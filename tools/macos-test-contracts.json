@@ -421,7 +421,6 @@
     "skills/review-gate/tests/diagnostics-message.test.sh": "linux-duplicate",
     "skills/review-gate/tests/diagnostics-report.test.sh": "linux-duplicate",
     "skills/review-gate/tests/install-latest.test.sh": "linux-duplicate",
-    "skills/review-gate/tests/provision-environment.test.sh": "linux-duplicate",
     "skills/review-gate/tests/refresh-workflow.test.sh": "linux-duplicate",
     "skills/review-gate/tests/request-copilot-review.test.sh": "linux-duplicate",
     "skills/review-gate/tests/settings-diagnostics-load.test.sh": "native",

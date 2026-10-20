@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-30
 
-**Status**: Active (lanes-app kendex/refresh heads with passing render proof → D023, overseer emergency merge → D029)
+**Status**: Active (lanes-app kendex/refresh heads with passing render proof → D023, overseer emergency merge → D029, environment provisioning and the report's app and environment rows → D031)
 
 **Research**: KEN-2067; the design note is attached to that issue
 

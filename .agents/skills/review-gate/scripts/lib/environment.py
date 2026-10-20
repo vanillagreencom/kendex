@@ -1,4 +1,4 @@
-"""Environment judgments shared by refresh adoption and the standard report."""
+"""Environment judgments for refresh adoption."""
 
 import json
 import os
@@ -135,8 +135,8 @@ def validate_environment(repository, config):
         # GitHub's same-name environment precedence cannot prevent an
         # outside value from filling a name absent from that environment.
         # Both token steps read fixed names, including the FLEET issue pair.
-        # The standard report owns the placement judgment. Only Actions
-        # repository/organization secrets can reach these caller mappings.
+        # Only Actions repository/organization secrets can reach these
+        # caller mappings.
         names = ["KENDEX_APP_ID", "KENDEX_APP_PRIVATE_KEY",
                  "FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY"] if "pairs" in config else config["names"]
         namespaces = [("repository", "repos/" + repository + "/actions/secrets")]
@@ -149,20 +149,3 @@ def validate_environment(repository, config):
     except ValueError:
         refuse("read")
 
-
-if __name__ == "__main__":
-    # validate-standard supplies API data through stdin and consumes JSON.
-    try:
-        data = json.load(sys.stdin)
-        if sys.argv[1] == "policy":
-            result = environment_policy(sys.argv[2], sys.argv[3], data["environments"], data.get("policies"))
-        elif sys.argv[1] == "secrets":
-            result = environment_secrets(sys.argv[2].split(), data)
-        elif sys.argv[1] == "placement":
-            result = secret_placement(sys.argv[2].split(), data)
-        else:
-            raise ValueError("operation")
-        print(json.dumps(result))
-    except (ValueError, KeyError, TypeError) as error:
-        print("review-gate-error=environment-data type=" + type(error).__name__, file=sys.stderr)
-        raise SystemExit(2) from error

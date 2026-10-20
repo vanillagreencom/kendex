@@ -1,7 +1,7 @@
 ---
 name: review-gate
 description: "Load to report the organization standard or adopt consumer refresh."
-summary: "Organization-standard report, environment provisioning and consumer refresh."
+summary: "Organization-standard report and consumer refresh."
 license: MIT
 user-invocable: true
 dependencies:
@@ -29,7 +29,7 @@ GitHub rulesets enforce approvals, stale-approval dismissal and review-thread re
 
 ## Organization standard
 
-Run `scripts/validate-standard.sh` for a read-only report. Run `scripts/provision-environment.sh --org ORG` from the organization owner's machine to provision app-secret environments, adding `--repo ORG/NAME` to provision one repository. Settings and repository wiring: [references/adoption.md](references/adoption.md).
+Run `scripts/validate-standard.sh` for a read-only report. The organization's own tooling sets up the review-secret environment and the app installation. Settings and repository wiring: [references/adoption.md](references/adoption.md).
 
 ## Consumer refresh
 
@@ -56,8 +56,7 @@ No lane runs a raw `--admin` merge, and no app token gains a merge path. This pa
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/validate-standard.sh` | Report rulesets, required checks, app installation and secret placement. |
-| `scripts/provision-environment.sh` | Provision the organization's declared app-secret environment. |
+| `scripts/validate-standard.sh` | Report rulesets and required checks. |
 | `refresh/adopt-refresh.sh` in the release checkout | Adopt the refresh workflow. `--retire-writer` opts into trusted retirement. |
 | `scripts/install-latest.sh` | Install the stable release on the trusted checkout's refresh caller major-tag commit. Use the latest stable release when the checkout has no refresh caller. |
 | `refresh/refresh-consumer.sh` in the release checkout | Rebuild the rolling refresh branch from the default branch and open or update its pull request at any measured class or an unmeasured standard class. Run the classifier from the same release checkout. Refuse held render edits before workflow adoption or publication. Preserve workflow edits under the [adoption contract](references/adoption.md#automatic-consumer-refresh). Disarm an armed pull request before pushing a new head; a disarm GitHub refuses stops the run unless the pull request is queued, merged or closed. Wait for GitHub to show the published head. If successful branch reads show no rules and no protection, merge that head directly and report `refresh-state=merged`. A failed direct merge reports `refresh-error=merge` and exits with the merge status. A branch with rules or protection, or a failed branch read, keeps app-token auto-merge. A head that stays unseen produces an unarmed warning. If GitHub refuses the arm and calls the pull request clean, merge it directly on the pushed head. Confirm that the arm enabled auto-merge, queued or merged the pull request. The merge queue merges it once the required approval, thread resolution and checks pass. The body names the class, classifier cause and path. An unmeasured standard class uses full review and CI. A failed classifier or missing class line stops publication. Render publication requires measurement. |

@@ -8,8 +8,6 @@ The settings loader is shared by the organization-standard tools, consumer refre
 
 Consumer adoption uses the committed workflow hash to prove that a retired copy remains unedited. Core refresh preserves adopted inventory records when their template disappears. Adoption uses that record to find a retired copy, including a renamed copy. It checks ownership before it changes any workflow or inventory entry.
 
-Secret writes on repeat provisioning runs and rotation follow the [`REVIEW_GATE_STANDARD_SECRETS` contract](references/adoption.md#settings).
-
 ## Consumer refresh
 
 The refresh scripts and their suites live in the repository's `refresh/` tree. They run from a kendex release checkout. The refresh adoption and publication contracts remain in [references/adoption.md](references/adoption.md#automatic-consumer-refresh).
@@ -20,6 +18,6 @@ The refresh scripts and their suites live in the repository's `refresh/` tree. T
 
 Run the shell suites under `tests/` through the repository's skill-suite entry point.
 
-`tests/settings-parsing.test.sh` holds settings precedence and refusal of unreadable sources. The standard-report and provisioning suites drive GitHub API fixtures.
+`tests/settings-parsing.test.sh` holds settings precedence and refusal of unreadable sources. The standard-report suite drives GitHub API fixtures.
 
 The suite fixtures pass an explicit child environment so host credentials cannot alter the cases.

@@ -560,7 +560,12 @@ cp "$TMP/caller-inventory" "$DIR/.kendex-generated.json"
 cp "$TMP/caller-workflow" "$DIR/$REFRESH"
 historical_adopt="$DIR/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 git -C "$SKILL_DIR" show 5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/adopt-refresh.sh >"$historical_adopt"
-chmod +x "$historical_adopt"
+# The v1.5.1 adopter calls the validator's retired environment-only mode, so
+# the validator pair it shipped beside sits under it for this control alone.
+for path in validate-standard.sh lib/standard.sh; do
+  git -C "$SKILL_DIR" show "5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/$path" >"$DIR/.agents/skills/review-gate/scripts/$path"
+done
+chmod +x "$historical_adopt" "$DIR/.agents/skills/review-gate/scripts/validate-standard.sh"
 trust_refresh_transport "$DIR" "$historical_adopt"
 run_refresh_command "$DIR" "$historical_adopt"
 if [ "$RC" -ne 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/caller-workflow" && grep -q '^review-gate-error=standard-setting-missing ' <<<"$OUT"; then

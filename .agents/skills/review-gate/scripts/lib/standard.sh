@@ -1,57 +1,26 @@
 # shellcheck shell=bash
 # The organization standard's values, from two sources. The skill's
 # standard.json holds the package's own: the CI and gate contexts. The
-# consumer's review-gate settings hold the organization's and the
-# repository's: the app, the environment and its secret names, and the
-# repository's required contexts, which no package can know.
-# validate-standard.sh reads GitHub against them and provision-environment.sh
-# writes the environment half of them; both load them here, so their shape
-# is judged in one place. Requires settings.sh loaded first.
+# consumer's review-gate settings hold the repository's: its required
+# contexts and the bypass actors its rulesets admit, which no package can
+# know. validate-standard.sh reads GitHub against them and loads them here,
+# so their shape is judged in one place. Requires settings.sh loaded first.
 
 # Sets WANT_CI (the CI context) and WANT_GATE (the gate context, which the
-# target layout no longer requires) from MANIFEST, and from settings WANT_ENV
-# (REVIEW_GATE_STANDARD_ENVIRONMENT) and WANT_SECRETS
-# (REVIEW_GATE_STANDARD_SECRETS, sorted, one per line). Each SCOPE reads the
-# keys of the one before it and more:
-#   environment  validate-standard.sh --environment-only: those two keys
-#   provision    provision-environment.sh: also WANT_APP
-#                (REVIEW_GATE_STANDARD_APP) and the bypass actors a ruleset
-#                holding one rule type alone may carry, one TYPE:ID:MODE per
-#                line: WANT_QUEUE_BYPASS (REVIEW_GATE_STANDARD_QUEUE_BYPASS,
-#                for a ruleset holding only merge_queue) and
-#                WANT_CHECKS_BYPASS (REVIEW_GATE_STANDARD_CHECKS_BYPASS, for
-#                one holding only required_status_checks), each empty where
-#                the key is
-#   full         validate-standard.sh's full mode: also WANT_CONTEXTS
-#                (REVIEW_GATE_STANDARD_CONTEXTS, sorted, `;`-joined)
-# In the environment and full scopes, the report's, a key among the app,
-# environment and secrets that no source sets reads the value standard.json
-# carried before 1.3.0 moved it to settings, and the run prints one
-# standard-setting-unset warning naming every such key; the provision scope
-# writes, so it refuses an unset key as an empty one, since that value would
-# create the earlier organization's environment in another's repositories.
-# A key a scope does not read is left empty and never resolved, so a
-# .env.local or process value of it cannot refuse that scope's run. A
-# malformed assignment to it in a settings file's [env] table still
-# refuses: settings.sh's rg_setting judges each present table whole,
-# whatever key it resolves. An empty WANT_CONTEXTS is no
-# refusal: the standard-required-contexts row reports it. With no jq on
-# PATH, a missing, unreadable or malformed manifest, an unreadable setting
-# the scope reads, a key the scope reads set empty (or unset, in the
-# provision scope), a secret name
-# that is not uppercase letters, digits and underscores starting with no
-# digit, or a bypass entry that is not TYPE:ID:MODE, it prints the refusal
-# to stderr and returns 1; the caller exits with its could-not-run status.
-rg_standard_load() { # MANIFEST SCOPE
-  local secrets contexts invalid missing="" rc=0
-  RG_STANDARD_UNSET=""
-  case "$2" in
-    environment | provision | full) ;;
-    *)
-      rg_message error standard-scope "$2" "rg_standard_load: the scope is environment, provision or full" >&2
-      return 1
-      ;;
-  esac
+# target layout no longer requires) from MANIFEST, and from settings
+# WANT_CONTEXTS (REVIEW_GATE_STANDARD_CONTEXTS, sorted, `;`-joined) and the
+# bypass actors a ruleset holding one rule type alone may carry, one
+# TYPE:ID:MODE per line: WANT_QUEUE_BYPASS
+# (REVIEW_GATE_STANDARD_QUEUE_BYPASS, for a ruleset holding only
+# merge_queue) and WANT_CHECKS_BYPASS (REVIEW_GATE_STANDARD_CHECKS_BYPASS,
+# for one holding only required_status_checks), each empty where the key is.
+# An empty WANT_CONTEXTS is no refusal: the standard-required-contexts row
+# reports it. With no jq on PATH, a missing, unreadable or malformed
+# manifest, an unreadable setting, or a bypass entry that is not
+# TYPE:ID:MODE, it prints the refusal to stderr and returns 1; the caller
+# exits with its could-not-run status.
+rg_standard_load() { # MANIFEST
+  local contexts
   if ! command -v jq >/dev/null 2>&1; then
     rg_message error jq-missing jq "jq is not on PATH; the standard manifest is read with it, so install jq" >&2
     return 1
@@ -77,81 +46,13 @@ rg_standard_load() { # MANIFEST SCOPE
     return 1
   }
 
-  WANT_APP=""
-  WANT_CONTEXTS=""
-  WANT_QUEUE_BYPASS=""
-  WANT_CHECKS_BYPASS=""
-  if [ "$2" != environment ]; then
-    rg_standard_setting REVIEW_GATE_STANDARD_APP "$RG_STANDARD_EARLIER_APP" "$2" || return 1
-    WANT_APP="$RG_STANDARD_VALUE"
-    [ -n "$WANT_APP" ] || missing=REVIEW_GATE_STANDARD_APP
-    WANT_QUEUE_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_QUEUE_BYPASS)" || return 1
-    WANT_CHECKS_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_CHECKS_BYPASS)" || return 1
-  fi
-  if [ "$2" = full ]; then
-    contexts="$(rg_setting REVIEW_GATE_STANDARD_CONTEXTS "")" || return 1
-    WANT_CONTEXTS="$(rg_pack "$contexts" ';' | LC_ALL=C sort -u | paste -sd ';' -)" || {
-      rg_message error standard-read REVIEW_GATE_STANDARD_CONTEXTS "could not split the required contexts" >&2
-      return 1
-    }
-  fi
-  rg_standard_setting REVIEW_GATE_STANDARD_ENVIRONMENT "$RG_STANDARD_EARLIER_ENVIRONMENT" "$2" || return 1
-  WANT_ENV="$RG_STANDARD_VALUE"
-  [ -n "$WANT_ENV" ] || missing="${missing:+$missing,}REVIEW_GATE_STANDARD_ENVIRONMENT"
-  rg_standard_setting REVIEW_GATE_STANDARD_SECRETS "$RG_STANDARD_EARLIER_SECRETS" "$2" || return 1
-  secrets="$RG_STANDARD_VALUE"
-  WANT_SECRETS="$(rg_pack "$secrets" ';' | LC_ALL=C sort -u)" || {
-    rg_message error standard-read REVIEW_GATE_STANDARD_SECRETS "could not split the secret names" >&2
+  WANT_QUEUE_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_QUEUE_BYPASS)" || return 1
+  WANT_CHECKS_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_CHECKS_BYPASS)" || return 1
+  contexts="$(rg_setting REVIEW_GATE_STANDARD_CONTEXTS "")" || return 1
+  WANT_CONTEXTS="$(rg_pack "$contexts" ';' | LC_ALL=C sort -u | paste -sd ';' -)" || {
+    rg_message error standard-read REVIEW_GATE_STANDARD_CONTEXTS "could not split the required contexts" >&2
     return 1
   }
-  [ -n "$WANT_SECRETS" ] || missing="${missing:+$missing,}REVIEW_GATE_STANDARD_SECRETS"
-  if [ -n "$missing" ]; then
-    rg_message error standard-setting-missing "$missing" "this repository declares no value for these review-gate settings; set each in the [env] table of kendex.settings.toml (references/adoption.md names them)" >&2
-    return 1
-  fi
-  # A name is uppercase letters, digits and underscores, and does not start
-  # with a digit. GitHub stores every secret name uppercase, and the name
-  # list rg_standard_missing reads uses that stored form, so a lowercase
-  # letter is refused: it would never match. An accepted
-  # name is the stored name, and two names differing only in case cannot
-  # both be declared.
-  invalid="$(LC_ALL=C grep -vxE -- '[A-Z_][A-Z0-9_]*' <<<"$WANT_SECRETS")" || rc=$?
-  case "$rc" in
-    0)
-      rg_message error standard-secret-invalid "${invalid//$'\n'/;}" "REVIEW_GATE_STANDARD_SECRETS holds these names, which are not secret names: a name is uppercase letters, digits and underscores, and does not start with a digit; GitHub stores every secret name uppercase" >&2
-      return 1
-      ;;
-    1) ;;
-    *)
-      rg_message error standard-read REVIEW_GATE_STANDARD_SECRETS "could not check the secret names" >&2
-      return 1
-      ;;
-  esac
-  if [ -n "$RG_STANDARD_UNSET" ]; then
-    rg_message warning standard-setting-unset "$RG_STANDARD_UNSET" "this repository sets none of these review-gate settings, so this report reads the values standard.json carried before 1.3.0, which name the vanillagreen organization's app, environment and secrets; set each in the [env] table of kendex.settings.toml (references/adoption.md names them). This read ends at 2.0." >&2
-  fi
-}
-
-# The values standard.json carried before 1.3.0 moved them to settings.
-# Compatibility read, floor 1.3.0, removed at 2.0: no setting turns it off.
-RG_STANDARD_EARLIER_APP=vanillagreen-fleet-lanes
-RG_STANDARD_EARLIER_ENVIRONMENT=kendex
-RG_STANDARD_EARLIER_SECRETS="FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
-
-# Sets RG_STANDARD_VALUE to KEY's resolved value. A KEY no source sets reads
-# empty in the provision scope, whose refusal names it, and in every other
-# scope reads EARLIER and joins RG_STANDARD_UNSET. A KEY set empty stays
-# empty: that is a declaration, not an absence. rg_setting answers an unset
-# key with the default it is handed, so a second read under another default
-# tells unset from set empty.
-rg_standard_setting() { # KEY EARLIER SCOPE
-  local probe
-  RG_STANDARD_VALUE="$(rg_setting "$1" "")" || return 1
-  [ -z "$RG_STANDARD_VALUE" ] && [ "$3" != provision ] || return 0
-  probe="$(rg_setting "$1" unset)" || return 1
-  [ "$probe" = unset ] || return 0
-  RG_STANDARD_VALUE="$2"
-  RG_STANDARD_UNSET="${RG_STANDARD_UNSET:+$RG_STANDARD_UNSET,}$1"
 }
 
 # The bypass actors the setting KEY admits, one TYPE:ID:MODE per line, the
@@ -180,30 +81,6 @@ rg_standard_actors() { # KEY
       ;;
   esac
   printf '%s\n' "$actors"
-}
-
-# The names among WANT_SECRETS absent from the newline list LISTED, one per
-# line, by the same whole-line match.
-rg_standard_missing() { # LISTED
-  local name
-  for name in $WANT_SECRETS; do
-    if ! grep -qxF -- "$name" <<<"$1"; then
-      printf '%s\n' "$name"
-    fi
-  done
-}
-
-# The value of the environment variable NAME on stdout, byte-exact: its own
-# trailing newlines kept, none added. It reads the process environment only,
-# never a shell variable, so a secret named like a bash variable (EUID) or a
-# script's own unexported one reads as absent. Returns 1 when the environment
-# does not hold NAME, or holds it empty.
-rg_secret_value() { # NAME
-  local value
-  value="$(printenv -- "$1" && printf x)" || return 1
-  value="${value%$'\n'x}"
-  [ -n "$value" ] || return 1
-  printf '%s' "$value"
 }
 
 # VALUE percent-encoded as one URL path segment.

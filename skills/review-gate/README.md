@@ -4,8 +4,7 @@ This package checks organization standards and updates kendex installs in consum
 
 ## Features
 
-- Report repository rules and app-secret placement against an organization standard.
-- Provision app-secret environments from the owner's machine.
+- Report repository rules and required checks against an organization standard.
 - Open or update a consumer refresh pull request.
 - Handle automatic review findings during consumer refresh.
 

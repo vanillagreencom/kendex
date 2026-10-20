@@ -1,29 +1,5 @@
 [env]
 
-# The GitHub App the organization standard installs on every repository,
-# by its slug. The organization owner's check of a repository reads it; the
-# package ships no value. Set empty, the check refuses. Until 2.0 the check
-# reads this key absent as vanillagreen-fleet-lanes, its value before 1.3.0,
-# with a warning; set it to your organization's app.
-REVIEW_GATE_STANDARD_APP = ""
-
-# The deployment environment that holds the standard's app secrets in every
-# repository, deploying from the default branch only. The package ships no
-# value; the owner's provisioning refuses until it is set. Set empty, the
-# check refuses. Until 2.0 the check reads this key absent as kendex, its
-# value before 1.3.0, with a warning; set it.
-REVIEW_GATE_STANDARD_ENVIRONMENT = ""
-
-# The names of the secrets that environment holds, separated by semicolons.
-# Names only: a value never goes in this file. A name is uppercase letters,
-# digits and underscores, and does not start with a digit: GitHub stores
-# every secret name uppercase. The package ships no value; the owner's
-# provisioning refuses until it is set. Set empty, the check refuses. Until
-# 2.0 the check reads this key absent as
-# FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY, its value before 1.3.0, with a
-# warning; set it.
-REVIEW_GATE_STANDARD_SECRETS = ""
-
 # The status checks this repository's own required-checks ruleset requires,
 # separated by semicolons: each job name exactly as the ruleset lists it.
 # The organization owner's check of the repository compares the branch's

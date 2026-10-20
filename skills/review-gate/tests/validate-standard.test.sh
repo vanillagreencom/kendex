@@ -25,40 +25,7 @@ BIN="$TMP/bin"
 BASE="$TMP/base"
 mkdir -p "$SKILL" "$BIN" "$BASE"
 cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
-
-# validate-standard consumes this machine error line. Malformed GitHub secret
-# metadata must refuse without copying input values into that diagnostic.
-environment_data_case() { # INPUT ERROR_TYPE
-  RC=0
-  RAW="$(env -i PATH="$BIN:/usr/bin:/bin" python3 "$SKILL/scripts/lib/environment.py" secrets APP_ID <<<"$1" 2>&1)" || RC=$?
-  CASE_MATCH=false
-  if [ "$RC" -eq 2 ] && [ "$RAW" = "review-gate-error=environment-data type=$2" ]; then
-    CASE_MATCH=true
-  fi
-}
-while IFS='~' read -r name input error_type; do
-  environment_data_case "$input" "$error_type"
-  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name (rc=$RC)" "$RAW"; fi
-done <<'ROWS'
-malformed secret metadata reports its error type without input values~[{"name":"PRIVATE_INPUT_MARKER"},{"name":null}]~ValueError
-malformed secret JSON reports its error type without input values~["PRIVATE_INPUT_MARKER",]~JSONDecodeError
-ROWS
-cp "$SKILL/scripts/lib/environment.py" "$TMP/environment-data.keep"
-python3 - "$SKILL/scripts/lib/environment.py" <<'ENVIRONMENT_DATA_CONTROL'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-source = path.read_text()
-old = 'type(error).__name__'
-assert source.count(old) == 1
-changed = source.replace(old, 'str(error)')
-assert changed != source
-path.write_text(changed)
-ENVIRONMENT_DATA_CONTROL
-environment_data_case '[{"name":"PRIVATE_INPUT_MARKER"},{"name":null}]' ValueError
-mv "$TMP/environment-data.keep" "$SKILL/scripts/lib/environment.py"
-if [ "$CASE_MATCH" = false ]; then ok 'control: exception text turns the environment-data assertion red';
-else bad 'environment-data diagnostic control' "$RAW"; fi
+. "$TEST_DIR/lib/workflow-edit.sh"
 
 cat >"$SKILL/standard.json" <<'JSON'
 {
@@ -69,13 +36,13 @@ JSON
 cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
 
-# This suite's wrapper injects real gh diagnostics at the secret read only.
+# This suite's wrapper injects real gh diagnostics at the branch read only.
 mv "$BIN/gh" "$BIN/gh-base"
 cat >"$BIN/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 for arg in "$@"; do
-  if [ "$arg" = repos/acme/widgets/environments/kendex/secrets ] && [ -f "$GH_SHIM_FIXTURES/.retry-error" ]; then
+  if [ "$arg" = repos/acme/widgets/branches/main ] && [ -f "$GH_SHIM_FIXTURES/.retry-error" ]; then
     count=0
     [ ! -f "$GH_SHIM_FIXTURES/.retry-count" ] || count="$(cat "$GH_SHIM_FIXTURES/.retry-count")"
     count=$((count + 1))
@@ -97,9 +64,9 @@ SH
 chmod +x "$BIN/gh" "$BIN/sleep"
 
 # The consumer checkouts the script runs from, each declaring the
-# organization's values in its own kendex.settings.toml or not. `full` is the
-# consumer every case uses unless it names another; its secret names are out
-# of order, so the sorted value below is the loader's.
+# repository's values in its own kendex.settings.toml or not. `full` is the
+# consumer every case uses unless it names another; its contexts are out of
+# order, so the sorted value below is the loader's.
 settings_consumer() { # NAME [ASSIGNMENT...]
   local dir="$TMP/consumer-$1"
   shift
@@ -113,17 +80,16 @@ settings_consumer() { # NAME [ASSIGNMENT...]
 QUEUE_BYPASS='REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always; Integration:5115517:pull_request"'
 CHECKS_BYPASS='REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"'
 CONTEXTS='REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
-settings_consumer full 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS"
-settings_consumer no-bypass 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS"
-settings_consumer bad-bypass 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' "$CONTEXTS" 'REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
-settings_consumer no-contexts 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
-settings_consumer empty-contexts 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = ""'
-settings_consumer gated 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"' 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);CI;Review gate"'
-settings_consumer none
-settings_consumer seeded 'REVIEW_GATE_STANDARD_APP = ""' 'REVIEW_GATE_STANDARD_ENVIRONMENT = ""' 'REVIEW_GATE_STANDARD_SECRETS = ""'
-settings_consumer no-secrets 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = " ; "'
-settings_consumer no-app 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
-settings_consumer bad-secret 'REVIEW_GATE_STANDARD_APP = "lanes-app"' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP-ID;9KEY;app_id"'
+settings_consumer full "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS"
+settings_consumer no-bypass "$CONTEXTS"
+settings_consumer bad-bypass "$CONTEXTS" 'REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
+settings_consumer no-contexts
+settings_consumer empty-contexts 'REVIEW_GATE_STANDARD_CONTEXTS = ""'
+settings_consumer gated 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);CI;Review gate"'
+# The organization keys this report read before the organization's own
+# tooling took the environment and app rows: the report reads none of them,
+# so a consumer still holding them, set or empty, reads like `full`.
+settings_consumer retired "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS" 'REVIEW_GATE_STANDARD_APP = ""' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "app-id; 9KEY"'
 CONSUMER="$TMP/consumer-full"
 
 # The matching world: it reads ok on every row of the BASELINE below and is
@@ -153,23 +119,7 @@ printf '{"id": 1, "bypass_actors": []}\n' >"$BASE/ruleset-1.json"
 printf '{"id": 2, "bypass_actors": [{"actor_type": "RepositoryRole", "actor_id": 9}]}\n' >"$BASE/ruleset-2.json"
 printf '{"id": 3, "bypass_actors": []}\n' >"$BASE/ruleset-3.json"
 printf '{"id": 4, "bypass_actors": []}\n' >"$BASE/ruleset-4.json"
-cat >"$BASE/installations.json" <<'JSON'
-{"installations": [{"app_slug": "other-app", "repository_selection": "selected"}, {"app_slug": "lanes-app", "repository_selection": "all"}]}
-JSON
-cat >"$BASE/environments.json" <<'JSON'
-{"environments": [{"name": "copilot", "deployment_branch_policy": null}, {"name": "kendex", "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}]}
-JSON
-printf '{"branch_policies": [{"name": "main", "type": "branch"}]}\n' >"$BASE/branch-policies.json"
 printf '{"name": "main", "protected": true, "protection": {"enabled": false}}\n' >"$BASE/branch.json"
-printf '{"secrets": [{"name": "APP_ID"}, {"name": "APP_KEY"}, {"name": "OTHER"}]}\n' >"$BASE/environment-secrets-kendex.json"
-printf '{"secrets": [{"name": "COPILOT_TOKEN"}]}\n' >"$BASE/environment-secrets-copilot.json"
-printf '{"secrets": [{"name": "OTHER"}]}\n' >"$BASE/repository-secrets.json"
-# The organization-wide list and the list shared with this repository are
-# two endpoints; only the first answers for the organization scope.
-printf '{"secrets": [{"name": "SHARED"}]}\n' >"$BASE/organization-secrets.json"
-printf '{"secrets": [{"name": "SHARED"}, {"name": "ELSEWHERE"}]}\n' >"$BASE/organization-actions-secrets.json"
-printf '{"secrets": [{"name": "NPM_TOKEN"}]}\n' >"$BASE/dependabot-secrets.json"
-printf '{"secrets": []}\n' >"$BASE/organization-dependabot-secrets.json"
 # The default branch's head, dead, is the queue's merge commit. Its first
 # associated pull request merged into another branch, so a read that ignores
 # the base takes the wrong head.
@@ -199,11 +149,7 @@ ok check=standard-conversation-resolution value=true
 ok check=standard-copilot-review value=present
 ok check=standard-bypass-actors value=0
 ok check=standard-classic-protection value=off
-ok check=standard-ci-context value=CI\;build\;lint-typecheck\;writer
-ok check=standard-app value=all
-ok check=standard-environment value=custom:branch:main
-ok check=standard-environment-secrets value=APP_ID\;APP_KEY
-ok check=standard-secrets-outside value=none'
+ok check=standard-ci-context value=CI\;build\;lint-typecheck\;writer'
 
 # The baseline with each named row turned to its status at its observed
 # value. OVERRIDES is `[STATUS:]check=value` pairs separated by `^`, values
@@ -253,7 +199,7 @@ want_advisories_of() { # OVERRIDES
 }
 
 run() { # FIXTURES SHIM_FAIL [ARGS...] — sets OUT (verdict lines), RC, and
-  # ADVISORIES and UNSET, the counts of the two compatibility warnings
+  # ADVISORIES, the count of the advisory warnings
   local fixtures="$1" shim_fail="$2"
   shift 2
   RC=0
@@ -261,7 +207,6 @@ run() { # FIXTURES SHIM_FAIL [ARGS...] — sets OUT (verdict lines), RC, and
     "$SKILL/scripts/validate-standard.sh" "$@" 2>&1)" || RC=$?
   OUT="$(grep -E '^(ok|advisory|FAIL) check=' <<<"$RAW" || true)"
   ADVISORIES="$(grep -c '^review-gate-warning=standard-advisory ' <<<"$RAW" || true)"
-  UNSET="$(grep -c '^review-gate-warning=standard-setting-unset ' <<<"$RAW" || true)"
 }
 
 echo "=== each drifted element reports its own row ==="
@@ -291,10 +236,10 @@ drift_case() { # NAME SHIM_FAIL FILES EDIT OVERRIDES [CONSUMER]
   want_rc="$(want_rc_of "$5")"
   want_adv="$(want_advisories_of "$5")"
   CASE_MATCH=false
-  if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ] && [ "$ADVISORIES" -eq "$want_adv" ] && [ "$UNSET" -eq 0 ]; then
+  if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ] && [ "$ADVISORIES" -eq "$want_adv" ]; then
     CASE_MATCH=true
   fi
-  CASE_DIFF="rc=$RC want $want_rc; advisory warnings=$ADVISORIES want $want_adv; unset warnings=$UNSET want 0
+  CASE_DIFF="rc=$RC want $want_rc; advisory warnings=$ADVISORIES want $want_adv
 $(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
 $RAW"
 }
@@ -309,21 +254,6 @@ while IFS='~' read -r name fail files edit overrides; do
   rows=$((rows + 1))
   drift_case "$name" "$fail" "$files" "$edit" "$overrides"
   if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
-  if [ "$overrides" = 'standard-secrets-outside=repository:APP_ID' ] && [ "$files" = repository-secrets.json ]; then
-    cp "$SKILL/scripts/lib/environment.py" "$TMP/placement-owner.keep"
-    python3 - "$SKILL/scripts/lib/environment.py" <<'PLACEMENT_CONTROL'
-from pathlib import Path
-import sys
-p=Path(sys.argv[1]); s=p.read_text(); old='for row in scopes:'
-assert s.count(old)==1
-changed=s.replace(old, 'for row in []: # for row in scopes:'); assert changed!=s
-p.write_text(changed)
-PLACEMENT_CONTROL
-    drift_case "$name" "$fail" "$files" "$edit" "$overrides"
-    mv "$TMP/placement-owner.keep" "$SKILL/scripts/lib/environment.py"
-    if [ "$CASE_MATCH" = false ]; then ok 'control: disabled placement judgment turns the outside-secret report red';
-    else bad 'placement report control' "$CASE_DIFF"; fi
-  fi
 done <<'ROWS'
 a repository matching the standard~~~~
 a pull-request rule from a repository ruleset~~rules.json~.[2].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:1:pull_request\,missing:pull_request^advisory:standard-required-approvals=absent^advisory:standard-stale-dismissal=absent
@@ -350,9 +280,6 @@ a ruleset source with no ruleset read is unreadable~~rules.json~.[3].ruleset_sou
 a repository deletion rule on the second page~~rules.page2.json~[{"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 1}]~advisory:standard-ruleset-source=Repository:1:deletion
 classic protection beside the rulesets~~branch.json~.protection.enabled = true~standard-classic-protection=on
 the branch unreadable~branch~~~standard-classic-protection=unreadable
-the app on selected repositories~~installations.json~.installations[1].repository_selection = "selected"~standard-app=selected
-the app not installed~~installations.json~.installations |= [.[0]]~standard-app=absent
-installations unreadable~installations~~~standard-app=unreadable
 lanes reporting their own names and no CI aggregate~~jobs-7.json~.jobs |= map(select(.name != "CI"))~standard-ci-context=ci-context-missing:pull_request:build\;lint-typecheck\;writer
 an aggregate whose name only starts with CI~~jobs-7.json~.jobs |= map(if .name == "CI" then .name = "CI Required" else . end)~standard-ci-context=ci-context-missing:pull_request:CI\ Required\;build\;lint-typecheck\;writer
 no job ran on the pull request~~workflow-runs.json~.workflow_runs = []~standard-ci-context=ci-context-missing:pull_request:none
@@ -370,24 +297,6 @@ the head's pull requests unreadable~commit-pulls~~~standard-ci-context=unreadabl
 pull_request runs unreadable~workflow-runs~~~standard-ci-context=unreadable
 the head's merge_group runs unreadable~workflow-runs-merge-group~~~standard-ci-context=unreadable
 a run's jobs unreadable~jobs-8~~~standard-ci-context=unreadable
-the environment deploys from every branch~~environments.json~.environments[1].deployment_branch_policy = null~standard-environment=unrestricted
-the environment deploys from protected branches~~environments.json~.environments[1].deployment_branch_policy = {"protected_branches": true, "custom_branch_policies": false}~standard-environment=protected-branches
-the environment deploys from a second branch~~branch-policies.json~.branch_policies += [{"name": "dev", "type": "branch"}]~standard-environment=custom:branch:main\,branch:dev
-branch policies unreadable~branch-policies~~~standard-environment=unreadable
-a tag policy named for the default branch~~branch-policies.json~.branch_policies = [{"name": "main", "type": "tag"}]~standard-environment=custom:tag:main
-a secret whose name only starts like a standard one~~environment-secrets-kendex.json~.secrets = [{"name": "APP_ID"}, {"name": "APP_KEY_OLD"}]~standard-environment-secrets=APP_ID
-the environment lacks a secret~~environment-secrets-kendex.json~.secrets |= map(select(.name != "APP_KEY"))~standard-environment-secrets=APP_ID
-environment secrets unreadable~environment-secrets-kendex~~~standard-environment-secrets=unreadable
-a repository secret of a standard name~~repository-secrets.json~.secrets += [{"name": "APP_ID"}]~standard-secrets-outside=repository:APP_ID
-a repository secret of a standard name on the second page~~repository-secrets.page2.json~{"secrets": [{"name": "APP_ID"}]}~standard-secrets-outside=repository:APP_ID
-a repository secret whose name only starts like a standard one~~repository-secrets.json~.secrets += [{"name": "APP_ID_OLD"}]~
-a standard name in another environment~~environment-secrets-copilot.json~.secrets += [{"name": "APP_ID"}]~standard-secrets-outside=environment:copilot:APP_ID
-a repository Dependabot secret of a standard name~~dependabot-secrets.json~.secrets += [{"name": "APP_KEY"}]~standard-secrets-outside=dependabot:APP_KEY
-an organization Dependabot secret of a standard name~~organization-dependabot-secrets.json~.secrets += [{"name": "APP_ID"}]~standard-secrets-outside=dependabot-organization:APP_ID
-another environment's secrets unreadable~environment-secrets-copilot~~~standard-secrets-outside=unreadable:environment:copilot
-repository Dependabot secrets unreadable~dependabot-secrets~~~standard-secrets-outside=unreadable:dependabot
-an organization secret of a standard name not shared with this repository~~organization-actions-secrets.json~.secrets += [{"name": "APP_KEY"}]~standard-secrets-outside=organization:APP_KEY
-organization secrets unreadable~organization-actions-secrets~~~standard-secrets-outside=unreadable:organization
 ROWS
 
 # The organization ruleset requests the review through kendex's workflow
@@ -419,16 +328,6 @@ a non-string workflow pin~.[3].parameters.workflows[0].sha = 7~$PIN_FAILURE
 the pinned workflow beside an unrelated workflow~.[3].parameters.workflows += [{"repository_id": 7, "path": ".github/workflows/build.yml"}]~
 ROWS
 
-# One drifted element that answers two rows: without the environment there
-# is no secret to ask for, and the secrets row says why rather than passing.
-echo "=== the environment's absence answers both of its rows ==="
-dir="$TMP/case-no-environment"
-cp -R "$BASE" "$dir"
-jq '.environments |= [.[0]]' "$dir/environments.json" >"$dir/e" && mv "$dir/e" "$dir/environments.json"
-run "$dir" ""
-want="$(expected_listing 'standard-environment=absent^standard-environment-secrets=absent')"
-if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "an absent environment"; else bad "an absent environment (rc=$RC)" "$RAW"; fi
-
 # The contexts row against consumers other than the table's: the list the
 # repository declares is the other half of its comparison.
 echo "=== the required contexts against the repository's declared list ==="
@@ -444,6 +343,19 @@ a required gate context the repository also declares~gated~.[5].parameters.requi
 a required gate context a repository with no context list fails~no-contexts~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 a required gate context a repository with an empty context list fails~empty-contexts~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 ROWS
+
+echo "=== the retired organization keys are not read ==="
+drift_case "a consumer still holding the retired organization keys" "" "" "" "" retired
+if [ "$CASE_MATCH" = true ]; then ok "a consumer still holding the retired organization keys reads the matching world"
+else bad "a consumer still holding the retired organization keys" "$CASE_DIFF"; fi
+# The control reads one retired key in a disposable copy of the loader.
+cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  WANT_CHECKS_BYPASS=' \
+  's/^  WANT_CHECKS_BYPASS=.*$/&\n  rg_standard_actors REVIEW_GATE_STANDARD_SECRETS >\/dev\/null || return 1/'
+drift_case "control: a retired key read" "" "" "" "" retired
+if [ "$CASE_MATCH" = false ]; then ok "control: a loader that reads a retired key turns the retired-key case red"
+else bad "control: a loader that reads a retired key" "$CASE_DIFF"; fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 
 echo "=== a ruleset holding one rule type admits the standard's actors there ==="
 # The matching world's repository rulesets, the merge queue in ruleset 3
@@ -479,13 +391,9 @@ echo "=== a failed read is unreadable, never a match ==="
 run "$BASE" rules
 want="$(expected_listing 'standard-ruleset-source=unreadable^standard-merge-queue=unreadable^standard-required-contexts=unreadable^standard-required-approvals=unreadable^standard-stale-dismissal=unreadable^standard-conversation-resolution=unreadable^standard-copilot-review=unreadable^standard-bypass-actors=unreadable')"
 if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "the effective rules unreadable"; else bad "the effective rules unreadable (rc=$RC)" "$RAW"; fi
-run "$BASE" environments
-want="$(expected_listing 'standard-environment=unreadable^standard-environment-secrets=unreadable^standard-secrets-outside=unreadable:environments')"
-if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "the environments unreadable"; else bad "the environments unreadable (rc=$RC)" "$RAW"; fi
 
 echo "=== each failed read keeps its own cause ==="
-# A withheld field beside a failed read, and a failed read followed by
-# successful ones: each cause line names its own read.
+# A withheld field beside a failed read: each cause line names its own read.
 dir="$TMP/case-causes"
 cp -R "$BASE" "$dir"
 jq 'del(.bypass_actors)' "$dir/org-ruleset-1.json" >"$dir/r" && mv "$dir/r" "$dir/org-ruleset-1.json"
@@ -495,12 +403,6 @@ if grep -qx '  2: gh-shim-error=api value=org-ruleset-2' <<<"$RAW" && grep -q '^
   ok "a withheld field and a failed ruleset read each name their own cause"
 else
   bad "a withheld field and a failed ruleset read each name their own cause" "$RAW"
-fi
-run "$BASE" organization-actions-secrets
-if grep -qx '  organization: gh-shim-error=api value=organization-actions-secrets' <<<"$RAW"; then
-  ok "a failed secret read keeps its cause after later reads succeed"
-else
-  bad "a failed secret read keeps its cause after later reads succeed" "$RAW"
 fi
 
 echo "=== the CI context is read on both legs of the latest merge ==="
@@ -546,11 +448,7 @@ the repository unreadable~repository~~full~~review-gate-error=repository-read~
 a manifest without a gate context~~{"ci_context": "CI"}~full~~review-gate-error=standard-malformed~
 a manifest without a CI context~~{"gate_context": "Review gate"}~full~~review-gate-error=standard-malformed~
 a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI"}~full~~review-gate-error=standard-malformed~
-a consumer holding the package's empty seed~~~seeded~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
-a secret list of separators alone~~~no-secrets~~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_SECRETS
-a secret name outside uppercase letters, digits and underscores~~~bad-secret~~review-gate-error=standard-secret-invalid~9KEY\;APP-ID\;app_id
 a bypass entry that is not TYPE:ID:MODE~~~bad-bypass~~review-gate-error=standard-bypass-invalid~Integration:5115517:bypass\;lanes-app
-environment-only refuses an environment key set empty~~~seeded~--environment-only~review-gate-error=standard-setting-missing~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
 an argument~~~full~--repo~review-gate-error=unknown-arguments~
 ROWS
 
@@ -565,110 +463,24 @@ else
   bad "the shipped standard.json is well-formed (rc=$RC)" "$RAW"
 fi
 
-# Adoption can validate its environment without owner-only GitHub reads.
-# This fixture omits every unrelated endpoint, so an accidental read fails.
-. "$TEST_DIR/lib/workflow-edit.sh"
-ENV_BASE="$TMP/environment-only"
-mkdir -p "$ENV_BASE"
-for file in repository environments branch-policies environment-secrets-kendex; do
-  cp "$BASE/$file.json" "$ENV_BASE/$file.json"
-done
-ENV_BASELINE='ok check=standard-environment value=custom:branch:main
-ok check=standard-environment-secrets value=APP_ID\;APP_KEY'
-EXPECTED_URLS='repos/{owner}/{repo}
-repos/acme/widgets/environments
-repos/acme/widgets/environments/kendex/deployment-branch-policies
-repos/acme/widgets/environments/kendex/secrets'
-# A consumer that declares no app validates its environment.
-CONSUMER="$TMP/consumer-no-app"
-run "$ENV_BASE" '' --environment-only
-CONSUMER="$TMP/consumer-full"
-if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ] && [ "$(cat "$ENV_BASE/.urls.log")" = "$EXPECTED_URLS" ]; then
-  ok 'environment-only reads only repository identity, policy, and secret names'
-else
-  bad "environment-only baseline (rc=$RC)" "$RAW"
-fi
-
-# The environment-only report reads no contexts value. A contexts
-# value the settings reader refuses must not stop the report. The value sits in
-# .env.local, which the reader judges one key at a time; a
-# kendex.settings.toml [env] table it judges whole.
-settings_consumer env-contexts 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "APP_KEY;APP_ID"'
-printf '%s\n' 'REVIEW_GATE_STANDARD_CONTEXTS="CI"x' >"$TMP/consumer-env-contexts/.env.local"
-CONSUMER="$TMP/consumer-env-contexts"
-run "$ENV_BASE" '' --environment-only
-CONSUMER="$TMP/consumer-full"
-if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ]; then
-  ok 'environment-only never resolves an unreadable REVIEW_GATE_STANDARD_CONTEXTS'
-else
-  bad "environment-only with unreadable contexts (rc=$RC)" "$RAW"
-fi
-# The environment scope reads neither bypass key: a consumer whose queue
-# bypass entry is malformed still validates its environment. The control reads the provision scope's keys in every scope, and
-# the same consumer is refused on the entry.
-CONSUMER="$TMP/consumer-bad-bypass"
-run "$ENV_BASE" '' --environment-only
-if [ "$RC" -eq 0 ] && [ "$OUT" = "$ENV_BASELINE" ] && ! grep -q 'standard-bypass-invalid' <<<"$RAW"; then
-  ok 'environment-only reads no bypass key: a malformed entry refuses nothing'
-else
-  bad "environment-only on a malformed bypass entry (rc=$RC)" "$RAW"
-fi
-cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-scope.keep"
-file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ "\$2" != environment \]; then$' 's/^  if \[ "\$2" != environment \]; then$/  if true; then/'
-run "$ENV_BASE" '' --environment-only
-if [ "$RC" -eq 2 ] && grep -q '^review-gate-error=standard-bypass-invalid ' <<<"$RAW"; then
-  ok 'control: the provision scope read in every scope refuses the environment run on the entry'
-else
-  bad "control: bypass keys in every scope (rc=$RC)" "$RAW"
-fi
-cp "$TMP/standard-scope.keep" "$SKILL/scripts/lib/standard.sh"
-CONSUMER="$TMP/consumer-full"
-
-while IFS='~' read -r name fail file edit overrides; do
-  [ -n "$name" ] || continue
-  dir="$TMP/env-$name"
-  cp -R "$ENV_BASE" "$dir"
-  if [ -n "$file" ]; then
-    jq "$edit" "$dir/$file.json" >"$dir/edited.json"
-    mv "$dir/edited.json" "$dir/$file.json"
-  fi
-  run "$dir" "$fail" --environment-only
-  want="$(expected_listing "$overrides")"
-  want="$(grep -E '^(ok|FAIL) check=standard-environment(-secrets)? ' <<<"$want")"
-  remedy=0
-  [ -z "$fail" ] || remedy=1
-  if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ] &&
-      { [ "$remedy" -eq 1 ] || grep -qF 'scripts/provision-environment.sh --org acme' <<<"$RAW"; }; then
-    ok "environment-only $name refuses with the matching environment verdict"
-  else
-    bad "environment-only $name (rc=$RC)" "$RAW"
-  fi
-done <<'ROWS'
-missing~~environments~.environments = []~standard-environment=absent^standard-environment-secrets=absent
-unrestricted~~environments~.environments[1].deployment_branch_policy = null~standard-environment=unrestricted
-missing-secret~~environment-secrets-kendex~.secrets |= map(select(.name != "APP_KEY"))~standard-environment-secrets=APP_ID
-unreadable~environments~~~standard-environment=unreadable^standard-environment-secrets=unreadable
-ROWS
-
-# The mode guard's control reaches the real validator with the same argument,
-# but makes it execute unrelated checks. The narrow-mode assertion goes red.
+# The controls below edit a disposable copy of the script and restore it
+# from this keep.
 cp "$SKILL/scripts/validate-standard.sh" "$TMP/standard-script.keep"
 
 echo "=== transient reads retry, permanent failures keep their first answer ==="
 retry_case() { # DIAGNOSTIC FAILURES ATTEMPTS WAITS RC
   local dir="$TMP/retry-case" got_attempts got_waits want
   rm -rf -- "${dir:?}"
-  cp -R "$ENV_BASE" "$dir"
+  cp -R "$BASE" "$dir"
   printf '%b\n' "$1" >"$dir/.retry-error"
   printf '%s\n' "$2" >"$dir/.retry-limit"
-  run "$dir" '' --environment-only
+  run "$dir" ''
   got_attempts="$(cat "$dir/.retry-count")"
   got_waits=""
   [ ! -f "$dir/.retry-waits" ] || got_waits="$(tr '\n' ',' <"$dir/.retry-waits")"
-  want="$ENV_BASELINE"
+  want="$BASELINE"
   if [ "$5" -eq 1 ]; then
-    want='ok check=standard-environment value=custom:branch:main
-FAIL check=standard-environment-secrets value=unreadable'
+    want="$(expected_listing 'standard-classic-protection=unreadable')"
   fi
   CASE_MATCH=false
   if [ "$RC" -eq "$5" ] && [ "$OUT" = "$want" ] && [ "$got_attempts" = "$3" ] && [ "$got_waits" = "$4" ]; then
@@ -688,8 +500,8 @@ done <<'ROWS'
 503 recovers~gh: Service Unavailable (HTTP 503)~1~2~1,~0
 504 recovers~gh: Gateway Timeout (HTTP 504)~1~2~1,~0
 no HTTP answer recovers~error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com~1~2~1,~0
-transport EOF recovers~Get "https://api.github.com/repos/acme/widgets/environments/kendex/secrets": EOF~1~2~1,~0
-transport failure stays bounded~Get "https://api.github.com/repos/acme/widgets/environments/kendex/secrets": context deadline exceeded~3~3~1,2,~1
+transport EOF recovers~Get "https://api.github.com/repos/acme/widgets/branches/main": EOF~1~2~1,~0
+transport failure stays bounded~Get "https://api.github.com/repos/acme/widgets/branches/main": context deadline exceeded~3~3~1,2,~1
 404 stays on its first answer~gh: Not Found (HTTP 404)~1~1~~1
 401 stays on its first answer~gh: Bad credentials (HTTP 401)~1~1~~1
 501 stays on its first answer~gh: Not Implemented (HTTP 501)~1~1~~1
@@ -713,55 +525,6 @@ retry bound shortened@"\$attempt" -lt 2@s/"$attempt" -lt 2/"$attempt" -lt 1/@gh:
 HTTP precedence removed@if \[\[ "\$error" =~ HTTP@s/if \[\[ "\$error" =~ HTTP/if false \&\& [[ "$error" =~ HTTP/@gh: Not Found (HTTP 404)\nerror connecting to api.github.com@1@1@@1
 doubling wait removed@delay=\$\(\(delay \* 2\)\)@s/delay=$((delay \* 2))/delay=1/@gh: Server Error (HTTP 500)@3@3@1,2,@1
 ROWS
-
-file_edit "$SKILL" scripts/validate-standard.sh 1 '^  ENVIRONMENT_ONLY=1$' 's/^  ENVIRONMENT_ONLY=1$/  ENVIRONMENT_ONLY=0/'
-chmod +x "$SKILL/scripts/validate-standard.sh"
-run "$ENV_BASE" '' --environment-only
-if [ "$RC" -eq 1 ] && [ "$OUT" != "$ENV_BASELINE" ] && grep -q '^FAIL check=standard-ruleset-source ' <<<"$OUT"; then
-  ok 'control: disabled narrow mode reaches unavailable owner-only reads'
-else
-  bad "control: narrow mode (rc=$RC)" "$RAW"
-fi
-cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
-
-# The exit rule must carry environment failure to the adoption caller.
-file_edit "$SKILL" scripts/validate-standard.sh 1 '^  \[ "\$FAILED" -eq 0 \]$' 's/^  \[ "\$FAILED" -eq 0 \]$/  [ "$FAILED" -ge 0 ]/'
-chmod +x "$SKILL/scripts/validate-standard.sh"
-run "$TMP/env-missing" '' --environment-only
-if [ "$RC" -eq 0 ] && grep -qxF 'FAIL check=standard-environment value=absent' <<<"$OUT"; then
-  ok 'control: lost environment status accepts an absent environment'
-else
-  bad "control: environment failure status (rc=$RC)" "$RAW"
-fi
-cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
-
-# The secret-name rule's control widens the copy's grammar to any name: the
-# bad names reach the GitHub reads, and the run no longer refuses.
-cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
-file_edit "$SKILL" scripts/lib/standard.sh 1 "grep -vxE -- '\\[A-Z_\\]\\[A-Z0-9_\\]\\*'" 's/\[A-Z_\]\[A-Z0-9_\]\*/.*/'
-RC=0
-RAW="$(cd "$TMP/consumer-bad-secret" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" \
-  "$SKILL/scripts/validate-standard.sh" 2>&1)" || RC=$?
-if [ "$RC" -ne 2 ] && ! grep -q '^review-gate-error=standard-secret-invalid ' <<<"$RAW"; then
-  ok 'control: a grammar that takes any name lets a bad secret name through'
-else
-  bad "control: secret-name grammar (rc=$RC)" "$RAW"
-fi
-cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
-
-# The missing-setting rule's control keeps the copy's refusal and never takes
-# it: a consumer that sets every key empty is no longer refused for its
-# settings, and the run goes on to the checks after it.
-file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ -n "\$missing" \]; then$' 's/^  if \[ -n "\$missing" \]; then$/  if [ -n "$missing" ] \&\& false; then/'
-RC=0
-RAW="$(cd "$TMP/consumer-seeded" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$BASE" \
-  "$SKILL/scripts/validate-standard.sh" 2>&1)" || RC=$?
-if ! grep -q '^review-gate-error=standard-setting-missing ' <<<"$RAW"; then
-  ok 'control: a skipped missing-setting refusal lets a consumer that declares nothing through'
-else
-  bad "control: missing-setting refusal (rc=$RC)" "$RAW"
-fi
-cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
 
 # The default-branch rules' controls, one per rule. Each plants one defect in
 # the copy that keeps the rule's text and drops its behavior, runs the case
@@ -825,98 +588,6 @@ workflow pin~then test\(~s/{40}/{1,40}/~.[3].parameters.workflows[0].sha = "0123
 workflow pin type~if type == "string" then test~s/else false end/else true end/~.[3].parameters.workflows[0].sha = 7~$PIN_FAILURE
 workflow source accounting~if any\(\.\[\]; kendex_review_workflow\) then~s/if any(\.\[\]; kendex_review_workflow) then/if false then/~.~
 workflow review accounting~any\(\.\[\]; \.type == "copilot_code_review" or kendex_copilot_workflow\)~s/or kendex_copilot_workflow/or false/~.~
-ROWS
-
-# The contexts key's scope guard: a copy that resolves it in the
-# environment scope refuses the environment-only run the unreadable
-# .env.local value above passes. The provision scope's control is in
-# provision-environment.test.sh.
-file_edit "$SKILL" scripts/lib/standard.sh 1 '^  if \[ "\$2" = full \]; then$' 's/^  if \[ "\$2" = full \]; then$/  if [ "$2" != provision ]; then/'
-CONSUMER="$TMP/consumer-env-contexts"
-run "$ENV_BASE" '' --environment-only
-CONSUMER="$TMP/consumer-full"
-if [ "$RC" -eq 2 ] && [ -z "$OUT" ]; then
-  ok 'control: a contexts key resolved in the environment scope refuses environment-only'
-else
-  bad "control: contexts scope (rc=$RC)" "$RAW"
-fi
-cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
-
-echo "=== an unset organization setting reads its value from before 1.3.0 ==="
-# A world holding the values standard.json carried before 1.3.0: the
-# vanillagreen-fleet-lanes app on every repository, and the kendex
-# environment holding FLEET_GH_APP_ID and FLEET_GH_APP_PRIVATE_KEY. Each
-# consumer leaves the named keys unset and sets the rest to those values, so
-# the listing matches only where each unset key read its earlier value, and
-# the one warning's value names exactly the unset keys.
-EARLIER="$TMP/earlier"
-cp -R "$BASE" "$EARLIER"
-printf '{"installations": [{"app_slug": "vanillagreen-fleet-lanes", "repository_selection": "all"}]}\n' >"$EARLIER/installations.json"
-printf '{"secrets": [{"name": "FLEET_GH_APP_ID"}, {"name": "FLEET_GH_APP_PRIVATE_KEY"}, {"name": "OTHER"}]}\n' >"$EARLIER/environment-secrets-kendex.json"
-EARLIER_APP='REVIEW_GATE_STANDARD_APP = "vanillagreen-fleet-lanes"'
-EARLIER_ENV='REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"'
-EARLIER_SECRETS='REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"'
-settings_consumer unset-app "$EARLIER_ENV" "$EARLIER_SECRETS" "$CONTEXTS"
-settings_consumer unset-environment "$EARLIER_APP" "$EARLIER_SECRETS" "$CONTEXTS"
-settings_consumer unset-secrets "$EARLIER_APP" "$EARLIER_ENV" "$CONTEXTS"
-settings_consumer unset-all "$CONTEXTS"
-EARLIER_OVERRIDES='ok:standard-environment-secrets=FLEET_GH_APP_ID\;FLEET_GH_APP_PRIVATE_KEY'
-# One fallback case against the script copy as it stands, CASE_MATCH and
-# CASE_DIFF as drift_case sets them.
-fallback_case() { # CONSUMER ARGUMENT MANIFEST UNSET_KEYS
-  local want warning
-  cp "$SKILL/standard.json" "$TMP/standard.keep"
-  [ -z "$3" ] || printf '%s\n' "$3" >"$SKILL/standard.json"
-  CONSUMER="$TMP/consumer-$1"
-  run "$EARLIER" "" ${2:+"$2"}
-  CONSUMER="$TMP/consumer-full"
-  mv "$TMP/standard.keep" "$SKILL/standard.json"
-  want="$(expected_listing "$EARLIER_OVERRIDES")"
-  [ -z "$2" ] || want="$(grep -E '^(ok|FAIL) check=standard-environment(-secrets)? ' <<<"$want")"
-  warning="$(grep '^review-gate-warning=standard-setting-unset ' <<<"$RAW" || true)"
-  CASE_MATCH=false
-  if [ "$RC" -eq 0 ] && [ "$OUT" = "$want" ] && [ "$UNSET" -eq 1 ] && [ "$ADVISORIES" -eq 0 ] &&
-    [ "${warning#* value=}" = "$4" ]; then
-    CASE_MATCH=true
-  fi
-  CASE_DIFF="rc=$RC want 0; unset warnings=$UNSET want 1 naming $4; advisory warnings=$ADVISORIES want 0
-$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
-$RAW"
-}
-FALLBACK_ROWS='an unset app reads vanillagreen-fleet-lanes~unset-app~~~REVIEW_GATE_STANDARD_APP
-an unset environment reads kendex~unset-environment~~~REVIEW_GATE_STANDARD_ENVIRONMENT
-unset secrets read FLEET_GH_APP_ID and FLEET_GH_APP_PRIVATE_KEY~unset-secrets~~~REVIEW_GATE_STANDARD_SECRETS
-three unset keys warn once, naming all three~unset-all~~~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
-environment-only reads the two environment keys alone~unset-all~--environment-only~~REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS
-the organization values inline in the manifest are not read~unset-all~~{"ci_context": "CI", "gate_context": "Review gate", "app": "lanes-app", "environment": "copilot", "environment_secrets": ["APP_ID", "APP_KEY"]}~REVIEW_GATE_STANDARD_APP\,REVIEW_GATE_STANDARD_ENVIRONMENT\,REVIEW_GATE_STANDARD_SECRETS'
-fallbacks=0
-while IFS='~' read -r name consumer arg manifest keys; do
-  [ -n "$name" ] || continue
-  fallbacks=$((fallbacks + 1))
-  fallback_case "$consumer" "$arg" "$manifest" "$keys"
-  if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
-done <<<"$FALLBACK_ROWS"
-[ "$fallbacks" -gt 0 ] || bad "the fallback table ran no row" ""
-
-# Each fallback mechanism's control runs every fallback row against a copy
-# that keeps the mechanism's text and drops its behaviour, and passes when
-# each row turns red: the refusal restored for an unset key, and the warning
-# dropped.
-# name ~ match ~ sed edit of scripts/lib/standard.sh
-while IFS='~' read -r name match edit; do
-  [ -n "$name" ] || continue
-  file_edit "$SKILL" scripts/lib/standard.sh 1 "$match" "$edit"
-  green=""
-  while IFS='~' read -r row consumer arg manifest keys; do
-    [ -n "$row" ] || continue
-    fallback_case "$consumer" "$arg" "$manifest" "$keys"
-    [ "$CASE_MATCH" = false ] || green="${green:+$green; }$row"
-  done <<<"$FALLBACK_ROWS"
-  if [ -z "$green" ]; then ok "control: $name"; else bad "control: $name" "still green: $green"; fi
-  cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
-done <<'ROWS'
-an unset key refused as an empty one reads no earlier value~ && \[ "\$3" != provision \] \|\| return 0$~s/ \&\& \[ "\$3" != provision \] || return 0$/ \&\& false || return 0/
-a dropped unset-key warning leaves the earlier read unannounced~^  if \[ -n "\$RG_STANDARD_UNSET" \]; then$~s/^  if \[ -n "\$RG_STANDARD_UNSET" \]; then$/  if false; then/
 ROWS
 
 echo "=== a departure from a 1.3.0 requirement is advisory until 2.0 ==="

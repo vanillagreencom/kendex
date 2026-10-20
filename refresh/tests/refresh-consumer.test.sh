@@ -2092,6 +2092,11 @@ sandbox
 repo="$DIR"
 git -C "$repo" branch -M main
 cp "$SKILL_DIR/tests/fixtures/pre-platform/"*.sh "$repo/.agents/skills/review-gate/scripts/"
+# The old adopter calls the validator's retired environment-only mode, so the
+# validator pair from the same commit sits beside it.
+for path in validate-standard.sh lib/standard.sh; do
+  git -C "$SKILL_DIR" show "672eb6013185427ba9cb109fece86dbe08f668b5:skills/review-gate/scripts/$path" >"$repo/.agents/skills/review-gate/scripts/$path"
+done
 # The retired runner resolves the report beside itself, before the directory move.
 git -C "$SKILL_DIR" show a75766f9d:skills/review-gate/scripts/refresh-report.py >"$repo/.agents/skills/review-gate/scripts/refresh-report.py"
 chmod +x "$repo/.agents/skills/review-gate/scripts/"*.sh

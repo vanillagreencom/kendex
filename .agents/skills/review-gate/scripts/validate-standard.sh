@@ -5,16 +5,14 @@
 # READ-ONLY: every GitHub call below is a GET. It answers whether the
 # repository's GitHub-side settings match the organization standard. The
 # standard's values come from lib/standard.sh: the CI and gate contexts from
-# ../standard.json, the app, environment and secret names, the required
-# contexts and the bypass actors a ruleset holding one rule type alone may
-# carry from the review-gate settings this repository declares. The rows
-# that hold no value (rule sources, merge queue, approvals, stale-approval
-# dismissal, thread resolution, Copilot review, no classic protection) are
-# fixed here. Its subject is GitHub
-# state, not the checkout, so CI does not run it: CI's token
-# cannot read bypass actors, installations or secret names, and every such
-# row would be unreadable there. The permission each row's reads need is in
-# print_usage.
+# ../standard.json, the required contexts and the bypass actors a ruleset
+# holding one rule type alone may carry from the review-gate settings this
+# repository declares. The rows that hold no value (rule sources, merge
+# queue, approvals, stale-approval dismissal, thread resolution, Copilot
+# review, no classic protection) are fixed here. Its subject is GitHub
+# state, not the checkout, so CI does not run it: CI's token cannot read
+# bypass actors, and that row would be unreadable there. The permission each
+# row's reads need is in print_usage.
 #
 # Report protocol: ok/advisory/FAIL check=KEY value=VALUE, then indented
 # explanation, the records rg_report in lib/diagnostics.sh prints. VALUE is
@@ -37,24 +35,19 @@ fi
 
 print_usage() {
   cat <<'USAGE'
-Usage: validate-standard.sh [--environment-only | --help]   (no positional arguments)
+Usage: validate-standard.sh [--help]   (no positional arguments)
 
 Reports, read-only, whether THIS repository's GitHub settings match the
 organization standard. standard.json in the skill holds the CI and gate
-contexts. The organization's values are review-gate settings, resolved from
-the current directory like every other: REVIEW_GATE_STANDARD_APP,
-REVIEW_GATE_STANDARD_ENVIRONMENT and REVIEW_GATE_STANDARD_SECRETS. The
-repository's own required contexts are REVIEW_GATE_STANDARD_CONTEXTS, and
-the bypass actors its merge-queue and required-checks rulesets admit the
-optional REVIEW_GATE_STANDARD_QUEUE_BYPASS and
-REVIEW_GATE_STANDARD_CHECKS_BYPASS, each empty by default, read the same
-way. The repository is the one `gh` resolves: GH_REPO when set, else the
-checkout's remote.
-
---environment-only reports the environment policy and its secret names, and
-reads neither REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_CONTEXTS, the
-two bypass keys nor any ruleset. Refresh adoption reads its caller declaration
-and uses the same environment judgments without this report mode.
+contexts. The repository's own required contexts are the review-gate setting
+REVIEW_GATE_STANDARD_CONTEXTS, and the bypass actors its merge-queue and
+required-checks rulesets admit the optional
+REVIEW_GATE_STANDARD_QUEUE_BYPASS and REVIEW_GATE_STANDARD_CHECKS_BYPASS,
+each empty by default, all resolved from the current directory like every
+other setting. The repository is the one `gh` resolves: GH_REPO when set,
+else the checkout's remote. The organization's own tooling sets up and
+checks the review-secret environment and the app installation; this report
+reads neither.
 
 One verdict line per row, ok, advisory or FAIL, VALUE being what was
 observed. An advisory row departs from a requirement the 1.3.0 standard
@@ -66,12 +59,6 @@ standard-stale-dismissal on any departure, and standard-required-contexts
 where REVIEW_GATE_STANDARD_CONTEXTS is unset or empty and the default branch
 does not require the standard's gate_context. An unreadable row is FAIL,
 never advisory.
-
-Each of REVIEW_GATE_STANDARD_APP, REVIEW_GATE_STANDARD_ENVIRONMENT and
-REVIEW_GATE_STANDARD_SECRETS that no source sets reads the value
-standard.json carried before 1.3.0, and the run prints one
-review-gate-warning=standard-setting-unset line to stderr, VALUE the unset
-keys. A key set empty still refuses.
 
   standard-ruleset-source           pull_request, deletion,
                                     non_fast_forward and a workflows rule
@@ -139,19 +126,6 @@ keys. A key set empty still refuses.
                                     pull_request leg ran CI and the head did
                                     not come through the merge queue),
                                     no-associated-pull-request or unreadable
-  standard-app                      REVIEW_GATE_STANDARD_APP is installed on every
-                                    repository of the organization
-  standard-environment              REVIEW_GATE_STANDARD_ENVIRONMENT exists
-                                    and deploys from the default branch only
-  standard-environment-secrets      that environment holds every secret
-                                    REVIEW_GATE_STANDARD_SECRETS names
-                                    (names only)
-  standard-secrets-outside          no other secret carries one of those names:
-                                    repository Actions secrets, every
-                                    organization Actions secret (shared with
-                                    this repository or not), repository and
-                                    organization Dependabot secrets, and
-                                    every other environment of the repository
 
 A failed read reports its row as FAIL with `unreadable` in the value, never
 as a match. The permission each row's reads need, as GitHub App permissions:
@@ -175,43 +149,21 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     Contents read; its pull requests: Pull
                                     requests read; the workflow runs on each
                                     leg and their jobs: Actions read
-  app                               the organization's installations:
-                                    organization Administration read
-  environment                       environments and branch policies:
-                                    Actions read
-  environment-secrets               the environment's secret names:
-                                    Environments read
-  secrets-outside                   repository Actions secret names:
-                                    Secrets read; organization Actions
-                                    secret names: organization Secrets read;
-                                    repository Dependabot secret names:
-                                    Dependabot secrets read; organization
-                                    Dependabot secret names: organization
-                                    Dependabot secrets read; other
-                                    environments' secret names: Environments
-                                    read (and Actions read to list them)
-A token holding only repository Administration, Metadata, Actions,
-Environments and Secrets read plus organization Secrets read reads
-bypass-actors, classic-protection, ci-context and app as unreadable, and the
-Dependabot scopes of secrets-outside as unreadable.
+A token holding only repository Administration, Metadata and Actions read
+reads bypass-actors, classic-protection and ci-context as unreadable.
 
 Exit codes:
   0  every row matched or reported advisory
   1  at least one FAIL line
   2  the check could not run at all (bad arguments, jq missing, a missing
-     or malformed standard.json, a standard setting set empty, the
-     repository itself could not be read)
+     or malformed standard.json, an unreadable or malformed standard
+     setting, the repository itself could not be read)
 USAGE
 }
 
 if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   print_usage
   exit 0
-fi
-ENVIRONMENT_ONLY=0
-if [ "${1:-}" = --environment-only ]; then
-  ENVIRONMENT_ONLY=1
-  shift
 fi
 if [ "$#" -gt 0 ]; then
   rg_message error unknown-arguments "$#" "validate-standard.sh: unknown argument list ($# argument(s), first: '${1}') — no positional arguments (run --help)" >&2
@@ -228,11 +180,7 @@ die() { # CODE VALUE MESSAGE
 if [ ! -r "$SCRIPT_DIR/lib/standard.sh" ] || ! . "$SCRIPT_DIR/lib/standard.sh" 2>/dev/null; then
   die standard-lib-load "$SCRIPT_DIR/lib/standard.sh" "could not load the standard library"
 fi
-if [ "$ENVIRONMENT_ONLY" -eq 1 ]; then
-  rg_standard_load "$SCRIPT_DIR/../standard.json" environment || exit 2
-else
-  rg_standard_load "$SCRIPT_DIR/../standard.json" full || exit 2
-fi
+rg_standard_load "$SCRIPT_DIR/../standard.json" || exit 2
 
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf -- "$SCRATCH"' EXIT
@@ -309,8 +257,6 @@ advise() { # CHECK VALUE MESSAGE NEW_FORM
   rg_report advisory "$1" "$2" "$3"
 }
 
-# The environment-only report excludes unrelated owner-only reads.
-if [ "$ENVIRONMENT_ONLY" -eq 0 ]; then
 # ------------------------------------------------------ default branch ---
 
 RULE_ROWS="standard-ruleset-source standard-merge-queue standard-required-contexts standard-required-approvals standard-stale-dismissal standard-conversation-resolution standard-copilot-review standard-bypass-actors"
@@ -601,149 +547,6 @@ ci_context_row() {
   fi
 }
 ci_context_row
-
-# ------------------------------------------------------------- the app ---
-
-if read_api "orgs/$OWNER/installations" ".installations[] | select(.app_slug == $(jq_string "$WANT_APP")) | .repository_selection" --paginate; then
-  case "$READ_OUT" in
-    all) ok standard-app all "$WANT_APP is installed on every repository of $OWNER" ;;
-    "") bad standard-app absent "$WANT_APP is not installed in $OWNER" ;;
-    *) bad standard-app "$READ_OUT" "$WANT_APP is installed on a selection of repositories; the standard installs it on all of them" ;;
-  esac
-else
-  bad standard-app unreadable "the installations of $OWNER could not be read: $READ_ERR"
-fi
-
-fi
-
-# --------------------------------------------------------- environment ---
-
-ENV_URI="$(rg_uri "$WANT_ENV")"
-# The environment rows' one remedy: no lane credential may create an
-# environment or write its secrets, so the owner converges it.
-PROVISION="The organization owner converges it from their own machine: scripts/provision-environment.sh --org $OWNER in this skill"
-# ENVS is the environments list as one JSON array, or empty when the read
-# failed; every environment row and the other-environment scopes below
-# branch on it.
-ENVS=""
-ENVS_ERR=""
-if read_api "repos/$FULL/environments" '.environments[] | @json' --paginate &&
-  ENVS="$(printf '%s' "$READ_OUT" | jq -s '.' 2>/dev/null)" &&
-  jq -e 'all(.[]; type == "object" and (.name | type) == "string")' >/dev/null 2>&1 <<<"$ENVS"; then
-  :
-else
-  ENVS=""
-  ENVS_ERR="${READ_ERR:-the response is not a list of named environments}"
-fi
-
-ENV_PRESENT=unknown
-if [ -n "$ENVS" ]; then
-  policy_data="$(jq -n --argjson environments "$ENVS" '{environments: $environments}')" ||
-    die environments-query "$WANT_ENV" "could not encode the environment data"
-  judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" policy "$BRANCH" "$WANT_ENV" <<<"$policy_data")" ||
-    die environments-query "$WANT_ENV" "could not judge the environment data"
-  ENV_PRESENT="$(jq -r .present <<<"$judgment")"
-  cause="$(jq -r .cause <<<"$judgment")" ||
-    die environments-query "$WANT_ENV" "could not decode the environment judgment"
-  if [ "$cause" = pending ]; then
-    if read_api "repos/$FULL/environments/$ENV_URI/deployment-branch-policies" '.branch_policies[] | @json' --paginate &&
-        policies="$(printf '%s' "$READ_OUT" | jq -s '.')"; then
-      policy_data="$(jq --argjson policies "$policies" '. + {policies: $policies}' <<<"$policy_data")"
-      judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" policy "$BRANCH" "$WANT_ENV" <<<"$policy_data")" ||
-        die environments-query "$WANT_ENV" "could not judge the branch-policy data"
-      cause="$(jq -r .cause <<<"$judgment")" ||
-        die environments-query "$WANT_ENV" "could not decode the branch-policy judgment"
-    else
-      cause=read
-    fi
-  fi
-  observed="$(jq -r .value <<<"$judgment")"
-  case "$cause" in
-    '') ok standard-environment "$observed" "$WANT_ENV deploys from $BRANCH only" ;;
-    read) bad standard-environment unreadable "the branch policies of $WANT_ENV could not be read: $READ_ERR" ;;
-    *) bad standard-environment "$observed" "$WANT_ENV must exist and allow the default branch only. $PROVISION" ;;
-  esac
-else
-  bad standard-environment unreadable "the environments could not be read: $ENVS_ERR"
-fi
-
-case "$ENV_PRESENT" in
-  yes)
-    if read_api "repos/$FULL/environments/$ENV_URI/secrets" '.secrets[] | @json' --paginate &&
-        secrets="$(printf '%s' "$READ_OUT" | jq -s '.')"; then
-      judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" secrets "$WANT_SECRETS" <<<"$secrets")" ||
-        die environments-query "$WANT_ENV" "could not judge the secret-name data"
-      held="$(jq -r .held <<<"$judgment")"
-      missing="$(jq -r .missing <<<"$judgment")"
-      if [ "$(jq -r .cause <<<"$judgment")" = '' ]; then
-        ok standard-environment-secrets "$held" "$WANT_ENV holds every secret the standard names"
-      else
-        bad standard-environment-secrets "$held" "$WANT_ENV lacks: $missing. $PROVISION"
-      fi
-    else
-      bad standard-environment-secrets unreadable "the secrets of $WANT_ENV could not be read: $READ_ERR"
-    fi
-    ;;
-  no) bad standard-environment-secrets absent "the environment $WANT_ENV does not exist, so it holds no secret. $PROVISION" ;;
-  unknown) bad standard-environment-secrets unreadable "the environments could not be read, so $WANT_ENV's secrets were not asked for" ;;
-esac
-
-if [ "$ENVIRONMENT_ONLY" -eq 1 ]; then
-  [ "$FAILED" -eq 0 ]
-  exit
-fi
-
-# A secret of the same name anywhere else is readable by a workflow on a
-# branch the environment's policy excludes, which is what that policy
-# exists to prevent. Each scope is one LABEL<TAB>ENDPOINT line. The
-# organization scopes read the organization-wide lists: a secret shared
-# only with other repositories is still outside the environment.
-scopes="repository	repos/$FULL/actions/secrets
-organization	orgs/$OWNER/actions/secrets
-dependabot	repos/$FULL/dependabot/secrets
-dependabot-organization	orgs/$OWNER/dependabot/secrets"
-placement_data='[]'
-if [ -n "$ENVS" ]; then
-  others="$(jq -r --arg n "$WANT_ENV" '.[] | select(.name != $n) | .name' <<<"$ENVS")" ||
-    die environments-query "$WANT_ENV" "jq could not evaluate a query over the parsed environments"
-  while IFS= read -r env_name; do
-    [ -n "$env_name" ] || continue
-    scopes="$scopes
-environment:$env_name	repos/$FULL/environments/$(rg_uri "$env_name")/secrets"
-  done <<EOF_OTHERS
-$others
-EOF_OTHERS
-else
-  placement_data="$(jq -n --arg error "$ENVS_ERR" '[{scope: "environments", error: $error}]')" ||
-    die environments-query "$WANT_ENV" "could not encode the failed environments read"
-fi
-while IFS='	' read -r label endpoint; do
-  if read_api "$endpoint" '.secrets[] | @json' --paginate &&
-      secrets="$(printf '%s' "$READ_OUT" | jq -s '.' 2>/dev/null)"; then
-    placement_data="$(jq --arg label "$label" --argjson secrets "$secrets" '. + [{scope: $label, secrets: $secrets}]' <<<"$placement_data")" ||
-      die environments-query "$WANT_ENV" "could not encode the secret-name data"
-  else
-    placement_data="$(jq --arg label "$label" --arg error "${READ_ERR:-the response is not a list of named secrets}" '. + [{scope: $label, error: $error}]' <<<"$placement_data")" ||
-      die environments-query "$WANT_ENV" "could not encode a failed secret-name read"
-  fi
-done <<EOF_SCOPES
-$scopes
-EOF_SCOPES
-judgment="$(python3 "$SCRIPT_DIR/lib/environment.py" placement "$WANT_SECRETS" <<<"$placement_data")" ||
-  die environments-query "$WANT_ENV" "could not judge the secret-placement data"
-if ! outside="$(jq -r .outside <<<"$judgment")" ||
-    ! unreadable="$(jq -r .unreadable <<<"$judgment")" ||
-    ! causes="$(jq -r .causes <<<"$judgment")"; then
-  die environments-query "$WANT_ENV" "could not decode the secret-placement judgment"
-fi
-if [ -n "$unreadable" ]; then
-  bad standard-secrets-outside "unreadable:$unreadable" "these secret-name reads failed${outside:+ (found outside $WANT_ENV so far: $outside)}:
-$causes"
-elif [ -z "$outside" ]; then
-  ok standard-secrets-outside none "no secret outside $WANT_ENV carries a name the standard keeps there"
-else
-  bad standard-secrets-outside "$outside" "these secrets sit outside $WANT_ENV, readable by a workflow on a branch its policy excludes. Move each into $WANT_ENV and declare that environment on every job that reads it, then delete these copies"
-fi
 
 if [ -n "$ADVISED" ]; then
   rg_message warning standard-advisory "$ADVISED" "these rows depart from requirements the 1.3.0 standard added and read as advisory until 2.0, when they fail; each row's new form:

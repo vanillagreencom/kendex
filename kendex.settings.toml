@@ -238,13 +238,6 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # Empty disables.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md .github/instructions/code-review.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
-# This organization's standard, which validate-standard.sh checks and
-# provision-environment.sh provisions: the lanes app, and the environment
-# that holds its two secrets in every repository
-# (docs/decisions/D003-one-merge-path.md).
-REVIEW_GATE_STANDARD_APP = "vanillagreen-fleet-lanes"
-REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"
-REVIEW_GATE_STANDARD_SECRETS = "FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY"
 # The contexts kendex's own required-checks ruleset requires once "Review
 # gate" leaves it: the CI jobs the ruleset lists, by name.
 REVIEW_GATE_STANDARD_CONTEXTS = "CI"

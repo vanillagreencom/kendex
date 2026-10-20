@@ -1,0 +1,3 @@
+- review-gate no longer sets up or checks the review-secret environment and the review app's installation: `provision-environment.sh` and `validate-standard.sh --environment-only` are removed, the standard report drops its app, environment and secret-placement rows, and the refresh report lists `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT` and `REVIEW_GATE_STANDARD_SECRETS` among a consumer's retired settings. Refresh adoption still checks the caller's environment before it changes any file.
+
+  You do: Delete those three keys from `kendex.settings.toml`, and set up the review-secret environment and the app installation with your organization's own tooling.
