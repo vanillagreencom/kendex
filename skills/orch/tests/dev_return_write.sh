@@ -988,7 +988,7 @@ assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes |
 echo "=== immutable same-round recovery receipts ==="
 # The writer and checker consume native --record evidence, as the other receipt
 # cases do. Focused proof and duration admission remain workflow judgments.
-for recovery_case in implement-pass implement-failed fix-pass fix-no-run fix-unproved; do
+for recovery_case in implement-pass implement-failed implement-foreground implement-interrupted fix-pass fix-no-run fix-foreground fix-interrupted fix-unproved; do
   recovery_kind=${recovery_case%%-*}
   recovery_result=${recovery_case#*-}
   RW="$(new_repo "recovery-$recovery_case")"
@@ -1020,17 +1020,31 @@ for recovery_case in implement-pass implement-failed fix-pass fix-no-run fix-unp
   original_source=(--validate-run-dir "$old_run")
   # Required pre-run checks can fail before the writer has native evidence.
   if [[ "$recovery_result" == no-run ]]; then original_source=(); fi
+  if [[ "$recovery_result" == foreground ]]; then
+    sed '/^class-base=/d' "$old_run/start" > "$RW/tmp/foreground-start"
+    cp "$RW/tmp/foreground-start" "$old_run/start"
+  fi
   run "${base_args[@]}" --validate 'FAILING: scoped' ${original_source[@]+"${original_source[@]}"} ${extra[@]+"${extra[@]}"}
   assert_eq "$RC" 0 "$recovery_case failed original is written" "$ERR"
   original="$OUT"; cp "$original" "$RW/tmp/original-bytes"
   run "${base_args[@]}" --validate pass --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
   assert_eq "$RC" 2 "$recovery_case refuses same-path overwrite" "$ERR"
-  verdict=pass; accepted=accept
+  verdict=pass; accepted=accept; expected_mode="$native_mode"; expected_base="$RH"
+  result_source=(--validate-run-dir "$new_run")
   case "$recovery_result" in
     failed) verdict='FAILING: scoped'; accepted=retry; printf 'guard-exit=1 at=2026-01-01T00:55:00Z\n' > "$new_run/exit" ;;
     unproved) verdict=no-verdict; printf 'guard-exit=124 at=2026-01-01T00:55:00Z verdict=no-verdict\n' > "$new_run/exit" ;;
+    foreground)
+      fg_recovery="$(foreground_record recovery "validate-mode=$native_mode" "head=$RH" "started-at=$(utc_at "$((started + 2))")" "ended-at=$(utc_at "$((started + 3))")")"
+      result_source=(--validate-record "$fg_recovery"); expected_base="" ;;
+    interrupted)
+      verdict='FAILING: interrupted-foreground'; accepted=retry; result_source=(); expected_mode=""; expected_base=""
+      fg_recovery="$(foreground_record interrupted "validate-mode=$native_mode" "head=$RH" "started-at=$(utc_at "$((started + 2))")" -ended-at -exit -selection -lanes)"
+      cp "$fg_recovery" "$RW/tmp/unfinished-record-bytes"
+      run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery --validate-record "$fg_recovery" ${extra[@]+"${extra[@]}"}
+      assert_eq "$RC" 2 "$recovery_case refuses unfinished evidence as a completed record" "$ERR" ;;
   esac
-  run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
+  run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery ${result_source[@]+"${result_source[@]}"} ${extra[@]+"${extra[@]}"}
   assert_eq "$RC $(rec '.round_id') $(rec '.commit') $(rec '.recovery_of')" \
     "0 recovery $RH ${original##*/}" "$recovery_case keeps the real round and implementation commit" "$ERR"
   companion="$OUT"
@@ -1038,7 +1052,7 @@ for recovery_case in implement-pass implement-failed fix-pass fix-no-run fix-unp
   assert_eq "$unchanged" true "$recovery_case preserves the failed bytes"
   selected="$(env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery ${check_extra[@]+"${check_extra[@]}"})"
   assert_eq "$(jq -r '[.verdict,.path,.validate_mode,.validate_class_base] | join(" ")' <<<"$selected")" \
-    "$accepted $companion $native_mode $RH" "$recovery_case acceptance selects the terminal native result"
+    "$accepted $companion $expected_mode $expected_base" "$recovery_case acceptance selects the terminal result"
   assert_eq "$("$CHECK" --file "$companion" | jq -r '.validate')" "$verdict" "$recovery_case submit reads the selected result"
   assert_eq "$("$CHECK" --file "$original" | jq -r '.validate')" 'FAILING: scoped' "$recovery_case failed original stays readable"
   state_file="$RW/tmp/workflow-state-issue-4503.json"
@@ -1048,6 +1062,14 @@ for recovery_case in implement-pass implement-failed fix-pass fix-no-run fix-unp
     expected_stages="[[\"${companion##*/}\",$((started + 2)),$((started + 3))]]"
     expected_durations="[[\"recovery\",\"${companion##*/}\",1]]"
   fi
+  if [[ "$recovery_result" == interrupted ]]; then
+    assert_eq "$(jq -c '[.validate_mode,.validate_time,has("validate_class_base")]' "$companion")" \
+      '[null,null,false]' "$recovery_case preserves unavailable proof without inventing mode, base or timing"
+    cmp -s "$fg_recovery" "$RW/tmp/unfinished-record-bytes" && unchanged=true || unchanged=false
+    assert_eq "$unchanged" true "$recovery_case preserves its unfinished foreground record"
+    expected_stages="[[\"${original##*/}\",$started,$((started + 1))]]"
+    expected_durations="[[\"recovery\",\"${original##*/}\",1]]"
+  fi
   assert_eq "$(jq -c '[.stages[] | select(.kind == "validate" and .round_id == "recovery") | [.receipt,.start,.end]]' "$state_file")" \
     "$expected_stages" "$recovery_case retains each receipt validation stage"
   assert_eq "$(jq -c '[.validate_rounds[] | [.round_id,.receipt,.seconds]]' "$state_file")" \
@@ -1055,15 +1077,17 @@ for recovery_case in implement-pass implement-failed fix-pass fix-no-run fix-unp
   first_timing="$(jq -c '{stages,validate_rounds}' "$state_file")"
   env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery ${check_extra[@]+"${check_extra[@]}"} >/dev/null
   assert_eq "$(jq -c '{stages,validate_rounds}' "$state_file")" "$first_timing" "$recovery_case reread is idempotent"
-  run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
+  run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery ${result_source[@]+"${result_source[@]}"} ${extra[@]+"${extra[@]}"}
   assert_eq "$RC" 2 "$recovery_case refuses another terminal companion" "$ERR"
-  if [[ "$recovery_case" == implement-pass ]]; then
-    # Foreground policy forbids the native runner and records only its exact HEAD.
+  if [[ "$recovery_case" == implement-interrupted ]]; then
     rm -f -- "${companion:?}"
-    jq 'del(.validate_class_base)' "$RW/tmp/original-bytes" > "$original"
-    fg_recovery="$(foreground_record recovery "head=$RH" "started-at=$(utc_at "$((started + 2))")" "ended-at=$(utc_at "$((started + 3))")")"
-    run "${base_args[@]}" --recovery --validate pass --validate-record "$fg_recovery"
-    assert_eq "$RC $(rec .validate_mode)" '0 full' 'foreground recovery proves its exact HEAD without a native snapshot' "$ERR"
+    run "${base_args[@]}" --recovery --validate "$verdict"
+    assert_eq "$RC" 2 'interrupted recovery requires a note explaining unavailable evidence' "$ERR"
+    WRITE="$(mutant_scripts recovery-interrupted-mutant dev-return-write)/dev-return-write" || exit 1
+    mutate_file "$WRITE" '[[ "$validate" == FAILING:* && -n "$validate_note" ]]' 'false'
+    run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery
+    assert_eq "$RC" 2 'control: requiring completed evidence rejects the interrupted terminal result' "$ERR"
+    WRITE="$WRITE_SHIPPED"
   fi
 done
 

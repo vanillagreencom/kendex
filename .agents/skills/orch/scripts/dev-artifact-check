@@ -161,7 +161,7 @@ range, or full where the project sets no DEV_VALIDATE_RANGE_CMD, or ci, a run
 whose local edits are complete with required CI pending, on a round whose record
 carries pr_open=true or pr-order resolves push-first
 (dev-round-write --pr-open). Any other recorded mode is
-reason=mode_mismatch; a null mode, a failing round that started no run, is
+reason=mode_mismatch; a null mode, a failing round without completed evidence, is
 not judged. A resolution that cannot be read exits 2.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,

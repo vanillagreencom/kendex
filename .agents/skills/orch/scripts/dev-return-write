@@ -208,7 +208,7 @@ die() {
       not-directory) printf 'The worktree path is not a directory.\n' ;;
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
       invalid-validate) printf 'The validation result must be pass, no-verdict, or start with FAILING:.\n' ;;
-      recovery-invalid) printf 'Recovery requires a valid failed parent and a current validation result with its original mode/base.\n' ;;
+      recovery-invalid) printf 'Recovery requires a valid failed parent, current HEAD and recorded proof or a noted failing result.\n' ;;
       receipt-exists) printf 'The receipt is immutable; Validate owns any recovery allowance.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
       validate-source-conflict) printf 'Name the run by one source: a run directory or a foreground validation record.\n' ;;
@@ -253,10 +253,13 @@ Usage:
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
 --recovery writes one immutable dev-return-ID-RID-recovery.json with recovery_of
-naming the valid failed original receipt. It requires a result bound to current
-HEAD and the original mode/base, and refuses replacement. Native results prove
+naming the valid failed original receipt. It requires current HEAD and refuses
+replacement. Recorded results keep the original mode/base. Native results prove
 the snapshot tree; foreground records prove their exact starting HEAD. The original
 failed receipt cannot be overwritten. Validate owns execution admission.
+An interrupted foreground attempt without a completed record uses FAILING,
+omits both evidence flags, and names the interruption in --validate-note.
+Its mode and time stay null; acceptance rejects this terminal result.
 An implement receipt carries additions plus deletions against the base branch,
 with a floor of 1. The orchestrator verifies and persists the first accepted one.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
@@ -275,7 +278,7 @@ A no-verdict needs a run that recorded a timeout or unavailable host check,
 and a --validate-note naming the host cause or timeout, per dev-implement.md
 section 5's no-verdict route; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it,
-or --validate-record below; a FAILING round with no run omits both and
+or --validate-record below; a FAILING round without completed evidence omits both and
 records validate_mode null. validate_class_base is the base --record reports:
 the round base, or the branch merge base for scoped full execution and for a
 scoped ci run of a full request or an orphaned base.
@@ -957,24 +960,31 @@ if [[ "$recovery" == true ]]; then
   recovery_of="${out##*/}"
   parent="$out"
   out="${out%.json}-recovery.json"
-  [[ -n "$run_ref" && "$commit" == "$(git -C "$worktree" rev-parse HEAD)" \
-    && "$run_head" =~ ^[0-9a-f]{40}$ && "$run_start" =~ ^[0-9]+$ ]] \
+  [[ "$commit" == "$(git -C "$worktree" rev-parse HEAD)" ]] \
     || die recovery-invalid "path=$parent"
-  git -C "$worktree" merge-base --is-ancestor "$run_head" "$commit" \
-    || die recovery-invalid "path=$parent"
-  if [[ "$validate_run_dir_given" == true ]]; then
-    [[ "$run_tree" =~ ^[0-9a-f]{40}$ && "$run_tree" == "$(git -C "$worktree" rev-parse "$commit^{tree}")" ]] \
+  if [[ -z "$run_ref" ]]; then
+    # Validate's interrupted foreground producer has no completed record.
+    [[ "$validate" == FAILING:* && -n "$validate_note" ]] \
       || die recovery-invalid "path=$parent"
   else
-    [[ "$run_head" == "$commit" ]] || die recovery-invalid "path=$parent"
+    [[ "$run_head" =~ ^[0-9a-f]{40}$ && "$run_start" =~ ^[0-9]+$ ]] \
+      || die recovery-invalid "path=$parent"
+    git -C "$worktree" merge-base --is-ancestor "$run_head" "$commit" \
+      || die recovery-invalid "path=$parent"
+    if [[ "$validate_run_dir_given" == true ]]; then
+      [[ "$run_tree" =~ ^[0-9a-f]{40}$ && "$run_tree" == "$(git -C "$worktree" rev-parse "$commit^{tree}")" ]] \
+        || die recovery-invalid "path=$parent"
+    else
+      [[ "$run_head" == "$commit" ]] || die recovery-invalid "path=$parent"
+    fi
+    jq -e --arg mode "$validate_mode" --arg base "$validate_class_base" --argjson start "$run_start" '
+      if .validate_mode == null then true else
+        .validate_mode == $mode
+        and ((.validate_class_base // "") == $base)
+        and (.validate_time == null or (.validate_time.ended_at | fromdateiso8601) <= $start)
+      end
+    ' "$parent" >/dev/null 2>&1 || die recovery-invalid "path=$parent"
   fi
-  jq -e --arg mode "$validate_mode" --arg base "$validate_class_base" --argjson start "$run_start" '
-    if .validate_mode == null then true else
-      .validate_mode == $mode
-      and ((.validate_class_base // "") == $base)
-      and (.validate_time == null or (.validate_time.ended_at | fromdateiso8601) <= $start)
-    end
-  ' "$parent" >/dev/null 2>&1 || die recovery-invalid "path=$parent"
 fi
 if [[ -L "$out" || ( -e "$out" && "$recovery" == true ) ]] \
   || { [[ -f "$out" ]] && jq -e '.validate | startswith("FAILING:")' "$out" >/dev/null 2>&1; }; then
