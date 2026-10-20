@@ -116,6 +116,15 @@ def main():
         shutil.copytree(ROOT / "skills/jarvis/tests", skills / "jarvis/tests",
                         ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copyfile(ROOT / "rust-toolchain.toml", scratch / "rust-toolchain.toml")
+        # The slowest clean text-only case took 35.412 s across four starts
+        # on the shared macOS runner. Keep headroom over that whole case.
+        timer = skills / "jarvis/scripts/lib/session.py"
+        original = timer.read_text()
+        old = "\nCALL_SECONDS = 55\n"
+        assert original.count(old) == 1, "launch-timer-replacement: expected one CALL_SECONDS = 55 line"
+        shortened = original.replace(old, "\nCALL_SECONDS = 40\n")
+        assert shortened != original
+        timer.write_text(shortened)
         clean = {}
         for name, relative, old, new, test in controls:
             env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),

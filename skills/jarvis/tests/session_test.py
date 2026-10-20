@@ -105,6 +105,10 @@ class SessionContract(unittest.TestCase):
                                  "XDG_STATE_HOME": str(self.root / "state"), "XDG_SESSION_ID": "fixture-login",
                                  "WAYLAND_DISPLAY": "fixture-wayland", "DISPLAY": ":fixture",
                                  "JARVIS_TEST_BASH": os.environ["JARVIS_TEST_BASH"]}
+        # Keep the production 70 s window, scaled with the source timer
+        # when the control runner shortens its disposable copy.
+        with patch.dict(os.environ, {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}):
+            self.launch_wait = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))["CALL_SECONDS"] * 70 / 55
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
         self.record = self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
         self.label = "jarvis-" + key[:32]
@@ -510,7 +514,7 @@ class SessionContract(unittest.TestCase):
         self.assertTrue(any("prompt" in json.loads(line) for line in self.rows.read_text().splitlines()))
         self.await_rows(events, 3)
         self.assertEqual(self.call("status")[0]["state"], "starting")
-        answer = self.wait("failed", "launch-failed", seconds=70)
+        answer = self.wait("failed", "launch-failed", seconds=self.launch_wait)
         self.assertIsNone(answer["terminal"])
         self.assertTrue(json.loads(self.record.read_text())["history"]["pending"]["started_at"])
 
@@ -532,7 +536,7 @@ class SessionContract(unittest.TestCase):
             with self.subTest(harness=harness):
                 fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"turn": "tools"}))
                 self.call("start", harness, mode="new")
-                self.wait(seconds=70)
+                self.wait(seconds=self.launch_wait)
                 identity = self.started()[-1]["id"]
                 self.call("stop")
                 self.wait("stopped")
@@ -557,7 +561,7 @@ class SessionContract(unittest.TestCase):
                     + "sys.exit(result.returncode)\n")
                 wrapper.chmod(0o755)
                 self.call("start", harness, mode="resume")
-                answer = self.wait(reason="resumed", seconds=70)
+                answer = self.wait(reason="resumed", seconds=self.launch_wait)
                 self.assertIsNotNone(answer["terminal"])
                 record = json.loads(self.record.read_text())
                 self.assertEqual(self.started()[-1]["id"], identity)
@@ -579,7 +583,7 @@ class SessionContract(unittest.TestCase):
                 fixture.write_text(json.dumps(json.loads(fixture.read_text())
                                               | {"turn": "text-only", "outcome": outcome}))
                 self.call("start", "pi", mode="new")
-                answer = self.wait(state, reason, seconds=70)
+                answer = self.wait(state, reason, seconds=self.launch_wait)
                 record = json.loads(self.record.read_text())
                 if state == "running":
                     self.assertIsNotNone(answer["terminal"])
