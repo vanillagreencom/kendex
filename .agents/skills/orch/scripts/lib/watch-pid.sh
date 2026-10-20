@@ -26,10 +26,14 @@
 #                       and removes them; the restarted watch, their writer,
 #                       never does
 #   oversee-watch.runner
-#                       lib/job-unit.sh's record of how a succession started
-#                       its restart helper, which the restart then overwrites
-#                       with how it started the watch; removed with the two
-#                       above
+#                       lib/job-unit.sh's record of how its launcher started
+#                       the watch holding the claim, with the pid line that
+#                       watch added: each job a launcher starts writes a
+#                       record of its own, oversee-watch.runner.XXXXXX, moved
+#                       here only once its watch claims, so a start that never
+#                       claims leaves the live watch's stop route standing
+#                       (lib/watch-handover.sh § watch_job_launch); removed
+#                       with the two above
 #
 # A record is live only while its pid runs a process whose command line names
 # oversee-watch (watch_pid_runs): a pid read back off disk may by then belong
@@ -117,6 +121,26 @@ watch_pid_release() { # STATE
   watch_pid_paths "$1" || return 0
   grep -qxF -- "pid=$$" "$WATCH_PID_FILE" 2>/dev/null || return 0
   rm -f -- "$WATCH_PID_FILE"
+}
+
+# The pid line a started watch adds to the record its launcher's job runner
+# wrote for it (lib/watch-handover.sh § watch_job_launch), so the launcher
+# waiting on its claim can tell a start still running from one that exited
+# first. The runner writes the record whole before it starts the job, so the
+# line always lands after it.
+watch_job_pid_write() { # RECORD
+  printf 'pid=%s\n' "$$" >> "$1"
+}
+
+# The pid RECORD's watch added, as WATCH_JOB_PID; empty where it has added
+# none yet. Returns 1 where RECORD cannot be read.
+watch_job_pid_read() { # RECORD
+  local line
+  WATCH_JOB_PID=""
+  while IFS= read -r line; do
+    [[ "$line" != pid=* ]] || WATCH_JOB_PID="${line#pid=}"
+  done < "$1" || return 1
+  [[ "$WATCH_JOB_PID" =~ ^[1-9][0-9]*$ ]] || WATCH_JOB_PID=""
 }
 
 # The script and directory used when no retained command supplies them.

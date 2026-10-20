@@ -202,17 +202,20 @@
 #            takeover route runs it where no watch claim stands
 #            (../workflows/oversee-takeover.md § 2). It is the handover
 #            `oversee resume` runs (lib/watch-handover.sh § watch_handover,
-#            --closed), from this pane, with the harness, account and model
-#            the fleet state's record names for it and no new flags: a live
-#            watch is stopped and replaced by a replay of its retained
-#            command, a stopped one replayed, its log and the reader's cursor
-#            kept either way. A pane the record does not name refuses
-#            `not-overseer`, starting and stopping nothing; a claim that
-#            cannot be read refuses `watch-restart-failed step=claim`, and a
-#            replay that never claims, one no GitHub credential serves among
+#            --closed), from this pane, with the harness, account, model and
+#            flags the fleet state's record names for it, the flags resume
+#            would relaunch it with: a live watch is stopped and replaced by
+#            a replay of its retained command, a stopped one replayed, its
+#            log and the reader's cursor kept either way, and its --handoff
+#            kept unless --handoff names another. A pane the record does not
+#            name refuses `not-overseer`, starting and stopping nothing; a
+#            record whose flags cannot be built refuses
+#            `watch-restart-failed step=flags`; a claim that cannot be read
+#            refuses `watch-restart-failed step=claim`, and a replay that
+#            exits before it claims, one no GitHub credential serves among
 #            them, refuses `watch-restart-failed step=claim log=<err>` once
-#            the claim wait ends, the started watch's own refusal in that
-#            log, with a live watch it would replace left running. Prints
+#            it has exited, the started watch's own refusal in that log,
+#            with a live watch it would replace left running. Prints
 #            `watch-started` on success. The fleet state must exist:
 #            `state-missing` otherwise.
 #
@@ -228,7 +231,8 @@
 #                    whose settings and fleet state the launch uses (default
 #                    the current directory)
 #   --handoff PATH   The handoff file the brief names (default
-#                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
+#                    tmp/handoffs/OVERSEER-HANDOFF.md, and under watch-restart
+#                    the one the retained watch command names); letters, digits and
 #                    ./_- only, so the brief survives the pane's shell
 #   --wait-secs N    Seconds the session has to come up: one bound over
 #                    reading its account, waiting for its running turn and
@@ -241,8 +245,8 @@
 # on stderr at exit 1, except `no-lane-qualifies` at exit 3, the status
 # `lanes pick` itself answers "no lane clears the bound" with. `overseer-launch`,
 # `overseer-launched`, `registered`, `watch-handover` and `watch-started` are on
-# stdout, and so is `resumed`; under watch-restart `watch-restart-failed` is its
-# refusal, and elsewhere `overseer-lane-unobserved`, `watch-restart-failed`,
+# stdout, and so is `resumed`. `watch-restart-failed` is a refusal under every
+# command; `overseer-lane-unobserved`,
 # `checkout-unsynced` and `fleet-log-unwritten`, the last naming a
 # `checkout-unsynced` row the fleet log could not take, are notices on stderr
 # the run continues past.
@@ -348,6 +352,7 @@ PREDECESSOR=""
 CWD=""
 ACCOUNT=""
 WAIT_GIVEN=""
+HANDOFF_GIVEN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --session|--predecessor|--cwd|--handoff|--wait-secs|--account)
@@ -356,7 +361,7 @@ while [[ $# -gt 0 ]]; do
         --session) SESSION_NAME="$2" ;;
         --predecessor) PREDECESSOR="$2" ;;
         --cwd) CWD="$2" ;;
-        --handoff) HANDOFF="$2" ;;
+        --handoff) HANDOFF="$2" HANDOFF_GIVEN=1 ;;
         --wait-secs) WAIT_SECS="$2" WAIT_GIVEN=1 ;;
         *) ACCOUNT="$2" ;;
       esac
@@ -408,9 +413,6 @@ source "$SCRIPT_DIR/lib/tmux-server.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
-# The bound a watch start waits out its authentication by.
-# shellcheck source=lib/gh-auth.sh
-source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/watch-handover.sh
 source "$SCRIPT_DIR/lib/watch-handover.sh"
 
@@ -544,12 +546,46 @@ register() {
 # ---------------------------------------------------------------------------
 # watch-restart
 # ---------------------------------------------------------------------------
+# The question-tool words a launch adds, into QUESTION_OFF: the setting is
+# their one owner.
+QUESTION_OFF=()
+question_off_read() {
+  local question_policy
+  question_policy="$(launch_overseer_question_tool)" \
+    || die invalid-question-tool "ORCH_QUESTION_TOOL=${ORCH_QUESTION_TOOL:-}"
+  QUESTION_OFF=()
+  [[ "$question_policy" != off ]] || QUESTION_OFF=(--question-off)
+}
+
+# The flag words a relaunch of the session RECORD names runs under, into
+# OL_FLAGS: its HARNESS, MODEL and EFFORT, where a Claude record's launch line
+# gives the executable model in place of the record's comparison form, which
+# drops an exact id's window, and the harness's full-bypass words, since the
+# session ran unattended whatever words of its launch the record kept: the
+# words ol_launch_flags keeps beside the recorded model and effort. Returns 1
+# with ol_launch_flags's OL_REASON and OL_FIELDS.
+record_flags() { # RECORD HARNESS MODEL EFFORT
+  local record="$1" harness="$2" model="$3" effort="$4" line words
+  if [[ "$harness" == claude ]]; then
+    line="$(jq -r '.launch_line // ""' <<<"$record" 2>"$DEP_ERR")" || die state-unwritable field=overseer
+    if [[ -n "$line" ]] && ol_command_read claude "$line" && [[ -n "$OL_COMMAND_MODEL" ]]; then
+      model="$OL_COMMAND_MODEL"
+    fi
+  fi
+  words="$(launch_choice_permission_write "$harness")" && launch_choice_shell_words "$words" \
+    || die launch-choice-failed "harness=${harness:-none}"
+  ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$harness" "$model" "$effort" "" "$harness" \
+    ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"}
+}
+
 # The recovery entry into the handover `oversee resume` runs, from the pane
 # this command runs in: the watch it starts inherits this session's
 # environment, credentials included, where the helper a launcher started
 # passed on the launcher's. Nothing here reads or copies a credential. The
-# identity is the record's for this pane, as a dead-pane succession's is, with
-# no flags: the record naming this pane is the launch line a relaunch replays.
+# identity is the record's for this pane, and so are the flags, the ones
+# `oversee resume` would relaunch it with (record_flags): the watch hands
+# them to the successor its wall or reserve recovery launches. The retained
+# command's --handoff stands unless --handoff names another.
 watch_restart() {
   local key server record_rc=0 lane_var home
   [[ -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
@@ -566,8 +602,13 @@ watch_restart() {
   home="${OL_CUR_HOME:-$OL_CUR_ACCOUNT}"
   [[ -n "$OL_CUR_HARNESS" && -n "$home" ]] \
     || die watch-restart-failed step=identity "session=$TMUX_PANE" "harness=${OL_CUR_HARNESS:-none}"
+  question_off_read
+  record_flags "$OL_CUR_RECORD" "$OL_CUR_HARNESS" "$OL_CUR_MODEL" "$OL_CUR_EFFORT" \
+    || die watch-restart-failed step=flags "session=$TMUX_PANE" "reason=$OL_REASON" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
   lane_var="$(lane_env_prefix "$OL_CUR_HARNESS" - "$OL_CUR_MODEL")"
-  if watch_handover --closed "" "$TMUX_PANE" "${lane_var%%=*}" "$home" "$OL_CUR_HARNESS"; then
+  [[ -n "$HANDOFF_GIVEN" ]] || WATCH_HANDOFF_KEEP=1
+  if watch_handover --closed "" "$TMUX_PANE" "${lane_var%%=*}" "$home" "$OL_CUR_HARNESS" \
+      ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then
     message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
     exit 0
   fi
@@ -679,7 +720,7 @@ if [[ "$COMMAND" == register ]]; then register; fi
 # and CWD the directory the session started in.
 RESUME_LINE="" RESUME_ID=""
 resume_line() {
-  local fields generation account model effort recorded_cwd line words
+  local fields generation account model effort recorded_cwd
   fields="$(jq -r '[.generation, .session_id, .harness, .account, .model, .effort, .cwd, .class]
     | map(. // "" | tostring) | join("\u001f")' <<<"$OL_PRIOR" 2>"$DEP_ERR")" || die state-unwritable field=overseer
   IFS=$'\x1f' read -r generation RESUME_ID OL_HARNESS account model effort recorded_cwd OL_MODEL_CLASS <<<"$fields"
@@ -688,22 +729,7 @@ resume_line() {
   # refuses here, where tmux would open the pane in $HOME.
   [[ -n "$recorded_cwd" ]] && CWD="$(cd -- "$recorded_cwd" 2>/dev/null && pwd -P)" \
     || die invalid-cwd "dir=${recorded_cwd:-none}"
-  # The record's model is its comparison form, which drops a Claude exact
-  # id's window; the launch line keeps the executable one, as oversee-succeed
-  # reads it.
-  if [[ "$OL_HARNESS" == claude ]]; then
-    line="$(jq -r '.launch_line // ""' <<<"$OL_PRIOR" 2>"$DEP_ERR")" || die state-unwritable field=overseer
-    if [[ -n "$line" ]] && ol_command_read claude "$line" && [[ -n "$OL_COMMAND_MODEL" ]]; then
-      model="$OL_COMMAND_MODEL"
-    fi
-  fi
-  # The session ran unattended, whatever words of its launch the record
-  # kept, so the harness's full-bypass words stand as its own flags, the ones
-  # ol_launch_flags keeps beside the recorded model and effort.
-  words="$(launch_choice_permission_write "$OL_HARNESS")" && launch_choice_shell_words "$words" \
-    || die launch-choice-failed "harness=${OL_HARNESS:-none}"
-  ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$OL_HARNESS" "$model" "$effort" "" "$OL_HARNESS" \
-    ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} \
+  record_flags "$OL_PRIOR" "$OL_HARNESS" "$model" "$effort" \
     || die "$OL_REASON" "session_id=$RESUME_ID" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
   lane_dir="$account"
   if ! ol_command_line --resume "$RESUME_ID" "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then
@@ -718,11 +744,7 @@ resume_line() {
     || die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
 }
 
-QUESTION_OFF=()
-if ! question_policy="$(launch_overseer_question_tool)"; then
-  die invalid-question-tool "ORCH_QUESTION_TOOL=${ORCH_QUESTION_TOOL:-}"
-fi
-[[ "$question_policy" != off ]] || QUESTION_OFF=(--question-off)
+question_off_read
 if [[ "$COMMAND" == resume ]]; then
   resume_line
 else

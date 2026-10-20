@@ -113,8 +113,6 @@ SETSID_LINE='runner=setsid reason=probe-failed detail=Failed to connect to bus: 
 
 # run_succeed [SUCCEED_BIN] — the script from outside the caller's pane, under
 # a whole environment, with the flags an overseer on the claude:1 entry passes.
-# The stand-in watch never authenticates, so both GitHub auth bounds are a
-# tenth of a second: the claim wait they derive bounds a refused restart.
 # The question tool is kept, so the successor's flags are the caller's alone;
 # what ORCH_QUESTION_TOOL adds to a line is oversee_succeed.sh's.
 # ROW_PATH, when set, goes ahead of the stubs on PATH, and ROW_LAUNCH, when
@@ -132,7 +130,7 @@ run_succeed() {
     LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
     CLAUDE_CONFIG_DIR="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude" \
     ORCH_OVERSEER_PREFERENCE=claude:fable:high ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
-    ORCH_QUESTION_TOOL=overseer KENDEX_GITHUB_AUTH_TIMEOUT=0.1 KENDEX_GITHUB_OP_TIMEOUT=0.1 \
+    ORCH_QUESTION_TOOL=overseer \
     "${1:-$SUCCEED}" --context 950000:1000000 -- --permission-mode dontAsk --verbose 2>&1)" || RC=$?
   # The window the caller held, which the successor holds once the close ran.
   SUCC_PANE="$(tm list-panes -t fleet:0 -F '#{pane_id}' 2>/dev/null || true)"
@@ -376,7 +374,7 @@ fresh_output
 start_watch
 STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
 run_succeed
-wait_failed 900
+wait_failed 300
 rm -f -- "${TMP_ROOT:?}/norecord"
 assert_eq "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
   "0|oversee-succeed: watch-restart-failed step=claim log=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.err $SETSID_LINE|$STARTED" \
@@ -384,21 +382,21 @@ assert_eq "$RC|$FAILED_LINE|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
 watch_stop "$OLD" "$FLEET_STATE" || true
 
 # A launch the runner refuses is a notice carrying the runner's own error,
-# never a handover or a restart. The helper's: a record the runner cannot
-# write, its temporary file's path taken by a directory. The restart's: a
-# setsid that starts the helper and fails every other start.
+# never a handover or a restart. The helper's: a setsid that fails every
+# start, whose refused job leaves no record of its own behind. The restart's:
+# a setsid that starts the helper and fails every other start.
 if command -v setsid >/dev/null 2>&1; then
-  RUNNER_PART="$TMP_ROOT/work/tmp/oversee-watch.runner.part"
+  mkdir -p "$TMP_ROOT/no-start"
+  printf '#!/bin/sh\nexit 1\n' > "$TMP_ROOT/no-start/setsid"
+  chmod +x "$TMP_ROOT/no-start/setsid"
   new_caller
   fresh_output
   start_watch
-  mkdir -p "$RUNNER_PART"
   STARTED="$(grep -c '^started ' "$TMP_ROOT/watch.log")"
-  run_succeed
-  rmdir -- "$RUNNER_PART"
+  ROW_PATH="$TMP_ROOT/no-start" run_succeed
   HELPER_LINE="$(grep '^oversee-succeed: watch-restart-failed step=helper ' <<<"$OUT" || true)"
-  assert_eq "$RC|$HELPER_LINE|$(grep -c '^oversee-succeed: watch-handover ' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")" \
-    "1|oversee-succeed: watch-restart-failed step=helper pid=$OLD error=record-unwritable path=$(cd "$TMP_ROOT/work/tmp" && pwd -P)/oversee-watch.runner|0|$STARTED" \
+  assert_eq "$RC|$HELPER_LINE|$(grep -c '^oversee-succeed: watch-handover ' <<<"$OUT")|$(grep -c '^started ' "$TMP_ROOT/watch.log")|$(find "$TMP_ROOT/work/tmp" -name 'oversee-watch.runner.*' | wc -l | tr -d ' ')" \
+    "1|oversee-succeed: watch-restart-failed step=helper pid=$OLD error=launch-failed status=1|0|$STARTED|0" \
     "a helper the runner refuses stops succession with the runner error"
   watch_stop "$OLD" "$FLEET_STATE" || true
 

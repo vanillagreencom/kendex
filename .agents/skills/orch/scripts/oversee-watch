@@ -37,6 +37,19 @@ die() { # REASON TOOL_DETAIL FIELD=VALUE...
   exit 2
 }
 
+# shellcheck source=lib/watch-pid.sh
+source "$SCRIPT_DIR/lib/watch-pid.sh"
+# A launcher waiting on this start's claim named the job record it made for
+# it: the pid added there tells that launcher whether the start still runs,
+# so one that exits before its claim, whatever the cause, is reported at once
+# (lib/watch-handover.sh § watch_start). For this start alone: nothing it
+# runs inherits the name.
+if [[ -n "${OVERSEE_WATCH_JOB_RECORD:-}" ]]; then
+  watch_job_pid_write "$OVERSEE_WATCH_JOB_RECORD" \
+    || die start-unpublished "" "path=$OVERSEE_WATCH_JOB_RECORD"
+  unset OVERSEE_WATCH_JOB_RECORD
+fi
+
 # A provider or mailbox failure belongs to one lane. Keep its result outside
 # `die`, because ending the process here would drop every mailbox after it.
 # The caller reports the failure against the state snapshot it owns, then
@@ -220,8 +233,6 @@ source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 # shellcheck source=lib/watch-host-kinds.sh
 source "$SCRIPT_DIR/lib/watch-host-kinds.sh"
-# shellcheck source=lib/watch-pid.sh
-source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 # shellcheck source=lib/lane-relaunch.sh
@@ -1151,8 +1162,6 @@ box_wait() { # PID SEEN
 # repository no --repo names, a long pass, or the heartbeat's open-PR list. A
 # run that ends on mail news before a long pass comes due makes no GitHub call.
 # A repeat wrapper also asks it once before its claim (repeat_watch).
-# lib/gh-auth.sh § orch_github_ready_secs bounds this ladder for a launcher
-# waiting on that claim, so a change to its steps changes that count.
 GH_READY=0
 github_ready() {
   [[ "$GH_READY" -eq 0 ]] || return 0
@@ -1185,9 +1194,9 @@ repeat_watch() { # ARGV...
       REPEAT_FIRST=""
       # Authenticated before the claim, so a watch that cannot read GitHub
       # never stands as the fleet's watch, nor stops the one it would
-      # replace; its launcher's claim wait reports it failed. A subshell, so
-      # the wrapper's environment stays the launcher's and every pass runs
-      # the ladder itself, inheriting no token or validation from this one.
+      # replace; its launcher's claim wait sees it exit. A subshell, so the
+      # wrapper's environment stays the launcher's and every pass runs the
+      # ladder itself, inheriting no token or validation from this one.
       ( github_ready ) || exit "$?"
       watch_claim "$@"
       overseer_command_record

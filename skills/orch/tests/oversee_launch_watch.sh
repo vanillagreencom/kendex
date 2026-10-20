@@ -459,11 +459,7 @@ for CLAIM_CASE in refusal; do
   chmod +x "$CLAIM_BIN/oversee-watch"
   tm kill-window -a -t "$KEEP_WINDOW"
   rm -f -- "${FLEET_STATE:?}"
-  # The stand-in never authenticates: tenth-second auth bounds keep the
-  # claim wait they derive short.
-  ROW_ENV=(KENDEX_GITHUB_AUTH_TIMEOUT=0.1 KENDEX_GITHUB_OP_TIMEOUT=0.1)
   run_oversee "$CLAIM_BIN/oversee" -- launch --wait-secs 20
-  ROW_ENV=()
   LIVE_RC=0
   watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
   EXPECT_CLAIM='1|1|0|none|1'
@@ -471,22 +467,26 @@ for CLAIM_CASE in refusal; do
   [[ "$(recorded pane)" == none ]] || RECORD_PRESENT=present
   assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$RECORD_PRESENT|$(tm list-panes -a -F '#{pane_id}' | wc -l | tr -d ' ')" \
     "$EXPECT_CLAIM" "$CLAIM_CASE: an accepted job with no claim refuses and restores the pane and record"
-  assert_eq "$(sed -n 's/^runner=//p' "$WATCH_RUNNER_FILE")" setsid \
-    "$CLAIM_CASE: the watcher job was accepted before the claim deadline"
+  assert_eq "$(grep -c "^oversee: watch-restart-failed step=claim log=$WATCH_ERR_FILE $SETSID_LINE\$" <<<"$OUT")|$(find "$TMP_ROOT/work/tmp" -name 'oversee-watch.runner.*' | wc -l | tr -d ' ')" "1|0" \
+    "$CLAIM_CASE: the watcher job was accepted before the claim deadline, and its record removed"
 done
 
-# The runner cannot write its record. A first launch must close the new pane.
+# The runner refuses the job: a setsid that starts nothing. A first launch
+# must close the new pane.
+mkdir -p "$TMP_ROOT/no-start"
+printf '#!/bin/sh\nexit 1\n' > "$TMP_ROOT/no-start/setsid"
+chmod +x "$TMP_ROOT/no-start/setsid"
 for ERROR_CASE in retained; do
   ERROR_BIN="$OVERSEE"
   EXPECT_ERROR=1
   tm kill-window -a -t "$KEEP_WINDOW"
   rm -f -- "${FLEET_STATE:?}"
-  mkdir "$TMP_ROOT/work/tmp/oversee-watch.runner.part"
+  ROW_ENV=(PATH="$TMP_ROOT/no-start:$NO_MANAGER:$BIN:$PATH")
   run_oversee "$ERROR_BIN" -- launch --wait-secs 20
-  rmdir "$TMP_ROOT/work/tmp/oversee-watch.runner.part"
+  ROW_ENV=()
   LIVE_RC=0
   watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
-  assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$(grep -c '^job-unit: record-unwritable ' <<<"$OUT")" \
+  assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$(grep -c '^oversee: watch-restart-failed step=start error=launch-failed ' <<<"$OUT")" \
     "1|1|0|$EXPECT_ERROR" "$ERROR_CASE: a refused job keeps its failed status and the restoration preserves the launch error"
 done
 
@@ -971,17 +971,17 @@ assert_eq "${NEW:+watched}|$WATCH_PANE" "watched|$SUCC" \
 # keyring, so a launcher with no GH_TOKEN starts a watch no credential serves,
 # while the successor pane's own environment carries one. With CRED_BIN/slow
 # present its token check takes twelve seconds, past the stop bound alone.
-# Rows that expect a refusal set both auth bounds to a tenth of a second, so
-# the claim wait the ladder's bound derives stays under a minute and a half.
 # The caller runs claude and its successor codex, whose harness the restarted
 # watch's command takes: the successor's credential is its own session's,
 # whatever harness the caller ran.
 CRED_BIN="$TMP_ROOT/cred-bin"
-mkdir -p "$CRED_BIN" "$BIN/processes"
+mkdir -p "$CRED_BIN/unit" "$BIN/processes"
 # A copy of sleep named codex holds the successor's pane, since only that
-# exact process name reads as codex.
+# exact process name reads as codex. The stub keeps the words it was launched
+# with, one per line, the last its opening prompt.
 cp "$(command -v sleep)" "$BIN/processes/codex"
-printf '#!/bin/sh\necho "esc to interrupt"\nexec "%s" 100000\n' "$BIN/processes/codex" > "$BIN/codex"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\necho "esc to interrupt"\nexec "%s" 100000\n' \
+  "$TMP_ROOT/codex.args" "$BIN/processes/codex" > "$BIN/codex"
 chmod +x "$BIN/codex"
 make_codex_lane "$H/.codex"
 jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' \
@@ -999,7 +999,11 @@ chmod +x "$CRED_BIN/gh"
 CRED_ENV=("${WATCH_ENV[@]}" PATH="$CRED_BIN:$WSTUBS:$NO_MANAGER:$BIN:$PATH" GH_REPO=owner/repo
   OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/cred-state")
 SUCCESSOR_TOKEN=(GH_TOKEN=fixture-successor-token)
-SHORT_AUTH=(KENDEX_GITHUB_AUTH_TIMEOUT=0.1 KENDEX_GITHUB_OP_TIMEOUT=0.1)
+# The real user manager, with a loginctl that reports it lingering, where one
+# answers: the watch then runs as a unit.
+cp "$NO_MANAGER/loginctl" "$CRED_BIN/unit/loginctl"
+UNIT_ENV=(PATH="$CRED_BIN/unit:$CRED_BIN:$WSTUBS:$BIN:$PATH"
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}")
 # run_restart PANE [ENV=VAL...] [-- OVERSEE_BIN] — `oversee watch-restart` as
 # PANE's own shell runs it: its $TMUX and $TMUX_PANE, the watch settings and
 # the words given. Sets OUT and RC.
@@ -1015,10 +1019,28 @@ run_restart() {
 }
 # claim_of — the live claim's pid, or none.
 claim_of() { if watch_pid_live "$FLEET_STATE"; then printf '%s' "$WATCH_PID"; else printf none; fi; }
+# retain WORD_INDEX VALUE — the retained watch command with one word replaced:
+# 1 is its script, and a later index one of its arguments.
+retain() {
+  python3 - "$WATCH_ARGV_FILE" "$1" "$2" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+words = p.read_bytes().split(b'\0')
+words[int(sys.argv[2])] = sys.argv[3].encode()
+p.write_bytes(b'\0'.join(words))
+PY
+}
+# flags_of PID — the words after the `--` of that watch's command line, as
+# flag_units prints them.
+flags_of() { local args; args="$(ps -ww -o args= -p "$1")" || return 1; tr ' ' '\n' <<<"${args#* -- }" | flag_units; }
+# flag_units — words one per line on stdin as one option per line, a `-c` or
+# `-m` joined to its value, sorted: a launch writes the same options in an
+# order of its own, and none of them reads another's place.
+flag_units() { awk '$0 == "-c" || $0 == "-m" { k = $0; next } k != "" { print k " " $0; k = ""; next } { print }' | LC_ALL=C sort; }
 echo "=== the fleet watch's GitHub credentials ==="
 
 # Slow, valid authentication: a first launch waits for the claim past the
-# stop bound, under the bound the auth ladder's own timeouts derive.
+# stop bound, while the started watch runs.
 tm kill-window -a -t "$KEEP_WINDOW"
 rm -f -- "$FLEET_STATE"
 fresh_output
@@ -1032,20 +1054,20 @@ LIVE_RC=0
 watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
 assert_eq "$RC|$LIVE_RC|$WATCH_PANE" "0|0|$PRED" \
   "a first launch waits out slow valid GitHub authentication and leaves the watch claimed" "$WATCH_ERR_FILE"
-CRED_OLD="$WATCH_PID"
 watch_handoff_read
 CRED_SINCE="$WATCH_SINCE"
+CRED_SCRIPT="$WATCH_SCRIPT"
 printf 'EVENT fixture unread\n' >> "$WATCH_LOG_FILE"
 UNREAD_LINE="$(awk 'END { print NR }' "$WATCH_LOG_FILE")"
 
 # A succession launched from an environment with no GitHub credential: the
 # helper's restarted watch inherits that environment, refuses before it
 # claims, and the helper reports the restart failed, never restarted.
-ROW_ENV=("${CRED_ENV[@]}" "${SHORT_AUTH[@]}" "${CODEX_SUCCESSOR[@]}")
+ROW_ENV=("${CRED_ENV[@]}" "${CODEX_SUCCESSOR[@]}")
 succeed
 ROW_ENV=()
 HELPER_LINE=""
-for _ in $(seq 1 1200); do
+for _ in $(seq 1 300); do
   HELPER_LINE="$(grep -E '^oversee-succeed: watch-restart(ed|-failed) ' "$WATCH_ERR_FILE" 2>/dev/null || true)"
   [[ -z "$HELPER_LINE" ]] || break
   sleep 0.1
@@ -1057,44 +1079,87 @@ assert_eq "$RC|${HELPER_LINE%% log=*}|$(grep -c '^oversee-watch: auth-failed ser
   "a caller with no GitHub credential hands over a watch that refuses before it claims, reported failed" "$WATCH_ERR_FILE"
 
 # The successor restarts the watch from its own pane and environment: the
-# watch claims for that pane, under the successor's harness, with the
-# retained command, log and cursor.
+# watch claims for that pane, under the successor's harness and the flags of
+# the session it serves, with the retained command, its handoff, the log and
+# the cursor. The fleet brief here names a handoff of its own.
+watch_handoff_read
+for (( i = 0; i < ${#WATCH_ARGV[@]}; i++ )); do
+  [[ "${WATCH_ARGV[i]}" != --handoff ]] || retain "$((i + 4))" tmp/handoffs/fleet-brief.md
+done
 run_restart "$SUCC" "${SUCCESSOR_TOKEN[@]}"
 CRED_NEW="$(claim_of)"
 watch_handoff_read || true
-assert_eq "$RC|$(grep -cE "^oversee: watch-started pid=$CRED_NEW pane=$SUCC log=$WATCH_LOG_FILE err=$WATCH_ERR_FILE( stopped=[0-9]+)? $SETSID_LINE\$" <<<"$OUT")|$WATCH_ORIGIN|$WATCH_PANE|$(recorded harness)|$WATCH_HARNESS|$WATCH_SINCE|$(sed -n "${UNREAD_LINE}p" "$WATCH_LOG_FILE")" \
-  "0|1|succession|$SUCC|codex|codex|$CRED_SINCE|EVENT fixture unread" \
-  "a codex successor's watch-restart starts the watch with its own credential after a claude caller had none, keeping the command, log and cursor" "$WATCH_ERR_FILE"
+SUCC_FLAGS="$(sed '$d' "$TMP_ROOT/codex.args" | flag_units)"
+assert_eq "$RC|$(grep -cE "^oversee: watch-started pid=$CRED_NEW pane=$SUCC log=$WATCH_LOG_FILE err=$WATCH_ERR_FILE( stopped=[0-9]+)? $SETSID_LINE\$" <<<"$OUT")|$WATCH_ORIGIN|$WATCH_PANE|$(recorded harness)|$WATCH_HARNESS|$WATCH_SINCE|$WATCH_HANDOFF|$(sed -n "${UNREAD_LINE}p" "$WATCH_LOG_FILE")" \
+  "0|1|succession|$SUCC|codex|codex|$CRED_SINCE|tmp/handoffs/fleet-brief.md|EVENT fixture unread" \
+  "a codex successor's watch-restart starts the watch with its own credential after a claude caller had none, keeping the command, handoff, log and cursor" "$WATCH_ERR_FILE"
+assert_eq "$(flags_of "$CRED_NEW" || echo unread)" "${SUCC_FLAGS:-none}" \
+  "the restarted watch carries the flags the successor session was launched with"
 
 # A pane the fleet state does not record as its overseer owns no watch.
 run_restart "$KEEP_PANE" "${SUCCESSOR_TOKEN[@]}"
 assert_eq "$RC|$(grep -c "^oversee: not-overseer session=$KEEP_PANE " <<<"$OUT")|$(claim_of)" "1|1|$CRED_NEW" \
   "watch-restart from a pane the record does not name refuses and leaves the watch"
 
-# No credential anywhere: the restart refuses with the claim step, the
-# started watch's auth-failed in the log it names, and the live watch kept.
-# Its control replays a copy of the watch that claims before it
-# authenticates, the order before this change, and reports a false start.
-# restart_refused [OVERSEE_BIN] — the row; sets REFUSED_RESULT.
+# No credential anywhere: the restart refuses with the claim step as soon as
+# the started watch exits, well inside the bound a start that never says it
+# runs is given, with that watch's auth-failed in the log it names and the
+# live watch kept. Its control waits without the started watch's pid and
+# runs into that bound.
+# restart_refused [OVERSEE_BIN] — the row; sets REFUSED_RESULT and
+# REFUSED_SECS.
 restart_refused() {
-  local before after
+  local before after started=$SECONDS
   before="$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)"
-  run_restart "$SUCC" "${SHORT_AUTH[@]}"
+  run_restart "$SUCC" ${1:+--} ${1:+"$1"}
+  REFUSED_SECS=$((SECONDS - started))
   after="$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)"
   REFUSED_RESULT="$RC|$(grep -c "^oversee: watch-restart-failed step=claim log=$WATCH_ERR_FILE " <<<"$OUT")|$(( after - before ))|$(claim_of)"
 }
 restart_refused
-assert_eq "$REFUSED_RESULT" "1|1|1|$CRED_NEW" \
-  "watch-restart with no GitHub credential refuses, names the failure and keeps the live watch" "$WATCH_ERR_FILE"
+assert_eq "$REFUSED_RESULT|$(( REFUSED_SECS < 2 * WATCH_STOP_SECS ))" "1|1|1|$CRED_NEW|1" \
+  "watch-restart with no GitHub credential refuses once the watch exits, names the failure and keeps the live watch" "$WATCH_ERR_FILE"
+UNPUBLISHED="$(mutant_scripts unpublished lib/watch-handover.sh)" || exit 1
+mutate_file "$UNPUBLISHED/lib/watch-handover.sh" '    elif [[ -n "$WATCH_JOB_PID" ]]; then' '    elif false; then'
+restart_refused "$UNPUBLISHED/oversee"
+assert_eq "${REFUSED_RESULT%%|*}|$(( REFUSED_SECS < 2 * WATCH_STOP_SECS ))" "1|0" \
+  "control: a claim wait blind to the started watch's exit runs out its bound"
+
+# Under a user manager, a replacement that refuses leaves the live watch's
+# runner record naming that watch's unit, so the documented stop-job stops
+# it. Its control writes the started job's record over the runner record, as
+# the start did before, and the stop then misses the surviving watch.
+# unit_refused_row OVERSEE_BIN — a unit watch restarted, a credential-less
+# restart through OVERSEE_BIN, then the stop; sets UNIT_RESULT.
+unit_refused_row() {
+  local live stop_rc=0
+  run_restart "$SUCC" "${SUCCESSOR_TOKEN[@]}" "${UNIT_ENV[@]}"
+  live="$(claim_of)"
+  run_restart "$SUCC" "${UNIT_ENV[@]}" -- "$1"
+  "$SRC_DIR/lib/job-unit.sh" stop-job "$WATCH_RUNNER_FILE" "$live" '*oversee-watch*' >/dev/null 2>&1 || stop_rc=$?
+  for _ in $(seq 1 200); do watch_pid_runs "$live" || break; sleep 0.1; done
+  UNIT_RESULT="$RC|$stop_rc|$(watch_pid_runs "$live" && echo running || echo stopped)"
+  ! watch_pid_runs "$live" || watch_stop "$live" "$FLEET_STATE" || true
+}
+if systemd-run --user --quiet --collect true </dev/null >/dev/null 2>&1; then
+  unit_refused_row "$OVERSEE"
+  assert_eq "$UNIT_RESULT" "1|0|stopped" \
+    "a refused replacement leaves the unit watch it kept stoppable through its runner record" "$WATCH_ERR_FILE"
+  SHARED_RECORD="$(mutant_scripts shared-record lib/watch-handover.sh)" || exit 1
+  mutate_file "$SHARED_RECORD/lib/watch-handover.sh" 'mktemp "$WATCH_RUNNER_FILE.XXXXXX"' 'printf %s "$WATCH_RUNNER_FILE"'
+  unit_refused_row "$SHARED_RECORD/oversee"
+  assert_eq "${UNIT_RESULT%|*}|${UNIT_RESULT##*|}" "1|2|running" \
+    "control: a replacement writing its record over the runner record leaves the kept watch unstoppable"
+else
+  printf '  skip  no user manager answers; the unit stop rows did not run\n'
+fi
+
+# The start authenticates before it claims. Its control replays a copy of
+# the watch that claims before it authenticates, the order before this
+# change, and reports a false start.
 CLAIM_FIRST="$(mutant_scripts claim-first oversee-watch)" || exit 1
 mutate_file "$CLAIM_FIRST/oversee-watch" $'      ( github_ready ) || exit "$?"\n' ''
-python3 - "$WATCH_ARGV_FILE" "$CLAIM_FIRST/oversee-watch" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-words = p.read_bytes().split(b'\0')
-words[1] = sys.argv[2].encode()
-p.write_bytes(b'\0'.join(words))
-PY
+retain 1 "$CLAIM_FIRST/oversee-watch"
 restart_refused
 assert_eq "${REFUSED_RESULT%%|*}" 0 \
   "control: a watch that claims before it authenticates reports the credential-less restart started" "$WATCH_ERR_FILE"

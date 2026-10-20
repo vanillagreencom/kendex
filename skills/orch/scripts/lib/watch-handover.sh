@@ -26,8 +26,8 @@
 # stderr to DEP_ERR.
 #
 # Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
-# directory), DEP_ERR (a file), HANDOFF (the brief's path), and lib/watch-pid.sh,
-# lib/job-unit.sh and lib/gh-auth.sh sourced by the caller. Sourcing it defines names and runs nothing. Sourced,
+# directory), DEP_ERR (a file), HANDOFF (the brief's path), and lib/watch-pid.sh
+# and lib/job-unit.sh sourced by the caller. Sourcing it defines names and runs nothing. Sourced,
 # never run.
 
 # COMMAND started through the orch job runner as NAME and the UTC second, with
@@ -35,18 +35,33 @@
 # current directory: a unit sends its command's output nowhere a caller
 # reads, so the redirection is the job's own first step, and the exec leaves
 # COMMAND the job's main process, so the job ends when it does. The record is
-# the runner file beside STATE. Returns 1 with JOB_UNIT_ERROR_KEY and
-# JOB_UNIT_ERROR set where the launch was refused.
+# a file of the job's own beside STATE, WATCH_JOB_RECORD, made by exclusive
+# creation and handed to COMMAND as OVERSEE_WATCH_JOB_RECORD; never
+# oversee-watch.runner itself, the stop route of the watch holding the claim
+# (references/watch-delivery.md), which a job that may never claim must not
+# take from that watch. The caller moves the record there once its job's watch
+# claims, or removes it. Returns 1 with JOB_UNIT_ERROR_KEY and JOB_UNIT_ERROR
+# set where the launch was refused, its record removed.
 watch_job_launch() { # NAME STATE OUT ERR COMMAND...
   local name="$1" state="$2" out="$3" err="$4"
   shift 4
+  WATCH_JOB_RECORD=""
   if ! watch_pid_paths "$state"; then
     JOB_UNIT_ERROR_KEY=state-path JOB_UNIT_ERROR="path=$state"
     return 1
   fi
-  job_unit_main launch "$name-$(date -u +%Y%m%dT%H%M%SZ)" "$WATCH_RUNNER_FILE" \
-    -- sh -c 'out=$1 err=$2; shift 2; exec "$@" >>"$out" 2>>"$err"' sh "$out" "$err" "$@" \
-    >/dev/null 2>"$DEP_ERR"
+  if ! WATCH_JOB_RECORD="$(mktemp "$WATCH_RUNNER_FILE.XXXXXX" 2>"$DEP_ERR")"; then
+    WATCH_JOB_RECORD=""
+    JOB_UNIT_ERROR_KEY=record-unwritable JOB_UNIT_ERROR="path=$WATCH_RUNNER_FILE.XXXXXX"
+    return 1
+  fi
+  if ! job_unit_main launch "$name-$(date -u +%Y%m%dT%H%M%SZ)" "$WATCH_JOB_RECORD" \
+      -- sh -c 'out=$1 err=$2; shift 2; exec "$@" >>"$out" 2>>"$err"' sh "$out" "$err" \
+      env OVERSEE_WATCH_JOB_RECORD="$WATCH_JOB_RECORD" "$@" >/dev/null 2>"$DEP_ERR"; then
+    rm -f -- "$WATCH_JOB_RECORD"
+    WATCH_JOB_RECORD=""
+    return 1
+  fi
 }
 
 # The watch serving PREDECESSOR handed to SUCCESSOR: the repeat-mode watch
@@ -136,22 +151,28 @@ watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
 # handoff, harness and flags. A stopped watch with no readable command uses
 # the workflow default and reports the unread path. replace=PID replays as
 # replay does and hands the watch OVERSEE_WATCH_REPLACE=PID, the live watch
-# its start may stop and take over.
+# its start may stop and take over. WATCH_HANDOFF_KEEP set keeps the retained
+# command's --handoff where it names one, in place of HANDOFF.
 # Wait for its claim before reporting success: an accepted job whose command
-# exits during initialization, a GitHub authentication failure among them,
-# has not left a watch running. The watch authenticates before it claims
-# (`oversee-watch` § repeat_watch), so the wait takes the auth ladder's bound
-# (lib/gh-auth.sh § orch_github_ready_secs) beside its stop bound, and an
-# auth bound that bounds nothing refuses as step=auth-bound before any launch,
-# since no wait for that claim would end. The claim is the
+# exits during initialization, a GitHub authentication refusal among them
+# (`oversee-watch` § repeat_watch), has not left a watch running. The wait
+# ends on the watch's own outcome: its claim, or its exit, read off the pid
+# it adds to its job's record (lib/watch-pid.sh § watch_job_pid_write), so a
+# start that refuses is reported as soon as it exits and one still
+# authenticating is waited out. Only a job that adds no pid is bounded here:
+# WATCH_STOP_SECS, twice that for a replay, whose start can first stop the
+# watch it takes over (`oversee-watch` § watch_claim). The job's record
+# becomes the runner record once its watch claims, and is removed where it
+# never does, so the live watch's stop route stands until it is replaced.
+# The claim is the
 # started watch's only where its pid differs from the claim live before the
 # launch, besides naming origin succession and PANE: a new tmux server can
 # hand the replaced watch's pane id to PANE itself, and that watch, started
 # here once before, holds a record whose origin and pane both match.
 watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
-  local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc auth_secs
+  local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc record live
   shift 6
-  local flags=() harness_args=() since="" word skip="" argv=()
+  local flags=() harness_args=() since="" word skip="" argv=() handoff="$HANDOFF" kept=""
   local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start replace=() prior=""
   [[ $# -eq 0 ]] || flags=(-- "$@")
   [[ -z "$harness" ]] || harness_args=(--harness "$harness")
@@ -169,21 +190,21 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
       name=watch-restart
       [[ "$mode" != replace=* ]] || replace=("OVERSEE_WATCH_REPLACE=${mode#replace=}")
       for word in ${WATCH_ARGV[@]+"${WATCH_ARGV[@]}"}; do
-        if [[ -n "$skip" ]]; then skip=""; continue; fi
+        if [[ -n "$skip" ]]; then
+          [[ "$skip" != handoff ]] || kept="$word"
+          skip=""
+          continue
+        fi
         case "$word" in
-          --handoff|--harness) skip=value ;;
-          --handoff=*) ;;
+          --handoff) skip=handoff ;;
+          --harness) skip=value ;;
+          --handoff=*) kept="${word#--handoff=}" ;;
           *) argv+=("$word") ;;
         esac
-      done ;;
+      done
+      [[ -z "${WATCH_HANDOFF_KEEP:-}" || -z "$kept" ]] || handoff="$kept" ;;
     *) WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=mode); return 1 ;;
   esac
-  if ! auth_secs="$(orch_github_ready_secs)"; then
-    WATCH_HANDOVER_KEY=watch-restart-failed
-    WATCH_HANDOVER_FIELDS=(step=auth-bound "KENDEX_GITHUB_AUTH_TIMEOUT=${KENDEX_GITHUB_AUTH_TIMEOUT:-10}"
-      "KENDEX_GITHUB_OP_TIMEOUT=${KENDEX_GITHUB_OP_TIMEOUT:-10}")
-    return 1
-  fi
   rc=0
   watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?
   if [[ "$rc" -gt 1 ]]; then
@@ -198,7 +219,7 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
   rc=0
   if ! watch_job_launch "$name" "$state" "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
       env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession ${replace[@]+"${replace[@]}"} \
-      "$script" ${argv[@]+"${argv[@]}"} --handoff "$HANDOFF" ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
+      "$script" ${argv[@]+"${argv[@]}"} --handoff "$handoff" ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
     WATCH_HANDOVER_KEY=watch-restart-failed
     WATCH_HANDOVER_FIELDS=(step=start "error=$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR")
     rc=1
@@ -208,21 +229,34 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
     return 1
   fi
   [[ "$rc" -eq 0 ]] || return 1
-  runner="$JOB_UNIT_LINE"
-  # A replay's start can stop the watch it takes over before it claims
-  # (`oversee-watch` § watch_claim), a stop bounded by WATCH_STOP_SECS, so it
-  # gets that bound on top of its own.
-  deadline=$((SECONDS + auth_secs + WATCH_STOP_SECS))
-  [[ "$mode" == fresh ]] || deadline=$((SECONDS + auth_secs + 2 * WATCH_STOP_SECS))
+  runner="$JOB_UNIT_LINE" record="$WATCH_JOB_RECORD"
+  deadline=$((SECONDS + WATCH_STOP_SECS))
+  [[ "$mode" == fresh ]] || deadline=$((SECONDS + 2 * WATCH_STOP_SECS))
   while :; do
     rc=0
     watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?
     if [[ "$rc" -eq 0 && "$WATCH_PID" != "$prior" && "$WATCH_ORIGIN" == succession && "$WATCH_PANE" == "$pane" ]]; then
+      if ! mv -f -- "$record" "$WATCH_RUNNER_FILE" 2>"$DEP_ERR"; then
+        WATCH_HANDOVER_KEY=watch-restart-failed
+        WATCH_HANDOVER_FIELDS=(step=runner "pid=$WATCH_PID" "record=$record" "$runner")
+        return 1
+      fi
       WATCH_HANDOVER_KEY=watch-started
       WATCH_HANDOVER_FIELDS=("pid=$WATCH_PID" "pane=$pane" "log=$WATCH_LOG_FILE" "err=$WATCH_ERR_FILE" "$runner")
       return 0
     fi
-    if [[ "$rc" -gt 1 || "$SECONDS" -ge "$deadline" ]]; then
+    # 0 runs, 1 exited with no claim standing, 2 unknown; a job that has
+    # added no pid runs until its bound.
+    live=0
+    if [[ "$rc" -gt 1 ]] || ! watch_job_pid_read "$record" 2>"$DEP_ERR"; then
+      live=2
+    elif [[ -n "$WATCH_JOB_PID" ]]; then
+      watch_pid_runs "$WATCH_JOB_PID" 2>"$DEP_ERR" || live=$?
+    elif [[ "$SECONDS" -ge "$deadline" ]]; then
+      live=1
+    fi
+    if [[ "$live" -ne 0 ]]; then
+      rm -f -- "$record"
       WATCH_HANDOVER_KEY=watch-restart-failed
       WATCH_HANDOVER_FIELDS=(step=claim "log=$WATCH_ERR_FILE" "$runner")
       return 1

@@ -678,9 +678,6 @@ source "$SCRIPT_DIR/lib/overseer-launch.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
-# The bound a watch start waits out its authentication by.
-# shellcheck source=lib/gh-auth.sh
-source "$SCRIPT_DIR/lib/gh-auth.sh"
 # The watch handover and the job launch the helper below restarts the watch
 # through, shared with `oversee launch --predecessor`.
 # shellcheck source=lib/watch-handover.sh
@@ -731,6 +728,9 @@ if [[ "${1:-}" == --watch-restart ]]; then
   shift
   [[ $# -ge 9 ]] || die unknown-option "arg=--watch-restart"
   watch_restart "$@"
+  # This helper's own job record (lib/watch-handover.sh § watch_job_launch),
+  # which nothing reads once the helper has run.
+  [[ -z "${OVERSEE_WATCH_JOB_RECORD:-}" ]] || rm -f -- "$OVERSEE_WATCH_JOB_RECORD"
   exit 0
 fi
 
