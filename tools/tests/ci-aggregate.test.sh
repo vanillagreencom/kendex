@@ -899,6 +899,10 @@ while IFS='|' read -r row wf head_ref expected; do
   [ ! -e "$root/runner/candidate-code-ran" ] || candidate=yes
   check "$row: scan exit, credential finding, and candidate execution" \
     "$expected" "$status:$finding:$candidate"
+  if [ "$expected" != "$status:$finding:$candidate" ]; then
+    printf 'ci-aggregate-test: credential-row=%s status=%s\n' "$row" "$status" >&2
+    tail -n 40 "$root/out" >&2
+  fi
 done <<ROWS
 trusted|$WORKFLOW|$QUEUE_REF|1:yes:no
 must-fail: the candidate's scanner|$TMP/candidate-scanner.yml|$QUEUE_REF|0:no:yes
