@@ -1,0 +1,1 @@
+- Update the UI development dependency Vite to 8.2.4 to fix Windows editor command escaping (GHSA-698v-4r3x-3vcv).
