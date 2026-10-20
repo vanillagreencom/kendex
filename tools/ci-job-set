@@ -163,7 +163,7 @@ LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate refresh orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest slack mailbox node pi-claude-bridge"
+SHARDS="review-gate refresh orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest slack mailbox node pi-claude-bridge orch-state-cost"
 # The native eligibility owner declares empty and unsupported macOS shards.
 # The ownership proof compares those declarations with actual suite coverage
 # and the workflow matrix. Linux keeps the complete SHARDS roster.
@@ -377,7 +377,7 @@ want_package() { # PACKAGE
   case "$1" in
     skills/orch)
       if [ -n "$suite_path" ]; then want_shard "$suite_shard"
-      else want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest; fi ;;
+      else want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest orch-state-cost; fi ;;
     skills/github) want_shard orch-rest ;;
     skills/review-gate | refresh)
       if [ -n "$suite_path" ]; then want_shard "${1#skills/}"

@@ -8,7 +8,8 @@
     "worktree-restack",
     "guards-scans",
     "guards-tools-tail",
-    "guards-commit-tail"
+    "guards-commit-tail",
+    "orch-state-cost"
   ],
   "native_replacements": {
     "skills/github/tests/pr-merge.test.sh": "skills/github/tests/native-contracts.test.sh",

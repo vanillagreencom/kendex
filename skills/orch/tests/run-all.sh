@@ -288,7 +288,7 @@ if [ "${1-}" = --shard ]; then
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-terminal|orch-oversee|orch-oversee-watch|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; set -- ;;
+    orch-terminal|orch-oversee|orch-oversee-watch|orch-oversee-succeed|orch-dev|orch-state|orch-state-cost|orch-rest) SHARD="$shard"; set -- ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -313,6 +313,11 @@ shard_of() { # BASE
       open-terminal-lane-hosted-copilot|open-terminal-lane-hosted-codex) OWNING_SHARD=orch-oversee; return ;;
       oversee_watch_overseer*)
         if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then OWNING_SHARD=orch-oversee; return; fi ;;
+    esac
+  fi
+  if [ "${RUNNER_OS:-Linux}" = Linux ]; then
+    case "$1" in
+      lanes-normalized|lanes-pick-cost|lanes-pick-spread) OWNING_SHARD=orch-state-cost; return ;;
     esac
   fi
   case "$1" in

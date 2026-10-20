@@ -36,14 +36,15 @@ mutant_scripts() {
       sibling="${dir%/scripts}/../orch"
       ;;
   esac
-  inventory="$(cd "$src" && find . -mindepth 1 | sed 's|^\./||')" \
-    || _mutant_scripts_refuse inventory-failed "$src"
-  [[ -n "$inventory" ]] || _mutant_scripts_refuse inventory-empty "$src"
-  rm -rf "${dir%/scripts}" || _mutant_scripts_refuse clear-failed "$dir"
-  mkdir -p "$dir" || _mutant_scripts_refuse mkdir-failed "$dir"
-  # One process creates the discovered tree; a control needs the same layout
-  # whatever the number of scripts beside its private file.
-  perl -e '
+  # The source tree is immutable during a suite. Reuse its neutral link
+  # layout, while every mutant gets its own directories and writable files.
+  local baseline="$TMP_ROOT/.mutant-scripts-$moved"
+  if [[ ! -d "$baseline" ]]; then
+    inventory="$(cd "$src" && find . -mindepth 1 | sed 's|^\./||')" \
+      || _mutant_scripts_refuse inventory-failed "$src"
+    [[ -n "$inventory" ]] || _mutant_scripts_refuse inventory-empty "$src"
+    mkdir "$baseline" || _mutant_scripts_refuse mkdir-failed "$baseline"
+    perl -e '
     use strict;
     use warnings;
     my ($src, $dir) = @ARGV;
@@ -56,7 +57,11 @@ mutant_scripts() {
           or die "mutant_scripts: link-failed $dir/$entry: $!\n";
       }
     }
-  ' -- "$src" "$dir" <<<"$inventory" || _mutant_scripts_refuse tree-failed "$dir"
+    ' -- "$src" "$baseline" <<<"$inventory" || _mutant_scripts_refuse tree-failed "$baseline"
+  fi
+  rm -rf "${dir%/scripts}" || _mutant_scripts_refuse clear-failed "$dir"
+  mkdir -p "${dir%/scripts}" || _mutant_scripts_refuse mkdir-failed "$dir"
+  cp -R "$baseline" "$dir" || _mutant_scripts_refuse copy-failed "$dir"
   if [[ -n "${2:-}" ]]; then
     [[ -f "$src/$2" ]] || _mutant_scripts_refuse no-such-script "$2"
     rm -- "$dir/$2" || _mutant_scripts_refuse unlink-failed "$dir/$2"

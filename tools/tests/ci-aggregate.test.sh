@@ -552,7 +552,7 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
 # A merge group touching the script the orch-terminal shard races.
 open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
 open_terminal_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$open_terminal")")"
-linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls-a","linear-controls-b"]' '[]')"
+linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls-a","linear-controls-b","orch-state-cost"]' '[]')"
 check "the portability row selects orch-rest" true \
   "$(jq -c 'index("orch-rest") != null' <<<"$open_terminal_queue")"
 only_succeed="$(measured linux false true false '["orch-oversee-succeed"]' '["orch-oversee-succeed"]')"
@@ -622,7 +622,7 @@ check "must-fail: a queue job ignoring the event runs on a pull request" "$open_
 # The shard key expands to the published list, and to the whole roster where
 # nothing was published; that literal is the roster ci-job-set selects from,
 # in its order, which the ALL_ON row's list is.
-check "the shard matrix expands the selected shards" "[$ORCH,\"guards-scans\",\"rest\"]" \
+check "the shard matrix expands the selected shards" "$ORCH_SHARDS" \
   "$(legs "$WORKFLOW" "$ORCH_CODE_ROW" success merge_group shard)"
 check "the shard matrix expands ci-job-set's roster, in order, when nothing classified" \
   "$(selection standard false .github/workflows/skill-tests.yml | sed -n 's/.* shards=\([^ ]*\).*/\1/p')" \
@@ -1301,6 +1301,16 @@ selected-linux|merge_group|$one_skill|true|1
 selected-both|merge_group|$ORCH_CODE_ROW|true|1
 unselected|merge_group|$CODE_ROW|false|0
 ROWS
+cost_only="$(measured linux false true false '["orch-state-cost"]' '[]')"
+value="$(gh_eval value "$(context_json merge_group success "$cost_only" "$TMP/published-map")" "$expr")"
+check "$CI_JOB selects the Linux state cost matrix member" true "$value"
+for result in failure cancelled skipped missing; do
+  RESULTS="$(jq -cn --arg result "$result" '{changes: {result: "success"}} +
+    (if $result == "missing" then {} else {"skill-suites-shard": {result: $result}} end)')"
+  check "$CI_JOB rejects $result evidence for the selected state cost job" 1 \
+    "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
+done
+RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
 plant "$WORKFLOW" "SHELL_SHARDS: \${{ $expr }}" "SHELL_SHARDS: \${{ $expr && false }}" \
   "$TMP/wf-shell-false-$CI_JOB.yml" "$CI_JOB"
 false_expr="$(aggregate_lanes "$TMP/wf-shell-false-$CI_JOB.yml" "$CI_JOB" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
