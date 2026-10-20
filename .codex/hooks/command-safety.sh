@@ -3,14 +3,25 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
-# summary: Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, literal cat bodies retain their data contract, and unknown receivers retain conservative shell-word detection. Unquoted body expansions are checked independently, and unsupported forwarded contexts retain conservative refusal. Only proven direct named-variable filters grant dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# description: On harnesses that execute hooks, refuse cat reads of the known ~/.fleet/env spellings. Refuse recognized whole-environment reads unless a proven direct pipe filters named variables. This fixed check runs outside Git and before project policy. Nested dumps and unsupported routing can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
+# summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses recognized whole-environment command text and gives a filter that names a variable. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
+# safety: Classify literal command producers and the program receiving inline code or registered heredoc input. Shells retain shell parsing, known interpreters use language-specific whole-environment evidence, literal cat bodies retain their data contract, and unknown receivers retain conservative shell-word detection. Unquoted body expansions are checked independently, and unsupported forwarded contexts retain conservative refusal. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Unseen programs and runtime-built names are outside this text check; unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
+
+# The reported private file is checked as text, without opening it or
+# evaluating submitted expansions. Filtering cannot make that read safe.
+environment_private_path() {
+  local path
+  for path in "$@"; do
+    case "$path" in '~/.fleet/env' | '$HOME/.fleet/env' | '${HOME}/.fleet/env') return 0 ;; esac
+    if [ -n "${HOME:-}" ] && [ "$path" = "$HOME/.fleet/env" ]; then return 0; fi
+  done
+  return 1
+}
 
 # This rule belongs to this hook, not the replaceable project pattern. No
 # harness output-rewrite interface can remove secrets before the transcript.
@@ -198,7 +209,8 @@ environment_producer() { # command kind, optional unsupported context and comman
             '\0:\n' | '\000:\n')
               if [ -n "$proc" ]; then mode=dump-lines; elif [ -z "$input_redirect" ]; then mode=convert; fi ;;
           esac
-        fi ;;
+        fi
+        if [ "$program" = cat ] && environment_private_path ${private_inputs[@]+"${private_inputs[@]}"} "${args[@]:pos}"; then mode=dump-unknown; fi ;;
       grep)
         filter_ok=1; pattern_count=0; pattern=""
         for ((j=pos; j<${#args[@]}; j++)); do
@@ -294,6 +306,7 @@ environment_main_command() { # command kind; arguments are already decoded data
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() origins=() evidence=()
+  local private_inputs=()
   local starts=() ends=() separators=() decisions=()
   if [ "$1" = argv ]; then
     tokens=(${command_argv[@]+"${command_argv[@]}"})
@@ -417,7 +430,7 @@ environment_main_command() { # command kind; arguments are already decoded data
   done
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); origins=()
-    proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; opaque_from=""
+    private_inputs=(); proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; opaque_from=""
     for ((j=start; j<end; j++)); do
       if [ "${kinds[$j]}" = operator ]; then
         fd=""; n=${#args[@]}
@@ -428,6 +441,7 @@ environment_main_command() { # command kind; arguments are already decoded data
         case "${tokens[$((j - 1))]}" in
           '<')
             input_redirect=1
+            private_inputs[${#private_inputs[@]}]=$target
             [ "${kinds[$j]:-}" != ansi-escaped ] || input_escaped=1
             [[ $target != /proc/*/environ ]] || proc=1 ;;
           '<&' | '<<') input_redirect=1 ;;
@@ -597,7 +611,8 @@ environment_main_command() { # command kind; arguments are already decoded data
             '\0:\n' | '\000:\n')
               if [ -n "$proc" ]; then mode=dump-lines; elif [ -z "$input_redirect" ]; then mode=convert; fi ;;
           esac
-        fi ;;
+        fi
+        if [ "$program" = cat ] && environment_private_path ${private_inputs[@]+"${private_inputs[@]}"} "${args[@]:pos}"; then mode=dump-unknown; fi ;;
       grep)
         filter_ok=1; pattern_count=0; pattern=""
         for ((j=pos; j<${#args[@]}; j++)); do
@@ -801,6 +816,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() arg_roles=() stage_roles=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() heredoc_starts=() body_ids=() stage_sources=() stage_stdin=() executable_texts=() executable_stages=()
   local body_decisions=()
+  local private_inputs=()
   local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() file_outputs=() executable_contexts=()
   if [ "${2:-}" = forwarded ]; then
     forwarded_argument=1
@@ -1014,7 +1030,7 @@ environment_dump() { # command kind; arguments are already decoded data
   if [ -n "$pipeline" ] && [ -n "$incoming_sources" ] && [ -n "$heredoc_input" ] && environment_main_evidence "$text" "${@:3}"; then return 0; fi
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=(); arg_roles=()
-    proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""; file_output=""; file_body=""; redirect_evidence=""
+    private_inputs=(); proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""; file_output=""; file_body=""; redirect_evidence=""
     for ((j=start; j<end; j++)); do
       case "${kinds[$j]}" in operator | operator-stderr | operator-explicit-other)
         fd=${kinds[$j]}
@@ -1022,6 +1038,7 @@ environment_dump() { # command kind; arguments are already decoded data
         case "${tokens[$((j - 1))]}" in
           '<' | '<>')
             input_redirect=1
+            private_inputs[${#private_inputs[@]}]=$target
             [ "${kinds[$j]:-}" != ansi-escaped ] || input_escaped=1
             [[ $target != /proc/*/environ ]] || proc=1
             [ "${tokens[$((j - 1))]}" != '<>' ] || output=1 ;;
@@ -1281,9 +1298,10 @@ refuse() { # KEY VALUE [CAUSE]
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
       refused=environment-dump)
-        echo "the command contains a recognized whole-environment read without a proven direct filter that names a variable"
-        echo "read named variables, for example: systemctl --user show-environment | grep '^NAME='"
-        echo "nested or unsupported routing can refuse conservatively; use the direct filtered form" ;;
+        echo "the command contains a recognized private-file read or a whole-environment read without a proven direct named-variable filter"
+        echo "for named non-secret settings, use orch-env NAME DEFAULT; do not read or filter the private file"
+        echo "for actual environment producers, read named variables, for example: systemctl --user show-environment | grep '^NAME='"
+        echo "nested or unsupported environment routing can refuse conservatively; use the direct filtered form for environment producers" ;;
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
         echo "run it with no memory cap, or with a cap in gigabytes; text that only mentions such a cap goes in a file, because matching reads the command text"
