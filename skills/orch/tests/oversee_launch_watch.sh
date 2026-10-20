@@ -146,6 +146,7 @@ FIXTURE_WATCH="$TMP_ROOT/fixture/oversee-watch"
 cat > "$FIXTURE_WATCH" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'rc=\$?; [[ -z "\${FIXTURE_STARTUP_STATUS:-}" ]] || printf "%s\\n" "\$rc" > "\$FIXTURE_STARTUP_STATUS"' EXIT
 source "$SRC_DIR/lib/watch-pid.sh"
 # The pid line the real watch adds to its job's record before anything else.
 if [[ -n "\${OVERSEE_WATCH_JOB_RECORD:-}" ]]; then
@@ -197,6 +198,7 @@ WATCH_ARGS="--repeat 60 --state $FLEET_STATE --since 2026-01-01T00:00:00Z --repo
 # added to its environment. Sets PRED and OLD.
 STAND_IN_ENV=()
 new_predecessor() {
+  local claim_rc=1 startup_exit=unread child_process=unread capture
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet
   rm -f -- "$FLEET_STATE"
@@ -204,17 +206,34 @@ new_predecessor() {
   PRED="$(recorded pane)"
   ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
   [[ "$RC" -eq 0 && "$PRED" == %* ]] || { printf 'fixture: the first launch failed\n%s\n' "$OUT" >&2; exit 1; }
+  # A previously stopped child can still finish after this setup starts.
+  capture="$(mktemp -d "$TMP_ROOT/stand-in.XXXXXX")" || exit 1
   # shellcheck disable=SC2086
   ( ( cd "${WATCH_START_CWD:-$TMP_ROOT/work}" || exit 1
-      exec env TMUX_PANE="${STAND_IN_PANE:-$PRED}" CLAUDE_CONFIG_DIR="$H/.claude-old" ${STAND_IN_ENV[@]+"${STAND_IN_ENV[@]}"} \
-        "$FIXTURE_WATCH" $WATCH_ARGS -- --model old --verbose </dev/null >/dev/null 2>&1 ) &
+      exec env TMUX_PANE="${STAND_IN_PANE:-$PRED}" CLAUDE_CONFIG_DIR="$H/.claude-old" FIXTURE_STARTUP_STATUS="$capture/exit" ${STAND_IN_ENV[@]+"${STAND_IN_ENV[@]}"} \
+        "$FIXTURE_WATCH" $WATCH_ARGS -- --model old --verbose ) </dev/null >"$capture/output" 2>&1 &
     echo $! > "$TMP_ROOT/stand-in.pid" )
   OLD="$(cat "$TMP_ROOT/stand-in.pid")"
   for _ in $(seq 1 50); do
-    if watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PID" == "$OLD" ]]; then return 0; fi
+    claim_rc=0
+    watch_pid_live "$FLEET_STATE" || claim_rc=$?
+    if [[ "$claim_rc" -eq 0 && "$WATCH_PID" == "$OLD" ]]; then return 0; fi
     sleep 0.1
   done
-  echo "fixture: the stand-in watch never recorded itself" >&2
+  # Read evidence before EXIT cleanup removes it; an unread fact is no cause.
+  startup_exit="$(cat "$capture/exit" 2>/dev/null)" || startup_exit=unread
+  child_process="$(ps -o stat= -o args= -p "$OLD" 2>&1)" || child_process="unread $child_process"
+  {
+    printf 'fixture: operation=new_predecessor step=claim child-pid=%s expected-pane=%s claim-result=%s claim-pid=%s claim-pane=%s startup-exit=%s\n' \
+      "$OLD" "${STAND_IN_PANE:-$PRED}" "$claim_rc" "${WATCH_PID:-unread}" "${WATCH_PANE:-unread}" "$startup_exit"
+    printf 'child-process=%s\n' "$child_process"
+    printf 'child-output-begin\n'
+    cat "$capture/output" || printf 'child-output=unread\n'
+    printf 'claim-record-begin\n'
+    cat "$WATCH_PID_FILE" 2>/dev/null || printf 'claim-record=unread\n'
+    printf 'watch-order-begin\n'
+    cat "$TMP_ROOT/watch.log" 2>/dev/null || printf 'watch-order=unread\n'
+  } >&2
   exit 1
 }
 started_line() { grep "^started $1 " "$TMP_ROOT/watch.log" | sed "s/^started $1 //"; }
@@ -1349,6 +1368,35 @@ for PI_RECOVERY in unchanged current; do
     "$PI_RECOVERY: account-free Pi public recovery regression" "$TMP_ROOT/pi-recovery-$PI_RECOVERY.out"
   ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
 done
+
+# A hand-started child can exit after its started event but before its claim.
+# Run this last: its real EXIT cleanup removes the evidence, leaving only
+# what new_predecessor printed. The planted defect stays in this private copy.
+FAILED_WATCH="$TMP_ROOT/startup-failure/oversee-watch"
+mkdir -p "${FAILED_WATCH%/*}"
+cp -p -- "$FIXTURE_WATCH" "$FAILED_WATCH"
+mutate_file "$FAILED_WATCH" 'watch_pid_write "$state" "${TMUX_PANE:-none}" "${OVERSEE_WATCH_ORIGIN:-hand}" "${FIXTURE_RECORD_SCRIPT:-$0}" "${base[@]}"' \
+  $'printf "fixture-startup stream=stdout pid=%s\\n" "$$"\nprintf "fixture-startup stream=stderr pid=%s\\n" "$$" >&2\nexit 37'
+STARTUP_RC=0
+STARTUP_OUT="$(
+  (
+    trap cleanup EXIT
+    FIXTURE_WATCH="$FAILED_WATCH"
+    STAND_IN_ENV=()
+    new_predecessor
+  ) 2>&1
+)" || STARTUP_RC=$?
+FAILED_CHILD="$(sed -n 's/^fixture: operation=new_predecessor step=claim child-pid=\([0-9]*\) .*/\1/p' <<<"$STARTUP_OUT")"
+assert_eq "$STARTUP_RC|$([[ "$FAILED_CHILD" =~ ^[1-9][0-9]*$ ]] && echo child || echo unread)|$([[ ! -e "$TMP_ROOT" ]] && echo removed || echo retained)" \
+  '1|child|removed' "a failed stand-in startup reports its operation and child before real cleanup"
+assert_contains "$STARTUP_OUT" 'claim-result=1 claim-pid=unread claim-pane=unread startup-exit=37' \
+  "the startup exit is available while the missing claim remains unread"
+for STARTUP_STREAM in stdout stderr; do
+  assert_contains "$STARTUP_OUT" "fixture-startup stream=$STARTUP_STREAM pid=$FAILED_CHILD" \
+    "the failed child's $STARTUP_STREAM survives cleanup"
+done
+assert_contains "$STARTUP_OUT" "started $FAILED_CHILD pane=" \
+  "the failed child's ordered startup event survives cleanup"
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
