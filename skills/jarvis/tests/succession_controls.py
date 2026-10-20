@@ -24,8 +24,8 @@ def main():
         source = skills / "jarvis/scripts/lib/session.py"
         controls = [("absent verb", "jarvis/scripts/lib/session.py", 'for verb in ("start", "status", "stop", "succeed", "report-due"):',
                      'for verb in ("start", "status", "stop"):', "test_succession_contract"),
-                    ("process identity", "jarvis/scripts/lib/session-backend.sh", '    lane_stop_identity "$1" "$2" "$3" ;;',
-                     '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" ;;', "test_succession_identity"),
+                    ("process identity", "jarvis/scripts/lib/session-backend.sh", '    lane_stop_identity "$1" "$2" "$3" || rc=$?',
+                     '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" || rc=$?', "test_succession_identity"),
                     ("walled account reused", "jarvis/scripts/lib/session.py",
                      'choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,\n                                             choice.get("model", ""), choice.get("effort", "")).stdout)',
                      'choice = {"harness": record["harness"], "account": record["account"], "model": "", "effort": ""}', "test_account_succession"),
