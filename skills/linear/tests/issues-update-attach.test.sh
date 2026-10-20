@@ -49,8 +49,8 @@ if grep -q '^upload-file = ' <<<"$config"; then
   headers="$(sed -n 's/^header = //p' <<<"$config" | jq -s .)"
   jq -cn --arg url "$url" --arg file "$file" --argjson headers "$headers" \
     '{put: {url: $url, file: $file, headers: $headers}}' >>"${CURL_LOG:?}"
-  printf '200'
-  exit 0
+  printf '%s' "${PUT_HTTP:-200}"
+  exit "${PUT_EXIT:-0}"
 fi
 
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
@@ -113,6 +113,7 @@ run_linear() {
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
+    PUT_HTTP="${PUT_HTTP:-200}" PUT_EXIT="${PUT_EXIT:-0}" \
     CURL_LOG="$CURL_LOG" \
     bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
@@ -162,6 +163,25 @@ assert_log "attachmentCreate carries the issue uuid and asset url" \
     and .variables.input.title == "notes.pdf")'
 assert_jq "an attach-only update reports success and the identifier" \
   "$OUT" '.success == true and .identifier == "TEAM-9"'
+
+# The existing storage PUT producer can fail before HTTP or after a response.
+while IFS='|' read -r name PUT_HTTP PUT_EXIT expected_http; do
+  run_linear issues update TEAM-9 --attach "$TMP_ROOT/notes.pdf"
+  assert_ne "$name: PUT failure fails the caller" "$RC" 0
+  assert_eq "$name: no success output" "$OUT" ''
+  assert_jq "$name: safe PUT diagnostic" "$(jq -sc 'map(select(has("curl_exit")))' <<<"$ERR")" \
+    "length == 1 and .[0].http_code == \"$expected_http\" and .[0].curl_exit == $PUT_EXIT"
+  assert_not_log "$name: no attachment record after failed PUT" \
+    'any(.[]; .query? // "" | contains("attachmentCreate"))'
+  assert_not_contains "$name: signed URL stays private" "$OUT$ERR" 'https://uploads.linear.app/put/notes.pdf'
+  assert_not_contains "$name: signed header stays private" "$OUT$ERR" 'signed-notes.pdf'
+done <<'CASES'
+connection|000|7|000
+local-read|000|26|000
+http-rejected|403|0|403
+response-then-failure|200|26|000
+CASES
+unset PUT_HTTP PUT_EXIT
 
 mkdir -p "$PROJECT/docs/research/TEAM-9"
 printf 'Research notes.' >"$PROJECT/docs/research/TEAM-9/findings.md"

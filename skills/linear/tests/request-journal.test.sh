@@ -54,12 +54,14 @@ renewal:graphql:2|download:download:2|download-budget:download:2) code=401 ;;
 rate:graphql:*) code=400 ;;
 write:graphql:*) code=503 ;;
 transport:graphql:*) code=000 ;;
+upload-transport:upload:*) code=000 ;;
+upload-http:upload:*) code=403 ;;
 esac
 exact=true
 if [[ "$kind" == upload && "$config" != *'signed-upload-fixture'* ]]; then exact=false; fi
 jq -cn --arg kind "$kind" --arg code "$code" --argjson exact "$exact" \
     '{transport:$kind,status:$code,exact_upload_header:$exact}' >>"$LOG/attempts"
-[[ "$code" != 000 ]] || exit 7
+[[ "$code" != 000 || "$kind" == upload ]] || exit 7
 format='%{http_code}'
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -76,6 +78,7 @@ if [[ "$config" == *'dump-header'* ]]; then
     fi
     printf 'X-RateLimit-Invalid: private-invalid-value\r\n\r\n'
 fi
+[[ "$code" != 000 ]] || exit 7
 if [[ "$kind" == mint ]]; then
     printf '{"access_token":"private-minted-token-%s","token_type":"Bearer","expires_in":3600}' "$n"
 elif [[ "$kind" == graphql ]]; then
@@ -115,6 +118,8 @@ for row in \
     'download|download|5|5|0|active|[["mint",0,1],["download",0,1],["download",0,2],["mint",0,1],["download",1,1]]|3' \
     'download-budget|download|6|6|1|active|[["mint",0,1],["download",0,1],["download",0,2],["mint",0,1],["download",1,1],["download",1,2]]|3' \
     'upload|upload|4|4|0|active||4' \
+    'upload-transport|upload|3|3|1|active||3' \
+    'upload-http|upload|3|3|1|active||3' \
     'missing|auth|1|1|0|active' \
     'changed|auth|1|1|0|active' \
     'cap|auth|1|0|0|byte-cap' \
@@ -206,8 +211,17 @@ for row in \
         assert_jq "$MODE: renewal cause is recorded" "$all" 'any(.[]; .transport == "mint" and .cause == "401-renewal") and any(.[]; .authorization_phase == 1)' ;;
     missing)
         assert_jq 'missing: complexity and caller coverage stay explicit' "$summary" '.totals.complexity_measured == 0 and .totals.complexity_missing == 1 and .totals.known_complexity == 0 and .totals.item_known == 0 and .totals.caller_supplied == 0' ;;
-    upload)
-        assert_jq 'upload: exact signed headers still reach storage' "$(jq -s . "$LOG/attempts")" 'all(.[]; .exact_upload_header)' ;;
+    upload|upload-transport|upload-http)
+        assert_jq "$MODE: exact signed headers still reach storage" "$(jq -s . "$LOG/attempts")" 'all(.[]; .exact_upload_header)'
+        if [[ "$MODE" != upload ]]; then
+            expected_code=403 expected_exit=0
+            [[ "$MODE" != upload-transport ]] || { expected_code=000; expected_exit=7; }
+            assert_jq "$MODE: safe PUT diagnostic" "$(jq -sc 'map(select(has("curl_exit")))' "$LOG/err")" \
+                "length == 1 and .[0].http_code == \"$expected_code\" and .[0].curl_exit == $expected_exit"
+            assert_eq "$MODE: no success output" "$(cat "$LOG/out")" ''
+            assert_not_contains "$MODE: signed URL stays private" "$(cat "$LOG/err")" 'https://storage.invalid/private-signed-url'
+            assert_not_contains "$MODE: signed header stays private" "$(cat "$LOG/err")" 'signed-upload-fixture'
+        fi ;;
     expiry)
         assert_eq 'expired session records no further attempts' "$(wc -c <"$JOURNAL/attempts.jsonl" | tr -d ' ')" 0
         assert_jq 'expiry: read explains incomplete attempt and process coverage' "$summary" '.complete and (.limitations | length > 0)' ;;

@@ -138,25 +138,29 @@ attach_upload_file() {
         put_config_lines+=("header = $(curl_config_quote "$header_line")")
     done < <(echo "$result" | jq -r '.fileUpload.uploadFile.headers // [] | .[] | "\(.key): \(.value)"')
 
-    local http_code raw headers delimiter=___HTTP_CODE___
+    local http_code raw headers curl_exit=0 delimiter=___HTTP_CODE___
     local _LJ_TRANSPORT=upload _LJ_OPERATION=attachment-upload _LJ_METHOD=PUT
     local _LJ_REQUEST_ID="$BASHPID-$RANDOM-$RANDOM" _LJ_PHASE=0 _LJ_CAUSE=request
     if [[ -n "${LINEAR_JOURNAL_DIR:-}" ]]; then
-        if ! raw=$(printf '%s\n' "${put_config_lines[@]}" 'dump-header = "-"' |
-            curl -s -o /dev/null -w "${delimiter}%{http_code}" -K -); then
+        raw=$(printf '%s\n' "${put_config_lines[@]}" 'dump-header = "-"' |
+            curl -s -o /dev/null -w "${delimiter}%{http_code}" -K -) || {
+            curl_exit=$?
             raw="${delimiter}000"
-        fi
+        }
         http_code="${raw##*"$delimiter"}"
         headers="${raw%"$delimiter"*}"
         linear_journal_record "$http_code" "$headers" 1
-    elif ! http_code=$(printf '%s\n' "${put_config_lines[@]}" | curl -s -o /dev/null -w "%{http_code}" -K -); then
-        http_code=000
+    else
+        http_code=$(printf '%s\n' "${put_config_lines[@]}" | curl -s -o /dev/null -w "%{http_code}" -K -) || {
+            curl_exit=$?
+            http_code=000
+        }
     fi
     case "$http_code" in
     2??) ;;
     *)
-        jq -cn --arg path "$file_path" --arg code "$http_code" \
-            '{error: ("Upload PUT failed for --attach path: " + $path + " (HTTP " + $code + ")")}' >&2
+        jq -cn --arg path "$file_path" --arg code "$http_code" --argjson curl_exit "$curl_exit" \
+            '{error: ("Upload PUT failed for --attach path: " + $path + " (HTTP " + $code + ", curl exit " + ($curl_exit | tostring) + ")"), http_code: $code, curl_exit: $curl_exit}' >&2
         return 1
         ;;
     esac

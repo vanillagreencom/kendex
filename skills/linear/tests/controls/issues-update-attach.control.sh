@@ -20,3 +20,8 @@ control_expect "missing bulk UUID: lookup is the only request, with no upload or
 control_replace scripts/commands/issues.sh 1 \
     '    if ! jq -e '\''.issue.id | strings | select(length > 0)'\'' <<<"$result" >/dev/null; then' \
     '    if false && ! jq -e '\''.issue.id | strings | select(length > 0)'\'' <<<"$result" >/dev/null; then'
+
+control_expect 'connection: safe PUT diagnostic'
+control_replace scripts/lib/attachments.sh 2 \
+    '            curl_exit=$?' \
+    '            curl_exit=0'
