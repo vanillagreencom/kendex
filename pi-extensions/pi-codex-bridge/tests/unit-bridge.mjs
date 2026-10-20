@@ -152,6 +152,9 @@ for (const row of [
 				else { client.text("answer", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); }
 				return { turn: { id: TURN } };
 			},
+			// A continuation the row should not make completes, so the row fails on
+			// its thread assertions rather than waiting.
+			"turn/steer": (params) => { client.complete(TURN, "completed", params.threadId); return { turnId: params.expectedTurnId }; },
 		});
 		// A two-batch turn: Codex calls again once the first call has its result.
 		client.on("responded", (id, result) => { if (id === "rpc-1" && row.calls === 2 && result.success) client.toolCall("rpc-2", "call-2"); });
