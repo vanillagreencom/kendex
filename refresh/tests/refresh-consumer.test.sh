@@ -664,7 +664,12 @@ catalog_refresh_matches() { # EXPECTED
       [ "$RC" -eq 0 ] && [ "$calls" = $'refresh --scope project --yes --leave|main\nrefresh --scope project --yes --leave|v7.8.9' ] &&
         [ "$(grep -c '^catalog-held ' <<<"$OUT")" -eq 1 ] &&
         grep -qxF 'catalog-held min=7.9.0 engine=7.8.9' <<<"$OUT" &&
-        grep -qF 'catalog-held min=7.9.0 engine=7.8.9' "$TMP/state/body" ;;
+        grep -qF 'catalog-held min=7.9.0 engine=7.8.9' "$TMP/state/summary" &&
+        grep -qxF "refresh-state=unchanged pr=1 class=render head=$catalog_head published=false" <<<"$OUT" &&
+        grep -qF "$catalog_head" "$TMP/state/summary" &&
+        [ "$catalog_head" = "$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" ] &&
+        ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls" &&
+        [ ! -e "$TMP/state/arm-attempted" ] ;;
     refused)
       [ "$RC" -eq 1 ] && [ "$calls" = 'refresh --scope project --yes --leave|main' ] &&
         ! grep -q '^catalog-held ' <<<"$OUT" &&
@@ -688,6 +693,10 @@ while IFS='|' read -r name main_error release_error revision expected; do
   [ -z "$main_error" ] || printf '%s\n' "$main_error" >"$TMP/state/catalog-main-error"
   [ -z "$release_error" ] || printf '%s\n' "$release_error" >"$TMP/state/catalog-release-error"
   CATALOG_REV="$revision"
+  if [ "$expected" = release ]; then
+    catalog_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  fi
+  : >"$TMP/state/calls"
   run_refresh catalog-update pass render
   unset CATALOG_REV
   if catalog_refresh_matches "$expected"; then ok "$name"; else bad "$name" "$OUT"; fi
@@ -735,6 +744,8 @@ FALLBACK_CONTROL
       CATALOG_REV=v7.8.9 expected=selected-refused
       printf 'Error: catalog-needs-engine min=7.9.0 engine=7.8.9\n' >"$TMP/state/catalog-release-error" ;;
   esac
+  catalog_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  : >"$TMP/state/calls"
   run_refresh catalog-update pass render
   unset CATALOG_REV
   if ! catalog_refresh_matches "$expected"; then ok "control: $mutation turns the catalog row red"
@@ -1354,8 +1365,23 @@ for mode in absent absent-control current current-control; do
       file_edit "$repo" refresh/refresh-consumer.sh 1 \
         '^if \[ -f kendex\.settings\.toml \]; then$' 's/^if \[ -f kendex\.settings\.toml \]; then$/if true; then # &/' ;;
     current-control)
-      file_edit "$repo" refresh/refresh-consumer.sh 1 \
-        '^  \[ -z "\$settings_report" \] \|\| ' 's/^  \[ -z "\$settings_report" \] || /  : # &/' ;;
+      python3 - "$runner" <<'CURRENT_SUMMARY_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+text = path.read_text()
+start = 'if git diff --cached --quiet; then\n'
+assert text.count(start) == 1
+offset = text.index(start)
+end = text.index('\nfi\n', offset) + len('\nfi\n')
+current = text[offset:end]
+old = '  [ -z "$settings_report" ] || '
+assert current.count(old) == 1
+changed = text[:offset] + current.replace(old, '  : # ' + old) + text[end:]
+assert changed != text
+path.write_text(changed)
+CURRENT_SUMMARY_CONTROL
+      ;;
   esac
   commit "$repo"
   git -C "$repo" push -q origin main
