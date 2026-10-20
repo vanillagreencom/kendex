@@ -1,12 +1,12 @@
 // A stand-in `codex` executable written into a test's scratch directory: it
-// answers `--version` with the given version and, as `app-server`, records
-// its pid, optionally answers the handshake and `model/list`, ignores SIGTERM,
-// or starts a helper in its own process group that outlives stdin EOF, the
-// way Codex starts a stdio MCP server.
+// answers `--version` with the given version, or stalls on it, and, as
+// `app-server`, records its pid, optionally answers the handshake and
+// `model/list`, ignores SIGTERM, or starts a helper in its own process group
+// that outlives stdin EOF, the way Codex starts a stdio MCP server.
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export function writeStubCodex(dir, { version = "0.163.0", answer = true, ignoreTerm = false, helper = false } = {}) {
+export function writeStubCodex(dir, { version = "0.163.0", versionStall = false, answer = true, ignoreTerm = false, helper = false } = {}) {
 	const path = join(dir, "codex");
 	const source = `#!${process.execPath}
 import { spawn } from "node:child_process";
@@ -14,6 +14,7 @@ import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 const dir = ${JSON.stringify(dir)};
 if (process.argv.includes("--version")) {
+	if (${versionStall}) await new Promise(() => setInterval(() => undefined, 1000));
 	process.stdout.write(${JSON.stringify(`codex-cli ${version}\n`)});
 	process.exit(0);
 }

@@ -614,10 +614,10 @@ async function assertSupportedCodex(launch, signal) {
       env: codexChildEnvironment(launch.codexHome, launch.env),
       encoding: "utf8",
       maxBuffer: 4096,
-      timeout: launch.handshakeTimeoutMs,
       signal
     }));
   } catch (error) {
+    if (signal?.aborted) throw signal.reason;
     throw new Error(`codex-version-unreadable executable=${launch.executable} code=${error.code ?? "unknown"}`);
   }
   const found = decodeVersion(stdout);
@@ -626,35 +626,35 @@ async function assertSupportedCodex(launch, signal) {
   }
 }
 async function startAppServer(launch, signal, spawn = nodeSpawn) {
-  await assertSupportedCodex(launch, signal);
-  signal.throwIfAborted();
-  const group = process.platform !== "win32";
-  const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
-    cwd: launch.cwd,
-    env: codexChildEnvironment(launch.codexHome, launch.env),
-    detached: group,
-    windowsHide: true
-  });
-  const client = new CodexProtocolClient(child, group);
-  const stop = () => void client.kill(signal.reason instanceof Error ? signal.reason : new Error("codex-request-aborted"));
-  signal.addEventListener("abort", stop, { once: true });
-  let timer;
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error(`codex-handshake-timeout after_ms=${launch.handshakeTimeoutMs}`)), launch.handshakeTimeoutMs);
+  const stopped = AbortSignal.any([signal, deadline.signal]);
   try {
-    await Promise.race([
-      client.request("initialize", INITIALIZE_PARAMS),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`codex-handshake-timeout after_ms=${launch.handshakeTimeoutMs}`)), launch.handshakeTimeoutMs);
-      })
-    ]);
-  } catch (error) {
-    await client.kill(error);
-    throw error;
+    await assertSupportedCodex(launch, stopped);
+    stopped.throwIfAborted();
+    const group = process.platform !== "win32";
+    const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
+      cwd: launch.cwd,
+      env: codexChildEnvironment(launch.codexHome, launch.env),
+      detached: group,
+      windowsHide: true
+    });
+    const client = new CodexProtocolClient(child, group);
+    const stop = () => void client.kill(stopped.reason instanceof Error ? stopped.reason : new Error("codex-request-aborted"));
+    stopped.addEventListener("abort", stop, { once: true });
+    try {
+      await client.request("initialize", INITIALIZE_PARAMS);
+    } catch (error) {
+      await client.kill(error);
+      throw error;
+    } finally {
+      stopped.removeEventListener("abort", stop);
+    }
+    client.notify("initialized");
+    return client;
   } finally {
     clearTimeout(timer);
-    signal.removeEventListener("abort", stop);
   }
-  client.notify("initialized");
-  return client;
 }
 async function listCodexModels(client) {
   const models = [];
@@ -849,6 +849,9 @@ var ThreadQueue = class {
     return head;
   }
 };
+var NO_CLIENT = { kind: "none" };
+function ignore() {
+}
 function emptyUsage() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 }
@@ -859,12 +862,10 @@ var CodexBridge = class {
   codexHome;
   #launch;
   #connect;
-  #client;
-  /** Aborts the open that #client stands for, which stops its child. */
-  #opening;
-  #current;
-  /** Children being stopped; close waits for each. */
+  #state = NO_CLIENT;
+  /** Children being stopped, and opens being aborted; close waits for each. */
   #stopping = /* @__PURE__ */ new Set();
+  /** The threads of the current client; its teardown drops them. */
   #threads = /* @__PURE__ */ new Map();
   constructor(options) {
     this.codexHome = options.codexHome;
@@ -893,7 +894,7 @@ var CodexBridge = class {
       timer = setTimeout(() => reject(new Error(`codex-discovery-timeout after_ms=${deadlineMs}`)), deadlineMs);
     });
     try {
-      const client = await Promise.race([this.#client ??= this.#open(), deadline]);
+      const client = await Promise.race([this.#client(), deadline]);
       return { models: await Promise.race([listCodexModels(client), deadline]) };
     } catch (error) {
       void this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
@@ -902,64 +903,66 @@ var CodexBridge = class {
       clearTimeout(timer);
     }
   }
-  /** Stop the child, and every stream on it, and wait for the child to exit. */
+  /** Stop the child, and every stream on it, and wait for the child to exit,
+   * a child still in its handshake included. */
   async close() {
-    await this.#closeClient(new Error("codex-bridge-closed"));
-    this.#threads.clear();
+    void this.#closeClient(new Error("codex-bridge-closed"));
     await Promise.all(this.#stopping);
   }
-  #stop(client, reason) {
-    const stopped = Promise.resolve(client.kill(reason)).finally(() => this.#stopping.delete(stopped));
-    this.#stopping.add(stopped);
-    return stopped;
+  #track(stopped) {
+    const tracked = stopped.finally(() => this.#stopping.delete(tracked));
+    this.#stopping.add(tracked);
+    return tracked;
   }
   // --- Client and router ---------------------------------------------------
-  #open() {
+  /** The current client, opening one when there is none. */
+  #client() {
+    if (this.#state.kind !== "none") return this.#state.promise;
     const controller = new AbortController();
-    this.#opening = controller;
-    const opening = this.#connect(this.#launch, controller.signal).then((client) => {
-      if (this.#client !== opening) {
-        void this.#stop(client, new Error("codex-bridge-closed"));
-        throw new Error("codex-bridge-closed");
+    const promise = this.#connect(this.#launch, controller.signal).then(
+      (client) => this.#adopt(controller, client),
+      (error) => {
+        if (this.#state.kind === "opening" && this.#state.controller === controller) this.#state = NO_CLIENT;
+        throw error;
       }
-      this.#opening = void 0;
-      this.#current = client;
-      client.on("request", (frame) => this.#onRequest(client, frame));
-      client.on("notification", (frame) => this.#onNotification(client, frame));
-      client.on("closed", (error) => this.#onClosed(client, error));
-      return client;
-    });
-    opening.catch(() => {
-      if (this.#client === opening) {
-        this.#client = void 0;
-        this.#opening = void 0;
-      }
-    });
-    return opening;
+    );
+    this.#state = { kind: "opening", controller, promise };
+    return promise;
   }
-  /** Release the client: abort an open still in its handshake, which stops
-   * that child, or stop the connected child. */
-  async #closeClient(reason) {
-    const opening = this.#opening;
-    const current = this.#current;
-    this.#client = void 0;
-    this.#opening = void 0;
-    this.#current = void 0;
-    opening?.abort(reason);
-    if (current !== void 0) await this.#stop(current, reason);
+  /** Take a client whose handshake ended. An open the bridge released while
+   * it ran stops its child before it settles, so close can wait for it. */
+  async #adopt(controller, client) {
+    const state = this.#state;
+    if (state.kind !== "opening" || state.controller !== controller) {
+      const reason = controller.signal.reason instanceof Error ? controller.signal.reason : new Error("codex-bridge-closed");
+      await client.kill(reason);
+      throw reason;
+    }
+    this.#state = { kind: "open", client, promise: state.promise };
+    client.on("request", (frame) => this.#onRequest(client, frame));
+    client.on("notification", (frame) => this.#onNotification(client, frame));
+    client.on("closed", (error) => void this.#closeClient(error, client));
+    return client;
   }
-  #onClosed(client, error) {
-    if (this.#current !== client) return;
-    void this.#stop(client, error);
-    this.#current = void 0;
-    this.#client = void 0;
-    for (const record of this.#threads.values()) record.queue.push({ kind: "refusal", error, turnId: null });
+  /**
+   * The one teardown of a client. It refuses every stream on the client and
+   * drops the client's thread records, then aborts an open still in its
+   * handshake, which stops that child, or stops the connected child. `close`
+   * waits for either. `from` names the client a breach or an exit concerns: a
+   * client the bridge already released is only stopped.
+   */
+  #closeClient(reason, from) {
+    const state = this.#state;
+    if (from !== void 0 && (state.kind !== "open" || state.client !== from)) return this.#track(from.kill(reason));
+    this.#state = NO_CLIENT;
+    for (const record of this.#threads.values()) record.queue.push({ kind: "refusal", error: reason, turnId: null });
     this.#threads.clear();
-  }
-  /** A guard that cannot be held by refusing one turn: fail every stream on
-   * the child and stop it (see ProtocolClient.kill for what that reaches). */
-  #breach(client, error) {
-    void this.#stop(client, error);
+    if (state.kind === "none") return Promise.resolve();
+    if (state.kind === "opening") {
+      state.controller.abort(reason);
+      return this.#track(state.promise.then(ignore, ignore));
+    }
+    return this.#track(state.client.kill(reason));
   }
   /** Stop the record's active turn. Codex refusing that while the client is
    * open leaves a turn running that the bridge cannot stop: a breach. */
@@ -969,7 +972,7 @@ var CodexBridge = class {
     record.interruptedTurnId = turnId;
     void client.request("turn/interrupt", { threadId: record.threadId, turnId }).catch((error) => {
       if (error instanceof CodexRequestError && error.kind === "no-active-turn") return;
-      if (this.#current === client) this.#breach(client, new Error(`codex-interrupt-failed thread=${record.threadId} turn=${turnId}`));
+      void this.#closeClient(new Error(`codex-interrupt-failed thread=${record.threadId} turn=${turnId}`), client);
     });
   }
   /** Refuse the turn a server request belongs to; a request no thread of
@@ -978,7 +981,7 @@ var CodexBridge = class {
     const records = threadId === null ? [...this.#threads.values()].filter((record) => record.activeTurnId !== null) : [this.#threads.get(threadId)];
     for (const record of records) {
       if (record === void 0) {
-        this.#breach(client, new Error(`codex-foreign-thread thread=${threadId}`));
+        void this.#closeClient(new Error(`codex-foreign-thread thread=${threadId}`), client);
         return;
       }
       this.#interrupt(client, record);
@@ -990,18 +993,18 @@ var CodexBridge = class {
     try {
       event = decodeEvent(frame.method, frame.params);
     } catch (error) {
-      this.#breach(client, error);
+      void this.#closeClient(error, client);
       return;
     }
     if (event.type === "ignored") return;
     if (event.type === "mcpStartup") {
-      if (event.status === "starting") this.#breach(client, new Error(`codex-mcp-started name=${event.name}`));
+      if (event.status === "starting") void this.#closeClient(new Error(`codex-mcp-started name=${event.name}`), client);
       return;
     }
     const record = this.#threads.get(event.threadId);
     if (record === void 0) {
       if (event.type === "turnStarted" || event.type === "itemStarted") {
-        this.#breach(client, new Error(`codex-foreign-thread thread=${event.threadId}`));
+        void this.#closeClient(new Error(`codex-foreign-thread thread=${event.threadId}`), client);
       }
       return;
     }
@@ -1026,7 +1029,7 @@ var CodexBridge = class {
       const record = this.#threads.get(call.threadId);
       if (record === void 0) {
         client.respondError(id, -32602, "codex-tool-call-refused");
-        this.#breach(client, new Error(`codex-foreign-thread thread=${call.threadId}`));
+        void this.#closeClient(new Error(`codex-foreign-thread thread=${call.threadId}`), client);
         return;
       }
       record.queue.push({ kind: "toolCall", requestId: id, call, raw: frame });
@@ -1058,25 +1061,35 @@ var CodexBridge = class {
       this.#threads.delete(idle.threadId);
     }
   }
+  /** A new record, claimed by the stream that asked for it. */
   #record(threadId, tools, lastTurnId) {
-    return { threadId, tools, lastTurnId, activeTurnId: null, interruptedTurnId: null, pending: [], queue: new ThreadQueue(), streaming: false, lastUsed: Date.now() };
+    return { threadId, tools, lastTurnId, activeTurnId: null, interruptedTurnId: null, pending: [], queue: new ThreadQueue(), streaming: true, lastUsed: Date.now() };
   }
   /** Answer a turn the bridge no longer continues, so Codex does not wait on
-   * it, and stop it. */
+   * it, and stop it. A record the bridge dropped went with its stopped child. */
   #abandon(client, record) {
+    if (record.activeTurnId === null || this.#threads.get(record.threadId) !== record) return;
     for (const answer of answerToolCalls(record.pending, [])) client.respond(answer.requestId, answer.result);
     record.pending = [];
     this.#interrupt(client, record);
     record.activeTurnId = null;
   }
+  /** End a claim whose stream has ended: stop its turn and free the thread. */
+  #release(client, record) {
+    this.#abandon(client, record);
+    record.streaming = false;
+  }
   /** Names only: `config/read` is decoded to the configured MCP server names
-   * inside its own parse. A read that fails refuses the thread. */
+   * inside its own parse. A read that fails refuses the thread. Only Codex's
+   * own error reply means it could not load its configuration; a closed
+   * client or a malformed reply keeps its own key. */
   async #mcpServerNames(client) {
     try {
       return await client.requestDecoded("config/read", { cwd: this.#launch.cwd }, decodeMcpServerNames);
     } catch (error) {
+      if (!(error instanceof CodexRequestError)) throw error;
       throw new Error(`codex-mcp-names-unread
-${firstLine(error)}
+${error.message}
 Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`codex\` with that CODEX_HOME to see the error.`);
     }
   }
@@ -1154,7 +1167,8 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
    * thread's latest turn is that turn. Otherwise it starts a new thread and
    * replays the transcript, so Codex never holds turns Pi has dropped, misses
    * another model's turns, or calls a tool Pi no longer has. Any turn the plan
-   * does not continue is abandoned, so Codex is not left waiting on it.
+   * does not continue is abandoned, so Codex is not left waiting on it. The
+   * plan's record comes claimed by the calling stream.
    */
   async #plan(client, model, messages, tools) {
     const boundary = findBoundary(messages);
@@ -1170,6 +1184,7 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
         plan = { record, mode: "turn", input: after.input };
       }
     }
+    if (plan !== void 0) plan.record.streaming = true;
     for (const other of this.#threads.values()) {
       if (other !== plan?.record && other.activeTurnId !== null && !other.streaming) this.#abandon(client, other);
     }
@@ -1193,70 +1208,82 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
       stopReason: "pending",
       timestamp: Date.now()
     };
-    let record;
-    let client;
-    let owned = false;
     const signal = options?.signal;
+    let client;
+    let record;
+    let handedOver = false;
+    let reading = false;
     let rejectAborted;
     const aborted = new Promise((_, reject) => rejectAborted = reject);
-    aborted.catch(() => void 0);
+    aborted.catch(ignore);
+    const untilAborted = (work) => {
+      work.catch(ignore);
+      return signal?.aborted ? aborted : Promise.race([work, aborted]);
+    };
     const onAbort = () => {
       const error = new Error("codex-request-aborted");
       rejectAborted?.(error);
-      if (client === void 0 || record === void 0 || !owned || record.activeTurnId === null) return;
-      this.#interrupt(client, record);
-      record.queue.push({ kind: "refusal", error, turnId: record.activeTurnId });
+      if (reading && record !== void 0 && record.activeTurnId !== null) record.queue.push({ kind: "refusal", error, turnId: record.activeTurnId });
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
       if (signal?.aborted) throw new Error("codex-request-aborted");
       const messages = collapseSystemMessages(context).messages;
       const tools = buildDynamicTools(getCurrentTools(messages));
-      client = await Promise.race([this.#client ??= this.#open(), aborted]);
-      const plan = await Promise.race([this.#plan(client, model, messages, tools), aborted]);
-      record = plan.record;
-      record.streaming = true;
-      owned = true;
-      record.lastUsed = Date.now();
+      const open = await untilAborted(this.#client());
+      client = open;
+      const planning = this.#plan(open, model, messages, tools);
+      const plan = await untilAborted(planning).catch((error) => {
+        void planning.then((late) => this.#release(open, late.record), ignore);
+        throw error;
+      });
+      const claimed = plan.record;
+      record = claimed;
+      claimed.lastUsed = Date.now();
       if (plan.mode === "continue") {
         const payload = { method: "item/tool/call", answers: plan.answers, steer: plan.input };
-        const sent = await options?.onPayload?.(payload, model) ?? payload;
-        for (const answer of sent.answers) client.respond(answer.requestId, answer.result);
-        record.pending = [];
+        const sent = await untilAborted(Promise.resolve(options?.onPayload?.(payload, model))) ?? payload;
+        for (const answer of sent.answers) open.respond(answer.requestId, answer.result);
+        claimed.pending = [];
         if (sent.steer.length > 0) {
-          await client.request("turn/steer", { threadId: record.threadId, expectedTurnId: record.activeTurnId, input: sent.steer });
+          await untilAborted(open.request("turn/steer", { threadId: claimed.threadId, expectedTurnId: claimed.activeTurnId, input: sent.steer }));
         }
       } else {
         if (plan.input.length === 0) throw new Error("codex-turn-input-empty");
         const effort = codexEffort(model, options?.reasoning);
         const params = {
-          threadId: record.threadId,
+          threadId: claimed.threadId,
           input: plan.input,
           model: model.id,
           approvalPolicy: APPROVAL_POLICY,
           environments: [],
           ...effort === null ? {} : { effort }
         };
-        const sent = await options?.onPayload?.(params, model) ?? params;
-        const { turnId } = await client.requestDecoded("turn/start", sent, decodeTurnStart);
-        record.activeTurnId = turnId;
-        record.lastTurnId = turnId;
+        const sent = await untilAborted(Promise.resolve(options?.onPayload?.(params, model))) ?? params;
+        const starting = open.requestDecoded("turn/start", sent, decodeTurnStart).then(({ turnId }) => {
+          claimed.activeTurnId = turnId;
+          claimed.lastTurnId = turnId;
+        });
+        await untilAborted(starting).catch((error) => {
+          handedOver = true;
+          void starting.then(ignore, ignore).then(() => this.#release(open, claimed));
+          throw error;
+        });
       }
-      await options?.onResponse?.({ status: 200, headers: {} }, model);
-      output.responseId = encodeResponseId(record.threadId, record.activeTurnId, tools.signature);
-      if (signal?.aborted) throw new Error("codex-request-aborted");
+      await untilAborted(Promise.resolve(options?.onResponse?.({ status: 200, headers: {} }, model)));
+      output.responseId = encodeResponseId(claimed.threadId, claimed.activeTurnId, tools.signature);
       stream.push({ type: "start", partial: output });
-      await this.#consume(stream, output, model, record, options);
+      reading = true;
+      await this.#consume(stream, output, model, claimed, options);
     } catch (error) {
-      if (client === void 0 && signal?.aborted) void this.#closeClient(new Error("codex-request-aborted"));
-      if (client !== void 0 && record !== void 0 && owned && record.activeTurnId !== null) this.#abandon(client, record);
+      if (client !== void 0 && record !== void 0 && !handedOver) this.#abandon(client, record);
       output.stopReason = signal?.aborted ? "aborted" : "error";
       output.errorMessage = error instanceof Error ? error.message : "codex-bridge-error";
       stream.push({ type: "error", reason: output.stopReason, error: output });
       stream.end();
     } finally {
       signal?.removeEventListener("abort", onAbort);
-      if (record !== void 0 && owned) record.streaming = false;
+      if (record !== void 0 && !handedOver) record.streaming = false;
     }
   }
   /** Read the thread's queue until the turn completes or Codex waits on a

@@ -73,13 +73,51 @@ test("a call Pi's transcript has no result for is answered as lost", async () =>
 	const bridge = bridgeFor(client);
 	const first = await finish(bridge.streamSimple(model, { messages: [system(), user("Read the file")] }));
 	assert.equal(first.reason, "toolUse");
-	// The user aborted while the tool ran and wrote again: no tool result.
+	// The user wrote again and the transcript holds no result for the call.
 	const next = await finish(bridge.streamSimple(model, { messages: [system(), user("Read the file"), first.message, user("Never mind", 4)] }));
 	assert.equal(next.reason, "stop");
 	assert.deepEqual(client.responses, [["rpc-1", { contentItems: [{ type: "inputText", text: LOST_TOOL_RESULT_TEXT }], success: false }]]);
 	const [[, steer]] = methods(client, "turn/steer");
 	assert.deepEqual(steer.input, [{ type: "text", text: "Never mind", text_elements: [] }]);
 	assert.equal(steer.expectedTurnId, TURN);
+	await bridge.close();
+});
+
+// Esc during a tool: Pi records an aborted result for the call, then calls
+// the stream again with the aborted signal. The bridge's child outlives that
+// stream, and the next prompt abandons the open call on the same child.
+test("an abort during a tool keeps the child, and the next prompt answers the open call as lost on it", { timeout: 5000 }, async () => {
+	const clients = [];
+	let threads = 0;
+	const connect = async () => {
+		const client = new FakeClient({
+			"thread/start": () => ({ thread: { id: `thread-${++threads}` } }),
+			"turn/start": (params) => {
+				if (params.threadId === "thread-1") client.toolCall("rpc-1", "call-1");
+				else { client.text("next", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); }
+				return { turn: { id: TURN } };
+			},
+		});
+		clients.push(client);
+		return client;
+	};
+	const bridge = new CodexBridge({ codexHome, cwd: "/workspace", connect });
+	const transcript = [system(), user("Read the file")];
+	const first = await finish(bridge.streamSimple(model, { messages: transcript }));
+	assert.equal(first.reason, "toolUse");
+	transcript.push(first.message, { ...toolResult("call-1", "Operation aborted"), isError: true });
+	const abort = new AbortController();
+	abort.abort();
+	const stopped = await finish(bridge.streamSimple(model, { messages: transcript }, { signal: abort.signal }));
+	assert.equal(stopped.reason, "aborted");
+	assert.equal(clients.length, 1);
+	assert.equal(clients[0].killed, undefined);
+	transcript.push(stopped.error, user("Next", 4));
+	const next = await finish(bridge.streamSimple(model, { messages: transcript }));
+	assert.equal(next.reason, "stop", next.error?.errorMessage);
+	assert.equal(clients.length, 1);
+	assert.deepEqual(clients[0].responses, [["rpc-1", { contentItems: [{ type: "inputText", text: LOST_TOOL_RESULT_TEXT }], success: false }]]);
+	assert.deepEqual(methods(clients[0], "turn/interrupt").map(([, params]) => params), [{ threadId: "thread-1", turnId: TURN }]);
 	await bridge.close();
 });
 
@@ -173,21 +211,25 @@ test("an enabled feature no review covers refuses the thread before a turn", asy
 	await bridge.close();
 });
 
-test("an abort before or during startup ends the stream as aborted", { timeout: 5000 }, async () => {
-	const counter = { connects: 0 };
-	const never = new CodexBridge({ codexHome, connect: () => { counter.connects++; return new Promise(() => undefined); } });
+test("an abort before or during startup ends the stream as aborted and leaves the open with the bridge", { timeout: 5000 }, async () => {
+	// A connection that ends only when its open is aborted, as startAppServer's does.
+	const opens = [];
+	const stalled = new CodexBridge({ codexHome, connect: (_launch, signal) => { opens.push(signal); return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason))); } });
 	const early = new AbortController();
 	early.abort();
-	const before = await finish(never.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: early.signal }));
+	const before = await finish(stalled.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: early.signal }));
 	assert.equal(before.reason, "aborted");
-	assert.equal(counter.connects, 0);
+	assert.equal(opens.length, 0);
 	const late = new AbortController();
-	const stream = never.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: late.signal });
+	const stream = stalled.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: late.signal });
 	setTimeout(() => late.abort(), 10);
 	const during = await finish(stream);
 	assert.equal(during.reason, "aborted");
 	assert.equal(during.error.errorMessage, "codex-request-aborted");
-	await never.close();
+	assert.equal(opens.length, 1);
+	assert.equal(opens[0].aborted, false, "the stream's abort stopped the bridge's open");
+	await stalled.close();
+	assert.equal(opens[0].reason?.message, "codex-bridge-closed");
 });
 
 test("failed thread setup reuses the bridge's one child, and close stops it", async () => {
@@ -252,11 +294,14 @@ test("Codex receives the reviewed sandbox, approval policy and empty environment
 });
 
 // A name read that fails, or that Codex answers in a shape the decoder
-// refuses, starts and resumes no thread.
+// refuses, starts and resumes no thread. Only Codex's own error reply carries
+// the configuration hint; every other failure keeps its own key.
+const CONFIG_HINT = "Codex could not load its configuration";
 for (const row of [
-	{ name: "failed, at a new thread", configRead: () => { throw new CodexRequestError("config/read", -32603, null); }, cold: false },
-	{ name: "malformed, at a new thread", configRead: () => ({ config: { mcp_servers: "fixture" } }), cold: false },
-	{ name: "failed, at a cold resume", configRead: () => { throw new CodexRequestError("config/read", -32603, null); }, cold: true },
+	{ name: "failed, at a new thread", configRead: () => { throw new CodexRequestError("config/read", -32603, null); }, cold: false, key: "codex-mcp-names-unread", hint: true },
+	{ name: "malformed, at a new thread", configRead: () => ({ config: { mcp_servers: "fixture" } }), cold: false, key: "codex-protocol-invalid method=config/read field=config.mcp_servers", hint: false },
+	{ name: "failed, at a cold resume", configRead: () => { throw new CodexRequestError("config/read", -32603, null); }, cold: true, key: "codex-mcp-names-unread", hint: true },
+	{ name: "cut off by the child's exit, at a new thread", configRead: (_params, client) => { const exit = new Error("codex-app-server-exit code=1 signal=null"); client.kill(exit); throw exit; }, cold: false, key: "codex-app-server-exit code=1 signal=null", hint: false },
 ]) {
 	test(`a name read that is ${row.name} refuses the turn`, async () => {
 		const client = new FakeClient({ "config/read": row.configRead });
@@ -264,7 +309,8 @@ for (const row of [
 		const boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: `codex-thread:${THREAD}:${TURN}:${readSignature}`, timestamp: 3 };
 		const messages = row.cold ? [system(), user("First"), boundary, user("Second", 4)] : [system(), user("Hello")];
 		const end = await finish(bridge.streamSimple(model, { messages }));
-		assert.equal(end.error.errorMessage.split("\n")[0], "codex-mcp-names-unread");
+		assert.equal(end.error.errorMessage.split("\n")[0], row.key);
+		assert.equal(end.error.errorMessage.includes(CONFIG_HINT), row.hint);
 		assert.equal(methods(client, "thread/start").length, 0);
 		assert.equal(methods(client, "thread/resume").length, 0);
 		await bridge.close();
@@ -377,17 +423,48 @@ test("a second stream on a thread another stream drives is refused and leaves th
 	const bridge = bridgeFor(client);
 	const first = await finish(bridge.streamSimple(model, { messages: [system(), user("Q1")] }));
 	const transcript = [system(), user("Q1"), first.message, user("Q2", 4)];
+	// Both streams start in one tick: the first claims the thread before any await.
 	const one = bridge.streamSimple(model, { messages: transcript });
-	while (methods(client, "turn/start").length < 2) await new Promise(setImmediate);
 	const two = await finish(bridge.streamSimple(model, { messages: transcript }));
 	assert.equal(two.error.errorMessage, `codex-thread-busy thread=${THREAD}`);
+	while (methods(client, "turn/start").length < 2) await new Promise(setImmediate);
 	assert.equal(methods(client, "turn/interrupt").length, 0);
 	client.text("second", "turn-2");
 	client.complete("turn-2");
 	const end = await finish(one);
 	assert.equal(end.reason, "stop", end.error?.errorMessage);
 	assert.equal(end.message.content.at(-1).text, "second");
+	assert.equal(methods(client, "turn/start").length, 2);
 	await bridge.close();
+});
+
+test("an abort before Codex answers turn/start ends the stream, and the turn Codex then starts is stopped", { timeout: 5000 }, async () => {
+	let reply;
+	const client = new FakeClient({ "turn/start": () => new Promise((resolve) => (reply = resolve)) });
+	const bridge = bridgeFor(client);
+	const abort = new AbortController();
+	const stream = bridge.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: abort.signal });
+	while (methods(client, "turn/start").length < 1) await new Promise(setImmediate);
+	abort.abort();
+	const end = await finish(stream);
+	assert.equal(end.reason, "aborted");
+	assert.equal(end.error.errorMessage, "codex-request-aborted");
+	reply({ turn: { id: TURN } });
+	await new Promise(setImmediate);
+	assert.deepEqual(methods(client, "turn/interrupt").map(([, params]) => params), [{ threadId: THREAD, turnId: TURN }]);
+	await bridge.close();
+});
+
+test("close ends a stream that waits on a running turn", { timeout: 2000 }, async () => {
+	const client = new FakeClient({ "turn/start": () => ({ turn: { id: TURN } }) });
+	const bridge = bridgeFor(client);
+	const stream = bridge.streamSimple(model, { messages: [system(), user("Hello")] });
+	while (methods(client, "turn/start").length < 1) await new Promise(setImmediate);
+	await bridge.close();
+	const end = await finish(stream);
+	assert.equal(end.type, "error");
+	assert.equal(end.error.errorMessage, "codex-bridge-closed");
+	assert.equal(client.killed?.message, "codex-bridge-closed");
 });
 
 test("an abort during a running turn ends the stream at once, and a queued call does not end it as toolUse", { timeout: 5000 }, async () => {

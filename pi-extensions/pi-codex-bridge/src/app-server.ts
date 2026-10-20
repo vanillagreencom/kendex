@@ -34,6 +34,7 @@ export const INITIALIZE_PARAMS = {
 	},
 };
 
+/** Read `codex --version`. An abort of `signal` rejects with its reason. */
 export async function assertSupportedCodex(launch: Launch, signal?: AbortSignal): Promise<void> {
 	let stdout: string;
 	try {
@@ -41,10 +42,10 @@ export async function assertSupportedCodex(launch: Launch, signal?: AbortSignal)
 			env: codexChildEnvironment(launch.codexHome, launch.env),
 			encoding: "utf8",
 			maxBuffer: 4096,
-			timeout: launch.handshakeTimeoutMs,
 			signal,
 		}));
 	} catch (error) {
+		if (signal?.aborted) throw signal.reason;
 		throw new Error(`codex-version-unreadable executable=${launch.executable} code=${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
 	}
 	const found = decodeVersion(stdout);
@@ -54,41 +55,42 @@ export async function assertSupportedCodex(launch: Launch, signal?: AbortSignal)
 }
 
 /**
- * Start one `codex app-server` child and complete the handshake. The client
- * owns the child from the spawn: a handshake that misses its deadline, or a
- * `signal` that aborts first, stops the child before this rejects.
+ * Start one `codex app-server` child and complete the handshake. One deadline
+ * covers the version check and the handshake. The client owns the child from
+ * the spawn: the deadline, or a `signal` that aborts first, stops the child
+ * before this rejects.
  */
 export async function startAppServer(launch: Launch, signal: AbortSignal, spawn: SpawnFunction = nodeSpawn): Promise<ProtocolClient> {
-	await assertSupportedCodex(launch, signal);
-	signal.throwIfAborted();
-	// Its own process group, so termination signals reach Codex's helpers.
-	const group = process.platform !== "win32";
-	const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
-		cwd: launch.cwd,
-		env: codexChildEnvironment(launch.codexHome, launch.env),
-		detached: group,
-		windowsHide: true,
-	});
-	const client = new CodexProtocolClient(child, group);
-	const stop = () => void client.kill(signal.reason instanceof Error ? signal.reason : new Error("codex-request-aborted"));
-	signal.addEventListener("abort", stop, { once: true });
-	let timer: NodeJS.Timeout | undefined;
+	const deadline = new AbortController();
+	const timer = setTimeout(() => deadline.abort(new Error(`codex-handshake-timeout after_ms=${launch.handshakeTimeoutMs}`)), launch.handshakeTimeoutMs);
+	const stopped = AbortSignal.any([signal, deadline.signal]);
 	try {
-		await Promise.race([
-			client.request("initialize", INITIALIZE_PARAMS),
-			new Promise<never>((_, reject) => {
-				timer = setTimeout(() => reject(new Error(`codex-handshake-timeout after_ms=${launch.handshakeTimeoutMs}`)), launch.handshakeTimeoutMs);
-			}),
-		]);
-	} catch (error) {
-		await client.kill(error as Error);
-		throw error;
+		await assertSupportedCodex(launch, stopped);
+		stopped.throwIfAborted();
+		// Its own process group, so termination signals reach Codex's helpers.
+		const group = process.platform !== "win32";
+		const child = spawn(launch.executable, appServerArgs(launch.configOverrides), {
+			cwd: launch.cwd,
+			env: codexChildEnvironment(launch.codexHome, launch.env),
+			detached: group,
+			windowsHide: true,
+		});
+		const client = new CodexProtocolClient(child, group);
+		const stop = () => void client.kill(stopped.reason instanceof Error ? stopped.reason : new Error("codex-request-aborted"));
+		stopped.addEventListener("abort", stop, { once: true });
+		try {
+			await client.request("initialize", INITIALIZE_PARAMS);
+		} catch (error) {
+			await client.kill(error as Error);
+			throw error;
+		} finally {
+			stopped.removeEventListener("abort", stop);
+		}
+		client.notify("initialized");
+		return client;
 	} finally {
 		clearTimeout(timer);
-		signal.removeEventListener("abort", stop);
 	}
-	client.notify("initialized");
-	return client;
 }
 
 export async function listCodexModels(client: ProtocolClient): Promise<CodexModel[]> {

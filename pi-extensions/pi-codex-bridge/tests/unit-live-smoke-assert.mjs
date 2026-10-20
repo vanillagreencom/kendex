@@ -18,6 +18,7 @@ const final = (stopReason, text) => ({ type: "message_end", message: { role: "as
 for (const [name, events, passes] of [
 	["the final pi-codex answer carries the value", [...toolEvents, final("stop", "CODEX_BRIDGE_TOOL_OK_1658")], true],
 	["the final pi-codex message failed after the tool ran", [...toolEvents, final("toolUse", ""), final("error", "")], false],
+	["the final pi-codex message carries the value but did not stop", [...toolEvents, final("error", "CODEX_BRIDGE_TOOL_OK_1658")], false],
 	["the final pi-codex answer lacks the value", [...toolEvents, final("stop", "I could not read it")], false],
 	["no read tool ran", [final("stop", "CODEX_BRIDGE_TOOL_OK_1658")], false],
 ]) {

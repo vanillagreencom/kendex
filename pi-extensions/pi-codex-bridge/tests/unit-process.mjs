@@ -8,12 +8,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { appServerArgs } from "../src/codex-policy.ts";
-import { assertSupportedCodex } from "../src/app-server.ts";
+import { assertSupportedCodex, startAppServer } from "../src/app-server.ts";
 import { CodexBridge } from "../src/bridge.ts";
 import { CodexProtocolClient } from "../src/json-rpc.ts";
 import { descendantsOf, parseProcStat, parsePsRows } from "../src/process-tree.ts";
 import { finish, model, system, user } from "./lib/fake-client.mjs";
-import { goneWithin, recordedPids, writeStubCodex } from "./lib/stub-codex.mjs";
+import { alive, goneWithin, recordedPids, writeStubCodex } from "./lib/stub-codex.mjs";
 
 const scratch = join(fileURLToPath(new URL("..", import.meta.url)), "tmp");
 mkdirSync(scratch, { recursive: true });
@@ -82,30 +82,45 @@ test("close stops a connected child and the processes it started", { timeout: 10
 	assert.equal(await goneWithin(helper, 2000), true);
 });
 
-test("a handshake that never answers loses its child at the discovery deadline", { timeout: 10_000 }, async (t) => {
-	const dir = scratchDir(t, "stall");
-	const bridge = new CodexBridge({ codexHome: dir, cwd: dir, executable: writeStubCodex(dir, { answer: false }), env: { PATH: process.env.PATH } });
-	assert.deepEqual(await bridge.discoverModels(500), { models: [], notice: "codex-discovery-timeout after_ms=500" });
-	const [first] = await recordedPids(dir, "app-server.pid");
-	assert.equal(await goneWithin(first, 3000), true, "the stalled child outlived the discovery deadline");
-	await bridge.close();
+test("the handshake deadline also covers a version check that never ends", { timeout: 10_000 }, async (t) => {
+	const dir = scratchDir(t, "version-stall");
+	const outcome = startAppServer({ ...launch(writeStubCodex(dir, { versionStall: true }), dir), handshakeTimeoutMs: 500 }, new AbortController().signal);
+	await assert.rejects(outcome, (error) => error.message === "codex-handshake-timeout after_ms=500");
+	assert.equal(existsSync(join(dir, "app-server.pid")), false);
 });
 
-test("after an abort during a stalled handshake, that child stops and the next stream ends", { timeout: 15_000 }, async (t) => {
+// close waits for a child still in its handshake, one that ignores SIGTERM
+// for the whole grace here: an open close aborts itself, and one the
+// discovery deadline aborted before.
+for (const row of [
+	{ name: "while discovery waits on it", deadlineMs: 10_000, awaitDiscovery: false },
+	{ name: "after the discovery deadline gave up on it", deadlineMs: 1000, awaitDiscovery: true },
+]) {
+	test(`close waits for a child still in its handshake: ${row.name}`, { timeout: 15_000 }, async (t) => {
+		const dir = scratchDir(t, "stall");
+		const bridge = new CodexBridge({ codexHome: dir, cwd: dir, executable: writeStubCodex(dir, { answer: false, ignoreTerm: true }), env: { PATH: process.env.PATH }, handshakeDeadlineMs: 10_000 });
+		const discovered = bridge.discoverModels(row.deadlineMs);
+		const [pid] = await recordedPids(dir, "app-server.pid");
+		if (row.awaitDiscovery) assert.deepEqual(await discovered, { models: [], notice: `codex-discovery-timeout after_ms=${row.deadlineMs}` });
+		await bridge.close();
+		assert.equal(alive(pid), false, "close returned while the child still ran");
+		if (!row.awaitDiscovery) assert.deepEqual(await discovered, { models: [], notice: "codex-bridge-closed" });
+	});
+}
+
+test("an abort during a stalled handshake ends only that stream: the next one joins the open and the handshake deadline stops the child", { timeout: 15_000 }, async (t) => {
 	const dir = scratchDir(t, "stall-abort");
-	const bridge = new CodexBridge({ codexHome: dir, cwd: dir, executable: writeStubCodex(dir, { answer: false }), env: { PATH: process.env.PATH }, handshakeDeadlineMs: 1000 });
+	const bridge = new CodexBridge({ codexHome: dir, cwd: dir, executable: writeStubCodex(dir, { answer: false }), env: { PATH: process.env.PATH }, handshakeDeadlineMs: 2000 });
 	t.after(() => bridge.close());
 	const abort = new AbortController();
 	const aborted = bridge.streamSimple(model, { messages: [system(), user("Hello")] }, { signal: abort.signal });
 	const [first] = await recordedPids(dir, "app-server.pid");
 	abort.abort();
 	assert.equal((await finish(aborted)).reason, "aborted");
-	assert.equal(await goneWithin(first, 3000), true, "the aborted handshake's child still runs");
 	const next = await finish(bridge.streamSimple(model, { messages: [system(), user("Again")] }));
-	assert.equal(next.error.errorMessage, "codex-handshake-timeout after_ms=1000");
-	const pids = await recordedPids(dir, "app-server.pid");
-	assert.equal(pids.length, 2, "the next stream opened its own child");
-	assert.equal(await goneWithin(pids[1], 3000), true, "the timed-out child still runs");
+	assert.equal(next.error.errorMessage, "codex-handshake-timeout after_ms=2000");
+	assert.deepEqual(await recordedPids(dir, "app-server.pid"), [first], "the next stream opened its own child");
+	assert.equal(await goneWithin(first, 3000), true, "the timed-out child still runs");
 });
 
 test("the process table readers keep pid, parent, group and start time", () => {

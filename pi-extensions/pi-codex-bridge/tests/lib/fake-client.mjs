@@ -52,9 +52,10 @@ export class FakeClient extends EventEmitter {
 	}
 
 	kill(reason) {
-		if (this.killed !== undefined) return;
+		if (this.killed !== undefined) return Promise.resolve();
 		this.killed = reason;
 		this.emit("closed", reason);
+		return Promise.resolve();
 	}
 
 	/** Send a server request or notification on the next tick. */

@@ -42,9 +42,13 @@ Codex sends each dynamic tool call as an `item/tool/call` server request and hol
 
 One queue per thread holds every request and notification in arrival order. A request that arrives between two Pi streams waits there for the next stream.
 
-The next stream answers each pending call by its request id. Text becomes `inputText` and an image becomes `inputImage` with a data URL. A call without a Pi result, as after an abort during the tool, is answered `success: false` with a lost-result text. User messages after the tool results go to the same turn through `turn/steer`.
+The next stream answers each pending call by its request id. Text becomes `inputText` and an image becomes `inputImage` with a data URL. A call without a Pi result is answered `success: false` with a lost-result text. User messages after the tool results go to the same turn through `turn/steer`.
 
-A turn the bridge does not continue, because the transcript moved to a new thread or its tools changed, has its pending calls answered as lost and is interrupted. Codex refusing an interrupt with `no active turn to interrupt` means the turn already ended; any other refusal stops the child with `codex-interrupt-failed thread=<id> turn=<id>`. An abort ends the stream at once and interrupts the turn.
+An abort while Pi runs the tool ends only that stream; the app-server child stays with the bridge. Pi then holds an aborted pi-codex message after the boundary, so the next prompt starts a new thread on the same child, and the turn it leaves is abandoned as below.
+
+A turn the bridge does not continue, because the transcript moved to a new thread or its tools changed, has its pending calls answered as lost and is interrupted. Codex refusing an interrupt with `no active turn to interrupt` means the turn already ended; any other refusal stops the child with `codex-interrupt-failed thread=<id> turn=<id>`. An abort ends the stream at once, whatever it waits on, and interrupts the turn. A `turn/start` Codex answers after the abort has its turn interrupted on arrival.
+
+A stream claims its thread in the same step as the busy check, before any wait, so a second stream on that thread is refused with `codex-thread-busy thread=<id>`.
 
 ## Pi stream contract
 
@@ -66,9 +70,9 @@ The bridge never calls a Codex login method. It refuses `account/chatgptAuthToke
 
 Codex 0.163.0 has no switch that stops every configured MCP server, and `-c mcp_servers={}` does not clear inherited servers. The bridge stops them by name:
 
-1. Immediately before each `thread/start` and cold `thread/resume`, it calls `config/read { cwd }` on the same app-server. The JSON-RPC client decodes the reply to the server names of the merged `mcp_servers` inside the parse of the reply line. No command, argument, env value or other config field outlives that parse. A failed or malformed read refuses the thread.
+1. Immediately before each `thread/start` and cold `thread/resume`, it calls `config/read { cwd }` on the same app-server. The JSON-RPC client decodes the reply to the server names of the merged `mcp_servers` inside the parse of the reply line. No command, argument, env value or other config field outlives that parse. A failed or malformed read refuses the thread. Only Codex's own error reply is keyed `codex-mcp-names-unread` with the hint to run `codex` with that `CODEX_HOME`; a malformed reply or a closed client keeps its own key.
 2. It passes `{ mcp_servers: { <name>: { enabled: false } } }` as the thread `config`.
-3. Any `mcpServer/startupStatus/updated` with `status: "starting"` refuses with `codex-mcp-started name=<n>` and stops the app-server. Codex 0.163.0 starts each stdio MCP server as the leader of its own process group, so a signal to the app-server's group does not reach it, and a SIGKILL denies Codex the teardown that stops it. The bridge therefore closes the app-server's stdin and sends SIGTERM to its group, and Codex's teardown stops the servers it started, one that outlives stdin EOF and ignores SIGTERM included. An app-server still running after 3 seconds gets SIGKILL. After the app-server exits, each process the bridge recorded below it before the first signal that still runs, with the same start time, gets SIGKILL with its group. `close` on `session_shutdown` stops the child the same way and waits for it.
+3. Any `mcpServer/startupStatus/updated` with `status: "starting"` refuses with `codex-mcp-started name=<n>` and stops the app-server. Codex 0.163.0 starts each stdio MCP server as the leader of its own process group, so a signal to the app-server's group does not reach it, and a SIGKILL denies Codex the teardown that stops it. The bridge therefore closes the app-server's stdin and sends SIGTERM to its group, and Codex's teardown stops the servers it started, one that outlives stdin EOF and ignores SIGTERM included. An app-server still running after 3 seconds gets SIGKILL. After the app-server exits, each process the bridge recorded below it before the first signal that still runs, with the same start time, gets SIGKILL with its group. `close` on `session_shutdown` stops the child the same way, ends every stream on it with `codex-bridge-closed`, and waits for the child to exit, a child still in its handshake included.
 
 The `apps`, `plugins`, `remote_plugin` and `skill_mcp_dependency_install` features, the sources of servers outside `mcp_servers`, are disabled at launch.
 
@@ -94,7 +98,7 @@ Models whose Codex catalog entry sets `tool_mode = "code_mode_only"` reach tools
 
 The extension factory lists models through the bridge's own app-server client, under a 15-second deadline. A stall or failure stops that child and gives an empty model list and one keyed notice at session start; a missing login gives the `codex-login-missing` notice instead. A child that lists models stays with the bridge for the session's streams until `session_shutdown`.
 
-The client owns its child from the spawn. The version check and the handshake share a 15-second deadline in every path; a deadline, the discovery deadline or a stream abort before the handshake ends stops that child, and the next stream starts a fresh one.
+The client owns its child from the spawn. One 15-second deadline covers the version check and the handshake together. That deadline, the discovery deadline or `close` stops the child, and the next stream starts a fresh one. A stream abort ends only that stream's wait: the open stays with the bridge, and a stream that comes before it settles joins it.
 
 ## Tests
 
