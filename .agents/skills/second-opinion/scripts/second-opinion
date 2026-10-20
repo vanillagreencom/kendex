@@ -146,8 +146,11 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              this names the model its command runs
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
                              hyphens become underscores); claude and codex
-                             have defaults (below). Codex commands also receive
-                             --disable hooks --json, including overrides.
+                             have defaults (below). Direct codex programs also
+                             receive --disable hooks --json, including overrides
+                             with supported env prefixes. Other CLIs and opaque
+                             wrappers supply their own backend flags. Keep every
+                             configured command read-only.
                              copilot has none: Copilot
                              CLI documents no headless mode that is read-only,
                              so SECOND_OPINION_COPILOT_CMD names a command you
@@ -1070,7 +1073,8 @@ target_cmd() {
 # reports a missing program. The argv is exec'd as it stands, never by a
 # shell, so a builtin such as exec is no program. An env override may point it
 # away from the target's own name. A command with no program word after its
-# assignments has nothing to run.
+# assignments has nothing to run. On success, stdout names the selected
+# program so command construction uses this same resolution.
 target_available() {
   local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*=' path="$PATH" dir="$CWD" chdir="" entry rest
   cmd="$(target_cmd "$1")"
@@ -1087,7 +1091,7 @@ target_available() {
         -u?*|--unset=*|-v|-0|--null|--debug) ;;
         -C?*) chdir="${1#-C}" ;;
         --chdir=*) chdir="${1#--chdir=}" ;;
-        -*) type -P env >/dev/null 2>&1; return ;;
+        -*) type -P env >/dev/null 2>&1 || return; printf '%s' env; return ;;
         *) break ;;
       esac
       [[ $# -gt 0 ]] && shift
@@ -1102,14 +1106,18 @@ target_available() {
   if [[ "$1" == */* ]]; then
     entry="$1"
     [[ "$entry" == /* ]] || entry="$dir/$entry"
-    [[ -f "$entry" && -x "$entry" ]]
+    [[ -f "$entry" && -x "$entry" ]] || return 1
+    printf '%s' "$entry"
     return
   fi
   rest="$path:"
   while [[ -n "$rest" ]]; do
     entry="${rest%%:*}"; rest="${rest#*:}"
     [[ "$entry" == /* ]] || entry="$dir/${entry:-.}"
-    [[ -f "$entry/$1" && -x "$entry/$1" ]] && return 0
+    if [[ -f "$entry/$1" && -x "$entry/$1" ]]; then
+      printf '%s' "$entry/$1"
+      return 0
+    fi
   done
   return 1
 }
@@ -1250,7 +1258,7 @@ consider_target() {
     skip_target "$t" "no command — $t has no built-in command; set $(target_cmd_var "$t") to the command it runs, one you have checked cannot write"
     return 1
   fi
-  if ! target_available "$t"; then
+  if ! target_available "$t" >/dev/null; then
     SKIPPED_UNAVAILABLE=true
     skip_target "$t" "CLI not found — install it or configure $(target_cmd_var "$t")"
     return 1
@@ -2602,16 +2610,18 @@ EXIT_CODE=0
 # writing the CLI's stderr to STDERR_TMP.
 run_target_cli() {
   local prompt_file="$1"
-  local rc=0 cmd
+  local rc=0 cmd program
   cmd="$(target_cmd "$TARGET_CLI")"
   if [[ -z "$cmd" ]]; then
     echo "{\"error\": \"Unknown target: $TARGET_CLI — set $(target_cmd_var "$TARGET_CLI")\"}" >&2
     return 2
   fi
-  # A configured Codex command must not inherit lane Stop hooks whose handoff
+  # A direct Codex command must not inherit lane Stop hooks whose handoff
   # writes its read-only sandbox cannot make. JSON events carry the assistant
   # answer without depending on those writes or scraping stderr's prompt echo.
-  [[ $(harness_model "$TARGET_CLI") != codex ]] || cmd="$cmd --disable hooks --json"
+  if program=$(target_available "$TARGET_CLI"); then
+    [[ ${program##*/} != codex ]] || cmd="$cmd --disable hooks --json"
+  fi
   # shellcheck disable=SC2086
   (
     cd -- "$CWD" || exit

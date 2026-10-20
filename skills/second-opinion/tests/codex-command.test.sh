@@ -4,7 +4,7 @@
 # refusal is recorded.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
 EXPECTED=$'exec\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--ephemeral\n--disable\nhooks\n--json'
-for row in default example project version-control; do
+for row in default example project version-control env-codex copilot opaque copilot-control; do
   build "$row" current:none models:codex
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/argv"\nexec "%s/bin/lane-codex" "$@"\n' "$ROW" "$ROW" >"$ROW/bin/codex"
   chmod +x "$ROW/bin/codex"
@@ -15,11 +15,41 @@ for row in default example project version-control; do
     # The row alone: the project's Codex room check needs the fleet's accounts.
     project) { echo '[env]'; grep '^SECOND_OPINION_CODEX_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml"; want=$'exec\n-m\ngpt-6.1-sol\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--disable\nhooks\n--ephemeral\n--disable\nhooks\n--json' ;;
     version-control) mutate_script "$SO" 'DEFAULT_CODEX_CMD="codex exec -s' 'DEFAULT_CODEX_CMD="codex exec -m gpt-6.1-sol -s' ;;
+    env-codex) W_ENV+=("SECOND_OPINION_CODEX_CMD=env -u SO_TEST_UNSET SO_TEST_PREFIX=1 $ROW/bin/codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral") ;;
+    copilot|opaque|copilot-control)
+      program=1copilot
+      [[ $row != opaque ]] || program=review-wrapper
+      cat >"$ROW/bin/$program" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+root=${0%/bin/*}
+printf '%s\n' "$@" >"$root/argv"
+printf '%s' "${COPILOT_ALLOW_ALL:-unset}" >"$root/allow-all"
+for arg in "$@"; do
+  case "$arg" in --disable|--json) exit 1 ;; esac
+done
+exec "$root/bin/lane-codex" "$@"
+SH
+      chmod +x "$ROW/bin/$program"
+      W_ENV+=("SECOND_OPINION_CODEX_CMD=env COPILOT_ALLOW_ALL=false $program --model gpt-6.1-sol --reasoning-effort medium --silent --no-ask-user --disable-builtin-mcps --available-tools bash view rg glob --deny-tool write")
+      want=$'--model\ngpt-6.1-sol\n--reasoning-effort\nmedium\n--silent\n--no-ask-user\n--disable-builtin-mcps\n--available-tools\nbash\nview\nrg\nglob\n--deny-tool\nwrite'
+      [[ $row != copilot-control ]] || mutate_script "$SO" '[[ ${program##*/} != codex ]]' '[[ $(harness_model "$TARGET_CLI") != codex ]]'
+      ;;
   esac
   rc=0
-  env -i HOME="$ROW" PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" quick --cwd "$WORK" --output "$ROW/out/out.json" "inspect file.txt" >"$ROW/stdout" 2>"$ROW/stderr" || rc=$?
-  assert_eq "$rc" 0 "$row run returns a usable reply"
-  if [[ "$row" != *control ]]; then assert_eq "$(cat "$ROW/argv")" "$want" "$row codex argv disables hooks"; continue; fi
+  env -i HOME="$ROW" PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" review --range HEAD --cwd "$WORK" --output "$ROW/out/out.json" >"$ROW/stdout" 2>"$ROW/stderr" || rc=$?
+  got="$rc:$(jq -r '.verdict' "$ROW/out/out.json" 2>/dev/null || printf missing)"
+  if [[ $row == copilot-control ]]; then
+    assert_eq "$got" 5:missing "$row rejects foreign flags before artifact creation"
+    assert_eq "$(cat "$ROW/argv")" "$want"$'\n--disable\nhooks\n--json' "$row restores target-name flag injection"
+    control_rc=0
+    (FAIL=0; assert_eq "$got" 0:pass "must-fail: $row artifact"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
+    assert_eq "$control_rc" 1 "$row turns the usable artifact check red"
+    continue
+  fi
+  assert_eq "$got" 0:pass "$row run writes a usable review artifact"
+  case "$row" in copilot|opaque) assert_eq "$(cat "$ROW/allow-all")" false "$row keeps configured write restriction" ;; esac
+  if [[ "$row" != *control ]]; then assert_eq "$(cat "$ROW/argv")" "$want" "$row backend argv"; continue; fi
   control_rc=0
   (assert_eq "$(cat "$ROW/argv")" "$EXPECTED" "must-fail: $row"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
   assert_eq "$control_rc" 1 "$row turns the argv pin red"
