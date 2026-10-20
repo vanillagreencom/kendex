@@ -372,18 +372,38 @@ run_succeed() {
   OUT="$(exec_succeed "$@" 2>&1)" || RC=$?
 }
 
-# stage_usage_pair ROW CURRENT PRIOR GAP — write the cache record the row will
+# stage_usage_pair ROW CURRENT PRIOR GAP [SEED] — write the cache record the row will
 # read, then make its displaced sample explicit. PRIOR=none leaves one sample.
 # Derive the gap from the stored sample, not another wall-clock reading: lanes
 # adds rounded SECONDS to its start epoch, which can lead date by a second.
 stage_usage_pair() {
   local row="$1" current="$2" prior="$3" gap="$4" state="$TMP_ROOT/state-$1" f now
+  local seed="${5:-}" copied
+  if [[ -n "$seed" ]]; then
+    [[ -d "$seed" && ! -L "$seed" ]] || { printf 'stage_usage_pair: seed=not-physical-directory path=%s\n' "$seed" >&2; return 1; }
+    for f in "$seed"/*.json; do
+      [[ -f "$f" && ! -L "$f" ]] || { printf 'stage_usage_pair: seed=not-regular-file path=%s\n' "$f" >&2; return 1; }
+    done
+  fi
   rm -rf -- "${state:?}"
   claude_usage "$current" 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-  (cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="$BIN:$PATH" LANES_HOME="$H" \
-    FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$state" \
-    ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
-    "$SRC_DIR/lanes" list --harness claude --json --no-cache >/dev/null)
+  if [[ -n "$seed" ]]; then
+    mkdir -p "$state/usage" || return 1
+    now="$("$STUB_REAL_DATE" +%s)" || return 1
+    for f in "$seed"/*.json; do
+      copied="$state/usage/${f##*/}"
+      cp -p -- "$f" "$copied" || return 1
+      # Every row starts with fresh observations, including the other account.
+      # Its original quota resets and policy stay bound to the generated body.
+      jq --argjson at "$now" '.fetched_at = $at | .normalized.fetched_at = $at' \
+        "$copied" > "$copied.tmp" && mv -- "$copied.tmp" "$copied" || return 1
+    done
+  else
+    (cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" PATH="$BIN:$PATH" LANES_HOME="$H" \
+      FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$state" \
+      ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
+      "$SRC_DIR/lanes" list --harness claude --json --no-cache >/dev/null)
+  fi
   [[ "$prior" != none ]] || return 0
   for f in "$state"/usage/*.json; do
     [[ "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
@@ -1776,9 +1796,32 @@ if [[ "$*" == +%s && -n "${JUDGE_NOW:-}" ]]; then printf '%s\n' "$JUDGE_NOW"; ex
 exec "$STUB_REAL_DATE" "$@"
 STUB
 chmod +x "$MEMO_CLOCK/date"
+# These rows judge memo reuse, not cold account discovery. Keep production's
+# cache records as neutral seeds; only private row copies are ever judged.
+stage_usage_pair memo-seed-56 56 36 600
+stage_usage_pair memo-seed-60 60 40 600
+stage_usage_pair memo-seed-99 99 79 600
+MEMO_SEED_56="$TMP_ROOT/state-memo-seed-56/usage"
+MEMO_SEED_60="$TMP_ROOT/state-memo-seed-60/usage"
+MEMO_SEED_99="$TMP_ROOT/state-memo-seed-99/usage"
+MEMO_SEEDS_BEFORE="$(cksum "$MEMO_SEED_56"/*.json "$MEMO_SEED_60"/*.json "$MEMO_SEED_99"/*.json)"
+ln -s "$MEMO_SEED_56" "$TMP_ROOT/memo-seed-link"
+assert_eq "$([[ -L "$TMP_ROOT/memo-seed-link" ]] && printf link || printf regular)" link 'memo seed directory control is a symlink'
+seed_rc=0
+stage_usage_pair memo-seed-dir-control 56 36 600 "$TMP_ROOT/memo-seed-link" > "$TMP_ROOT/memo-seed-dir-control.log" 2>&1 || seed_rc=$?
+assert_eq "$seed_rc" 1 'memo preparation refuses a symlinked seed directory'
+mkdir "$TMP_ROOT/memo-record-link"
+for record in "$MEMO_SEED_56"/*.json; do
+  ln -s "$record" "$TMP_ROOT/memo-record-link/${record##*/}"
+  assert_eq "$([[ -L "$TMP_ROOT/memo-record-link/${record##*/}" ]] && printf link || printf regular)" link 'memo seed record control is a symlink'
+  break
+done
+seed_rc=0
+stage_usage_pair memo-seed-file-control 56 36 600 "$TMP_ROOT/memo-record-link" > "$TMP_ROOT/memo-seed-file-control.log" 2>&1 || seed_rc=$?
+assert_eq "$seed_rc" 1 'memo preparation refuses a symlinked seed record'
 memo_case() { # ROW SCRIPT
   local name="$1" script="$2" row="memo-$1" state="$TMP_ROOT/state-memo-$1"
-  local now age=0 current=56 first calls record stamp memo wall claims before_until second_now max_age="" ttl_value ttl_quote
+  local now age=0 current=56 first calls record stamp memo wall claims before_until second_now max_age="" ttl_value ttl_quote seed f
   local PATH_PREFIX="$MEMO_CLOCK" SUCCEED_BIN="$script" SUCCESSOR_ACCOUNTS=1 NO_CONTEXT=1 WALL_MINUTES=0
   local USAGE_MAX_AGE="" HEADROOM_PCT="$TRIGGER" USAGE_TTL=300
   export PATH_PREFIX SUCCEED_BIN SUCCESSOR_ACCOUNTS NO_CONTEXT WALL_MINUTES USAGE_MAX_AGE HEADROOM_PCT USAGE_TTL
@@ -1800,7 +1843,23 @@ memo_case() { # ROW SCRIPT
   esac
   new_caller "$UNDER_MARK"
   caller_record claude claude-fable-5-1
-  stage_usage_pair "$row" "$current" "$((current - 20))" 600
+  case "$current" in
+    56) seed="$MEMO_SEED_56" ;;
+    60) seed="$MEMO_SEED_60" ;;
+    99) seed="$MEMO_SEED_99" ;;
+    *) printf 'memo_case: current=unknown value=%s\n' "$current" >&2; return 1 ;;
+  esac
+  stage_usage_pair "$row" "$current" "$((current - 20))" 600 "$seed"
+  case "$name" in
+    unchanged|replay-headroom|replay-rate)
+      for f in "$state"/usage/*.json; do
+        assert_eq "$([[ -f "$f" && ! -L "$f" ]] && printf regular || printf other)" regular "memo $name has a private regular usage record"
+        assert_eq "$(jq -r --argjson at "$now" '.fetched_at >= $at and .fetched_at == .normalized.fetched_at' "$f")" true "memo $name refreshes coherent observation stamps"
+        assert_eq "$(jq -Sc 'del(.fetched_at, .normalized.fetched_at, .prior.fetched_at)' "$f")" \
+          "$(jq -Sc 'del(.fetched_at, .normalized.fetched_at, .prior.fetched_at)' "$seed/${f##*/}")" \
+          "memo $name preserves generated usage, resets, policy and sample claims"
+      done ;;
+  esac
   for record in "$state"/usage/*.json; do
     [[ "$(jq -r '.config_dir' "$record")" == "$H/.claude" ]] && break
   done
@@ -1813,6 +1872,12 @@ memo_case() { # ROW SCRIPT
     jq --argjson at "$((now + 120))" '.usage.five_hour.resets_at = ($at | todate) | .prior.usage.five_hour.resets_at = ($at | todate)' "$record" > "$record.tmp"
     mv -- "$record.tmp" "$record"
   fi
+  case "$name" in
+    unchanged|watch-aged|reset|replay-headroom|replay-rate)
+      assert_eq "$(jq -r '[.fetched_at, .prior.fetched_at, has("normalized")] | @tsv' "$record")" \
+        "$(printf '%s\t%s\tfalse' "$((now - age))" "$((now - age - 600))")" \
+        "memo $name retains historical age and prior gap before production normalization" ;;
+  esac
   # Normalize the seeded prior sample through the production reader before
   # assigning historical mtimes. The first judged read then writes no input.
   JUDGE_NOW="$now" run_succeed "$row" '' --check-marks
@@ -1898,6 +1963,27 @@ memo_case() { # ROW SCRIPT
 }
 for memo_row in unchanged other-record other-wall watch-hook watch-aged record-rewritten record-missing claim-added claim-removed wall-written headroom-policy model ttl-30-basic ttl-0-basic ttl-030-literal ttl-00-literal served-until reset own-second context failed-1 failed-5 replay-headroom crossing-rate cached-rate replay-rate; do
   memo_case "$memo_row" "$PICKLOG/oversee-succeed"
+  if [[ "$memo_row" == other-record ]]; then
+    for record in "$TMP_ROOT/state-memo-unchanged/usage/"*.json; do
+      [[ "$(jq -r '.config_dir' "$record")" == "$H/.claude" ]] && break
+    done
+    other_record="$TMP_ROOT/state-memo-other-record/usage/${record##*/}"
+    seed_record="$MEMO_SEED_56/${record##*/}"
+    other_before="$(cat "$other_record")"
+    seed_before="$(cat "$seed_record")"
+    : > "$TMP_ROOT/memo-other-stamp"
+    : > "$TMP_ROOT/memo-seed-stamp"
+    touch -r "$other_record" "$TMP_ROOT/memo-other-stamp"
+    touch -r "$seed_record" "$TMP_ROOT/memo-seed-stamp"
+    printf 'changed\n' > "$record"
+    assert_eq "$(cat "$other_record")|$(cat "$seed_record")" "$other_before|$seed_before" 'writing one completed memo row leaves its peer and seed unchanged'
+    touch -t 200001010000 "$record"
+    assert_eq "$([[ ! "$other_record" -nt "$TMP_ROOT/memo-other-stamp" && ! "$TMP_ROOT/memo-other-stamp" -nt "$other_record" && ! "$seed_record" -nt "$TMP_ROOT/memo-seed-stamp" && ! "$TMP_ROOT/memo-seed-stamp" -nt "$seed_record" ]] && printf same || printf changed)" same 'touching one completed memo row preserves peer and seed mtimes'
+    write_own_claim memo-unchanged "$CALLER_PANE" "$H/.claude"
+    assert_eq "$([[ ! -e "$TMP_ROOT/state-memo-other-record/claims/own.claim" && ! -e "$MEMO_SEED_56/../claims/own.claim" ]] && printf private || printf shared)" private 'a memo row claim stays private'
+    rm -- "$TMP_ROOT/state-memo-unchanged/claims/own.claim" "$record"
+    assert_eq "$(cat "$other_record")|$(cat "$seed_record")" "$other_before|$seed_before" 'deleting a completed memo row record and claim preserves its peer and seed'
+  fi
 done
 
 # Each disposable mutant removes the condition its row must detect. Reuse
@@ -1921,6 +2007,7 @@ for control in base record bound ttl expiry precision rate; do
     assert_eq "$control_rc" 1 "control $control fails memo row $memo_row"
   done
 done
+assert_eq "$(cksum "$MEMO_SEED_56"/*.json "$MEMO_SEED_60"/*.json "$MEMO_SEED_99"/*.json)" "$MEMO_SEEDS_BEFORE" 'all memo judgements and mutation controls leave the seeds immutable'
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # A known harness remains enough to judge account triggers when its context
