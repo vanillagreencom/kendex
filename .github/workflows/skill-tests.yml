@@ -1410,7 +1410,7 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-tool-renderer
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.99.1 @earendil-works/pi-ai@0.99.1 @earendil-works/pi-coding-agent@0.99.1 @earendil-works/pi-tui@0.99.1
+          npm install --no-save --include=dev --include=peer --include=optional --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@1.0.1 @earendil-works/pi-ai@1.0.1 @earendil-works/pi-coding-agent@1.0.1 @earendil-works/pi-tui@1.0.1 @earendil-works/pi-codemode@1.0.1 @earendil-works/pi-mcp@1.0.1 @earendil-works/pi-telemetry@1.0.1
           npm test
 
       # Prompt stash mocks its Pi TUI value imports, so its suite needs no
