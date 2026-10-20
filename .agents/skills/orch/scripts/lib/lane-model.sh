@@ -384,13 +384,16 @@ def credit_room($credit_floor):
 # spend a reserve-only refusal or a fully reserved window seat. Pool accounts
 # spend no plan window; explicit cloud-credit mode is judged by with_lane_tier.
 # A credit choice drops the spent window forecast, which no longer binds it.
+# An ended plan is walled ahead of both: no credit spends it, and a seat on it
+# never regains the room a seat-reserve verdict waits for.
 def with_lane_seat_verdict($wall; $max; $credit_floor; $seats; $reserve):
   . + {_seat: (if .harness != "copilot" and .harness != "pi"
                   and ((._id // .config_dir) as $d | any($seats[]; . == $d)) then 1 else 0 end)}
   | ($wall | wall_verdict($max)) as $ordinary
   | (if ._seat == 1 then [$max, 100 - $reserve] | min else $max end) as $limit
   | ($wall | wall_verdict($limit)) as $plan
-  | (if $ordinary == "walled" and credit_room($credit_floor) and (._seat == 0 or $reserve < 100) then "credits"
+  | (if lane_ended then "walled"
+     elif $ordinary == "walled" and credit_room($credit_floor) and (._seat == 0 or $reserve < 100) then "credits"
      elif ._seat == 1 and $plan == "walled" then "seat-reserve"
      else $plan end) as $kind
   | if $kind == "credits"
