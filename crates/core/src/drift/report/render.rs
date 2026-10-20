@@ -12,8 +12,8 @@ const NOT_FROM_HERE: &str = "(the main checkout's project: its refresh owner run
 /// How much of a report a reader asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verbosity {
-    /// What a person must act on or know: no line the background refresh
-    /// settles, no technical detail, and in the session report a count and
+    /// What a person must act on or know: pending comparisons included,
+    /// no technical detail, and in the session report a count and
     /// one example per section.
     Default,
     /// Every line, each with its technical detail.
@@ -21,7 +21,7 @@ pub enum Verbosity {
 }
 
 /// A duration as the shortest honest spelling: "3m", "5h", "2d".
-fn age_word(secs: u64) -> String {
+pub(super) fn age_word(secs: u64) -> String {
     match secs {
         s if s < 120 => "moments".to_owned(),
         s if s < 7200 => format!("{}m", s / 60),
@@ -85,7 +85,7 @@ fn next_action(report: &CheckReport) -> Option<Sentence> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
     pub sections: Vec<PageSection>,
-    /// `(package evaluation: 5m ago)`, where anything was evaluated.
+    /// `(oldest package evaluation: 5m ago)`, where anything was evaluated.
     pub age: Option<String>,
     /// The refresh a reader runs next, where every line points at one.
     pub next: Option<Sentence>,
@@ -170,7 +170,6 @@ pub fn page(report: &CheckReport, verbosity: Verbosity) -> Page {
             items: section
                 .lines
                 .iter()
-                .filter(|line| verbose || line.class != Class::Settling)
                 .map(|line| PageItem {
                     class: line.class,
                     text: line.text.clone(),
@@ -197,7 +196,7 @@ pub fn page(report: &CheckReport, verbosity: Verbosity) -> Page {
         sections,
         age: report
             .snapshot_age_secs
-            .map(|age| format!("(package evaluation: {} ago)", age_word(age))),
+            .map(|age| format!("(oldest package evaluation: {} ago)", age_word(age))),
         next: next_action(report),
     }
 }
@@ -226,10 +225,7 @@ fn outcome(page: &Page) -> String {
         said.push(format!("kendex could not check {}", items_word(unknown)));
     }
     if settling > 0 {
-        said.push(format!(
-            "the background refresh checks {} again",
-            items_word(settling)
-        ));
+        said.push(format!("{} pending evaluation", items_word(settling)));
     }
     if notices > 0 {
         let verb = match notices {

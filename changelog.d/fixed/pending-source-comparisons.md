@@ -1,0 +1,1 @@
+- Session checks show superseded source comparisons as pending with their evaluation age, without counting them as attention. Pending comparisons stay non-clean with exit 1; unreadable current comparisons stay visible with exit 2, and refresh requests no longer imply that refresh is running.

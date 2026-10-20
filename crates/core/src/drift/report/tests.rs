@@ -294,7 +294,7 @@ fn each_classification_lands_in_its_section_with_its_remedy() {
     // line.
     let text = render_plain(&report, Verbosity::Verbose);
     let stale_at = text.find("stale:").unwrap();
-    let age_at = text.find("(package evaluation:").unwrap();
+    let age_at = text.find("(oldest package evaluation:").unwrap();
     assert!(stale_at < age_at, "{text}");
 }
 
@@ -329,37 +329,93 @@ fn edited_outranks_stale_for_one_package() {
 }
 
 #[test]
-fn a_mirror_that_moved_since_evaluation_reads_as_unevaluated() {
+fn a_mirror_that_moved_since_evaluation_reads_as_pending_without_attention() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());
     let scope = Scope::Global;
     write_manifest(&env, &scope, &manifest_with_remote());
-    snapshot_with(
+    let mut packages: Vec<_> = ["moved", "also-moved"]
+        .map(|name| PackageSnapshot {
+            update_available: name == "moved",
+            refs_state: Some("old-refs".into()),
+            ..package(name)
+        })
+        .to_vec();
+    packages.push(PackageSnapshot {
+        repo: String::new(),
+        edited: true,
+        ..package("current-edit")
+    });
+    snapshot_aged(
         &env,
         &scope,
-        ["moved", "also-moved"]
-            .map(|name| PackageSnapshot {
-                update_available: name == "moved",
-                refs_state: Some("old-refs".into()),
-                ..package(name)
-            })
-            .to_vec(),
+        packages.clone(),
+        crate::clock::unix_now() - 7 * 3600,
     );
     record_refs(&env, "owner/repo", Some("new-refs"));
-
     let report = check(
         &env,
         std::slice::from_ref(&scope),
         crate::drift::copies::CheckMode::Settle,
     );
-    // The honest "maybe": never a guessed verdict, and never a failure to
-    // check — the check ran and this is its answer.
     assert_eq!(report.status, CheckStatus::Drift);
     assert_eq!(report.status.exit_code(), 1);
+    let page = page(&report, Verbosity::Default);
+    let items: Vec<_> = page
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .collect();
     assert_eq!(
-        render_plain(&report, Verbosity::Default),
-        "source comparison needed: 2\n  skill 'moved': source changed since evaluation; not yet re-evaluated — fix: kendex refresh --global\n  … 1 more — see: kendex check\n(package evaluation: moments ago)\n2 items need attention.\nNext: kendex check --global to list global packages; kendex refresh --global --yes to refresh them.\n"
+        items
+            .iter()
+            .filter(|item| item.class == Class::Settling)
+            .count(),
+        2
     );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| matches!(item.class, Class::Drift | Class::Unevaluated))
+            .count(),
+        1
+    );
+    for item in items.iter().filter(|item| item.class == Class::Settling) {
+        assert!(item.fix.is_none());
+        assert!(item.text.contains("7h"));
+    }
+    // The session hook relays this bounded outcome to the agent.
+    let text = render_plain(&report, Verbosity::Default);
+    assert!(
+        text.contains("1 item needs attention; 2 items pending evaluation."),
+        "{text}"
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["status"], "drift");
+    assert!(json["snapshotAgeSecs"].as_u64().unwrap() >= 7 * 3600);
+    for package in &mut packages {
+        package.refs_state = Some("new-refs".into());
+    }
+    snapshot_with(&env, &scope, packages);
+    let settled = check(&env, &[scope], crate::drift::copies::CheckMode::Settle);
+    let lines: Vec<_> = settled
+        .sections
+        .iter()
+        .flat_map(|section| &section.lines)
+        .collect();
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.class == Class::Drift)
+            .count(),
+        2
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| matches!(line.class, Class::Settling | Class::Unevaluated))
+    );
+    assert_eq!(settled.status, CheckStatus::Drift);
 }
 
 #[test]
@@ -447,7 +503,7 @@ fn snapshot_age_is_rendered() {
     );
     assert_eq!(report.snapshot_age_secs.map(|age| age / 3600), Some(3));
     let text = render_plain(&report, Verbosity::Verbose);
-    assert!(text.contains("(package evaluation: 3h ago)"));
+    assert!(text.contains("(oldest package evaluation: 3h ago)"));
     assert!(text.ends_with(
         "Next: kendex refresh --scope project --yes in this checkout to refresh project packages.\n"
     ));

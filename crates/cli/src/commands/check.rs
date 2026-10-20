@@ -22,8 +22,7 @@ use commit_hooks::fold_commit_hooks;
 /// is still owed, so the next session reads fresh verdicts. An explicit
 /// check draws every line from the design system's components. `--quiet`
 /// prints the bounded session report and nothing when clean. `--json`
-/// prints the machine shape. `--verbose` adds the lines the background
-/// refresh settles and each line's technical cause. `mode` is whether that deep read may write a
+/// prints the machine shape. `--verbose` adds each line's technical cause. `mode` is whether that deep read may write a
 /// project's committed install record: `--report-only`, which the session
 /// hook passes, never does.
 pub fn run(
@@ -36,7 +35,7 @@ pub fn run(
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let scopes = resolve_scopes(env, filter)?;
     let channel = ui::channel(json);
-    let checked = {
+    let mut checked = {
         let _reading = match (&channel, quiet) {
             (Channel::Human(style), false) => {
                 Some(ui::Spinner::start(style, "reading the snapshot"))
@@ -64,10 +63,27 @@ pub fn run(
     // the check's other write, the install record for a copy it proved
     // against its source, is the report's own, and `--report-only`
     // withholds it at a project scope.
-    if report::wants_background_refresh(env, &scopes, &checked)
-        && std::env::var("KENDEX_BACKGROUND_REFRESH").as_deref() != Ok("off")
-    {
+    let background_disabled = std::env::var("KENDEX_BACKGROUND_REFRESH").as_deref() == Ok("off");
+    let requested =
+        !background_disabled && report::wants_background_refresh(env, &scopes, &checked);
+    if requested {
         kendex_core::process::respawn_detached(&["source", "refresh", "--stale"]);
+    }
+    for line in checked
+        .sections
+        .iter_mut()
+        .flat_map(|section| &mut section.lines)
+    {
+        if line.class == Class::Settling {
+            let observation = if background_disabled {
+                "; background refresh disabled"
+            } else if requested {
+                "; refresh requested; running state unconfirmed"
+            } else {
+                "; refresh running state unconfirmed"
+            };
+            line.text = line.text.clone().prose(observation);
+        }
     }
 
     match (channel, quiet) {
@@ -165,14 +181,22 @@ fn status(class: Class) -> Status {
     }
 }
 
-/// A section is as serious as its most serious row, by core's own reading
-/// of what a row makes of the check.
-/// A section whose rows all wait on the background refresh exits clean
-/// but is not done: it is drawn as the notice its rows are.
+/// Pending comparisons need a notice even though their exit stays non-clean.
 fn section_status(section: &PageSection) -> Status {
-    match section.items.iter().map(|item| item.class.status()).max() {
-        Some(CheckStatus::Clean) => Status::Notice,
-        status => outcome(status.unwrap_or(CheckStatus::Clean)),
+    if section
+        .items
+        .iter()
+        .any(|item| item.class == Class::Unknown)
+    {
+        Status::Failed
+    } else if section
+        .items
+        .iter()
+        .any(|item| matches!(item.class, Class::Drift | Class::Unevaluated))
+    {
+        Status::Decision
+    } else {
+        Status::Notice
     }
 }
 
@@ -186,54 +210,39 @@ fn outcome(status: CheckStatus) -> Status {
     }
 }
 
-/// How the run ended, describing the complete report above it. The pointer
-/// to those lines is named only where every counted line has a remedy. A
-/// line the background refresh settles asks nothing of the reader, so it
-/// is not counted; but a check left with only such lines has not found
-/// every install matching its source either. By default it says nothing,
-/// as the session report does, and `--verbose` says the check is pending.
-fn verdict(checked: &CheckReport, page: &Page, verbosity: Verbosity) -> Option<(Status, String)> {
-    let items: Vec<_> = page
-        .sections
-        .iter()
-        .flat_map(|section| &section.items)
+/// Pending comparisons are counted separately from attention in every view.
+fn verdict(checked: &CheckReport, page: &Page, _verbosity: Verbosity) -> Option<(Status, String)> {
+    let all = || page.sections.iter().flat_map(|section| &section.items);
+    let settling = all().filter(|item| item.class == Class::Settling).count();
+    let notices = all().any(|item| item.class == Class::Notice);
+    let pending = format!(
+        "{settling} item{} pending evaluation",
+        if settling == 1 { "" } else { "s" }
+    );
+    let items: Vec<_> = all()
         .filter(|item| !matches!(item.class, Class::Settling | Class::Notice))
         .collect();
     if items.is_empty() {
-        if checked
-            .sections
-            .iter()
-            .flat_map(|section| &section.lines)
-            .any(|line| line.class == Class::Notice)
-        {
-            return Some((
+        return Some(if settling > 0 {
+            (
+                Status::Notice,
+                if notices {
+                    format!("{pending}; external command notices are listed above")
+                } else {
+                    pending
+                },
+            )
+        } else if notices {
+            (
                 Status::Notice,
                 "external command notices are listed above".to_owned(),
-            ));
-        }
-        let settling = checked
-            .sections
-            .iter()
-            .flat_map(|section| &section.lines)
-            .filter(|line| line.class == Class::Settling)
-            .count();
-        return match (settling, verbosity) {
-            (0, _) => Some((
+            )
+        } else {
+            (
                 Status::Done,
                 "all clear — every install matches its source".to_owned(),
-            )),
-            (_, Verbosity::Default) => None,
-            (settling, Verbosity::Verbose) => Some((
-                Status::Notice,
-                format!(
-                    "{settling} item{} not checked yet — the background refresh checks again",
-                    match settling {
-                        1 => "",
-                        _ => "s",
-                    }
-                ),
-            )),
-        };
+            )
+        });
     }
     let every = items.iter().all(|item| item.fix.is_some());
     let text = format!(
@@ -252,6 +261,11 @@ fn verdict(checked: &CheckReport, page: &Page, verbosity: Verbosity) -> Option<(
             false => " — see the lines above",
         }
     );
+    let text = if settling > 0 {
+        format!("{text}; {pending}")
+    } else {
+        text
+    };
     Some((outcome(checked.status), text))
 }
 

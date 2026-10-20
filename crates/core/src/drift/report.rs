@@ -57,25 +57,20 @@ impl CheckStatus {
     }
 }
 
-/// What a line is: a fact about drift, a package whose verdict is not in
-/// yet, or an admission that something could not be checked. The first
-/// two are answers and exit 1; the third is the absence of one and exits 2.
-/// The last is a could-not-check the check's own background refresh
-/// settles: nothing for a person to do, so it exits 0 and only
-/// `--verbose` and `--json` carry it.
+/// A classified finding, unresolved comparison, unreadable input or notice.
+/// Pending comparisons remain non-clean until evaluated, without asking
+/// for a person's decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum Class {
     Drift,
     /// Information that needs no action and leaves the exit status clean.
     Notice,
-    /// The source comparison is missing or outdated, or no deep pass has
-    /// run yet. The next background refresh settles it.
+    /// The source comparison is missing or unresolved, or no deep pass has run.
     Unevaluated,
     Unknown,
-    /// Could not be checked, for a reason the background refresh this
-    /// check starts clears: the source's cached copy is due a fetch, after
-    /// which the comparison is derived again.
+    /// Present refs prove the comparison was superseded, and its enabled
+    /// source has no recorded fetch failure. Re-evaluation is still owed.
     Settling,
 }
 
@@ -84,9 +79,9 @@ impl Class {
     /// owed is a state the check determined, so it counts as drift.
     pub fn status(self) -> CheckStatus {
         match self {
-            Class::Drift | Class::Unevaluated => CheckStatus::Drift,
+            Class::Drift | Class::Unevaluated | Class::Settling => CheckStatus::Drift,
             Class::Unknown => CheckStatus::Unknown,
-            Class::Settling | Class::Notice => CheckStatus::Clean,
+            Class::Notice => CheckStatus::Clean,
         }
     }
 }

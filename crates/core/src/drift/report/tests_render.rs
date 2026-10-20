@@ -33,6 +33,44 @@ fn a_notice_only_report_ends_with_its_outcome() {
 }
 
 #[test]
+fn pending_rows_keep_each_scopes_age_and_the_report_labels_the_oldest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scopes = [Scope::Global, project_scope(tmp.path())];
+    let now = crate::clock::unix_now();
+    for (scope, age) in scopes.iter().zip([7 * 3600, 2 * 3600]) {
+        write_manifest(&env, scope, &manifest_with_remote());
+        super::tests::snapshot_aged(&env, scope, vec![package("pending-fixture")], now - age);
+    }
+    super::tests::record_refs(&env, "owner/repo", Some("new-refs"));
+    let report = check(&env, &scopes, crate::drift::copies::CheckMode::Settle);
+    assert_eq!(report.status, CheckStatus::Drift);
+    for verbosity in [Verbosity::Default, Verbosity::Verbose] {
+        let page = page(&report, verbosity);
+        let items: Vec<_> = page
+            .sections
+            .iter()
+            .flat_map(|section| &section.items)
+            .collect();
+        assert_eq!(items.len(), 2);
+        assert!(
+            items
+                .iter()
+                .all(|item| item.class == Class::Settling && item.fix.is_none())
+        );
+        assert!(items[0].text.contains("7h"));
+        assert!(items[1].text.contains("2h"));
+        assert_eq!(
+            page.age.as_deref(),
+            Some("(oldest package evaluation: 7h ago)")
+        );
+        assert!(page.next.is_none());
+        // Session consumers relay this outcome without adding their own count.
+        assert!(render_plain(&report, verbosity).ends_with("2 items pending evaluation.\n"));
+    }
+}
+
+#[test]
 fn section_budget_counts_its_overflow_line_inside_itself() {
     let tmp = tempfile::tempdir().unwrap();
     let env = env_in(tmp.path());

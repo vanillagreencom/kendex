@@ -145,7 +145,7 @@ fn the_check_draws_every_kind_of_row_rich() {
             "<1;31>commit hooks</>  <90>2</>",
             "  <33>!</> pre-commit is not armed",
             "  <31>✗</> commit-msg could not be read",
-            "<90>(package evaluation: 5m ago)</>",
+            "<90>(oldest package evaluation: 5m ago)</>",
             "<90>Next: kendex refresh --scope project --yes in this checkout to refresh project packages.</>",
         ]
     );
@@ -250,7 +250,7 @@ fn the_check_draws_every_kind_of_row_plain() {
             "commit hooks:",
             "  pre-commit is not armed",
             "  commit-msg could not be read",
-            "(package evaluation: 5m ago)",
+            "(oldest package evaluation: 5m ago)",
             "Next: kendex refresh --scope project --yes in this checkout to refresh project packages.",
         ]
     );
@@ -325,55 +325,70 @@ fn the_verdict_counts_the_rows_it_closes() {
     );
 }
 
-/// A check whose only lines wait on the background refresh does not claim
-/// the installs match: by default it draws nothing, and `--verbose` draws
-/// the lines and closes on the pending check. A clean report is the
-/// control that still closes on the all-clear.
+/// A pending-only report stays visible and closes with a notice in both
+/// renderings. Command notices cannot hide that pending result.
 #[test]
 fn a_check_left_waiting_on_the_refresh_never_claims_all_clear() {
-    let waiting = CheckReport {
+    let mut waiting = CheckReport {
+        status: CheckStatus::Drift,
         sections: vec![section(
-            "could not check",
-            vec![line(Class::Settling, "skill 'gh': history unread", None)],
+            "source comparison needed",
+            vec![line(Class::Settling, "pending-fixture", None)],
         )],
         snapshot_age_secs: None,
         ..clean()
     };
-    // Silent by default in both renderings: no header, report or verdict.
-    for style in [plain(), rich(100)] {
-        let quiet = screen(&style, &waiting, "here", Verbosity::Default);
-        assert!(quiet.head.is_empty(), "{:?}", quiet.head);
-        assert!(quiet.report.is_empty(), "{:?}", quiet.report);
-        assert!(quiet.verdict.is_empty(), "{:?}", quiet.verdict);
+    for notices in [false, true] {
+        if notices {
+            waiting.sections.push(section(
+                "external commands",
+                vec![line(Class::Notice, "notice-fixture", None)],
+            ));
+        }
+        for verbosity in [Verbosity::Default, Verbosity::Verbose] {
+            let page = page(&waiting, verbosity);
+            assert_eq!(page.sections[0].items[0].class, Class::Settling);
+            assert_eq!(
+                super::section_status(&page.sections[0]),
+                crate::ui::Status::Notice
+            );
+            assert_eq!(
+                verdict(&waiting, &page, verbosity).map(|(status, _)| status),
+                Some(crate::ui::Status::Notice)
+            );
+            for style in [plain(), rich(100)] {
+                let drawn = screen(&style, &waiting, "here", verbosity);
+                assert!(!drawn.report.is_empty());
+                assert!(!drawn.verdict.is_empty());
+            }
+        }
     }
-    assert!(
-        !screen(&rich(100), &waiting, "here", Verbosity::Verbose)
-            .head
-            .is_empty(),
-        "verbose draws the run it reports"
-    );
-    let verbose = screen(&plain(), &waiting, "here", Verbosity::Verbose);
+    waiting.sections.push(section(
+        "stale",
+        vec![line(Class::Drift, "drift-fixture", None)],
+    ));
     assert_eq!(
-        verbose.report,
-        ["could not check:", "  skill 'gh': history unread"]
+        verdict(
+            &waiting,
+            &page(&waiting, Verbosity::Default),
+            Verbosity::Default
+        )
+        .map(|(status, _)| status),
+        Some(crate::ui::Status::Decision)
     );
+    waiting.status = CheckStatus::Unknown;
+    waiting.sections.push(section(
+        "could not check",
+        vec![line(Class::Unknown, "unknown-fixture", None)],
+    ));
     assert_eq!(
-        verbose.verdict,
-        ["1 item not checked yet — the background refresh checks again"]
-    );
-    // Rich draws the section as a notice too, never in the colour of done.
-    let rich_run = screen(&rich(100), &waiting, "here", Verbosity::Verbose);
-    assert_eq!(
-        tagged(&rich_run.report),
-        [
-            "",
-            "<1;36>could not check</>  <90>1</>",
-            "  <36>•</> skill 'gh': history unread",
-        ]
-    );
-    assert_eq!(
-        screen(&plain(), &clean(), "here", Verbosity::Verbose).verdict,
-        ["all clear — every install matches its source"]
+        verdict(
+            &waiting,
+            &page(&waiting, Verbosity::Default),
+            Verbosity::Default
+        )
+        .map(|(status, _)| status),
+        Some(crate::ui::Status::Failed)
     );
 }
 

@@ -1135,99 +1135,156 @@ impl ScopeCheck<'_> {
         };
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
-        let mut changed = BTreeSet::new();
+        let mut compared = BTreeSet::new();
         for package in &snapshot.packages {
-            // A hold or an ignore is a decision already made; re-announcing
-            // it every session teaches agents to skim.
+            // Holds and ignores do not suppress independent unreadable evidence.
             if package.held || package.ignored {
                 continue;
             }
-            let kind = package.kind.name();
-            let name = shown(&package.name);
-            let stamp_refs = stamp_for(self.env, &package.repo).and_then(|stamp| stamp.refs_state);
-            match (stamp_refs.as_ref(), package.refs_state.as_ref()) {
-                _ if package.repo.is_empty() => self.package_line(package, sections),
-                (Some(current), Some(evaluated)) if current == evaluated => {
-                    self.package_line(package, sections);
-                }
-                (Some(_), Some(_)) => {
-                    if changed.insert((package.kind, package.name.as_str(), package.repo.as_str())) {
-                        sections.unevaluated.push(unevaluated(
-                            format!(
-                                "{prefix}{kind} '{name}': source changed since evaluation; not yet re-evaluated"
-                            ),
-                            Remedy::Refresh {
-                                global: self.global,
-                            },
-                        ));
+            let key = (package.kind, package.name.as_str(), package.repo.as_str());
+            let note = snapshot
+                .unreadable
+                .iter()
+                .find(|note| (note.kind, note.name.as_str(), note.repo.as_str()) == key);
+            if let Some(line) = self.comparison_line(
+                manifest,
+                package.kind,
+                &package.name,
+                &package.repo,
+                package.refs_state.as_deref(),
+                age,
+                note,
+            ) {
+                if compared.insert(key) {
+                    match line.class {
+                        Class::Unknown => sections.unknown.push(line),
+                        Class::Settling | Class::Unevaluated => sections.unevaluated.push(line),
+                        Class::Drift | Class::Notice => unreachable!("comparison classification"),
                     }
                 }
-                _ => sections.unevaluated.push(unevaluated(
-                    format!(
-                        "{prefix}{kind} '{name}': could not compare source versions; comparison data is missing"
-                    ),
-                    Remedy::Refresh {
-                        global: self.global,
-                    },
-                )),
+            } else {
+                self.package_line(package, sections);
             }
         }
         for note in &snapshot.unreadable {
-            let kind = note.kind.name();
-            let name = shown(&note.name);
-            if crate::drift::snapshot::source_changed(
-                self.env,
-                &note.repo,
-                note.refs_state.as_deref(),
-            ) {
-                if changed.insert((note.kind, note.name.as_str(), note.repo.as_str())) {
-                    sections.unevaluated.push(unevaluated(
-                        format!("{prefix}{kind} '{name}': source changed since evaluation; not yet re-evaluated"),
-                        Remedy::Refresh { global: self.global },
-                    ));
-                }
-            } else {
-                sections.unknown.push(self.unreadable_line(manifest, note));
+            if !compared.insert((note.kind, note.name.as_str(), note.repo.as_str())) {
+                continue;
+            }
+            let line = self
+                .comparison_line(
+                    manifest,
+                    note.kind,
+                    &note.name,
+                    &note.repo,
+                    note.refs_state.as_deref(),
+                    age,
+                    Some(note),
+                )
+                .unwrap_or_else(|| self.unreadable_line(note));
+            match line.class {
+                Class::Unknown => sections.unknown.push(line),
+                Class::Settling | Class::Unevaluated => sections.unevaluated.push(line),
+                Class::Drift | Class::Notice => unreachable!("comparison classification"),
             }
         }
     }
 
-    /// The could-not-check line for evidence the last comparison could not
-    /// read, at the mirror state that produced it.
-    ///
-    /// A fetch that is due re-derives the comparison in the background
-    /// refresh this check starts, which settles most of these: a cached
-    /// copy missing a commit is the usual one. That refresh fetches only
-    /// the enabled sources this manifest declares, so a note on any other
-    /// mirror has no retry coming and stays could-not-check. A recorded
-    /// fetch error means the last retry failed: a failure keeps the old
-    /// fetch time, so the stamp still reads as due, but nothing has settled
-    /// and the person is told. A success clears the error.
-    fn unreadable_line(
+    /// Only two present, unequal refs establish supersession. Fetch age
+    /// alone says nothing about whether an unreadable comparison will recover.
+    #[allow(clippy::too_many_arguments)]
+    fn comparison_line(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
-        note: &crate::drift::snapshot::UnreadableSnapshot,
-    ) -> Line {
-        let fetched = !note.repo.is_empty() && {
-            let mirror = crate::remote::cache_key(self.env, &note.repo);
-            manifest.is_some_and(|manifest| {
-                manifest.sources.values().any(|source| {
-                    source.enabled
-                        && source
-                            .repo
-                            .as_deref()
-                            .is_some_and(|repo| crate::remote::cache_key(self.env, repo) == mirror)
-                })
-            })
+        kind: ItemKind,
+        name: &str,
+        repo: &str,
+        evaluated: Option<&str>,
+        age: u64,
+        note: Option<&crate::drift::snapshot::UnreadableSnapshot>,
+    ) -> Option<Line> {
+        if repo.is_empty() {
+            return None;
+        }
+        let stamp = stamp_for(self.env, repo);
+        let current = stamp.as_ref().and_then(|stamp| stamp.refs_state.as_deref());
+        let superseded = match (current, evaluated) {
+            (Some(current), Some(evaluated)) if current == evaluated => return None,
+            (Some(_), Some(_)) => true,
+            _ => false,
         };
-        let settles = fetched
-            && stamp_for(self.env, &note.repo)
-                .is_some_and(|stamp| stamp.is_stale(self.now) && stamp.last_error.is_none());
-        Line {
-            class: match settles {
-                true => Class::Settling,
-                false => Class::Unknown,
+        if !superseded && let Some(note) = note {
+            return Some(self.unreadable_line(note));
+        }
+        let mirror = crate::remote::cache_key(self.env, repo);
+        let declared =
+            manifest.and_then(|manifest| {
+                manifest
+                    .sources
+                    .values()
+                    .find(|source| {
+                        source.enabled
+                            && source.repo.as_deref().is_some_and(|repo| {
+                                crate::remote::cache_key(self.env, repo) == mirror
+                            })
+                    })
+                    .or_else(|| {
+                        manifest.sources.values().find(|source| {
+                            source.repo.as_deref().is_some_and(|repo| {
+                                crate::remote::cache_key(self.env, repo) == mirror
+                            })
+                        })
+                    })
+            });
+        let failed = stamp
+            .as_ref()
+            .is_some_and(|stamp| stamp.last_error.is_some() || stamp.first_failure_at.is_some());
+        let pending = superseded && declared.is_some_and(|source| source.enabled) && !failed;
+        let reason = if !superseded {
+            "could not compare source versions; comparison data is missing"
+        } else if failed {
+            "source changed since evaluation; source refresh failed; not yet re-evaluated"
+        } else if declared.is_some_and(|source| !source.enabled) {
+            "source changed since evaluation; source refresh disabled; not yet re-evaluated"
+        } else if declared.is_none() {
+            "source changed since evaluation; source refresh unavailable; not yet re-evaluated"
+        } else {
+            "source changed since evaluation; comparison pending"
+        };
+        let mut text = format!(
+            "{}{} '{}': {reason} (evaluation: {} ago)",
+            self.prefix,
+            kind.name(),
+            shown(name),
+            super::render::age_word(age)
+        );
+        if let Some(note) = note {
+            text.push_str(&format!("; previous evaluation: {}", shown(&note.message)));
+        }
+        let mut details: Vec<String> = note
+            .and_then(|note| note.detail.as_deref())
+            .map(verbatim)
+            .into_iter()
+            .collect();
+        if let Some(error) = stamp.as_ref().and_then(|stamp| stamp.last_error.as_deref()) {
+            details.push(verbatim(error));
+        }
+        Some(Line {
+            class: if pending {
+                Class::Settling
+            } else {
+                Class::Unevaluated
             },
+            text: text.into(),
+            remedy: (!pending).then_some(Remedy::Refresh {
+                global: self.global,
+            }),
+            detail: (!details.is_empty()).then(|| details.join("; ")),
+        })
+    }
+
+    fn unreadable_line(&self, note: &crate::drift::snapshot::UnreadableSnapshot) -> Line {
+        Line {
+            class: Class::Unknown,
             text: format!(
                 "{}{} '{}': {}",
                 self.prefix,

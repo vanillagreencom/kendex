@@ -342,7 +342,7 @@ fn an_unreadable_history_is_a_warning_never_current() {
 #[allow(clippy::unwrap_used)]
 fn a_foreground_fetch_retires_missing_commit_evidence() {
     use drift::copies::CheckMode;
-    use drift::report::{CheckStatus, Class, Remedy};
+    use drift::report::{CheckStatus, Class};
 
     let cases = [
         ("package and warning", false, false, false, false),
@@ -412,15 +412,14 @@ fn a_foreground_fetch_retires_missing_commit_evidence() {
             let count = |class| lines.iter().filter(|line| line.class == class).count();
             assert_eq!(count(Class::Unknown) > 0, !fetch, "{case}, fetch={fetch}");
             assert_eq!(
-                count(Class::Unevaluated),
+                count(Class::Settling),
                 usize::from(fetch),
                 "{case}, fetch={fetch}"
             );
-            let remedies = lines
-                .iter()
-                .filter(|line| line.remedy == Some(Remedy::Refresh { global: false }))
-                .count();
-            assert_eq!(remedies, usize::from(fetch), "{case}, fetch={fetch}");
+            assert!(
+                lines.iter().all(|line| line.remedy.is_none()),
+                "{case}, fetch={fetch}"
+            );
             assert_eq!(
                 drift::report::wants_background_refresh(&w.env, scopes, &checked),
                 fetch

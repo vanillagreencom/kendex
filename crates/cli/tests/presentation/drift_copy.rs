@@ -13,7 +13,7 @@ const HASH: &str = "f7db7e89c3a1d04b5e6f7a8b9c0d1e2f3a4b5c6d";
 /// A project whose last comparison could not read one package's history,
 /// with the source's fetch last done `fetched_ago` seconds back.
 #[allow(clippy::unwrap_used)]
-fn failed_comparison(home: &Path, fetched_ago: u64) -> PathBuf {
+fn failed_comparison(home: &Path, fetched_ago: u64, superseded: bool) -> PathBuf {
     let project = home.join("dev/app");
     fs::create_dir_all(&project).unwrap();
     fs::write(
@@ -33,7 +33,7 @@ fn failed_comparison(home: &Path, fetched_ago: u64) -> PathBuf {
         &scope,
         &ScopeSnapshot {
             schema: SNAPSHOT_SCHEMA,
-            taken_at: now,
+            taken_at: now - 7 * 3600,
             scope: scope.label(),
             packages: vec![],
             unreadable: vec![UnreadableSnapshot {
@@ -44,7 +44,7 @@ fn failed_comparison(home: &Path, fetched_ago: u64) -> PathBuf {
                     "git log --first-parent --format=%H {HASH} -- :(literal)skills/gh failed: fatal: bad object {HASH}"
                 )),
                 repo: "owner/repo".into(),
-                refs_state: Some("refs".into()),
+                refs_state: Some(if superseded { "old-refs" } else { "refs" }.into()),
             }],
         },
     )
@@ -71,57 +71,54 @@ fn technical(text: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// Rows: how long ago the source was fetched, and whether the background
-/// refresh this check starts settles the failure. A fetch that is due
-/// settles it, so the default report says nothing and exits clean; a fetch
-/// that just ran did not, so the default report says what failed, in
-/// words, and exits could-not-check. Either way `--verbose` and `--json`
-/// keep the git command and its output verbatim.
+/// A due fetch cannot excuse current unreadability. Superseded refs remain
+/// visible and non-clean even with background refresh disabled by this fixture.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_failed_comparison_says_only_what_the_person_needs() {
-    for (fetched_ago, settles) in [(2 * stamps::TTL.as_secs(), true), (0, false)] {
+    for (fetched_ago, superseded) in [(2 * stamps::TTL.as_secs(), false), (0, false), (0, true)] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
-        let project = failed_comparison(&home, fetched_ago);
-
+        let project = failed_comparison(&home, fetched_ago, superseded);
+        let expected_code = if superseded { 1 } else { 2 };
         for quiet in [true, false] {
             let flags: &[&str] = if quiet { &["--quiet"] } else { &[] };
             let (code, text) = check(&home, &project, flags);
-            let label = format!("settles={settles} quiet={quiet}");
-            match settles {
-                true => {
-                    assert_eq!(code, Some(0), "{label}: {text}");
-                    assert!(!text.contains("gh"), "{label}: {text}");
-                }
-                false => {
-                    assert_eq!(code, Some(2), "{label}: {text}");
-                    assert!(text.contains("skill 'gh'"), "{label}: {text}");
-                }
-            }
-            assert_eq!(technical(&text), Vec::<&str>::new(), "{label}: {text}");
-
+            assert_eq!(code, Some(expected_code));
+            assert_eq!(technical(&text), Vec::<&str>::new());
+            assert!(!text.is_empty());
             let verbose = [flags, &["--verbose"]].concat();
             let (code, text) = check(&home, &project, &verbose);
-            assert_eq!(code, Some(if settles { 0 } else { 2 }), "{label}: {text}");
-            assert!(
-                text.contains(&format!("bad object {HASH}")),
-                "{label}: {text}"
-            );
+            assert_eq!(code, Some(expected_code));
+            assert!(text.contains(&format!("bad object {HASH}")));
         }
-
-        let (_, json) = check(&home, &project, &["--json"]);
+        let (code, json) = check(&home, &project, &["--json"]);
+        assert_eq!(code, Some(expected_code));
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let line = &parsed["sections"][0]["lines"][0];
         assert_eq!(
             line["class"],
-            if settles { "settling" } else { "unknown" },
-            "{json}"
+            if superseded { "settling" } else { "unknown" }
         );
-        assert!(line["detail"].as_str().unwrap().contains(HASH), "{json}");
+        assert_eq!(
+            parsed["status"],
+            if superseded { "drift" } else { "unknown" }
+        );
+        assert!(line["detail"].as_str().unwrap().contains(HASH));
+        assert!(line["remedy"].is_null());
         assert_eq!(
             technical(line["text"].as_str().unwrap()),
             Vec::<&str>::new()
         );
+        if superseded {
+            assert!(parsed["snapshotAgeSecs"].as_u64().unwrap() >= 7 * 3600);
+            // The session consumer relays these observation fields as text.
+            assert!(
+                line["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("background refresh disabled")
+            );
+        }
     }
 }

@@ -38,6 +38,7 @@ fn missing_remote_comparison_data_names_each_package() {
             line.text
                 .contains("skill 'orch': could not compare source versions")
         );
+        assert_eq!(line.class, Class::Unevaluated);
         assert_eq!(line.remedy, Some(Remedy::Refresh { global: false }));
     }
 }
@@ -145,8 +146,8 @@ fn unreadable_evidence_is_current_only_at_its_evaluated_source() {
         );
         assert_eq!(
             report.sections[0].lines[0].class,
-            if changed {
-                Class::Unevaluated
+            if evaluated.is_some() && current.is_some() && changed {
+                Class::Settling
             } else {
                 Class::Unknown
             }
@@ -158,104 +159,191 @@ fn unreadable_evidence_is_current_only_at_its_evaluated_source() {
     }
 }
 
-/// A could-not-check whose source is due a fetch is settled by the
-/// background refresh the check starts for that fetch: the line is
-/// settling, the check is clean, and the refresh it relies on is wanted.
-/// Rows: the same note after a fetch that just ran; a source declared
-/// under another spelling of the same mirror, which that refresh fetches;
-/// a disabled source, which it never fetches, so the note stays
-/// could-not-check; and a due fetch whose retry already failed, which
-/// settled nothing.
+/// Fetch age is not recovery evidence. Supersession requires known refs
+/// and the same enabled mirror, with no recorded failure.
 #[test]
-fn unreadable_evidence_due_a_fetch_settles_in_the_background() {
+#[allow(clippy::too_many_lines)]
+fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
     let due = 2 * stamps::TTL.as_secs();
-    let (settling, unknown) = (
-        (Class::Settling, CheckStatus::Clean),
-        (Class::Unknown, CheckStatus::Unknown),
-    );
-    // (fetched ago, declared spelling, enabled, retry failed, expected)
-    for (fetched_ago, declared, enabled, retry_failed, (class, status)) in [
-        (due, "owner/repo", true, false, settling),
-        (0, "owner/repo", true, false, unknown),
+    // (fetch age, declaration, enabled, failure age, evaluated, current, class)
+    for (fetched_ago, declared, enabled, failure, evaluated, current, class) in [
+        (
+            due,
+            "owner/repo",
+            true,
+            None,
+            Some("refs"),
+            Some("refs"),
+            Class::Unknown,
+        ),
+        (
+            0,
+            "owner/repo",
+            true,
+            None,
+            Some("refs"),
+            Some("refs"),
+            Class::Unknown,
+        ),
+        (
+            due,
+            "owner/repo",
+            true,
+            None,
+            None,
+            Some("refs"),
+            Class::Unknown,
+        ),
+        (
+            due,
+            "owner/repo",
+            true,
+            None,
+            Some("refs"),
+            None,
+            Class::Unknown,
+        ),
+        (due, "owner/repo", true, None, None, None, Class::Unknown),
+        (
+            0,
+            "owner/repo",
+            true,
+            None,
+            Some("old"),
+            Some("refs"),
+            Class::Settling,
+        ),
         (
             due,
             "https://github.com/owner/repo.git",
             true,
-            false,
-            settling,
+            None,
+            Some("old"),
+            Some("refs"),
+            Class::Settling,
         ),
-        (due, "owner/repo", false, false, unknown),
-        (due, "owner/repo", true, true, unknown),
+        (
+            due,
+            "owner/repo",
+            false,
+            None,
+            Some("old"),
+            Some("refs"),
+            Class::Unevaluated,
+        ),
+        (
+            due,
+            "unrelated/repo",
+            true,
+            None,
+            Some("old"),
+            Some("refs"),
+            Class::Unevaluated,
+        ),
+        (
+            due,
+            "owner/repo",
+            true,
+            Some(0),
+            Some("old"),
+            Some("refs"),
+            Class::Unevaluated,
+        ),
+        (
+            due,
+            "owner/repo",
+            true,
+            Some(3 * stamps::TTL.as_secs()),
+            Some("old"),
+            Some("refs"),
+            Class::Unevaluated,
+        ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_in(tmp.path());
         let scope = project_scope(tmp.path());
-        assert_eq!(
-            crate::remote::cache_key(&env, declared),
-            crate::remote::cache_key(&env, "owner/repo"),
-            "the rows name one mirror"
-        );
         let mut manifest = manifest_with_remote();
         let source = manifest.sources.get_mut("cat").unwrap();
         source.repo = Some(declared.into());
         source.enabled = enabled;
         write_manifest(&env, &scope, &manifest);
-        crate::drift::snapshot::store(
-            &env,
-            &scope,
-            &ScopeSnapshot {
-                schema: SNAPSHOT_SCHEMA,
-                taken_at: crate::clock::unix_now(),
-                scope: scope.canonical().label(),
-                packages: vec![],
-                unreadable: vec![UnreadableSnapshot {
-                    kind: crate::model::ItemKind::Skill,
-                    name: "gh".into(),
-                    message: "its version history could not be read".into(),
-                    detail: Some("git log failed: fatal: bad object f7db7e89".into()),
-                    repo: "owner/repo".into(),
-                    refs_state: Some("refs".into()),
-                }],
-            },
-        )
-        .unwrap();
-        let key = crate::remote::cache_key(&env, "owner/repo");
-        stamps::record_success(
-            &env,
-            &key,
-            Some("refs".into()),
-            crate::clock::unix_now() - fetched_ago,
-        )
-        .unwrap();
-        if retry_failed {
-            stamps::record_failure(
+        let now = crate::clock::unix_now();
+        let note = UnreadableSnapshot {
+            kind: crate::model::ItemKind::Skill,
+            name: "gh".into(),
+            message: "its version history could not be read".into(),
+            detail: Some("git log failed: fatal: bad object f7db7e89".into()),
+            repo: "owner/repo".into(),
+            refs_state: evaluated.map(str::to_owned),
+        };
+        for with_package in [false, true] {
+            crate::drift::snapshot::store(
                 &env,
-                &key,
-                "could not resolve host",
-                crate::clock::unix_now(),
+                &scope,
+                &ScopeSnapshot {
+                    schema: SNAPSHOT_SCHEMA,
+                    taken_at: now - 7 * 3600,
+                    scope: scope.canonical().label(),
+                    packages: if with_package {
+                        vec![crate::drift::snapshot::PackageSnapshot {
+                            refs_state: evaluated.map(str::to_owned),
+                            ..package("gh")
+                        }]
+                    } else {
+                        vec![]
+                    },
+                    unreadable: vec![note.clone(), note.clone()],
+                },
             )
             .unwrap();
-        }
-
-        let report = check(
-            &env,
-            std::slice::from_ref(&scope),
-            crate::drift::copies::CheckMode::Settle,
-        );
-        let line = &report.sections[0].lines[0];
-        let row = format!("{declared} enabled={enabled} retry_failed={retry_failed}");
-        assert_eq!(line.class, class, "{row}");
-        assert_eq!(report.status, status, "{row}");
-        assert_eq!(
-            line.detail.as_deref(),
-            Some("git log failed: fatal: bad object f7db7e89")
-        );
-        if class == Class::Settling {
-            assert!(wants_background_refresh(
+            let key = crate::remote::cache_key(&env, "owner/repo");
+            stamps::record_success(&env, &key, current.map(str::to_owned), now - fetched_ago)
+                .unwrap();
+            if let Some(failed_ago) = failure {
+                stamps::record_failure(&env, &key, "could not resolve host", now - failed_ago)
+                    .unwrap();
+            }
+            let report = check(
                 &env,
                 std::slice::from_ref(&scope),
-                &report
-            ));
+                crate::drift::copies::CheckMode::Settle,
+            );
+            let lines: Vec<_> = report
+                .sections
+                .iter()
+                .flat_map(|section| &section.lines)
+                .collect();
+            let line = lines.iter().find(|line| line.text.contains("gh")).unwrap();
+            assert_eq!(line.class, class, "{declared}, {evaluated:?}, {current:?}");
+            assert_eq!(
+                lines.iter().filter(|line| line.text.contains("gh")).count(),
+                1
+            );
+            assert!(line.text.contains(&note.message));
+            assert!(
+                line.detail
+                    .as_deref()
+                    .unwrap()
+                    .contains(note.detail.as_deref().unwrap())
+            );
+            if failure.is_some() {
+                assert!(
+                    line.detail
+                        .as_deref()
+                        .unwrap()
+                        .contains("could not resolve host")
+                );
+            }
+            let old_failure = failure.is_some_and(|age| age > 2 * stamps::TTL.as_secs());
+            assert_eq!(
+                report.status,
+                if old_failure || class == Class::Unknown {
+                    CheckStatus::Unknown
+                } else {
+                    CheckStatus::Drift
+                }
+            );
+            assert_eq!(line.remedy.is_none(), class != Class::Unevaluated);
         }
     }
 }
