@@ -268,15 +268,28 @@ fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
         source.enabled = enabled;
         write_manifest(&env, &scope, &manifest);
         let now = crate::clock::unix_now();
-        let note = UnreadableSnapshot {
-            kind: crate::model::ItemKind::Skill,
+        // Eval::standing emits both warnings when a Pi declaration is rebound
+        // but its recorded installation still names the original source.
+        let history = UnreadableSnapshot {
+            kind: crate::model::ItemKind::PiExtension,
             name: "gh".into(),
             message: "its version history could not be read".into(),
             detail: Some("git log failed: fatal: bad object f7db7e89".into()),
             repo: "owner/repo".into(),
             refs_state: evaluated.map(str::to_owned),
         };
-        for with_package in [false, true] {
+        let origin = UnreadableSnapshot {
+            message: "the installed package could not be compared with its source".into(),
+            detail: Some("recorded source differs from the declared source".into()),
+            ..history.clone()
+        };
+        let notes = [history, origin];
+        for package_state in [
+            None,
+            Some((false, false)),
+            Some((true, false)),
+            Some((false, true)),
+        ] {
             crate::drift::snapshot::store(
                 &env,
                 &scope,
@@ -284,15 +297,18 @@ fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
                     schema: SNAPSHOT_SCHEMA,
                     taken_at: now - 7 * 3600,
                     scope: scope.canonical().label(),
-                    packages: if with_package {
+                    packages: if let Some((held, ignored)) = package_state {
                         vec![crate::drift::snapshot::PackageSnapshot {
+                            kind: crate::model::ItemKind::PiExtension,
                             refs_state: evaluated.map(str::to_owned),
+                            held,
+                            ignored,
                             ..package("gh")
                         }]
                     } else {
                         vec![]
                     },
-                    unreadable: vec![note.clone(), note.clone()],
+                    unreadable: notes.iter().chain(&notes).cloned().collect(),
                 },
             )
             .unwrap();
@@ -313,25 +329,53 @@ fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
                 .iter()
                 .flat_map(|section| &section.lines)
                 .collect();
-            let line = lines.iter().find(|line| line.text.contains("gh")).unwrap();
-            assert_eq!(line.class, class, "{declared}, {evaluated:?}, {current:?}");
+            let package_lines: Vec<_> = lines
+                .iter()
+                .filter(|line| line.text.contains("gh"))
+                .collect();
             assert_eq!(
-                lines.iter().filter(|line| line.text.contains("gh")).count(),
-                1
+                package_lines.len(),
+                if class == Class::Unknown {
+                    notes.len()
+                } else {
+                    1
+                },
+                "{declared}, {evaluated:?}, {current:?}, {package_state:?}"
             );
-            assert!(line.text.contains(&note.message));
-            assert!(
-                line.detail
-                    .as_deref()
-                    .unwrap()
-                    .contains(note.detail.as_deref().unwrap())
-            );
-            if failure.is_some() {
+            for line in &package_lines {
+                assert_eq!(line.class, class, "{declared}, {evaluated:?}, {current:?}");
+                assert_eq!(line.remedy.is_none(), class != Class::Unevaluated);
+                if failure.is_some() {
+                    assert!(
+                        line.detail
+                            .as_deref()
+                            .unwrap()
+                            .contains("could not resolve host")
+                    );
+                }
+            }
+            for note in &notes {
+                let matching: Vec<_> = package_lines
+                    .iter()
+                    .filter(|line| line.text.contains(&note.message))
+                    .collect();
+                assert_eq!(matching.len(), 1);
+                assert_eq!(matching[0].text.matches(&note.message).count(), 1);
                 assert!(
-                    line.detail
+                    matching[0]
+                        .detail
                         .as_deref()
                         .unwrap()
-                        .contains("could not resolve host")
+                        .contains(note.detail.as_deref().unwrap())
+                );
+                assert_eq!(
+                    matching[0]
+                        .detail
+                        .as_deref()
+                        .unwrap()
+                        .matches(note.detail.as_deref().unwrap())
+                        .count(),
+                    1
                 );
             }
             let old_failure = failure.is_some_and(|age| age > 2 * stamps::TTL.as_secs());
@@ -343,7 +387,6 @@ fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
                     CheckStatus::Drift
                 }
             );
-            assert_eq!(line.remedy.is_none(), class != Class::Unevaluated);
         }
     }
 }

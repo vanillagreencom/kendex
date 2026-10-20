@@ -1135,6 +1135,15 @@ impl ScopeCheck<'_> {
         };
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
+        let mut unreadable: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for note in &snapshot.unreadable {
+            let notes = unreadable
+                .entry((note.kind, note.name.as_str(), note.repo.as_str()))
+                .or_default();
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
+        }
         let mut compared = BTreeSet::new();
         for package in &snapshot.packages {
             // Holds and ignores do not suppress independent unreadable evidence.
@@ -1142,10 +1151,7 @@ impl ScopeCheck<'_> {
                 continue;
             }
             let key = (package.kind, package.name.as_str(), package.repo.as_str());
-            let note = snapshot
-                .unreadable
-                .iter()
-                .find(|note| (note.kind, note.name.as_str(), note.repo.as_str()) == key);
+            let notes = unreadable.get(&key).map_or(&[][..], Vec::as_slice);
             if let Some(line) = self.comparison_line(
                 manifest,
                 package.kind,
@@ -1153,11 +1159,13 @@ impl ScopeCheck<'_> {
                 &package.repo,
                 package.refs_state.as_deref(),
                 age,
-                note,
+                notes,
             ) {
                 if compared.insert(key) {
                     match line.class {
-                        Class::Unknown => sections.unknown.push(line),
+                        Class::Unknown => sections
+                            .unknown
+                            .extend(notes.iter().map(|note| self.unreadable_line(note))),
                         Class::Settling | Class::Unevaluated => sections.unevaluated.push(line),
                         Class::Drift | Class::Notice => unreachable!("comparison classification"),
                     }
@@ -1166,10 +1174,12 @@ impl ScopeCheck<'_> {
                 self.package_line(package, sections);
             }
         }
-        for note in &snapshot.unreadable {
-            if !compared.insert((note.kind, note.name.as_str(), note.repo.as_str())) {
+        for (key, notes) in unreadable {
+            if !compared.insert(key) {
                 continue;
             }
+            // record_with binds every warning for a repository to the same refs.
+            let note = notes[0];
             let line = self
                 .comparison_line(
                     manifest,
@@ -1178,11 +1188,13 @@ impl ScopeCheck<'_> {
                     &note.repo,
                     note.refs_state.as_deref(),
                     age,
-                    Some(note),
+                    &notes,
                 )
                 .unwrap_or_else(|| self.unreadable_line(note));
             match line.class {
-                Class::Unknown => sections.unknown.push(line),
+                Class::Unknown => sections
+                    .unknown
+                    .extend(notes.iter().map(|note| self.unreadable_line(note))),
                 Class::Settling | Class::Unevaluated => sections.unevaluated.push(line),
                 Class::Drift | Class::Notice => unreachable!("comparison classification"),
             }
@@ -1200,7 +1212,7 @@ impl ScopeCheck<'_> {
         repo: &str,
         evaluated: Option<&str>,
         age: u64,
-        note: Option<&crate::drift::snapshot::UnreadableSnapshot>,
+        notes: &[&crate::drift::snapshot::UnreadableSnapshot],
     ) -> Option<Line> {
         if repo.is_empty() {
             return None;
@@ -1212,7 +1224,7 @@ impl ScopeCheck<'_> {
             (Some(_), Some(_)) => true,
             _ => false,
         };
-        if !superseded && let Some(note) = note {
+        if !superseded && let Some(note) = notes.first() {
             return Some(self.unreadable_line(note));
         }
         let mirror = crate::remote::cache_key(self.env, repo);
@@ -1257,14 +1269,19 @@ impl ScopeCheck<'_> {
             shown(name),
             super::render::age_word(age)
         );
-        if let Some(note) = note {
-            text.push_str(&format!("; previous evaluation: {}", shown(&note.message)));
+        let mut messages = BTreeSet::new();
+        let mut causes = BTreeSet::new();
+        let mut details = Vec::new();
+        for note in notes {
+            if messages.insert(&note.message) {
+                text.push_str(&format!("; previous evaluation: {}", shown(&note.message)));
+            }
+            if let Some(detail) = note.detail.as_deref()
+                && causes.insert(detail)
+            {
+                details.push(verbatim(detail));
+            }
         }
-        let mut details: Vec<String> = note
-            .and_then(|note| note.detail.as_deref())
-            .map(verbatim)
-            .into_iter()
-            .collect();
         if let Some(error) = stamp.as_ref().and_then(|stamp| stamp.last_error.as_deref()) {
             details.push(verbatim(error));
         }
