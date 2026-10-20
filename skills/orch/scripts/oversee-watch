@@ -1141,6 +1141,30 @@ box_wait() { # PID SEEN
   done
 }
 
+# Auth ladder (../references/gates.md § Waiter auth ladder): a stale env token yields to the
+# keyring; when neither works, the env token is dropped so the project's
+# GH_BOT_TOKEN can be selected — the last candidate. Never proceed
+# unauthenticated: an unauthenticated `gh pr list` would report an empty
+# fleet, not a failure.
+#
+# Asked once per run, and only when GitHub is first needed: resolving a
+# repository no --repo names, a long pass, or the heartbeat's open-PR list. A
+# run that ends on mail news before a long pass comes due makes no GitHub call.
+# A repeat wrapper also asks it once before its claim (repeat_watch).
+# lib/gh-auth.sh § orch_github_ready_secs bounds this ladder for a launcher
+# waiting on that claim, so a change to its steps changes that count.
+GH_READY=0
+github_ready() {
+  [[ "$GH_READY" -eq 0 ]] || return 0
+  orch_sanitize_gh_env
+  if ! orch_github_auth_status; then
+    unset GH_TOKEN GITHUB_TOKEN
+    { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
+      || die auth-failed "" "service=github"
+  fi
+  GH_READY=1
+}
+
 # The pass is handed the state itself and only the entries argv gave this
 # wrapper, never the merged set: a lane whose record closed while the pass
 # loops has to leave that pass's fleet, which a hand-passed --item never does.
@@ -1159,6 +1183,12 @@ repeat_watch() { # ARGV...
     # watch wrote.
     if [[ -n "$REPEAT_FIRST" ]]; then
       REPEAT_FIRST=""
+      # Authenticated before the claim, so a watch that cannot read GitHub
+      # never stands as the fleet's watch, nor stops the one it would
+      # replace; its launcher's claim wait reports it failed. A subshell, so
+      # the wrapper's environment stays the launcher's and every pass runs
+      # the ladder itself, inheriting no token or validation from this one.
+      ( github_ready ) || exit "$?"
       watch_claim "$@"
       overseer_command_record
     fi
@@ -1652,27 +1682,6 @@ pass_stop() {
   exit 143
 }
 trap pass_stop TERM
-
-# Auth ladder (../references/gates.md § Waiter auth ladder): a stale env token yields to the
-# keyring; when neither works, the env token is dropped so the project's
-# GH_BOT_TOKEN can be selected — the last candidate. Never proceed
-# unauthenticated: an unauthenticated `gh pr list` would report an empty
-# fleet, not a failure.
-#
-# Asked once per run, and only when GitHub is first needed: resolving a
-# repository no --repo names, a long pass, or the heartbeat's open-PR list. A
-# run that ends on mail news before a long pass comes due makes no GitHub call.
-GH_READY=0
-github_ready() {
-  [[ "$GH_READY" -eq 0 ]] || return 0
-  orch_sanitize_gh_env
-  if ! orch_github_auth_status; then
-    unset GH_TOKEN GITHUB_TOKEN
-    { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
-      || die auth-failed "" "service=github"
-  fi
-  GH_READY=1
-}
 
 if [[ ${#REPOS[@]} -eq 0 ]]; then
   github_ready

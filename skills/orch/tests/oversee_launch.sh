@@ -1438,7 +1438,7 @@ test_resume() {
   # Controls, each a resume_line copy the rows above must reject: the main
   # dispatch without resume, the resumed command without its flags, no fresh
   # launch line recorded, and the typing directory in place of the record's.
-  resume_control resumectl '  launch|register|resume) ;;' '  launch|register) ;;'
+  resume_control resumectl '  launch|register|resume|watch-restart) ;;' '  launch|register|watch-restart) ;;'
   resume_control noflags \
     '  if ! ol_command_line --resume "$RESUME_ID" "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then' \
     '  if ! ol_command_line --resume "$RESUME_ID" "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD"; then'

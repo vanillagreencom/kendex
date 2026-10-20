@@ -678,6 +678,9 @@ source "$SCRIPT_DIR/lib/overseer-launch.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
+# The bound a watch start waits out its authentication by.
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
 # The watch handover and the job launch the helper below restarts the watch
 # through, shared with `oversee launch --predecessor`.
 # shellcheck source=lib/watch-handover.sh

@@ -26,8 +26,8 @@
 # stderr to DEP_ERR.
 #
 # Requires, of a caller that runs its functions: SCRIPT_DIR (the orch scripts
-# directory), DEP_ERR (a file), HANDOFF (the brief's path), and lib/watch-pid.sh and lib/job-unit.sh
-# sourced by the caller. Sourcing it defines names and runs nothing. Sourced,
+# directory), DEP_ERR (a file), HANDOFF (the brief's path), and lib/watch-pid.sh,
+# lib/job-unit.sh and lib/gh-auth.sh sourced by the caller. Sourcing it defines names and runs nothing. Sourced,
 # never run.
 
 # COMMAND started through the orch job runner as NAME and the UTC second, with
@@ -138,13 +138,18 @@ watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
 # replay does and hands the watch OVERSEE_WATCH_REPLACE=PID, the live watch
 # its start may stop and take over.
 # Wait for its claim before reporting success: an accepted job whose command
-# exits during initialization has not left a watch running. The claim is the
+# exits during initialization, a GitHub authentication failure among them,
+# has not left a watch running. The watch authenticates before it claims
+# (`oversee-watch` § repeat_watch), so the wait takes the auth ladder's bound
+# (lib/gh-auth.sh § orch_github_ready_secs) beside its stop bound, and an
+# auth bound that bounds nothing refuses as step=auth-bound before any launch,
+# since no wait for that claim would end. The claim is the
 # started watch's only where its pid differs from the claim live before the
 # launch, besides naming origin succession and PANE: a new tmux server can
 # hand the replaced watch's pane id to PANE itself, and that watch, started
 # here once before, holds a record whose origin and pane both match.
 watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
-  local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc
+  local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc auth_secs
   shift 6
   local flags=() harness_args=() since="" word skip="" argv=()
   local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start replace=() prior=""
@@ -173,6 +178,12 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
       done ;;
     *) WATCH_HANDOVER_KEY=watch-restart-failed WATCH_HANDOVER_FIELDS=(step=mode); return 1 ;;
   esac
+  if ! auth_secs="$(orch_github_ready_secs)"; then
+    WATCH_HANDOVER_KEY=watch-restart-failed
+    WATCH_HANDOVER_FIELDS=(step=auth-bound "KENDEX_GITHUB_AUTH_TIMEOUT=${KENDEX_GITHUB_AUTH_TIMEOUT:-10}"
+      "KENDEX_GITHUB_OP_TIMEOUT=${KENDEX_GITHUB_OP_TIMEOUT:-10}")
+    return 1
+  fi
   rc=0
   watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?
   if [[ "$rc" -gt 1 ]]; then
@@ -201,8 +212,8 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
   # A replay's start can stop the watch it takes over before it claims
   # (`oversee-watch` § watch_claim), a stop bounded by WATCH_STOP_SECS, so it
   # gets that bound on top of its own.
-  deadline=$((SECONDS + WATCH_STOP_SECS))
-  [[ "$mode" == fresh ]] || deadline=$((SECONDS + 2 * WATCH_STOP_SECS))
+  deadline=$((SECONDS + auth_secs + WATCH_STOP_SECS))
+  [[ "$mode" == fresh ]] || deadline=$((SECONDS + auth_secs + 2 * WATCH_STOP_SECS))
   while :; do
     rc=0
     watch_pid_live "$state" 2>"$DEP_ERR" || rc=$?

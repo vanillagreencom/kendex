@@ -6,9 +6,9 @@
 # socket under a private TMUX_TMPDIR, from outside tmux as oversee_launch.sh
 # runs the verb, whose suite owns everything else a launch does. The watch
 # handed over is a stand-in that records itself through lib/watch-pid.sh, as
-# the real one does, save in the last row, where the real watch runs and the
-# successor dies under it. What the helper does once started is
-# oversee_succeed_watch.sh's.
+# the real one does, save in the last rows, where the real watch runs: the
+# successor dies under it, and its GitHub credentials decide whether it
+# starts. What the helper does once started is oversee_succeed_watch.sh's.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
@@ -42,7 +42,7 @@ cleanup() {
   for pid in $(sed -n 's/^started \([0-9]*\) .*/\1/p' "$TMP_ROOT/watch.log" 2>/dev/null); do
     kill -TERM "$pid" 2>/dev/null || true
   done
-  # The real watch of the last row, where a failed row left it running.
+  # The real watch of the last rows, where a failed row left it running.
   ! watch_pid_live "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || kill -TERM "$WATCH_PID" 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
@@ -77,6 +77,10 @@ echo \$! > "$HARNESS_PIDS/\${TMUX_PANE#%}"
 wait \$!
 STUB
 chmod +x "$BIN/claude"
+# A real watch authenticates before it claims: this gh answers its auth check
+# and nothing else, as an authenticated host with no fleet fixture would.
+printf '#!/bin/sh\n[ "$1 $2" = "auth status" ] || { echo "fixture: no GitHub fixture" >&2; exit 1; }\necho "Logged in"\n' > "$BIN/gh"
+chmod +x "$BIN/gh"
 
 new_home fleet
 make_lane "$H" claude
@@ -213,10 +217,11 @@ watch_handoff_read() {
   local word prev=""
   watch_pid_live "$FLEET_STATE" || { printf '%s\n' "$OUT" >&2; cat -- "$WATCH_ERR" >&2; return 1; }
   watch_argv_read "$FLEET_STATE"
-  WATCH_HANDOFF="" WATCH_SINCE=""
+  WATCH_HANDOFF="" WATCH_SINCE="" WATCH_HARNESS=""
   for word in "${WATCH_ARGV[@]}"; do
     [[ "$prev" != --handoff ]] || WATCH_HANDOFF="$word"
     [[ "$prev" != --since ]] || WATCH_SINCE="$word"
+    [[ "$prev" != --harness ]] || WATCH_HARNESS="$word"
     prev="$word"
   done
 }
@@ -454,7 +459,11 @@ for CLAIM_CASE in refusal; do
   chmod +x "$CLAIM_BIN/oversee-watch"
   tm kill-window -a -t "$KEEP_WINDOW"
   rm -f -- "${FLEET_STATE:?}"
+  # The stand-in never authenticates: tenth-second auth bounds keep the
+  # claim wait they derive short.
+  ROW_ENV=(KENDEX_GITHUB_AUTH_TIMEOUT=0.1 KENDEX_GITHUB_OP_TIMEOUT=0.1)
   run_oversee "$CLAIM_BIN/oversee" -- launch --wait-secs 20
+  ROW_ENV=()
   LIVE_RC=0
   watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
   EXPECT_CLAIM='1|1|0|none|1'
@@ -688,9 +697,11 @@ WATCH_ENV=(PATH="$WSTUBS:$NO_MANAGER:$BIN:$PATH" ORCH_REPORT=off ORCH_WATCH_MAIL
 # stops the old watch in the handover, before the replay starts, which must
 # let the first pass in before the old close ends. Sets FINISH_RESULT and
 # FINISH_ORDER.
+# The wrapper's own auth, before its claim, carries no OVERSEE_WATCH_REPEAT_OWNER
+# and marks nothing.
 FINISH_BIN="$TMP_ROOT/finish-bin"
 mkdir -p "$FINISH_BIN"
-printf '#!/bin/sh\n[ "$1 $2" != "auth status" ] || { echo pass >> %s/watch.log; echo "Logged in"; }\n' "$TMP_ROOT" > "$FINISH_BIN/gh"
+printf '#!/bin/sh\n[ "$1 $2" != "auth status" ] || { [ -z "$OVERSEE_WATCH_REPEAT_OWNER" ] || echo pass >> %s/watch.log; echo "Logged in"; }\n' "$TMP_ROOT" > "$FINISH_BIN/gh"
 chmod +x "$FINISH_BIN/gh"
 resume_finishing_row() { # [OVERSEE_BIN]
   local deadline start
@@ -741,11 +752,13 @@ assert_eq "$FINISH_ORDER" "pass finished " \
   "control: a handover that stops the old watch itself lets the replay's first pass in before the old close ends" "$WATCH_ERR"
 
 # The auth acknowledgement orders the first long pass after the harness exit.
+# A pass's auth is held, never the wrapper's own before its claim, which the
+# pass's OVERSEE_WATCH_REPEAT_OWNER tells apart.
 REAL_GH="$WSTUBS/gh.real"
 cp "$WSTUBS/gh" "$REAL_GH"
 cat > "$WSTUBS/gh" <<EOF
 #!/bin/sh
-if [ "\$1 \$2" = 'auth status' ]; then
+if [ "\$1 \$2" = 'auth status' ] && [ -n "\${OVERSEE_WATCH_REPEAT_OWNER:-}" ]; then
   echo waiting > "$WSTUBS/auth.waiting"
   while [ ! -f "$WSTUBS/harness.dead" ]; do sleep 0.1; done
 fi
@@ -816,7 +829,7 @@ for RECOVERY_CASE in walled; do
   printf '%s\n' "$RECOVERY_BIN" > "$WSTUBS/succeed.bin"
   cat > "$WSTUBS/gh" <<EOF
 #!/bin/sh
-if [ "\$1 \$2" = 'auth status' ]; then
+if [ "\$1 \$2" = 'auth status' ] && [ -n "\${OVERSEE_WATCH_REPEAT_OWNER:-}" ]; then
   echo waiting > "$WSTUBS/auth.waiting"
   while [ ! -f "$WSTUBS/harness.dead" ]; do sleep 0.1; done
   echo Logged in
@@ -951,6 +964,141 @@ assert_eq "${NEW:+watched}|$WATCH_PANE" "watched|$SUCC" \
   "automatic successor death leaves its replacement with a repeat watch" "$WATCH_ERR_FILE"
 [[ -z "$NEW" ]] || watch_stop "$NEW" "$FLEET_STATE"
 [[ -z "$REAL_OLD" ]] || kill -TERM "$REAL_OLD" 2>/dev/null || true
+
+# --- the watch's GitHub credentials ------------------------------------------
+# The real watch authenticates before it claims, in the environment its
+# launcher hands it. This gh answers only the successor's token and has no
+# keyring, so a launcher with no GH_TOKEN starts a watch no credential serves,
+# while the successor pane's own environment carries one. With CRED_BIN/slow
+# present its token check takes twelve seconds, past the stop bound alone.
+# Rows that expect a refusal set both auth bounds to a tenth of a second, so
+# the claim wait the ladder's bound derives stays under a minute and a half.
+# The caller runs claude and its successor codex, whose harness the restarted
+# watch's command takes: the successor's credential is its own session's,
+# whatever harness the caller ran.
+CRED_BIN="$TMP_ROOT/cred-bin"
+mkdir -p "$CRED_BIN" "$BIN/processes"
+# A copy of sleep named codex holds the successor's pane, since only that
+# exact process name reads as codex.
+cp "$(command -v sleep)" "$BIN/processes/codex"
+printf '#!/bin/sh\necho "esc to interrupt"\nexec "%s" 100000\n' "$BIN/processes/codex" > "$BIN/codex"
+chmod +x "$BIN/codex"
+make_codex_lane "$H/.codex"
+jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' \
+  > "$FIXTURE_DIR/.codex.json"
+CODEX_SUCCESSOR=(ORCH_OVERSEER_PREFERENCE=codex:gpt-5.6-sol:high ORCH_LANE_DIRS="$H/.claude:$H/.codex")
+cat > "$CRED_BIN/gh" <<EOF
+#!/bin/sh
+[ "\${GH_TOKEN:-}" = fixture-successor-token ] || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+case "\$1 \$2" in
+  "api user") [ ! -f "$CRED_BIN/slow" ] || sleep 12; echo fixture ;;
+  *) echo '[]' ;;
+esac
+EOF
+chmod +x "$CRED_BIN/gh"
+CRED_ENV=("${WATCH_ENV[@]}" PATH="$CRED_BIN:$WSTUBS:$NO_MANAGER:$BIN:$PATH" GH_REPO=owner/repo
+  OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/cred-state")
+SUCCESSOR_TOKEN=(GH_TOKEN=fixture-successor-token)
+SHORT_AUTH=(KENDEX_GITHUB_AUTH_TIMEOUT=0.1 KENDEX_GITHUB_OP_TIMEOUT=0.1)
+# run_restart PANE [ENV=VAL...] [-- OVERSEE_BIN] — `oversee watch-restart` as
+# PANE's own shell runs it: its $TMUX and $TMUX_PANE, the watch settings and
+# the words given. Sets OUT and RC.
+run_restart() {
+  local pane="$1" bin="$OVERSEE" env_args=()
+  shift
+  while [[ $# -gt 0 && "$1" != -- ]]; do env_args+=("$1"); shift; done
+  [[ $# -lt 2 ]] || bin="$2"
+  RC=0
+  OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" TMUX_TMPDIR="$TMUX_DIR" \
+    TMUX="$(tm display-message -p -t "$pane" '#{socket_path},#{pid},0')" TMUX_PANE="$pane" \
+    "${CRED_ENV[@]}" ${env_args[@]+"${env_args[@]}"} "$bin" watch-restart 2>&1 </dev/null)" || RC=$?
+}
+# claim_of — the live claim's pid, or none.
+claim_of() { if watch_pid_live "$FLEET_STATE"; then printf '%s' "$WATCH_PID"; else printf none; fi; }
+echo "=== the fleet watch's GitHub credentials ==="
+
+# Slow, valid authentication: a first launch waits for the claim past the
+# stop bound, under the bound the auth ladder's own timeouts derive.
+tm kill-window -a -t "$KEEP_WINDOW"
+rm -f -- "$FLEET_STATE"
+fresh_output
+touch "$CRED_BIN/slow"
+ROW_ENV=("${CRED_ENV[@]}" "${SUCCESSOR_TOKEN[@]}" KENDEX_GITHUB_AUTH_TIMEOUT=15)
+run_oversee -- launch --wait-secs 20
+ROW_ENV=()
+rm -f -- "$CRED_BIN/slow"
+PRED="$(recorded pane)"
+LIVE_RC=0
+watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
+assert_eq "$RC|$LIVE_RC|$WATCH_PANE" "0|0|$PRED" \
+  "a first launch waits out slow valid GitHub authentication and leaves the watch claimed" "$WATCH_ERR_FILE"
+CRED_OLD="$WATCH_PID"
+watch_handoff_read
+CRED_SINCE="$WATCH_SINCE"
+printf 'EVENT fixture unread\n' >> "$WATCH_LOG_FILE"
+UNREAD_LINE="$(awk 'END { print NR }' "$WATCH_LOG_FILE")"
+
+# A succession launched from an environment with no GitHub credential: the
+# helper's restarted watch inherits that environment, refuses before it
+# claims, and the helper reports the restart failed, never restarted.
+ROW_ENV=("${CRED_ENV[@]}" "${SHORT_AUTH[@]}" "${CODEX_SUCCESSOR[@]}")
+succeed
+ROW_ENV=()
+HELPER_LINE=""
+for _ in $(seq 1 1200); do
+  HELPER_LINE="$(grep -E '^oversee-succeed: watch-restart(ed|-failed) ' "$WATCH_ERR_FILE" 2>/dev/null || true)"
+  [[ -z "$HELPER_LINE" ]] || break
+  sleep 0.1
+done
+LIVE_PANE=none
+! watch_pid_live "$FLEET_STATE" || LIVE_PANE="$WATCH_PANE"
+assert_eq "$RC|${HELPER_LINE%% log=*}|$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)|$(test "$LIVE_PANE" = "$SUCC" && echo claimed || echo unclaimed)" \
+  "0|oversee-succeed: watch-restart-failed step=claim|1|unclaimed" \
+  "a caller with no GitHub credential hands over a watch that refuses before it claims, reported failed" "$WATCH_ERR_FILE"
+
+# The successor restarts the watch from its own pane and environment: the
+# watch claims for that pane, under the successor's harness, with the
+# retained command, log and cursor.
+run_restart "$SUCC" "${SUCCESSOR_TOKEN[@]}"
+CRED_NEW="$(claim_of)"
+watch_handoff_read || true
+assert_eq "$RC|$(grep -cE "^oversee: watch-started pid=$CRED_NEW pane=$SUCC log=$WATCH_LOG_FILE err=$WATCH_ERR_FILE( stopped=[0-9]+)? $SETSID_LINE\$" <<<"$OUT")|$WATCH_ORIGIN|$WATCH_PANE|$(recorded harness)|$WATCH_HARNESS|$WATCH_SINCE|$(sed -n "${UNREAD_LINE}p" "$WATCH_LOG_FILE")" \
+  "0|1|succession|$SUCC|codex|codex|$CRED_SINCE|EVENT fixture unread" \
+  "a codex successor's watch-restart starts the watch with its own credential after a claude caller had none, keeping the command, log and cursor" "$WATCH_ERR_FILE"
+
+# A pane the fleet state does not record as its overseer owns no watch.
+run_restart "$KEEP_PANE" "${SUCCESSOR_TOKEN[@]}"
+assert_eq "$RC|$(grep -c "^oversee: not-overseer session=$KEEP_PANE " <<<"$OUT")|$(claim_of)" "1|1|$CRED_NEW" \
+  "watch-restart from a pane the record does not name refuses and leaves the watch"
+
+# No credential anywhere: the restart refuses with the claim step, the
+# started watch's auth-failed in the log it names, and the live watch kept.
+# Its control replays a copy of the watch that claims before it
+# authenticates, the order before this change, and reports a false start.
+# restart_refused [OVERSEE_BIN] — the row; sets REFUSED_RESULT.
+restart_refused() {
+  local before after
+  before="$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)"
+  run_restart "$SUCC" "${SHORT_AUTH[@]}"
+  after="$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)"
+  REFUSED_RESULT="$RC|$(grep -c "^oversee: watch-restart-failed step=claim log=$WATCH_ERR_FILE " <<<"$OUT")|$(( after - before ))|$(claim_of)"
+}
+restart_refused
+assert_eq "$REFUSED_RESULT" "1|1|1|$CRED_NEW" \
+  "watch-restart with no GitHub credential refuses, names the failure and keeps the live watch" "$WATCH_ERR_FILE"
+CLAIM_FIRST="$(mutant_scripts claim-first oversee-watch)" || exit 1
+mutate_file "$CLAIM_FIRST/oversee-watch" $'      ( github_ready ) || exit "$?"\n' ''
+python3 - "$WATCH_ARGV_FILE" "$CLAIM_FIRST/oversee-watch" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+words = p.read_bytes().split(b'\0')
+words[1] = sys.argv[2].encode()
+p.write_bytes(b'\0'.join(words))
+PY
+restart_refused
+assert_eq "${REFUSED_RESULT%%|*}" 0 \
+  "control: a watch that claims before it authenticates reports the credential-less restart started" "$WATCH_ERR_FILE"
+! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE" || true
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

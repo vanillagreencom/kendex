@@ -966,7 +966,11 @@ Options:
                       watch's claim, which the start refusals below and a
                       succession's handover read; how an overseer launches,
                       finds and stops its watch is
-                      references/watch-delivery.md's. However it is sent,
+                      references/watch-delivery.md's. The loop runs the
+                      GitHub auth ladder before it claims: a start no
+                      credential serves exits 2 as auth-failed, writing no
+                      record and stopping no watch it would replace.
+                      However it is sent,
                       TERM on the loop removes the record at once, ends
                       the pass it is running and exits once that pass has;
                       a lane-close part way through is run to its end and

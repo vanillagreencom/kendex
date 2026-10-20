@@ -113,3 +113,24 @@ orch_load_env_bot_token() {
   export GH_TOKEN="$token"
   return 0
 }
+
+# The longest, in whole seconds, the oversee-watch ladder (orch_sanitize_gh_env,
+# orch_github_auth_status, then orch_load_env_bot_token and
+# orch_github_auth_status again) can run before it answers, for a caller that
+# waits on that answer. Each gh call is bounded by KENDEX_GITHUB_AUTH_TIMEOUT
+# and the one `op read` by KENDEX_GITHUB_OP_TIMEOUT, and the bounded runner
+# overruns either by at most its 20-tick stop. The ladder makes at most 21 gh
+# calls, a token validation being up to two (`api user`, then
+# `installation/repositories` for an installation token):
+#    3  the sanitize check: one validation and the keyring probe
+#    4  the status check: one validation, asked again at 124
+#   10  the bot token: GH_BOT_TOKEN's validation from the environment, each of
+#       the three names' from project config, and the op-resolved value's
+#    4  the status check of the token loaded
+# Returns 1 where either bound is unreadable, or 0, which bounds nothing.
+orch_github_ready_secs() {
+  local auth op
+  auth="$(kendex_github_bound_ticks "${KENDEX_GITHUB_AUTH_TIMEOUT:-10}")" && (( auth > 0 )) || return 1
+  op="$(kendex_github_bound_ticks "${KENDEX_GITHUB_OP_TIMEOUT:-10}")" && (( op > 0 )) || return 1
+  printf '%s' "$(( (21 * (auth + 20) + op + 20 + 9) / 10 ))"
+}

@@ -24,7 +24,7 @@ For a watch the overseer launcher started, run this claim read after each delive
 bash -c '. "$1" || exit 3; watch_pid_live "$2" && printf "%s\n" "$WATCH_PID"' _ .agents/skills/orch/scripts/lib/watch-pid.sh "[OVERSEE_STATE]"
 ```
 
-Exit 0 is a live claim. Exit 1 is no live claim. Any other status is a failed read: report its stderr and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, follow [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance)'s stop and restart rules. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
+Exit 0 is a live claim. Exit 1 is no live claim. Any other status is a failed read: report its stderr and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, the recorded overseer restarts the watch as [takeover § 2](../workflows/oversee-takeover.md#watch-reader) states; otherwise follow [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance)'s stop and restart rules. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
 
 To stop a launcher-owned watch, use `[PID]` from that claim read. Run `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[OVERSEE_STATE_DIR]/oversee-watch.runner" [PID] '*oversee-watch*'`. The runner stops its exact unit or its verified process group. Report any failed stop with its `job-unit:` line.
 

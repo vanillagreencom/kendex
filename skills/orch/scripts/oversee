@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # oversee — the overseer session itself: launch one, register one a person
-# opened by hand, or resume the recorded one after its session was lost.
+# opened by hand, resume the recorded one after its session was lost, or
+# restart its fleet watch from its own pane.
 #
 # Usage:
 #   oversee launch [--session NAME | --predecessor SESSION] [--cwd DIR]
 #                  [--handoff PATH] [--wait-secs N]
 #   oversee register [--account DIR]
 #   oversee resume [--session NAME] [--handoff PATH] [--wait-secs N]
+#   oversee watch-restart [--handoff PATH]
 #
 #   launch   opens a fleet's FIRST overseer, or with --predecessor its
 #            successor. A first launch is a succession launch with no
@@ -129,10 +131,12 @@
 #        serving the new pane. With no watch claim, start one and wait for
 #        its claim. With a live watch, arrange its handover before step 8,
 #        because the stop can end this command. A start or helper launch
-#        the runner refuses closes the new pane and restores the prior
-#        record. Its job-unit line states the cause. The shared owner is
-#        lib/watch-handover.sh; references/watch-delivery.md gives the
-#        session's log reader and stop route.
+#        the runner refuses, or a started watch that never claims, one no
+#        GitHub credential in this command's environment serves among them,
+#        closes the new pane and restores the prior record. Its job-unit
+#        line states the cause. The shared owner is lib/watch-handover.sh;
+#        references/watch-delivery.md gives the session's log reader and
+#        stop route.
 #     On success `overseer-launched` names the session, window, generation
 #     and lane, and the predecessor where one was stopped, at exit 0.
 #   register writes the session record for the session this command runs in,
@@ -190,6 +194,27 @@
 #            line naming the pid stopped (lib/watch-handover.sh §
 #            watch_handover, --closed). Prints `resumed` naming the session,
 #            window, server, generation, lane and native session id.
+#   watch-restart
+#            restarts the fleet watch from the overseer pane this command
+#            runs in, under that session's own environment, so the watch
+#            reads GitHub with the credentials the session has, which the
+#            launcher that started the inherited watch may have lacked. The
+#            takeover route runs it where no watch claim stands
+#            (../workflows/oversee-takeover.md § 2). It is the handover
+#            `oversee resume` runs (lib/watch-handover.sh § watch_handover,
+#            --closed), from this pane, with the harness, account and model
+#            the fleet state's record names for it and no new flags: a live
+#            watch is stopped and replaced by a replay of its retained
+#            command, a stopped one replayed, its log and the reader's cursor
+#            kept either way. A pane the record does not name refuses
+#            `not-overseer`, starting and stopping nothing; a claim that
+#            cannot be read refuses `watch-restart-failed step=claim`, and a
+#            replay that never claims, one no GitHub credential serves among
+#            them, refuses `watch-restart-failed step=claim log=<err>` once
+#            the claim wait ends, the started watch's own refusal in that
+#            log, with a live watch it would replace left running. Prints
+#            `watch-started` on success. The fleet state must exist:
+#            `state-missing` otherwise.
 #
 # Options:
 #   --session NAME   The tmux session the window opens in (default
@@ -216,7 +241,8 @@
 # on stderr at exit 1, except `no-lane-qualifies` at exit 3, the status
 # `lanes pick` itself answers "no lane clears the bound" with. `overseer-launch`,
 # `overseer-launched`, `registered`, `watch-handover` and `watch-started` are on
-# stdout, and so is `resumed`; `overseer-lane-unobserved`, `watch-restart-failed`,
+# stdout, and so is `resumed`; under watch-restart `watch-restart-failed` is its
+# refusal, and elsewhere `overseer-lane-unobserved`, `watch-restart-failed`,
 # `checkout-unsynced` and `fleet-log-unwritten`, the last naming a
 # `checkout-unsynced` row the fleet log could not take, are notices on stderr
 # the run continues past.
@@ -232,13 +258,14 @@ message() { # KEY FIELD=VALUE...
   shift
   case "$key" in
     unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
-    unknown-command) text='The commands are launch, register and resume.' ;;
+    unknown-command) text='The commands are launch, register, resume and watch-restart.' ;;
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     invalid-cwd) text='--cwd, or for resume the record'\''s cwd, names no directory. Nothing was opened.' ;;
     settings-rejected) text='The settings load failed; nothing is launched from partial settings.' ;;
     runtime-unsupported) text='This launcher reads the new session'\''s account off its tmux pane, so it opens sessions on the tmux runtime alone. ORCH_OVERSEER_HOST names another; nothing was launched.' ;;
-    tmux-missing) text='register runs inside the overseer'\''s own tmux pane; launch and resume reach a tmux server through $TMUX or ORCH_TMUX_SESSION.' ;;
+    tmux-missing) text='register and watch-restart run inside the overseer'\''s own tmux pane; launch and resume reach a tmux server through $TMUX or ORCH_TMUX_SESSION.' ;;
+    not-overseer) text='The fleet state does not record this pane as its overseer on this server, so this session does not own the fleet watch. Nothing was started or stopped. Run watch-restart from the recorded overseer'\''s own pane.' ;;
     session-unresolved) text='The checkout repository name is invalid, so no default tmux session can be named. Give --session or set ORCH_TMUX_SESSION. Nothing was opened.' ;;
     tmux-session-missing) text='The tmux session named does not exist on the server this run reaches. Nothing was opened; the server field names the socket.' ;;
     tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
@@ -246,7 +273,7 @@ message() { # KEY FIELD=VALUE...
     state-missing) text='No oversee workflow state stands at the path field, so this checkout records no overseer to resume. Nothing was resumed and no state was created. Run resume from the checkout whose fleet state records the overseer.' ;;
     overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee launch --predecessor naming it, or oversee-succeed, or stop it and clear the record. A record carrying no server start takes oversee register in that pane before --predecessor accepts it.' ;;
     predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A record carrying no server start names none: run oversee register in its pane first. A succession only ever stops the recorded overseer; nothing was opened.' ;;
-    option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together. resume takes neither --cwd nor --account: it opens in the cwd and on the account its record names, from the fleet state of the checkout it runs in.' ;;
+    option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together. resume takes neither --cwd nor --account: it opens in the cwd and on the account its record names, from the fleet state of the checkout it runs in. watch-restart takes --handoff alone: it opens no session.' ;;
     close-failed) text='The predecessor could not be stopped, so the successor was closed and the record put back; the predecessor keeps running.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An empty model selects the native default on claude, codex or copilot; pi requires provider/id. A first launch skips pi entries.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
@@ -271,7 +298,7 @@ message() { # KEY FIELD=VALUE...
     overseer-launched) text='The overseer is running and recorded.' ;;
     watch-handover) text='The fleet watch serving the predecessor pane is restarted from the successor pane once the predecessor is stopped, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
     watch-started) text='The repeat fleet watch runs outside the overseer session. Read the log field to receive its events. unread= names a retained command that could not be read; the watch runs the default selection. stopped= names the watch that claimed the lost pane, whose command a resume replayed and whose replay stopped it and took its place. Restart a hand-selected watch by hand.' ;;
-    watch-restart-failed) text='The fleet watch could not be started or handed to the new pane. The launch failed. The step and runner fields name the cause.' ;;
+    watch-restart-failed) text='The fleet watch could not be started or handed to the new pane, and a launch fails with it. The step and runner fields name the cause; at step=claim the file the log field names holds what the started watch said, a GitHub authentication failure among the causes.' ;;
     interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
@@ -310,7 +337,7 @@ esac
 COMMAND="$1"
 shift
 case "$COMMAND" in
-  launch|register|resume) ;;
+  launch|register|resume|watch-restart) ;;
   *) die_status 2 unknown-command "command=$COMMAND" ;;
 esac
 
@@ -320,6 +347,7 @@ SESSION_NAME=""
 PREDECESSOR=""
 CWD=""
 ACCOUNT=""
+WAIT_GIVEN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --session|--predecessor|--cwd|--handoff|--wait-secs|--account)
@@ -329,7 +357,7 @@ while [[ $# -gt 0 ]]; do
         --predecessor) PREDECESSOR="$2" ;;
         --cwd) CWD="$2" ;;
         --handoff) HANDOFF="$2" ;;
-        --wait-secs) WAIT_SECS="$2" ;;
+        --wait-secs) WAIT_SECS="$2" WAIT_GIVEN=1 ;;
         *) ACCOUNT="$2" ;;
       esac
       shift 2 ;;
@@ -342,6 +370,8 @@ matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
   || die_status 2 option-conflict "command=$COMMAND" "session=${SESSION_NAME:-none}" "predecessor=$PREDECESSOR"
 [[ "$COMMAND" != resume || ( -z "$CWD" && -z "$ACCOUNT" ) ]] \
   || die_status 2 option-conflict "command=$COMMAND" "cwd=${CWD:-none}" "account=${ACCOUNT:-none}"
+[[ "$COMMAND" != watch-restart || -z "$SESSION_NAME$PREDECESSOR$CWD$ACCOUNT$WAIT_GIVEN" ]] \
+  || die_status 2 option-conflict "command=$COMMAND"
 
 DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
 export DEP_ERR
@@ -378,6 +408,9 @@ source "$SCRIPT_DIR/lib/tmux-server.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
+# The bound a watch start waits out its authentication by.
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/watch-handover.sh
 source "$SCRIPT_DIR/lib/watch-handover.sh"
 
@@ -390,12 +423,13 @@ fi
 
 # The oversee state, where the record lives, its path in STATE_PATH: created
 # for a fresh fleet, read for every other. One refusal for both, naming the
-# path. A resume creates none: a fresh state records no overseer to resume.
+# path. A resume or watch-restart creates none: a fresh state records no
+# overseer to resume and no watch to restart.
 STATE_PATH=""
 state_ready() {
   STATE_PATH="$("$SCRIPT_DIR/workflow-state" path oversee 2>"$DEP_ERR")" || die state-unwritable state=oversee
   if ! "$SCRIPT_DIR/workflow-state" exists oversee >/dev/null 2>"$DEP_ERR"; then
-    [[ "$COMMAND" != resume ]] || die state-missing "path=$STATE_PATH"
+    [[ "$COMMAND" != resume && "$COMMAND" != watch-restart ]] || die state-missing "path=$STATE_PATH"
     "$SCRIPT_DIR/workflow-state" init oversee >/dev/null 2>"$DEP_ERR" || die state-unwritable "path=$STATE_PATH"
   fi
   ol_record_read || die state-unwritable "path=$STATE_PATH"
@@ -506,6 +540,40 @@ register() {
     "retained=$OL_RECORD_RETAINED" "fresh=$OL_RECORD_FRESH"
   exit 0
 }
+
+# ---------------------------------------------------------------------------
+# watch-restart
+# ---------------------------------------------------------------------------
+# The recovery entry into the handover `oversee resume` runs, from the pane
+# this command runs in: the watch it starts inherits this session's
+# environment, credentials included, where the helper a launcher started
+# passed on the launcher's. Nothing here reads or copies a credential. The
+# identity is the record's for this pane, as a dead-pane succession's is, with
+# no flags: the record naming this pane is the launch line a relaunch replays.
+watch_restart() {
+  local key server record_rc=0 lane_var home
+  [[ -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
+  key="$(lane_context_caller_key)" || die pane-unreadable "pane=$TMUX_PANE" field=pid
+  matches "$key" '^([0-9]+)[[:blank:]]+(%[0-9]+)$' || die pane-unreadable "pane=$TMUX_PANE" field=pid "value=$key"
+  server="${key%% *}"
+  state_ready
+  ol_record_current "$server" "$TMUX_PANE" || record_rc=$?
+  case "$record_rc" in
+    0) ;;
+    1) die not-overseer "session=$TMUX_PANE" "server=$server" ;;
+    *) die state-unwritable field=overseer ;;
+  esac
+  home="${OL_CUR_HOME:-$OL_CUR_ACCOUNT}"
+  [[ -n "$OL_CUR_HARNESS" && -n "$home" ]] \
+    || die watch-restart-failed step=identity "session=$TMUX_PANE" "harness=${OL_CUR_HARNESS:-none}"
+  lane_var="$(lane_env_prefix "$OL_CUR_HARNESS" - "$OL_CUR_MODEL")"
+  if watch_handover --closed "" "$TMUX_PANE" "${lane_var%%=*}" "$home" "$OL_CUR_HARNESS"; then
+    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
+    exit 0
+  fi
+  die "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
+}
+if [[ "$COMMAND" == watch-restart ]]; then watch_restart; fi
 
 # ---------------------------------------------------------------------------
 # launch

@@ -30,7 +30,13 @@ The fleet's record is the oversee workflow state ([schemas/workflow-state.md § 
 
 Read [watch-delivery.md](../references/watch-delivery.md)'s takeover read-before rule and the claim, follow and current-harness sections it selects. Read the runner record and live watch claim there, then follow the retained log from the handoff's next unhandled line. The launcher and succession helper already own the repeat watch.
 
-A missing claim takes the recovery route in [oversee.md § 4](oversee.md#4-watch-and-advance). Read only that section for recovery. A failed claim read takes watch-delivery.md's failed-read rule. A hand-opened session that needs a new watch takes the launch route there.
+With no live claim in a session the fleet state records as its overseer, restart the watch from this session before following the log or reporting the watch ready. An inherited start the launching environment could not authenticate to GitHub claims nothing; its `auth-failed service=github` line is in `oversee-watch.err` beside the fleet state.
+
+```bash
+.agents/skills/orch/scripts/oversee watch-restart
+```
+
+It replays the retained watch command from this pane under this session's own credentials, keeping the log and the reader's cursor (`oversee --help`). Follow the log after its `watch-started` line. On `watch-restart-failed`, report its step and the cause `oversee-watch.err` names to the owner, and do not report the watch ready. A remaining missing claim takes the recovery route in [oversee.md § 4](oversee.md#4-watch-and-advance). Read only that section for recovery. A failed claim read takes watch-delivery.md's failed-read rule. A hand-opened session that needs a new watch takes the launch route there.
 
 ## 3. Handle delivered events
 

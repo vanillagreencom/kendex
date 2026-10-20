@@ -813,10 +813,12 @@ EOF
 
 # Retry writes must follow the case's old-close snapshot. Releasing auth through
 # its timer also exposes a clock that drops sleeps and exhausts the auth bound.
+# Only a pass's auth is held: the wrapper's own, before its claim, carries no
+# OVERSEE_WATCH_REPEAT_OWNER and answers at once.
 unit_auth_clock() {
   cat > "$STUB_DIR/bin/gh" <<EOF
 #!/usr/bin/env bash
-if [[ -n "\${LIFECYCLE_SLEEP_FAIL:-}" && "\$*" == 'auth status' ]]; then
+if [[ -n "\${LIFECYCLE_SLEEP_FAIL:-}" && -n "\${OVERSEE_WATCH_REPEAT_OWNER:-}" && "\$*" == 'auth status' ]]; then
   rm -f "\$STUB_DIR/auth-done"
   touch "\$STUB_DIR/auth-held"
   while [[ ! -e "\$STUB_DIR/auth-release" ]]; do "$REAL_SLEEP" 0.01; done
