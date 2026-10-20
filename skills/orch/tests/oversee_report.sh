@@ -1194,12 +1194,20 @@ REPORT
     markdown-id) lead='[KEN-42](https://linear.app/vanillagreen/issue/KEN-42) is ready.' ;;
     github-link) lead='See <https://github.com/owner/repo/pull/42|the change>.' ;;
     commit-link) lead='See https://github.com/owner/repo/commit/abcdef.' ;;
-    missing) rows="${rows%$'\n\n```\nWaiting on you'*}" ;;
-    spacing) rows="${rows//$'\n\n```'/$'\n```'}" ;;
+    missing)
+      waiting_suffix=$'\n\n```\nWaiting on you'
+      rows="${rows%$waiting_suffix*}" ;;
+    spacing)
+      section_gap=$'\n\n```'
+      section_start=$'\n```'
+      rows="${rows//$section_gap/$section_start}" ;;
     key-last) rows="${rows/- Nothing/- Outcome (*<https:\/\/linear.app\/vanillagreen\/issue\/KEN-42|[KEN-42]>*)}" ;;
     two-keys) rows="${rows/- Nothing/- *<https:\/\/linear.app\/vanillagreen\/issue\/KEN-42|[KEN-42]>* waits on *<https:\/\/linear.app\/vanillagreen\/issue\/KEN-43|[KEN-43]>*}" ;;
     header) rows="${rows/Completed/Finished}" ;;
-    inline-header) rows="${rows/$'```\nCompleted\n```'/'```Completed```'}" ;;
+    inline-header)
+      completed_header=$'```\nCompleted\n```'
+      inline_header='```Completed```'
+      rows="${rows/$completed_header/$inline_header}" ;;
     unclosed-header) rows+=$'\n```\nCompleted' ;;
     opening) lead='*Overall:* Work continues.' ;;
     bullet-label) rows+=$'\n- Good: Read the report.' ;;
