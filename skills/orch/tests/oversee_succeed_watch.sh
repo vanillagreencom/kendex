@@ -141,12 +141,17 @@ run_succeed() {
 # directory and arguments, to watch.log, and one `stopped` line when it is
 # stopped. Started by a succession, it first stops the live watch it replaces,
 # as the real start does for a watch whose pane is gone (that rule is
-# oversee_watch_lifecycle.sh's); where norecord exists, such a start ends
-# before it records anything, a restart that never comes up.
+# oversee_watch_lifecycle.sh's); where norecord exists, such a start exits
+# before it claims, a restart that never comes up.
 FIXTURE_WATCH="$TMP_ROOT/fixture/oversee-watch"
 cat > "$FIXTURE_WATCH" <<EOF
 #!/usr/bin/env bash
 source "$SRC_DIR/lib/watch-pid.sh"
+# The pid line the real watch adds to its job's record before anything else.
+if [[ -n "\${OVERSEE_WATCH_JOB_RECORD:-}" ]]; then
+  watch_job_pid_write "\$OVERSEE_WATCH_JOB_RECORD"
+  unset OVERSEE_WATCH_JOB_RECORD
+fi
 trap 'echo "stopped \$\$" >> "$TMP_ROOT/watch.log"; exit 143' TERM
 state=""
 prev=""

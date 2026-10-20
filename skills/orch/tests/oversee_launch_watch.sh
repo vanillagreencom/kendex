@@ -147,6 +147,11 @@ cat > "$FIXTURE_WATCH" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 source "$SRC_DIR/lib/watch-pid.sh"
+# The pid line the real watch adds to its job's record before anything else.
+if [[ -n "\${OVERSEE_WATCH_JOB_RECORD:-}" ]]; then
+  watch_job_pid_write "\$OVERSEE_WATCH_JOB_RECORD"
+  unset OVERSEE_WATCH_JOB_RECORD
+fi
 finish() {
   [[ -n "\${FIXTURE_FINISH_HOLD:-}" ]] || return 0
   for _ in \$(seq 1 1200); do [[ ! -e "\$FIXTURE_FINISH_HOLD" ]] || break; sleep 0.1; done
@@ -450,25 +455,122 @@ for SINCE_CASE in floor; do
   watch_stop "$WATCH_PID" "$FLEET_STATE"
 done
 
-# The runner accepts this first-watch job, but the command exits without a claim.
-NORECORD="$(mutant_scripts norecord lib/watch-handover.sh)" || exit 1
-for CLAIM_CASE in refusal; do
-  CLAIM_BIN="$NORECORD"
-  rm -- "${CLAIM_BIN:?}/oversee-watch"
-  printf '#!/bin/sh\nexit 0\n' > "$CLAIM_BIN/oversee-watch"
-  chmod +x "$CLAIM_BIN/oversee-watch"
+# A start that gives up on a job whose watch may still run gives the job up
+# through its own record: stopped there and the record removed, or the record
+# kept and named in the refusal with the stop's error. One row per give-up:
+#   unpublished  the watch adds no pid by the bound, so a setsid job names no
+#                group to stop and its record stays
+#   unknown      the watch's pid runs but ps cannot read it, nor then can the
+#                stop, so the record stays
+#   runner       the watch claims, but its record cannot become the runner
+#                record: its group is stopped and the record removed
+#   unit         unpublished under the user manager, where one answers: the
+#                unit is stopped by its name and the record removed
+#   unit-launch  a unit launch the client reports failed while the manager
+#                cannot say whether it took it, whose stop fails as well, so
+#                the record stays
+# The rows run through a stand-in watch whose mode file picks what it does:
+# quiet runs on and adds no pid, publish adds it, claim runs the fixture
+# watch, which adds it and claims. The control removes the record and stops
+# nothing, as the start did before, and must fail every row.
+GIVEUP_WATCH="$TMP_ROOT/fixture/giveup-watch"
+cat > "$GIVEUP_WATCH" <<EOF
+#!/usr/bin/env bash
+echo "\$\$" > "$TMP_ROOT/giveup.pid"
+mode="\$(cat "$TMP_ROOT/giveup.mode")"
+[[ "\$mode" != claim ]] || exec "$FIXTURE_WATCH" "\$@"
+source "$SRC_DIR/lib/watch-pid.sh"
+[[ "\$mode" != publish ]] || watch_job_pid_write "\$OVERSEE_WATCH_JOB_RECORD"
+while :; do sleep 1; done
+EOF
+chmod +x "$GIVEUP_WATCH"
+mkdir -p "$TMP_ROOT/ps-refuse" "$TMP_ROOT/mv-refuse" "$TMP_ROOT/linger" "$TMP_ROOT/unit-launch"
+cat > "$TMP_ROOT/ps-refuse/ps" <<EOF
+#!/bin/sh
+pid="\$(cat "$TMP_ROOT/giveup.pid" 2>/dev/null)"
+prev=""
+for arg in "\$@"; do
+  if [ -n "\$pid" ] && [ "\$prev" = -p ] && [ "\$arg" = "\$pid" ]; then echo "fixture: ps refused" >&2; exit 1; fi
+  prev="\$arg"
+done
+exec "$(command -v ps)" "\$@"
+EOF
+cat > "$TMP_ROOT/mv-refuse/mv" <<EOF
+#!/bin/sh
+for last in "\$@"; do :; done
+case "\$last" in */oversee-watch.runner) echo "fixture: mv refused" >&2; exit 1 ;; esac
+exec "$(command -v mv)" "\$@"
+EOF
+cp "$NO_MANAGER/loginctl" "$TMP_ROOT/linger/loginctl"
+cp "$NO_MANAGER/loginctl" "$TMP_ROOT/unit-launch/loginctl"
+printf '#!/bin/sh\ncase "$*" in *--unit=*) echo "fixture: launch timed out" >&2; exit 1 ;; esac\nexit 0\n' \
+  > "$TMP_ROOT/unit-launch/systemd-run"
+printf '#!/bin/sh\necho "fixture: bus timeout" >&2\nexit 1\n' > "$TMP_ROOT/unit-launch/systemctl"
+chmod +x "$TMP_ROOT/ps-refuse/ps" "$TMP_ROOT/mv-refuse/mv" "$TMP_ROOT/unit-launch/systemd-run" "$TMP_ROOT/unit-launch/systemctl"
+UNIT_HOST=(XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}")
+GIVEUP="$(mutant_scripts giveup lib/watch-handover.sh)" || exit 1
+GIVEUP_CONTROL="$(mutant_scripts giveup-control lib/watch-handover.sh)" || exit 1
+mutate_file "$GIVEUP_CONTROL/lib/watch-handover.sh" '      watch_job_abandon "$WATCH_JOB_RECORD" 0 || true' \
+  '      rm -f -- "$WATCH_JOB_RECORD"'
+mutate_file "$GIVEUP_CONTROL/lib/watch-handover.sh" '  watch_job_abandon "$record" "${WATCH_JOB_PID:-0}" || true' \
+  '  rm -f -- "$record"'
+mutate_file "$GIVEUP_CONTROL/lib/watch-handover.sh" '("${refusal[@]}" "${WATCH_JOB_STOP[@]}" "$runner")' \
+  '("${refusal[@]}" "$runner")'
+for GIVEUP_DIR in "$GIVEUP" "$GIVEUP_CONTROL"; do
+  rm -- "$GIVEUP_DIR/oversee-watch"
+  cp -p -- "$GIVEUP_WATCH" "$GIVEUP_DIR/oversee-watch"
+done
+# giveup_row ROW SCRIPTS — a first launch through SCRIPTS under ROW's
+# failure, the job then stopped and its kept record removed. Sets
+# GIVEUP_RESULT and GIVEUP_EXPECT: the exit, the refusal line with the
+# launch's unit name as UNIT, whether a job record stays, and whether the
+# started watch runs.
+giveup_row() {
+  local row="$1" scripts="$2" mode=quiet line kept job runs
+  case "$row" in
+    unpublished) ROW_ENV=() ;;
+    unknown) mode=publish ROW_ENV=(PATH="$TMP_ROOT/ps-refuse:$NO_MANAGER:$BIN:$PATH") ;;
+    runner) mode=claim ROW_ENV=(PATH="$TMP_ROOT/mv-refuse:$NO_MANAGER:$BIN:$PATH") ;;
+    unit) ROW_ENV=(PATH="$TMP_ROOT/linger:$BIN:$PATH" "${UNIT_HOST[@]}") ;;
+    unit-launch) ROW_ENV=(PATH="$TMP_ROOT/unit-launch:$BIN:$PATH") ;;
+  esac
+  printf '%s\n' "$mode" > "$TMP_ROOT/giveup.mode"
+  rm -f -- "$TMP_ROOT/giveup.pid" "${FLEET_STATE:?}"
   tm kill-window -a -t "$KEEP_WINDOW"
-  rm -f -- "${FLEET_STATE:?}"
-  run_oversee "$CLAIM_BIN/oversee" -- launch --wait-secs 20
-  LIVE_RC=0
-  watch_pid_live "$FLEET_STATE" || LIVE_RC=$?
-  EXPECT_CLAIM='1|1|0|none|1'
-  RECORD_PRESENT=none
-  [[ "$(recorded pane)" == none ]] || RECORD_PRESENT=present
-  assert_eq "$RC|$LIVE_RC|$(grep -c '^oversee: overseer-launched ' <<<"$OUT")|$RECORD_PRESENT|$(tm list-panes -a -F '#{pane_id}' | wc -l | tr -d ' ')" \
-    "$EXPECT_CLAIM" "$CLAIM_CASE: an accepted job with no claim refuses and restores the pane and record"
-  assert_eq "$(grep -c "^oversee: watch-restart-failed step=claim log=$WATCH_ERR_FILE $SETSID_LINE\$" <<<"$OUT")|$(find "$TMP_ROOT/work/tmp" -name 'oversee-watch.runner.*' | wc -l | tr -d ' ')" "1|0" \
-    "$CLAIM_CASE: the watcher job was accepted before the claim deadline, and its record removed"
+  run_oversee "$scripts/oversee" -- launch --wait-secs 20
+  ROW_ENV=()
+  line="$(grep '^oversee: watch-restart-failed ' <<<"$OUT" | sed 's/orch-watch-start-[0-9TZ]*-[0-9]*/UNIT/g' || true)"
+  kept="$(find "$TMP_ROOT/work/tmp" -name 'oversee-watch.runner.*')"
+  job="$(cat "$TMP_ROOT/giveup.pid" 2>/dev/null || echo none)"
+  runs=stopped
+  ! watch_pid_runs "$job" 2>/dev/null || runs=running
+  GIVEUP_RESULT="$RC|$line|${kept:+kept}|$runs"
+  case "$row" in
+    unpublished) GIVEUP_EXPECT="1|oversee: watch-restart-failed step=claim log=$WATCH_ERR stop=failed record=$kept stop-error=kill-group-failed pid=0 step=read $SETSID_LINE|kept|running" ;;
+    unknown) GIVEUP_EXPECT="1|oversee: watch-restart-failed step=claim log=$WATCH_ERR stop=failed record=$kept stop-error=kill-group-failed pid=$job step=read $SETSID_LINE|kept|running" ;;
+    runner) GIVEUP_EXPECT="1|oversee: watch-restart-failed step=runner pid=$job stop=stopped $SETSID_LINE||stopped" ;;
+    unit) GIVEUP_EXPECT="1|oversee: watch-restart-failed step=claim log=$WATCH_ERR stop=stopped runner=systemd unit=UNIT||stopped" ;;
+    unit-launch) GIVEUP_EXPECT="1|oversee: watch-restart-failed step=start stop=failed record=$kept stop-error=stop-failed unit=UNIT.service detail=fixture: bus timeout error=launch-failed unit=UNIT.service step=show detail=fixture: launch timed out|kept|stopped" ;;
+  esac
+  if [[ "$runs" == running ]]; then
+    kill -TERM "$job" 2>/dev/null || true
+    for _ in $(seq 1 100); do watch_pid_runs "$job" || break; sleep 0.1; done
+  fi
+  find "$TMP_ROOT/work/tmp" -name 'oversee-watch.runner.*' -delete
+}
+GIVEUP_ROWS=(unpublished unknown runner unit-launch)
+if systemd-run --user --quiet --collect true </dev/null >/dev/null 2>&1; then
+  GIVEUP_ROWS+=(unit)
+else
+  printf '  skip  no user manager answers; the unit give-up row did not run\n'
+fi
+for GIVEUP_CASE in "${GIVEUP_ROWS[@]}"; do
+  giveup_row "$GIVEUP_CASE" "$GIVEUP"
+  assert_eq "$GIVEUP_RESULT" "$GIVEUP_EXPECT" \
+    "$GIVEUP_CASE: a start that gives up stops its job through its record or keeps the record and names it" "$WATCH_ERR"
+  giveup_row "$GIVEUP_CASE" "$GIVEUP_CONTROL"
+  assert_eq "$([[ "$GIVEUP_RESULT" == "$GIVEUP_EXPECT" ]] && echo held || echo caught)" caught \
+    "control: $GIVEUP_CASE: a start that removes the record and stops nothing fails the row"
 done
 
 # The runner refuses the job: a setsid that starts nothing. A first launch
@@ -1104,21 +1206,26 @@ assert_eq "$RC|$(grep -c "^oversee: not-overseer session=$KEEP_PANE " <<<"$OUT")
 # No credential anywhere: the restart refuses with the claim step as soon as
 # the started watch exits, well inside the bound a start that never says it
 # runs is given, with that watch's auth-failed in the log it names and the
-# live watch kept. Its control waits without the started watch's pid and
-# runs into that bound.
+# live watch kept, its runner record as it was and no job record of its own
+# left. Its control waits without the started watch's pid and runs into that
+# bound.
 # restart_refused [OVERSEE_BIN] — the row; sets REFUSED_RESULT and
 # REFUSED_SECS.
 restart_refused() {
-  local before after started=$SECONDS
+  local before after started=$SECONDS runner records
   before="$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)"
+  runner="$(cat -- "$WATCH_RUNNER_FILE" 2>/dev/null)" || runner=absent
+  records="$(find "$TMP_ROOT/work/tmp" -name 'oversee-watch.runner.*' | LC_ALL=C sort)"
   run_restart "$SUCC" ${1:+--} ${1:+"$1"}
   REFUSED_SECS=$((SECONDS - started))
   after="$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)"
   REFUSED_RESULT="$RC|$(grep -c "^oversee: watch-restart-failed step=claim log=$WATCH_ERR_FILE " <<<"$OUT")|$(( after - before ))|$(claim_of)"
+  REFUSED_RESULT+="|$([[ "$(cat -- "$WATCH_RUNNER_FILE" 2>/dev/null || echo absent)" == "$runner" ]] && echo kept || echo changed)"
+  REFUSED_RESULT+="|$([[ "$(find "$TMP_ROOT/work/tmp" -name 'oversee-watch.runner.*' | LC_ALL=C sort)" == "$records" ]] && echo none || echo left)"
 }
 restart_refused
-assert_eq "$REFUSED_RESULT|$(( REFUSED_SECS < 2 * WATCH_STOP_SECS ))" "1|1|1|$CRED_NEW|1" \
-  "watch-restart with no GitHub credential refuses once the watch exits, names the failure and keeps the live watch" "$WATCH_ERR_FILE"
+assert_eq "$REFUSED_RESULT|$(( REFUSED_SECS < 2 * WATCH_STOP_SECS ))" "1|1|1|$CRED_NEW|kept|none|1" \
+  "watch-restart with no GitHub credential refuses once the watch exits, names the failure and keeps the live watch and its runner record" "$WATCH_ERR_FILE"
 UNPUBLISHED="$(mutant_scripts unpublished lib/watch-handover.sh)" || exit 1
 mutate_file "$UNPUBLISHED/lib/watch-handover.sh" '    elif [[ -n "$WATCH_JOB_PID" ]]; then' '    elif false; then'
 restart_refused "$UNPUBLISHED/oversee"
