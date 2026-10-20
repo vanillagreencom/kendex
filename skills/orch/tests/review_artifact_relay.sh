@@ -26,8 +26,8 @@
 #
 # EACH CONTRACT IS PINNED IN TWO HALVES, and neither is sound alone. The
 # off-branch half asserts that no mention sits outside an `ok == true` branch;
-# on a file with no mentions at all it evaluates to zero and passes. The count
-# half is what makes it mean something. Drop one and the pair goes vacuous.
+# on a file with no mentions at all it evaluates to zero and passes. The
+# required-context half is what makes it mean something.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -36,8 +36,8 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 REVIEW_PR="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 SUBMIT_PR="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 
-# shellcheck source=lib/assertions.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+# shellcheck source=lib/md.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 # wc, not grep -c: grep exits 1 on a zero count, which under `pipefail` would
 # make "no bad lines" indistinguishable from a broken command.
@@ -54,11 +54,17 @@ assert_eq "$(offbranch "$REVIEW_PR" valid_undermeasured)" "0" \
   "review-pr.md: every valid_undermeasured mention sits in an ok == true branch"
 assert_eq "$(offbranch "$SUBMIT_PR" valid_undermeasured)" "0" \
   "submit-pr.md: every valid_undermeasured mention sits in an ok == true branch"
-assert_eq "$(mentions "$REVIEW_PR" valid_undermeasured)" "2" \
-  "review-pr.md names it at BOTH its call sites (§ 2.5 external, § 3.1 completion)"
+rule "review-pr external acceptance relays measurement declarations" "$REVIEW_PR" \
+  "### 2.2 Launch And Delegate" \
+  "valid_undermeasured" "ok == true" "measurement_failed" "measurement_suppressed"
+rule "review-pr continuation retains undermeasured declarations after acceptance" "$REVIEW_PR" \
+  "### 3.1 Completion" \
+  "valid_undermeasured" "ok == true" "artifact.agent"
+rule "review-pr completion relays measurement declarations" "$REVIEW_PR" \
+  "### 3.1 Completion" \
+  "valid_undermeasured" "ok == true" "OUTSTANDING" "measurement_failed" "measurement_suppressed"
 assert_eq "$(mentions "$SUBMIT_PR" valid_undermeasured)" "1" \
   "submit-pr.md § 1 names the undermeasured reason once"
-assert_file_contains "$REVIEW_PR" "measurement_failed" "review-pr.md relays the declaration string"
 assert_file_contains "$SUBMIT_PR" "measurement_failed" "submit-pr.md relays the declaration string"
 
 # measurement_suppressed exists so a suppression is not invisible, which makes
@@ -67,8 +73,6 @@ assert_eq "$(offbranch "$REVIEW_PR" measurement_suppressed)" "0" \
   "review-pr.md: every measurement_suppressed mention sits in an ok == true branch"
 assert_eq "$(offbranch "$SUBMIT_PR" measurement_suppressed)" "0" \
   "submit-pr.md: every measurement_suppressed mention sits in an ok == true branch"
-assert_eq "$(mentions "$REVIEW_PR" measurement_suppressed)" "2" \
-  "review-pr.md relays the suppression record at BOTH its call sites"
 assert_eq "$(mentions "$SUBMIT_PR" measurement_suppressed)" "1" \
   "submit-pr.md § 1 relays the suppression record"
 
@@ -84,5 +88,4 @@ assert_file_not_contains "$REVIEW_PR" 'A return message arrives with `Verdict:` 
 assert_file_not_contains "$REVIEW_PR" "if jq -e '.verdict'" \
   "review-pr no longer prescribes inline if/redirection for external verdict check"
 
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-[[ "$FAIL" -eq 0 ]]
+md_report

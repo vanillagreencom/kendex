@@ -8,8 +8,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 
-# shellcheck source=lib/assertions.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+# shellcheck source=lib/md.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 assert_order() {
   local file="$1" first="$2" second="$3" name="$4"
@@ -63,10 +63,32 @@ assert_order "$review_pr" \
   ".agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [AGENT_LIST_JSON]" \
   ".agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at" \
   "review-pr stamps the freshness boundary after the reviewer-state write"
-assert_order "$review_pr" \
-  ".agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at" \
-  "Delegate to every reviewer in the active set in parallel." \
+freshness_stamp=".agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at"
+delegation_boundary=".agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]"
+assert_order "$review_pr" "$freshness_stamp" "$delegation_boundary" \
   "review-pr stamps the freshness boundary before the delegation batch"
+
+# Path minting is immediately before each selected reviewer's delegation.
+# Keep both commands in the control; only their order is wrong.
+[[ "$(grep -cFx -- "$freshness_stamp" "$review_pr")" == 1 ]]
+[[ "$(grep -cFx -- "$delegation_boundary" "$review_pr")" == 1 ]]
+awk -v stamp="$freshness_stamp" -v boundary="$delegation_boundary" '
+  $0 == stamp { pending = $0; next }
+  { print }
+  $0 == boundary { print pending; pending = "" }
+  END { if (pending != "") exit 1 }
+' "$review_pr" > "$MD_TMP/late-stamp.md"
+if cmp -s "$review_pr" "$MD_TMP/late-stamp.md"; then
+  fail "freshness-order control changed no input"
+elif (
+  FAIL=0
+  assert_order "$MD_TMP/late-stamp.md" "$freshness_stamp" "$delegation_boundary" "late-stamp control"
+  [[ "$FAIL" -eq 0 ]]
+) > "$MD_TMP/late-stamp.log"; then
+  fail "freshness-order control accepted a stamp after delegation"
+else
+  pass "control: delegation ordering rejects a late freshness stamp"
+fi
 
 # --- Codex Desktop app handoff ----------------------------------------------
 # A working-tree starting state can begin the child before generated agents are
