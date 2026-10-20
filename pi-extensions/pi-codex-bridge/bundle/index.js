@@ -34,6 +34,7 @@ import { promisify } from "node:util";
 
 // src/codex-policy.ts
 var SUPPORTED_CODEX_VERSION = "0.163.0";
+var PI_TOOL_NAMESPACE = "pi";
 var DISABLED_FEATURES = [
   "shell_tool",
   "apps",
@@ -120,7 +121,12 @@ var LAUNCH_CONFIG = [
   // request. A setting under the multi_agent_v2 table that enables no
   // feature; the catalog's multi-agent runtime reads it even while the
   // multi_agent feature is off.
-  "features.multi_agent_v2.max_concurrent_threads_per_session=1"
+  "features.multi_agent_v2.max_concurrent_threads_per_session=1",
+  // A model whose catalog entry is code_mode_only sees a listed namespace as
+  // top-level tools, and only through direct calls; any other tool sits
+  // inside `exec`, which fails closed while code_mode_host is off. A setting
+  // under the code_mode table that enables no feature.
+  `features.code_mode.direct_only_tool_namespaces=["${PI_TOOL_NAMESPACE}"]`
 ];
 function appServerArgs(configOverrides) {
   return [
@@ -675,7 +681,7 @@ function baseName(name) {
   return normalized.length > 0 ? normalized : "pi_tool";
 }
 function buildDynamicTools(tools) {
-  const declarations = [];
+  const functions = [];
   const piNameByCodexName = /* @__PURE__ */ new Map();
   for (const tool of tools) {
     const stem = baseName(tool.name);
@@ -686,8 +692,9 @@ function buildDynamicTools(tools) {
       name = `${stem.slice(0, TOOL_NAME_LIMIT - tail.length)}${tail}`;
     }
     piNameByCodexName.set(name, tool.name);
-    declarations.push({ type: "function", name, description: tool.description, inputSchema: tool.parameters });
+    functions.push({ type: "function", name, description: tool.description, inputSchema: tool.parameters });
   }
+  const declarations = functions.length === 0 ? [] : [{ type: "namespace", name: PI_TOOL_NAMESPACE, description: "Tools of the Pi session this conversation runs in.", tools: functions }];
   const signature = createHash("sha256").update(JSON.stringify(declarations)).digest("hex").slice(0, 16);
   return { declarations, piNameByCodexName, signature };
 }
@@ -1317,7 +1324,7 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
     };
     const addToolCall = (requestId2, call) => {
       if (call.turnId !== record.activeTurnId) throw new Error(`codex-tool-call-turn-mismatch turn=${call.turnId}`);
-      if (call.namespace !== null) throw new Error(`codex-tool-call-namespace-refused namespace=${call.namespace}`);
+      if (call.namespace !== PI_TOOL_NAMESPACE) throw new Error(`codex-tool-call-namespace-refused namespace=${call.namespace}`);
       const piToolName = record.tools.piNameByCodexName.get(call.tool);
       if (piToolName === void 0) throw new Error(`codex-tool-call-unknown tool=${call.tool}`);
       if (record.pending.some((pending) => pending.callId === call.callId)) throw new Error(`codex-tool-call-duplicate call=${call.callId}`);

@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { listCodexModels, startAppServer, type Launch } from "./app-server.js";
 import { requireCodexLogin } from "./auth-presence.js";
-import { ALLOWED_ITEM_TYPES, APPROVAL_POLICY, threadConfig, unreviewedFeature } from "./codex-policy.js";
+import { ALLOWED_ITEM_TYPES, APPROVAL_POLICY, PI_TOOL_NAMESPACE, threadConfig, unreviewedFeature } from "./codex-policy.js";
 import { buildDynamicTools, type DynamicToolCatalog } from "./dynamic-tools.js";
 import { CodexRequestError, type IncomingNotification, type IncomingRequest, type ProtocolClient } from "./json-rpc.js";
 import { API_ID, codexEffort, PROVIDER_ID } from "./models.js";
@@ -653,7 +653,7 @@ export class CodexBridge {
 		};
 		const addToolCall = (requestId: RequestId, call: DynamicToolCall) => {
 			if (call.turnId !== record.activeTurnId) throw new Error(`codex-tool-call-turn-mismatch turn=${call.turnId}`);
-			if (call.namespace !== null) throw new Error(`codex-tool-call-namespace-refused namespace=${call.namespace}`);
+			if (call.namespace !== PI_TOOL_NAMESPACE) throw new Error(`codex-tool-call-namespace-refused namespace=${call.namespace}`);
 			const piToolName = record.tools.piNameByCodexName.get(call.tool);
 			if (piToolName === undefined) throw new Error(`codex-tool-call-unknown tool=${call.tool}`);
 			if (record.pending.some((pending) => pending.callId === call.callId)) throw new Error(`codex-tool-call-duplicate call=${call.callId}`);

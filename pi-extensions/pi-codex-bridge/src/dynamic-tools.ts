@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Tool } from "@earendil-works/pi-ai";
+import { PI_TOOL_NAMESPACE } from "./codex-policy.js";
 
 const TOOL_NAME_LIMIT = 64;
 
-/** A Codex `DynamicToolSpec` of type `function`. */
+/** A Codex `DynamicToolNamespaceTool`: a function inside a namespace. */
 export interface DynamicTool {
 	type: "function";
 	name: string;
@@ -11,8 +12,18 @@ export interface DynamicTool {
 	inputSchema: unknown;
 }
 
+/** A Codex `DynamicToolSpec` of type `namespace`. */
+export interface DynamicToolNamespace {
+	type: "namespace";
+	name: typeof PI_TOOL_NAMESPACE;
+	description: string;
+	tools: DynamicTool[];
+}
+
 export interface DynamicToolCatalog {
-	declarations: DynamicTool[];
+	/** One `pi` namespace holding every Pi tool, or none when Pi has no tools:
+	 * Codex refuses an empty namespace. */
+	declarations: DynamicToolNamespace[];
 	piNameByCodexName: Map<string, string>;
 	/** Identifies the declared set. Codex keeps a thread's start-time tools
 	 * and takes no new ones on resume, so a thread serves only this set. */
@@ -25,7 +36,7 @@ function baseName(name: string): string {
 }
 
 export function buildDynamicTools(tools: Tool[]): DynamicToolCatalog {
-	const declarations: DynamicTool[] = [];
+	const functions: DynamicTool[] = [];
 	const piNameByCodexName = new Map<string, string>();
 	for (const tool of tools) {
 		const stem = baseName(tool.name);
@@ -36,8 +47,11 @@ export function buildDynamicTools(tools: Tool[]): DynamicToolCatalog {
 			name = `${stem.slice(0, TOOL_NAME_LIMIT - tail.length)}${tail}`;
 		}
 		piNameByCodexName.set(name, tool.name);
-		declarations.push({ type: "function", name, description: tool.description, inputSchema: tool.parameters });
+		functions.push({ type: "function", name, description: tool.description, inputSchema: tool.parameters });
 	}
+	const declarations: DynamicToolNamespace[] = functions.length === 0
+		? []
+		: [{ type: "namespace", name: PI_TOOL_NAMESPACE, description: "Tools of the Pi session this conversation runs in.", tools: functions }];
 	const signature = createHash("sha256").update(JSON.stringify(declarations)).digest("hex").slice(0, 16);
 	return { declarations, piNameByCodexName, signature };
 }

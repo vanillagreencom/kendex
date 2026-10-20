@@ -7,6 +7,10 @@ import type { JsonObject } from "./protocol.js";
 
 export const SUPPORTED_CODEX_VERSION = "0.163.0";
 
+/** The dynamic-tool namespace that carries Pi's tools. Codex reserves no such
+ * name and none of its own tools uses it. */
+export const PI_TOOL_NAMESPACE = "pi";
+
 /**
  * Default-on 0.163.0 features that run something outside Pi: native shell,
  * exec and patch tools, browsers, computer use, image tools, MCP and plugin
@@ -121,6 +125,11 @@ export const LAUNCH_CONFIG = [
 	// feature; the catalog's multi-agent runtime reads it even while the
 	// multi_agent feature is off.
 	"features.multi_agent_v2.max_concurrent_threads_per_session=1",
+	// A model whose catalog entry is code_mode_only sees a listed namespace as
+	// top-level tools, and only through direct calls; any other tool sits
+	// inside `exec`, which fails closed while code_mode_host is off. A setting
+	// under the code_mode table that enables no feature.
+	`features.code_mode.direct_only_tool_namespaces=["${PI_TOOL_NAMESPACE}"]`,
 ] as const;
 
 export function appServerArgs(configOverrides: readonly string[]): string[] {

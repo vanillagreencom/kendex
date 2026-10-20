@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { ARG_SENTINEL, ENV_SENTINEL, filesHolding, fixtureWorld, piModel } from "./lib/codex-fixture.mjs";
+import { ARG_SENTINEL, ENV_SENTINEL, codeModeOnlyModel, filesHolding, fixtureWorld, piModel } from "./lib/codex-fixture.mjs";
 import { goneWithin } from "./lib/stub-codex.mjs";
 import { finish, readTool, system, toolResult, user } from "./lib/fake-client.mjs";
 import { functionCall, message, offeredTools } from "./lib/mock-responses.mjs";
@@ -26,7 +26,7 @@ function captureStderr() {
 test("configured MCP servers stay off at start and at cold resume, and their values reach nothing the bridge writes", { timeout: FIXTURE_TIMEOUT }, async (t) => {
 	const world = await fixtureWorld("mcp-off", {
 		script: [
-			[functionCall("read", { path: "fixture.txt" }, "call-1")],
+			[functionCall("read", { path: "fixture.txt" }, "call-1", "pi")],
 			[message("first answer")],
 			[message("second answer")],
 		],
@@ -125,7 +125,7 @@ test("Codex offers the model no native tool or user-input tool, and such calls r
 	const bridge = world.newBridge();
 	const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Run a command")] }));
 	const offered = world.mock.requests.flatMap((request) => offeredTools(request.body));
-	assert.ok(offered.includes("read"), `Pi's tool is offered: ${offered}`);
+	assert.ok(offered.includes("pi.read"), `Pi's tool is offered: ${offered}`);
 	for (const native of ["exec_command", "write_stdin", "shell", "apply_patch", "view_image", "web_search", "image_generation", "spawn_agent", "request_user_input", "request_user_input_async"]) {
 		assert.equal(offered.some((name) => name.split(".").at(-1) === native), false, `${native} is offered: ${offered}`);
 	}
@@ -134,13 +134,59 @@ test("Codex offers the model no native tool or user-input tool, and such calls r
 	await bridge.close();
 });
 
+// The second launch drops the direct-namespace setting and is the contrast:
+// there Codex nests Pi's tools inside `exec`, which fails closed with the
+// code-mode host off.
+test("a code-mode-only model sees Pi's tools as the direct pi namespace, outside exec, and its call reaches Pi", { timeout: FIXTURE_TIMEOUT }, async (t) => {
+	const slug = "mock-code-mode";
+	const world = await fixtureWorld("code-mode", {
+		model: slug,
+		modelCatalog: [codeModeOnlyModel(slug)],
+		script: [[functionCall("read", { path: "fixture.txt" }, "call-1", "pi")], [message("answer")], [message("contrast")]],
+	});
+	t.after(() => world.close());
+	const model = piModel(world.model);
+	const transcript = [system([readTool]), user("Read the fixture")];
+	const frames = [];
+	const bridge = world.newBridge();
+	const toolUse = await finish(bridge.streamSimple(model, { messages: transcript }, { onProviderStreamEvent: (frame) => void frames.push(frame) }));
+	assert.equal(toolUse.reason, "toolUse", toolUse.error?.errorMessage);
+	assert.deepEqual(toolUse.message.content.at(-1), { type: "toolCall", id: "call-1", name: "read", arguments: { path: "fixture.txt" } });
+	const call = frames.find((frame) => frame.method === "item/tool/call");
+	assert.equal(call?.params.namespace, "pi");
+	transcript.push(toolUse.message, toolResult("call-1", "FIXTURE-VALUE"));
+	const answer = await finish(bridge.streamSimple(model, { messages: transcript }));
+	assert.equal(answer.reason, "stop", answer.error?.errorMessage);
+	assert.equal(answer.message.content.at(-1).text, "answer");
+	assert.match(JSON.stringify(world.mock.requests[1].body.input.find((item) => item.type === "function_call_output")), /FIXTURE-VALUE/);
+	await bridge.close();
+
+	const execText = (request) => request.body.tools.find((tool) => tool.name === "exec")?.description ?? "";
+	const direct = world.mock.requests[0];
+	assert.ok(offeredTools(direct.body).includes("pi.read"), `pi.read is not offered directly: ${offeredTools(direct.body)}`);
+	assert.ok(execText(direct).length > 0, "the model has no exec tool, so the plan is not code mode");
+	assert.equal(execText(direct).includes("pi__read"), false, "exec lists Pi's read");
+
+	const contrast = world.newBridge({ withoutSetting: 'features.code_mode.direct_only_tool_namespaces=["pi"]' });
+	const nested = await finish(contrast.streamSimple(model, { messages: [system([readTool]), user("Contrast")] }));
+	assert.equal(nested.reason, "stop", nested.error?.errorMessage);
+	await contrast.close();
+	const nestedRequest = world.mock.requests[2];
+	assert.equal(offeredTools(nestedRequest.body).includes("pi.read"), false);
+	assert.ok(execText(nestedRequest).includes("pi__read"), "without the setting exec does not list Pi's read");
+
+	const [withSetting, withoutSetting] = world.enabledFeatures();
+	assert.ok(withSetting.length > 0, "no feature list was read");
+	assert.deepEqual(withSetting, withoutSetting);
+});
+
 // The scripted spawn is the parent's first model response; a sub-agent's turn
 // would take the next scripted response. Only the parent's two model requests
 // may reach the mock: the spawn request and the parent's answer to its result.
 test("a sub-agent spawn on a code-mode model starts no thread and makes no model request", { timeout: FIXTURE_TIMEOUT }, async (t) => {
 	const world = await fixtureWorld("subagent", {
 		model: "gpt-6-sol",
-		script: [[{ ...functionCall("spawn_agent", { task_name: "sub", message: "work outside Pi" }, "spawn-1"), namespace: "collaboration" }], [message("parent")], [message("sub-agent")]],
+		script: [[functionCall("spawn_agent", { task_name: "sub", message: "work outside Pi" }, "spawn-1", "collaboration")], [message("parent")], [message("sub-agent")]],
 	});
 	t.after(() => world.close());
 	const bridge = world.newBridge();

@@ -47,8 +47,9 @@ export function message(text, id = `msg_${text.length}_${Date.now()}`) {
 	return { type: "message", role: "assistant", id, content: [{ type: "output_text", text }] };
 }
 
-export function functionCall(name, args, callId) {
-	return { type: "function_call", call_id: callId, name, arguments: JSON.stringify(args) };
+/** A function call; `namespace` names the tool namespace it calls into. */
+export function functionCall(name, args, callId, namespace) {
+	return { type: "function_call", call_id: callId, name, arguments: JSON.stringify(args), ...(namespace === undefined ? {} : { namespace }) };
 }
 
 /** Every tool name offered to the model in one request, nested ones included. */

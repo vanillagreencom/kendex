@@ -189,6 +189,12 @@ for (const row of [
 	{ name: "a configured MCP server starting", send: (client) => client.notification("mcpServer/startupStatus/updated", { threadId: THREAD, name: "marker", status: "starting", error: null, failureReason: null }), key: "codex-mcp-started name=marker", killed: true },
 	{ name: "a native item starting", send: (client) => client.notification("item/started", { threadId: THREAD, turnId: TURN, item: { type: "commandExecution" }, startedAtMs: 1 }), key: "codex-native-item type=commandExecution", killed: false },
 	{ name: "a turn on a thread Pi did not start", send: (client) => client.notification("turn/started", { threadId: "thread-sub", turn: { id: "turn-sub" } }), key: "codex-foreign-thread thread=thread-sub", killed: true },
+	...[null, "functions", "pix"].map((namespace) => ({
+		name: `a tool call in namespace ${namespace}`,
+		send: (client) => client.serverRequest("rpc-ns", "item/tool/call", { threadId: THREAD, turnId: TURN, callId: "call-ns", namespace, tool: "read", arguments: {} }),
+		key: `codex-tool-call-namespace-refused namespace=${namespace}`,
+		killed: false,
+	})),
 ]) {
 	test(`the turn is refused on ${row.name}`, async () => {
 		const client = new FakeClient({ "turn/start": () => { row.send(client); return { turn: { id: TURN } }; } });
@@ -476,7 +482,7 @@ test("an abort during a running turn ends the stream at once, and a queued call 
 	await new Promise(setImmediate);
 	// The call reaches the queue first, then the abort: Codex never completes
 	// the interrupted turn here, so only the bridge can end the stream.
-	client.emit("request", { kind: "request", id: "rpc-late", method: "item/tool/call", params: { threadId: THREAD, turnId: TURN, callId: "call-late", namespace: null, tool: "read", arguments: {} } });
+	client.emit("request", { kind: "request", id: "rpc-late", method: "item/tool/call", params: { threadId: THREAD, turnId: TURN, callId: "call-late", namespace: "pi", tool: "read", arguments: {} } });
 	abort.abort();
 	const end = await finish(stream);
 	assert.equal(end.reason, "aborted");

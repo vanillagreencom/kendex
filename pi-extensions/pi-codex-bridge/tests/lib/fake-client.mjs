@@ -68,7 +68,7 @@ export class FakeClient extends EventEmitter {
 	}
 
 	toolCall(id, callId, turnId = TURN, tool = "read", threadId = THREAD) {
-		this.serverRequest(id, "item/tool/call", { threadId, turnId, callId, namespace: null, tool, arguments: { path: callId } });
+		this.serverRequest(id, "item/tool/call", { threadId, turnId, callId, namespace: "pi", tool, arguments: { path: callId } });
 	}
 
 	text(delta, turnId = TURN, threadId = THREAD) {

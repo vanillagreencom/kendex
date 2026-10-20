@@ -5,6 +5,7 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { startAppServer } from "../../src/app-server.ts";
 import { CodexBridge } from "../../src/bridge.ts";
@@ -27,7 +28,29 @@ function serverTable(name, marker) {
 	].join("\n");
 }
 
-export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userConfig = "" } = {}) {
+/** A Codex catalog entry for the mock model that offers tools only through
+ * code mode, as every model the Codex service lists does. Test-only model
+ * metadata: the bridge writes none. */
+export function codeModeOnlyModel(slug) {
+	return {
+		slug,
+		display_name: slug,
+		description: "Fixture model",
+		base_instructions: "Fixture model.",
+		supported_reasoning_levels: [],
+		shell_type: "default",
+		visibility: "list",
+		supported_in_api: true,
+		priority: 1,
+		support_verbosity: false,
+		truncation_policy: { mode: "tokens", limit: 10000 },
+		experimental_supported_tools: [],
+		tool_mode: "code_mode_only",
+	};
+}
+
+/** `modelCatalog` replaces Codex's model catalog through `model_catalog_json`. */
+export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userConfig = "", modelCatalog } = {}) {
 	const scratch = join(packageDir, "tmp");
 	mkdirSync(scratch, { recursive: true });
 	const root = mkdtempSync(join(scratch, `fixture-${name}-`));
@@ -41,6 +64,11 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 	// requires no OpenAI auth. It exists so the bridge's login check passes.
 	writeFileSync(join(home, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-fixture-not-a-credential" }));
 	const homeConfig = join(home, "config.toml");
+	if (modelCatalog !== undefined) {
+		const catalog = join(root, "model-catalog.json");
+		writeFileSync(catalog, JSON.stringify({ models: modelCatalog }));
+		userConfig = `model_catalog_json = ${JSON.stringify(catalog)}\n${userConfig}`;
+	}
 	writeFileSync(homeConfig, `${userConfig}\n${serverTable("user_marker", markers.user)}\n[projects.${JSON.stringify(project)}]\ntrust_level = "trusted"\n`);
 	const projectConfig = join(project, ".codex", "config.toml");
 	writeFileSync(projectConfig, serverTable("project_marker", markers.project));
@@ -56,22 +84,31 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 	let beforeWrite = () => undefined;
 	const recordingSpawn = (command, args, options) => {
 		const child = spawn(command, args, options);
-		children.push({ command, args: [...args], env: { ...options.env }, child });
+		const record = { command, args: [...args], env: { ...options.env }, child, sent: [], received: [] };
+		children.push(record);
+		createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => record.received.push(line));
 		const write = child.stdin.write.bind(child.stdin);
 		child.stdin.write = (chunk, ...rest) => {
 			const line = chunk.toString();
 			sentLines.push(line);
+			record.sent.push(line);
 			beforeWrite(line);
 			return write(chunk, ...rest);
 		};
 		return child;
 	};
-	const newBridge = () => new CodexBridge({
+	/** `withoutSetting` drops one `-c` launch setting the bridge passes, for a
+	 * contrast launch. */
+	const newBridge = ({ withoutSetting } = {}) => new CodexBridge({
 		codexHome: home,
 		cwd: project,
 		executable: CODEX,
 		configOverrides,
-		connect: (launch, signal) => startAppServer(launch, signal, recordingSpawn),
+		connect: (launch, signal) => startAppServer(launch, signal, withoutSetting === undefined ? recordingSpawn : (command, args, options) => {
+			const at = args.findIndex((arg, index) => args[index - 1] === "-c" && arg === withoutSetting);
+			if (at < 0) throw new Error(`fixture-setting-absent setting=${withoutSetting}`);
+			return recordingSpawn(command, args.toSpliced(at - 1, 2), options);
+		}),
 	});
 	return {
 		root,
@@ -85,6 +122,12 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 		model,
 		newBridge,
 		onWrite: (hook) => (beforeWrite = hook),
+		/** The features each app-server child reported enabled to the bridge's
+		 * `experimentalFeature/list`, sorted. */
+		enabledFeatures: () => children.map(({ sent, received }) => {
+			const ids = new Set(sent.flatMap((chunk) => chunk.split("\n").filter(Boolean)).map((line) => JSON.parse(line)).filter((frame) => frame.method === "experimentalFeature/list").map((frame) => frame.id));
+			return received.map((line) => JSON.parse(line)).filter((frame) => ids.has(frame.id) && frame.result !== undefined).flatMap((frame) => frame.result.data.filter((feature) => feature.enabled).map((feature) => feature.name)).sort();
+		}),
 		sentMethods: () => sentLines.flatMap((line) => line.split("\n").filter(Boolean)).map((line) => JSON.parse(line).method).filter(Boolean),
 		addLateServer: () => appendFileSync(homeConfig, `\n${serverTable("late_marker", markers.late)}`),
 		startedMarkers: () => Object.entries(markers).filter(([, path]) => existsSync(path)).map(([key]) => key),

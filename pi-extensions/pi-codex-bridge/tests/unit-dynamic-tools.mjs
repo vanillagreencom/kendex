@@ -4,14 +4,19 @@ import { buildDynamicTools } from "../src/dynamic-tools.ts";
 
 const schema = { type: "object", properties: {} };
 
-test("Pi tool declarations become unique app-server dynamic tools", () => {
+test("Pi tool declarations become unique functions in one pi namespace, and no tools declare none", () => {
 	const catalog = buildDynamicTools([
 		{ name: "mcp/read", description: "Read", parameters: schema },
 		{ name: "mcp read", description: "Read another", parameters: schema },
 	]);
-	assert.deepEqual(catalog.declarations.map((tool) => tool.name), ["mcp_read", "mcp_read_2"]);
+	assert.equal(catalog.declarations.length, 1);
+	const [namespace] = catalog.declarations;
+	assert.equal(namespace.type, "namespace");
+	assert.equal(namespace.name, "pi");
+	assert.deepEqual(namespace.tools.map((tool) => [tool.type, tool.name]), [["function", "mcp_read"], ["function", "mcp_read_2"]]);
 	assert.equal(catalog.piNameByCodexName.get("mcp_read"), "mcp/read");
 	assert.equal(catalog.piNameByCodexName.get("mcp_read_2"), "mcp read");
+	assert.deepEqual(buildDynamicTools([]).declarations, []);
 });
 
 test("the signature changes with any declared field and holds for an equal set", () => {
