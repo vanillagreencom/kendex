@@ -816,8 +816,19 @@ jobs:
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
           else
-            command -v tmux >/dev/null || { sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y tmux; }
+            # Ubuntu's tmux 3.4 runs libutempter's helper at pane EOF with
+            # SIGCHLD at its default action, so a pane process that exits in
+            # that window is never reaped and pane-died never fires. tmux 3.6
+            # re-raises SIGCHLD there (upstream fa5f3cef); the image's
+            # Homebrew, not on PATH, carries a later release. The catalog
+            # job's suite-command installs the same one.
+            brew=/home/linuxbrew/.linuxbrew/bin/brew
+            "$brew" install tmux
+            tmux_dir="$("$brew" --prefix tmux)/bin"
+            echo "$tmux_dir" >> "$GITHUB_PATH"
+            export PATH="$tmux_dir:$PATH"
           fi
+          tmux -V
 
           if [[ '${{ matrix.shard }}' == orch-terminal ]]; then
             if [[ "$RUNNER_OS" == macOS ]]; then
@@ -2116,13 +2127,17 @@ jobs:
       timeout-minutes: 90
       # Exercise this branch's CI scripts, never a binary built from it.
       ref: ${{ github.sha }}
+      # Every changed package's suites see one tmux, the release the
+      # `tmux for pane delivery tests` step installs and gives its reason for.
       suite-command: >-
         ${{ github.event_name == 'merge_group' && format('
+        brew=/home/linuxbrew/.linuxbrew/bin/brew;
+        "$brew" install tmux;
+        export PATH="$("$brew" --prefix tmux)/bin:$PATH";
+        tmux -V;
         orch_paths=$(git diff --name-only "$CATALOG_BASE" -- skills/orch .agents/skills/orch);
         if [ -n "$orch_paths" ]; then
-          missing="";
-          for tool in tmux fish; do command -v "$tool" >/dev/null || missing="$missing $tool"; done;
-          if [ -n "$missing" ]; then sudo apt-get update; sudo apt-get install -y $missing; fi;
+          if ! command -v fish >/dev/null; then sudo apt-get update; sudo apt-get install -y fish; fi;
           if ! command -v claude >/dev/null; then
             npm install --prefix "$RUNNER_TEMP/release-suite-tools" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code;
             export PATH="$RUNNER_TEMP/release-suite-tools/node_modules/.bin:$PATH";

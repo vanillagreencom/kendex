@@ -28,6 +28,8 @@ tools/guard --full                          # the local full battery: Rust and U
 
 The harness-ci change-class suite runs its render rows only where a `kendex` is on PATH, and skips them where none is. It does not run that install. It builds `kendex-cli` from this checkout as a debug build in `target/` and runs that binary, so a branch that changes what kendex renders needs no self-install for these rows. The build needs the Rust toolchain, and on Linux the D-Bus development headers: `libdbus-1-dev` on Debian and Ubuntu. A failed build fails the suite.
 
+On Linux the tmux suites need tmux 3.6 or newer, which CI takes from Homebrew: Ubuntu 24.04's tmux 3.4 loses the SIGCHLD of a pane process that exits while libutempter's helper runs at pane close, so under load the jarvis task suite waits for a `pane-died` that never fires.
+
 `tools/harness-smoke` asks each harness on the machine, through its own listing or startup surface, whether a package kendex installed into a scratch project loaded, and what reaches a lane sent a directive: one row per harness per kind, `unanswerable` with its reason where a harness or this machine has no surface. Which rows a harness gets follows each hook's answer for that harness in `kendex index --json` on this checkout. It writes nothing to the repository.
 
 ## Debug
