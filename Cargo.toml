@@ -99,7 +99,6 @@ todo = "deny"
 unimplemented = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
-too_many_lines = "deny"
 
 # What a panic or backtrace in the workspace's own crates needs is the file
 # and line of each frame; the variable and type tables that full debuginfo

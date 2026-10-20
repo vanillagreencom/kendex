@@ -6,14 +6,96 @@
 # the other trees they touch, and none of what --full adds beyond that: the
 # workspace test run, cross-target checks, the documentation build, the Bash
 # 3.2 parse, the working-tree bot-instructions check, the decision-ID check,
-# the cargo free-space floor and the class lane selection. Every compiler and
-# toolchain call is a stub in fake-bin that logs what it was asked.
+# the cargo free-space floor and the class lane selection. Native lint-policy
+# rows compile disposable inputs; selection rows log calls through fake-bin.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/guard-world.sh
 . "$TEST_DIR/lib/guard-world.sh"
+
+native_lint_policy() {
+  local native_base row target selection expected native_rc native_out i
+  mkdir -p "$R/crates/core/src"
+  rm -- "${R:?}/crates/core/tests/existing_temp.rs"
+  printf '%s\n' '[workspace]' 'resolver = "3"' 'members = ["crates/core"]' >"$R/Cargo.toml"
+  # Consume the actual policy rather than maintaining another lint list.
+  awk '/^\[workspace.lints.clippy\]$/ { copying=1 }
+    /^\[/ && $0 != "[workspace.lints.clippy]" { copying=0 }
+    copying { print }' "$REPO/Cargo.toml" >>"$R/Cargo.toml"
+  cat >"$R/crates/core/Cargo.toml" <<'TOML'
+[package]
+name = "kendex-core"
+version = "0.1.0"
+edition = "2024"
+autotests = false
+[lints]
+workspace = true
+[[test]]
+name = "integration"
+path = "tests/main.rs"
+TOML
+  printf '%s\n' 'pub fn production() {}' >"$R/crates/core/src/lib.rs"
+  printf '%s\n' 'fn main() {}' >"$R/crates/core/build.rs"
+  printf '%s\n' '#[test]' 'fn neutral() {}' >"$R/crates/core/tests/main.rs"
+  cp "$REPO/rust-toolchain.toml" "$R/rust-toolchain.toml"
+  cp "$REPO/clippy.toml" "$R/clippy.toml"
+  git -C "$R" add -A
+  git -C "$R" commit -qm 'native lint fixture'
+  native_base="$(git -C "$R" rev-parse HEAD)"
+  # Cargo and Clippy are the judges. The planted function exceeds the native
+  # default threshold with statements, not comments or blank source lines.
+  native_long_function() {
+    printf '%s\n' "$1 {" '    let mut value = 0_u32;'
+    for ((i=0; i<105; i++)); do printf '%s\n' '    value = std::hint::black_box(value + 1);'; done
+    printf '%s\n' '    assert_eq!(value, 105);' '}'
+  }
+  for row in 'production|manifest|too_many_lines' 'build-script|workspace|too_many_lines' \
+    'test-helpers|manifest|pass' 'forbidden-helper|workspace|todo'; do
+    IFS='|' read -r target selection expected <<<"$row"
+    git -C "$R" reset -q --hard "$native_base"
+    case "$target" in
+      production)
+        native_long_function 'pub fn production()' >"$R/crates/core/src/lib.rs"
+        # The all-target check must still run after production length fails.
+        printf '%s\n' 'fn forbidden() { todo!(); }' >"$R/crates/core/tests/main.rs"
+        ;;
+      build-script) native_long_function 'fn main()' >"$R/crates/core/build.rs" ;;
+      test-helpers | forbidden-helper)
+        {
+          printf '%s\n' 'pub fn production() {}' '#[cfg(test)]' 'mod tests {'
+          native_long_function 'fn private_helper()'
+          printf '%s\n' '#[test]'
+          native_long_function 'fn long_test()'
+          printf '%s\n' '#[test]' 'fn calls_helper() { private_helper(); }' '}'
+        } >"$R/crates/core/src/lib.rs"
+        {
+          native_long_function 'fn integration_helper()'
+          printf '%s\n' '#[test]' 'fn calls_helper() { integration_helper(); }'
+          if [ "$target" = forbidden-helper ]; then printf '%s\n' 'fn forbidden() { todo!(); }'; fi
+        } >"$R/crates/core/tests/main.rs"
+        ;;
+    esac
+    [ "$selection" != workspace ] || printf '\n' >>"$R/clippy.toml"
+    (cd "$R" && cargo fmt)
+    native_rc=0
+    native_out="$(cd "$R" && CARGO_TARGET_DIR="$TMP/tmp/native-$target" "$GUARD" --range "$native_base" 2>&1)" || native_rc=$?
+    # Clippy's lint identifier is the machine category these rows consume.
+    if [ "$expected" = pass ]; then
+      [ "$native_rc" -eq 0 ] && ok 'native lint policy accepts long tests and private/integration helpers' \
+        || bad 'native lint policy accepts long tests and private/integration helpers' "$native_out"
+    else
+      [ "$native_rc" -eq 1 ] && [[ "$native_out" == *"#$expected"* ]] \
+        && { [ "$target" != production ] || [[ "$native_out" == *'#todo'* ]]; } \
+        && ok "native $selection lint policy refuses $target through $expected" \
+        || bad "native $selection lint policy refuses $target through $expected" "$native_out"
+    fi
+  done
+  unset -f native_long_function
+  reset_world
+}
+native_lint_policy
 
 CALLS="$TMP/calls"
 SCAN_BIN="$TMP/scan-bin"
@@ -89,11 +171,13 @@ back_to_base
 echo "=== what a range compiles is what it touched since its base ==="
 CORE_CALLS="cargo tree -p kendex-core -e normal
 cargo clippy --version
+cargo clippy --manifest-path crates/core/Cargo.toml --quiet -- -D clippy::too_many_lines
 cargo clippy --manifest-path crates/core/Cargo.toml --all-targets --quiet
 cargo fmt --version
 cargo fmt --check"
 WORKSPACE_CALLS="cargo tree -p kendex-core -e normal
 cargo clippy --version
+cargo clippy --workspace --quiet -- -D clippy::too_many_lines
 cargo clippy --workspace --all-targets --quiet
 cargo fmt --version
 cargo fmt --check"

@@ -1349,9 +1349,13 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   if ! cargo clippy --version >/dev/null 2>&1; then
     unrun missing-tool cargo-clippy
   elif [ "$rust_all" -eq 1 ]; then
+    # Default native targets retain production and build-script length checks;
+    # all targets retain the workspace's other denials, including test helpers.
+    cargo clippy --workspace --quiet -- -D clippy::too_many_lines || say clippy workspace
     cargo clippy --workspace --all-targets --quiet || say clippy workspace
   else
     for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
+      cargo clippy --manifest-path "$manifest" --quiet -- -D clippy::too_many_lines || say clippy "$manifest"
       cargo clippy --manifest-path "$manifest" --all-targets --quiet || say clippy "$manifest"
     done
   fi

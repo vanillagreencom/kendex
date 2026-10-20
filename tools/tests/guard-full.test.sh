@@ -1561,7 +1561,9 @@ lanes_ran() {
     case "$lane" in
       suites) [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] ;;
       parse) [[ "$OUT" == *"stub: bash32-parse"* ]] ;;
-      lint) grep -qFx "clippy --workspace --all-targets --quiet" "$CARGO_CALL_LOG" ;;
+      lint)
+        grep -qFx "clippy --workspace --quiet -- -D clippy::too_many_lines" "$CARGO_CALL_LOG" &&
+          grep -qFx "clippy --workspace --all-targets --quiet" "$CARGO_CALL_LOG" ;;
       apple) grep -qF -- "--target aarch64-apple-darwin" "$CARGO_CALL_LOG" ;;
       windows) grep -qF -- "--target x86_64-pc-windows-msvc" "$CARGO_CALL_LOG" ;;
       test) grep -qFx "test --workspace --quiet" "$CARGO_CALL_LOG" ;;
