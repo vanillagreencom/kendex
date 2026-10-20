@@ -20,43 +20,17 @@
 # compare-<base>.json when that file exists, so a case can give each carry
 # candidate its own delta, and from compare.json otherwise.
 # Every read's URL is appended to .urls.log so a case can pin read shapes.
-# A write (`gh api -X METHOD` other than GET, or `gh secret set`) reads no
-# fixture: it appends one line to .writes.log, `METHOD URL BODY` or
-# `secret-set repo=R env=E name=N value=V` with BODY and V %q-escaped, and
-# GH_SHIM_FAIL=METHOD:NAME or GH_SHIM_FAIL=secret-set fails it.
+# A write (`gh api -X METHOD` other than GET) reads no fixture.
 set -euo pipefail
-if [ "${1:-}" = secret ]; then
-  [ "${2:-}" = set ] || { printf 'gh-shim-error=secret-verb value=%q\n' "${2:-}" >&2; exit 90; }
-  secret_name="${3:-}"; secret_env=""; secret_repo=""
-  shift 3
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --env) shift; secret_env="$1" ;;
-      --repo) shift; secret_repo="$1" ;;
-      *) printf 'gh-shim-error=secret-flag value=%q\n' "$1" >&2; exit 90 ;;
-    esac
-    shift
-  done
-  # Byte-exact: the x keeps the value's trailing newlines from the capture.
-  secret_value="$(cat && printf x)"
-  secret_value="${secret_value%x}"
-  if [ "${GH_SHIM_FAIL:-}" = secret-set ]; then
-    printf 'gh-shim-error=api value=%q\n' secret-set >&2
-    exit 1
-  fi
-  printf 'secret-set repo=%s env=%s name=%s value=%q\n' "$secret_repo" "$secret_env" "$secret_name" "$secret_value" >>"$GH_SHIM_FIXTURES/.writes.log"
-  exit 0
-fi
-url=""; filter=""; paginate=0; graphql_page2=0; graphql_after=""; method=""; input=""; fields=""
+url=""; filter=""; paginate=0; graphql_page2=0; graphql_after=""; method=""
 while [ $# -gt 0 ]; do
   case "$1" in
     api|--slurp) ;;
     --paginate) paginate=1 ;;
     -X|--method) shift; method="$1" ;;
-    --input) shift; input="$1" ;;
+    --input) shift ;;
     -f|-F)
       shift
-      fields="${fields:+$fields }$1"
       # A cursor variable marks a follow-up thread page: serve the page-2
       # fixture (when present) so pagination is exercised for real. The
       # cursor VALUE is kept so cursor-keyed fixtures
@@ -106,28 +80,17 @@ case "$url" in
   "repos/"*"/branches/"*) name=branch ;;
   "orgs/"*"/rulesets/"*) name="org-ruleset-${url##*/}" ;;
   *"/rulesets/"*) name="ruleset-${url##*/}" ;;
-  "orgs/"*"/installations") name=installations ;;
-  "orgs/"*"/repos"*) name=organization-repositories ;;
   *"/deployment-branch-policies") name=branch-policies ;;
-  *"/deployment-branch-policies/"*) name=branch-policy ;;
   *"/environments/"*"/secrets")
     environment="${url#*/environments/}"
     name="environment-secrets-${environment%/secrets}"
     ;;
-  "orgs/"*"/dependabot/secrets") name=organization-dependabot-secrets ;;
-  "repos/"*"/dependabot/secrets") name=dependabot-secrets ;;
   *"/environments") name=environments ;;
   *"/environments/"*) name=environment ;;
   *"/actions/organization-secrets") name=organization-secrets ;;
   "orgs/"*"/actions/secrets") name=organization-actions-secrets ;;
   *"/actions/secrets") name=repository-secrets ;;
   "repos/{owner}/{repo}") name=repository ;;
-  "orgs/"*)
-    case "${url#orgs/}" in
-      */*) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
-    esac
-    name=organization
-    ;;
   *"/commits/"*"/pulls") name=commit-pulls ;;
   "repos/"*"/commits/"*) name=commit ;;
   *"/actions/runs/"*"/jobs"*)
@@ -148,13 +111,6 @@ case "$url" in
   *) printf 'gh-shim-error=request value=%q\n' "$url" >&2; exit 90 ;;
 esac
 if [ -n "$method" ] && [ "$method" != GET ]; then
-  body="$fields"
-  [ "$input" != - ] || body="$(cat)"
-  if [ "${GH_SHIM_FAIL:-}" = "$method:$name" ]; then
-    printf 'gh-shim-error=api value=%q\n' "$method:$name" >&2
-    exit 1
-  fi
-  printf '%s %s %q\n' "$method" "$url" "$body" >>"$GH_SHIM_FIXTURES/.writes.log"
   exit 0
 fi
 echo "$url" >>"$GH_SHIM_FIXTURES/.urls.log"

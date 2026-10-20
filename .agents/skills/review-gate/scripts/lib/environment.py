@@ -12,19 +12,17 @@ def environment_policy(branch, name, environments, policies=None):
         raise ValueError("environments")
     selected = [row for row in environments if row["name"] == name]
     if len(selected) != 1:
-        return {"present": "no", "cause": "missing", "value": "absent"}
+        return {"cause": "missing"}
     policy = selected[0].get("deployment_branch_policy")
     if not isinstance(policy, dict) or policy.get("custom_branch_policies") is not True or policy.get("protected_branches") is not False:
-        kind = "unrestricted" if policy is None else "protected-branches" if isinstance(policy, dict) and policy.get("protected_branches") is True else "malformed"
-        return {"present": "yes", "cause": "branch-policy", "value": kind}
+        return {"cause": "branch-policy"}
     if policies is None:
-        return {"present": "yes", "cause": "pending", "value": "custom"}
+        return {"cause": "pending"}
     if not isinstance(policies, list) or not all(isinstance(row, dict) and isinstance(row.get("name"), str) and isinstance(row.get("type", "branch"), str) for row in policies):
         raise ValueError("branch-policies")
-    observed = "custom:" + ",".join(row.get("type", "branch") + ":" + row["name"] for row in policies)
     if len(policies) != 1 or policies[0].get("name") != branch or policies[0].get("type", "branch") != "branch":
-        return {"present": "yes", "cause": "branch-policy", "value": observed}
-    return {"present": "yes", "cause": "", "value": observed}
+        return {"cause": "branch-policy"}
+    return {"cause": ""}
 
 
 def environment_secrets(names, secrets):
@@ -35,29 +33,22 @@ def environment_secrets(names, secrets):
         cause = "secrets"
     else:
         cause = ""
-    return {"cause": cause, "held": ";".join(name for name in names if name in held),
-            "missing": ";".join(name for name in names if name not in held)}
+    return {"cause": cause, "held": ";".join(name for name in names if name in held)}
 
 
 def secret_placement(names, scopes):
-    """Judge named secret copies; each caller supplies the scopes it reads."""
-    outside, unreadable, causes = [], [], []
+    """Judge named secret copies."""
+    outside, unreadable = [], []
     for row in scopes:
         label = row["scope"]
-        if "error" in row:
-            unreadable.append(label)
-            causes.append(label + ": " + row["error"])
-            continue
         try:
             held = environment_secrets(names, row["secrets"])["held"]
         except ValueError:
             unreadable.append(label)
-            causes.append(label + ": the response is not a list of named secrets")
             continue
         outside.extend(label + ":" + name for name in held.split(";") if name)
     return {"cause": "read" if unreadable else "secrets-outside" if outside else "",
-            "outside": ";".join(outside), "unreadable": ",".join(unreadable),
-            "causes": "\n".join(causes)}
+            "outside": ";".join(outside), "unreadable": ",".join(unreadable)}
 
 
 def gh_api(*arguments):

@@ -328,15 +328,14 @@ a non-string workflow pin~.[3].parameters.workflows[0].sha = 7~$PIN_FAILURE
 the pinned workflow beside an unrelated workflow~.[3].parameters.workflows += [{"repository_id": 7, "path": ".github/workflows/build.yml"}]~
 ROWS
 
-# The contexts row against consumers other than the table's: the list the
-# repository declares is the other half of its comparison.
-echo "=== the required contexts against the repository's declared list ==="
+echo "=== the repository's declared settings ==="
 # name ~ consumer ~ jq edit of rules.json ~ overrides
 while IFS='~' read -r name consumer edit overrides; do
   [ -n "$name" ] || continue
   drift_case "$name" "" "${edit:+rules.json}" "$edit" "$overrides" "$consumer"
   if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
 done <<'ROWS'
+a consumer still holding the retired organization keys~retired~~
 a repository that declares no context list~no-contexts~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
 a repository that declares an empty context list~empty-contexts~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
 a required gate context the repository also declares~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
@@ -344,10 +343,6 @@ a required gate context a repository with no context list fails~no-contexts~.[5]
 a required gate context a repository with an empty context list fails~empty-contexts~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 ROWS
 
-echo "=== the retired organization keys are not read ==="
-drift_case "a consumer still holding the retired organization keys" "" "" "" "" retired
-if [ "$CASE_MATCH" = true ]; then ok "a consumer still holding the retired organization keys reads the matching world"
-else bad "a consumer still holding the retired organization keys" "$CASE_DIFF"; fi
 # The control reads one retired key in a disposable copy of the loader.
 cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
 file_edit "$SKILL" scripts/lib/standard.sh 1 '^  WANT_CHECKS_BYPASS=' \
