@@ -5186,8 +5186,9 @@ check_report() {
 # picks one. Every other verdict reads the accounts of the record's own host,
 # its `host` or `local` where it names none, as ORCH_LANE_HOST, since a
 # relaunch stays on that host and open-terminal judges it there: `unjudged`
-# where that host's `lanes list` failed; `queue` where it lists no account of
-# the harness; otherwise `lanes pick` for the record's harness and model
+# where that host's `lanes list` failed; `queue` where it lists no account
+# the pick would judge (`--help`, owed); otherwise `lanes pick` for the
+# record's harness and model
 # decides, the launcher's own judge: room is `queue`, a wall is `dated` until
 # the earliest reset that judgement names for its walled accounts, and
 # anything else is `unjudged`. One
@@ -5544,10 +5545,8 @@ verifying_read() { # SAFE_ITEMS
 # window and its reset, `until=-` where none states one. Exit 3 with none
 # walled is every account unmeasured, and any other exit a judgement that
 # failed, named on stderr: both are `unjudged`. A listing holding no account
-# the pick would judge queues the item unasked: the accounts are those of the
-# harness the model is billed on (lib/lane-launch.sh lane_pick_harness), and
-# the listing's api-credit records, its Pi API grants, stand only for a pick
-# whose pool (lane_pick_pool) is api-credit, never for a Copilot pool.
+# the pick would judge queues the item unasked; which accounts those are is
+# stated once, in `--help` under owed.
 owed_wall() { # HOST HARNESS MODEL
   local host="$1" harness="$2" model="$3" errf="$WORK_DIR/owed-pick.err" rc=0 walled until billed pool
   local args=(pick --harness "$harness" --json)

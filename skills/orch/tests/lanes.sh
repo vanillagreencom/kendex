@@ -810,6 +810,31 @@ api_case 'list gives a grant above the floor room and its share left' "$API_LIST
   "0:[[\"$H/.eclaude\",\"api-credit\",\"credits\",\"room\",null,75]]"
 api_case 'list --harness pi lists the grants alone' "$API_LIST_ENV" 'list --harness pi --json' \
   '[.[] | [.harness, .config_dir]]' "0:[[\"pi\",\"$H/.eclaude\"]]"
+# oversee-watch lists every pass under the default TTL, so its usual read is
+# warm: the provider's cached batch, which host_lane_rows filters apart from
+# the decoder. A warm listing holds the grant the cold one held, the Copilot
+# pool row still out, on the cold read's one accounts call.
+api_list_warm() { # NAME
+  local state="$TMP_ROOT/api-list-warm-$1" env_list passes="" pass calls
+  mkdir -p "$state"
+  env_list="$API_LIST_ENV;OVERSEE_WATCH_STATE_DIR=$state;ORCH_LANES_USAGE_TTL=300;LANE_HOST_STUB_LOG=$state/provider.log"
+  for pass in cold warm; do
+    run_lanes "$env_list" list --json
+    passes+="$pass=$RC:$(jq -c "$API_LIST_GRANT" <<<"$OUT" 2>/dev/null || printf unreadable) "
+  done
+  calls="$(grep -c '^accounts ' "$state/provider.log" || true)"
+  assert_eq "${passes}calls=$calls" \
+    "cold=0:[[\"$H/.eclaude\",\"api-credit\",\"credits\",\"room\",null,75]] warm=0:[[\"$H/.eclaude\",\"api-credit\",\"credits\",\"room\",null,75]] calls=1" \
+    'a warm listing lists the grant the cold one listed, on one provider read' "$ERR"
+}
+api_list_warm after
+API_LIST_SHIPPED="$LANES"
+API_LIST_MUTANT="$(mutant_scripts api-list-warm-before lanes)" || exit 1
+mutate_file "$API_LIST_MUTANT/lanes" '(.harness != "pi" or api_grant_row(.credits != null; .detail))' '(.harness != "pi")'
+LANES="$API_LIST_MUTANT/lanes"; API_LIST_SAVED="$FAIL"; FAIL=0
+api_list_warm before > "$TMP_ROOT/api-list-warm-before.out"
+API_LIST_RED="$FAIL"; FAIL="$API_LIST_SAVED"; LANES="$API_LIST_SHIPPED"
+assert_eq "$API_LIST_RED" 1 'control: a warm filter that drops every Pi row loses the grant the cold listing held'
 # The grant rows ride the listing's one provider read, so a cold listing asks
 # the accounts verb once, whether it answers or fails.
 for status in 0 7; do
@@ -822,18 +847,24 @@ done
 
 # On a pool=cloud-credit host a Claude account spends its cloud credit, so a
 # credit at 9 of 200 dollars walls it on the credits bucket while its plan
-# windows have room. On main it carried its plan-window verdict.
+# windows have room. On main it carried its plan-window verdict. The credit is
+# no Codex account's, and that host launches no Codex lane, so the Codex
+# account beside it keeps its plan verdict.
 new_home cloud-list
 make_lane "$H" claude 3600
 claude_usage 10 20 5 Opus | jq '. + {iguana_necktie: {limit_dollars: 200, used_dollars: 191,
   remaining_dollars: 9, resets_at: "2099-06-01T00:00:00Z", locked_reason: null}}' > "$FIXTURE_DIR/.claude.json"
-table "on a cloud-credit host the credit decides a Claude account's listing, whatever its plan windows read|ORCH_LANE_HOST=claude-cloud|$LIST|claude.pool=cloud-credit claude.verdict=walled claude.binding_bucket=credits claude.headroom_pct=4"
+make_codex_lane "$H/.codex"
+jq -n '{rate_limit: {primary_window: {used_percent: 30, reset_at: 1785000000, limit_window_seconds: 18000},
+                     secondary_window: {used_percent: 40, reset_at: 1785600000, limit_window_seconds: 604800}}}' \
+  > "$FIXTURE_DIR/.codex.json"
+table "on a cloud-credit host the credit decides a Claude account's listing, whatever its plan windows read, and a Codex account keeps its plan verdict|ORCH_LANE_HOST=claude-cloud|list --json|claude.pool=cloud-credit claude.verdict=walled claude.binding_bucket=credits claude.headroom_pct=4 codex.pool=null codex.verdict=room codex.binding_bucket=weekly codex.headroom_pct=60"
 # --local and --cache-only ask no provider anything, its capabilities
 # included, so a configured provider that cannot answer leaves the local
 # listing standing.
 table \
-  "list --local reads no capabilities of a provider that cannot answer|ORCH_LANE_HOST=$API_HOST;LANE_HOST_STUB_NO_CAPABILITIES=1|list --local --json|rc=0 length=1 claude.measured_through=local" \
-  "list --cache-only reads no capabilities of a provider that cannot answer|ORCH_LANE_HOST=$API_HOST;LANE_HOST_STUB_NO_CAPABILITIES=1|list --cache-only --json|rc=0 length=1 claude.measured_through=local"
+  "list --local reads no capabilities of a provider that cannot answer|ORCH_LANE_HOST=$API_HOST;LANE_HOST_STUB_NO_CAPABILITIES=1|list --local --json|rc=0 length=2 claude.measured_through=local codex.measured_through=local" \
+  "list --cache-only reads no capabilities of a provider that cannot answer|ORCH_LANE_HOST=$API_HOST;LANE_HOST_STUB_NO_CAPABILITIES=1|list --cache-only --json|rc=0 length=2 claude.measured_through=local codex.measured_through=local"
 
 echo "=== unmeasurable lanes are never idle ==="
 # An expired login, an authenticated lane whose usage body carries none of the

@@ -50,8 +50,9 @@
 #         A grant is judged as `pick` judges it (tier 0 below), not on plan
 #         windows: each provider harness=pi API grant row is its own record,
 #         `pool` api-credit, under `all` and alone under --harness pi; on a
-#         pool=cloud-credit host each record takes the pool a pick of its
-#         harness spends there, cloud-credit for a Claude account. A read
+#         pool=cloud-credit host a Claude account is judged on its cloud
+#         credit, and any other harness's account, which that host never
+#         launches, keeps its plan verdict. A read
 #         grant's `headroom_pct` is its share left, binding_bucket `credits`
 #         and binding_resets_at null, and its verdict is walled at or below
 #         ORCH_LANE_CLOUD_CREDIT_FLOOR. --local and --cache-only read no host
@@ -4550,12 +4551,17 @@ case "$SUB" in
 		fi
 		# Each record is judged on the pool a pick of its harness spends on this
 		# host, lane_pick_pool's answer; a Pi record here is an API grant, the
-		# pool an anthropic/ model spends. Retirement ends a cloud credit, so a
-		# cloud-credit record takes the dates a pick of that pool takes.
+		# pool an anthropic/ model spends. The cloud credit is a Claude
+		# account's, and the one kind declaring it launches Claude alone
+		# (open-terminal, cloud-session-invalid): another harness's lane in that
+		# fleet runs on another host, so its record keeps its plan answer.
+		# Retirement ends a cloud credit, so a cloud-credit record takes the
+		# dates a pick of that pool takes.
 		pool_args=()
 		for h in claude codex copilot pi; do
 			model=""; [[ "$h" != pi ]] || model=anthropic/
-			pool="$(lane_pick_pool "$h" "$model" "$host_pool")" || exit 1
+			spends="$host_pool"; [[ "$h" == claude || "$spends" != cloud-credit ]] || spends=plan
+			pool="$(lane_pick_pool "$h" "$model" "$spends")" || exit 1
 			pool_args+=(--arg "pool_$h" "$pool")
 		done
 		TIER_RETIRE='{}'

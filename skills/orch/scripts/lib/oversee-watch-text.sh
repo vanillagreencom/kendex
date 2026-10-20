@@ -727,7 +727,13 @@ The long pass's events, checked and reported in this order:
                              record's host, its `host` or `local`, as
                              ORCH_LANE_HOST: a `lanes list` there that fails
                              is `unjudged`, named as owed-accounts-unread; one
-                             listing no account of the harness is `queue`;
+                             listing no account the pick would judge is
+                             `queue`: those are the accounts of the harness
+                             the record's model bills on (lib/lane-launch.sh
+                             lane_pick_harness, so a pi-claude/ model bills
+                             claude), and a Pi API grant stands for an
+                             anthropic/ model alone, the one model whose pick
+                             spends the api-credit pool;
                              otherwise `lanes pick --harness <h> [--model <m>]`
                              with the record's harness and model decides:
                              room is `queue`, a wall `dated` until the
