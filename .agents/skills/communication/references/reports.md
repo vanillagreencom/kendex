@@ -53,26 +53,36 @@ Jarvis and overseer reports use this shared summary shape. Use this mrkdwn templ
 
 Use each section where it applies. Keep the general format and the section order.
 
+Give Overall, What's going well and What's not going well separate quote blocks, with an unquoted blank line between them in both forms. Apply the [work story](#work-story) to each What's not going well problem: state the action taken, or that nothing is being done and why. Apply [Evidence and costs](messages.md#evidence-and-costs) to each Readings line: state its meaning and the action taken. For standard Markdown, use this opening and convert the remaining mrkdwn example under [References and markup](messages.md#references-and-markup):
+
+```markdown
+> **Overall:** [Overall outcome.]
+
+> **What's going well:** [Progress and its effect.]
+
+> **What's not going well:** [Each problem and action taken, or no action and why.]
+```
+
 The figures and items below are fictitious examples, not readings. Use each section where it applies, in this order. Replace Jarvis with the reporting session's name.
 
 ````text
 > *Overall:* CI work is ahead of plan this week, and lanes now finish within the day. Account room is the one risk until Saturday's resets.
->
+
 > *What's going well:* Merges reach main within an hour of review. The new lane order spends prepaid credit before it expires.
->
-> *What's not going well:* Two kendex lanes ran past 16 hours on repeated test failures. Finished work still waits a day for its post-merge check.
+
+> *What's not going well:* Two kendex lanes ran past 16 hours on repeated test failures; I narrowed their failing checks. Finished work still waits a day for its post-merge check; I started checking the oldest today.
 
 ```
 Readings
 ```
 
-- Post-merge checks waiting:
-    - 90 kendex _(median 35 h)_
-    - 10 fleet
-- 3 lanes past 3.5 hours at 9:30 am
-    - *<https://linear.app/vanillagreen/issue/KEN-0002|[KEN-0002]>* _(17 h)_
-        - _Paused for a design review of its test setup._
-    - *<https://linear.app/vanillagreen/issue/HT-0003|[HT-0003]>* _(8 h)_
+- Post-merge checks waiting delay acceptance; I started with the oldest:
+    - 90 kendex _(median 35 h)_: Acceptance is late; I started checking the oldest today.
+    - 10 fleet: Acceptance is late; I started checking these after kendex.
+- 3 lanes past 3.5 hours at 9:30 am need help; I inspected their failures:
+    - *<https://linear.app/vanillagreen/issue/KEN-0002|[KEN-0002]>* _(17 h)_: Review blocks progress; I sent the setup decision.
+        - _Paused for a design review of its test setup; I sent the decision._
+    - *<https://linear.app/vanillagreen/issue/HT-0003|[HT-0003]>* _(8 h)_: Repeated failures delay delivery; I narrowed its failing checks.
 
 _*<https://linear.app/vanillagreen/issue/KEN-0001|[KEN-0001]>* cuts the check time; I read it after it merges._
 
