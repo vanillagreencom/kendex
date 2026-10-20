@@ -237,16 +237,16 @@ class SessionContract(unittest.TestCase):
             + shlex.quote(real) + ' "$@"\n')
         wrapper.chmod(0o755)
 
-    def hold_inspection_until_started(self, events, drawn):
-        # A barrier, not a clock: a pane read the worker began against the
-        # unstarted record answers only once SessionStart stamped the record
-        # and the pane drew what follows it.
+    def hold_inspection_until_drawn(self, events, drawn, *, started):
+        # Count entry separately from the draw: a second entry proves the
+        # worker judged the first captured draw before the test releases Start.
         real = shutil.which("tmux")
         wrapper = self.root / "bin/tmux"
+        stamp = ("jq -e " + shlex.quote(".pending.started_at != null") + " "
+                 + shlex.quote(str(self.record)) + " >/dev/null 2>&1 && ") if started else ""
         wrapper.write_text("#!" + os.environ["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
             + "for arg in \"$@\"; do if [[ $arg == capture-pane ]]; then printf 'inspect\\n' >> "
-            + shlex.quote(str(events)) + "; until jq -e " + shlex.quote(".pending.started_at != null") + " "
-            + shlex.quote(str(self.record)) + " >/dev/null 2>&1 && screen=\"$(" + shlex.quote(real)
+            + shlex.quote(str(events)) + "; until " + stamp + "screen=\"$(" + shlex.quote(real)
             + ' "$@")" && [[ $screen == *' + shlex.quote(drawn) + "* ]]; do sleep 0.05; done; "
             + "printf '%s\\n' \"$screen\"; exit; fi; done\nexec " + shlex.quote(real) + ' "$@"\n')
         wrapper.chmod(0o755)
@@ -654,15 +654,15 @@ class SessionContract(unittest.TestCase):
         self.wait()
         self.call("stop")
         self.wait("stopped")
-        events = self.observe_inspection()
+        events = self.root / "inspect-events"
         os.mkfifo(self.gate)
-        # Pending: two reads of the held, unstarted pane complete before its
-        # start. Confirmed: the first read, begun before the start, captures
-        # the pane after it, and the worker discards that answer.
+        # Pending: the first read captures the history, and the second entry
+        # proves the worker judged it while Start was held. Confirmed: the
+        # first read captures after Start, so the worker discards that answer.
         for drawn, reads in (("pending", 2), ("confirmed", 1)):
             with self.subTest(drawn=drawn):
-                if drawn == "confirmed":
-                    self.hold_inspection_until_started(events, "Do you trust the files")
+                self.hold_inspection_until_drawn(events,
+                    "Noted." if drawn == "pending" else "Do you trust the files", started=drawn == "confirmed")
                 fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"history": drawn}))
                 inspections = len(events.read_text().splitlines()) if events.exists() else 0
                 self.call("start", "copilot")
