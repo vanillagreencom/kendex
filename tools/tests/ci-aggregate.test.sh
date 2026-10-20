@@ -1310,6 +1310,17 @@ for result in failure cancelled skipped missing; do
   check "$CI_JOB rejects $result evidence for the selected state cost job" 1 \
     "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
 done
+# The missing fixture removes the whole matrix job's needs key. A graph
+# omission leaves the independently selected matrix running outside CI's needs.
+mkdir -p "$TMP/selected-control/tools" "$TMP/selected-control/skills/harness-ci"
+ln -s "$ROOT/skills/harness-ci/scripts" "$TMP/selected-control/skills/harness-ci/scripts"
+plant "$AGGREGATE" 'true) selected="$selected $job" ;;' 'true) : ;;' \
+  "$TMP/selected-control/tools/ci-aggregate"
+chmod +x "$TMP/selected-control/tools/ci-aggregate"
+check "must-fail: ignoring selected presence accepts the omitted matrix result" 0 \
+  "$(aggregate "$TMP/selected-control/tools/ci-aggregate" --lane "$value:skill-suites-shard")"
+check "an unselected absent job retains its existing waiver contract" 0 \
+  "$(aggregate "$AGGREGATE" --lane 'false:skill-suites-shard')"
 RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
 plant "$WORKFLOW" "SHELL_SHARDS: \${{ $expr }}" "SHELL_SHARDS: \${{ $expr && false }}" \
   "$TMP/wf-shell-false-$CI_JOB.yml" "$CI_JOB"
