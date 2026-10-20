@@ -32,7 +32,7 @@ Safe inventory row shape:
 
 If `is_group` is absent, treat any label that appears as another label's `parent` as a group label and never assign it.
 
-For Linear, match each label by ID and scope as well as name. The inventory's `team` is empty for a workspace label. A team label must belong to the issue's team. A project taxonomy states which labels are shared and which belong to its team; prose using this existing `team` representation is sufficient. The CLI's `--labels` resolves names. If the mutation credential can see multiple labels with the same name, stop before mutation and report their IDs and scopes. Definition changes follow [Linear shared label maintenance](../../linear/SKILL.md#shared-label-maintenance).
+For Linear, match each label by ID and scope as well as name. The inventory's `team` is empty for a workspace label. A team label must belong to the issue's team. A project taxonomy states which labels are shared and which belong to its team; prose using this existing `team` representation is sufficient. The CLI's `--labels` resolves names. If the item's team and workspace labels contain multiple labels with the same name, stop before mutation and report their IDs and scopes. Ignore same-name labels from other teams. Definition changes follow [Linear shared label maintenance](../../linear/SKILL.md#shared-label-maintenance).
 
 ## Project Taxonomy Contract
 
