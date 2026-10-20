@@ -4,6 +4,8 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 
 ## Features
 
+The agents listed below require a kendex installation of Jarvis. An app-supplied copy of only the skill folder supplies none of their harness agent files.
+
 - A [persona](persona.md) defines how the assistant works and answers you.
 - [Decision guidance](references/decisions.md) defines which actions need your approval.
 - [Result checks](references/verification.md) keep completion claims tied to evidence.
@@ -31,15 +33,17 @@ Jarvis is a set of instructions for an AI assistant that carries out work you de
 
 ## Install
 
-One command installs the persona, references, workflows and agents:
+Run from your assistant home:
 
 ```sh
-kendex add --skill jarvis --harness claude,codex,copilot,pi --yes
+kendex add vanillagreencom/kendex --bundle jarvis --harness claude,codex,copilot,pi --yes
 ```
 
 ## How it works
 
 Your assistant reads the Jarvis skill when you delegate a task. It follows the reading routes in [SKILL.md](SKILL.md) to load the reference that the task needs.
+
+The install command adds the Jarvis skill, its required skills, its declared agents and the skills assigned to those agents. kendex renders the agents for the selected harnesses. The bundle also installs the session hooks that confirm the native session identity. Installing `orch` alone does not install Jarvis or its declared agents.
 
 ## Customise
 
@@ -53,7 +57,7 @@ Follow [Memory](references/memory.md) for personal facts and preferences. Follow
 
 Use a private Git repository for your assistant home. Committed files travel with its commits. Local files stay on one machine.
 
-Install the `jarvis` bundle in this home with `kendex add --bundle jarvis --harness claude,codex,copilot,pi --yes`. The bundle installs Jarvis and the hooks that confirm the native session identity.
+Use the command in [Install](#install) to install Jarvis in this home.
 
 Follow the [home layout reference](references/home-layout.md) for file paths, Git status, Copilot folder trust and the session record.
 

@@ -107,6 +107,8 @@ tags: [assistant, productivity]
 
 Use the [home layout](references/home-layout.md) for the assistant home.
 
+The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the assistant home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
+
 Read the [home contract](references/home-contract.md) when starting a session or finding a memory note.
 
 kendex does not insert package text into `AGENTS.md`. The fixed persona path is `persona.md`, beside `SKILL.md`.
