@@ -472,7 +472,7 @@ oversee_watch_owed_membership|orch-dev|orch-state
 oversee_watch_owed_release|orch-dev|orch-state
 oversee_watch_owed_shared|orch-dev|orch-state
 oversee_watch_owed_future|orch-dev|orch-state'
-orch_profiles=(orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest)
+orch_profiles=(orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest orch-state-cost)
 stub_suite "$SANDBOX/oversee_launch_future.sh"
 stub_suite "$SANDBOX/oversee_watch_owed_future.sh"
 moved_owners() { # OS ; `name|shard` for every shard that runs a moved row's suite
@@ -495,6 +495,34 @@ check "must-fail: without their row the moved families return to Linux orch-over
   "$(cut -d'|' -f1 <<< "$moved_rows" | sed 's/$/|orch-oversee/' | sort)" "$(moved_owners Linux)"
 cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
 rm -- "$SANDBOX/oversee_launch_future.sh" "$SANDBOX/oversee_watch_owed_future.sh"
+# Only these complete Linux suites move. Future names keep the state
+# complement, and macOS retains its existing routing before eligibility.
+moved_rows='lanes-normalized|orch-state-cost|orch-state
+lanes-pick-cost|orch-state-cost|orch-state
+lanes-pick-spread|orch-state-cost|orch-state
+lanes-normalized_future|orch-state|orch-state
+lanes-pick-cost_future|orch-state|orch-state
+lanes-pick-spread_future|orch-state|orch-state'
+for name in lanes-normalized_future lanes-pick-cost_future lanes-pick-spread_future; do
+  stub_suite "$SANDBOX/$name.sh"
+done
+for PARTITION_RUNNER_OS in Linux macOS; do
+  column=2
+  [[ "$PARTITION_RUNNER_OS" != macOS ]] || column=3
+  check "the state cost suites have exactly their original OS owner on $PARTITION_RUNNER_OS" \
+    "$(cut -d'|' -f1,"$column" <<< "$moved_rows" | sort)" "$(moved_owners "$PARTITION_RUNNER_OS")"
+done
+# Retain the matching names while disabling the override. The same owner
+# comparison must detect the moved suites falling back to Linux state.
+sed 's/lanes-normalized|lanes-pick-cost|lanes-pick-spread) OWNING_SHARD=orch-state-cost; return ;;/lanes-normalized|lanes-pick-cost|lanes-pick-spread) : ;;/' \
+  "$TMP/runner-original" > "$SANDBOX/run-all.sh"
+cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "state cost control changed no selector"
+check "must-fail: disabling cost routing returns the moved Linux suites to state" \
+  "$(cut -d'|' -f1 <<< "$moved_rows" | sed 's/$/|orch-state/' | sort)" "$(moved_owners Linux)"
+cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
+for name in lanes-normalized_future lanes-pick-cost_future lanes-pick-spread_future; do
+  rm -- "${SANDBOX:?}/$name.sh"
+done
 PARTITION_RUNNER_OS=Windows
 for profile in orch-oversee orch-oversee-watch orch-dev orch-state orch-rest; do
   check "$profile refuses an unsupported platform" "1" "$(status_of --shard "$profile")"

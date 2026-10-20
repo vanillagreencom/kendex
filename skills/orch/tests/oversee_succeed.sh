@@ -226,9 +226,8 @@ new_caller() {
   local f="$TMP_ROOT/caller.screen" spec marker="${2:-(fixture@example.com)}"
   local cmd="${3:-cat '$f'; exec sleep 100000}"
   printf '%s\n' "$1" > "$f"
-  tm kill-window -a -t "$KEEP_WINDOW"
-  tm move-window -r -t fleet
-  spec="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' "$cmd")"
+  spec="$(tm kill-window -a -t "$KEEP_WINDOW" \; move-window -r -t fleet \; \
+    new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
   record_caller "$1" "$CALLER_PANE"

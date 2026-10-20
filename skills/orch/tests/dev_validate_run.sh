@@ -1299,8 +1299,14 @@ ci_world() {
     *) printf 'ci_world: world=%s\n' "$1" >&2; return 1 ;;
   esac
 }
-ci_proj() { # NAME CONTEXT — CONTEXT empty leaves the setting unset
+ci_proj() { # NAME CONTEXT [BASELINE] — CONTEXT empty leaves the setting unset
   local dir
+  if [[ -n "${3:-}" ]]; then
+    dir="$TMP_ROOT/$1"
+    cp -R -- "$3" "$dir" || return 1
+    printf '%s\n' "$dir"
+    return 0
+  fi
   dir="$(make_mode_proj "$1" 'echo range')"
   [[ -z "$2" ]] || printf 'DEV_VALIDATE_CI_CONTEXT = "%s"\n' "$2" >> "$dir/kendex.settings.toml"
   printf 'DEV_VALIDATE_FINDING_PREFIX = "echo: "\n' >> "$dir/kendex.settings.toml"
@@ -2664,6 +2670,9 @@ SELECTION_ROWS=(
   "a full URI failure keeps the original failure|full|yes|all|pr-uri|full||all|no|full|1|base-unresolved"
   "a range URI failure keeps the original failure|range|yes|all|pr-uri|range||all|yes|range|1|base-unresolved"
 )
+# Copy the neutral Git history and configuration; each row owns its index,
+# settings, selector, launch log and validation records.
+SELECTION_BASELINE="$(ci_proj proj-selection-baseline CI)"
 selection_rows() { # SCRIPT [LABEL]
   local row label requested configured selection world proj dir got_mode got_scoped got_selection got_base got_launch got_rc got_fallback got_verdict expected_rc args n answer measured
   local initial_fail="$FAIL" order delivery
@@ -2672,7 +2681,7 @@ selection_rows() { # SCRIPT [LABEL]
     IFS='|' read -r label requested configured selection world _ _ _ _ _ expected_rc _ order delivery <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
-    proj="$(ci_proj "proj-selection-$n" CI)"
+    proj="$(ci_proj "proj-selection-$n" CI "$SELECTION_BASELINE")"
     sed -i.bak "s/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = \"${order:-review-first}\"/" "$proj/kendex.settings.toml"
     [[ -z "$delivery" ]] || printf 'ORCH_DELIVERY = "%s"\n' "$delivery" >> "$proj/kendex.settings.toml"
     cat > "$proj/local-command" <<'SH'
@@ -3085,6 +3094,12 @@ assert_eq "$(sed -E 's/ head=[^ ]* start=[0-9]+ / /; s/started-at=[^ ]+ ended-at
 # names no context.
 pass_proj() { # NAME
   local dir
+  if [[ -n "${PASS_BASELINE:-}" ]]; then
+    dir="$TMP_ROOT/$1"
+    cp -R -- "$PASS_BASELINE" "$dir" || return 1
+    printf '%s\n' "$dir"
+    return 0
+  fi
   dir="$(make_mode_proj "$1" 'printf x >> tmp/ran; test ! -e tmp/fail && echo validate: lanes=a,b selection=subset')"
   printf 'DEV_VALIDATE_FINDING_PREFIX = "echo: "\n' >> "$dir/kendex.settings.toml"
   printf 'tmp/\n' > "$dir/.gitignore"
@@ -3094,6 +3109,7 @@ pass_proj() { # NAME
   mkdir -p "$dir/tmp"
   printf '%s\n' "$dir"
 }
+PASS_BASELINE="$(pass_proj proj-pass-baseline)"
 pass_start() { # SCRIPT WORKTREE PATHS ARG...
   local script="$1" proj="$2" paths="$3"
   shift 3
