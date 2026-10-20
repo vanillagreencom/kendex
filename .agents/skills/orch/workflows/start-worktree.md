@@ -144,6 +144,8 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
 
 Before submit-pr can arm the PR, move a Linear development item to In Review. Read the item live first. A Done or Verifying item skips this mutation. With `pr` delivery it continues through the existing merged-PR route in merge-pr. This state write belongs before arming because an armed PR can merge while submit-pr runs.
 
+In the same step, read the item's Done-when boxes against the accepted development return. A box whose actual named evidence only a deployment, installation or live use can give, such as a real Pi create/relaunch sample, is a post-merge box. An empty listing or other branch output does not substitute for it. Rewrite it on the item in the form of project-management's SKILL.md § Disposition (`Post-merge:`, `Where:`, `Why after merge:`, `Trigger:` and `Deadline:`) before submit-pr arms, so the merged item reads Verifying rather than waiting for this lane to repair the checklist. Leave branch-provable boxes unticked: merge-pr records their proof after merge.
+
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
