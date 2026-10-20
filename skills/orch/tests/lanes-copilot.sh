@@ -708,10 +708,8 @@ lanes_control ctl-pi-override lib/lane-model.sh 'if $h == "pi" then (if .headroo
 pi_run refused 10/100 pick --lane "$H/.pi1" "${PI_MODEL[@]}" --json
 assert_eq "rc=$RC $(pi_fields '.measured_through')" 'rc=5 "host"' \
   "control: under the unreachable rule a refused Pi row hides the override"
-lanes_control ctl-pi-all lanes '		if [[ "$mode" != normalized ]]; then
-			[[ "$want:$harness" != all:pi || "$mode" == cache || "$mode" == buckets ]] || continue
-		fi' '		:'
-mutate_file "$LANES_BIN" '($h == "all" and .harness != "pi")' '($h == "all")'
+lanes_control ctl-pi-all lanes 'or ($v[27] == "grant" and (api_grant_row($v[15] != ""; $v[3]) | not)) then empty' 'then empty'
+mutate_file "$LANES_BIN" '(.harness != "pi" or api_grant_row(.credits != null; .detail))' 'true'
 pi_run room - list --json
 assert_eq "$(pi_fields '[.[] | select(.harness == "pi")] | length')" 1 "control: without the all filter list shows the Pi row"
 lanes_control ctl-pi-fix lanes 'lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ"; } >&2' ':; } >&2'
