@@ -587,7 +587,7 @@ record_flags() { # RECORD HARNESS MODEL EFFORT
 # them to the successor its wall or reserve recovery launches. The retained
 # command's --handoff stands unless --handoff names another.
 watch_restart() {
-  local key server record_rc=0 lane_var home
+  local key server record_rc=0 lane_var="" home
   [[ -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
   key="$(lane_context_caller_key)" || die pane-unreadable "pane=$TMUX_PANE" field=pid
   matches "$key" '^([0-9]+)[[:blank:]]+(%[0-9]+)$' || die pane-unreadable "pane=$TMUX_PANE" field=pid "value=$key"
@@ -600,12 +600,19 @@ watch_restart() {
     *) die state-unwritable field=overseer ;;
   esac
   home="${OL_CUR_HOME:-$OL_CUR_ACCOUNT}"
-  [[ -n "$OL_CUR_HARNESS" && -n "$home" ]] \
+  [[ -n "$OL_CUR_HARNESS" ]] \
     || die watch-restart-failed step=identity "session=$TMUX_PANE" "harness=${OL_CUR_HARNESS:-none}"
+  if [[ -n "$home" ]]; then
+    lane_var="$(lane_env_prefix "$OL_CUR_HARNESS" - "$OL_CUR_MODEL")"
+  else
+    # ol_pick_lane records no account for Pi providers outside its pools.
+    ol_account "$OL_CUR_HARNESS" "$OL_CUR_MODEL"
+    [[ "$OL_ACCOUNT_HARNESS" == none ]] \
+      || die watch-restart-failed step=identity "session=$TMUX_PANE" "harness=$OL_CUR_HARNESS"
+  fi
   question_off_read
   record_flags "$OL_CUR_RECORD" "$OL_CUR_HARNESS" "$OL_CUR_MODEL" "$OL_CUR_EFFORT" \
     || die watch-restart-failed step=flags "session=$TMUX_PANE" "reason=$OL_REASON" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
-  lane_var="$(lane_env_prefix "$OL_CUR_HARNESS" - "$OL_CUR_MODEL")"
   [[ -n "$HANDOFF_GIVEN" ]] || WATCH_HANDOFF_KEEP=1
   if watch_handover --closed "" "$TMUX_PANE" "${lane_var%%=*}" "$home" "$OL_CUR_HARNESS" \
       ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then

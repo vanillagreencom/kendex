@@ -211,10 +211,12 @@ watch_handover() { # [--closed] PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
 watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS [FLAG...]
   local mode="$1" state="$2" pane="$3" var="$4" home="$5" harness="$6" deadline runner rc record job refusal=()
   shift 6
-  local flags=() harness_args=() since="" word skip="" argv=() handoff="$HANDOFF" kept=""
+  local flags=() harness_args=() account=() since="" word skip="" argv=() handoff="$HANDOFF" kept=""
   local cwd="${WATCH_CWD:-}" script="${WATCH_SCRIPT:-}" launch_cwd="$PWD" name=watch-start replace=() prior=""
   [[ $# -eq 0 ]] || flags=(-- "$@")
   [[ -z "$harness" ]] || harness_args=(--harness "$harness")
+  # Account-free Pi launches keep the caller's credential/provider environment.
+  [[ -z "$var" || -z "$home" ]] || account=("$var=$home")
   case "$mode" in
     fresh)
       # The first lane is the fleet's start; an empty fleet starts now.
@@ -257,7 +259,7 @@ watch_start() { # fresh|replay|replace=PID STATE PANE LANE_VAR LANE_HOME HARNESS
   fi
   rc=0
   if ! watch_job_launch "$name" "$state" "$WATCH_LOG_FILE" "$WATCH_ERR_FILE" \
-      env TMUX_PANE="$pane" "$var=$home" OVERSEE_WATCH_ORIGIN=succession ${replace[@]+"${replace[@]}"} \
+      env TMUX_PANE="$pane" ${account[@]+"${account[@]}"} OVERSEE_WATCH_ORIGIN=succession ${replace[@]+"${replace[@]}"} \
       "$script" ${argv[@]+"${argv[@]}"} --handoff "$handoff" ${harness_args[@]+"${harness_args[@]}"} ${flags[@]+"${flags[@]}"}; then
     WATCH_HANDOVER_KEY=watch-restart-failed
     WATCH_HANDOVER_FIELDS=(step=start ${WATCH_JOB_STOP[@]+"${WATCH_JOB_STOP[@]}"}

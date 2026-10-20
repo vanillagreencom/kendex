@@ -1092,6 +1092,11 @@ CODEX_SUCCESSOR=(ORCH_OVERSEER_PREFERENCE=codex:gpt-5.6-sol:high ORCH_LANE_DIRS=
 cat > "$CRED_BIN/gh" <<EOF
 #!/bin/sh
 [ "\${GH_TOKEN:-}" = fixture-successor-token ] || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+if [ -f "$CRED_BIN/account-free" ]; then
+  [ "\${CLAUDE_CONFIG_DIR:-}" = "$H/inherited-claude" ] &&
+  [ "\${PI_CODING_AGENT_DIR:-}" = "$H/inherited-pi" ] &&
+  [ "\${OPENAI_API_KEY:-}" = fixture-provider-token ] || exit 1
+fi
 case "\$1 \$2" in
   "api user") [ ! -f "$CRED_BIN/slow" ] || sleep 12; echo fixture ;;
   *) echo '[]' ;;
@@ -1271,6 +1276,79 @@ restart_refused
 assert_eq "${REFUSED_RESULT%%|*}" 0 \
   "control: a watch that claims before it authenticates reports the credential-less restart started" "$WATCH_ERR_FILE"
 ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE" || true
+
+# ol_pick_lane and ol_command_line produce an account-free Pi successor.
+# Its public recovery must keep the inherited provider environment, including
+# the Claude variable an unconditional fallback prefix would clear.
+cp "$(command -v sleep)" "$BIN/processes/pi"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\necho "esc to interrupt"\nexec "%s" 100000\n' \
+  "$TMP_ROOT/pi.args" "$BIN/processes/pi" > "$BIN/pi"
+chmod +x "$BIN/pi"
+# A Pi caller uses its native successor producer; public oversee launch has
+# no caller permission posture and intentionally skips Pi preferences.
+PI_AGENT="$H/.pi/agent"
+mkdir -p "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions"
+jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
+printf 'payload.context_window = usage.contextWindow;\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/stop.ts"
+tm kill-window -a -t "$KEEP_WINDOW"
+PI_CALLER="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' \
+  "'$BIN/pi' --model openai/gpt-5 --thinking high")"
+PI_TMUX="$(tm display-message -p -t "$PI_CALLER" '#{socket_path},#{pid},0')"
+fixture_succession_handoff "$FLEET_STATE" "$TMP_ROOT/work/tmp/handoffs/fleet-brief.md"
+retain 1 "$CRED_SCRIPT"
+RC=0
+OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$H" \
+  TMUX_TMPDIR="$TMUX_DIR" TMUX="$PI_TMUX" TMUX_PANE="$PI_CALLER" "${CRED_ENV[@]}" "${SUCCESSOR_TOKEN[@]}" \
+  ORCH_OVERSEER_PREFERENCE= ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 \
+  "$SRC_DIR/oversee-succeed" --harness pi --context 900000:1000000 --wait-secs 20 \
+  --handoff tmp/handoffs/fleet-brief.md \
+  -- --model openai/gpt-5 --thinking high 2>&1 </dev/null)" || RC=$?
+if [[ "$RC" -ne 0 ]]; then
+  printf '%s\n' "$OUT" >&2
+  assert_eq "$RC" 0 "the account-free Pi successor setup succeeds"
+  exit 1
+fi
+SUCC="$(recorded pane)"
+assert_eq "$RC|$(jq -c '[.overseer.harness,.overseer.account,.overseer.home,.overseer.model,.overseer.effort]' "$FLEET_STATE")" \
+  '0|["pi",null,null,"openai/gpt-5","high"]' \
+  "the shipped Pi successor records its provider with no account override" "$WATCH_ERR_FILE"
+wait_restart
+watch_handoff_read
+assert_eq "$WATCH_HANDOFF" tmp/handoffs/fleet-brief.md \
+  "the Pi setup records the custom handoff before public recovery" "$WATCH_ERR_FILE"
+! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
+retain 1 "$CRED_SCRIPT"
+PI_FLAGS="$(sed '$d' "$TMP_ROOT/pi.args" | flag_units)"
+PI_INHERITED=(CLAUDE_CONFIG_DIR="$H/inherited-claude" PI_CODING_AGENT_DIR="$H/inherited-pi" OPENAI_API_KEY=fixture-provider-token)
+touch "$CRED_BIN/account-free"
+# The unchanged identity refusal is the must-fail control for this one row.
+PI_ACCOUNT_CONTROL="$(mutant_scripts pi-account-control oversee)" || exit 1
+mutate_file "$PI_ACCOUNT_CONTROL/oversee" '  [[ -n "$OL_CUR_HARNESS" ]] \' \
+  '  [[ -n "$OL_CUR_HARNESS" && -n "$home" ]] \'
+for PI_RECOVERY in unchanged current; do
+  PI_BIN="$OVERSEE" PI_EXPECT=0
+  [[ "$PI_RECOVERY" != unchanged ]] || { PI_BIN="$PI_ACCOUNT_CONTROL/oversee"; PI_EXPECT=1; }
+  run_restart "$SUCC" "${SUCCESSOR_TOKEN[@]}" "${PI_INHERITED[@]}" -- "$PI_BIN"
+  PI_NEW="$(claim_of)"
+  PI_ASSERT_RC=0
+  (
+    FAIL=0
+    assert_eq "$RC|${PI_NEW:+$([[ "$PI_NEW" != none ]] && echo claimed || echo absent)}" "0|claimed" \
+      "account-free Pi public recovery authenticates under its inherited environment" "$WATCH_ERR_FILE"
+    if [[ "$PI_NEW" != none ]]; then
+      watch_handoff_read
+      assert_eq "$WATCH_ORIGIN|$WATCH_PANE|$WATCH_HARNESS|$WATCH_SINCE|$WATCH_HANDOFF|$(sed -n "${UNREAD_LINE}p" "$WATCH_LOG_FILE")" \
+        "succession|$SUCC|pi|$CRED_SINCE|tmp/handoffs/fleet-brief.md|EVENT fixture unread" \
+        "account-free Pi recovery keeps its binding, retained command, handoff and unread log"
+      assert_eq "$(flags_of "$PI_NEW" || echo unread)" "$PI_FLAGS" \
+        "account-free Pi recovery keeps the successor's Pi flags"
+    fi
+    [[ "$FAIL" -eq 0 ]]
+  ) > "$TMP_ROOT/pi-recovery-$PI_RECOVERY.out" 2>&1 || PI_ASSERT_RC=$?
+  assert_eq "$PI_ASSERT_RC" "$PI_EXPECT" \
+    "$PI_RECOVERY: account-free Pi public recovery regression" "$TMP_ROOT/pi-recovery-$PI_RECOVERY.out"
+  ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
+done
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
