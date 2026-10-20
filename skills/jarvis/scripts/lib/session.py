@@ -567,7 +567,8 @@ class Session:
                 # controller. A reused PID grants no right to close its pane.
                 stopped = self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"], check=False)
                 if stopped.returncode:
-                    raise Refusal("handover-failed", "The predecessor identity changed. Check the session record before retrying.", "failed")
+                    sys.stderr.write(stopped.stderr)
+                    raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")
                 if not self.terminal(record):
                     return
                 condition = "#{&&:" + condition + ",#{==:#{pane_pid}," + str(identity["pid"]) + "}}"

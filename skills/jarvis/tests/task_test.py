@@ -1,16 +1,20 @@
 """Real tmux and shared launch code; account meter and native CLIs are fixtures."""
+from contextlib import redirect_stderr
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
 import signal
+import runpy
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from fixtures.harness import native_launcher
 
@@ -409,12 +413,62 @@ sys.exit(task.main())
     def session(self, verb, *args):
         result = subprocess.run([str(self.skills / "jarvis/scripts/jarvis-session"), verb, "--home", str(self.home), *args],
                                 env=self.env, capture_output=True, text=True, timeout=60)
+        self.session_result = result
         # A refusal answers on stdout alone: its state, reason and detail.
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def jarvis_live(self):
         return subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"],
                               env=self.env, capture_output=True, timeout=10).returncode == 0
+
+    def test_stop_process_result_reaches_owned_diagnostic(self):
+        with patch.dict(os.environ, self.env, JARVIS_BASH=self.env["JARVIS_TEST_BASH"]):
+            runtime = runpy.run_path(str(self.skills / "jarvis/scripts/lib/session.py"))
+            session = runtime["Session"](self.home)
+            pid = int(self.tmux("display-message", "-p", "-t", self.terminal["pane"], "#{pane_pid}").stdout)
+            identity = json.loads(session.backend("process", pid).stdout)
+            record = json.loads(self.record_path.read_text())
+            real_ps = shutil.which("ps")
+            for mode, process, code, cause in (
+                    ("stale", dict(identity, started_at="stale"), 3, "identity-stale"),
+                    ("invalid", dict(identity, pid="invalid"), 1, "identity-invalid"),
+                    ("read-failed", identity, 1, "start-read-failed")):
+                with self.subTest(mode=mode):
+                    # ps is the real start-time reader on Linux and macOS.
+                    if mode == "read-failed":
+                        self.bin.joinpath("ps").write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\n"
+                            + 'if [[ "$*" == "-o lstart= -p ' + str(pid) + '" ]]; then exit 2; fi\n'
+                            + "exec " + shlex.quote(real_ps) + ' "$@"\n')
+                        self.bin.joinpath("ps").chmod(0o755)
+                    record["process"] = process
+                    bridge = session.backend("stop-process", process["pid"], process["started_at"], record["harness"], check=False)
+                    self.assertEqual((bridge.returncode, bridge.stdout), (code, ""))
+                    errors = io.StringIO()
+                    try:
+                        with redirect_stderr(errors), self.assertRaises(runtime["Refusal"]) as refused:
+                            session.end_owned(record, window=True)
+                    finally:
+                        if mode == "read-failed":
+                            self.bin.joinpath("ps").unlink()
+                    self.assertEqual((refused.exception.state, refused.exception.reason), ("failed", "handover-failed"))
+                    # The fixture and operators consume these diagnostic fields.
+                    self.assertEqual(len(errors.getvalue().splitlines()), 1)
+                    self.assertEqual(errors.getvalue(), bridge.stderr)
+                    fields = dict(word.split("=", 1) for word in shlex.split(errors.getvalue())[1:])
+                    self.assertEqual((fields["operation"], int(fields["exit"]), fields["cause"]),
+                                     ("stop-process", code, cause))
+                    self.assertEqual(fields["pid"], "" if mode == "invalid" else str(pid))
+                    self.assertTrue(self.jarvis_live())
+                    self.assertEqual(session.backend("worker-live", pid, identity["started_at"]).returncode, 0)
+            record["process"] = identity
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                session.end_owned(dict(record, generation=2), window=True)
+            self.assertTrue(self.jarvis_live())
+            with redirect_stderr(errors):
+                session.end_owned(record, window=True)
+            self.assertEqual(errors.getvalue(), "")
+            self.assertFalse(self.jarvis_live())
 
     def test_failed_succession_ends_task_windows(self):
         # A successor that fails after its predecessor ended leaves no
@@ -431,6 +485,7 @@ sys.exit(task.main())
         rows = (("exits", exits, "succeed"),
                 ("abandoned", "#!" + self.env["JARVIS_TEST_BASH"] + "\nexec sleep 600\n", "succeed"),
                 ("exits-stopped", exits, "stop"))
+        first_failure = None
         with native_launcher() as launcher:
             shutil.copyfile(Path(__file__).with_name("fixtures") / "harness.py", self.home / ".fixture-harness.py")
             (self.home / ".fixture.json").write_text(json.dumps({"rows": str(self.root / "rows.jsonl"),
@@ -444,39 +499,112 @@ sys.exit(task.main())
                 os.replace(staged, self.bin / name)
             for mode, successor, recovery in rows:
                 with self.subTest(mode=mode):
-                    install("claude", launcher.read_bytes())
-                    self.session("start", *start)
-                    self.terminal = self.settle("running")["terminal"]
-                    task = self.launch("codex", mode, model="gpt-5")
-                    self.acknowledgement(task)
-                    install("claude", successor.encode())
-                    self.session("succeed")
-                    if mode == "abandoned":
-                        deadline = time.monotonic() + 30
-                        while json.loads(self.record_path.read_text())["transfer"]["phase"] != "predecessor-ended":
-                            self.assertLess(time.monotonic(), deadline, self.record_path.read_text())
-                            time.sleep(0.05)
-                        os.kill(json.loads(self.record_path.read_text())["worker"]["pid"], signal.SIGKILL)
-                    else:
-                        self.settle("failed", "handover-failed")
-                        self.assertEqual(self.call("status", "--id", task["id"]).get("failure"), ended_by_controller)
-                        self.assertFalse(self.jarvis_live())
-                    install("claude", launcher.read_bytes())
-                    if recovery == "stop":
+                    self.succession_mode = mode
+                    self.session_result = None
+                    try:
+                        install("claude", launcher.read_bytes())
+                        self.session("start", *start)
+                        self.terminal = self.settle("running")["terminal"]
+                        task = self.launch("codex", mode, model="gpt-5")
+                        self.acknowledgement(task)
+                        install("claude", successor.encode())
+                        self.session("succeed")
+                        if mode == "abandoned":
+                            deadline = time.monotonic() + 30
+                            while json.loads(self.record_path.read_text())["transfer"]["phase"] != "predecessor-ended":
+                                self.assertLess(time.monotonic(), deadline, self.record_path.read_text())
+                                time.sleep(0.05)
+                            os.kill(json.loads(self.record_path.read_text())["worker"]["pid"], signal.SIGKILL)
+                        else:
+                            self.settle("failed", "handover-failed")
+                            self.assertEqual(self.call("status", "--id", task["id"]).get("failure"), ended_by_controller)
+                            self.assertFalse(self.jarvis_live())
+                        install("claude", launcher.read_bytes())
+                        if recovery == "stop":
+                            self.session("stop")
+                            self.settle("stopped", "stopped")
+                            self.assertFalse(self.jarvis_live())
+                            self.session("start", *start)
+                        else:
+                            self.session("succeed")
+                        self.settle("running")
+                        ended = self.call("status", "--id", task["id"])
+                        self.assertEqual((ended["completion"]["outcome"], ended.get("failure")), ("failed", ended_by_controller))
+                        windows = self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
+                        self.assertNotIn(task["terminal"]["window"], windows)
+                        self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
                         self.session("stop")
                         self.settle("stopped", "stopped")
-                        self.assertFalse(self.jarvis_live())
-                        self.session("start", *start)
-                    else:
-                        self.session("succeed")
-                    self.settle("running")
-                    ended = self.call("status", "--id", task["id"])
-                    self.assertEqual((ended["completion"]["outcome"], ended.get("failure")), ("failed", ended_by_controller))
-                    windows = self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
-                    self.assertNotIn(task["terminal"]["window"], windows)
-                    self.assertEqual(self.call("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
-                    self.session("stop")
-                    self.settle("stopped", "stopped")
+                    except Exception:
+                        # Subtests share this allocation. Preserve the first
+                        # failure before tearDown removes its record and log.
+                        result = self.session_result
+                        command = ({"argv": result.args, "exit": result.returncode,
+                                    "stdout": result.stdout, "stderr": result.stderr}
+                                   if result is not None else {"unread": "not-run"})
+                        if first_failure is None:
+                            first_failure = {"mode": mode, "command": command}
+                        evidence = {"mode": mode, "command": command, "first_failure": first_failure}
+                        for field, path in (("session_record", self.record_path),
+                                            ("session_log", self.record_path.with_name("session.log"))):
+                            try:
+                                evidence[field] = path.read_text()
+                            except OSError as failure:
+                                evidence[field] = {"unread": type(failure).__name__}
+                        print("jarvis-task-failure: " + json.dumps(evidence), file=sys.stderr, flush=True)
+                        raise
+
+    def test_failed_succession_prints_evidence_before_cleanup(self):
+        # Plant one command failure in the existing row owner. The following
+        # row still sees its retained succession, rather than a second defect.
+        program = r'''
+import io, json, subprocess, sys, unittest
+from unittest.mock import patch
+from task_test import TaskContract
+
+class Planted(TaskContract):
+    def session(self, verb, *args):
+        if self.succession_mode == "abandoned" and verb == "succeed":
+            self.retries = getattr(self, "retries", 0) + 1
+            if self.retries == 2:
+                argv = [str(self.skills / "jarvis/scripts/jarvis-session"), verb, "--home", str(self.home), *args]
+                result = subprocess.CompletedProcess(argv, 1,
+                    json.dumps({"state": "failed", "reason": "handover-failed", "fixture": "planted"}),
+                    "jarvis-session: operation=stop-process exit=1 cause=signal-refused pid=42\n")
+                self.record_path.with_name("session.log").unlink(missing_ok=True)
+                with patch("subprocess.run", return_value=result):
+                    return super().session(verb, *args)
+        return super().session(verb, *args)
+
+    def tearDown(self):
+        root = self.root
+        super().tearDown()
+        print("fixture-cleanup: " + json.dumps({"exists": root.exists()}), file=sys.stderr)
+
+suite = unittest.TestSuite([Planted("test_failed_succession_ends_task_windows")])
+unittest.TextTestRunner(stream=io.StringIO()).run(suite)
+'''
+        result = subprocess.run([sys.executable, "-B", "-c", program], cwd=Path(__file__).parent,
+                                env=dict(self.env, JARVIS_TEST_SKILLS=str(self.skills)),
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        events = [json.loads(line[len("jarvis-task-failure: "):]) for line in result.stderr.splitlines()
+                  if line.startswith("jarvis-task-failure: ")]
+        self.assertEqual([event["mode"] for event in events], ["abandoned", "exits-stopped"], result.stderr)
+        abandoned, inherited = events
+        self.assertEqual(abandoned["command"]["argv"][1], "succeed")
+        self.assertEqual(abandoned["command"]["exit"], 1)
+        self.assertEqual(json.loads(abandoned["command"]["stdout"])["fixture"], "planted")
+        fields = dict(word.split("=", 1) for word in shlex.split(abandoned["command"]["stderr"])[1:])
+        self.assertEqual((fields["exit"], fields["cause"]), ("1", "signal-refused"))
+        self.assertEqual(json.loads(abandoned["session_record"])["intent"], "succeed")
+        self.assertEqual(abandoned["session_log"], {"unread": "FileNotFoundError"})
+        self.assertEqual(inherited["first_failure"], abandoned["first_failure"])
+        self.assertEqual(inherited["command"]["argv"][1], "start")
+        self.assertEqual(json.loads(inherited["command"]["stdout"])["reason"], "handover-failed")
+        cleanup = 'fixture-cleanup: {"exists": false}'
+        self.assertIn(cleanup, result.stderr)
+        self.assertLess(result.stderr.rindex("jarvis-task-failure: "), result.stderr.index(cleanup))
 
     def test_model_classes_use_production_picker(self):
         if not REAL_KENDEX:
@@ -621,6 +749,17 @@ while True: signal.pause()
             ("browser-endpoint", "task.py", (('child_env.append("JARVIS_BROWSER_PORT=0")',
                 'child_env.append("JARVIS_BROWSER_PORT=9222")'),), "test_launch_contract"),
         )
+        self.regression_controls(rows)
+
+    def test_stop_process_result_control(self):
+        self.regression_controls((("stop-result-collapsed", "session.py", ((
+            '                if stopped.returncode:\n                    sys.stderr.write(stopped.stderr)\n'
+            '                    raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")',
+            '                if stopped.returncode:\n'
+            '                    raise Refusal("handover-failed", "The predecessor identity changed. Check the session record before retrying.", "failed")'),),
+            "test_stop_process_result_reaches_owned_diagnostic"),))
+
+    def regression_controls(self, rows):
         for name, filename, edits, case in rows:
             with self.subTest(control=name):
                 if name == "picker" and not REAL_KENDEX:

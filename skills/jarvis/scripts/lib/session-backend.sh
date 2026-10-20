@@ -137,7 +137,13 @@ case "$verb" in
     at="$(lane_process_start "$1")" || exit 2
     [[ "$at" == "$2" ]] || exit 1 ;;
   stop-process)
-    lane_stop_identity "$1" "$2" "$3" ;;
+    rc=0
+    lane_stop_identity "$1" "$2" "$3" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      # Session.end_owned forwards this result to the caller's diagnostics.
+      printf 'jarvis-session: operation=stop-process exit=%s cause=%s pid=%s\n' "$rc" "$LANE_STOP_CAUSE" "$LANE_STOP_PID" >&2
+    fi
+    exit "$rc" ;;
   history) recorded_session_file "$@" ;;
   prepare)
     harness="$1" account="$2" home="$3" id="$4" file="$5"
