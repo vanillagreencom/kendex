@@ -27,9 +27,10 @@
 # classifier and turn the waiver on; `aggregate-needs` rejects that run on the
 # classifier's own result.
 #
-# Every refusal starts `ci-aggregate: cause=<name>` and exits 2, a helper this
-# script cannot find included. Exit 1 is the helper's own rejection, passed
-# through unchanged.
+# Argument refusals start `ci-aggregate: cause=<name>` and exit 2, a helper
+# this script cannot find included. A missing selected result exits 1 with
+# `ci-aggregate: selected-result=absent job=<name>`. The helper's status
+# rejections pass through unchanged.
 set -euo pipefail
 
 die() { # CAUSE MESSAGE
@@ -51,6 +52,7 @@ classifier=""
 lanes=""
 authorized=""
 declared=""
+selected=""
 
 need_value() { # FLAG REMAINING NEXT
   [ "$2" -ge 2 ] || die "missing-value option=$1" "$1 needs a value"
@@ -90,7 +92,8 @@ for lane in $lanes; do
   declared="$declared --skippable $job"
   case "$selection" in
     false) authorized="$authorized --skippable $job" ;;
-    true | '') ;;
+    true) selected="$selected $job" ;;
+    '') ;;
     *) die "invalid-selection job=$job value=$selection" \
       "a selection is true, false, or empty where the classifier published none" ;;
   esac
@@ -109,5 +112,19 @@ printf 'ci-aggregate: waiver=%s authorized=%s\n' "$waiver" \
   "$(printf '%s' "$authorized" | sed 's/ --skippable//g; s/^ //')" >&2
 
 # shellcheck disable=SC2086 # a job name carries no whitespace
-exec "$HELPER" --results "$results" --classifier "$classifier" \
-  --waiver "$waiver" $authorized
+accepted="$("$HELPER" --results "$results" --classifier "$classifier" \
+  --waiver "$waiver" $authorized)" || exit "$?"
+
+# GitHub toJSON(needs) omits a selected job dropped from CI's needs graph,
+# even while its independent matrix runs. The helper judges present statuses;
+# this selection owner must also require each selected job's result.
+missing="$(printf '%s\n' "$results" | jq -r --arg selected "$selected" '
+  . as $results | $selected | split(" ")[] | select(. != "") |
+  select(. as $job | $results | has($job) | not) |
+  "ci-aggregate: selected-result=absent job=\(.)"
+')" || exit "$?"
+if [ -n "$missing" ]; then
+  printf '%s\n' "$missing" >&2
+  exit 1
+fi
+printf '%s\n' "$accepted"
