@@ -59,6 +59,24 @@ enum Owner {
     },
 }
 
+impl Owner {
+    /// Whether `manifest` still declares this owner under the source the
+    /// lock recorded for it: the identity [`held_manifest`] matches an
+    /// exemption by.
+    fn declared_in(&self, manifest: &Manifest) -> bool {
+        match self {
+            Owner::Item { kind, name, source } => manifest
+                .declared(*kind)
+                .get(name)
+                .is_some_and(|decl| &decl.source == source),
+            Owner::Bundle { name, source } => manifest
+                .bundles
+                .get(name)
+                .is_some_and(|decl| &decl.source == source),
+        }
+    }
+}
+
 /// The declarations one item is here under, following a dependency up to
 /// whatever asked for its parent.
 ///
@@ -301,7 +319,7 @@ pub(crate) fn held_planning<'a>(
     let (mut planning, mut pins) = planning_manifest(manifest, lock, options);
     crate::source::check_catalog_compatibility(env, scope, &planning)?;
     if let Some(pins) = pins.as_mut() {
-        release_unserved(env, options, planning.to_mut(), pins)?;
+        release_unserved(env, scope, options, planning.to_mut(), pins)?;
         crate::source::check_catalog_compatibility(env, scope, &planning)?;
         // An add retains the installed packages instead of reconciling
         // them; its existing dependency refusal must still see their pins.
@@ -358,8 +376,13 @@ fn planning_manifest<'a>(
 /// keep the record and release unserved pins. A hold that does not keep
 /// source records keeps every pin, so `verify --at-record` still reports
 /// what the record names.
+///
+/// A reservation is fetched for only where this plan reads it: most are
+/// for items nothing reaches, a removed package's among them, and a write
+/// that fetched for those would refuse offline over a read it never makes.
 fn release_unserved(
     env: &Env,
+    scope: &Scope,
     options: &super::super::PlanOptions,
     held: &mut Manifest,
     pins: &mut HeldPins,
@@ -372,60 +395,145 @@ fn release_unserved(
         pins,
         |repo, commit| crate::remote::serves(env, repo, commit),
         |repo| crate::remote::fetch_mirror(env, repo),
+        |held, pins| consumed(env, scope, held, pins),
     )
+}
+
+/// The reservations a walk of `held` reads: one a planned item reads
+/// through, or one whose commit the walk tried to open. The second is how
+/// a reservation at a commit the cache cannot serve shows: its catalog
+/// resolves pending, so nothing is planned from it and no item names it.
+fn consumed(
+    env: &Env,
+    scope: &Scope,
+    held: &Manifest,
+    pins: &HeldPins,
+) -> BTreeSet<(String, Held)> {
+    let mut state = super::DesiredState::default();
+    let read =
+        super::super::expansion::expand(env, scope, held, Some(pins), &mut state).held_readings();
+    pins.reservations
+        .iter()
+        .map(|pin| (pin.source.clone(), pin.held.clone(), pin.commit.clone()))
+        .filter(|(source, held, commit)| {
+            read.contains(&(source.clone(), held.clone()))
+                || state.pinned.contains_key(&(source.clone(), commit.clone()))
+        })
+        .map(|(source, held, _)| (source, held))
+        .collect()
 }
 
 /// [`release_unserved`] against the cache reads it is handed: `serves`
 /// answers whether a commit can be read here, `fetch` brings a repository's
-/// mirror current. Each commit is asked about once, and again once after
-/// its repository is fetched; each repository holding a commit `serves`
-/// refuses is fetched once, and a pin still refused after that is gone. A
-/// fetch that fails proves nothing about what upstream holds, so the write
-/// is refused and every pin stays. A pin on a switched-off source is read
-/// by nothing this pass, as the resolvers skip it, so it is neither asked
-/// about nor fetched for, and stays.
+/// mirror current, `consumed` names the reservations a walk of the
+/// manifest reads. Each commit is asked about once, and again once after
+/// its repository is fetched; each repository is fetched at most once.
+///
+/// Every repository holding a pin `serves` refuses is fetched, and a pin
+/// still refused after that is gone. A reservation is only asked about:
+/// one still refused in a repository fetched for a pin is gone too. Where
+/// one is refused in a repository nobody fetched, the walk is asked which
+/// reservations it reads, and only their repositories are fetched; a
+/// reservation still refused there is gone, and one nothing reads stays,
+/// unasked of upstream. A fetch that fails proves nothing about what
+/// upstream holds, so the write is refused and every hold stays. A hold on
+/// a switched-off source is read by nothing this pass, as the resolvers
+/// skip it, so it is neither asked about nor fetched for, and stays.
 fn release(
     held: &mut Manifest,
     pins: &mut HeldPins,
     serves: impl Fn(&str, &str) -> bool,
-    mut fetch: impl FnMut(&str) -> Result<()>,
+    fetch: impl FnMut(&str) -> Result<()>,
+    consumed: impl FnOnce(&Manifest, &HeldPins) -> BTreeSet<(String, Held)>,
 ) -> Result<()> {
-    let mut served: BTreeMap<(String, String), bool> = BTreeMap::new();
-    let mut fetching: BTreeMap<String, String> = BTreeMap::new();
-    for pin in pins.all() {
-        if !held
-            .sources
+    let read = |held: &Manifest, pin: &HeldPin| {
+        held.sources
             .get(&pin.source)
             .is_some_and(|decl| decl.enabled)
-        {
-            continue;
-        }
-        let commit = (pin.repo.clone(), pin.commit.clone());
-        if !*served
-            .entry(commit)
-            .or_insert_with(|| serves(&pin.repo, &pin.commit))
-        {
-            fetching
-                .entry(pin.repo.clone())
-                .or_insert_with(|| pin.source.clone());
-        }
+    };
+    let mut cache = Availability {
+        served: BTreeMap::new(),
+        fetched: BTreeSet::new(),
+        serves,
+        fetch,
+    };
+    let pinned: Vec<HeldPin> = pins
+        .pins
+        .iter()
+        .filter(|pin| read(held, pin))
+        .cloned()
+        .collect();
+    cache.fetch_for(&pinned)?;
+    let unfetched: Vec<HeldPin> = pins
+        .reservations
+        .iter()
+        .filter(|pin| read(held, pin) && !cache.serves(pin) && !cache.fetched.contains(&pin.repo))
+        .cloned()
+        .collect();
+    pins.release_where(held, |pin| cache.gone(pin));
+    if unfetched.is_empty() {
+        return Ok(());
     }
-    for (repo, source) in &fetching {
-        if fetch(repo).is_err() {
-            return Err(CoreError::SourcePending {
-                name: source.clone(),
-            });
-        }
-    }
-    for ((repo, commit), readable) in &mut served {
-        if !*readable && fetching.contains_key(repo) {
-            *readable = serves(repo, commit);
-        }
-    }
-    pins.release_where(held, |pin| {
-        served.get(&(pin.repo.clone(), pin.commit.clone())) == Some(&false)
-    });
+    let wanted = consumed(held, pins);
+    let reads: Vec<HeldPin> = unfetched
+        .into_iter()
+        .filter(|pin| wanted.contains(&(pin.source.clone(), pin.held.clone())))
+        .collect();
+    cache.fetch_for(&reads)?;
+    pins.release_where(held, |pin| cache.gone(pin));
     Ok(())
+}
+
+/// [`release`]'s answers so far: what `serves` said of each commit, and
+/// which repositories were fetched.
+struct Availability<S, F> {
+    served: BTreeMap<(String, String), bool>,
+    fetched: BTreeSet<String>,
+    serves: S,
+    fetch: F,
+}
+
+impl<S: Fn(&str, &str) -> bool, F: FnMut(&str) -> Result<()>> Availability<S, F> {
+    fn serves(&mut self, pin: &HeldPin) -> bool {
+        *self
+            .served
+            .entry((pin.repo.clone(), pin.commit.clone()))
+            .or_insert_with(|| (self.serves)(&pin.repo, &pin.commit))
+    }
+
+    /// Fetch, once each, the repositories holding a commit of `holds` that
+    /// `serves` refuses, then ask again about every refused commit in them.
+    fn fetch_for(&mut self, holds: &[HeldPin]) -> Result<()> {
+        let mut fetching: BTreeMap<String, String> = BTreeMap::new();
+        for pin in holds {
+            if !self.serves(pin) && !self.fetched.contains(&pin.repo) {
+                fetching
+                    .entry(pin.repo.clone())
+                    .or_insert_with(|| pin.source.clone());
+            }
+        }
+        for (repo, source) in &fetching {
+            if (self.fetch)(repo).is_err() {
+                return Err(CoreError::SourcePending {
+                    name: source.clone(),
+                });
+            }
+            self.fetched.insert(repo.clone());
+        }
+        for ((repo, commit), readable) in &mut self.served {
+            if !*readable && fetching.contains_key(repo) {
+                *readable = (self.serves)(repo, commit);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether this hold's commit is still refused after its repository
+    /// was fetched: gone from upstream, not merely unfetched.
+    fn gone(&self, pin: &HeldPin) -> bool {
+        self.fetched.contains(&pin.repo)
+            && self.served.get(&(pin.repo.clone(), pin.commit.clone())) == Some(&false)
+    }
 }
 
 /// The manifest a single-package update plans from: the targets read
@@ -560,6 +668,12 @@ fn held_manifest(
 
 /// Installed derived items have their own reads. Reservations grant no
 /// installation or user choice and are consulted only by a reached edge.
+///
+/// An item is reserved only where no declaration the planning manifest
+/// still holds owns it: a member of a live set reads the set's revision,
+/// and a dependency of a live declaration reads its requirer's. An item
+/// whose owners are all gone — an assigned skill, or one whose
+/// declaration or set the person removed — keeps its own record.
 fn reserve_readings(
     manifest: &Manifest,
     lock: &Lock,
@@ -575,20 +689,17 @@ fn reserve_readings(
         {
             continue;
         }
-        // Nothing is exempt under a locked, at-record or installed read,
-        // so no owner could release the reservation: skip the walk.
-        if !exempt.is_empty() {
-            let own = Owner::Item {
-                kind: entry.kind,
-                name: entry.name.clone(),
-                source: entry.source.clone(),
-            };
-            if exempt.contains(&own)
-                || !owners_of(lock, entry.kind, &entry.name, &entry.source, true)
-                    .is_disjoint(exempt)
-            {
-                continue;
-            }
+        let own = Owner::Item {
+            kind: entry.kind,
+            name: entry.name.clone(),
+            source: entry.source.clone(),
+        };
+        if exempt.contains(&own)
+            || owners_of(lock, entry.kind, &entry.name, &entry.source, true)
+                .iter()
+                .any(|owner| exempt.contains(owner) || owner.declared_in(manifest))
+        {
+            continue;
         }
         let Some(repo) = held_repo(manifest, lock, &entry.source, keeps_records) else {
             continue;

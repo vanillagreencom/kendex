@@ -1068,8 +1068,8 @@ fn targeted_updates_read_every_harness_copys_owners() {
             "{case}: {:?}",
             messages(&report)
         );
-        // The pins and reservations the plan read through: everything the
-        // update held still.
+        // The pins and reservations the plan read through. The agents
+        // follow the pins of the declarations that require them.
         let held: BTreeSet<_> = report
             .held
             .iter()
@@ -1078,12 +1078,7 @@ fn targeted_updates_read_every_harness_copys_owners() {
                 kendex_core::engine::Held::Set { name } => panic!("{case}: set {name} held"),
             })
             .collect();
-        let expected_held = BTreeSet::from([
-            (ItemKind::Skill, "ra"),
-            (ItemKind::Skill, "rb"),
-            (ItemKind::Agent, "aa"),
-            (ItemKind::Agent, "ab"),
-        ]);
+        let expected_held = BTreeSet::from([(ItemKind::Skill, "ra"), (ItemKind::Skill, "rb")]);
         assert_eq!(held, expected_held, "{case}");
         apply::execute(&w.env, &report.plan).unwrap();
         let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
@@ -1110,4 +1105,299 @@ fn targeted_updates_read_every_harness_copys_owners() {
             );
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Member {
+    Command,
+    Agent,
+    McpServer,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Hold {
+    AtRecord,
+    OtherPackage,
+}
+
+/// A set owns its members' readings: they are no reservation of their
+/// own. Kit follows a source read at `release`, which still resolves to
+/// the commit every member was installed from. A member no walk opens
+/// (a command, an agent, an MCP server) renders unchanged, with no
+/// revision conflict, under the record's own reading and under an
+/// update of another package.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_tracking_sets_unwalked_member_reads_the_sets_revision() {
+    for member in [Member::Command, Member::Agent, Member::McpServer] {
+        for hold in [Hold::AtRecord, Hold::OtherPackage] {
+            let case = format!("{member:?} under {hold:?}");
+            let w = world();
+            let (kind, name, list) = match member {
+                Member::Command => (ItemKind::Command, "ship", "commands"),
+                Member::Agent => (ItemKind::Agent, "writer", "agents"),
+                Member::McpServer => (ItemKind::McpServer, "gh", "mcp-servers"),
+            };
+            match member {
+                Member::Command => {
+                    fs::create_dir_all(w.upstream.join("commands")).unwrap();
+                    fs::write(w.upstream.join("commands/ship.md"), "Ship it.\n").unwrap();
+                }
+                Member::Agent => write_agent(&w.upstream, name, "Writer."),
+                Member::McpServer => {
+                    fs::create_dir_all(w.upstream.join("mcp")).unwrap();
+                    fs::write(
+                        w.upstream.join("mcp/gh.toml"),
+                        "command = \"gh-mcp\"\nargs = [\"--stdio\"]\n",
+                    )
+                    .unwrap();
+                }
+            }
+            write_skill(&w.upstream, "other", "", "Other one.");
+            fs::write(
+                w.upstream.join("kendex.toml"),
+                format!("is_source_catalog = true\n\n[bundles.kit]\n{list} = [\"{name}\"]\n"),
+            )
+            .unwrap();
+            let c = commit(&w.upstream, "c");
+            git(&w.upstream, &["tag", "release"]);
+            write_manifest(
+                &w,
+                &format!(
+                    "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\nrev = \"release\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[bundles.kit]\nsource = \"cat\"\n[skills.other]\nsource = \"cat\"\n"
+                ),
+            );
+            sync_and_apply(&w);
+            let key = entry_key(kind, name, HarnessId::Claude);
+            let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+            assert_eq!(
+                installed.entries[&key].source_commit.as_deref(),
+                Some(c.as_str()),
+                "{case}"
+            );
+            write_skill(&w.upstream, "other", "", "Other two.");
+            commit(&w.upstream, "d");
+            fetch_mirrors(&w);
+            let options = match hold {
+                Hold::AtRecord => kendex_core::attest::Reading::Recorded.plan_options(),
+                Hold::OtherPackage => PlanOptions::for_package(ItemKind::Skill, "other"),
+            };
+            let report = plan_apply(&w.env, &w.scope, &options).unwrap();
+            assert_eq!(
+                report.declaration_status,
+                DeclarationStatus::Complete,
+                "{case}: {:?}",
+                messages(&report)
+            );
+            assert!(
+                !report
+                    .warnings
+                    .iter()
+                    .any(|row| row.kind == kind && row.name == name),
+                "{case}: {:?}",
+                messages(&report)
+            );
+            assert!(report.installations.contains_key(&key), "{case}");
+            assert_eq!(
+                report.record.entries[&key].source_commit.as_deref(),
+                Some(c.as_str()),
+                "{case}"
+            );
+        }
+    }
+}
+
+/// An assigned skill the person also declared records only that request.
+/// Its declaration removed by hand, nothing declared owns it any more,
+/// so a locked write keeps it at its own record while its source moves.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hand_removed_declaration_of_an_assigned_skill_keeps_its_record() {
+    let w = world();
+    write_skill(
+        &w.upstream,
+        "lead",
+        "dependencies:\n  agents: [scout]\n",
+        "Lead.",
+    );
+    write_agent(&w.upstream, "scout", "Scout.");
+    write_skill(&w.upstream, "y", "", "Y one.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nscout = [\"y\"]\n",
+    )
+    .unwrap();
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.lead]\nsource = \"cat\"\n[skills.y]\nsource = \"cat\"\n",
+    );
+    sync_and_apply(&w);
+    let key = entry_key(ItemKind::Skill, "y", HarnessId::Claude);
+    let reasons = &load_lock(&lock_path(&w.env, &w.scope)).unwrap().entries[&key].reasons;
+    assert_eq!(
+        reasons,
+        &BTreeSet::from([kendex_core::lock::Reason::Requested])
+    );
+    declare(&w, "[skills.lead]\nsource = \"cat\"\n");
+    write_skill(&w.upstream, "y", "", "Y two.");
+    commit(&w.upstream, "two");
+    fetch_mirrors(&w);
+    let report = plan_apply(&w.env, &w.scope, &PlanOptions::locked()).unwrap();
+    assert_eq!(
+        report.declaration_status,
+        DeclarationStatus::Complete,
+        "{:?}",
+        messages(&report)
+    );
+    assert_eq!(
+        report.record.entries[&key].source_commit.as_deref(),
+        Some(first.as_str())
+    );
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "y").contains("Y one."));
+}
+
+/// Take this machine offline: no mirror, no published checkout, and an
+/// upstream nothing can reach.
+#[allow(clippy::unwrap_used)]
+fn go_offline(w: &World) {
+    fs::remove_dir_all(w.env.source_cache_dir()).unwrap();
+    fs::rename(&w.upstream, w.home.join("unreachable")).unwrap();
+}
+
+/// Removing the last package a repository source brings needs nothing
+/// from that repository, whatever the package brought with it: offline,
+/// the removal plans and executes. The subtree row removes a lead that
+/// requires scout, which is assigned y, which requires linear.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_offline_removal_of_the_last_package_fetches_nothing() {
+    for subtree in [false, true] {
+        let w = world();
+        let deps = if subtree {
+            "dependencies:\n  agents: [scout]\n"
+        } else {
+            ""
+        };
+        write_skill(&w.upstream, "lead", deps, "Lead.");
+        write_agent(&w.upstream, "scout", "Scout.");
+        write_skill(
+            &w.upstream,
+            "y",
+            "dependencies:\n  required: [linear]\n",
+            "Y.",
+        );
+        write_skill(&w.upstream, "linear", "", "Linear.");
+        fs::write(
+            w.upstream.join("kendex.toml"),
+            "[agent-skills]\nscout = [\"y\"]\n",
+        )
+        .unwrap();
+        commit(&w.upstream, "one");
+        write_manifest(
+            &w,
+            &format!(
+                "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.lead]\nsource = \"cat\"\n"
+            ),
+        );
+        sync_and_apply(&w);
+        let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+        assert_eq!(
+            installed.entries.contains_key(&entry_key(
+                ItemKind::Skill,
+                "linear",
+                HarnessId::Claude
+            )),
+            subtree
+        );
+        go_offline(&w);
+        let report =
+            kendex_core::engine::ops::remove(&w.env, &w.scope, &["lead".to_owned()], None, true)
+                .unwrap_or_else(|error| panic!("subtree={subtree}: {error}"));
+        apply::execute(&w.env, &report.plan).unwrap();
+        let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+        assert!(
+            !lock
+                .entries
+                .contains_key(&entry_key(ItemKind::Skill, "lead", HarnessId::Claude)),
+            "subtree={subtree}"
+        );
+    }
+}
+
+/// A reservation the plan reads at a commit the mirror lacks is fetched
+/// and kept: the mirror serves lead's A but not y's recorded B. With
+/// upstream reachable, y stays at B; with it unreachable, the write is
+/// refused naming the source rather than y moving or dropping.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_read_reservation_the_mirror_lacks_is_fetched() {
+    for reachable in [true, false] {
+        let Reserved { w, a, b } = reserved(true, "");
+        fs::remove_dir_all(w.env.source_cache_dir()).unwrap();
+        git(&w.upstream, &["reset", "--hard", "--quiet", &a]);
+        fetch_mirrors(&w);
+        git(&w.upstream, &["reset", "--hard", "--quiet", &b]);
+        if !reachable {
+            fs::rename(&w.upstream, w.home.join("unreachable")).unwrap();
+        }
+        let result = plan_apply(&w.env, &w.scope, &PlanOptions::locked());
+        if !reachable {
+            assert!(
+                matches!(result, Err(CoreError::SourcePending { ref name }) if name == "cat"),
+                "{:?}",
+                result.map(|report| messages(&report))
+            );
+            continue;
+        }
+        let report = result.unwrap();
+        assert_eq!(
+            report.declaration_status,
+            DeclarationStatus::Complete,
+            "{:?}",
+            messages(&report)
+        );
+        let key = entry_key(ItemKind::Skill, "y", HarnessId::Claude);
+        assert_eq!(
+            report.record.entries[&key].source_commit.as_deref(),
+            Some(b.as_str())
+        );
+        apply::execute(&w.env, &report.plan).unwrap();
+        assert!(installed_body(&w, "y").contains("Y at B."));
+    }
+}
+
+/// An add of a set that newly carries an agent whose own declaration the
+/// person removed by hand: the agent's reading is its own record, the set
+/// reads the same commit, and nothing is in conflict.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_added_set_agrees_with_its_reserved_agent_at_the_same_commit() {
+    use kendex_core::engine::Held;
+    let w = world();
+    write_agent(&w.upstream, "writer", "Writer.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[bundles.kit]\nagents = [\"writer\"]\n",
+    )
+    .unwrap();
+    let c = commit(&w.upstream, "c");
+    declare(&w, "[agents.writer]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    declare(&w, "[bundles.kit]\nsource = \"cat\"\n");
+    let options = PlanOptions::for_additions([Held::Set { name: "kit".into() }]);
+    let report = plan_apply(&w.env, &w.scope, &options).unwrap();
+    assert_eq!(
+        report.declaration_status,
+        DeclarationStatus::Complete,
+        "{:?}",
+        messages(&report)
+    );
+    let key = entry_key(ItemKind::Agent, "writer", HarnessId::Claude);
+    assert!(report.installations.contains_key(&key));
+    assert_eq!(
+        report.record.entries[&key].source_commit.as_deref(),
+        Some(c.as_str())
+    );
 }

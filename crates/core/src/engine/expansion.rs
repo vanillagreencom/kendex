@@ -589,6 +589,10 @@ impl Expansion {
     /// which weighs the revision the person chose rather than the one read
     /// — unless either side is a pin this pass invented, which is a read
     /// revision and no choice of anyone's.
+    ///
+    /// A side read through a reservation is at the commit its lock entries
+    /// record, whether or not anything opened that commit: a set member
+    /// that is not walked never opens its own catalog.
     pub(super) fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
         self.rev_disagreements.sort();
         self.rev_disagreements.dedup();
@@ -602,10 +606,22 @@ impl Expansion {
                 _ => None,
             }
         };
+        let reservations = &self.reservations;
+        let side = |source: &str, owner: &Option<super::Held>, rev: &Option<String>| {
+            let reserved = match owner {
+                Some(super::Held::Item { kind, name }) => reservations
+                    .get(&(source.to_owned(), *kind, name.clone()))
+                    .map(|(commit, _)| commit)
+                    .filter(|commit| rev.as_ref() == Some(*commit))
+                    .cloned(),
+                Some(super::Held::Set { .. }) | None => None,
+            };
+            reserved.or_else(|| commit_of(source, rev))
+        };
         self.rev_disagreements.retain(|one| {
-            let kept = commit_of(&one.source, &one.kept);
+            let kept = side(&one.source, &one.kept_owner, &one.kept);
             let chosen = one.by_a_set && one.kept_owner.is_none() && one.refused_owner.is_none();
-            chosen || kept.is_none() || kept != commit_of(&one.source, &one.refused)
+            chosen || kept.is_none() || kept != side(&one.source, &one.refused_owner, &one.refused)
         });
         for Disagreement {
             kind,

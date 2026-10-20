@@ -807,6 +807,7 @@ fn a_pin_is_released_only_once_a_fetch_shows_its_commit_gone() {
                     false => Ok(()),
                 }
             },
+            |_, _| panic!("{case}: no reservation to walk for"),
         );
         assert_eq!(fetched.get(), row.fetches, "{case}");
         assert_eq!(probed.get(), row.probes, "{case}");
@@ -825,6 +826,184 @@ fn a_pin_is_released_only_once_a_fetch_shows_its_commit_gone() {
                 let pinned = (!released).then(|| commit.clone());
                 assert_eq!((rev("one"), rev("two")), (pinned.clone(), pinned), "{case}");
                 assert_eq!(pins.pins().len(), if released { 0 } else { 2 }, "{case}");
+            }
+        }
+    }
+}
+
+/// One case of [`release`] for a reservation beside one pin: whether the
+/// pin's commit is served, what the cache answers for the reservation's
+/// commit before and after a fetch, whether the walk reads the
+/// reservation, and what the release does with it (`None`: refused).
+struct ReserveRow {
+    case: &'static str,
+    pin_served: bool,
+    served_before: bool,
+    served_after: bool,
+    read: bool,
+    fetch_fails: bool,
+    walks: usize,
+    fetches: usize,
+    kept: Option<bool>,
+}
+const RESERVE_ROWS: &[ReserveRow] = &[
+    ReserveRow {
+        case: "served: no walk, no fetch, kept",
+        pin_served: true,
+        served_before: true,
+        served_after: true,
+        read: true,
+        fetch_fails: false,
+        walks: 0,
+        fetches: 0,
+        kept: Some(true),
+    },
+    ReserveRow {
+        case: "unserved and unread: walked, never fetched, kept",
+        pin_served: true,
+        served_before: false,
+        served_after: false,
+        read: false,
+        fetch_fails: true,
+        walks: 1,
+        fetches: 0,
+        kept: Some(true),
+    },
+    ReserveRow {
+        case: "unserved and read, newer than the fetch: fetched, kept",
+        pin_served: true,
+        served_before: false,
+        served_after: true,
+        read: true,
+        fetch_fails: false,
+        walks: 1,
+        fetches: 1,
+        kept: Some(true),
+    },
+    ReserveRow {
+        case: "unserved and read, gone upstream: fetched, released",
+        pin_served: true,
+        served_before: false,
+        served_after: false,
+        read: true,
+        fetch_fails: false,
+        walks: 1,
+        fetches: 1,
+        kept: Some(false),
+    },
+    ReserveRow {
+        case: "unserved and read, fetch fails: refused",
+        pin_served: true,
+        served_before: false,
+        served_after: false,
+        read: true,
+        fetch_fails: true,
+        walks: 1,
+        fetches: 1,
+        kept: None,
+    },
+    ReserveRow {
+        case: "repository fetched for the pin, gone upstream: no walk, released",
+        pin_served: false,
+        served_before: false,
+        served_after: false,
+        read: true,
+        fetch_fails: false,
+        walks: 0,
+        fetches: 1,
+        kept: Some(false),
+    },
+    ReserveRow {
+        case: "repository fetched for the pin, served after: no walk, kept",
+        pin_served: false,
+        served_before: false,
+        served_after: true,
+        read: false,
+        fetch_fails: false,
+        walks: 0,
+        fetches: 1,
+        kept: Some(true),
+    },
+];
+
+/// A reservation is fetched for only where the walk reads it: an unread
+/// one stays held and asks nothing of upstream, so a write offline is not
+/// refused over a read it never makes. A read one is fetched for once and
+/// released only if its commit is still refused after; a failed fetch
+/// refuses the write. In a repository already fetched for a pin, the
+/// reservation is judged on the fetched mirror with no walk.
+#[test]
+fn a_reservation_is_fetched_for_only_where_the_walk_reads_it() {
+    let pinned = "a".repeat(40);
+    let reserved = "b".repeat(40);
+    let manifest = manifest_with(&[("one", None)], &[]);
+    let lock = lock_with(&[
+        (
+            "skill:one:claude",
+            entry("one", Some(&pinned), &[Reason::Requested]),
+        ),
+        (
+            "skill:r:claude",
+            entry("r", Some(&reserved), &[Reason::Requested]),
+        ),
+    ]);
+    let r = (
+        "cat".to_owned(),
+        Held::Item {
+            kind: ItemKind::Skill,
+            name: "r".to_owned(),
+        },
+    );
+    for row in RESERVE_ROWS {
+        let case = row.case;
+        let targets = Targets {
+            declarations: BTreeSet::new(),
+            reach: Reach::Carriers,
+        };
+        let (mut held, mut pins) = held_manifest(&manifest, &lock, &targets, true);
+        assert_eq!(pins.reservations().len(), 1, "{case}");
+        let fetched = std::cell::Cell::new(0);
+        let walked = std::cell::Cell::new(0);
+        let result = release(
+            &mut held,
+            &mut pins,
+            |_, commit| match (commit == pinned, fetched.get()) {
+                (true, 0) => row.pin_served,
+                (true, _) => true,
+                (false, 0) => row.served_before,
+                (false, _) => row.served_after,
+            },
+            |_| {
+                fetched.set(fetched.get() + 1);
+                match row.fetch_fails {
+                    true => Err(CoreError::FetchFailed {
+                        repo: "owner/catalog".to_owned(),
+                        reason: "offline".to_owned(),
+                    }),
+                    false => Ok(()),
+                }
+            },
+            |_, _| {
+                walked.set(walked.get() + 1);
+                row.read.then(|| r.clone()).into_iter().collect()
+            },
+        );
+        assert_eq!(walked.get(), row.walks, "{case}");
+        assert_eq!(fetched.get(), row.fetches, "{case}");
+        match row.kept {
+            None => assert!(
+                matches!(result, Err(CoreError::SourcePending { ref name }) if name == "cat"),
+                "{case}: {result:?}"
+            ),
+            Some(kept) => {
+                result.unwrap();
+                assert_eq!(pins.reservations().len(), usize::from(kept), "{case}");
+                assert_eq!(
+                    pins.selectors().contains_key(&r),
+                    kept,
+                    "{case}: selector follows the reservation"
+                );
+                assert_eq!(pins.pins().len(), 1, "{case}");
             }
         }
     }
