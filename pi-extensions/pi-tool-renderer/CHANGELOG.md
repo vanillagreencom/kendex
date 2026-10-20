@@ -5,6 +5,7 @@
 ### Unreleased
 
 - With the compact renderers on, the system prompt lists `read`, `bash`, `grep`, `find` and `ls` under Available tools again and keeps Pi's guidelines for them, such as using `read` instead of `cat`. With `renderMutationTools` on, `edit` and `write` keep their entries and guidelines too.
+- With tool chrome on, the first render of a long transcript takes less CPU. A drawn tool row that already fits the terminal is no longer wrapped again; rows look the same.
 
 ### 2.0.10
 
