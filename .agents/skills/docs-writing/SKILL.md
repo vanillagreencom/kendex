@@ -62,7 +62,6 @@ This is the default repository layout. A rewrite moves what it finds onto it. A 
 |---|---|---|---|
 | `README.md` | a person choosing or using it | the sections § `README.md` orders | yes |
 | `AGENTS.md` | every agent, at session start | what the repo is, the commands, the conventions, and task routes to principle docs, directly or through named nested instructions | yes |
-| `CLAUDE.md` | Claude Code sessions that need an import | the project's own `@AGENTS.md` import (§ `CLAUDE.md`) | only where a session needs an import |
 | `DEVELOPMENT.md` | a maintainer | build, run, test and debug: only what the tooling does not show | where needed |
 | `LICENSE` | a person | the licence | yes |
 | `CHANGELOG.md`, `changelog.d/` | a person reading a release | release notes | released packages |
@@ -80,7 +79,7 @@ Nothing else lives under `docs/`. A software implementation plan, research repor
 ### Reference rules
 
 - The root `AGENTS.md` gives each principle doc a task trigger, or routes to a nested `AGENTS.md` that gives the local trigger: "Before writing a plugin: `docs/architecture/plugins.md`".
-- A nested `AGENTS.md` names the principle doc for its folder. Codex reads every `AGENTS.md` on the path to the working directory. Claude Code loads nested instructions under § `CLAUDE.md`. Copilot reads the nested file when it opens files there.
+- A nested `AGENTS.md` names the principle doc for its folder. Codex reads every `AGENTS.md` on the path to the working directory. Claude Code loads a nested `AGENTS.md` when it reads a file there. Copilot reads the nested file when it opens files there.
 - The Copilot review instruction files point the review bot at the same principle docs for the matching paths; the bot-instructions skill renders them.
 - Decision records are not listed in `AGENTS.md`. Review and dev workflows find them by keyword with `decisions search`, and a code comment cites a decision ID only where that code carries out the choice.
 - A code comment holds a local reason or an external cause at its site, per the code-quality skill's SKILL.md § Comments and Prose, and nothing points to it.
@@ -110,15 +109,11 @@ Another section only where the thing needs it. Never: internal vocabulary, invar
 
 Read by every harness at the start of every session. What the repo is in two or three sentences; the commands not discoverable from the tooling; the conventions that differ from a tool default or a language norm; task triggers for principle docs, directly or through named nested `AGENTS.md` files. Keep only rules no linked principle doc owns; route to that doc instead of repeating its rules. Codex reads only the root-to-cwd chain of `AGENTS.md` files. Before changing a directory, read its applicable nested instructions even when the harness did not load them. Never: anything derivable from the code, rationale, history. Example: [examples/root-agents.md](examples/root-agents.md).
 
+Repository agent instructions live in `AGENTS.md` alone. A repository keeps no `CLAUDE.md`: no root or nested `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md`. [Claude Code reads `AGENTS.md` natively](https://code.claude.com/docs/en/memory#agents-md) from [v2.1.277](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21277). The user-scope `~/.claude/CLAUDE.md` is a harness setting, not a repository document.
+
 ### `<dir>/AGENTS.md`
 
-Read by an agent working in that folder. Keep the folder's commands and rules no linked principle doc owns, with no rationale. Give a task trigger for that doc instead of repeating its rules. An approach belongs in architecture when one reader's task needs it to prevent a harmful mistake, whatever folders the task crosses. Claude Code's native loading and personal-import fallback follow § `CLAUDE.md`. Examples: [examples/nested-agents-plugins.md](examples/nested-agents-plugins.md), [examples/nested-agents-components.md](examples/nested-agents-components.md).
-
-### `CLAUDE.md`
-
-[Claude Code reads `AGENTS.md` natively](https://code.claude.com/docs/en/memory#agents-md) from [v2.1.277](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21277). Bedrock and telemetry-off sessions need v2.1.281. By default, a `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in the working directory or above prevents native loading. A nested `AGENTS.md` loads when Claude reads a file there, unless that directory has one of those Claude files. Files under `.agents/` do not load.
-
-kendex writes no `CLAUDE.md`. An existing root or nested `CLAUDE.md` with an `@AGENTS.md` import belongs to the project. kendex leaves it in place and does not check it. A person who needs an older session, a disabled native plugin or Project instructions set to `claude-md` keeps their own `CLAUDE.md` with that import.
+Read by an agent working in that folder. Keep the folder's commands and rules no linked principle doc owns, with no rationale. Give a task trigger for that doc instead of repeating its rules. An approach belongs in architecture when one reader's task needs it to prevent a harmful mistake, whatever folders the task crosses. Examples: [examples/nested-agents-plugins.md](examples/nested-agents-plugins.md), [examples/nested-agents-components.md](examples/nested-agents-components.md).
 
 ### `docs/architecture/<name>.md`
 
