@@ -373,12 +373,20 @@ function summarizeGenericCall(name: string, args: any, theme: any): string {
 			return ids.length <= 1 ? theme.fg("accent", ids[0] ?? "start tasks") : `${theme.fg("accent", ids[0]!)}${theme.fg("muted", ` +${ids.length - 1} tasks`)}`;
 		}
 		case "ScheduleWakeup": return summarizeScheduleWakeupCall(args, theme);
-		default: return theme.fg("accent", oneLine(stringArg(args, "path", "file_path", "url", "query", "name", "subject", "tool", "description", "prompt") || humanizeToolName(name), 72));
+		default: {
+			const arg = stringArg(args, "path", "file_path", "url", "query", "name", "subject", "tool", "description", "prompt");
+			return arg ? theme.fg("accent", oneLine(arg, 72)) : "";
+		}
 	}
 }
 
+function labelledSummary(name: string, summary: string, theme: any): string {
+	const label = humanizeToolName(name);
+	return `${toolLabel(theme, summary ? `${label} ` : label)}${summary}`;
+}
+
 export function renderGenericToolCall(name: string, args: any, theme: any, context: any): TruncatedLines {
-	return makeTruncatedLines(`${genericStatusPrefix(context, theme)}${toolLabel(theme, `${humanizeToolName(name)} `)}${summarizeGenericCall(name, args, theme)}`);
+	return makeTruncatedLines(`${genericStatusPrefix(context, theme)}${labelledSummary(name, summarizeGenericCall(name, args, theme), theme)}`);
 }
 
 function summarizeUnknownToolCall(name: string, args: any, theme: any): string {
@@ -394,8 +402,9 @@ function unknownToolStatus(name: string, raw: string, isError: boolean, theme: a
 }
 
 export function renderUnknownToolCall(name: string, args: any, theme: any, context: any): TruncatedLines | ReturnType<typeof makeEmpty> {
-	if (context?.executionStarted) return makeEmpty();
-	return makeTruncatedLines(`${genericStatusPrefix(context, theme)}${toolLabel(theme, `${humanizeToolName(name)} `)}${summarizeUnknownToolCall(name, args, theme)}`);
+	// A final result without a start is a restored or aborted block; its result row names the call.
+	if (context?.executionStarted || context?.isPartial === false) return makeEmpty();
+	return makeTruncatedLines(`${genericStatusPrefix(context, theme)}${labelledSummary(name, summarizeUnknownToolCall(name, args, theme), theme)}`);
 }
 
 export function renderUnknownToolResult(name: string, result: any, { expanded, isPartial }: any, theme: any, context: any): TruncatedLines | ReturnType<typeof makeEmpty> {
@@ -404,7 +413,7 @@ export function renderUnknownToolResult(name: string, result: any, { expanded, i
 	const raw = textContent(result).trim();
 	const args = context?.args ?? {};
 	const status = unknownToolStatus(name, raw, Boolean(context?.isError), theme);
-	let text = `${stackPrefix(theme)}${toolLabel(theme, `${humanizeToolName(name)} `)}${summarizeUnknownToolCall(name, args, theme)}${theme.fg("dim", " · ")}${status}`;
+	let text = `${stackPrefix(theme)}${labelledSummary(name, summarizeUnknownToolCall(name, args, theme), theme)}${theme.fg("dim", " · ")}${status}`;
 	if (!expanded) return makeTruncatedLines(`${text}${theme.fg("dim", " · ctrl+o to expand")}`);
 	const json = splitTerminalLines(JSON.stringify(args, null, 2));
 	text += `\n${treeConnector(theme, raw ? "├" : "└", context?.cwd)}${theme.fg("muted", "args")}`;
