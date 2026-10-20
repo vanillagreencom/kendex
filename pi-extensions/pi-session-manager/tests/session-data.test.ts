@@ -1,12 +1,10 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { mockPiTui } from "./lib/pi-tui-mock.ts";
 import { sessionFixture } from "./lib/session-fixture.ts";
 
-mock.module("@earendil-works/pi-tui", () => ({
-	truncateToWidth: (text: string, width: number) => text.slice(0, width),
-	visibleWidth: (text: string) => text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, "").length,
-}));
+mockPiTui();
 
 afterEach(async () => {
 	const { sessionUserMessagesCache } = await import("../extensions/session-data.ts");
