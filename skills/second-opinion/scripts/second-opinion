@@ -146,11 +146,12 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              this names the model its command runs
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
                              hyphens become underscores); claude and codex
-                             have defaults (below). Direct codex programs also
-                             receive --disable hooks --json, including overrides
-                             with supported env prefixes. Other CLIs and opaque
-                             wrappers supply their own backend flags. Keep every
-                             configured command read-only.
+                             have defaults (below). Targets named codex (any
+                             case) also receive --disable hooks --json when
+                             their command directly runs codex, including
+                             overrides with supported env prefixes. Other target
+                             names, CLIs and opaque wrappers supply their own
+                             backend flags. Keep every configured command read-only.
                              copilot has none: Copilot
                              CLI documents no headless mode that is read-only,
                              so SECOND_OPINION_COPILOT_CMD names a command you
@@ -2619,7 +2620,8 @@ run_target_cli() {
   # A direct Codex command must not inherit lane Stop hooks whose handoff
   # writes its read-only sandbox cannot make. JSON events carry the assistant
   # answer without depending on those writes or scraping stderr's prompt echo.
-  if program=$(target_available "$TARGET_CLI"); then
+  # Keep injected transport within the target scope unwrap_codex_events handles.
+  if [[ $(harness_model "$TARGET_CLI") == codex ]] && program=$(target_available "$TARGET_CLI"); then
     [[ ${program##*/} != codex ]] || cmd="$cmd --disable hooks --json"
   fi
   # shellcheck disable=SC2086

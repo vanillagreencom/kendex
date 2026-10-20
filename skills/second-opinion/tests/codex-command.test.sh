@@ -4,11 +4,12 @@
 # refusal is recorded.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
 EXPECTED=$'exec\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--ephemeral\n--disable\nhooks\n--json'
-for row in default example project version-control env-codex copilot opaque copilot-control; do
-  build "$row" current:none models:codex
+while IFS='|' read -r row target mode; do
+  build "$row" current:none "models:$target"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/argv"\nexec "%s/bin/lane-codex" "$@"\n' "$ROW" "$ROW" >"$ROW/bin/codex"
   chmod +x "$ROW/bin/codex"
   want="$EXPECTED"
+  want_result=0:pass
   case "$row" in
     default) ;;
     example) cp "$SKILL_DIR/kendex.settings.toml.example" "$PROJ/kendex.settings.toml"; want=$'exec\n-m\ngpt-6.1-sol\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--disable\nhooks\n--ephemeral\n--disable\nhooks\n--json' ;;
@@ -16,6 +17,33 @@ for row in default example project version-control env-codex copilot opaque copi
     project) { echo '[env]'; grep '^SECOND_OPINION_CODEX_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml"; want=$'exec\n-m\ngpt-6.1-sol\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--disable\nhooks\n--ephemeral\n--disable\nhooks\n--json' ;;
     version-control) mutate_script "$SO" 'DEFAULT_CODEX_CMD="codex exec -s' 'DEFAULT_CODEX_CMD="codex exec -m gpt-6.1-sol -s' ;;
     env-codex) W_ENV+=("SECOND_OPINION_CODEX_CMD=env -u SO_TEST_UNSET SO_TEST_PREFIX=1 $ROW/bin/codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral") ;;
+    custom-*)
+      W_ENV+=("SECOND_OPINION_MY_MODEL_MODEL=codex" "SECOND_OPINION_MY_MODEL_CMD=$ROW/bin/codex exec -s read-only")
+      want=$'exec\n-s\nread-only'
+      cat >"$ROW/bin/codex" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+root=${0%/bin/codex}
+printf '%s\n' "$@" >"$root/argv"
+json=false
+for arg in "$@"; do [[ $arg != --json ]] || json=true; done
+if $json; then
+  reply=$("$root/bin/lane-codex" "$@") || exit $?
+  printf '{"type":"thread.started","thread_id":"review"}\n'
+  jq -cn --arg text "$reply" '{type:"item.completed",item:{type:"agent_message",text:$text}}'
+  printf '{"type":"turn.completed"}\n'
+else
+  exec "$root/bin/lane-codex" "$@"
+fi
+SH
+      if [[ $mode == quick ]]; then
+        printf 'assistant reply\n' >"$ROW/resp-codex"
+        want_result='0:assistant reply'
+      fi
+      [[ $row != custom-control ]] || mutate_script "$SO" \
+        'if [[ $(harness_model "$TARGET_CLI") == codex ]] && program=$(target_available "$TARGET_CLI"); then' \
+        'if program=$(target_available "$TARGET_CLI"); then # retained scope: if [[ $(harness_model "$TARGET_CLI") == codex ]] && program=$(target_available "$TARGET_CLI"); then'
+      ;;
     copilot|opaque|copilot-control)
       program=1copilot
       [[ $row != opaque ]] || program=review-wrapper
@@ -36,9 +64,20 @@ SH
       [[ $row != copilot-control ]] || mutate_script "$SO" '[[ ${program##*/} != codex ]]' '[[ $(harness_model "$TARGET_CLI") != codex ]]'
       ;;
   esac
+  argv=(review --range HEAD --output "$ROW/out/out.json")
+  [[ $mode != quick ]] || argv=(quick 'inspect file.txt')
   rc=0
-  env -i HOME="$ROW" PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" review --range HEAD --cwd "$WORK" --output "$ROW/out/out.json" >"$ROW/stdout" 2>"$ROW/stderr" || rc=$?
-  got="$rc:$(jq -r '.verdict' "$ROW/out/out.json" 2>/dev/null || printf missing)"
+  env -i HOME="$ROW" PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" --cwd "$WORK" >"$ROW/stdout" 2>"$ROW/stderr" || rc=$?
+  if [[ $mode == quick ]]; then got="$rc:$(cat "$ROW/stdout")"
+  else got="$rc:$(jq -r '.verdict' "$ROW/out/out.json" 2>/dev/null || printf missing)"; fi
+  if [[ $row == custom-control ]]; then
+    assert_eq "$got" 4:missing "$row reproduces the undecoded event stream"
+    assert_eq "$(cat "$ROW/argv")" "$want"$'\n--disable\nhooks\n--json' "$row restores executable-only injection"
+    control_rc=0
+    (FAIL=0; assert_eq "$got" "$want_result" "must-fail: $row artifact"; [[ $FAIL -eq 0 ]]) || control_rc=$?
+    assert_eq "$control_rc" 1 "$row turns the custom artifact check red"
+    continue
+  fi
   if [[ $row == copilot-control ]]; then
     assert_eq "$got" 5:missing "$row rejects foreign flags before artifact creation"
     assert_eq "$(cat "$ROW/argv")" "$want"$'\n--disable\nhooks\n--json' "$row restores target-name flag injection"
@@ -47,13 +86,25 @@ SH
     assert_eq "$control_rc" 1 "$row turns the usable artifact check red"
     continue
   fi
-  assert_eq "$got" 0:pass "$row run writes a usable review artifact"
+  assert_eq "$got" "$want_result" "$row delivers the requested $mode answer"
   case "$row" in copilot|opaque) assert_eq "$(cat "$ROW/allow-all")" false "$row keeps configured write restriction" ;; esac
   if [[ "$row" != *control ]]; then assert_eq "$(cat "$ROW/argv")" "$want" "$row backend argv"; continue; fi
   control_rc=0
   (assert_eq "$(cat "$ROW/argv")" "$EXPECTED" "must-fail: $row"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
   assert_eq "$control_rc" 1 "$row turns the argv pin red"
-done
+done <<'ROWS'
+default|codex|review
+example|codex|review
+project|codex|review
+version-control|codex|review
+env-codex|codex|review
+copilot|codex|review
+opaque|codex|review
+copilot-control|codex|review
+custom-review|my-model|review
+custom-quick|my-model|quick
+custom-control|my-model|review
+ROWS
 
 # VG-612 and HT-2311 configured Codex without --disable hooks. Human output
 # showed their verdict only on stderr before a read-only handoff and Stop loop.
