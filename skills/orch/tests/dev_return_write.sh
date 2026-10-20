@@ -157,7 +157,7 @@ table() {
   for row in "$@"; do
     IFS='|' read -r label args expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
-    if [[ "$independent" == true ]]; then
+    if [[ "$independent" == true && "$args" == *'--kind implement '* ]]; then
       fresh_issue="${args#*--issue }"; fresh_issue="${fresh_issue%% *}"
       args="${args/--issue $fresh_issue /--issue $fresh_issue-$((RUN_SEQ + 1)) }"
     fi

@@ -3079,13 +3079,14 @@ assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: option-unused option=-
 # A run the evidence ended records a zero wall time, and --record reads it as
 # no-verdict, which a receipt's no-verdict needs.
 proj_bound_rec="$(ci_proj proj-bound-rec CI)"
+bound_rec_tree="$(git -C "$proj_bound_rec" rev-parse 'HEAD^{tree}')"
 plant_run "$proj_bound_rec" 20000101T000000Z-1 full docs/a.md 20
 RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true \
   run_script "$CI_SCRIPT" --worktree "$proj_bound_rec" --poll 1
 bound_rec_dir="$(run_dir_of "$OUT")"
 run_script "$CI_SCRIPT" --record --run-dir "$bound_rec_dir"
 assert_eq "$(sed -E 's/ head=[^ ]* start=[0-9]+ / /; s/started-at=[^ ]+ ended-at=[^ ]+$/T/' <<<"$OUT")" \
-  "validate-mode=full selection=unreported verdict=no-verdict seconds=0 T" \
+  "validate-mode=full selection=unreported verdict=no-verdict tree=$bound_rec_tree seconds=0 T" \
   "a run an earlier run's bound ended records no verdict and no wall time" "$ERR"
 
 # --- A pass over the same tree answers a later run of the same command -------
