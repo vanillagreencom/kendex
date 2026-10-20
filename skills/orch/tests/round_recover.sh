@@ -189,14 +189,14 @@ for harness in claude-send claude-text pi codex codex-item; do
     "$harness: dev-artifact-check accepts the recovered round"
 done
 
-# A run the bound ended proves a no-verdict report naming its scoped suites,
-# which is accepted, since it is neither a pass nor a failure, and the suites
-# become the receipt's note.
+# A run the bound ended proves a no-verdict report naming its cause, which is
+# accepted, since it is neither a pass nor a failure, and the cause becomes the
+# receipt's note verbatim.
 new_round cut KEN-3 1-1 no-verdict
-transcript "$TMP_ROOT/cut.jsonl" claude-send 1-1 "$(implement_report "$HEAD_SHA" "no-verdict: dev_validate_run.sh" none)"
+transcript "$TMP_ROOT/cut.jsonl" claude-send 1-1 "$(implement_report "$HEAD_SHA" "no-verdict: timeout" none)"
 run --worktree "$WT" --issue KEN-3 --round-id 1-1 --transcript "$TMP_ROOT/cut.jsonl"
 assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-1-1.json" '"\(.validate)|\(.validate_note)"') $("$CHECK" --worktree "$WT" --issue KEN-3 --round-id 1-1 | jq -r .verdict)" \
-  "rc=0 no-verdict|scoped suites green: dev_validate_run.sh accept" "a no-verdict report beside a run the timeout ended is recovered with its suites and accepted" "$TMP_ROOT/stderr"
+  "rc=0 no-verdict|timeout accept" "a no-verdict report beside a run the timeout ended is recovered with its cause as the note and accepted" "$TMP_ROOT/stderr"
 
 echo "=== only this round's turns hold its report ==="
 # A persistent agent's earlier round reported above this round's delegation,

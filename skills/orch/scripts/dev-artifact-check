@@ -26,7 +26,7 @@
 #     "validate_time": {"started_at": "…", "ended_at": "…", "seconds": N}|null
 #       (the run's wall time; null only beside a FAILING: validate),
 #     "validate_note": "…"|null (optional free-text qualifier; required
-#       beside no-verdict, where it names the scoped suites that passed),
+#       beside no-verdict, where it names the host cause or timeout),
 #     "qa_labels": […], "near_ceiling": […]|null (byte-ceiling near-ceiling lines,
 #     null when the probe did not answer), "near_ceiling_error": "…"|null,
 #     "summary_posted": bool, "summary": "…"|null,
@@ -458,8 +458,7 @@ emit() {
   # A validate value other than "pass" or "no-verdict" downgrades accept to
   # retry: the agent finished its tail but the round's validation is failing.
   # no-verdict reports a timeout or unavailable host check, neither pass nor
-  # failing: the scoped suites were the round's result and CI is the full
-  # record.
+  # failing: the round takes dev-implement.md section 5's no-verdict route.
   local verdict
   if [[ "$ok" == "true" ]]; then
     verdict="accept"
@@ -505,7 +504,7 @@ round_id_matches() {
 # non-empty string; .schema_version a number; .commit/.validate non-empty
 # strings; .validate_mode present and full, range or ci, or null
 # beside a FAILING: .validate; a no-verdict .validate carries the
-# .validate_note naming the scoped suites, its only evidence; .validate_time
+# .validate_note naming the host cause or timeout; .validate_time
 # present, null beside a FAILING: .validate, else the run's UTC start and end
 # with seconds their difference, and only beside a recorded mode, since a time
 # with no run names nothing. A truncated or half-written receipt fails this gate → reason=invalid.

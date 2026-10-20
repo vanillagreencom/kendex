@@ -50,12 +50,13 @@
 # validate_mode is its mode, never typed by the agent, and a --validate pass
 # needs a run whose sentinel is guard-exit=0. no-verdict needs a run
 # whose record is verdict=no-verdict, from a timeout or unavailable host check,
-# so it is neither a pass nor a failure, and the scoped suites the round ran in
-# its place are its evidence, named in --validate-note, which it requires. A FAILING result is accepted beside
+# so it is neither a pass nor a failure. The round takes dev-implement.md
+# section 5's no-verdict route, and --validate-note, which it requires, names
+# the host cause or timeout. A FAILING result is accepted beside
 # any run: --validate judges every gate of the round, and a passing run
-# with another gate failing is still a failed round. Submit reuses only a full
-# pass with no validate_class_base or with validate_selection battery, so a
-# range pass recorded as full, a full pass whose class --record reads from a
+# with another gate failing is still a failed round. The runner's
+# --require-proof local-pass filter decides what submit reuses, so a range
+# pass recorded as full, a full pass whose class --record reads from a
 # round base recorded without it, or a failed run recorded as a pass, would
 # stand in for the whole battery.
 # validate_class_base is that base, present only where --record reports one.
@@ -263,7 +264,8 @@ range or ci. A --validate pass needs a local run that passed or a ci run whose
 record is pending. A ci receipt accepts local edits and awaits required CI
 on the published head. Its existing start tree must match the committed tree.
 A no-verdict needs a run that recorded a timeout or unavailable host check,
-and a --validate-note naming the cause and scoped suites that passed; a
+and a --validate-note naming the host cause or timeout, per dev-implement.md
+section 5's no-verdict route; a
 FAILING result is accepted beside any run. A pass or no-verdict requires it,
 or --validate-record below; a FAILING round with no run omits both and
 records validate_mode null. validate_class_base is the base --record reports:
@@ -605,7 +607,7 @@ if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
   [[ -n "${validate_note//[[:space:]]/}" ]] \
     || die empty-text option=--validate-note
 fi
-# A no-verdict with no suites named would accept a round on no evidence.
+# A no-verdict with no cause named would accept a round on no evidence.
 [[ "$validate" != no-verdict || -n "$validate_note" ]] \
   || die required option=--validate-note validate=no-verdict
 # One summary source only — accepting both would need a precedence rule, and a

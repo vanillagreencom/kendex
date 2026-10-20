@@ -290,7 +290,7 @@
 # nothing: start records the newest such run as the bound-run= line, the
 # sentinel carries that run's guard-exit and verdict=no-verdict, the log names
 # it, and the wall time is zero. The caller takes the route a no-verdict run
-# takes, the scoped suites.
+# takes, dev-implement.md section 5's no-verdict route.
 # An earlier full or range run that passed answers this run the same way when
 # it ran the same command text, handed the same class, docs verdict, base and
 # finding prefix, over the tree this run would validate, its tree= line, and
@@ -357,7 +357,8 @@
 # verdict=no-verdict cause=host and never supplies a timeout reuse proof.
 # A run the bound ended records verdict=no-verdict for timeout's own 124 or
 # 137, with no own-exit marker. A command returning 124 or 137 itself fails.
-# Both no-verdict causes take dev-implement.md section 5's scoped-suite route.
+# Both no-verdict causes take dev-implement.md section 5's no-verdict route;
+# validate_note names the host cause or timeout.
 #
 # state=lost is the detached child gone with no verdict recorded: a host or
 # low-memory kill, an agent warden's reap
