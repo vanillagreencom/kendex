@@ -19,7 +19,7 @@ source "$TEST_DIR/lib/assertions.sh"
 # The clock every case reads: `date -u +%s` answers the case's now file, else
 # NOW; every other call is the host's date.
 NOW=1790000000
-OWNER_ROWS=$'\n*Landed*\n- Nothing\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing'
+OWNER_ROWS=$'\n```\nCompleted\n```\n- Nothing\n\n```\nIn progress\n```\n- Nothing\n\n```\nBlocked\n```\n- Nothing\n\n```\nWaiting on you\n```\n- Nothing'
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/date" <<EOF
 #!/usr/bin/env bash
@@ -243,6 +243,10 @@ run() {
   local envs=()
   while [[ "$1" != -- ]]; do envs+=("$1"); shift; done
   shift
+  if [[ -n "${REPORT_UNDER_TEST:-}" ]]; then
+    local communication="${REPORT_UNDER_TEST%/scripts/*}/../communication"
+    [[ -e "$communication" ]] || ln -s "$TEST_DIR/../../communication" "$communication"
+  fi
   RC=0
   OUT="$(cd "$CASE" && env -u ORCH_REPORT -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES \
     -u ORCH_REPORT_UPCOMING -u ORCH_REPORT_COLUMNS -u ORCH_REPORT_SUMMARY_LINES -u ORCH_REPORT_QUIET_HOURS -u ORCH_OWNER_TIME_ZONE \

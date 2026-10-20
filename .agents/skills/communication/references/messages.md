@@ -83,6 +83,29 @@ Write times in the person's time zone with am or pm. Do not use a `Z` stamp.
 - Report changed rules, guidance or directives after their commit is pushed. Name each changed file once as `repo/folder/file.md`, linked to `https://github.com/OWNER/REPO/blob/COMMIT/path#heading` at that commit.
 - Beside a file, including a Slack file comment, use Slack mrkdwn: `*Label*` for bold, `<URL|LABEL>` for a link and plain lines for a list. The other markup rules still hold.
 
+## Slack messages
+
+For ordinary messages with sections, put each header on a bold line. Start bullet labels in bold, never italic. Give every issue id visible square brackets, bold and its tracker link, including in notices, answers, asks and reports. Use inline code for code, commands and filenames. Progress reports keep the full code-block headers in the [summary template](reports.md#summary-template).
+
+Standard Markdown:
+
+```markdown
+**Installed plugins**
+
+- **Tailscale plugin:** The plugin is installed.
+- **[\[KEN-123\]](https://linear.app/vanillagreen/issue/KEN-123)** records the change to `kendex.toml`.
+```
+
+File-comment mrkdwn:
+
+```text
+*Installed plugins*
+- *Tailscale plugin:* The plugin is installed.
+- *<https://linear.app/vanillagreen/issue/KEN-123|[KEN-123]>* records the change to `kendex.toml`.
+```
+
+Slack supports underline in structured `rich_text` text styles. The current post and relay routes send `markdown_text` or `mrkdwn` text, whose supported formats have no underline syntax. Use bold headers on this route; add no Unicode imitation. See Slack's [text element styles](https://docs.slack.dev/reference/block-kit/block-elements/text-element/), [Markdown block formats](https://docs.slack.dev/reference/block-kit/blocks/markdown-block/) and [mrkdwn styles](https://docs.slack.dev/messaging/formatting-message-text/#basic-visual-styles).
+
 ## Corrections
 
 Own a mistake in one line, with its repair.

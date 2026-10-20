@@ -39,7 +39,7 @@ message() { # KEY VALUE [CAUSE]
   {
     printf 'oversee-report: %s=%s\n' "$1" "$2"
     case "$1" in
-      args) echo "oversee-report takes due, render or write, then --state PATH and one --repo OWNER/REPO or more; write also takes --summary-file PATH and --succession. See --help." ;;
+      args) echo "oversee-report takes due, render, write or check-summary; fleet verbs take --state PATH and one --repo OWNER/REPO or more; write also takes --summary-file PATH and --succession. See --help." ;;
       state) echo "The fleet state file could not be read as workflow-state JSON, so no report is judged or rendered from a partial fleet." ;;
       setting) echo "The setting holds a value it does not take. oversee-report --help lists the values." ;;
       setting-read) echo "orch-env could not read the setting, so which repositories the report reads is unknown. Its own words are below." ;;
@@ -83,6 +83,7 @@ Usage: oversee-report due    --state PATH --repo OWNER/REPO [--repo ...]
        oversee-report render --state PATH --repo OWNER/REPO [--repo ...]
        oversee-report write  --state PATH --repo OWNER/REPO [--repo ...]
                              --summary-file PATH [--succession]
+       oversee-report check-summary --summary-file PATH
 
 The overseer's status report, in the rows
 references/communication-modes.md § Status report gives: Landed, Escapes,
@@ -149,13 +150,21 @@ write    prints the rows and writes the same bytes to the path
          Before rendering, writing or sending, write checks the summary in
          its posted mrkdwn form. Each finding prints one stderr line:
          oversee-report: summary-shape=RULE, with RULE bare-id, github-link,
-         waiting-on-you or layout. A matched line adds line=N. Each bullet
+         waiting-on-you, label, item-line or layout. A matched line adds line=N. Each bullet
          over 20 words adds words=W. A top-level bullet count above
          ORCH_REPORT_SUMMARY_LINES adds item-lines=N cap=CAP.
          These findings are advisory: write sends on the writer's word.
          Argument, setting and notice failures still refuse.
          Owner wording and the template live in
          ../communication/references/reports.md § Summary template.
+
+check-summary
+         checks only --summary-file, with the same findings as write. Needs
+         no fleet state, repository, tracker or delivery. Prints no report
+         and sends no notice. Findings remain advisory and exit 0; missing
+         or empty input and an invalid summary cap refuse. An unreadable or
+         incomplete communication template prints summary-shape=unavailable.
+         The installed template supplies the labels and opening item form.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, with a
@@ -306,7 +315,7 @@ EOF
 [[ $# -ge 1 ]] || refuse args none
 case "$1" in
   -h | --help) usage; exit 0 ;;
-  due | render | write) VERB="$1"; shift ;;
+  due | render | write | check-summary) VERB="$1"; shift ;;
   *) refuse args "$1" ;;
 esac
 STATE=""
@@ -327,11 +336,11 @@ while [[ $# -gt 0 ]]; do
 done
 if [[ -n "$SESSION_START" ]]; then
   [[ "$VERB" == due ]] || refuse args due-only-option
-else
+elif [[ "$VERB" != check-summary ]]; then
   [[ -n "$STATE" ]] || refuse args missing-state
   [[ ${#REPOS[@]} -gt 0 ]] || refuse args missing-repo
 fi
-if [[ "$VERB" == write ]]; then
+if [[ "$VERB" == write || "$VERB" == check-summary ]]; then
   [[ -n "$SUMMARY" ]] || refuse args missing-summary-file
 elif [[ -n "$SUMMARY" || "$SUCCESSION" -eq 1 ]]; then
   refuse args write-only-option
@@ -370,6 +379,108 @@ LANE_HOST="${OVERSEE_REPORT_LANE_HOST:-$SCRIPT_DIR/lane-host}"
 WORKFLOW_STATE="${OVERSEE_REPORT_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 # Relative to a clone's root on a lane's host, as workflow-state joins it.
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
+
+# The report writers share this check before any fleet read or delivery.
+if [[ "$VERB" == write || "$VERB" == check-summary ]]; then
+SUMMARY_LINES="${ORCH_REPORT_SUMMARY_LINES-20}"
+[[ "$SUMMARY_LINES" =~ ^[1-9][0-9]*$ ]] || refuse setting "ORCH_REPORT_SUMMARY_LINES:$SUMMARY_LINES"
+[[ -f "$SUMMARY" && -r "$SUMMARY" ]] || refuse summary "$SUMMARY"
+if ! SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print line[i] }' < "$SUMMARY")"; then
+  refuse summary "$SUMMARY"
+fi
+[[ -n "$SUMMARY_TEXT" ]] || refuse summary "$SUMMARY"
+# The installed example owns both the label spellings and the markup around
+# an item link. Findings advise the writer, including unavailable template
+# evidence, and never refuse the send. Hold them behind a later refusal key.
+TEMPLATE="$SCRIPT_DIR/../../communication/references/reports.md"
+if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
+  function finding(rule, detail) {
+    printf "oversee-report: summary-shape=%s%s\n", rule, detail
+  }
+  function label_text(line) {
+    sub(/^[[:space:]>-]+/, "", line)
+    sub(/^:[[:alnum:]_+-]+:[[:space:]]*/, "", line)
+    gsub(/[*_`]/, "", line)
+    sub(/:.*/, "", line)
+    sub(/[[:space:]]+$/, "", line)
+    return line
+  }
+  FNR == NR {
+    if ($0 == "````text") { example = 1; next }
+    if ($0 == "````") { example = 0; next }
+    if (!example) next
+    if ($0 == "```") { fenced = !fenced; next }
+    if (fenced) { sections[$0] = 1; last_section = $0; next }
+    if ($0 ~ /^> \*[^*]+:\*/ || $0 ~ /^- \*[^*<>]+:\*/) {
+      key = label_text($0)
+      match($0, /:\*/)
+      labels[key] = substr($0, 1, RSTART + 1)
+    }
+    if (!item_prefix && match($0, /<https?:\/\/[^<>|[:space:]]+\|\[[A-Z]+-[0-9]+\]>/)) {
+      item_prefix = substr($0, 1, RSTART - 1)
+      sub(/^[[:space:]]*-[[:space:]]+/, "", item_prefix)
+      item_suffix = substr($0, RSTART + RLENGTH, 1)
+    }
+    next
+  }
+  {
+    if (!item_prefix || !last_section) exit 3
+    line = FNR
+    text = $0
+    gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
+    if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
+        text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) finding("bare-id", " line=" line)
+    if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) finding("github-link", " line=" line)
+    key = label_text($0)
+    if (key ~ /^Waiting on you$/) waiting = 1
+    if ($0 == "```") { header = !header; fence_line = line; next }
+    if (header) {
+      # The final example header names its reporting session. Its suffix
+      # stays template-owned while the session name can change.
+      suffix = last_section
+      sub(/^[^ ]+ /, "", suffix)
+      session_header = length($0) > length(suffix) && substr($0, length($0) - length(suffix)) == " " suffix
+      if (!($0 in sections) && !session_header) finding("label", " line=" line)
+    } else if (key in sections || key in labels) {
+      if (!(key in labels) || index($0, labels[key]) != 1) finding("label", " line=" line)
+    } else if ($0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*[^*]+\*:?$/ || $0 ~ /^>?[[:space:]]*\*[^*<>]+:\*/ || $0 ~ /^```.+/) {
+      finding("label", " line=" line)
+    }
+    if ($0 ~ /^[[:space:]]*[-*][[:space:]]+/) {
+      if ($0 ~ /^[-*][[:space:]]+/) items++
+      item = $0
+      sub(/^[[:space:]]*[-*][[:space:]]+/, "", item)
+      rest = item
+      keys = 0
+      while (match(rest, /<https?:\/\/[^<>|[:space:]]+\|\[?[A-Z]+-[0-9]+\]?>/)) {
+        keys++
+        if (keys == 1) {
+          prefix = substr(rest, 1, RSTART - 1)
+          link = substr(rest, RSTART, RLENGTH)
+          after = substr(rest, RSTART + RLENGTH)
+        }
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      if (keys && (keys != 1 || prefix != item_prefix || substr(after, 1, length(item_suffix)) != item_suffix || link !~ /\|\[[A-Z]+-[0-9]+\]>/)) finding("item-line", " line=" line)
+      words = item
+      gsub(/<https?:\/\/[^<>|[:space:]]+\|/, "", words)
+      gsub(/>/, "", words)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", words)
+      count = split(words, fields, /[[:space:]]+/)
+      if (count > 20) finding("layout", " line=" line " words=" count)
+    }
+  }
+  END {
+    if (!item_prefix || !last_section) exit 3
+    if (header) finding("label", " line=" fence_line)
+    if (!waiting) finding("waiting-on-you", "")
+    if (items > cap) finding("layout", " item-lines=" items " cap=" cap)
+  }' "$TEMPLATE" - <<<"$SUMMARY_TEXT")"; then
+  SHAPE_FINDINGS="oversee-report: summary-shape=unavailable template=$TEMPLATE"
+fi
+[[ -z "$SHAPE_FINDINGS" ]] || printf '%s\n' "$SHAPE_FINDINGS" >&2
+[[ "$VERB" != check-summary ]] || exit 0
+fi
 
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
@@ -454,53 +565,6 @@ for column in ${column_list[@]+"${column_list[@]}"}; do
   COLUMNS+=("$column")
 done
 [[ ${#COLUMNS[@]} -gt 0 ]] || refuse setting "ORCH_REPORT_COLUMNS:$COLUMNS_SETTING"
-
-# Check the owner comment before progress-report-path creates its directory.
-if [[ "$VERB" == write ]]; then
-SUMMARY_LINES="${ORCH_REPORT_SUMMARY_LINES-20}"
-[[ "$SUMMARY_LINES" =~ ^[1-9][0-9]*$ ]] || refuse setting "ORCH_REPORT_SUMMARY_LINES:$SUMMARY_LINES"
-[[ -f "$SUMMARY" && -r "$SUMMARY" ]] || refuse summary "$SUMMARY"
-if ! SUMMARY_TEXT="$(awk '{ line[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print line[i] }' < "$SUMMARY")"; then
-  refuse summary "$SUMMARY"
-fi
-[[ -n "$SUMMARY_TEXT" ]] || refuse summary "$SUMMARY"
-# The writer owns Slack's upload comment. Findings advise the writer and
-# never refuse the send. Hold them with helper stderr so a later refusal
-# still names its cause first.
-if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
-  function finding(rule, detail) {
-    printf "oversee-report: summary-shape=%s%s\n", rule, detail
-  }
-  {
-    text = $0
-    gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
-    if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
-        text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) finding("bare-id", " line=" NR)
-    if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) finding("github-link", " line=" NR)
-    label = $0
-    gsub(/\*/, "", label)
-    sub(/^[[:space:]]+/, "", label)
-    sub(/^:[[:alnum:]_+-]+:[[:space:]]*/, "", label)
-    if (label ~ /^Waiting on you(:|[[:space:]]*$)/) waiting = 1
-    if ($0 ~ /^[[:space:]]*[-*][[:space:]]+/) {
-      if ($0 ~ /^[-*][[:space:]]+/) items++
-      words = $0
-      gsub(/<https?:\/\/[^<>|[:space:]]+\|/, "", words)
-      gsub(/>/, "", words)
-      sub(/^[[:space:]]*[-*][[:space:]]+/, "", words)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", words)
-      count = split(words, fields, /[[:space:]]+/)
-      if (count > 20) finding("layout", " line=" NR " words=" count)
-    }
-  }
-  END {
-    if (!waiting) finding("waiting-on-you", "")
-    if (items > cap) finding("layout", " item-lines=" items " cap=" cap)
-  }' <<<"$SUMMARY_TEXT")"; then
-  refuse summary "$SUMMARY"
-fi
-[[ -z "$SHAPE_FINDINGS" ]] || printf '%s\n' "$SHAPE_FINDINGS" >&2
-fi
 
 # --- fleet state and the last report -----------------------------------------
 

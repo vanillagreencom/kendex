@@ -1108,24 +1108,81 @@ summary_write() { # CASE_SUFFIX
     "written|$file" "summary $name writes, prints and sends the report once" "$CASE/err"
   assert_eq "$(cat "$CASE/notice.txt" 2>/dev/null || true)" "$(cat "$CASE/summary.txt")" \
     "summary $name reaches the notice unchanged" "$CASE/err"
+  run ${envs[@]+"${envs[@]}"} -- check-summary --summary-file "$CASE/summary.txt"
+  assert_eq "$RC|$OUT|$(awk '/^oversee-report: summary-shape=/ {print}' "$CASE/err")" "0||$want" \
+    "summary $name check-only has the same findings and no report" "$CASE/err"
+  assert_eq "$(wc -l < "$CASE/events.jsonl" | tr -d ' ')" 1 "summary $name check-only sends no second notice"
+
 }
 while IFS='~' read -r name mode setting want; do
   rows="$OWNER_ROWS"
   lead='Work continues.'
   case "$mode" in
     normal) ;;
-    tiered|emoji)
-      lead='*Overall:* The work helps people read their reports. They can find completed work, current problems and the choices that need their answer.'
-      rows=$'\n*What\x27s going well:* Reports reach the owner.\n\n*What\x27s not going well:* Some reports need clearer detail.\n\n----\n\n*Readings:*\n- Reports arrive on time.\n  - Today: all reports (<https://linear.app/vanillagreen/issue/KEN-42|KEN-42>).\n    - The morning report includes overnight work.\n  _Additional information: The owner can read every report._\n\n*Completed:*\n- Clearer reports (<https://linear.app/vanillagreen/issue/KEN-43|KEN-43>).\n\n*In-Progress:*\n- The next report is being written.\n\n*Blocked:*\n- One report needs its source.\n\n----\n\n*Waiting on you:*\n- Choose the report time.\n  _Additional information: The morning report needs this choice._\n\n*Headroom Remaining:*\nClaude: 40% (2 accounts)\nCodex: 27% (3 accounts)\n\n*Overseer Self-Analysis:*\n- Good: I read the reports before sending.\n- Bad: I sent one report late.\n  _I changed the reminder._\n\n----\n\n_Next report: 8 am_'
-      if [[ "$mode" == emoji ]]; then
-        rows="${rows//\*Readings:/:book: *Readings:}"
-        rows="${rows//\*Completed:/:large_green_square: *Completed:}"
-        rows="${rows//\*In-Progress:/:large_yellow_square: *In-Progress:}"
-        rows="${rows//\*Blocked:/:large_red_square: *Blocked:}"
-        rows="${rows//\*Waiting on you:/:clock1: *Waiting on you:}"
-        rows="${rows//\*Headroom Remaining:/:moneybag: *Headroom Remaining:}"
-        rows="${rows//\*Overseer Self-Analysis:/:robot_face: *Overseer Self-Analysis:}"
-      fi ;;
+    tiered)
+      lead='> *Overall:* Work reaches people within the day.'
+      rows="$(cat <<'REPORT'
+>
+> *What's going well:* Reports reach the owner.
+>
+> *What's not going well:* Two reports arrived late.
+
+```
+Readings
+```
+
+- Reports arrive on time.
+  - *<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]>* _(17 h)_
+    - _The morning report includes overnight work._
+
+_The owner can read every report._
+
+```
+Completed
+```
+
+- *<https://linear.app/vanillagreen/issue/KEN-43|[KEN-43]>* Clearer reports
+
+```
+In progress
+```
+
+- The next report is being written.
+
+```
+Blocked
+```
+
+- One report needs its source.
+
+```
+Waiting on you
+```
+
+- Choose the report time.
+
+_The morning report needs this choice._
+
+```
+Headroom remaining
+```
+
+- *Claude:* 40% _(2 accounts)_
+- *Codex:* 27% _(3 accounts)_
+- *Copilot:* 9% _(1 account)_
+
+```
+Overseer self-analysis
+```
+
+- *Good:* I read the reports before sending.
+- *Bad:* I sent one report late.
+
+_I changed the reminder._
+
+`Next report: 8 am`
+REPORT
+)" ;;
     sub-words|sub-id)
       item='KEN-42'
       if [[ "$mode" == sub-words ]]; then
@@ -1137,21 +1194,28 @@ while IFS='~' read -r name mode setting want; do
     markdown-id) lead='[KEN-42](https://linear.app/vanillagreen/issue/KEN-42) is ready.' ;;
     github-link) lead='See <https://github.com/owner/repo/pull/42|the change>.' ;;
     commit-link) lead='See https://github.com/owner/repo/commit/abcdef.' ;;
-    missing) rows=$'\n*Landed*\n- Nothing\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing' ;;
-    spacing) rows=$'\n*Landed*\n- Nothing\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing' ;;
+    missing) rows="${rows%$'\n\n```\nWaiting on you'*}" ;;
+    spacing) rows="${rows//$'\n\n```'/$'\n```'}" ;;
+    key-last) rows="${rows/- Nothing/- Outcome (*<https:\/\/linear.app\/vanillagreen\/issue\/KEN-42|[KEN-42]>*)}" ;;
+    two-keys) rows="${rows/- Nothing/- *<https:\/\/linear.app\/vanillagreen\/issue\/KEN-42|[KEN-42]>* waits on *<https:\/\/linear.app\/vanillagreen\/issue\/KEN-43|[KEN-43]>*}" ;;
+    header) rows="${rows/Completed/Finished}" ;;
+    inline-header) rows="${rows/$'```\nCompleted\n```'/'```Completed```'}" ;;
+    unclosed-header) rows+=$'\n```\nCompleted' ;;
+    opening) lead='*Overall:* Work continues.' ;;
+    bullet-label) rows+=$'\n- Good: Read the report.' ;;
     words20|words21|links20|all)
       item=""
       for ((n=0; n<18; n++)); do item+="word "; done
       case "$mode" in
         words20) item+="word word" ;;
         words21|all) item+="word word word" ;;
-        links20) item+="<https://linear.app/vanillagreen/issue/KEN-42|KEN-42> <https://linear.app/vanillagreen/issue/KEN-43|KEN-43>" ;;
+        links20) item+="<https://example.com/reading|Source> <https://example.com/reading2|Source>" ;;
       esac
       if [[ "$mode" == all ]]; then
         lead='KEN-42: https://github.com/owner/repo/pull/42'
-        rows=$'\n*Landed*\n- '"$item"$'\n- '"$item"$'\n- KEN-43: https://github.com/owner/repo/commit/abcdef'
+        rows=$'\n```\nCompleted\n```\n- '"$item"$'\n- '"$item"$'\n- KEN-43: https://github.com/owner/repo/commit/abcdef'
       else
-        rows=$'\n*Landed*\n- '"$item"$'\n\n*Running*\n- Nothing\n\n*Blocked*\n- Nothing\n\n*Waiting on you*\n- Nothing'
+        rows="${rows/- Nothing/- $item}"
       fi ;;
     cap20|cap21)
       extra=16
@@ -1164,6 +1228,25 @@ while IFS='~' read -r name mode setting want; do
   envs=()
   [[ -z "$setting" ]] || envs+=("$setting")
   summary_write shipped
+  case "$name" in
+    key-last|two-keys|header|opening)
+      mutant="$(mutant_scripts "shape-original-$name/orch" oversee-report)/oversee-report" || exit 1
+      ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "${mutant%/orch/scripts/*}/github"
+      case "$name" in
+        key-last|two-keys)
+          mutate_file "$mutant" 'if (keys && (keys != 1' 'if (0 && keys && (keys != 1' ;;
+        header)
+          mutate_file "$mutant" 'if (!($0 in sections) && !session_header)' 'if (0 && !($0 in sections) && !session_header)' ;;
+        opening)
+          mutate_file "$mutant" 'if (!(key in labels) || index($0, labels[key]) != 1)' 'if (0 && (!(key in labels) || index($0, labels[key]) != 1))' ;;
+      esac
+      if (FAIL=0; REPORT_UNDER_TEST="$mutant" summary_write disabled; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/shape-original-$name.out"; then
+        fail "disabled checker passed the changed $name row"
+      else
+        assert_file_contains "$TMP_ROOT/shape-original-$name.out" "  FAIL  summary $name sends and prints each keyed finding" \
+          "the $name row rejects removed production behavior"
+      fi ;;
+  esac
   if [[ "$name" == tiered-summary ]]; then
     mutant="$(mutant_scripts shape-nested-cap/orch oversee-report)/oversee-report" || exit 1
     ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/shape-nested-cap/github"
@@ -1173,7 +1256,7 @@ while IFS='~' read -r name mode setting want; do
     else
       assert_file_contains "$TMP_ROOT/shape-nested-cap.out" '  FAIL  summary tiered-summary sends and prints each keyed finding' \
         "summary coverage rejects counting nested bullets"
-      assert_file_contains "$TMP_ROOT/shape-nested-cap.out" 'oversee-report: summary-shape=layout item-lines=9 cap=7' \
+      assert_file_contains "$TMP_ROOT/shape-nested-cap.out" 'oversee-report: summary-shape=layout item-lines=12 cap=10' \
         "nested bullet control reaches the configured cap"
     fi
   fi
@@ -1207,20 +1290,51 @@ github-link~github-link~~oversee-report: summary-shape=github-link line=1
 commit-link~commit-link~~oversee-report: summary-shape=github-link line=1
 waiting-on-you~missing~~oversee-report: summary-shape=waiting-on-you
 conforming~normal~~
-tiered-summary~tiered~ORCH_REPORT_SUMMARY_LINES=7~
-emoji-labels~emoji~~
-sub-bullet-words~sub-words~~oversee-report: summary-shape=layout line=14 words=21
-sub-bullet-id~sub-id~~oversee-report: summary-shape=bare-id line=14
+key-last~key-last~~oversee-report: summary-shape=item-line line=6
+two-keys~two-keys~~oversee-report: summary-shape=item-line line=6
+header~header~~oversee-report: summary-shape=label line=4
+inline-header~inline-header~~oversee-report: summary-shape=label line=3
+unclosed-header~unclosed-header~~oversee-report: summary-shape=label line=22
+opening~opening~~oversee-report: summary-shape=label line=1
+bullet-label~bullet-label~~oversee-report: summary-shape=label line=22
+tiered-summary~tiered~ORCH_REPORT_SUMMARY_LINES=10~
+sub-bullet-words~sub-words~~oversee-report: summary-shape=layout line=22 words=21
+sub-bullet-id~sub-id~~oversee-report: summary-shape=bare-id line=22
 label-spacing~spacing~~
-words~words21~~oversee-report: summary-shape=layout line=4 words=21
+words~words21~~oversee-report: summary-shape=layout line=6 words=21
 word-boundary~words20~~
 two-links~links20~~
 line-cap~cap21~~oversee-report: summary-shape=layout item-lines=21 cap=20
 at-cap~cap20~~
 custom-cap~normal~ORCH_REPORT_SUMMARY_LINES=3~oversee-report: summary-shape=layout item-lines=4 cap=3
 figures~figures~ORCH_REPORT_SUMMARY_LINES=4~
-all-findings~all~ORCH_REPORT_SUMMARY_LINES=2~oversee-report: summary-shape=bare-id line=1;oversee-report: summary-shape=github-link line=1;oversee-report: summary-shape=layout line=4 words=21;oversee-report: summary-shape=layout line=5 words=21;oversee-report: summary-shape=bare-id line=6;oversee-report: summary-shape=github-link line=6;oversee-report: summary-shape=waiting-on-you;oversee-report: summary-shape=layout item-lines=3 cap=2
+all-findings~all~ORCH_REPORT_SUMMARY_LINES=2~oversee-report: summary-shape=bare-id line=1;oversee-report: summary-shape=github-link line=1;oversee-report: summary-shape=layout line=6 words=21;oversee-report: summary-shape=layout line=7 words=21;oversee-report: summary-shape=bare-id line=8;oversee-report: summary-shape=github-link line=8;oversee-report: summary-shape=waiting-on-you;oversee-report: summary-shape=layout item-lines=3 cap=2
 ROWS
+# A changed installed template is the authority, not a checker label list.
+template_labels() {
+  mutant="$(mutant_scripts "shape-template-$1/orch" oversee-report)/oversee-report" || exit 1
+  local sibling="${mutant%/orch/scripts/*}"
+  ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$sibling/github"
+  mkdir -p "$sibling/communication/references"
+  cp "$TEST_DIR/../../communication/references/reports.md" "$sibling/communication/references/reports.md"
+  mutate_file "$sibling/communication/references/reports.md" $'\nCompleted\n' $'\nFinished\n'
+  if [[ "$1" == fixed ]]; then
+    mutate_file "$mutant" 'TEMPLATE="$SCRIPT_DIR/../../communication/references/reports.md"' \
+      "TEMPLATE=\"$TEST_DIR/../../communication/references/reports.md\""
+  fi
+  name="template-$1"; lead='Work continues.'; envs=()
+  rows="${OWNER_ROWS/Completed/Finished}"; want=''
+  REPORT_UNDER_TEST="$mutant" summary_write renamed
+  rows="$OWNER_ROWS"; want='oversee-report: summary-shape=label line=4'
+  REPORT_UNDER_TEST="$mutant" summary_write stale
+}
+template_labels shipped
+if (FAIL=0; template_labels fixed; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/shape-template.out"; then
+  fail 'checker ignoring its installed template passed the rename control'
+else
+  assert_file_contains "$TMP_ROOT/shape-template.out" '  FAIL  summary template-fixed sends and prints each keyed finding' \
+    'the template rename row rejects ignoring the installed template'
+fi
 for cap in '' 0 -1 text; do
   run "ORCH_REPORT_SUMMARY_LINES=$cap" -- write --state "$CASE/state.json" --repo owner/repo --summary-file "$CASE/summary.txt"
   assert_eq "$RC|$(first_err)" "2|oversee-report: setting=ORCH_REPORT_SUMMARY_LINES:$cap" "an invalid summary cap refuses"
