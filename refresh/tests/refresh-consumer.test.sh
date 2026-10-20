@@ -162,8 +162,14 @@ case "$*" in
     elif [ -f "$TEST_STATE/push-refused" ]; then
       [ "${TEST_PUSH_QUERY:-pass}" != fail ] || exit 87
       state="$TEST_STATE/push-state.json"
+    elif [ -f "$TEST_STATE/refreshed" ]; then
+      state="$TEST_STATE/start-state.json"
+      if [ -f "$TEST_STATE/prepush-state.json" ]; then state="$TEST_STATE/prepush-state.json"; fi
+      if [ -f "$TEST_STATE/disarm-attempted" ] && [ -f "$TEST_STATE/disarm-state.json" ]; then
+        state="$TEST_STATE/disarm-state.json"
+      fi
+      [ ! -f "$TEST_STATE/prepush-query-failed" ] || exit 87
     else
-      [ ! -f "$TEST_STATE/refreshed" ] || exit 89
       [ "${TEST_START_QUERY:-pass}" != fail ] || exit 87
       state="$TEST_STATE/start-state.json"
     fi
@@ -215,6 +221,7 @@ case "$*" in
         jq -cn --arg state "$arm_state" --arg head "$head" --argjson queued "$queued" --argjson armed "$armed" \
           '{data:{repository:{ref:{target:{oid:$head}},pullRequest:{state:$state,isInMergeQueue:$queued,autoMergeRequest:(if $armed then {enabledAt:"2026-10-07T03:00:00Z"} else null end)}}}}' >"$TEST_STATE/arm-state.json" ;;
       *' --disable-auto '*)
+        : >"$TEST_STATE/disarm-attempted"
         [ "${TEST_DISARM_MODE:-pass}" != refused ] || { printf 'GraphQL: disarm refused\n' >&2; exit 1; }
         rm -f -- "$TEST_STATE/armed" ;;
       *)
@@ -530,6 +537,8 @@ runner="$lock_saved_runner"
 : >"$TMP/state/pr"
 : >"$TMP/state/calls"
 : >"$TMP/state/creates"
+
+run_admission_rows
 
 # The same assertions reject the runner on the implementation's main base.
 run_project_rows
@@ -1017,7 +1026,7 @@ for mutation in body summary failure; do
       file_edit "$repo" refresh/refresh-consumer.sh 1 '^printf -v body ' \
         's/"\$version_report"/""/' ;;
     summary)
-      file_edit "$repo" refresh/refresh-consumer.sh 1 '^  printf .*GITHUB_STEP_SUMMARY' \
+      file_edit "$repo" refresh/refresh-consumer.sh 1 '^  printf .*"\$version_report" >>"\$\{GITHUB_STEP_SUMMARY:' \
         's/"\$version_report"/""/' ;;
     failure)
       file_edit "$repo" refresh/refresh-consumer.sh 1 '^if ! engine_version=' \
@@ -1454,14 +1463,13 @@ cp "$TMP/apply-runner" "$runner"
 rm -f -- "${repo:?}/.claude/hooks/leftover.sh"
 commit "$repo"
 git -C "$repo" push -q origin main
-# The body must update with the current class, including when the rolling
-# tree is unchanged. Every class arms the head it published; each row starts
+# Every changed publication updates the body with the current class and arms
+# the head it published; each row starts
 # unarmed, so an arm a previous row left cannot answer for it.
 for row in \
   'standard|open|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
   'render|update|cause=renders-match-their-sources' \
   'standard|update|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
-  'standard|unchanged|cause=excluded-path path=.agents/skills/commit-guards/scripts/install-git-hooks glob=*skills/commit-guards/scripts/*' \
   'trivial|update|cause=documentation-paths lines=8' \
   'micro|update|cause=production-within-micro production=8' \
   'small|update|cause=production-within-small subsystem=skills' \
@@ -1473,11 +1481,9 @@ for row in \
     : >"$TMP/state/pr"
     method=POST
   fi
-  [ "$mode" != unchanged ] || state=unchanged
   : >"$TMP/state/calls"
   reset_default
-  # The unchanged row deliberately repeats the preceding content.
-  [ "$mode" = unchanged ] || content="class-$class"
+  content="class-$class"
   run_refresh "$content" pass "$class"
   if refresh_class_matches "$class" "$state" "$CLASS_REASON" "$method"; then
     ok "$class $mode publishes its class and cause and arms its head"
@@ -1793,8 +1799,11 @@ for row in \
     missing-field) jq 'del(.data.repository.pullRequest.isInMergeQueue)' "$TMP/state/push-state.json" >"$TMP/partial"; mv "$TMP/partial" "$TMP/state/push-state.json" ;;
     malformed-response) printf 'not-json\n' >"$TMP/state/push-state.json" ;;
   esac
-  starts=1
-  [ -s "$TMP/state/pr" ] || starts=0
+  starts=2
+  if [ ! -s "$TMP/state/pr" ]; then
+    starts=1
+    [ "$name" != new-branch-failure ] || starts=0
+  fi
   : >"$TMP/state/calls"
   run_refresh "push-$name" pass render
   if refresh_push_matches "$expected" "$reason" "$starts"; then ok "$name post-refusal state"; else bad "$name post-refusal state" "$OUT"; fi
@@ -1832,6 +1841,11 @@ mutations = {
     'refusal-armed': ('        case "$reason" in active | armed) reason=queued ;; esac ;;', '        case "$reason" in active) reason=queued ;; esac ;;'),
 }
 old, new = mutations[sys.argv[2]]
+if sys.argv[2] in ('defer', 'fail-open', 'armed-defer'):
+    # Bind this mutation to the push-refusal branch, not its pre-push read.
+    suffix = "\n        printf 'refresh-state=deferred reason=%s\\n' \"$reason\"\n        exit 0 ;;\n    esac\n    printf 'refresh-error=push"
+    old += suffix
+    new += suffix
 assert s.count(old) == 1
 if sys.argv[2] == 'queue-field':
     # Retain the selection outside the query argument, not in its payload.
@@ -1901,9 +1915,9 @@ import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 old, new = {
-    'no-defer': ('    queued | merged | closed)\n      printf', '    no-start-defer)\n      printf'),
-    'no-disarm': ('  if [ "$reason" = armed ] && ! gh pr merge', '  if false && ! gh pr merge'),
-    'disarm-open': ('" >&2\n        exit 1 ;;\n    esac\n  fi', '" >&2 ;;\n    esac\n  fi'),
+    'no-defer': ('    queued | merged | closed | branch-gone)\n      printf', '    no-start-defer)\n      printf'),
+    'no-disarm': ('    if [ "$reason" = armed ] && ! gh pr merge', '    if false && ! gh pr merge'),
+    'disarm-open': ('" >&2\n          exit 1 ;;\n      esac\n    fi', '" >&2 ;;\n      esac\n    fi'),
 }[sys.argv[2]]
 assert s.count(old) == 1
 changed = s.replace(old, new) + '\n# ' + old.split('\n')[0] + '\n'
