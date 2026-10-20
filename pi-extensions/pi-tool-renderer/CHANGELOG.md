@@ -5,6 +5,7 @@
 ### Unreleased
 
 - With the compact renderers on, the system prompt lists `read`, `bash`, `grep`, `find` and `ls` under Available tools again and keeps Pi's guidelines for them, such as using `read` instead of `cat`. With `renderMutationTools` on, `edit` and `write` keep their entries and guidelines too.
+- The renderer loads beside another extension that registers `read`, `grep` or another tool it replaces, such as pi-hashline-edit-pro. Before, Pi refused to load the renderer. Now that extension keeps its tool and draws it, and the renderer replaces only the tools no other extension registers. Its tools register when the session starts.
 
 ### 2.0.10
 

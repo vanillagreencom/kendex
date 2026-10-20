@@ -50,14 +50,29 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	installCustomMessageSpacingPatch(pi, (agent as any).CustomMessageComponent);
 	installSkillInvocationRenderer(pi, (agent as any).SkillInvocationMessageComponent);
 	const cwd = process.cwd();
-	registerRead(pi, agent, cwd);
-	registerBash(pi, agent, cwd);
-	if (settingBoolean("renderMutationTools", false, cwd)) {
-		registerEdit(pi, agent, cwd);
-		registerWrite(pi, agent, cwd);
-	}
-	registerReadOnly(pi, agent, cwd, "grep");
-	registerReadOnly(pi, agent, cwd, "find");
-	registerReadOnly(pi, agent, cwd, "ls");
-	if (settingBoolean("registerBatchTool", true, cwd)) registerToolBatch(pi, cwd);
+	const renderMutationTools = settingBoolean("renderMutationTools", false, cwd);
+	const registerBatchTool = settingBoolean("registerBatchTool", true, cwd);
+	// Pi refuses a whole extension when another one registered a tool of the same name at load, so the
+	// replacements register at session_start and leave a name another extension owns to that extension.
+	// A later session_start on this API finds this extension's own tools listed and registers none again.
+	pi.on("session_start", () => {
+		const taken = new Set(pi.getAllTools().filter((tool) => tool.sourceInfo.source !== "builtin").map((tool) => tool.name));
+		const added: string[] = [];
+		const register = (name: string, add: () => void) => {
+			if (taken.has(name)) return;
+			add();
+			added.push(name);
+		};
+		register("read", () => registerRead(pi, agent, cwd));
+		register("bash", () => registerBash(pi, agent, cwd));
+		if (renderMutationTools) {
+			register("edit", () => registerEdit(pi, agent, cwd));
+			register("write", () => registerWrite(pi, agent, cwd));
+		}
+		for (const name of ["grep", "find", "ls"] as const) register(name, () => registerReadOnly(pi, agent, cwd, name));
+		if (registerBatchTool) register("tool_batch", () => registerToolBatch(pi, cwd));
+		// Pi activates every tool an extension registers at load; one registered later in place of a
+		// built-in keeps the built-in's inactive state, which would drop grep, find and ls.
+		if (added.length > 0) pi.setActiveTools([...new Set([...pi.getActiveTools(), ...added])]);
+	});
 }
