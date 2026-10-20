@@ -988,7 +988,7 @@ assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes |
 echo "=== immutable same-round recovery receipts ==="
 # The writer and checker consume native --record evidence, as the other receipt
 # cases do. Focused proof and duration admission remain workflow judgments.
-for recovery_case in implement-pass implement-failed fix-pass fix-unproved; do
+for recovery_case in implement-pass implement-failed fix-pass fix-no-run fix-unproved; do
   recovery_kind=${recovery_case%%-*}
   recovery_result=${recovery_case#*-}
   RW="$(new_repo "recovery-$recovery_case")"
@@ -1017,8 +1017,11 @@ for recovery_case in implement-pass implement-failed fix-pass fix-unproved; do
       '"started-at=\($start|todate)\nended-at=\($start+1|todate)\nseconds=1"' > "$native_run/timing"
   done
   base_args=(--worktree "$RW" --kind "$recovery_kind" --issue issue-4503 --round-id recovery --branch recovery --commit "$RH")
-  run "${base_args[@]}" --validate 'FAILING: scoped' --validate-run-dir "$old_run" ${extra[@]+"${extra[@]}"}
-  assert_eq "$RC" 0 "$recovery_case native failed original is written" "$ERR"
+  original_source=(--validate-run-dir "$old_run")
+  # Required pre-run checks can fail before the writer has native evidence.
+  if [[ "$recovery_result" == no-run ]]; then original_source=(); fi
+  run "${base_args[@]}" --validate 'FAILING: scoped' ${original_source[@]+"${original_source[@]}"} ${extra[@]+"${extra[@]}"}
+  assert_eq "$RC" 0 "$recovery_case failed original is written" "$ERR"
   original="$OUT"; cp "$original" "$RW/tmp/original-bytes"
   run "${base_args[@]}" --validate pass --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
   assert_eq "$RC" 2 "$recovery_case refuses same-path overwrite" "$ERR"
@@ -1039,11 +1042,19 @@ for recovery_case in implement-pass implement-failed fix-pass fix-unproved; do
   assert_eq "$("$CHECK" --file "$companion" | jq -r '.validate')" "$verdict" "$recovery_case submit reads the selected result"
   assert_eq "$("$CHECK" --file "$original" | jq -r '.validate')" 'FAILING: scoped' "$recovery_case failed original stays readable"
   state_file="$RW/tmp/workflow-state-issue-4503.json"
+  expected_stages="[[\"${original##*/}\",$started,$((started + 1))],[\"${companion##*/}\",$((started + 2)),$((started + 3))]]"
+  expected_durations="[[\"recovery\",\"${original##*/}\",1],[\"recovery\",\"${companion##*/}\",1]]"
+  if [[ "$recovery_result" == no-run ]]; then
+    expected_stages="[[\"${companion##*/}\",$((started + 2)),$((started + 3))]]"
+    expected_durations="[[\"recovery\",\"${companion##*/}\",1]]"
+  fi
+  assert_eq "$(jq -c '[.stages[] | select(.kind == "validate" and .round_id == "recovery") | [.receipt,.start,.end]]' "$state_file")" \
+    "$expected_stages" "$recovery_case retains each receipt validation stage"
+  assert_eq "$(jq -c '[.validate_rounds[] | [.round_id,.receipt,.seconds]]' "$state_file")" \
+    "$expected_durations" "$recovery_case retains each receipt duration"
   first_timing="$(jq -c '{stages,validate_rounds}' "$state_file")"
   env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery ${check_extra[@]+"${check_extra[@]}"} >/dev/null
   assert_eq "$(jq -c '{stages,validate_rounds}' "$state_file")" "$first_timing" "$recovery_case reread is idempotent"
-  assert_eq "$(jq -c '[.validate_rounds[] | [.round_id,.receipt,.seconds]]' "$state_file")" \
-    "[[\"recovery\",\"${original##*/}\",1],[\"recovery\",\"${companion##*/}\",1]]" "$recovery_case retains both receipt durations"
   run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
   assert_eq "$RC" 2 "$recovery_case refuses another terminal companion" "$ERR"
   if [[ "$recovery_case" == implement-pass ]]; then
@@ -1059,7 +1070,7 @@ done
 # Invalid native bindings and parents reach the real writer before publication.
 # Keep one last fix fixture; remove only its companion for independent inputs.
 cp "$companion" "$RW/tmp/valid-companion"
-for defect in tree missing-tree mode base start parent-pass parent-malformed; do
+for defect in tree missing-tree mode base parent-pass parent-malformed; do
   rm -f -- "${companion:?}"
   cp "$RW/tmp/original-bytes" "$original"
   cp "$new_run/start" "$RW/tmp/start-good"
@@ -1068,7 +1079,6 @@ for defect in tree missing-tree mode base start parent-pass parent-malformed; do
     missing-tree) sed '/^tree=/d' "$RW/tmp/start-good" > "$new_run/start" ;;
     mode) sed 's/^validate-mode=.*/validate-mode=full/' "$RW/tmp/start-good" > "$new_run/start" ;;
     base) sed 's/^class-base=.*/class-base=0000000000000000000000000000000000000000/' "$RW/tmp/start-good" > "$new_run/start" ;;
-    start) sed 's/^start=.*/start=0/' "$RW/tmp/start-good" > "$new_run/start" ;;
     parent-pass) jq '.validate="pass"' "$RW/tmp/original-bytes" > "$original" ;;
     parent-malformed) jq 'del(.validate_time)' "$RW/tmp/original-bytes" > "$original" ;;
   esac

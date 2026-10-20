@@ -969,9 +969,11 @@ if [[ "$recovery" == true ]]; then
     [[ "$run_head" == "$commit" ]] || die recovery-invalid "path=$parent"
   fi
   jq -e --arg mode "$validate_mode" --arg base "$validate_class_base" --argjson start "$run_start" '
-    (.validate_mode == null or .validate_mode == $mode)
-    and ((.validate_class_base // "") == $base)
-    and (.validate_time == null or (.validate_time.ended_at | fromdateiso8601) <= $start)
+    if .validate_mode == null then true else
+      .validate_mode == $mode
+      and ((.validate_class_base // "") == $base)
+      and (.validate_time == null or (.validate_time.ended_at | fromdateiso8601) <= $start)
+    end
   ' "$parent" >/dev/null 2>&1 || die recovery-invalid "path=$parent"
 fi
 if [[ -L "$out" || ( -e "$out" && "$recovery" == true ) ]] \
