@@ -19,6 +19,14 @@ control_expect 'list of a missing issue: names the issue'
 control_replace scripts/commands/attachments.sh 1 \
     "    if ! jq -e '.issue.id | strings | select(length > 0)' <<<\"\$result\" >/dev/null; then" \
     '    if false; then'
+# A URL in a Markdown label consumes the destination as part of that URL.
+control_expect 'description|ordinary: URL label lists only the canonical record with metadata'
+control_expect 'description|angle: URL label lists only the canonical record with metadata'
+control_expect 'comment|ordinary: URL label lists only the canonical record with metadata'
+control_expect 'comment|angle: URL label lists only the canonical record with metadata'
+control_replace scripts/commands/attachments.sh 1 \
+    '            [($text // "") | capture("(?<destination>\\[[^\\]]*\\]\\(<?)?(?<url>https://uploads\\.linear\\.app/[^[:space:])>\"]+)"; "g")' \
+    '            [($text // "") | capture("(?<destination>\\]\\(<?)?(?<url>https://uploads\\.linear\\.app/[^[:space:])>\"]+)"; "g")'
 # A bare link keeps the punctuation of the sentence it ends.
 control_expect 'list: a bare link drops trailing prose punctuation'
 control_replace scripts/commands/attachments.sh 1 \

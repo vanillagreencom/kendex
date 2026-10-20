@@ -61,6 +61,16 @@ prose='Plan https://uploads.linear.app/o/t/a.txt. Then https://uploads.linear.ap
 comments=$(conn "$(jq -cn --arg prose "$prose" '[{id: "c1", body: "log at https://uploads.linear.app/o/q/run.log?x=1"}, {id: "c2", body: $prose}]
     | map(. + {createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", user: {name: "Fixture Person"}})')")
 description='See https://uploads.linear.app/o/p/plan.md. And ![s](<https://uploads.linear.app/o/i/shot.png>)'
+url='https://uploads.linear.app/o/p/plan.md'
+case "${LINK_FORM:-}" in
+    ordinary) link="[$url]($url)" ;;
+    angle) link="[$url](<$url>)" ;;
+    *) link='' ;;
+esac
+case "${LINK_CONTEXT:-}" in
+    description) description="$description $link" ;;
+    comment) comments=$(jq -c --arg link "$link" '.nodes[0].body += (" " + $link)' <<<"$comments") ;;
+esac
 jq -cjn --argjson records "$records" --argjson comments "$comments" --arg d "$description" \
     '{data: {issue: {id: "uuid-1", identifier: "KEN-1", description: $d, attachments: $records, comments: $comments}}}'
 printf '___HTTP_CODE___200'
@@ -72,6 +82,7 @@ run_attachments() {
     RC=0
     OUT=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CALLS="$TMP_ROOT/calls" \
         SLEPT="$TMP_ROOT/slept" DOWNLOAD_RESPONSES="${DOWNLOAD_RESPONSES:-}" \
+        LINK_FORM="${LINK_FORM:-}" LINK_CONTEXT="${LINK_CONTEXT:-}" \
         LINEAR_API_KEY_OVERRIDE=test-key bash .agents/skills/linear/scripts/linear.sh attachments "$@" \
         2>"$TMP_ROOT/err") || RC=$?
 }
@@ -90,6 +101,16 @@ assert_jq "list: a bare link drops trailing prose punctuation" "$OUT" \
 assert_jq "list: a Markdown link destination keeps its url as written" "$OUT" \
     '[.[] | select(.url | contains("/o/w/")) | .url] == ["https://uploads.linear.app/o/w/draft.", "https://uploads.linear.app/o/w/note!"]'
 assert_jq "list: a record off the upload host is left out" "$OUT" 'all(.[]; .url | startswith("https://uploads.linear.app/"))'
+
+# Linear renders a URL pasted into prose with the URL as its Markdown label.
+for row in 'description|ordinary' 'description|angle' 'comment|ordinary' 'comment|angle'; do
+    IFS='|' read -r LINK_CONTEXT LINK_FORM <<<"$row"
+    run_attachments list KEN-1
+    assert_eq "$row: list succeeds" "$RC" 0
+    assert_jq "$row: URL label lists only the canonical record with metadata" "$OUT" \
+        '[.[] | select(.url | contains("/o/p/"))] == [{url: "https://uploads.linear.app/o/p/plan.md", source: "KEN-1", context: "attachment", filename: "plan.md", repo_path: "docs/plans/plan.md"}]'
+done
+unset LINK_CONTEXT LINK_FORM
 
 run_attachments list KEN-404
 assert_eq "list of a missing issue: refuses" "$RC" 1

@@ -73,7 +73,7 @@ list_attachments() {
     # the semicolon; a Markdown link destination is the URL as written.
     jq '.issue as $issue
         | def links($text; $context):
-            [($text // "") | capture("(?<destination>\\]\\(<?)?(?<url>https://uploads\\.linear\\.app/[^[:space:])>\"]+)"; "g")
+            [($text // "") | capture("(?<destination>\\[[^\\]]*\\]\\(<?)?(?<url>https://uploads\\.linear\\.app/[^[:space:])>\"]+)"; "g")
              | if .destination then .url else .url | sub("[?!.,:;*_~]+$"; "") end
              | {url: ., source: $issue.identifier, context: $context,
                 filename: (split("?")[0] | split("/") | last), repo_path: null}];
