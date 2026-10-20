@@ -680,17 +680,20 @@ function baseName(name) {
   const normalized = name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, TOOL_NAME_LIMIT);
   return normalized.length > 0 ? normalized : "pi_tool";
 }
+var RESERVED_ESCAPE = "pi_";
+function codexName(stem, tail) {
+  const name = `${stem.slice(0, TOOL_NAME_LIMIT - tail.length)}${tail}`;
+  if (name !== "mcp" && !name.startsWith("mcp__")) return name;
+  return `${RESERVED_ESCAPE}${stem.slice(0, TOOL_NAME_LIMIT - RESERVED_ESCAPE.length - tail.length)}${tail}`;
+}
 function buildDynamicTools(tools) {
   const functions = [];
   const piNameByCodexName = /* @__PURE__ */ new Map();
   for (const tool of tools) {
     const stem = baseName(tool.name);
-    let name = stem;
+    let name = codexName(stem, "");
     let suffix = 2;
-    while (piNameByCodexName.has(name)) {
-      const tail = `_${suffix++}`;
-      name = `${stem.slice(0, TOOL_NAME_LIMIT - tail.length)}${tail}`;
-    }
+    while (piNameByCodexName.has(name)) name = codexName(stem, `_${suffix++}`);
     piNameByCodexName.set(name, tool.name);
     functions.push({ type: "function", name, description: tool.description, inputSchema: tool.parameters });
   }

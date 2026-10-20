@@ -180,6 +180,26 @@ test("a code-mode-only model sees Pi's tools as the direct pi namespace, outside
 	assert.deepEqual(withSetting, withoutSetting);
 });
 
+// Codex refuses a thread whose declared tools include `mcp` or `mcp__*`.
+test("Pi tools named mcp and mcp__* start a thread under escaped names, and a call maps back to the Pi name", { timeout: FIXTURE_TIMEOUT }, async (t) => {
+	const world = await fixtureWorld("mcp-name", { script: [[functionCall("pi_mcp", { action: "list" }, "call-mcp", "pi")], [message("after mcp")]] });
+	t.after(() => world.close());
+	const tools = ["mcp", "mcp__srv__tool"].map((name) => ({ name, description: `Pi tool ${name}`, parameters: { type: "object", properties: { action: { type: "string" } } } }));
+	const model = piModel(world.model);
+	const transcript = [system(tools), user("List MCP servers")];
+	const bridge = world.newBridge();
+	const toolUse = await finish(bridge.streamSimple(model, { messages: transcript }));
+	assert.equal(toolUse.reason, "toolUse", toolUse.error?.errorMessage);
+	assert.deepEqual(toolUse.message.content.at(-1), { type: "toolCall", id: "call-mcp", name: "mcp", arguments: { action: "list" } });
+	const offered = offeredTools(world.mock.requests[0].body);
+	assert.ok(offered.includes("pi.pi_mcp") && offered.includes("pi.pi_mcp__srv__tool"), `escaped tools are not offered: ${offered}`);
+	transcript.push(toolUse.message, toolResult("call-mcp", "MCP-LIST", "mcp"));
+	const answer = await finish(bridge.streamSimple(model, { messages: transcript }));
+	assert.equal(answer.reason, "stop", answer.error?.errorMessage);
+	assert.match(JSON.stringify(world.mock.requests[1].body.input.find((item) => item.type === "function_call_output")), /MCP-LIST/);
+	await bridge.close();
+});
+
 // The scripted spawn is the parent's first model response; a sub-agent's turn
 // would take the next scripted response. Only the parent's two model requests
 // may reach the mock: the spawn request and the parent's answer to its result.

@@ -35,17 +35,27 @@ function baseName(name: string): string {
 	return normalized.length > 0 ? normalized : "pi_tool";
 }
 
+/** Codex 0.163.0 refuses a dynamic tool named `mcp` or `mcp__*`, inside a
+ * namespace too (`validate_dynamic_tools`): those names are its MCP tools'. */
+const RESERVED_ESCAPE = "pi_";
+
+/** The stem with `tail`, within the length limit, escaped when Codex reserves
+ * the result. A suffixed stem can become reserved, as `mcp_` with `_2` does,
+ * so the check runs on the whole name. */
+function codexName(stem: string, tail: string): string {
+	const name = `${stem.slice(0, TOOL_NAME_LIMIT - tail.length)}${tail}`;
+	if (name !== "mcp" && !name.startsWith("mcp__")) return name;
+	return `${RESERVED_ESCAPE}${stem.slice(0, TOOL_NAME_LIMIT - RESERVED_ESCAPE.length - tail.length)}${tail}`;
+}
+
 export function buildDynamicTools(tools: Tool[]): DynamicToolCatalog {
 	const functions: DynamicTool[] = [];
 	const piNameByCodexName = new Map<string, string>();
 	for (const tool of tools) {
 		const stem = baseName(tool.name);
-		let name = stem;
+		let name = codexName(stem, "");
 		let suffix = 2;
-		while (piNameByCodexName.has(name)) {
-			const tail = `_${suffix++}`;
-			name = `${stem.slice(0, TOOL_NAME_LIMIT - tail.length)}${tail}`;
-		}
+		while (piNameByCodexName.has(name)) name = codexName(stem, `_${suffix++}`);
 		piNameByCodexName.set(name, tool.name);
 		functions.push({ type: "function", name, description: tool.description, inputSchema: tool.parameters });
 	}
