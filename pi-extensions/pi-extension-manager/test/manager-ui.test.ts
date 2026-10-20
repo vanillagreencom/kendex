@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { clearPackageConfigCache } from "../extensions/manager/package-config.ts";
+import { clearPackageConfigCache, piUserDir } from "../extensions/manager/package-config.ts";
 import { mutantManager, processAlive, settleWithin, startedPid, waitFor, writeCommand } from "./fixtures/commands.ts";
 
 // Neutral terminal primitives; the production components own rendering.
@@ -39,7 +39,7 @@ beforeEach(() => {
 	clearPackageConfigCache();
 });
 
-afterEach(() => {
+afterEach(async () => {
 	for (const pid of leftovers.splice(0)) {
 		try { process.kill(-pid, "SIGKILL"); } catch {}
 	}
@@ -47,6 +47,9 @@ afterEach(() => {
 		if (value === undefined) delete process.env[name];
 		else process.env[name] = value;
 	}
+	// Later test files share this process: restore the default host before its selected directory goes.
+	const { selectHost } = await import("../extensions/manager/host.ts");
+	await selectHost({ getAgentDir: piUserDir, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
 	rmSync(rootTmp, { recursive: true, force: true });
 	clearPackageConfigCache();
 });
