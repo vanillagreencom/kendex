@@ -44,7 +44,7 @@ Run [start-worktree.md](start-worktree.md) § 3 under these bounds:
 - **QA.** [review-pr.md](review-pr.md) § 5 drops `needs-review` when the change is not visible in the UI or in the CLI output, recording `qa_decision` with the rationale `small tier: nothing visible`. `needs-safety-audit`, `needs-perf-test` and `needs-ui-review` follow review-pr.md § 5 unchanged.
 - **Fix rounds.** [review-pr.md § At The Cap](review-pr.md#at-the-cap) states the default bound. For this item `workflow-state cap REVIEW_MAX_CYCLES --issue [ISSUE_ID]` holds it at 1 even where a project setting raises it, and holds a setting of 0 as set. A QA fix round follows review-pr.md § 7 Converged unchanged; this bound does not count it.
 - **Findings.** A wording, naming or index finding is answered by reply and starts no fix push: [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow).
-- **Validation.** The implement round runs the full `DEV_VALIDATE_CMD` once. A fix round validates its own range, as [dev-fix.md](dev-fix.md) delegates it. No step reruns a green battery on an unchanged tree.
+- **Validation.** The implement round consumes the existing `dev-validate-run` route and result as [dev-implement.md § 5 Validate](../../dev/workflows/dev-implement.md#5-validate) sets out. A fix round validates its own range, as [dev-fix.md](dev-fix.md) delegates it. No step reruns a green battery on an unchanged tree.
 
 Before § 4, repeat the § 2 check on the tree the review left. `tier=small` continues; anything else escapes.
 
