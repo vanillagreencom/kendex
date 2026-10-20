@@ -689,7 +689,13 @@ fn held_manifest(
 /// still holds owns it: a member of a live set reads the set's revision,
 /// and a dependency of a live declaration reads its requirer's. An item
 /// whose owners are all gone — an assigned skill, or one whose
-/// declaration or set the person removed — keeps its own record.
+/// declaration or set the person removed — keeps its own record. An item
+/// the person keeps removed installs from nothing, so it reserves nothing.
+///
+/// The manifest declares no item revision for an undeclared item, so a
+/// write that keeps records releases a reservation only on the source
+/// revision. An item revision its record carries was copied from the
+/// declaration it once came in under, not chosen for it.
 fn reserve_readings(
     manifest: &Manifest,
     lock: &Lock,
@@ -702,6 +708,7 @@ fn reserve_readings(
     for entry in lock.entries.values() {
         if !PLANNED_KINDS.contains(&entry.kind)
             || manifest.declared(entry.kind).contains_key(&entry.name)
+            || manifest.is_held_back(entry.kind, &entry.name)
             || !seen.insert((entry.kind, entry.name.clone(), entry.source.clone()))
         {
             continue;
@@ -721,12 +728,18 @@ fn reserve_readings(
         let Some(repo) = held_repo(manifest, lock, &entry.source, keeps_records) else {
             continue;
         };
-        let selector = crate::lock::DeclaredSelector::of(manifest, &entry.source, None);
+        let source_rev = manifest
+            .sources
+            .get(&entry.source)
+            .and_then(|decl| decl.rev.as_deref());
         if keeps_records
             && lock.entries.values().any(|other| {
                 other.kind == entry.kind
                     && other.name == entry.name
-                    && other.selector.as_ref().is_some_and(|old| old != &selector)
+                    && other
+                        .selector
+                        .as_ref()
+                        .is_some_and(|old| old.source_rev.as_deref() != source_rev)
             })
         {
             continue;

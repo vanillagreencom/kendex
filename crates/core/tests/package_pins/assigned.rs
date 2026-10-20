@@ -441,16 +441,30 @@ enum Retention {
     NativeAfterUpdate,
 }
 
+/// The selector shape a lock records for an assigned item: the one this
+/// planner writes, none from before selectors, or the item revision the
+/// earlier planner copied from the assigning declaration.
+#[derive(Clone, Copy, Debug)]
+enum RecordedSelector {
+    Current,
+    Legacy,
+    Inherited,
+}
+
 /// Held writes and installed native lookup consume the same item records,
 /// including when the assigning agent was pinned before the skill existed.
 #[allow(clippy::unwrap_used)]
 #[allow(
     clippy::too_many_lines,
-    reason = "one own-record contract across read modes, differing commits and legacy selectors"
+    reason = "one own-record contract across read modes, differing commits and selector shapes"
 )]
 fn assert_assignment_retention(mode: Retention) {
     for pinned_lead in [false, true] {
-        for legacy in [false, true] {
+        for shape in [
+            RecordedSelector::Current,
+            RecordedSelector::Legacy,
+            RecordedSelector::Inherited,
+        ] {
             let w = world();
             write_skill(
                 &w.upstream,
@@ -499,16 +513,21 @@ fn assert_assignment_retention(mode: Retention) {
             let installed = locked_commit(&w, "y");
             let path = lock_path(&w.env, &w.scope);
             let mut before = load_lock(&path).unwrap();
-            if legacy {
-                for entry in before
-                    .entries
-                    .values_mut()
-                    .filter(|entry| entry.name == "y" || entry.name == "helper")
-                {
-                    entry.selector = None;
+            for entry in before
+                .entries
+                .values_mut()
+                .filter(|entry| entry.name == "y" || entry.name == "helper")
+            {
+                match shape {
+                    RecordedSelector::Current => {}
+                    RecordedSelector::Legacy => entry.selector = None,
+                    RecordedSelector::Inherited => {
+                        let selector = entry.selector.as_mut().unwrap();
+                        selector.rev.clone_from(&entry.source_commit);
+                    }
                 }
-                kendex_core::lock::save(&path, &before).unwrap();
             }
+            kendex_core::lock::save(&path, &before).unwrap();
             let key = entry_key(ItemKind::Skill, "y", HarnessId::Claude);
             let old_selector = before.entries[&key].selector.clone();
             let old_bytes = installed_body(&w, "y");
@@ -533,12 +552,13 @@ fn assert_assignment_retention(mode: Retention) {
             assert_eq!(
                 report.declaration_status,
                 DeclarationStatus::Complete,
-                "{mode:?} pinned={pinned_lead} legacy={legacy}: {:?}",
+                "{mode:?} pinned={pinned_lead} {shape:?}: {:?}",
                 messages(&report)
             );
             assert_eq!(
                 report.record.entries[&key].source_commit.as_deref(),
-                Some(installed.as_str())
+                Some(installed.as_str()),
+                "{mode:?} pinned={pinned_lead} {shape:?}"
             );
             assert_eq!(report.record.entries[&key].selector, old_selector);
             if !matches!(mode, Retention::Recorded) {
@@ -1166,62 +1186,128 @@ fn go_offline(w: &World) {
     fs::rename(&w.upstream, w.home.join("unreachable")).unwrap();
 }
 
-/// Removing the last package a repository source brings needs nothing
-/// from that repository, whatever the package brought with it: offline,
-/// the removal plans and executes. The subtree row removes a lead that
+/// Leave the mirror serving `served` and no later commit, with upstream
+/// back at `head`.
+#[allow(clippy::unwrap_used)]
+fn mirror_serves(w: &World, served: &str, head: &str) {
+    fs::remove_dir_all(w.env.source_cache_dir()).unwrap();
+    git(&w.upstream, &["reset", "--hard", "--quiet", served]);
+    fetch_mirrors(w);
+    git(&w.upstream, &["reset", "--hard", "--quiet", head]);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Offline {
+    Leaf,
+    Subtree,
+    Assigned,
+}
+
+/// One offline removal: the scope as installed and taken offline, the
+/// package removed, and the commit lead stays at where it stays.
+struct OfflineRemoval {
+    w: World,
+    removed: &'static str,
+    lead_at: Option<String>,
+}
+
+/// The last package, a lead that brings nothing or, as a subtree, one that
 /// requires scout, which is assigned y, which requires linear.
+#[allow(clippy::unwrap_used)]
+fn last_package(subtree: bool) -> OfflineRemoval {
+    let w = world();
+    let deps = if subtree {
+        "dependencies:\n  agents: [scout]\n"
+    } else {
+        ""
+    };
+    write_skill(&w.upstream, "lead", deps, "Lead.");
+    write_agent(&w.upstream, "scout", "Scout.");
+    write_skill(
+        &w.upstream,
+        "y",
+        "dependencies:\n  required: [linear]\n",
+        "Y.",
+    );
+    write_skill(&w.upstream, "linear", "", "Linear.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nscout = [\"y\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    write_manifest(
+        &w,
+        &format!(
+            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.lead]\nsource = \"cat\"\n"
+        ),
+    );
+    sync_and_apply(&w);
+    let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
+    assert_eq!(
+        installed
+            .entries
+            .contains_key(&entry_key(ItemKind::Skill, "linear", HarnessId::Claude)),
+        subtree
+    );
+    go_offline(&w);
+    OfflineRemoval {
+        w,
+        removed: "lead",
+        lead_at: None,
+    }
+}
+
+/// The assigned skill y, recorded at B, while lead and scout stay pinned
+/// at A, the only commit the mirror serves.
+#[allow(clippy::unwrap_used)]
+fn assigned_skill() -> OfflineRemoval {
+    let Reserved { w, a, b } = reserved(true, "");
+    mirror_serves(&w, &a, &b);
+    fs::rename(&w.upstream, w.home.join("unreachable")).unwrap();
+    OfflineRemoval {
+        w,
+        removed: "y",
+        lead_at: Some(a),
+    }
+}
+
+/// Removing a package needs nothing from its repository that the removal
+/// does not keep: offline, the removal plans and executes. That holds for
+/// the last package a source brings, whatever it brought with it, and for
+/// an assigned skill whose own record the mirror lacks while the packages
+/// that stay read only what is cached.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_offline_removal_of_the_last_package_fetches_nothing() {
-    for subtree in [false, true] {
-        let w = world();
-        let deps = if subtree {
-            "dependencies:\n  agents: [scout]\n"
-        } else {
-            ""
+    for case in [Offline::Leaf, Offline::Subtree, Offline::Assigned] {
+        let OfflineRemoval {
+            w,
+            removed,
+            lead_at,
+        } = match case {
+            Offline::Leaf => last_package(false),
+            Offline::Subtree => last_package(true),
+            Offline::Assigned => assigned_skill(),
         };
-        write_skill(&w.upstream, "lead", deps, "Lead.");
-        write_agent(&w.upstream, "scout", "Scout.");
-        write_skill(
-            &w.upstream,
-            "y",
-            "dependencies:\n  required: [linear]\n",
-            "Y.",
-        );
-        write_skill(&w.upstream, "linear", "", "Linear.");
-        fs::write(
-            w.upstream.join("kendex.toml"),
-            "[agent-skills]\nscout = [\"y\"]\n",
-        )
-        .unwrap();
-        commit(&w.upstream, "one");
-        write_manifest(
-            &w,
-            &format!(
-                "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.lead]\nsource = \"cat\"\n"
-            ),
-        );
-        sync_and_apply(&w);
-        let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
-        assert_eq!(
-            installed.entries.contains_key(&entry_key(
-                ItemKind::Skill,
-                "linear",
-                HarnessId::Claude
-            )),
-            subtree
-        );
-        go_offline(&w);
         let report =
-            kendex_core::engine::ops::remove(&w.env, &w.scope, &["lead".to_owned()], None, true)
-                .unwrap_or_else(|error| panic!("subtree={subtree}: {error}"));
+            kendex_core::engine::ops::remove(&w.env, &w.scope, &[removed.to_owned()], None, true)
+                .unwrap_or_else(|error| panic!("{case:?}: {error:?}"));
         apply::execute(&w.env, &report.plan).unwrap();
         let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
         assert!(
             !lock
                 .entries
-                .contains_key(&entry_key(ItemKind::Skill, "lead", HarnessId::Claude)),
-            "subtree={subtree}"
+                .contains_key(&entry_key(ItemKind::Skill, removed, HarnessId::Claude)),
+            "{case:?}"
+        );
+        let lead = entry_key(ItemKind::Skill, "lead", HarnessId::Claude);
+        assert_eq!(
+            lock.entries
+                .get(&lead)
+                .and_then(|entry| entry.source_commit.clone()),
+            lead_at,
+            "{case:?}"
         );
     }
 }
@@ -1235,10 +1321,7 @@ fn an_offline_removal_of_the_last_package_fetches_nothing() {
 fn a_read_reservation_the_mirror_lacks_is_fetched() {
     for reachable in [true, false] {
         let Reserved { w, a, b } = reserved(true, "");
-        fs::remove_dir_all(w.env.source_cache_dir()).unwrap();
-        git(&w.upstream, &["reset", "--hard", "--quiet", &a]);
-        fetch_mirrors(&w);
-        git(&w.upstream, &["reset", "--hard", "--quiet", &b]);
+        mirror_serves(&w, &a, &b);
         if !reachable {
             fs::rename(&w.upstream, w.home.join("unreachable")).unwrap();
         }
