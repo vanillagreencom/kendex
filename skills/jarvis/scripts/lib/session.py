@@ -49,7 +49,7 @@ def dialog_question(line):
     return "".join(c for c in DIALOG_FRAME.sub("", line) if c.isprintable())[:200]
 
 
-def environment():
+def environment(harness=None):
     # Keep desktop and transport access. Credentials and parent harness
     # identity come from the selected account, never the calling session.
     keys = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "COLORTERM",
@@ -57,6 +57,9 @@ def environment():
             "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE",
             "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy",
             "all_proxy", "no_proxy", "JARVIS_BASH"}
+    # Pi's Claude provider home is independent of its selected Pi account.
+    if harness == "pi" and os.environ.get("CLAUDE_CONFIG_DIR"):
+        keys.add("CLAUDE_CONFIG_DIR")
     return {key: value for key, value in os.environ.items()
             if key in keys or key.startswith(("XDG_", "LC_"))}
 
@@ -94,8 +97,8 @@ class Session:
               + (f" errno={errno.errorcode.get(failure.errno, failure.errno)}" if isinstance(failure, OSError) else "")
               + " message=" + json.dumps(str(failure)), file=sys.stderr)
 
-    def backend(self, verb, *args, check=True):
-        return self.run([BASH, str(BACKEND), verb, *map(str, args)], check=check)
+    def backend(self, verb, *args, check=True, env=None):
+        return self.run([BASH, str(BACKEND), verb, *map(str, args)], check=check, env=env)
 
     def tmux(self, *args, check=True, socket=None):
         target = ["-S", socket] if socket else ["-L", self.label]
@@ -249,7 +252,7 @@ class Session:
                                       "import runpy, sys; runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
                                       str(Path(__file__).resolve()), verb, self.home, str(generation)],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
-                                     env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
+                                     env=dict(environment(record["harness"]), JARVIS_BASH=BASH), start_new_session=True)
         try:
             identity = json.loads(self.backend("process", child.pid).stdout)
             record["worker"] = identity
@@ -611,7 +614,8 @@ class Session:
             choice = record.get("choice") or {}
             prepared = json.loads(self.backend("prepare", record["harness"], record["account"], self.home,
                                                launch["id"], launch["file"], self.path, generation,
-                                               choice.get("model", ""), choice.get("effort", "")).stdout)
+                                               choice.get("model", ""), choice.get("effort", ""),
+                                               env=environment(record["harness"])).stdout)
             with self.locked():
                 record = self.read()
                 if not self._current_request(record, generation, verb):
