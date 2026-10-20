@@ -18,7 +18,7 @@ ot_message() { # REASON FIELD=VALUE...
     launch-blocked) text='An item or its ancestor has a blocker that still holds launch. Merge or complete the named blockers before launching this item.' ;;
     launch-blocked-unread) text='The live blocker read failed. Restore the tracker read before launching this item.' ;;
     launch-overlap) text='The item touches a file a held lane or an open pull request is changing. Nothing was launched. Wait for the holder to merge, or name the file in scope in the brief, as an append-only addition, and pass --in-scope with it.' ;;
-    launch-overlap-unread) text='A read the file-overlap judgement needs failed, as read names; read=location is a Location line that names no backticked path. Nothing was launched. Restore that read, or backtick the paths on the Location line, before launching this item.' ;;
+    launch-overlap-unread) text='A read the file-overlap judgement needs failed, as read names; read=location is a Location line in this item that names no backticked path, and read=lane:ITEM:location is one in the item of held lane ITEM. Nothing was launched. Restore that read, or backtick the paths on that Location line, before launching this item.' ;;
     in-scope-unanchored) text='--in-scope answers the file-overlap hold, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
     entry-permission-untransferable) text='The caller permissions cannot transfer to this harness. The preference walk skips this entry.' ;;
     items-missing) text='Specify a work item.' ;;
@@ -830,13 +830,15 @@ workflows/oversee.md § 2. The touched set is the backticked paths on the
 item's Location line, less a :N or :N-M line suffix, plus every file tracked
 here that names a backticked path on a body line that deletes or renames it,
 on the base and on each such pull request's head; a deleted or renamed token
-counts only where the base tracks it as a path. A pull request's files are
+counts only where the base tracks it as a file. A pull request's files are
 its files endpoint's, a rename's previous path included. A held lane's set is
 its record's touched, else its item's, read now; the item's own pull request
 is no holder. changelog.d/ paths never count. holder is the lane item or #N
-for a pull request. A launch-overlap-unread names the read that failed;
-read=location is a Location line that names no backticked path. A relaunch
-or wake of a recorded lane passes this check.
+for a pull request. A launch-overlap-unread names the read that failed, led
+by lane:ITEM where held lane ITEM's item needed it; read=location is a
+Location line in this item that names no backticked path, and
+read=lane:ITEM:location one in held lane ITEM's item. A relaunch or wake of
+a recorded lane passes this check.
   --in-scope PATH   A file the brief names in scope beside its holder, an
                     append-only addition: that shared file passes the
                     overlap hold. Repeatable; a directory ending in / covers

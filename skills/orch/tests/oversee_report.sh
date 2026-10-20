@@ -392,20 +392,20 @@ assert_eq "$RC|$(awk '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| 
 
 echo "=== render: Next names a held item and its holder ==="
 # KEN-2 keeps src/a.sh as its touched set and its open #12 changes src/b.sh;
-# KEN-6 names no Location.
+# KEN-6 names no Location and KEN-8 an unticked one.
 seed_fleet next_held
-jq '(.lanes[] | select(.item == "KEN-2")).touched = ["src/a.sh"]' "$CASE/state.json" > "$CASE/state.next"
+jq '(.lanes[] | select(.item == "KEN-2")).touched = ["src/a.sh"] | .launch_queue += ["KEN-8"]' "$CASE/state.json" > "$CASE/state.next"
 mv -- "$CASE/state.next" "$CASE/state.json"
-for row in 'KEN-4|src/a.sh' 'KEN-5|src/b.sh'; do
-  jq --arg loc "${row#*|}" '.description = "**Location**: `\($loc)`"' "$CASE/linear-${row%%|*}.json" > "$CASE/state.next"
+for row in 'KEN-4|`src/a.sh`' 'KEN-5|`src/b.sh`' 'KEN-8|src/c.sh (the gate)'; do
+  jq --arg loc "${row#*|}" '.description = "**Location**: \($loc)"' "$CASE/linear-${row%%|*}.json" > "$CASE/state.next"
   mv -- "$CASE/state.next" "$CASE/linear-${row%%|*}.json"
 done
 echo '[{"number": 12, "headRefName": "ken-2", "changedFiles": 1}]' > "$CASE/open.json"
 echo '[[{"filename": "src/b.sh"}]]' > "$CASE/pr-12.json"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk -F' [|] ' '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-/ { print substr($1, 3) }' <<<"$OUT" | paste -sd, -)" \
-  "0|KEN-4 (held by KEN-2: src/a.sh),KEN-5 (held by #12: src/b.sh),KEN-6" \
-  "a queued item sharing a file with a running lane or an open pull request names that holder"
+  "0|KEN-4 (held by KEN-2: src/a.sh),KEN-5 (held by #12: src/b.sh),KEN-6,KEN-8 (overlap unread: location)" \
+  "a queued item sharing a file with a running lane or an open pull request names that holder; an unticked Location labels its row"
 
 echo "=== render: ORCH_REPORT_COLUMNS picks and orders the columns ==="
 seed_fleet columns

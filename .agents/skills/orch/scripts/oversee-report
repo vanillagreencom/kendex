@@ -226,8 +226,11 @@ Rows:
                   reads `ITEM (held by HOLDER: FILE)`, judged by the same
                   lib/launch-overlap.sh as the first --repo's item, in
                   this checkout, against that repository's held lanes and
-                  open same-repository pull requests; a read it needs that
-                  fails refuses as overlap-read.
+                  open same-repository pull requests. A Location line
+                  that names no backticked path, the key's or a held
+                  lane's item's, reads `ITEM (overlap unread: READ)`, READ
+                  being location or lane:ITEM:location; any other read it
+                  needs that fails refuses as overlap-read.
   Waiting on you  each owner ask no answer has closed, from `lane-mail
                   pending --item overseer --to owner`, as `Question for you:
                   <text>`, with its recommendation and the time after which
@@ -782,11 +785,9 @@ table() {
 }
 
 # next_rows ITEMS: NEXT_ROWS gets the table rows of the upcoming queue keys,
-# one per line; a key the open-terminal overlap hold would refuse names
-# its holder and the shared file (lib/launch-overlap.sh). A key whose tracker
-# its spelling does not name is not judged, as its cells are not read. A key
-# names no repository: it is judged as the first --repo's, the repository
-# oversee-watch reads the fleet's owed items from.
+# one per line, labelled from lib/launch-overlap.sh's judgement; the --help
+# Next row states which keys are judged and how. The first --repo is the
+# repository oversee-watch reads the fleet's owed items from.
 NEXT_ROWS=""
 next_rows() {
   local item tracker label lanes rc
@@ -801,7 +802,13 @@ next_rows() {
       case "$rc" in
         0) ;;
         1) label+=" (held by $OVERLAP_HOLDER: $OVERLAP_FILE)" ;;
-        *) refuse overlap-read "$item read=$OVERLAP_UNREAD" "$(cat "$WORK_DIR/overlap.err")" ;;
+        *)
+          # An unticked Location line is the body's content, not a failed
+          # read, and stays the row's to name.
+          case "$OVERLAP_UNREAD" in
+            location | lane:*:location) label+=" (overlap unread: $OVERLAP_UNREAD)" ;;
+            *) refuse overlap-read "$item read=$OVERLAP_UNREAD" "$(cat "$WORK_DIR/overlap.err")" ;;
+          esac ;;
       esac
     fi
     NEXT_ROWS+="$item"$'\t'"$label"$'\n'
