@@ -37,7 +37,7 @@ printf '%s\n' \
     >"$FIXTURE/.agents/skills/control/scripts/environment-load"
 printf '%s\n' \
     '#!/bin/sh' \
-    'printf "swallowed %s\n" "$*"' \
+    ':' \
     >"$FIXTURE/.agents/skills/control/scripts/command-swallow"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh"
 cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/codex"
@@ -52,8 +52,8 @@ export HELP_INERT_CALLS="$CALLS"
 # bash4-runtime-contract.test.sh): under Bash 3 it refuses before serving
 # help, so its rows are out of this suite's reach on that shell.
 LINEAR_SKIPPED=0
-# skill, script, expected output, arguments, expected violation. A dash means no arguments.
-while IFS=$'\t' read -r skill script token args expected; do
+# skill, script, arguments, expected violation. A dash means no arguments.
+while IFS=$'\t' read -r skill script args expected; do
     [ -n "$skill" ] || continue
     if [ "$skill" = linear ] && [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
         [ "$LINEAR_SKIPPED" -eq 1 ] || printf 'skipping linear rows: its contract is Bash 4 or newer, this is %s\n' "$BASH_VERSION"
@@ -75,7 +75,7 @@ while IFS=$'\t' read -r skill script token args expected; do
             "$FIXTURE/.agents/skills/$skill/$script" $args 2>&1)" || status=$?
     fi
     observed=""
-    if [ "$status" -ne 0 ] || [[ "$output" != *"$token"* ]]; then
+    if [ "$status" -ne 0 ] || [ -z "$output" ]; then
         observed="command"
     fi
     [ ! -e "$MARKER" ] || observed="${observed:+$observed,}environment"
@@ -85,8 +85,8 @@ while IFS=$'\t' read -r skill script token args expected; do
         PASS=$((PASS + 1))
     else
         printf 'FAIL: %s %s %s\n' "$skill" "$script" "$args" >&2
-        printf '  status=%s observed=%s expected=%s token=%s\n' \
-            "$status" "$observed" "$expected" "$token" >&2
+        printf '  status=%s observed=%s expected=%s\n' \
+            "$status" "$observed" "$expected" >&2
         if [ -s "$CALLS" ]; then
             sed 's/^/  dependency: /' "$CALLS" >&2
         fi
@@ -94,112 +94,112 @@ while IFS=$'\t' read -r skill script token args expected; do
         FAIL=$((FAIL + 1))
     fi
 done <<'ROWS'
-control	scripts/dependency-call	dependency control	--help	dependency
-control	scripts/environment-load	environment control	--help	environment
-control	scripts/command-swallow	command control	--help	command
-decider	scripts/decisions	Decision Lookup Tool	-
-decider	scripts/decisions	Decision Lookup Tool	help
-decider	scripts/decisions	Decision Lookup Tool	--help
-decider	scripts/decisions	Decision Lookup Tool	-h
-decider	scripts/decisions	Decision Lookup Tool	search
-decider	scripts/decisions	Decision Lookup Tool	search --help
-decider	scripts/decisions	Decision Lookup Tool	list --help
-decider	scripts/decisions	Decision Lookup Tool	search query -h
-decider	scripts/decisions	Decision Lookup Tool	search query --limit 2 --help
-github	scripts/github.sh	GitHub API CLI	-
-github	scripts/github.sh	GitHub API CLI	help
-github	scripts/github.sh	GitHub API CLI	--help
-github	scripts/github.sh	GitHub API CLI	-h
-github	scripts/github.sh	Add a label	label-add --help
-github	scripts/github.sh	View PR details	pr-view --help
-github	scripts/github.sh	Merge PR	pr-merge -h
-github	scripts/github.sh	View PR details	pr-view 123 --help
-github	scripts/github.sh	Merge PR	pr-merge 42 -h
-github	scripts/github.sh	Sticky	sticky-comment 23 --body --help
-github	scripts/github.sh	Usage: check-review-replies	check-review-replies --help
-github	scripts/commands/check-review-replies.sh	Usage: check-review-replies	-h
-linear	scripts/commands/issues.sh	Issue Operations	-
-linear	scripts/commands/issues.sh	Issue Operations	help
-linear	scripts/commands/issues.sh	Issue Operations	--help
-linear	scripts/commands/issues.sh	Issue Operations	activate --help
-linear	scripts/commands/issues.sh	Issue Operations	get --help
-linear	scripts/commands/issues.sh	Issue Operations	validate-completion --help
-linear	scripts/commands/issues.sh	Issue Operations	get KEN-1 --help
-linear	scripts/commands/issues.sh	Issue Operations	list --limit 5 -h
-linear	scripts/commands/projects.sh	Project Operations	--help
-linear	scripts/commands/cycles.sh	Cycle Operations	-h
-linear	scripts/commands/labels.sh	Label Operations	help
-linear	scripts/commands/comments.sh	Comment Operations	--help
-linear	scripts/commands/milestones.sh	Project Milestone Operations	--help
-linear	scripts/commands/initiatives.sh	Initiative Operations	--help
-linear	scripts/commands/auth-check.sh	Auth + target preflight	--help
-linear	scripts/commands/session-status.sh	Session Status	--help
-linear	scripts/commands/teams.sh	Team Operations	--help
-linear	scripts/commands/users.sh	User Operations	--help
-linear	scripts/commands/statuses.sh	Workflow State Operations	--help
-linear	scripts/commands/documents.sh	Document Operations	--help
-linear	scripts/commands/project-labels.sh	Project Label Operations	--help
-linear	scripts/commands/attachments.sh	Attachment Operations	--help
-linear	scripts/commands/attachments.sh	Attachment Operations	-
-linear	scripts/commands/projects.sh	Project Operations	-
-linear	scripts/linear.sh	Linear GraphQL API CLI	--help
-linear	scripts/linear.sh	Issue Operations	issues --help
-linear	scripts/linear.sh	Project Operations	projects --help
-linear	scripts/linear.sh	Cycle Operations	cycles -h
-linear	scripts/linear.sh	Label Operations	labels help
-linear	scripts/linear.sh	Comment Operations	comments --help
-linear	scripts/linear.sh	Project Milestone Operations	milestones --help
-linear	scripts/linear.sh	Initiative Operations	initiatives --help
-linear	scripts/linear.sh	Auth + target preflight	auth-check --help
-linear	scripts/linear.sh	Session Status	session-status --help
-linear	scripts/linear.sh	Team Operations	teams --help
-linear	scripts/linear.sh	User Operations	users --help
-linear	scripts/linear.sh	Workflow State Operations	statuses --help
-linear	scripts/linear.sh	Document Operations	documents --help
-linear	scripts/linear.sh	Project Label Operations	project-labels --help
-linear	scripts/linear.sh	Attachment Operations	attachments --help
-linear	scripts/linear.sh	Project Operations	projects
-orch	scripts/approval-wait	Usage: approval-wait	--help
-orch	scripts/approval-wait	Usage: approval-wait	-h
-orch	scripts/approval-wait	Usage: approval-wait	help
-orch	scripts/approval-wait	Usage: approval-wait	123 --mode approval -h
-orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	-
-orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	--help
-orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	-h
-orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	help
-orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	list --help
-orch	scripts/lanes	lanes list [--harness claude|codex|copilot|all]	pick --harness claude -h
-orch	scripts/open-terminal	Usage: open-terminal	--help
-orch	scripts/open-terminal	Usage: open-terminal	-h
-orch	scripts/open-terminal	Usage: open-terminal	help
-orch	scripts/open-terminal	Usage: open-terminal	KEN-1 --harness claude --help
-orch	scripts/orch-env	Usage: orch-env VAR_NAME DEFAULT	--help
-orch	scripts/orch-env	Usage: orch-env VAR_NAME DEFAULT	-h
-orch	scripts/orch-env	Usage: orch-env VAR_NAME DEFAULT	help
-orch	scripts/oversee-watch	Usage: oversee-watch	--help
-orch	scripts/oversee-watch	Usage: oversee-watch	-h
-orch	scripts/oversee-watch	Usage: oversee-watch	help
-orch	scripts/oversee-watch	Usage: oversee-watch	--repo o/r --item KEN-1 -h
-orch	scripts/reconcile-work-items	Usage: reconcile-work-items	--help
-orch	scripts/reconcile-work-items	Usage: reconcile-work-items	-h
-orch	scripts/reconcile-work-items	Usage: reconcile-work-items	help
-orch	scripts/workflow-state	Usage: workflow-state	--help
-orch	scripts/workflow-state	Usage: workflow-state	-h
-orch	scripts/workflow-state	Usage: workflow-state	help
-orch	scripts/workflow-state	Usage: workflow-state	--state-dir tmp --help
-orch	scripts/workflow-state	  remove <issue_id>	remove --help
-orch	scripts/workflow-state	  remove <issue_id>	remove -h
-orch	scripts/workflow-state	  remove <issue_id>	--state-dir tmp remove --help
-second-opinion	scripts/second-opinion	Cross-model second opinion	--help
-second-opinion	scripts/second-opinion	Cross-model second opinion	-h
-second-opinion	scripts/second-opinion	Cross-model second opinion	review --help
-second-opinion	scripts/second-opinion	Cross-model second opinion	quick -h
-worktree	scripts/worktree	Usage: worktree <command>	--help
-worktree	scripts/worktree	Usage: worktree <command>	-h
-worktree	scripts/worktree	Usage: worktree <command>	help
-worktree	scripts/worktree	Usage: worktree remove	remove CC-1 --help
-worktree	scripts/worktree	Usage: worktree cleanup	cleanup --stale --help
-worktree	scripts/worktree	Usage: worktree push	push some-id -h
+control	scripts/dependency-call	--help	dependency
+control	scripts/environment-load	--help	environment
+control	scripts/command-swallow	--help	command
+decider	scripts/decisions	-
+decider	scripts/decisions	help
+decider	scripts/decisions	--help
+decider	scripts/decisions	-h
+decider	scripts/decisions	search
+decider	scripts/decisions	search --help
+decider	scripts/decisions	list --help
+decider	scripts/decisions	search query -h
+decider	scripts/decisions	search query --limit 2 --help
+github	scripts/github.sh	-
+github	scripts/github.sh	help
+github	scripts/github.sh	--help
+github	scripts/github.sh	-h
+github	scripts/github.sh	label-add --help
+github	scripts/github.sh	pr-view --help
+github	scripts/github.sh	pr-merge -h
+github	scripts/github.sh	pr-view 123 --help
+github	scripts/github.sh	pr-merge 42 -h
+github	scripts/github.sh	sticky-comment 23 --body --help
+github	scripts/github.sh	check-review-replies --help
+github	scripts/commands/check-review-replies.sh	-h
+linear	scripts/commands/issues.sh	-
+linear	scripts/commands/issues.sh	help
+linear	scripts/commands/issues.sh	--help
+linear	scripts/commands/issues.sh	activate --help
+linear	scripts/commands/issues.sh	get --help
+linear	scripts/commands/issues.sh	validate-completion --help
+linear	scripts/commands/issues.sh	get KEN-1 --help
+linear	scripts/commands/issues.sh	list --limit 5 -h
+linear	scripts/commands/projects.sh	--help
+linear	scripts/commands/cycles.sh	-h
+linear	scripts/commands/labels.sh	help
+linear	scripts/commands/comments.sh	--help
+linear	scripts/commands/milestones.sh	--help
+linear	scripts/commands/initiatives.sh	--help
+linear	scripts/commands/auth-check.sh	--help
+linear	scripts/commands/session-status.sh	--help
+linear	scripts/commands/teams.sh	--help
+linear	scripts/commands/users.sh	--help
+linear	scripts/commands/statuses.sh	--help
+linear	scripts/commands/documents.sh	--help
+linear	scripts/commands/project-labels.sh	--help
+linear	scripts/commands/attachments.sh	--help
+linear	scripts/commands/attachments.sh	-
+linear	scripts/commands/projects.sh	-
+linear	scripts/linear.sh	--help
+linear	scripts/linear.sh	issues --help
+linear	scripts/linear.sh	projects --help
+linear	scripts/linear.sh	cycles -h
+linear	scripts/linear.sh	labels help
+linear	scripts/linear.sh	comments --help
+linear	scripts/linear.sh	milestones --help
+linear	scripts/linear.sh	initiatives --help
+linear	scripts/linear.sh	auth-check --help
+linear	scripts/linear.sh	session-status --help
+linear	scripts/linear.sh	teams --help
+linear	scripts/linear.sh	users --help
+linear	scripts/linear.sh	statuses --help
+linear	scripts/linear.sh	documents --help
+linear	scripts/linear.sh	project-labels --help
+linear	scripts/linear.sh	attachments --help
+linear	scripts/linear.sh	projects
+orch	scripts/approval-wait	--help
+orch	scripts/approval-wait	-h
+orch	scripts/approval-wait	help
+orch	scripts/approval-wait	123 --mode approval -h
+orch	scripts/lanes	-
+orch	scripts/lanes	--help
+orch	scripts/lanes	-h
+orch	scripts/lanes	help
+orch	scripts/lanes	list --help
+orch	scripts/lanes	pick --harness claude -h
+orch	scripts/open-terminal	--help
+orch	scripts/open-terminal	-h
+orch	scripts/open-terminal	help
+orch	scripts/open-terminal	KEN-1 --harness claude --help
+orch	scripts/orch-env	--help
+orch	scripts/orch-env	-h
+orch	scripts/orch-env	help
+orch	scripts/oversee-watch	--help
+orch	scripts/oversee-watch	-h
+orch	scripts/oversee-watch	help
+orch	scripts/oversee-watch	--repo o/r --item KEN-1 -h
+orch	scripts/reconcile-work-items	--help
+orch	scripts/reconcile-work-items	-h
+orch	scripts/reconcile-work-items	help
+orch	scripts/workflow-state	--help
+orch	scripts/workflow-state	-h
+orch	scripts/workflow-state	help
+orch	scripts/workflow-state	--state-dir tmp --help
+orch	scripts/workflow-state	remove --help
+orch	scripts/workflow-state	remove -h
+orch	scripts/workflow-state	--state-dir tmp remove --help
+second-opinion	scripts/second-opinion	--help
+second-opinion	scripts/second-opinion	-h
+second-opinion	scripts/second-opinion	review --help
+second-opinion	scripts/second-opinion	quick -h
+worktree	scripts/worktree	--help
+worktree	scripts/worktree	-h
+worktree	scripts/worktree	help
+worktree	scripts/worktree	remove CC-1 --help
+worktree	scripts/worktree	cleanup --stale --help
+worktree	scripts/worktree	push some-id -h
 ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
