@@ -54,9 +54,10 @@
 # section 5's no-verdict route, and --validate-note, which it requires, names
 # the host cause or timeout. A FAILING result is accepted beside
 # any run: --validate judges every gate of the round, and a passing run
-# with another gate failing is still a failed round. Submit reuses only a full
-# pass with no validate_class_base or with validate_selection battery, so a
-# range pass recorded as full, a full pass whose class --record reads from a
+# with another gate failing is still a failed round. Submit reuses a
+# foreground record's full pass as it stands and asks the runner's
+# --require-proof local-pass filter about any other pass, so a range
+# pass recorded as full, a full pass whose class --record reads from a
 # round base recorded without it, or a failed run recorded as a pass, would
 # stand in for the whole battery.
 # validate_class_base is that base, present only where --record reports one.
