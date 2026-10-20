@@ -2178,6 +2178,100 @@ table \
   "two cold lanes refused in one run spend one retry between them|$COLD_PAIR_DIRS;OVERSEE_WATCH_STATE_DIR=$TMP_ROOT/cold-pair-state;clock=virtual|$LIST|claude.status=rate_limited eclaude.status=rate_limited fetched=claude,claude,eclaude"
 rm -f -- "${FIXTURE_DIR:?}/.claude.status" "${FIXTURE_DIR:?}/.eclaude.status"
 
+echo "=== usage record metadata belongs to the accepted figure ==="
+# The lock boundary publishes the peer's endpoint refusal after the fast read.
+# It runs the real record reader on both sides; no reader function is replaced.
+RECORD_LOCK_BIN="$TMP_ROOT/record-lock-bin"
+mkdir -p "$RECORD_LOCK_BIN"
+cat > "$RECORD_LOCK_BIN/flock" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" == 3 && "$1" == -w && "$3" == 8 ]] || exit 1
+calls=0
+[[ ! -f "$RECORD_PUBLISHED.calls" ]] || calls="$(cat "$RECORD_PUBLISHED.calls")"
+calls=$((calls + 1))
+printf '%s' "$calls" > "$RECORD_PUBLISHED.calls"
+[[ "$calls" -gt "$RECORD_SKIP_LOCKS" ]] || exit 0
+if [[ ! -f "$RECORD_PUBLISHED" ]]; then
+  if [[ -f "$RECORD_TARGET" ]]; then printf 'figure\n'; else printf 'miss\n'; fi > "$RECORD_PUBLISHED"
+  cp -- "$RECORD_PEER" "$RECORD_TARGET"
+fi
+STUB
+chmod +x "$RECORD_LOCK_BIN/flock"
+
+record_metadata_case() { # MODE CODE
+  local mode="$1" code="$2" state peer target f env_list before="" figure="" skip_locks=0
+  new_home "record-metadata-$mode-$code"
+  make_lane "$H" eclaude 3600
+  claude_usage 70 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+  state="$TMP_ROOT/record-metadata-$mode-$code-state"
+  rm -rf -- "${state:?}"
+  env_list="OVERSEE_WATCH_STATE_DIR=$state;ORCH_LANE_DIRS=$H/.claude:$H/.eclaude"
+  run_lanes "$env_list;FETCH_STATUS=$code;FETCH_RETRY_AFTER=600;clock=virtual" $LIST
+  target=""
+  for f in "$state"/usage/*.json; do
+    [[ "$(jq -r '.config_dir' "$f")" != "$H/.eclaude" ]] || target="$f"
+  done
+  [[ -f "$target" ]] || { fail 'endpoint fixture produced no refusal record'; return; }
+  peer="$state/peer.json"
+  jq --argjson now "$(date +%s)" '.fetched_at = $now | .refusal.expires_at = ($now + 600)
+    | .normalized.fetched_at = $now' "$target" > "$peer"
+  rm -- "$target"
+  if [[ "$mode" == after-legacy ]]; then
+    skip_locks=1
+    make_lane "$H" claude 3600
+    claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+    run_lanes "$env_list" $LIST
+    for f in "$state"/usage/*.json; do
+      [[ "$(jq -r '.config_dir' "$f")" != "$H/.claude" ]] || figure="$f"
+    done
+    jq 'del(.normalized)' "$figure" > "$figure.legacy" && mv -- "$figure.legacy" "$figure"
+    before="$(jq -c '[.fetched_at, .usage, .prior, .sample_claims]' "$figure")"
+    rm -- "$target"
+  elif [[ "$mode" == displaced-figure || "$mode" == late-miss ]]; then
+    run_lanes "$env_list" $LIST
+    jq 'del(.normalized)' "$target" > "$target.legacy" && mv -- "$target.legacy" "$target"
+    if [[ "$mode" == late-miss ]]; then
+      jq '.usage.five_hour.resets_at = "2000-01-01T00:00:00Z"' "$target" > "$target.expired" \
+        && mv -- "$target.expired" "$target"
+    fi
+  fi
+  run_lanes "$env_list;PATH=$RECORD_LOCK_BIN:$CLAIM_BIN:$PATH;RECORD_PEER=$peer;RECORD_TARGET=$target;RECORD_PUBLISHED=$state/published;RECORD_SKIP_LOCKS=$skip_locks" $LIST
+  local want_status=refused
+  [[ "$code" != 429 ]] || want_status=rate_limited
+  assert_eq "$RC:$(jq -c '[.[] | select(.alias == "eclaude") | [.status, .headroom_pct, .session_5h_pct, .weekly_pct, .model_buckets]]' <<<"$OUT"):$(fetched_lanes "$RUN/fetch.log")" \
+    "0:[[\"$want_status\",null,null,null,[]]]:none" \
+    "$mode: the locked refusal has no figure or metadata from another read ($code)" "$ERR"
+  assert_eq "$(cat "$state/published")" "$([[ "$mode" == displaced-figure || "$mode" == late-miss ]] && printf figure || printf miss)" \
+    "$mode: the peer publishes only at the usage lock boundary ($code)"
+  assert_eq "$(jq -c '[.usage, .usage_fetched_at, .normalized.account.status]' "$target")" \
+    "[null,null,\"$want_status\"]" "$mode: a refusal-only record stays distinct from a figure ($code)"
+  if [[ "$mode" == after-legacy ]]; then
+    assert_eq "$(json '.[] | select(.alias == "claude") | .headroom_pct'):$(jq -c '[.fetched_at, .usage, .prior, .sample_claims]' "$figure"):$(jq -r '.normalized.account.status' "$figure")" \
+      "50:$before:ok" 'a preceding legacy figure retains its values and gains normalization' "$ERR"
+  fi
+  run_lanes "$env_list" $LIST --no-cache
+  assert_eq "$(observe 'rc= eclaude.status= eclaude.headroom_pct= fetched=')" \
+    "rc=0 eclaude.status=$want_status eclaude.headroom_pct=null fetched=$([[ "$mode" == after-legacy ]] && printf claude || printf none)" \
+    "$mode: --no-cache honors the live refusal without another request ($code)" "$ERR"
+}
+for record_row in 'cold 401' 'cold 429' 'after-legacy 429' 'displaced-figure 401' 'late-miss 401'; do
+  read -r record_mode record_code <<<"$record_row"
+  record_metadata_case "$record_mode" "$record_code"
+done
+record_metadata_shipped="$LANES"
+record_metadata_mutant="$(mutant_scripts record-metadata-unowned lanes)" || exit 1
+mutate_file "$record_metadata_mutant/lanes" 'local USAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false' \
+  'local USAGE_CACHE_RECORD USAGE_CACHE_LEGACY'
+mutate_file "$record_metadata_mutant/lanes" $'\tUSAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false' \
+  $'\tif false; then USAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false; fi'
+LANES="$record_metadata_mutant/lanes"
+record_metadata_saved_fail="$FAIL"; FAIL=0
+record_metadata_case cold 401 > "$TMP_ROOT/record-metadata-control.log"
+record_metadata_red="$FAIL"; FAIL="$record_metadata_saved_fail"
+LANES="$record_metadata_shipped"
+assert_eq "$record_metadata_red" 1 'control: unowned metadata makes the cold locked-refusal regression fail'
+
 echo "=== a caller naming its own pass interval is served its last figure ==="
 # A watch whose pass is longer than the TTL finds the figure expired on every
 # pass and fetches on every pass, which is the burst with no caller doing
