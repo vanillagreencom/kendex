@@ -136,8 +136,9 @@ for scenario in done closed-children deep-closed-children related-only malformed
     assert "$scenario names all open descendants for disposition" jq -se --argjson pending "$pending" 'any(.[]; .error == "supersession-children" and .issue == "CC-721" and (.children | sort) == $pending)' "$TMP_ROOT/err"
   fi
   if [ "$scenario" = deep-closed-children ]; then
-    assert "terminal descendants are all read once before cancellation" jq -se '
-      [.[] | select(.query | test("query GetChildren(Recursive)?\\(")) | .variables.id] | sort
+    assert "terminal descendants are all read before the disposition comment" jq -se '
+      .[:(map(.query | contains("commentCreate")) | index(true))]
+      | [.[] | select(.query | test("query GetChildren(Recursive)?\\(")) | .variables.id] | sort
       == ["CC-721","CC-722","CC-723","CC-724","CC-725","CC-726","CC-727","CC-728","CC-729"]' "$log"
   fi
   if [ "$scenario" = retry ]; then
