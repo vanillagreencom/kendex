@@ -142,6 +142,8 @@ def main():
     with rows.open("a") as stream:
         stream.write(json.dumps({"harness": harness, "id": identity, "argv": args, "cwd": os.getcwd(),
                                  "account": str(account), "record": str(record_path), "pid": os.getpid(),
+                                 "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
+                                 "excluded_env": [key for key in fixture.get("excluded_env", []) if key in os.environ],
                                  "display": [os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY")]}) + "\n")
     history = fixture.get("history")
     if history == "pending":

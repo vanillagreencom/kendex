@@ -158,6 +158,9 @@ case "$verb" in
     fi
     form="$(lane_launch_form "$cmd" "$harness" "$LANE_TRUST_HOME" "")"
     child_env="JARVIS_RECORD=$(lane_single_quote "$6") JARVIS_GENERATION=$(lane_single_quote "$7")"
+    if [[ "$harness" == pi && -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+      child_env+=" CLAUDE_CONFIG_DIR=$(lane_single_quote "$CLAUDE_CONFIG_DIR")"
+    fi
     # Jarvis acts on the owner's desktop, so its session keeps the live display.
     lane_launch_keep_live_session
     line="$(lane_launch_line "$cmd" "$harness" "$var" "$LANE_TRUST_HOME" "$form" "" "$child_env")" || exit 1
