@@ -1701,6 +1701,11 @@ async function piCodexBridge(pi) {
   globalState[OWNER] = bridge;
   let notice;
   let active = false;
+  let retired = false;
+  const stream = (...args) => {
+    if (retired) throw new Error("codex-provider-retired");
+    return bridge.streamSimple(...args);
+  };
   const activate = async () => {
     active = true;
     let models = [];
@@ -1725,7 +1730,7 @@ Pi Codex offers no models until the Codex CLI is signed in: codex login`;
         }
       },
       models,
-      api: { stream: bridge.streamSimple, streamSimple: bridge.streamSimple }
+      api: { stream, streamSimple: stream }
     }));
   };
   if (enabledWhateverTrust(process.cwd())) await activate();
@@ -1739,6 +1744,8 @@ Pi Codex offers no models until the Codex CLI is signed in: codex login`;
     notice = void 0;
   });
   pi.on("session_shutdown", async () => {
+    retired = true;
+    pi.unregisterProvider(PROVIDER_ID);
     await bridge.close();
     if (globalState[OWNER] === bridge) globalState[OWNER] = void 0;
   });

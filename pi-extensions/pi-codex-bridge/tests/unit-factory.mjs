@@ -2,25 +2,107 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { clearPackageConfigCache } from "../src/package-config.ts";
-import { model, system, user } from "./lib/fake-client.mjs";
-import { writeStubCodex } from "./lib/stub-codex.mjs";
+import { finish, model, system, user } from "./lib/fake-client.mjs";
+import { alive, recordedPids, writeStubCodex } from "./lib/stub-codex.mjs";
 
 const scratch = join(process.cwd(), "tmp");
 mkdirSync(scratch, { recursive: true });
 const PACKAGE_ID = "@vanillagreen/pi-codex-bridge";
 const disabled = { kendex: { extensionManager: { config: { [PACKAGE_ID]: { enabled: false } } } } };
 
-function fakePi() {
+function fakePi(runtime) {
 	const handlers = new Map();
 	const providers = [];
 	return {
 		providers,
 		handlers,
-		registerProvider: (provider) => providers.push(provider),
+		registerProvider: (provider) => {
+			providers.push(provider);
+			runtime?.registerNativeProvider(provider);
+		},
+		unregisterProvider: (name) => runtime?.unregisterProvider(name),
 		on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
 		events: { on: () => () => undefined },
 	};
+}
+
+// Interactive /reload rebuilds extensions but retains the real ModelRuntime.
+// Only event delivery is simulated; Pi owns provider/auth/dispatch semantics.
+for (const enabled of [false, true]) {
+	test(`retained runtime reload with replacement enabled=${enabled}`, { timeout: 20_000 }, async () => {
+		const home = mkdtempSync(join(scratch, "reload-home-"));
+		writeFileSync(join(home, "auth.json"), "{}");
+		const bin = mkdtempSync(join(scratch, "reload-bin-"));
+		writeStubCodex(bin);
+		const project = mkdtempSync(join(scratch, "reload-project-"));
+		mkdirSync(join(project, ".pi"));
+		const settings = join(project, ".pi", "settings.json");
+		writeFileSync(settings, "{}");
+		const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
+		const saved = { CODEX_HOME: process.env.CODEX_HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH };
+		const savedCwd = process.cwd();
+		process.env.CODEX_HOME = home;
+		process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(scratch, "reload-pi-"));
+		process.env.PATH = `${bin}:${process.env.PATH}`;
+		process.chdir(project);
+		clearPackageConfigCache();
+		const ctx = { hasUI: false, cwd: project, isProjectTrusted: () => true };
+		let pi = fakePi(runtime);
+		const shutdown = async () => {
+			for (const handler of pi.handlers.get("session_shutdown") ?? []) await handler({}, ctx);
+		};
+		try {
+			const { default: factory } = await import("../src/index.ts");
+			await factory(pi);
+			for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
+			const previous = runtime.getProvider("pi-codex");
+			assert.ok(previous);
+			assert.equal((await runtime.checkAuth("pi-codex"))?.type, "api_key");
+			const [first] = await recordedPids(bin, "app-server.pid");
+			assert.equal(alive(first), true);
+			writeFileSync(settings, JSON.stringify(enabled ? {} : disabled));
+			await shutdown();
+			assert.equal(alive(first), false, "reload shutdown left the original child running");
+			assert.equal(runtime.getProvider("pi-codex"), undefined);
+			assert.deepEqual(runtime.getModels("pi-codex"), []);
+			assert.equal(await runtime.checkAuth("pi-codex"), undefined);
+			for (const callback of [previous.stream, previous.streamSimple]) {
+				assert.throws(() => callback(model, { messages: [system(), user("Stale selection")] }), { message: "codex-provider-retired" });
+			}
+			assert.deepEqual(await recordedPids(bin, "app-server.pid"), [first], "a retired callback launched another child");
+			pi = fakePi(runtime);
+			await factory(pi);
+			for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "reload" }, ctx);
+			const replacement = runtime.getProvider("pi-codex");
+			assert.equal(replacement !== undefined, enabled);
+			if (enabled) {
+				assert.notEqual(replacement, previous);
+				assert.equal((await runtime.checkAuth("pi-codex"))?.type, "api_key");
+				// The process stub stops at config/read; reaching that protocol error
+				// proves the replacement dispatches without a hosted model request.
+				const result = await finish(runtime.streamSimple(model, { messages: [system(), user("Replacement")] }));
+				assert.match(result.error.errorMessage, /^codex-protocol-invalid method=config\/read /);
+			} else {
+				assert.equal(await runtime.checkAuth("pi-codex"), undefined);
+			}
+			const children = await recordedPids(bin, "app-server.pid");
+			assert.equal(children.length, enabled ? 2 : 1);
+			await shutdown();
+			assert.equal(runtime.getProvider("pi-codex"), undefined);
+			assert.ok(children.every((pid) => !alive(pid)), "final shutdown left a child running");
+		} finally {
+			await shutdown();
+			process.chdir(savedCwd);
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			clearPackageConfigCache();
+		}
+	});
 }
 
 // Where the provider comes from on a fresh start, per login and project

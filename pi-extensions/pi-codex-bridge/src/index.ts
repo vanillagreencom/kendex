@@ -33,6 +33,11 @@ export default async function piCodexBridge(pi: ExtensionAPI): Promise<void> {
 	globalState[OWNER] = bridge;
 	let notice: string | undefined;
 	let active = false;
+	let retired = false;
+	const stream: typeof bridge.streamSimple = (...args) => {
+		if (retired) throw new Error("codex-provider-retired");
+		return bridge.streamSimple(...args);
+	};
 
 	/** Discover the account's models and register the provider. */
 	const activate = async (): Promise<void> => {
@@ -57,7 +62,7 @@ export default async function piCodexBridge(pi: ExtensionAPI): Promise<void> {
 				},
 			},
 			models,
-			api: { stream: bridge.streamSimple, streamSimple: bridge.streamSimple },
+			api: { stream, streamSimple: stream },
 		}));
 	};
 
@@ -75,6 +80,9 @@ export default async function piCodexBridge(pi: ExtensionAPI): Promise<void> {
 		notice = undefined;
 	});
 	pi.on("session_shutdown", async () => {
+		// /reload keeps Pi's ModelRuntime and can leave a selected callback alive.
+		retired = true;
+		pi.unregisterProvider(PROVIDER_ID);
 		await bridge.close();
 		if (globalState[OWNER] === bridge) globalState[OWNER] = undefined;
 	});
