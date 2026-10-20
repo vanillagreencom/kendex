@@ -28,7 +28,7 @@ A login kept in the system keyring (`cli_auth_credentials_store = "keyring"`) ha
 
 - Lists the models `codex app-server` reports for the current account.
 - Offers Pi's active tools to Codex and runs each call in Pi.
-- Continues the same Codex thread across Pi turns, and starts a new thread when Pi's tools or history no longer match it.
+- Continues the same Codex thread across Pi turns, and starts a new thread when Pi's tools, system prompt or history no longer match it.
 - Maps Pi's thinking levels to the efforts each Codex model lists.
 - Keeps every configured MCP server stopped.
 - Refuses Codex's native tools: shell, exec, file edits, browsers and sub-agents.

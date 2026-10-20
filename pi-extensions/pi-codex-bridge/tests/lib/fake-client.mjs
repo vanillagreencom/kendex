@@ -96,8 +96,10 @@ export const model = {
 
 export const readTool = { name: "read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } } } };
 
-export function system(tools = [readTool]) {
-	return { role: "system", content: "Use the declared tools.", toolsAdded: tools, timestamp: 1 };
+export const PROMPT = "Use the declared tools.";
+
+export function system(tools = [readTool], content = PROMPT) {
+	return { role: "system", content, toolsAdded: tools, timestamp: 1 };
 }
 
 export function user(content, timestamp = 2) {

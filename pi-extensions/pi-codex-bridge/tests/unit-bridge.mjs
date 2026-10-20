@@ -6,7 +6,8 @@ import { CodexBridge } from "../src/bridge.ts";
 import { CodexRequestError } from "../src/json-rpc.ts";
 import { buildDynamicTools } from "../src/dynamic-tools.ts";
 import { LOST_TOOL_RESULT_TEXT } from "../src/tool-pairing.ts";
-import { FakeClient, TURN, THREAD, finish, model, readTool, system, toolResult, user } from "./lib/fake-client.mjs";
+import { encodeResponseId, systemPromptDigest } from "../src/transcript.ts";
+import { FakeClient, PROMPT, TURN, THREAD, finish, model, readTool, system, toolResult, user } from "./lib/fake-client.mjs";
 
 const scratch = join(process.cwd(), "tmp");
 mkdirSync(scratch, { recursive: true });
@@ -122,36 +123,67 @@ test("an abort during a tool keeps the child, and the next prompt answers the op
 });
 
 // One row per way the boundary can stop matching Codex's thread. Each must
-// start a new thread whose first turn replays the transcript.
+// start a new thread whose first turn replays the transcript, and leave no
+// call of the old turn waiting: each is answered as lost and the turn is
+// interrupted. `calls` is how many tool calls the warm turn makes, one per
+// batch; `boundary` picks the stream whose message Pi returns to.
 const readSignature = buildDynamicTools([readTool]).signature;
+const promptDigest = systemPromptDigest([system()]);
+const writeTool = { name: "write", description: "Write", parameters: { type: "object" } };
+const TERSE = "Answer tersely.";
+const LOST = { contentItems: [{ type: "inputText", text: LOST_TOOL_RESULT_TEXT }], success: false };
 for (const row of [
-	{ name: "warm: Codex's latest turn is not Pi's boundary", warm: true, boundaryTurn: "turn-older", tools: [readTool] },
-	{ name: "warm: Pi's tool set changed since the thread started", warm: true, boundaryTurn: TURN, tools: [{ name: "write", description: "Write", parameters: { type: "object" } }] },
-	{ name: "cold: the resumed thread's latest turn is not Pi's boundary", warm: false, boundaryTurn: TURN, resumedTurn: "turn-later", tools: [readTool] },
+	{ name: "warm: Codex's latest turn is not Pi's boundary", warm: true, boundaryTurn: "turn-older" },
+	{ name: "warm: Pi's tool set changed since the thread started", warm: true, tools: [writeTool] },
+	{ name: "warm: Pi's system prompt changed since the thread started", warm: true, prompt: TERSE },
+	{ name: "warm: Pi's tool set changed during a tool batch", warm: true, calls: 1, tools: [readTool, writeTool] },
+	{ name: "warm: another pi-codex model is selected during a tool batch", warm: true, calls: 1, nextModel: { ...model, id: "gpt-other" } },
+	{ name: "warm: Pi returned to an earlier tool batch of the same turn", warm: true, calls: 2 },
+	{ name: "cold: the resumed thread's latest turn is not Pi's boundary", warm: false, resumedTurn: "turn-later", resumes: 1 },
+	{ name: "cold: Pi's system prompt changed since the thread started", warm: false, prompt: TERSE, resumes: 0 },
 ]) {
-	test(`boundary mismatch starts a new thread: ${row.name}`, async () => {
+	test(`boundary mismatch starts a new thread: ${row.name}`, { timeout: 5000 }, async () => {
 		let threads = 0;
 		const client = new FakeClient({
 			"thread/start": () => ({ thread: { id: `thread-${++threads}` } }),
 			"thread/resume": (params) => ({ thread: { id: params.threadId }, initialTurnsPage: { data: [{ id: row.resumedTurn }] } }),
-			"turn/start": (params) => { client.text("answer", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); return { turn: { id: TURN } }; },
+			"turn/start": (params) => {
+				if (params.threadId === "thread-1" && row.calls) client.toolCall("rpc-1", "call-1");
+				else { client.text("answer", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); }
+				return { turn: { id: TURN } };
+			},
 		});
+		// A two-batch turn: Codex calls again once the first call has its result.
+		client.on("responded", (id, result) => { if (id === "rpc-1" && row.calls === 2 && result.success) client.toolCall("rpc-2", "call-2"); });
 		const bridge = bridgeFor(client);
-		let boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", timestamp: 3 };
+		const transcript = [system(), user("First")];
+		let boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: encodeResponseId("thread-1", TURN, readSignature, promptDigest), timestamp: 3 };
 		if (row.warm) {
-			const first = await finish(bridge.streamSimple(model, { messages: [system(), user("First")] }));
-			assert.equal(first.reason, "stop");
+			const first = await finish(bridge.streamSimple(model, { messages: transcript }));
+			assert.equal(first.reason, row.calls ? "toolUse" : "stop");
 			boundary = first.message;
+			if (row.calls === 2) {
+				const second = await finish(bridge.streamSimple(model, { messages: [...transcript, first.message, toolResult("call-1")] }));
+				assert.equal(second.message.content.at(-1).id, "call-2");
+			}
 		}
-		boundary = { ...boundary, responseId: `codex-thread:thread-1:${row.boundaryTurn}:${readSignature}` };
-		const final = await finish(bridge.streamSimple(model, { messages: [system(row.tools), user("First"), boundary, user("Second", 4)] }));
-		assert.equal(final.reason, "stop", final.message?.errorMessage);
-		assert.equal(methods(client, "thread/resume").length, row.warm ? 0 : 1);
+		if (row.boundaryTurn) boundary = { ...boundary, responseId: encodeResponseId("thread-1", row.boundaryTurn, readSignature, promptDigest) };
+		const results = row.calls ? [toolResult("call-1")] : [];
+		const messages = [system(row.tools, row.prompt), user("First"), boundary, ...results, user("Second", 4)];
+		const final = await finish(bridge.streamSimple(row.nextModel ?? model, { messages }));
+		assert.equal(final.reason, "stop", final.error?.errorMessage);
+		assert.equal(methods(client, "thread/resume").length, row.resumes ?? 0);
 		assert.equal(methods(client, "thread/start").length, row.warm ? 2 : 1);
 		const [, params] = methods(client, "turn/start").at(-1);
 		assert.equal(params.threadId, row.warm ? "thread-2" : "thread-1");
+		assert.equal(methods(client, "thread/start").at(-1)[1].baseInstructions, row.prompt ?? PROMPT);
 		assert.match(params.input[0].text, /^Conversation so far, replayed from Pi:/);
 		assert.deepEqual(params.input.at(-1), { type: "text", text: "Second", text_elements: [] });
+		assert.equal(methods(client, "turn/steer").length, 0);
+		if (row.calls) {
+			assert.deepEqual(client.responses.at(-1), [`rpc-${row.calls}`, LOST]);
+			assert.deepEqual(methods(client, "turn/interrupt").map(([, interrupt]) => interrupt), [{ threadId: "thread-1", turnId: TURN }]);
+		}
 		await bridge.close();
 	});
 }
@@ -312,7 +344,7 @@ for (const row of [
 	test(`a name read that is ${row.name} refuses the turn`, async () => {
 		const client = new FakeClient({ "config/read": row.configRead });
 		const bridge = bridgeFor(client);
-		const boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: `codex-thread:${THREAD}:${TURN}:${readSignature}`, timestamp: 3 };
+		const boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: encodeResponseId(THREAD, TURN, readSignature, promptDigest), timestamp: 3 };
 		const messages = row.cold ? [system(), user("First"), boundary, user("Second", 4)] : [system(), user("Hello")];
 		const end = await finish(bridge.streamSimple(model, { messages }));
 		assert.equal(end.error.errorMessage.split("\n")[0], row.key);
@@ -330,32 +362,11 @@ test("a cold resume of a thread Codex does not hold starts a new thread with the
 		"turn/start": (params) => { client.text("fresh", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); return { turn: { id: TURN } }; },
 	});
 	const bridge = bridgeFor(client);
-	const boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: `codex-thread:thread-gone:${TURN}:${readSignature}`, timestamp: 3 };
+	const boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: encodeResponseId("thread-gone", TURN, readSignature, promptDigest), timestamp: 3 };
 	const end = await finish(bridge.streamSimple(model, { messages: [system(), user("First"), boundary, user("Second", 4)] }));
 	assert.equal(end.reason, "stop", end.error?.errorMessage);
 	assert.equal(methods(client, "turn/start").at(-1)[1].threadId, "thread-new");
 	assert.match(methods(client, "turn/start").at(-1)[1].input[0].text, /^Conversation so far/);
-	await bridge.close();
-});
-
-test("a tool-set change during a tool batch answers the open call as lost and interrupts that turn", async () => {
-	let threads = 0;
-	const client = new FakeClient({
-		"thread/start": () => ({ thread: { id: `thread-${++threads}` } }),
-		"turn/start": (params) => {
-			if (params.threadId === "thread-1") client.toolCall("rpc-1", "call-1");
-			else { client.text("new thread", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); }
-			return { turn: { id: TURN } };
-		},
-	});
-	const bridge = bridgeFor(client);
-	const first = await finish(bridge.streamSimple(model, { messages: [system(), user("Read")] }));
-	assert.equal(first.reason, "toolUse");
-	const write = { name: "write", description: "Write", parameters: { type: "object" } };
-	const next = await finish(bridge.streamSimple(model, { messages: [system([readTool, write]), user("Read"), first.message, toolResult("call-1")] }));
-	assert.equal(next.reason, "stop", next.error?.errorMessage);
-	assert.deepEqual(client.responses, [["rpc-1", { contentItems: [{ type: "inputText", text: LOST_TOOL_RESULT_TEXT }], success: false }]]);
-	assert.deepEqual(methods(client, "turn/interrupt").map(([, params]) => params), [{ threadId: "thread-1", turnId: TURN }]);
 	await bridge.close();
 });
 
@@ -375,7 +386,7 @@ for (const row of [
 			"turn/start": (params) => { client.text("answer", TURN, params.threadId); client.complete(TURN, "completed", params.threadId); return { turn: { id: TURN } }; },
 		});
 		const bridge = bridgeFor(client);
-		let boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: `codex-thread:thread-1:${TURN}:${readSignature}`, timestamp: 3 };
+		let boundary = { role: "assistant", content: [{ type: "text", text: "earlier" }], api: "codex-app-server", provider: "pi-codex", model: model.id, stopReason: "stop", responseId: encodeResponseId("thread-1", TURN, readSignature, promptDigest), timestamp: 3 };
 		if (row.warm) boundary = (await finish(bridge.streamSimple(model, { messages: [system(), user("Q1")] }))).message;
 		const end = await finish(bridge.streamSimple(model, { messages: [system(), user("Q1"), boundary, user("Q2", 4), row.between, user("Q3", 6)] }));
 		assert.equal(end.reason, "stop", end.error?.errorMessage);

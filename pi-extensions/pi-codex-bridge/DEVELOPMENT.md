@@ -26,15 +26,14 @@ The bridge calls these 0.163.0 methods:
 
 Codex stores a thread's dynamic tools in `CODEX_HOME` with the thread. `thread/resume` restores them and takes no new ones, so a thread serves one tool set for its whole life.
 
-Each Pi assistant message stores `codex-thread:<thread>:<turn>:<tool signature>` as its `responseId`. The latest such message that ended with `stop` or `toolUse` is the boundary. The bridge continues the boundary's thread only when all of these hold:
+Each Pi assistant message stores `codex-thread:<thread>:<turn>:<tool signature>:<prompt digest>` as its `responseId`. The tool signature and the prompt digest name what Codex fixes at thread start: the dynamic tools, and the system prompt sent as `baseInstructions`, which `turn/start` cannot change. The latest such message that ended with `stop` or `toolUse` is the boundary. The bridge reuses the boundary's thread only when all of these hold:
 
-- the signature matches Pi's current tools;
+- the signature matches Pi's current tools and the digest matches Pi's current system prompt;
 - only user messages, and for a `toolUse` boundary that turn's tool results, follow the boundary: another model's turn, or a pi-codex message that errored or was aborted, means Codex lacks part of the transcript;
-- the thread's latest turn is the boundary's turn: the bridge's own record in the same process, or the `initialTurnsPage` of a cold resume. A cold resume of a thread the `CODEX_HOME` does not hold (Codex replies `no rollout found for thread id`) counts as a mismatch.
+- the thread's latest turn is the boundary's turn: the bridge's own record in the same process, or the `initialTurnsPage` of a cold resume. A cold resume of a thread the `CODEX_HOME` does not hold (Codex replies `no rollout found for thread id`) counts as a mismatch;
+- for a tool continuation, the boundary's model is the selected model, because tool answers and `turn/steer` carry no model, and the boundary's tool calls are the batch Codex waits on, so a return to an earlier batch of the same turn is not answered with that batch's results. A new turn names its model in `turn/start`, so a model switch alone does not end a thread.
 
-Otherwise it starts a new thread. The new thread's first turn carries every earlier message as one replayed text item, the images those messages held, and the trailing user messages. A tool change, a Pi tree navigation, a model switch, an aborted turn or a fresh `CODEX_HOME` therefore starts a new thread instead of failing the session. A Pi compaction keeps the thread while its latest pi-codex message survives the compaction.
-
-The system prompt is fixed at thread start (`baseInstructions`). A later change to Pi's system prompt reaches Codex with the next new thread. The bridge does not start a new thread for it, because Pi extensions can change the prompt every turn and a replay loses Codex's own record of tool calls.
+Otherwise it starts a new thread. The new thread's first turn replays every earlier message as text, in order, with each message's images right after its own text, then the trailing user messages. A tool change, a system-prompt change, a Pi tree navigation, a model switch during a tool batch, an aborted turn or a fresh `CODEX_HOME` therefore starts a new thread instead of failing the session. A Pi compaction keeps the thread while its latest pi-codex message survives the compaction. An extension that rewrites the system prompt for one prompt, as pi-caveman's modes do, costs a replay on that prompt and on the next one that restores it.
 
 ## Tool calls
 
@@ -94,7 +93,7 @@ Native Codex tools must not run. These guards hold that:
 
 ## Model discovery
 
-The extension factory lists models through the bridge's own app-server client, under a 15-second deadline. A stall or failure stops that child and gives an empty model list and one keyed notice at session start; a missing login gives the `codex-login-missing` notice instead. A child that lists models stays with the bridge for the session's streams until `session_shutdown`.
+The bridge lists models through its own app-server client, under a 15-second deadline. Pi records project trust only at `session_start`, while startup model selection reads only providers a factory registered. The factory therefore lists models and registers the provider only when the package is enabled both with and without the project's settings; otherwise `session_start` records Pi's trust answer and does both unless the trusted settings disable the package. A disabled package starts no app-server. A stall or failure stops that child and gives an empty model list and one keyed notice at session start; a missing login gives the `codex-login-missing` notice instead. A child that lists models stays with the bridge for the session's streams until `session_shutdown`.
 
 The client owns its child from the spawn. One 15-second deadline covers the version check and the handshake together. That deadline, the discovery deadline or `close` stops the child, and the next stream starts a fresh one. A stream abort ends only that stream's wait: the open stays with the bridge, and a stream that comes before it settles joins it.
 

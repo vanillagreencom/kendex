@@ -33,7 +33,7 @@ import {
 	type RequestId,
 } from "./protocol.js";
 import { answerToolCalls, type PendingToolCall, type ToolCallAnswer } from "./tool-pairing.js";
-import { afterBoundary, encodeResponseId, findBoundary, replayInput } from "./transcript.js";
+import { afterBoundary, encodeResponseId, findBoundary, replayInput, systemPromptDigest } from "./transcript.js";
 
 /** Threads one bridge keeps state for; the least recently used idle one goes first. */
 export const MAX_THREADS = 16;
@@ -126,6 +126,11 @@ function ignore(): void {}
 
 function emptyUsage(): AssistantMessage["usage"] {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+}
+
+/** Whether a message's tool calls are the calls Codex waits on, in order. */
+function sameBatch(callIds: readonly string[], pending: readonly PendingToolCall[]): boolean {
+	return callIds.length === pending.length && pending.every((call, index) => call.callId === callIds[index]);
 }
 
 function firstLine(error: unknown): string {
@@ -482,24 +487,27 @@ export class CodexBridge {
 
 	/**
 	 * Which Codex thread serves this transcript. Pi's latest clean pi-codex
-	 * message names a thread, a turn and a tool signature. The bridge continues
-	 * that thread only when the signature matches Pi's current tools, nothing
-	 * but user input and that turn's tool results follows the message, and the
-	 * thread's latest turn is that turn. Otherwise it starts a new thread and
-	 * replays the transcript, so Codex never holds turns Pi has dropped, misses
-	 * another model's turns, or calls a tool Pi no longer has. Any turn the plan
-	 * does not continue is abandoned, so Codex is not left waiting on it. The
-	 * plan's record comes claimed by the calling stream.
+	 * message is the boundary (`findBoundary`). The bridge reuses its thread only
+	 * when the thread was started for Pi's current tools and system prompt,
+	 * nothing but user input and that turn's tool results follows the message,
+	 * and the thread's latest turn is that turn. A tool continuation also needs
+	 * the boundary's model to be the selected one, since tool answers and
+	 * `turn/steer` carry no model, and the boundary's tool calls to be the batch
+	 * Codex waits on. Otherwise it starts a new thread and replays the
+	 * transcript, so Codex never holds turns Pi has dropped, misses another
+	 * model's turns, calls a tool Pi no longer has or keeps a stale prompt. Any
+	 * turn the plan does not continue is abandoned, so Codex is not left waiting
+	 * on it. The plan's record comes claimed by the calling stream.
 	 */
-	async #plan(client: ProtocolClient, model: Model<string>, messages: Message[], tools: DynamicToolCatalog): Promise<Plan> {
+	async #plan(client: ProtocolClient, model: Model<string>, messages: Message[], tools: DynamicToolCatalog, promptDigest: string): Promise<Plan> {
 		const boundary = findBoundary(messages);
 		const record = boundary === undefined ? undefined : this.#threads.get(boundary.threadId);
 		if (record?.streaming) throw new Error(`codex-thread-busy thread=${record.threadId}`);
 		const after = boundary === undefined ? undefined : afterBoundary(messages, boundary);
-		const matches = boundary !== undefined && after!.clean && boundary.toolSignature === tools.signature;
+		const matches = boundary !== undefined && after!.clean && boundary.toolSignature === tools.signature && boundary.promptDigest === promptDigest;
 		let plan: Plan | undefined;
 		if (matches && record !== undefined) {
-			if (boundary.stopReason === "toolUse" && record.activeTurnId === boundary.turnId && record.pending.length > 0) {
+			if (boundary.stopReason === "toolUse" && record.activeTurnId === boundary.turnId && boundary.model === model.id && sameBatch(boundary.toolCallIds, record.pending)) {
 				plan = { record, mode: "continue", input: after!.input, answers: answerToolCalls(record.pending, after!.toolResults) };
 			} else if (boundary.stopReason === "stop" && record.activeTurnId === null && record.lastTurnId === boundary.turnId) {
 				plan = { record, mode: "turn", input: after!.input };
@@ -561,9 +569,10 @@ export class CodexBridge {
 			if (signal?.aborted) throw new Error("codex-request-aborted");
 			const messages = collapseSystemMessages(context).messages;
 			const tools = buildDynamicTools(getCurrentTools(messages));
+			const promptDigest = systemPromptDigest(messages);
 			const open = await untilAborted(this.#client());
 			client = open;
-			const planning = this.#plan(open, model, messages, tools);
+			const planning = this.#plan(open, model, messages, tools, promptDigest);
 			const plan = await untilAborted(planning).catch((error: unknown) => {
 				// A plan that settles after this stream ended hands its claim back.
 				void planning.then((late) => this.#release(open, late.record), ignore);
@@ -606,7 +615,7 @@ export class CodexBridge {
 				});
 			}
 			await untilAborted(Promise.resolve(options?.onResponse?.({ status: 200, headers: {} }, model)));
-			output.responseId = encodeResponseId(claimed.threadId, claimed.activeTurnId!, tools.signature);
+			output.responseId = encodeResponseId(claimed.threadId, claimed.activeTurnId!, tools.signature, promptDigest);
 			stream.push({ type: "start", partial: output });
 			reading = true;
 			await this.#consume(stream, output, model, claimed, options);

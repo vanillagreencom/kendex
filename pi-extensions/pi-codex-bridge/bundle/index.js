@@ -24,7 +24,7 @@ Sign in with the Codex CLI first: codex login`);
 import {
   collapseSystemMessages,
   createAssistantMessageEventStream,
-  getCurrentSystemPrompt,
+  getCurrentSystemPrompt as getCurrentSystemPrompt2,
   getCurrentTools
 } from "@earendil-works/pi-ai";
 
@@ -764,9 +764,14 @@ function answerToolCalls(pending, results) {
 }
 
 // src/transcript.ts
+import { createHash as createHash2 } from "node:crypto";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 var RESPONSE_ID_PREFIX = "codex-thread";
-function encodeResponseId(threadId, turnId, toolSignature) {
-  return `${RESPONSE_ID_PREFIX}:${threadId}:${turnId}:${toolSignature}`;
+function encodeResponseId(threadId, turnId, toolSignature, promptDigest) {
+  return `${RESPONSE_ID_PREFIX}:${threadId}:${turnId}:${toolSignature}:${promptDigest}`;
+}
+function systemPromptDigest(messages) {
+  return createHash2("sha256").update(getCurrentSystemPrompt(messages)).digest("hex").slice(0, 16);
 }
 function findBoundary(messages) {
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -774,14 +779,29 @@ function findBoundary(messages) {
     if (message.role !== "assistant" || message.provider !== PROVIDER_ID) continue;
     if (message.stopReason !== "stop" && message.stopReason !== "toolUse") continue;
     const parts = message.responseId?.split(":");
-    if (parts?.length !== 4 || parts[0] !== RESPONSE_ID_PREFIX || parts.some((part) => part.length === 0)) continue;
-    return { index, threadId: parts[1], turnId: parts[2], toolSignature: parts[3], stopReason: message.stopReason };
+    if (parts?.length !== 5 || parts[0] !== RESPONSE_ID_PREFIX || parts.some((part) => part.length === 0)) continue;
+    return {
+      index,
+      threadId: parts[1],
+      turnId: parts[2],
+      toolSignature: parts[3],
+      promptDigest: parts[4],
+      model: message.model,
+      toolCallIds: message.content.flatMap((item) => item.type === "toolCall" ? [item.id] : []),
+      stopReason: message.stopReason
+    };
   }
   return void 0;
 }
+function textItem(text2) {
+  return { type: "text", text: text2, text_elements: [] };
+}
+function imageItem(image) {
+  return { type: "image", url: `data:${image.mimeType};base64,${image.data}` };
+}
 function userInput(content) {
-  if (typeof content === "string") return [{ type: "text", text: content, text_elements: [] }];
-  return content.map((item) => item.type === "text" ? { type: "text", text: item.text, text_elements: [] } : { type: "image", url: `data:${item.mimeType};base64,${item.data}` });
+  if (typeof content === "string") return [textItem(content)];
+  return content.map((item) => item.type === "text" ? textItem(item.text) : imageItem(item));
 }
 function afterBoundary(messages, boundary) {
   const later = messages.slice(boundary.index + 1);
@@ -811,7 +831,7 @@ ${parts.join("\n")}`;
 function historyImages(message) {
   if (message.role !== "user" && message.role !== "toolResult") return [];
   if (typeof message.content === "string") return [];
-  return message.content.flatMap((item) => item.type === "image" ? [{ type: "image", url: `data:${item.mimeType};base64,${item.data}` }] : []);
+  return message.content.flatMap((item) => item.type === "image" ? [imageItem(item)] : []);
 }
 function replayInput(messages) {
   const conversation = messages.filter((message) => message.role !== "system");
@@ -820,10 +840,17 @@ function replayInput(messages) {
   const history = conversation.slice(0, start);
   const trailing = conversation.slice(start).flatMap((message) => message.role === "user" ? userInput(message.content) : []);
   if (history.length === 0) return trailing;
-  const replay = `Conversation so far, replayed from Pi:
-
-${history.map(historyEntry).join("\n\n")}`;
-  return [{ type: "text", text: replay, text_elements: [] }, ...history.flatMap(historyImages), ...trailing];
+  const replay = [];
+  let entries = ["Conversation so far, replayed from Pi:"];
+  for (const message of history) {
+    entries.push(historyEntry(message));
+    const images = historyImages(message);
+    if (images.length === 0) continue;
+    replay.push(textItem(entries.join("\n\n")), ...images);
+    entries = [];
+  }
+  if (entries.length > 0) replay.push(textItem(entries.join("\n\n")));
+  return [...replay, ...trailing];
 }
 
 // src/bridge.ts
@@ -864,6 +891,9 @@ function ignore() {
 }
 function emptyUsage() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+}
+function sameBatch(callIds, pending) {
+  return callIds.length === pending.length && pending.every((call, index) => call.callId === callIds[index]);
 }
 function firstLine(error) {
   return (error instanceof Error ? error.message : "codex-bridge-error").split("\n", 1)[0];
@@ -1123,7 +1153,7 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
       cwd: this.#launch.cwd,
       approvalPolicy: APPROVAL_POLICY,
       sandbox: "read-only",
-      baseInstructions: getCurrentSystemPrompt(messages),
+      baseInstructions: getCurrentSystemPrompt2(messages),
       dynamicTools: tools.declarations,
       ephemeral: false,
       environments: [],
@@ -1171,24 +1201,27 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
   }
   /**
    * Which Codex thread serves this transcript. Pi's latest clean pi-codex
-   * message names a thread, a turn and a tool signature. The bridge continues
-   * that thread only when the signature matches Pi's current tools, nothing
-   * but user input and that turn's tool results follows the message, and the
-   * thread's latest turn is that turn. Otherwise it starts a new thread and
-   * replays the transcript, so Codex never holds turns Pi has dropped, misses
-   * another model's turns, or calls a tool Pi no longer has. Any turn the plan
-   * does not continue is abandoned, so Codex is not left waiting on it. The
-   * plan's record comes claimed by the calling stream.
+   * message is the boundary (`findBoundary`). The bridge reuses its thread only
+   * when the thread was started for Pi's current tools and system prompt,
+   * nothing but user input and that turn's tool results follows the message,
+   * and the thread's latest turn is that turn. A tool continuation also needs
+   * the boundary's model to be the selected one, since tool answers and
+   * `turn/steer` carry no model, and the boundary's tool calls to be the batch
+   * Codex waits on. Otherwise it starts a new thread and replays the
+   * transcript, so Codex never holds turns Pi has dropped, misses another
+   * model's turns, calls a tool Pi no longer has or keeps a stale prompt. Any
+   * turn the plan does not continue is abandoned, so Codex is not left waiting
+   * on it. The plan's record comes claimed by the calling stream.
    */
-  async #plan(client, model, messages, tools) {
+  async #plan(client, model, messages, tools, promptDigest) {
     const boundary = findBoundary(messages);
     const record = boundary === void 0 ? void 0 : this.#threads.get(boundary.threadId);
     if (record?.streaming) throw new Error(`codex-thread-busy thread=${record.threadId}`);
     const after = boundary === void 0 ? void 0 : afterBoundary(messages, boundary);
-    const matches = boundary !== void 0 && after.clean && boundary.toolSignature === tools.signature;
+    const matches = boundary !== void 0 && after.clean && boundary.toolSignature === tools.signature && boundary.promptDigest === promptDigest;
     let plan;
     if (matches && record !== void 0) {
-      if (boundary.stopReason === "toolUse" && record.activeTurnId === boundary.turnId && record.pending.length > 0) {
+      if (boundary.stopReason === "toolUse" && record.activeTurnId === boundary.turnId && boundary.model === model.id && sameBatch(boundary.toolCallIds, record.pending)) {
         plan = { record, mode: "continue", input: after.input, answers: answerToolCalls(record.pending, after.toolResults) };
       } else if (boundary.stopReason === "stop" && record.activeTurnId === null && record.lastTurnId === boundary.turnId) {
         plan = { record, mode: "turn", input: after.input };
@@ -1240,9 +1273,10 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
       if (signal?.aborted) throw new Error("codex-request-aborted");
       const messages = collapseSystemMessages(context).messages;
       const tools = buildDynamicTools(getCurrentTools(messages));
+      const promptDigest = systemPromptDigest(messages);
       const open = await untilAborted(this.#client());
       client = open;
-      const planning = this.#plan(open, model, messages, tools);
+      const planning = this.#plan(open, model, messages, tools, promptDigest);
       const plan = await untilAborted(planning).catch((error) => {
         void planning.then((late) => this.#release(open, late.record), ignore);
         throw error;
@@ -1281,7 +1315,7 @@ Codex could not load its configuration for CODEX_HOME=${this.codexHome}. Run \`c
         });
       }
       await untilAborted(Promise.resolve(options?.onResponse?.({ status: 200, headers: {} }, model)));
-      output.responseId = encodeResponseId(claimed.threadId, claimed.activeTurnId, tools.signature);
+      output.responseId = encodeResponseId(claimed.threadId, claimed.activeTurnId, tools.signature, promptDigest);
       stream.push({ type: "start", partial: output });
       reading = true;
       await this.#consume(stream, output, model, claimed, options);
@@ -1483,6 +1517,22 @@ function projectTrustRegistry() {
   host[PROJECT_TRUST_SYMBOL] = trustRegistry;
   return trustRegistry;
 }
+function projectTrusted(ctx) {
+  try {
+    return ctx.isProjectTrusted?.() === true;
+  } catch {
+    return false;
+  }
+}
+function recordSettingsTrust(settingsPath, ctx) {
+  const registry = projectTrustRegistry();
+  if (!registry.projectSettings) registry.projectSettings = /* @__PURE__ */ new Map();
+  registry.projectSettings.set(settingsPath, projectTrusted(ctx));
+}
+function recordProjectTrust(ctx) {
+  if (!ctx.cwd) return;
+  recordSettingsTrust(projectSettingsPath(ctx.cwd), ctx);
+}
 function settingsFileTrusted(settingsPath) {
   return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
@@ -1496,6 +1546,9 @@ function userSettingsPathAt(now) {
 }
 var pathListsUser;
 var pathLists = /* @__PURE__ */ new Map();
+function userAndProjectSettingsPaths(project) {
+  return userAndProjectSettingsPathsAt(project, performance.now());
+}
 function userAndProjectSettingsPathsAt(project, now) {
   const user = userSettingsPathAt(now);
   if (user !== pathListsUser) {
@@ -1536,6 +1589,9 @@ function settingsFilesKey(paths) {
     settingsFilesKeys.set(paths, key);
   }
   return key;
+}
+function readSettingsFiles(paths) {
+  return readSettingsFilesAt(paths, performance.now());
 }
 function readSettingsFilesAt(paths, now) {
   const key = settingsFilesKey(paths);
@@ -1588,6 +1644,10 @@ function cwdSettingsAt(cwd, now) {
   return view;
 }
 var configsByFiles = /* @__PURE__ */ new WeakMap();
+function readPackageConfigAt(packageId, paths) {
+  const files = readSettingsFiles(paths);
+  return packageConfigOver(packageId, files, configsOver(files));
+}
 function configsOver(files) {
   let configs = configsByFiles.get(files);
   if (!configs) {
@@ -1630,39 +1690,48 @@ function installSettingsCacheRefresh(pi) {
 var PACKAGE_ID = "@vanillagreen/pi-codex-bridge";
 var OWNER = /* @__PURE__ */ Symbol.for("pi-codex-bridge:provider-owner");
 var globalState = globalThis;
+function enabledWhateverTrust(cwd) {
+  return [void 0, projectSettingsPath(cwd)].every((project) => readPackageConfigAt(PACKAGE_ID, userAndProjectSettingsPaths(project)).enabled !== false);
+}
 async function piCodexBridge(pi) {
   installSettingsCacheRefresh(pi);
-  if (readPackageConfig(PACKAGE_ID).enabled === false) return;
   if (globalState[OWNER] !== void 0) return;
   const codexHome = resolveCodexHome();
   const bridge = new CodexBridge({ codexHome });
   globalState[OWNER] = bridge;
   let notice;
-  let models = [];
-  if (hasCodexLogin(codexHome)) {
-    const discovered = await bridge.discoverModels();
-    models = buildPiModels(discovered.models);
-    if (discovered.notice !== void 0) notice = `${discovered.notice}
+  let active = false;
+  const activate = async () => {
+    active = true;
+    let models = [];
+    if (hasCodexLogin(codexHome)) {
+      const discovered = await bridge.discoverModels();
+      models = buildPiModels(discovered.models);
+      if (discovered.notice !== void 0) notice = `${discovered.notice}
 Pi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
-  } else {
-    notice = `${LOGIN_MISSING_KEY} home=${codexHome}
+    } else {
+      notice = `${LOGIN_MISSING_KEY} home=${codexHome}
 Pi Codex offers no models until the Codex CLI is signed in: codex login`;
-  }
-  pi.registerProvider(piAi.createProvider({
-    id: PROVIDER_ID,
-    name: "Pi Codex",
-    baseUrl: API_ID,
-    auth: {
-      apiKey: {
-        name: "Codex CLI login",
-        check: async () => hasCodexLogin(codexHome) ? { type: "api_key", source: "Codex CLI login" } : void 0,
-        resolve: async () => hasCodexLogin(codexHome) ? { auth: {}, source: "Codex CLI login" } : void 0
-      }
-    },
-    models,
-    api: { stream: bridge.streamSimple, streamSimple: bridge.streamSimple }
-  }));
-  pi.on("session_start", (_event, ctx) => {
+    }
+    pi.registerProvider(piAi.createProvider({
+      id: PROVIDER_ID,
+      name: "Pi Codex",
+      baseUrl: API_ID,
+      auth: {
+        apiKey: {
+          name: "Codex CLI login",
+          check: async () => hasCodexLogin(codexHome) ? { type: "api_key", source: "Codex CLI login" } : void 0,
+          resolve: async () => hasCodexLogin(codexHome) ? { auth: {}, source: "Codex CLI login" } : void 0
+        }
+      },
+      models,
+      api: { stream: bridge.streamSimple, streamSimple: bridge.streamSimple }
+    }));
+  };
+  if (enabledWhateverTrust(process.cwd())) await activate();
+  pi.on("session_start", async (_event, ctx) => {
+    recordProjectTrust(ctx);
+    if (!active && readPackageConfig(PACKAGE_ID, ctx.cwd).enabled !== false) await activate();
     if (notice === void 0) return;
     if (ctx.hasUI) ctx.ui.notify(notice, "warning");
     else process.stderr.write(`${notice}
