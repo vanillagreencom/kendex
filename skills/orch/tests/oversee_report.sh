@@ -407,6 +407,20 @@ assert_eq "$RC|$(awk -F' [|] ' '/^Next/ { on = 1; next } on && /^$/ { on = 0 } o
   "0|KEN-4 (held by KEN-2: src/a.sh),KEN-5 (held by #12: src/b.sh),KEN-6,KEN-8 (overlap unread: location)" \
   "a queued item sharing a file with a running lane or an open pull request names that holder; an unticked Location labels its row"
 
+echo "=== render: Next labels a legacy lane's unticked Location ==="
+# KEN-3 runs with no touched set and its Location line names no path, so the
+# judgement of KEN-4 cannot read what the lane holds and says whose body it was.
+seed_fleet next_lane_unread
+jq '.description = "**Location**: src/d.sh (the gate)"' "$CASE/linear-KEN-3.json" > "$CASE/state.next"
+mv -- "$CASE/state.next" "$CASE/linear-KEN-3.json"
+jq '.description = "**Location**: `src/a.sh`"' "$CASE/linear-KEN-4.json" > "$CASE/state.next"
+mv -- "$CASE/state.next" "$CASE/linear-KEN-4.json"
+echo '[]' > "$CASE/open.json"
+run -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(awk -F' [|] ' '/^Next/ { on = 1; next } on && /^$/ { on = 0 } on && /^\| KEN-4/ { print substr($1, 3) }' <<<"$OUT")" \
+  "0|KEN-4 (overlap unread: lane:KEN-3:location)" \
+  "a held lane with no touched set and an unticked Location line labels the row it blocks, and the report still prints"
+
 echo "=== render: ORCH_REPORT_COLUMNS picks and orders the columns ==="
 seed_fleet columns
 run ORCH_REPORT_COLUMNS="why it matters, issue" -- render --state "$CASE/state.json" --repo owner/repo
