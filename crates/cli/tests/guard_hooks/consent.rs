@@ -83,47 +83,58 @@ fn spaced_fixture() -> tempfile::TempDir {
         .unwrap()
 }
 
-/// A clone nobody armed executes none of its own code, however loudly it
-/// declares this package.
-///
-/// The whole trust boundary in one fixture. `.kendex-lock.json` sits under
-/// the work tree, so a repository can ship one declaring commit-guards as
-/// an enabled skill — that is what a real install leaves behind, and what
-/// anyone can commit. The hooks directory is the other half, and git clones
-/// it for nobody: with no helper in it, nothing here has been licensed, and
-/// `kendex check` must reach its verdict from local state alone.
-///
-/// The marker file is the assertion. A report that merely reads right can
-/// be produced by a script that already ran.
+/// With no helper, optional presence, recorded adoption and an unreadable
+/// record have distinct results. None licenses the package's code.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_runs_nothing_out_of_a_repository_nobody_armed() {
-    let tmp = spaced_fixture();
-    let home = &rooted(&tmp);
-    let root = repo(home);
-    // A real install: the lock genuinely declares the package. Nothing is
-    // armed, which is the state a fresh clone of such a repository is in.
-    install_package(home, &root, &["commit-guards"]);
-    assert!(
-        !root.join(".git/hooks/kendex-guards").exists(),
-        "the fixture is unarmed"
-    );
-    let marker = home.join("installer-ran");
-    installer_that_announces_itself(&root, &marker);
+    enum Adoption {
+        Absent,
+        Recorded,
+        Unreadable,
+    }
+    for (adoption, code, class) in [
+        (Adoption::Absent, 0, None),
+        (Adoption::Recorded, 1, Some("drift")),
+        (Adoption::Unreadable, 2, Some("unknown")),
+    ] {
+        let tmp = spaced_fixture();
+        let home = &rooted(&tmp);
+        let root = repo(home);
+        install_package(home, &root, &["commit-guards"]);
+        match adoption {
+            Adoption::Absent => {}
+            Adoption::Recorded | Adoption::Unreadable => {
+                let armed = run(home, &root, "kendex", &["guard", "install"]);
+                assert_eq!(armed.status.code(), Some(0), "{}", said(&armed));
+                std::fs::remove_file(root.join(".git/hooks/kendex-guards")).unwrap();
+                if matches!(adoption, Adoption::Unreadable) {
+                    // A damaged local state path yields ENOTDIR even for a
+                    // privileged test process; absence must not swallow it.
+                    let records = root.join(".git/kendex/armed");
+                    std::fs::remove_dir_all(&records).unwrap();
+                    std::fs::write(&records, "not a directory\n").unwrap();
+                }
+            }
+        }
+        assert!(!root.join(".git/hooks/kendex-guards").exists());
+        let marker = home.join("installer-ran");
+        installer_that_announces_itself(&root, &marker);
 
-    let out = run(home, &root, "kendex", &["check"]);
-    assert!(
-        !marker.exists(),
-        "check ran a script out of a repository nobody armed: {}",
-        said(&out)
-    );
-    // And it still says the useful thing, from local state alone.
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(
-        said(&out).contains("holds no kendex-guards helper"),
-        "{}",
-        said(&out)
-    );
+        let out = run(home, &root, "kendex", &["check", "--json"]);
+        assert!(!marker.exists(), "unlicensed package ran: {}", said(&out));
+        assert_eq!(out.status.code(), Some(code), "{}", said(&out));
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let hooks = report["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|section| section["title"] == "commit hooks");
+        assert_eq!(
+            hooks.map(|section| section["lines"][0]["class"].as_str().unwrap()),
+            class
+        );
+    }
 }
 
 /// An armed repository that declares nothing executes nothing either.

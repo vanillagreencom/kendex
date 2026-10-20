@@ -548,8 +548,7 @@ fn a_lapsed_package_that_is_not_commit_guards_is_told_its_own_remedy() {
     assert!(!out.contains("guard install"), "{out}");
 }
 
-/// `kendex check` names an unarmed repository, in the package's own words,
-/// and says nothing once it is armed.
+/// An optional package install and a clean adopted installation both pass.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_names_an_unarmed_repository() {
@@ -558,10 +557,10 @@ fn check_names_an_unarmed_repository() {
     offer(&world, "commit-guards");
     world.run(&["add", "cat", "--skill", "commit-guards", "-y"]);
 
-    let unarmed = said(&world.try_run(&["check"]));
-    assert!(unarmed.contains("commit hooks"), "{unarmed}");
+    let unarmed = world.try_run(&["check"]);
+    assert_eq!(unarmed.status.code(), Some(0), "{}", said(&unarmed));
 
     world.run(&["guard", "install"]);
-    let armed = said(&world.try_run(&["check"]));
-    assert!(!armed.contains("commit hooks"), "{armed}");
+    let armed = world.try_run(&["check"]);
+    assert_eq!(armed.status.code(), Some(0), "{}", said(&armed));
 }
