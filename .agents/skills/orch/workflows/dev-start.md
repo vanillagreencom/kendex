@@ -168,7 +168,7 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
 ```
 
-`A` is the `verdict` field — `accept`, `wait`, or `retry`. The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and matches its internal `round_id`.
+`A` is the `verdict` field — `accept`, `wait`, or `retry`. The checker selects the round receipt under [dev-return.md § Identity](../schemas/dev-return.md#identity-the-round-id) and matches its internal `round_id`. Read its returned `path` for every artifact field below and carry that path to submit.
 
 **Check B** — `B = pass` only when every check passes:
 
@@ -191,7 +191,7 @@ A round that meets the Stalled round conditions of [references/skill-rules.md §
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid artifact with a failing `validate`, treat that verdict as final under [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), after any permitted in-round correction and rerun. Run Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid failed original, route a qualifying stopped-round recovery through [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), keeping the original delegation, `pre_delegate_sha` and Check B. Check A again after its terminal companion. A selected failed companion or an original that does not qualify is final. Run Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 

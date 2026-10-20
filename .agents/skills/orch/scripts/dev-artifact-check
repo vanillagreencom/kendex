@@ -116,7 +116,11 @@ the per-wake check. Codex uses references/codex-runtime.md, Delegated round
 wait. OpenCode runs it via scheduled re-entry, or falls back to the per-wake
 check alone.
 
-Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
+Round mode selects WT/tmp/dev-return-ISSUE-RID-recovery.json when present,
+otherwise WT/tmp/dev-return-ISSUE-RID.json. An invalid companion refuses without
+fallback. recovery_of binds the same issue, round, kind and branch to a valid
+failed original. File mode checks only its explicit path.
+Round mode (the production path):
 requires it exists, its internal .round_id == RID, then the scalar/kind, commit
 object (against WT's git repo, kendex#994), and items gates. A kind fix receipt
 additionally REQUIRES --expect-items-from-round and exits 2 without it: its
@@ -696,7 +700,7 @@ collect_unapproved_additions() {
 # git repo skips the commit checks — production worktrees always are, and a
 # check that cannot run proves nothing either way.
 validate_artifact() {
-  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" round_record="${5:-}" warning=""
+  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" round_record="${5:-}" warning="" historical="${6:-false}"
   if [[ ! -f "$file" ]]; then
     emit false "" "missing"
     return 1
@@ -708,6 +712,24 @@ validate_artifact() {
   if ! has_required_fields "$file"; then
     emit false "$file" "invalid"
     return 1
+  fi
+  if jq -e 'has("recovery_of")' "$file" >/dev/null 2>&1; then
+    local parent
+    if ! parent="$(jq -r '"dev-return-\(.issue)-\(.round_id).json"' "$file")"; then
+      emit false "$file" "invalid"; return 1
+    fi
+    if [[ "$historical" == true || -L "$file" || "$parent" == */* || "$parent" == *..* \
+      || ! -f "${file%/*}/$parent" || -L "${file%/*}/$parent" ]] \
+      || ! jq -e --arg parent "$parent" --slurpfile original "${file%/*}/$parent" '
+        .recovery_of == $parent and ($original[0] as $p
+          | (.issue == $p.issue and .round_id == $p.round_id and .kind == $p.kind and .branch == $p.branch)
+          and ($p | has("recovery_of") | not) and ($p.validate | startswith("FAILING:")))
+      ' "$file" >/dev/null 2>&1; then
+      emit false "$file" "invalid"; return 1
+    fi
+    if ! validate_artifact "${file%/*}/$parent" "$want_round" "$expect_items" "$repo" "$round_record" true >/dev/null; then
+      emit false "$file" "invalid"; return 1
+    fi
   fi
   # A fix receipt's mode is the one its round runs. It is judged before the
   # commit gate, whose warning would otherwise precede this gate's status 2
@@ -765,7 +787,7 @@ validate_artifact() {
     fi
     # A deferred CI receipt authorizes publication of only its current commit.
     # Both round acceptance and submit's --file reuse use this one reader.
-    if jq -e '.validate_mode == "ci"' "$file" >/dev/null 2>&1 \
+    if [[ "$historical" != true ]] && jq -e '.validate_mode == "ci"' "$file" >/dev/null 2>&1 \
       && [[ "$commit" != "$(git -C "$repo" rev-parse HEAD)" ]]; then
       emit false "$file" "ci_head_mismatch"
       return 1
@@ -988,7 +1010,17 @@ require_round_record_flag() {
 }
 
 check_once() {
-  local out rc=0 verdict
+  local out rc=0 verdict parent_file=""
+  if [[ "$round_mode" == true ]]; then
+    file="$worktree/tmp/dev-return-$issue-$round_id.json"
+    parent_file="$file"
+    if [[ -e "${file%.json}-recovery.json" || -L "${file%.json}-recovery.json" ]]; then
+      file="${file%.json}-recovery.json"
+      if [[ -L "$file" ]] || ! jq -e 'has("recovery_of")' "$file" >/dev/null 2>&1; then
+        emit false "$file" "invalid"; return 1
+      fi
+    fi
+  fi
   require_round_record_flag
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
   if (( rc == 0 )); then
@@ -999,6 +1031,9 @@ check_once() {
   fi
   if [[ "$round_mode" == true ]] && (( rc == 0 || rc == 1 )) \
     && jq -e '.reason != "missing" and .reason != "invalid"' >/dev/null 2>&1 <<<"$out"; then
+    if [[ -n "$parent_file" && "$file" != "$parent_file" ]]; then
+      (file="$parent_file"; record_stage "$(emit true "$file" valid)") || printf 'dev-artifact-check: parent-stage-unrecorded issue=%s round=%s\n' "$issue" "$round_id" >&2
+    fi
     record_stage "$out" || printf 'dev-artifact-check: stage-unrecorded issue=%s round=%s\n' "$issue" "$round_id" >&2
   fi
   printf '%s\n' "$out"
@@ -1012,17 +1047,17 @@ record_stage() {
   state="$("$SCRIPT_DIR/workflow-state" path "$issue" 2>/dev/null)" || return 1
   [[ -f "$state" ]] || return 0
   now="$(date +%s)" || return 1
-  "$SCRIPT_DIR/workflow-state" update "$issue" --arg round "$round_id" --argjson end "$now" \
+  "$SCRIPT_DIR/workflow-state" update "$issue" --arg round "$round_id" --arg receipt "${file##*/}" --arg original "dev-return-$issue-$round_id.json" --argjson end "$now" \
     --slurpfile artifact "$file" --argjson result "$result" '
       $artifact[0].kind as $kind
       | .stages = ((.stages // []) | map(if .round_id == $round and .kind != "validate"
           then .kind = $kind | .end //= $end else . end))
       | if $result.validate_time == null then . else
           $result.validate_time as $time
-          | .stages = ([(.stages // [])[] | select(.round_id != $round or .kind != "validate")]
-              + [{kind: "validate", round_id: $round, start: ($time.started_at | fromdateiso8601), end: ($time.ended_at | fromdateiso8601)}])
-          | .validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round)]
-              + [({round_id: $round, kind: $kind, mode: $result.validate_mode, seconds: $time.seconds}
+          | .stages = ([(.stages // [])[] | select(.round_id != $round or .kind != "validate" or (.receipt // $original) != $receipt)]
+              + [{kind: "validate", round_id: $round, receipt: $receipt, start: ($time.started_at | fromdateiso8601), end: ($time.ended_at | fromdateiso8601)}])
+          | .validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round or (.receipt // $original) != $receipt)]
+              + [({round_id: $round, receipt: $receipt, kind: $kind, mode: $result.validate_mode, seconds: $time.seconds}
                 + (if $result.validate_lanes == null then {} else {lanes: $result.validate_lanes} end)
                 + (if $result.validate_selection == null then {} else {selection: $result.validate_selection} end))])
         end' >/dev/null 2>&1

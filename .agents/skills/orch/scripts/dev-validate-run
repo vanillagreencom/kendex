@@ -1539,12 +1539,9 @@ if [[ "$mode" == record ]]; then
       || die timing-unreadable "path=$run_dir/timing"
     record_timing=" seconds=$timing_seconds started-at=$timing_started ended-at=$timing_ended"
   fi
-  # CI proves a ci run's head. Bind the pending receipt to the same
-  # worktree snapshot the classifier judged, even when the round commits later.
-  if [[ "$record_mode" == ci ]]; then
-    record_tree="$(start_field "$run_dir/start" tree)"
-    record_timing="${record_tree:+ tree=$record_tree}$record_timing"
-  fi
+  # Receipts bind the committed contents to the snapshot the classifier judged.
+  record_tree="$(start_field "$run_dir/start" tree)"
+  record_timing="${record_tree:+ tree=$record_tree}$record_timing"
   record_orphaned="$(start_field "$run_dir/start" validate-base-orphaned)"
   record_class_base="$(start_field "$run_dir/start" class-base)"
   record_scoped="$(start_field "$run_dir/start" scoped)"

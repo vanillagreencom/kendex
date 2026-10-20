@@ -657,8 +657,8 @@ done
 # publication now waits for local work. The live reuse reader leaves it idle.
 CHECK="$(mutant_scripts pending-ci-command dev-artifact-check)/dev-artifact-check" || exit 1
 # shellcheck disable=SC2016
-mutate_file "$CHECK" $'    if jq -e \'.validate_mode == "ci"\' "$file"' \
-  $'    if "$SCRIPT_DIR/dev-validate-run" --worktree "$repo" --poll 1 >/dev/null && jq -e \'.validate_mode == "ci"\' "$file"'
+mutate_file "$CHECK" $'    if [[ "$historical" != true ]] && jq -e \'.validate_mode == "ci"\' "$file"' \
+  $'    if "$SCRIPT_DIR/dev-validate-run" --worktree "$repo" --poll 1 >/dev/null && [[ "$historical" != true ]] && jq -e \'.validate_mode == "ci"\' "$file"'
 jq --arg head "$(git -C "$PF" rev-parse HEAD)" '.commit=$head' "$receipt" > "$receipt.next"
 mv "$receipt.next" "$receipt"
 run_check --file "$receipt"
@@ -842,7 +842,7 @@ for row in "${stage_rows[@]}"; do
     if [[ "$timed" == true ]]; then
       assert_eq "$(jq -c '[.stages[1] | {kind,round_id,start,end}]' "$STAGE_FILE")" \
         "[{\"kind\":\"validate\",\"round_id\":\"$R\",\"start\":1767225600,\"end\":1767228900}]" "$label validation uses run times"
-      assert_eq "$(jq -c '.validate_rounds' "$STAGE_FILE")" "[{\"round_id\":\"$R\",\"kind\":\"$kind\",\"mode\":\"full\",\"seconds\":3300}]" "$label records validation minutes"
+      assert_eq "$(jq -c '.validate_rounds' "$STAGE_FILE")" "[{\"round_id\":\"$R\",\"receipt\":\"${ARTIFACT##*/}\",\"kind\":\"$kind\",\"mode\":\"full\",\"seconds\":3300}]" "$label records validation minutes"
     else
       assert_eq "$(jq -c '[.stages[] | select(.kind == "validate")]' "$STAGE_FILE")" '[]' 'no run creates no validate stage'
     fi

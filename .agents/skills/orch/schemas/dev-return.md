@@ -8,7 +8,9 @@ Every `implement` receipt carries the branch's additions plus deletions at its c
 
 ## Identity: the round id
 
-Each delegation stamps a unique token (`workflow-state new-round-id [ISSUE] dev_round_id`) and embeds it in the delegation. The artifact is bound to that token twice: its filename is `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json`, and it carries `"round_id": ROUND_ID` inside. `dev-artifact-check --round-id RID` resolves that exact path and requires the internal token to match.
+Each delegation stamps a unique token (`workflow-state new-round-id [ISSUE] dev_round_id`) and embeds it in the delegation. The artifact is bound to that token twice: its filename is `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json`, and it carries `"round_id": ROUND_ID` inside. `dev-artifact-check --round-id RID` requires the internal token to match.
+
+An admitted recovery under dev-implement § 5 writes one fixed companion, `tmp/dev-return-[ISSUE_ID]-[ROUND_ID]-recovery.json`, through `dev-return-write --recovery`. It keeps the same round id and carries `recovery_of`, the original receipt's basename. The checker requires a valid failed original of the same issue, round, kind and branch. The writer preserves that original and refuses companion replacement. Round mode selects the companion when present and returns its `path`; an invalid companion refuses without fallback. Explicit file mode checks its named file. Acceptance and submit consume the selected path. Both results remain readable, including their native run records; a recovery can name the same implementation commit.
 
 Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` — the delegated item set the orchestrator persists at stamp time, checked against this artifact's `items[]` via `--expect-items-from-round`. Schema: [`dev-round.md`](dev-round.md).
 

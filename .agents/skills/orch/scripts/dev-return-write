@@ -208,6 +208,8 @@ die() {
       not-directory) printf 'The worktree path is not a directory.\n' ;;
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
       invalid-validate) printf 'The validation result must be pass, no-verdict, or start with FAILING:.\n' ;;
+      recovery-invalid) printf 'Recovery requires a valid failed parent and a current validation result with its original mode/base.\n' ;;
+      receipt-exists) printf 'The receipt is immutable; Validate owns any recovery allowance.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
       validate-source-conflict) printf 'Name the run by one source: a run directory or a foreground validation record.\n' ;;
       validate-record-unreadable) printf 'The foreground validation record is not a readable file.\n' ;;
@@ -247,9 +249,14 @@ Usage:
     [--validate-run-dir RUN_DIR | --validate-record FILE] [--qa-label LABEL]... \
     [--near-ceiling-base REF] [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
-    [--item N DECISION REASONING]...
+    [--item N DECISION REASONING]... [--recovery]
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
+--recovery writes one immutable dev-return-ID-RID-recovery.json with recovery_of
+naming the valid failed original receipt. It requires a result bound to current
+HEAD and the original mode/base, and refuses replacement. Native results prove
+the snapshot tree; foreground records prove their exact starting HEAD. The original
+failed receipt cannot be overwritten. Validate owns execution admission.
 An implement receipt carries additions plus deletions against the base branch,
 with a floor of 1. The orchestrator verifies and persists the first accepted one.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
@@ -345,7 +352,7 @@ is_own_flag() {
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
     --validate-note|--validate-run-dir|--validate-record|--summary|--summary-file|--recovered-text|--qa-label|\
     --near-ceiling-base|--label|--no-labels|--bundled|\
-    --no-summary|--item|-h|--help) return 0 ;;
+    --no-summary|--item|--recovery|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -381,6 +388,8 @@ worktree=""
 kind=""
 issue=""
 round_id=""
+recovery=false
+recovery_of=""
 branch=""
 commit=""
 validate=""
@@ -450,6 +459,7 @@ while (( $# > 0 )); do
     --label)        need "$1" $# "${2:-}"; labels+=("$2"); shift 2 ;;
     --no-labels)    no_dup "$1" "$no_labels"; no_labels=true; shift ;;
     --near-ceiling-base) need "$1" $# "${2:-}"; no_dup "$1" "$near_ceiling_base_given"; near_ceiling_base_given=true; near_ceiling_base="$2"; shift 2 ;;
+    --recovery)     no_dup "$1" "$recovery"; recovery=true; shift ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
     --item)
@@ -943,6 +953,31 @@ fi
 mkdir -p "$worktree/tmp"
 out_dir="$(cd "$worktree/tmp" && pwd)"
 out="$out_dir/dev-return-$issue-$round_id.json"
+if [[ "$recovery" == true ]]; then
+  recovery_of="${out##*/}"
+  parent="$out"
+  out="${out%.json}-recovery.json"
+  [[ -n "$run_ref" && "$commit" == "$(git -C "$worktree" rev-parse HEAD)" \
+    && "$run_head" =~ ^[0-9a-f]{40}$ && "$run_start" =~ ^[0-9]+$ ]] \
+    || die recovery-invalid "path=$parent"
+  git -C "$worktree" merge-base --is-ancestor "$run_head" "$commit" \
+    || die recovery-invalid "path=$parent"
+  if [[ "$validate_run_dir_given" == true ]]; then
+    [[ "$run_tree" =~ ^[0-9a-f]{40}$ && "$run_tree" == "$(git -C "$worktree" rev-parse "$commit^{tree}")" ]] \
+      || die recovery-invalid "path=$parent"
+  else
+    [[ "$run_head" == "$commit" ]] || die recovery-invalid "path=$parent"
+  fi
+  jq -e --arg mode "$validate_mode" --arg base "$validate_class_base" --argjson start "$run_start" '
+    (.validate_mode == null or .validate_mode == $mode)
+    and ((.validate_class_base // "") == $base)
+    and (.validate_time == null or (.validate_time.ended_at | fromdateiso8601) <= $start)
+  ' "$parent" >/dev/null 2>&1 || die recovery-invalid "path=$parent"
+fi
+if [[ -L "$out" || ( -e "$out" && "$recovery" == true ) ]] \
+  || { [[ -f "$out" ]] && jq -e '.validate | startswith("FAILING:")' "$out" >/dev/null 2>&1; }; then
+  die receipt-exists "path=$out"
+fi
 
 # --- Write atomically: build to a same-dir temp file, then mv over the target ---
 # A concurrent checker never observes a partial/empty artifact, and a failed
@@ -969,6 +1004,7 @@ fi
 jq -n \
   --argjson schema_version 1 \
   --arg round_id "$round_id" \
+  --arg recovery_of "$recovery_of" \
   --arg kind "$kind" \
   --arg issue "$issue" \
   --arg branch "$branch" \
@@ -1011,12 +1047,21 @@ jq -n \
      recovered_from: $recovered_from,
      bundled: $bundled,
      items: $items
-   } + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
+   } + (if $recovery_of == "" then {} else {recovery_of: $recovery_of} end)
+     + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
      + (if $validate_lanes == "" then {} else {validate_lanes: $validate_lanes} end)
      + (if $validate_class_base == "" then {} else {validate_class_base: $validate_class_base} end)
      + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 
-mv "$tmp" "$out"
+if [[ "$recovery" == true ]]; then
+  # The checker owns parent validity; the link publishes without replacement.
+  "$SCRIPT_DIR/dev-artifact-check" --file "$tmp" --round-id "$round_id" >/dev/null \
+    || die recovery-invalid "path=$parent"
+  ln "$tmp" "$out" 2>/dev/null || die receipt-exists "path=$out"
+  rm -f -- "${tmp:?}"
+else
+  mv "$tmp" "$out"
+fi
 trap - EXIT
 
 printf '%s\n' "$out"
