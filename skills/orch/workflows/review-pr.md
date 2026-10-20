@@ -77,9 +77,17 @@ A `due` result means the reading is at or above the handoff mark minus `ORCH_HAN
 .agents/skills/orch/scripts/worktree-push --checkpoint --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
 ```
 
-The checkpoint uses the existing guarded branch transport and SHA reconciliation under either `ORCH_DELIVERY` mode. It enters no base-delivery phase. Route its exit and reconciliation by `worktree-push --help`. After the call, compare HEAD with `[BOUND_HEAD]`. If it moved, apply [The Cycle, Rules reload after a rebase](../SKILL.md#the-cycle) at once, including after a failed transport. A failed checkpoint starts no panel and records no successful publication. Once the branch checkpoint succeeds, record the resulting published head in the handoff under [oversee-events.md § Judgement rules, Hand off a lane before it runs out](../references/oversee-events.md#judgement-rules). Keep unfinished-work and running-job details in the record. The fresh session re-enters § 2 and runs this check before starting the whole panel. Base delivery stays behind that session's completed review. This route uses the existing handoff and branch checkpoint without a panel runner.
+The checkpoint uses the existing guarded branch transport and SHA reconciliation under either `ORCH_DELIVERY` mode. It enters no base-delivery phase. Route its exit and reconciliation by `worktree-push --help`. After the call, compare HEAD with `[BOUND_HEAD]`. If it moved, apply [The Cycle, Rules reload after a rebase](../SKILL.md#the-cycle) at once, including after a failed transport. A failed checkpoint starts no panel and records no successful publication. Once the branch checkpoint succeeds, record the resulting published head in the handoff under [oversee-events.md § Judgement rules, Hand off a lane before it runs out](../references/oversee-events.md#judgement-rules). Before retirement, collect known available attached and external returns through § 3's existing check/wait owners. Otherwise record each return explicitly unread, with only known assignment, job, output path, wake, deadline and survival facts. Unknown external outcome or liveness stays unread; invent no wait target or terminal result and launch no duplicate job. The fresh session re-enters § 2's native room check, then applies the continuation rule below. Base delivery stays behind that session's completed review.
 
-`[AGENTS]` is the caller's `agents` context when provided. Otherwise it is the first-cycle panel: the reviewers this harness exposes whose domains the whole diff, `origin/[BASE_BRANCH]...HEAD`, or the issue's Done-when touches, by [§ 4's scoped-panel rule](#bounded-re-review). Read the Done-when first: `linear.sh issues get [ISSUE_ID]` `.description` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body` for GitHub. A failed read, or a `pr-N` key, selects from the diff alone, and `[PANEL_REASON]` says so. On a § 1 entry, record the panel before any spawn, `[PANEL_REASON]` naming the domains touched, or `caller panel` for a caller's `agents`:
+**Original-batch continuation.** Before handoff, copy the owning workflow's known assignment facts into the existing `remaining` and `traps` prose: item/worktree/branch/PR, published and reviewed head, concrete range endpoints, full required panel and reason, external request, original `review_round_id` and `review_delegated_at`, each assigned canonical domain's exact artifact path and accepted or attempted disposition, and domains never launched. Include actual first-delegation times, deadlines, ping/re-delegation history and existing return/wake owners for unfinished work. Keep the fixed handoff shape; add no state key or typed association.
+
+On resume, prove that these copied facts describe the same original batch and unchanged published/current head and concrete scope. Keep its original current `review_round_id`, stage and `review_delegated_at` throughout the continuation, including § 3.1's exact-file rechecks. `json_paths` and `review_wave_done` alone prove no assignment or acceptance. Missing original provenance, a different current batch, or changed head/scope means no reuse: retain historical evidence and enter ordinary fresh review under native admission. Do not reconstruct a range from today's symbolic base or attach today's token to an old report.
+
+Revalidate only the exact previously accepted files assigned to this batch through § 3.1. Keep the full required `[AGENTS]` panel separate from the launch subset. Subtract revalidated accepted domains only from delegation; preserve their findings, repeats and measurement declarations for normal handling. Attempted work retains its job owner, deadlines, rejection/re-delegation history and execution outcome; no duplicate live launch or restarted allowance. A resolved `unresponsive` domain remains visible as unresponsive, never accepted. Only unread domains proved never launched enter the continuation's launch subset. If the preserved facts or native overlap admission cannot support this route, stop and report the exact limitation.
+
+A handoff resets no counters, validation receipts, findings/dispositions or failure history and starts no unchanged-tree validation replay.
+
+`[AGENTS]` is the caller's `agents` context when provided. Otherwise it is the first-cycle panel: the reviewers this harness exposes whose domains the whole diff, `origin/[BASE_BRANCH]...HEAD`, or the issue's Done-when touches, by [§ 4's scoped-panel rule](#bounded-re-review). Read the Done-when first: `linear.sh issues get [ISSUE_ID]` `.description` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body` for GitHub. A failed read, or a `pr-N` key, selects from the diff alone, and `[PANEL_REASON]` says so. On a fresh § 1 entry, record the panel before any spawn (a proved continuation retains its original panel), `[PANEL_REASON]` naming the domains touched, or `caller panel` for a caller's `agents`:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] first_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[PANEL_REASON]"}'
@@ -107,11 +115,11 @@ Read existing reviewer state before any spawn:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}'
 ```
 
-Classify each reviewer in `[AGENTS]` as reusable, context-exhausted, missing, closed, or confirmed-stuck. Reuse a live ID only under [Delegation](../references/skill-rules.md#delegation) for the target worktree. Apply that rule after a name-only resume too. Apply [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse) to Codex retirements; V1 closes the thread, while V2 keeps its slot allocated. Add context-exhausted sessions with the missing, closed, or confirmed-stuck sessions to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward. On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first. **Do not spawn yet** — resolve § 2.1 first.
+On a proved continuation, apply the lifecycle classification below only to its launch subset; preserve attempted assignments for § 3 collection. Classify each reviewer in `[AGENTS]` as reusable, context-exhausted, missing, closed, or confirmed-stuck. Reuse a live ID only under [Delegation](../references/skill-rules.md#delegation) for the target worktree. Apply that rule after a name-only resume too. Apply [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse) to Codex retirements; V1 closes the thread, while V2 keeps its slot allocated. Add context-exhausted sessions with the missing, closed, or confirmed-stuck sessions to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward. On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first. **Do not spawn yet** — resolve § 2.1 first.
 
 ### 2.1 External Review Availability
 
-External review runs automatically alongside the internal panel when available, treated identically to an internal reviewer. No user prompt.
+External review runs automatically alongside the internal panel when available, treated identically to an internal reviewer. No user prompt. A proved continuation retains the original external request and return ownership; skip availability detection and collect it through § 3. Unknown outcome/liveness remains explicitly unread, with no replacement launch.
 
 **Skip if** `.agents/skills/second-opinion/scripts/second-opinion` does not exist → `EXTERNAL_REVIEW_REQUESTED=false`.
 
@@ -123,13 +131,15 @@ A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anyth
 
 ### 2.2 Launch And Delegate
 
-Select an eligible finished thread or spawn each reviewer in `REVIEWERS_TO_LAUNCH` under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), resolving fresh Codex spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`. In **wave mode**, restrict this section to `[WAVE]` — the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not yet in `review_wave_done` — and reset the tracking on entry from § 2.1 (skip the reset when re-entering from § 3.2 for the next wave of the same cycle):
+**Scope before delegation.** Resolve `origin/[BASE_BRANCH]` and `HEAD` to commit SHAs on a fresh § 1 entry. On a § 4 or § 7 re-entry, resolve its `pre_delegate_sha` and current `HEAD` instead. Bind `[DIFF_RANGE]` to those concrete `[BASE_SHA]...[HEAD_SHA]` endpoints and pass it to both internal and external review below. A missing fix boundary keeps the existing `unavailable` internal range and external default; it supplies no continuation provenance. Preserve an original continuation's already resolved endpoints without re-resolving symbolic refs.
+
+Select an eligible finished thread or spawn each reviewer in `REVIEWERS_TO_LAUNCH` under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), resolving fresh Codex spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`. In **wave mode**, restrict this section to `[WAVE]` — the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not yet in `review_wave_done` — and reset the tracking on fresh entry from § 2.1 (skip the reset on a proved original-batch continuation or when re-entering from § 3.2 for the next wave of the same cycle). A continuation selects its wave only from the never-launched launch subset above, retaining the full required panel:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_wave_done '[]'
 ```
 
-On V1, a closed reviewer has no session to reuse: recreate it fresh. On V2, retirement keeps the thread allocated: reuse an eligible finished reviewer through `followup_task` with the complete delegation below. Write state for the assigned wave under canonical reviewer names. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write, counting assigned reusable threads as well as successful fresh spawns in `[OBSERVED_SPAWN_COUNT]` on V2:
+On V1, a closed reviewer has no session to reuse: recreate it fresh. On V2, retirement keeps the thread allocated: reuse an eligible finished reviewer through `followup_task` with the complete delegation below. Write state for the assigned wave under canonical reviewer names. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write, counting assigned reusable threads as well as successful fresh spawns in `[OBSERVED_SPAWN_COUNT]` on V2. On a proved continuation, preserve `review_wave_done` instead of the reset in this fresh-batch write:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.reviewer_slots_observed = [OBSERVED_SPAWN_COUNT] | .review_wave_done = []'
@@ -137,13 +147,13 @@ On V1, a closed reviewer has no session to reuse: recreate it fresh. On V2, reti
 
 Then tell the user once: `Runtime capped concurrent agent sessions — set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in kendex.settings.toml [env]`, where `[OBSERVED_BUDGET]` is successful spawns + this session + live dev/QA sessions on other surfaces. On V2, report the `effective_cap` read from `spawn-adapter slots`; the active-only sum omits held finished threads. On V2, an empty fresh-spawn set first takes Codex thread reuse's eligible-thread and held-thread wave routes. Only after those routes cannot run the work, report the cap blocker that rule requires. On other surfaces, if nothing spawned at all, report the misconfiguration and stop.
 
-Store the active set:
+Store the active set. On a continuation, include retained attempted/live assignments and their IDs/runtime types in these values; do not replace their ownership with the launch subset:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [AGENT_LIST_JSON] | .review_agent_ids = [AGENT_ID_MAP_JSON] | .review_agent_runtime_types = [AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
-Stamp the freshness boundary immediately before the delegation batch. In wave mode, re-stamp before each wave's batch:
+Stamp the freshness boundary immediately before a fresh delegation batch. In wave mode, re-stamp before each fresh wave's batch. A proved original-batch continuation skips both writes below, retaining the original token/stage and evidence boundary even when a never-launched domain starts later:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] review_round_id
@@ -153,7 +163,7 @@ Stamp the freshness boundary immediately before the delegation batch. In wave mo
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
 
-For Codex, prepare each complete `DELEGATION:` message under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), including the target reviewer's full instructions and workflow. A reused thread's fixed runtime instructions must permit that review. Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_REQUESTED=true`, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
+For Codex, prepare each complete `DELEGATION:` message under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), including the target reviewer's full instructions and workflow. A reused thread's fixed runtime instructions must permit that review. Delegate to every reviewer selected for launch in parallel after current native room and overlap admission, including for each continuation spawn or followup. Preserve existing attempted/live assignments in the active state rather than replacing their ownership. When `EXTERNAL_REVIEW_REQUESTED=true` on a fresh batch, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
@@ -165,13 +175,13 @@ Follow workflow: .agents/skills/reviewer/workflows/review.md
 Worktree: [WORKTREE_PATH]
 Branch: [BRANCH]
 Artifact: [ARTIFACT_PATH]
+Diff-range: [DIFF_RANGE, or unavailable for a missing fix boundary]
 
 Decisions:
 [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
 [For each decision whose path failed verification: "- decision index lookup failed for [DECISION_ID]"]
 [If none: "- No linked decisions found."]
 <if re-review cycle>
-Diff-range: [a § 4 or § 7 re-entry only — `[PRE_SHA]...HEAD` when that section's `pre_delegate_sha` read returned a sha, the bare word `unavailable` when it returned `null` or nothing; omit the line on a § 1 entry]
 Re-review cycle [N]. Already resolved — do NOT re-report the entries listed below, unless you check a Fixed entry against the current diff and the defect is still there: report that one again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha, so the stale entry can be superseded. A Fixed entry you did not check, and every Escalated and Declined entry, stays suppressed.
 - Fixed: [For each fixed_item: "[LOCATION] | [DESCRIPTION] — fixed in [COMMIT_SHA]"; an entry whose commit is a `dropped:<sha>` marker prints "recorded, then dropped in a rebase" in place of the sha]
 - Escalated: [For each escalated_item: "[LOCATION] | [DESCRIPTION] — [REASON]"]
@@ -184,7 +194,7 @@ Fresh session — you have no memory of earlier cycles. Read your prior report [
 
 `[PRIOR_REPORT_PATH]` is that reviewer's most recent `review-[AGENT]-*.json` from state `json_paths`.
 
-**External review** (only when requested). Run `second-opinion …`; it backgrounds itself and prints when to check. `[RANGE_FLAG]` is `--range [PRE_SHA]...HEAD` on a re-entry whose `pre_delegate_sha` read returned a sha, and empty otherwise, leaving the script's own `origin/BASE...HEAD` default: the external lane sits in the scoped panel and takes the panel's boundary.
+**External review** (only when requested). Run `second-opinion …`; it backgrounds itself and prints when to check. `[RANGE_FLAG]` is `--range [DIFF_RANGE]` with the same concrete endpoints sent internally. Only a missing fix boundary leaves it empty, using the script's own `origin/BASE...HEAD` default: the external lane sits in the scoped panel and takes the panel's boundary.
 
 ```bash
 mkdir -p [WORKTREE_PATH]/tmp
@@ -207,14 +217,22 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 
 ### 3.1 Completion
 
-`OUTSTANDING` is the active set plus `{external}` when requested. A reviewer completes **only** when its on-disk artifact validates — a return message carrying `Verdict:`/`File:` is never sufficient:
+`OUTSTANDING` is the active set plus `{external}` when requested, excluding only accepted returns or execution outcomes already resolved under this section. On a continuation, keep every required domain accounted for as accepted, attempted/unread, never-launched/unread or unresponsive; an unread domain prevents advancing past collection until its normal acceptance or deadline route resolves it. A reviewer completes **only** when its on-disk artifact validates — a return message carrying `Verdict:`/`File:` is never sufficient:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
 ```
 
-Run it on every return message and every watchdog sweep. `ok == true` → drop the agent from `OUTSTANDING` and append its path, carrying the result's `repeats` to § 4; `reason == "valid_undermeasured"` → carry the result's `measurement_failed` string into the review summary beside that verdict, with `measurement_suppressed` when present, and never present the domain as clean.
+**Continuation exact-file checks.** For a proved original-batch continuation, use the preserved assigned path instead of the glob check above, with the original current token/stage and original evidence boundary still in place:
+
+```bash
+.agents/skills/orch/scripts/review-artifact-check --file [ASSIGNED_ARTIFACT_PATH] [WORKTREE_PATH] [ORIGINAL_REVIEW_DELEGATED_AT] --issue [ISSUE_ID]
+```
+
+Match `artifact.agent` to the preserved canonical assignment and required panel. Reuse only an `ok == true` result; missing, invalid, stale, `no_review` or `moving_tree` evidence supplies no completion. A failed accepted-file recheck invalidates reuse and takes ordinary fresh review, retaining the rejection and history. Never select a sibling glob, touch an old file, lower/omit the boundary or mint a receipt. For an unfinished assigned return, retain any stricter rejection boundary § 3.2 already requires without changing the original batch boundary. Rechecking an already recorded accepted path appends no duplicate history; carry its findings, repeats and `valid_undermeasured` declarations through the same handling below.
+
+Run the applicable check on every return message and every watchdog sweep. `ok == true` → drop the agent from `OUTSTANDING` and append its path, carrying the result's `repeats` to § 4; `reason == "valid_undermeasured"` → carry the result's `measurement_failed` string into the review summary beside that verdict, with `measurement_suppressed` when present, and never present the domain as clean.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
@@ -226,7 +244,7 @@ Wave mode uses this combined write instead, then shuts that reviewer's session d
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.json_paths += ["[PATH]"] | .review_wave_done += ["[AGENT]"]'
 ```
 
-`ok == false`, including `moving_tree`, after a return means the return is **incomplete**, whatever its `File:` path or message body claims. Send that agent **exactly one** re-delegation. A `moving_tree` refusal requires a new review after development finishes, with a new starting snapshot:
+`ok == false`, including `moving_tree`, after a return means the return is **incomplete**, whatever its `File:` path or message body claims. Send that agent **exactly one** re-delegation. A continuation retains any already-spent re-delegation and names its exact assigned path in the message below instead of a new timestamped path. A `moving_tree` refusal requires a new review after development finishes, with a new starting snapshot:
 
 > Your review return is incomplete: `review-artifact-check` reports `[reason]`[ — `[detail]`] for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), following every required field of `review-finding.md`, then return `Verdict:` and `File:` again.
 
@@ -234,13 +252,15 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-**Keep a wake source armed for every incomplete agent (§ 3.1).** Arm one `review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]` per agent. On Codex, use [codex-runtime.md § Reviewer round wait](../references/codex-runtime.md#reviewer-round-wait) through the existing job runner and hold every completion in the current turn. Other harnesses use the check's `--help` background route. `[SECS]` ends at its earliest pending table row, or its deadline when no earlier row remains. The external lane uses § 2.2's `wait:` command. Arm with the delegation batch and re-arm after every action, including a ping. A promised completion extends nothing without re-arming. After artifact rejection (§ 3.1), set `[REVIEW_DELEGATED_AT]` strictly above the rejected artifact's mtime.
+**Keep a wake source armed for every incomplete agent (§ 3.1).** Arm one `review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]` per agent. On Codex, use [codex-runtime.md § Reviewer round wait](../references/codex-runtime.md#reviewer-round-wait) through the existing job runner and hold every completion in the current turn. Other harnesses use the check's `--help` background route. `[SECS]` ends at its earliest pending table row, or its deadline when no earlier row remains. The external lane uses § 2.2's `wait:` command. Arm with the delegation batch and re-arm after every action, including a ping. A promised completion extends nothing without re-arming. After artifact rejection (§ 3.1), set `[REVIEW_DELEGATED_AT]` strictly above the rejected artifact's mtime. In a continuation this is a stricter per-assignment check boundary, never a write to the original batch boundary. The glob watchdog supplies a wake only: § 3.1's exact assigned-file check decides continuation acceptance.
 
 **Replace a wake source without a verdict once, immediately.** `review-artifact-check` returns a result on stdout at exit 0 or 1. A keyed refusal at exit 2, or any other status, leaves the agent's deadlines unarmed. If the replacement also ends without a verdict, stop and report an environment failure with its status and any keyed line. Never arm a third source or mark the reviewer `unresponsive` for this failure.
 
-Sweep the filesystem on every wake. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 36 minutes for `reviewer-test`, 15 minutes for every other agent. The `reviewer-test` figure covers one [`mutation-stability`](../../reviewer/scripts/mutation-stability) run at that script's defaults plus 5 minutes. The control build and test and mutant build and test each keep `--timeout`. Clean repeats follow the reviewer skill's Mutation-Stability Pairing budget rule. The default command bound is 31 minutes. `skills/orch/tests/reviewer-test-deadline.test.sh` fails when the figure falls below that run. The external lane's printed deadline is absolute Unix epoch seconds; compare it with `date +%s`. If no deadline metadata prints, use 2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes, with 1080 seconds as the timeout default. It is not a messageable agent, so the ping row and its early end never apply to it.
+**Continuation clocks.** Keep the original batch evidence boundary for accepted-file rechecks. A never-launched domain's watchdog starts at its actual first delegation, recorded by this workflow as known unfinished-work detail in `remaining`/`traps` on another handoff. Use that first-delegation time for the ping, post-ping, per-agent and active-measurement deadlines below; do not substitute the older batch timestamp. Previously attempted domains retain their original clocks, spent ping/re-delegation history and wake ownership. A resumed session restarts none of them.
 
-**Active required measurement.** A responsive reviewer running the [reviewer skill's Mutation-Stability Pairing](../../reviewer/SKILL.md#mutation-stability-pairing) receives the `reviewer-test` deadline above, regardless of agent name. Its status reply must identify the active required measurement job. Apply this deadline before the post-ping and per-agent deadline rows. Keep it anchored to the original `review_delegated_at`; a reply does not restart the clock. Re-arm the wake source for this deadline. A promise without an active required job keeps the agent's usual deadline. Completion still requires § 3.1's validated artifact.
+Sweep the filesystem on every wake. Per-agent deadline from `review_delegated_at` (a continuation uses the first-delegation clock above): 25 minutes for an agent whose name contains `perf`, 36 minutes for `reviewer-test`, 15 minutes for every other agent. The `reviewer-test` figure covers one [`mutation-stability`](../../reviewer/scripts/mutation-stability) run at that script's defaults plus 5 minutes. The control build and test and mutant build and test each keep `--timeout`. Clean repeats follow the reviewer skill's Mutation-Stability Pairing budget rule. The default command bound is 31 minutes. `skills/orch/tests/reviewer-test-deadline.test.sh` fails when the figure falls below that run. The external lane's printed deadline is absolute Unix epoch seconds; compare it with `date +%s`. If no deadline metadata prints, use 2 × `SECOND_OPINION_TIMEOUT` plus 3 minutes, with 1080 seconds as the timeout default. It is not a messageable agent, so the ping row and its early end never apply to it.
+
+**Active required measurement.** A responsive reviewer running the [reviewer skill's Mutation-Stability Pairing](../../reviewer/SKILL.md#mutation-stability-pairing) receives the `reviewer-test` deadline above, regardless of agent name. Its status reply must identify the active required measurement job. Apply this deadline before the post-ping and per-agent deadline rows. Keep it anchored to the original delegation clock defined above; a reply does not restart the clock. Re-arm the wake source for this deadline. A promise without an active required job keeps the agent's usual deadline. Completion still requires § 3.1's validated artifact.
 
 | Event | Action |
 |-------|--------|
@@ -255,7 +275,7 @@ Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] review_wave_done "[AGENT]"
 ```
 
-`OUTSTANDING` empty (`unresponsive` counts as resolved) → § 3.3 in persistent mode; in wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3.
+`OUTSTANDING` empty (`unresponsive` counts as execution resolved, never accepted) → § 3.3 in persistent mode only when no never-launched required domain remains unread; otherwise return to § 2 for admission of that subset. In wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3. A proved continuation keeps its original batch across these launches; ordinary new waves keep § 2.2's fresh-batch rule.
 
 ### 3.3 Present
 
