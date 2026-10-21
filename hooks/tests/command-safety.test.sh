@@ -223,16 +223,49 @@ fi
 # the corresponding whole-object and downstream-receiver restrictions.
 environment_rows() {
   local rows expected command_json label world payload payload_cwd status output
-  local want first_key invalid shape_kind before=$((passed + failed))
+  local want first_key invalid shape_kind diagnostics_safe before=$((passed + failed))
   local selected_rows=("$@") selected_seen=()
   mkdir -p "$scratch/policy-tools"
   for tool in jq cat; do ln -sf "$(command -v "$tool")" "$scratch/policy-tools/$tool"; done
-  rows=$(jq -sr --args '
+  rows=$(jq -sr --arg fixture_home "$scratch/private-home" --args '
     .[] | select(($ARGS.positional | length) == 0 or
       (.[2] as $label | $ARGS.positional | index($label))) |
+    .[1] |= (if type == "array" then map(gsub("@PRIVATE_HOME@"; $fixture_home)) else gsub("@PRIVATE_HOME@"; $fixture_home) end) |
     [.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
+[2,"FABRICATED_VALUE=fixture-private-value-4519 cat ~/.fleet/env","private-tilde"]
+[2,"cat @PRIVATE_HOME@/.fleet/env","private-inherited-home"]
+[2,"cat $HOME/.fleet/env","private-textual-home"]
+[2,"cat ${HOME}/.fleet/env","private-textual-braced-home"]
+[2,"cat -- ~/.fleet/env","private-tilde-terminator"]
+[2,"cat -- @PRIVATE_HOME@/.fleet/env","private-inherited-home-terminator"]
+[2,"cat -- $HOME/.fleet/env","private-textual-home-terminator"]
+[2,"cat -- ${HOME}/.fleet/env","private-textual-braced-home-terminator"]
+[2,"cat < ~/.fleet/env","private-tilde-redirect"]
+[2,"cat < @PRIVATE_HOME@/.fleet/env","private-inherited-home-redirect"]
+[2,"cat < $HOME/.fleet/env","private-textual-home-redirect"]
+[2,"cat < ${HOME}/.fleet/env","private-textual-braced-home-redirect"]
+[2,"bash -c 'cat ~/.fleet/env'","private-tilde-shell"]
+[2,"bash -c 'cat @PRIVATE_HOME@/.fleet/env'","private-inherited-home-shell"]
+[2,"bash -c 'cat $HOME/.fleet/env'","private-textual-home-shell"]
+[2,"bash -c 'cat ${HOME}/.fleet/env'","private-textual-braced-home-shell"]
+[2,"bash -c 'cat < ${HOME}/.fleet/env'","private-shell-redirect"]
+[2,["cat","~/.fleet/env"],"private-tilde-argv"]
+[2,["cat","@PRIVATE_HOME@/.fleet/env"],"private-inherited-home-argv"]
+[2,["cat","$HOME/.fleet/env"],"private-textual-home-argv"]
+[2,["cat","${HOME}/.fleet/env"],"private-textual-braced-home-argv"]
+[2,["bash","-c","cat ~/.fleet/env"],"private-shell-argv"]
+[2,"command -p -- cat -- ~/.fleet/env","private-command-launcher"]
+[2,"sudo -n -u fixture cat < ~/.fleet/env","private-sudo-launcher"]
+[2,"env FIXTURE=fixture-private-value-4519 cat ~/.fleet/env","private-env-launcher"]
+[2,"bash wrap.sh step cat ~/.fleet/env","private-forwarded-cat"]
+[2,"cat ~/.fleet/env | grep '^NAME='","private-filter-remains-refused"]
+[2,"cat ~/.fleet/env","private-outside-git","outside"]
+[0,"cat examples/env scripts/lib/jarvis-env.sh","private-harmless-path-operands"]
+[0,"HOME=/fabricated-other cat /fabricated-other/.fleet/env","private-submitted-home-is-not-inherited"]
+[0,".agents/skills/orch/scripts/orch-env ORCH_LANE_PREFERENCE auto","private-named-setting"]
+[0,"bash -c '.agents/skills/orch/scripts/orch-env ORCH_LANE_PREFERENCE auto'","private-named-setting-shell"]
 [0,"bash scripts/lib/jarvis-env.sh DIR -- node FILE","operand-env-script"]
 [0,"unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE\nbash scripts/lib/jarvis-env.sh tmp/package-repair-VGS-1735-standins -- node \"$PWD/tmp/package-repair-VGS-1735.js\" > tmp/package-repair-VGS-1735.log 2>&1\nruntime_status=$?\ncat tmp/package-repair-VGS-1735.log\nprintf 'runtime-1 exit=%s\\n' \"$runtime_status\"\nexit \"$runtime_status\"","operand-env-reported-command"]
 [0,"bash wrapper.sh --path 'scripts/lib/jarvis-env.sh'","operand-env-quoted-path"]
@@ -1323,13 +1356,17 @@ ENVIRONMENT_ROWS
     status=0
     if [ "$world" = missing-policy-tools ]; then
       output=$(env "PATH=$scratch/policy-tools" "$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
+    elif [[ $label == 'environment: private-'* ]]; then
+      output=$(env "HOME=$scratch/private-home" "$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
     else
       output=$("$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
     fi
     [ "$world" != absent-loader ] || mv "$scratch/environment-loader" "$repo/.agents/skills/commit-guards/scripts/lib"
     first_key=$(first_line "$scratch/stderr")
+    diagnostics_safe=1
+    if grep -F -- fixture-private-value-4519 "$scratch/stderr" >/dev/null; then diagnostics_safe=""; fi
     want=-; [ "$expected" -ne 2 ] || want='command-safety: refused=environment-dump'
-    if [ "$status" -eq "$expected" ] && [ "$first_key" = "$want" ] && [ -z "$output" ]; then
+    if [ "$status" -eq "$expected" ] && [ "$first_key" = "$want" ] && [ -z "$output" ] && [ -n "$diagnostics_safe" ]; then
       printf 'PASS %s\n' "$label"; passed=$((passed + 1))
     else
       printf 'FAIL %s: exit=%s expected=%s first=%s expected-first=%s stdout=[%s]\n' "$label" "$status" "$expected" "$first_key" "$want" "$output"
@@ -1386,6 +1423,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ }
       }
       defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
+      defect == "private-path" { swap("environment_private_path() {", "environment_private_path() { return 1") }
       defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
       defect == "operand-word-boundary" { swap("(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_.-]|$)", "(^|[^A-Za-z0-9_])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)") }
       defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[@]}\"; }; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && { [ -n \"$redirect_evidence\" ] || environment_main_evidence \"${args[$program_pos]}\"; }; then mode=dump-unknown; fi") }
@@ -1478,7 +1516,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     fi
     row_label=${failed_row#FAIL environment: }; row_label=${row_label%%: exit=*}
     control_status=0
-    if [ "$defect" = literal-source-veto ]; then
+    if [ "$defect" = literal-source-veto ] || [ "$defect" = private-path ]; then
       env "HOOK_UNDER_TEST=$mutant" "$BASH" "${BASH_SOURCE[0]}" --environment-rows "$row_label" \
         >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
     else
@@ -1496,6 +1534,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
     fi
   done <<'ENVIRONMENT_CONTROLS'
+private-path|FAIL environment: private-tilde: exit=0 expected=2
 receiver-named-method|FAIL environment: receiver-jarvis-config-named-method: exit=2 expected=0
 receiver-named-method|FAIL environment: receiver-jarvis-heredoc-named-method: exit=2 expected=0
 receiver-line-boundary|FAIL environment: receiver-python-heredoc-whole-line-end: exit=0 expected=2
