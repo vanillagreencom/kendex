@@ -1,6 +1,6 @@
 # Oversee
 
-Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches and unblocks (lanes merge their PRs) — it never reviews, save the Copilot thread reads and head approvals [copilot-head-notices.md](../references/copilot-head-notices.md) sets, and it implements nothing but a `micro` item § 3 Item Tier leaves it to run. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
+Run a fleet by selecting unblocked items, launching one lane per item and advancing each PR to merge. The overseer owns launch, watch and unblocking. Lanes merge their own PRs. The overseer reviews only the Copilot thread reads and head approvals in [copilot-head-notices.md](../references/copilot-head-notices.md). It implements only a `micro` item that § 3 Item Tier leaves in this session. Run unattended and resolve a blocked lane without waiting for the user to notice it.
 
 ## 1. Resolve The Launch Surface
 
@@ -12,17 +12,47 @@ Once per session, first match wins:
 2. The harness ships session or thread launching (Codex threads, Claude Code agent teams, a desktop app's session tool or bundled skill) → use it: one managed session per item, carrying the same brief `open-terminal` would render.
 3. Neither → no parallel surface. Say so once and work the queue sequentially in this session, running each item's § 3 Item Tier brief: `start [ISSUE_ID]`, `small [ISSUE_ID]`, or [micro.md](micro.md) in this session for a `micro` item, with § 2 selection between items. On a hosted fleet this session runs no item: [SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes.
 
-A lane's questions arrive at least once as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
+A lane's questions arrive at least once as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface.
 
-A session a person opened by hand registers itself first, so the hooks and the watch know which session is the overseer: `.agents/skills/orch/scripts/oversee register`. The Jarvis session registers as its checkout's overseer the same way so the turn-end hook judges its wake. A session `oversee launch` or a succession opened is already recorded.
+Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
 
-Read the mailbox and handoff through [overseer takeover § 1](oversee-takeover.md#1-read-the-mailbox-and-handoff). At succession, takeover and after compaction, follow that route instead of reading launch or stop rules. A new fleet continues with § 2 after those reads.
+A session a person opened by hand registers itself first, so the hooks and the watch know which session is the overseer: `.agents/skills/orch/scripts/oversee register`.
+
+The Jarvis session registers as its checkout's overseer the same way so the turn-end hook judges its wake.
+
+A session `oversee launch` or a succession opened is already recorded.
+
+Read the mailbox and handoff through [overseer takeover § 1](oversee-takeover.md#1-read-the-mailbox-and-handoff).
+
+At succession, takeover and after compaction, follow that route instead of reading launch or stop rules.
+
+A new fleet continues with § 2 after those reads.
 
 ## 2. Select Work
 
 `open-terminal --state-dir` enforces the Ancestor gate in [references/skill-rules.md § Coordination](../references/skill-rules.md#coordination). It refuses a held launch as `launch-blocked` and an incomplete tracker read as `launch-blocked-unread`. A relaunch or wake of an already recorded lane passes this check. When code shows a dependency that holds an item, record its blocking relation first under linear SKILL.md § Blocked Label vs Issue Relations. Then apply the Ancestor gate.
 
-Unblocked, non-terminal development items from the tracker. Exclude Verifying items: their post-merge readings belong to the verification pass. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to each final development item before launch. Follow `start.md` for container selection. The fleet state's `launch_queue` holds the order; its membership is the tracker's, never handoff memory: every heartbeat names each owed tracker item the queue lacks as an `owed` line under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `heartbeat`, which routes each verdict. A GitHub item labeled `blocked` is not a candidate. An item whose `worktree create` exits 75 belongs to another session: skip it; its siblings still launch. On the tmux surface that claim IS `open-terminal`'s own worktree create, never pre-create the worktree. A surface that creates its own worktree environment (Codex app threads) records the claim in workflow-state before launch. Oversee runs as at most one session per repo. `open-terminal --state-dir` enforces the two caps in [lane-directive.md § Caps](../references/lane-directive.md#caps). Select items only where their cap has room; on other surfaces keep those same limits yourself:
+Unblocked, non-terminal development items from the tracker.
+
+Exclude Verifying items: their post-merge readings belong to the verification pass.
+
+Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to each final development item before launch.
+
+Follow `start.md` for container selection.
+
+The fleet state's `launch_queue` holds the order; its membership is the tracker's, never handoff memory: every heartbeat names each owed tracker item the queue lacks as an `owed` line under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `heartbeat`, which routes each verdict.
+
+A GitHub item labeled `blocked` is not a candidate.
+
+An item whose `worktree create` exits 75 belongs to another session: skip it; its siblings still launch.
+
+On the tmux surface that claim IS `open-terminal`'s own worktree create, never pre-create the worktree.
+
+A surface that creates its own worktree environment (Codex app threads) records the claim in workflow-state before launch.
+
+Oversee runs as at most one session per repo. `open-terminal --state-dir` enforces the two caps in [lane-directive.md § Caps](../references/lane-directive.md#caps).
+
+Select items only where their cap has room; on other surfaces keep those same limits yourself:
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
@@ -49,13 +79,43 @@ Every selected item takes a tier before it launches. `item-tier` assigns it, and
 - `small`: `/orch small [ISSUE_ID]`, which runs [small.md](small.md): the standard session under thin review bounds.
 - `start`: `/orch start [ISSUE_ID]`, the `standard` tier, as the rest of this section states.
 
-A `micro` item launches as a lane like any other, with its model class and effort selected through [Model class](../references/skill-rules.md#delegation), and always with `--cmd`. On a hosted fleet it launches only that way, waiting for a free lane ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes). Otherwise, with no lane free, or on the § 1 no-parallel surface, the overseer runs [micro.md](micro.md) in this session from the main checkout; that run holds the checkout on the item's branch until § 3 there returns it to the base, so start it between events and never beside another read of the base checkout.
+A `micro` item launches as a lane like any other, with its model class and effort selected through [Model class](../references/skill-rules.md#delegation), and always with `--cmd`.
 
-A run that ends at [micro.md](micro.md) § Escape or [small.md](small.md) § Escape comes back as an item to launch at the next class up, on the branch it left. So does a run that stops without reaching an escape, a failed push or create among the causes. Run `item-tier` again with `--floor` naming the class above the one the run held, and only that when no branch holds a commit past `origin/[BASE_BRANCH]`. Otherwise add `--base origin/[BASE_BRANCH] --head [HEAD_REF] --repo [MAIN_REPO_ROOT]`: `[HEAD_REF]` is `origin/[BRANCH]` once a pushed branch is fetched, else the local `[BRANCH]` every worktree on this host shares. A hosted lane's unpushed branch exists only on its host, so that lane runs the line with its worktree as `--repo`. Read a micro run's § 5 `Checkout` value: a main checkout still on the item's branch is returned to the base before the next launch.
+On a hosted fleet it launches only that way, waiting for a free lane ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes).
+
+Otherwise, with no lane free, or on the § 1 no-parallel surface, the overseer runs [micro.md](micro.md) in this session from the main checkout; that run holds the checkout on the item's branch until § 3 there returns it to the base, so start it between events and never beside another read of the base checkout.
+
+A run that ends at [micro.md](micro.md) § Escape or [small.md](small.md) § Escape comes back as an item to launch at the next class up, on the branch it left.
+
+So does a run that stops without reaching an escape, a failed push or create among the causes.
+
+Run `item-tier` again with `--floor` naming the class above the one the run held, and only that when no branch holds a commit past `origin/[BASE_BRANCH]`.
+
+Otherwise add `--base origin/[BASE_BRANCH] --head [HEAD_REF] --repo [MAIN_REPO_ROOT]`: `[HEAD_REF]` is `origin/[BRANCH]` once a pushed branch is fetched, else the local `[BRANCH]` every worktree on this host shares.
+
+A hosted lane's unpushed branch exists only on its host, so that lane runs the line with its worktree as `--repo`.
+
+Read a micro run's § 5 `Checkout` value: a main checkout still on the item's branch is returned to the base before the next launch.
 
 ### Lane directive
 
-A launch through `open-terminal` on the tmux surface for the claude, codex or copilot harness, whose launcher takes a lane config dir, takes these steps in order, local or on a remote control host. A pi launch on a `github-copilot/` model takes steps 2 to 4 with `--harness pi`: it spends the Copilot pool, which `lanes pick` judges as its monthly window, read from the lane host's `harness=pi` accounts row with `ORCH_LANE_COPILOT_POOL` as the override (`lanes --help`), and never on a Claude or Codex window; its refusals are answered as [lane-directive.md § No lane has room](../references/lane-directive.md#no-lane-has-room) says for a pi pick. A hosted pi launch on an `anthropic/` model takes steps 2 to 4 with `--harness pi`, judged on the provider's API-credit row for the Claude home its `create --account` receives. It spends the eligible grant with the earliest expiry above the shared cloud credit floor. An unread grant or local host refuses `lane-provider-unmeasured`. A local pi launch on a `pi-claude/` model takes the same steps with `--harness pi`, judged as a claude launch; a hosted one is refused. A pi item on another provider, or none, launches locally as § 1 says; hosted, it is refused (`host-invalid` with no lane, `lane-provider-unmeasured` with one) until its model names a supported provider and its account has a reading. [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) states the refusals. A copilot fleet lane launches locally only; hosted, it is refused (`reason=hosted`). Every other surface or harness launches as § 1 says, with no inventory or pick.
+A launch through `open-terminal` on the tmux surface for the claude, codex or copilot harness, whose launcher takes a lane config dir, takes these steps in order, local or on a remote control host.
+
+A pi launch on a `github-copilot/` model takes steps 2 to 4 with `--harness pi`: it spends the Copilot pool, which `lanes pick` judges as its monthly window, read from the lane host's `harness=pi` accounts row with `ORCH_LANE_COPILOT_POOL` as the override (`lanes --help`), and never on a Claude or Codex window; its refusals are answered as [lane-directive.md § No lane has room](../references/lane-directive.md#no-lane-has-room) says for a pi pick.
+
+A hosted pi launch on an `anthropic/` model takes steps 2 to 4 with `--harness pi`, judged on the provider's API-credit row for the Claude home its `create --account` receives.
+
+It spends the eligible grant with the earliest expiry above the shared cloud credit floor.
+
+An unread grant or local host refuses `lane-provider-unmeasured`.
+
+A local pi launch on a `pi-claude/` model takes the same steps with `--harness pi`, judged as a claude launch; a hosted one is refused.
+
+A pi item on another provider, or none, launches locally as § 1 says; hosted, it is refused (`host-invalid` with no lane, `lane-provider-unmeasured` with one) until its model names a supported provider and its account has a reading. [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) states the refusals.
+
+A copilot fleet lane launches locally only; hosted, it is refused (`reason=hosted`).
+
+Every other surface or harness launches as § 1 says, with no inventory or pick.
 
 1. Inventory: `lanes list`. On a control host the inventory is that host's login dirs. On a hosted fleet it also carries the provider's own reading of each account it holds a credential for; the `THROUGH` column, `measured_through` under `--json`, says which credential measured each row, and the two readings of one account can disagree.
 2. Model: read the item's body once. Apply the project-management skill's [SKILL.md § Disposition](../../project-management/SKILL.md#disposition) **Judge the approach**. Record go, change or drop and the short cause-and-effect answer in the launch `ruling` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). The overseer judges directly whether the design choice is consequential or the approach uncertain. Record that review decision in the same ruling. When either holds, carry the brief and an instruction for one one-shot `reviewer-arch` review at launch. The lane runs that review before implementing through [design-review.md § Patch-chain actions](../references/design-review.md#patch-chain-actions), row **Second opinion**. Read `orch-env ORCH_LANE_PREFERENCE ""` as the program's default. Select the model class and effort through [Model class](../references/skill-rules.md#delegation), and keep a model the brief names. Select the model before the lane, because it is what the lane is judged on: an account with plan-wide room can have none left for one model, and choosing the lane first picks an account the launch then opens a usage banner on. Never pick a weaker model because a lane is near its wall: pick another lane. The same read judges span: an item whose Location still names more than one subsystem, as [small.md](small.md)'s opening defines one, or whose body names no Location, goes back to filing under the project-management skill's [SKILL.md](../../project-management/SKILL.md) § Disposition **One landing per subsystem** before it launches, unless its body names why it cannot land in parts. Record that span reason in the same launch ruling.
@@ -64,15 +124,63 @@ A launch through `open-terminal` on the tmux surface for the claude, codex or co
 
 The launch cap and its refusals: [lane-directive.md § Caps](../references/lane-directive.md#caps).
 
-Placement: a Claude-class lane tries a Claude cloud entry first while its grant admits it, then the Codex fallback. Use the preference walk in [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference). Add no cloud session while the control host's available memory is under 2 GB or its kernel `oom_kill` count has risen. Tell the owner when either condition holds. The overseer reads these host measurements; the launcher does not enforce them. Each cloud session adds PR and stall checks to the existing watch pass. Its directives use the session channel. The mailbox pass excludes these sessions. When its pull request is approved, it needs one landing lane on the fleet host.
+Placement: a Claude-class lane tries a Claude cloud entry first while its grant admits it, then the Codex fallback.
 
-A Claude cloud review or audit is item work. Launch it through `open-terminal --host claude-cloud` with its brief file, so it gets the item branch, the cloud session words, the lane record and the stall watch. Before each launch, read `lane-host resolve`; any value but `local` makes a hosted fleet. A cloud entry uses `--host claude-cloud`; other launches use `--host [HOST]`, subject to the approved cloud landing rule below. Report any other surface or harness without launching locally. An approved cloud pull request's landing lane follows the resolved host's `land` value from `lane-host capabilities`: `land=handoff` keeps `--host local`, and `land=lane` uses `--host [HOST]`. `start` never launches a hosted lane: only `oversee` and `handoff` launch through `open-terminal --host`. Under [SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes, every item's work launches as a hosted lane through this directive, and a session with no tmux surface reports the queue once, naming that surface as the route. The credential reaches the sandbox per [schemas/lane-host.md](../schemas/lane-host.md) § Provider protocol, with no local `CLAUDE_CONFIG_DIR` prefix.
+Use the preference walk in [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference).
+
+Add no cloud session while the control host's available memory is under 2 GB or its kernel `oom_kill` count has risen.
+
+Tell the owner when either condition holds.
+
+The overseer reads these host measurements; the launcher does not enforce them.
+
+Each cloud session adds PR and stall checks to the existing watch pass.
+
+Its directives use the session channel.
+
+The mailbox pass excludes these sessions.
+
+When its pull request is approved, it needs one landing lane on the fleet host.
+
+A Claude cloud review or audit is item work.
+
+Launch it through `open-terminal --host claude-cloud` with its brief file, so it gets the item branch, the cloud session words, the lane record and the stall watch.
+
+Before each launch, read `lane-host resolve`; any value but `local` makes a hosted fleet.
+
+A cloud entry uses `--host claude-cloud`; other launches use `--host [HOST]`, subject to the approved cloud landing rule below.
+
+Report any other surface or harness without launching locally.
+
+An approved cloud pull request's landing lane follows the resolved host's `land` value from `lane-host capabilities`: `land=handoff` keeps `--host local`, and `land=lane` uses `--host [HOST]`. `start` never launches a hosted lane: only `oversee` and `handoff` launch through `open-terminal --host`.
+
+Under [SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes, every item's work launches as a hosted lane through this directive, and a session with no tmux surface reports the queue once, naming that surface as the route.
+
+The credential reaches the sandbox per [schemas/lane-host.md](../schemas/lane-host.md) § Provider protocol, with no local `CLAUDE_CONFIG_DIR` prefix.
 
 For `--host claude-cloud`, replace the brief below with the item body and the complete `item-tier` output line alone, following [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for the session channel and `LAUNCH_SESSION_TEXT` in [scripts/lib/lane-launch.sh](../scripts/lib/lane-launch.sh) for the session instructions.
 
-Per item, mint the brief § Item Tier assigned (or its `github [OWNER/REPO]#[N]` spelling). Add `Model class: top` with its reason or `Model class: fast` only as [Model class](../references/skill-rules.md#delegation) permits; otherwise omit the field. The brief carries question routing from [skill-rules.md § Coordination](../references/skill-rules.md#coordination). A lane whose harness has an Arm in [watch-delivery.md](../references/watch-delivery.md#lane-mailbox-monitor) also gets its brief line. `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2); a pi lane takes `/skill:orch start [ITEM]`, a Copilot CLI lane the Codex CLI prose form, which open-terminal passes as the value of `-i`, and an opencode lane the `/orch` form. At the `micro` and `small` tiers each of those reads the tier's `brief=` word where it reads `start`. A `micro` or `small` item therefore always launches with `--cmd` carrying its brief: `open-terminal`'s own template renders `start` for every tracker and harness pair it handles, so a launch without `--cmd` runs the standard cycle whatever the tier said. Size launch flags to the item, then launch on the § 1 surface.
+For an implementation phase, mint the brief § Item Tier assigned (or its `github [OWNER/REPO]#[N]` spelling).
 
-A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUTONOMY=ask`; `auto` stays the default. This setting is merge authorization, not an overseer validation grant. On the tmux surface set it in the overseer's tmux session before the first launch, so every lane window inherits it; on surface 2, pass it in the launcher's environment. The lane's merge question then reaches the overseer as `lane-question` ([oversee-events.md § Held merges](../references/oversee-events.md#judgement-rules)).
+Add `Model class: top` with its reason or `Model class: fast` only as [Model class](../references/skill-rules.md#delegation) permits; otherwise omit the field.
+
+The brief carries question routing from [skill-rules.md § Coordination](../references/skill-rules.md#coordination).
+
+A lane whose harness has an Arm in [watch-delivery.md](../references/watch-delivery.md#lane-mailbox-monitor) also gets its brief line. `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2); a pi lane takes `/skill:orch start [ITEM]`, a Copilot CLI lane the Codex CLI prose form, which open-terminal passes as the value of `-i`, and an opencode lane the `/orch` form.
+
+At the `micro` and `small` tiers each of those reads the tier's `brief=` word where it reads `start`.
+
+A `micro` or `small` item therefore always launches with `--cmd` carrying its brief: `open-terminal`'s own template renders `start` for every tracker and harness pair it handles, so a launch without `--cmd` runs the standard cycle whatever the tier said.
+
+Size launch flags to the item, then launch on the § 1 surface.
+
+A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUTONOMY=ask`; `auto` stays the default.
+
+This setting is merge authorization, not an overseer validation grant.
+
+On the tmux surface set it in the overseer's tmux session before the first launch, so every lane window inherits it; on surface 2, pass it in the launcher's environment.
+
+The lane's merge question then reaches the overseer as `lane-question` ([oversee-events.md § Held merges](../references/oversee-events.md#judgement-rules)).
 
 ```bash
 tmux set-environment ORCH_MERGE_AUTONOMY ask
@@ -84,7 +192,28 @@ Resolve `ORCH_USER_MODE` once for every question this fleet relays to the user:
 .agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
 ```
 
-The launch brief names the implementer selected through [dev § Implementer selection](../../dev/SKILL.md#implementer-selection) and follows the Private settings rule in [skill-rules.md § Coordination](../references/skill-rules.md#coordination). The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree, which its record carries as `mail_root`. It directs the lane to initialize and rewrite the status file with its current step on a `Step:` line, which `oversee-watch` reads as the `lane-long` stage, blocker, handoff paths, validation minutes per round, the `Review:` line [review-pr.md](review-pr.md) § 1 and § 9 and [submit-pr.md](submit-pr.md) § 2 step 1 write, and one merge-attempt record: the attempt's exit, exact `--expected-head` value and returned `merge-route: admin|queue cause=...` line. Later status rewrites retain the review line and that record. The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask. Build the terminal command under step 4 and [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference). Deliver its brief under [§ Brief file](../references/lane-directive.md#brief-file).
+The launch brief names the implementer selected through [dev § Implementer selection](../../dev/SKILL.md#implementer-selection) and follows the Private settings rule in [skill-rules.md § Coordination](../references/skill-rules.md#coordination).
+
+The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree, which its record carries as `mail_root`.
+
+It directs the lane to initialize and rewrite the status file with its current step on a `Step:` line, which `oversee-watch` reads as the `lane-long` stage, blocker, handoff paths, validation minutes per round, the `Review:` line [review-pr.md](review-pr.md) § 1 and § 9 and [submit-pr.md](submit-pr.md) § 2 step 1 write, and one merge-attempt record: the attempt's exit, exact `--expected-head` value and returned `merge-route: admin|queue cause=...` line.
+
+Later status rewrites retain the review line and that record.
+
+The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask.
+
+Build the terminal command under step 4 and [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference).
+
+Deliver its brief under [§ Brief file](../references/lane-directive.md#brief-file).
+
+#### Source-only phase brief
+
+For a source-only design, investigation or opinion, replace the implementation-start instruction with a brief for that phase. Name the source-only outcome, admitted source and scratch paths, required artifacts, acceptance owner and permitted effects. Do not send an unstarted source phase through `start`'s implementation preparation. Keep helper-owned status, mailbox, context, admission and reviewer completion outputs at their required paths.
+
+Use [Delegation § Source-only inputs](../references/skill-rules.md#source-only-inputs) for the complete known input set by role and reviewer admission. The brief names that inventory, each explicitly authorized cumulative service ceiling, and the retained continuation and return paths. Local file reads have no arbitrary per-brief count stop. Existing native context and account admission bound continuation; their model, reserve and cap owners stay unchanged.
+
+At a native handoff or an explicit service/scope boundary, use [Source-only continuation](../references/oversee-events.md#source-only-continuation). A boundary does not grant a new phase or effects beyond this brief.
+
 
 ### Recovery relaunch
 
@@ -94,7 +223,11 @@ A dead or walled terminal lane uses native resume, as [lane-directive.md § Reco
 
 Resolve the fleet state address through [overseer takeover § Fleet state address](oversee-takeover.md#fleet-state-address).
 
-On the tmux surface `open-terminal` creates the state on the first launch and records every lane it launches, relaunches or wakes as one `lanes[]` entry; nothing is written by hand. [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) names the tmux session its windows open in. On surface 2 and surface 3 the overseer's first hand-written write creates it: a surface-2 lane record below, or a `fleet_log` or `triaged` append ([oversee-events.md](../references/oversee-events.md)). Before that first write, when `exists` reports false, run `init` (init overwrites: never re-init a live fleet state):
+On the tmux surface `open-terminal` creates the state on the first launch and records every lane it launches, relaunches or wakes as one `lanes[]` entry; nothing is written by hand. [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) names the tmux session its windows open in.
+
+On surface 2 and surface 3 the overseer's first hand-written write creates it: a surface-2 lane record below, or a `fleet_log` or `triaged` append ([oversee-events.md](../references/oversee-events.md)).
+
+Before that first write, when `exists` reports false, run `init` (init overwrites: never re-init a live fleet state):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state exists --json oversee
@@ -104,7 +237,9 @@ On the tmux surface `open-terminal` creates the state on the first launch and re
 .agents/skills/orch/scripts/workflow-state init oversee
 ```
 
-A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflow: the Linear id for a Linear item and `issue-N` for a GitHub item, as `open-terminal` records it and `oversee-watch` names it, never the `[OWNER/REPO]#[N]` the brief spells. On surface 2, whose launcher is the harness's own, append the same record after the launch, with `window` null:
+A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflow: the Linear id for a Linear item and `issue-N` for a GitHub item, as `open-terminal` records it and `oversee-watch` names it, never the `[OWNER/REPO]#[N]` the brief spells.
+
+On surface 2, whose launcher is the harness's own, append the same record after the launch, with `window` null:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state append oversee lanes '{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running"}'
@@ -120,7 +255,83 @@ A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflo
 
 ## 4. Watch And Advance
 
-The overseer launch starts one detached repeat watch for the fleet. Read its events as § Watch delivery states. A harness that wakes only at a background command's exit reads that same log in single passes. A hand-opened session with no live watch claim launches its watch by that reference. The launcher passes the first lane record's `launched_at` as `--since`. With no lane record, it uses the first watch launch time. Succession keeps that floor. A hand-opened session passes the first lane record's `launched_at` as `--since` with its repeat command. Pass `--state [OVERSEE_STATE]` with the file that [Fleet state address](oversee-takeover.md#fleet-state-address) resolves. Before every pass, and before every loop that a quiet pass makes, the watch reads every `lanes[]` record whose status is `running`. It reads the item, its window, and its `mail_root`. It uses the named host for a record that has one. Automatic close uses the directory containing `[OVERSEE_STATE]`; each lane's own workflow-state reads keep their lane-specific location. A lane launch, relaunch, or close while the watch runs needs no watch restart. Each pass prints every event it found as one block in the shape that `oversee-watch --help` states. Handle every line, even when its pass exits nonzero. Fix the cause that stderr names. The next pass starts after the `--repeat` delay. `lane-close` is the only terminal-lane close-out; [lane-reach.md § Lane close](../references/lane-reach.md#lane-close) holds how it ends a lane, what each refusal asks, and each surface's close. A successful dead-overseer or walled-overseer succession makes the single pass exit 3. The repeat command converts that status to 0 and stops after the succession helper receives the complete watch command. The helper starts and confirms the successor's detached watch even after the old claim is removed. Notice-only recovery, an exhausted retry, and a blocked recovery that no account in the fleet qualifies for also stop the repeat command with status 0, so a manual replacement starts one new watch and owns the overseer mailbox. Do not restart the old watch after any of those stops. For any other exit, fix the cause that stderr names and start it again. Never hand-roll a monitor. Without the github skill's watcher, the watch skips its pr-watch step and a `disarmed` or `awaiting-stale` pull request is invisible ([references/gates.md](../references/gates.md) § Multi-PR watching). `LINEAR_TEAM` enables triage. A fleet that tracks work elsewhere runs the same command and gets one stderr notice that triage is off. An event block prints only the pr-watch lines whose keys rose in that pass. A key that clears and recurs is news again. The heartbeat prints the full latest reducer output. The watch also reads each repository `ORCH_CONNECTED_REPOS` lists, after the `--repo` values. Pass the item repository first. The first repository and `ORCH_CONNECTED_REPOS` feed pr-watch. Additional `--repo` values feed the existing merge, heartbeat, report and repository checks, but do not add repositories to pr-watch. The first repository's baseline holds the triage, lane, and merged rows. With `--state`, each long pass reads the tracker once: `LINEAR_TEAM`'s In Progress, In Review and Verifying items or, with no team, the first repository's open `issue-N` pull requests. The heartbeat consumes that read. Verifying boxes and deadlines are printed even for queued or active lane records. They never become `owed` development work.
+The overseer launch starts one detached repeat watch for the fleet.
+
+Read its events as § Watch delivery states.
+
+A harness that wakes only at a background command's exit reads that same log in single passes.
+
+A hand-opened session with no live watch claim launches its watch by that reference.
+
+The launcher passes the first lane record's `launched_at` as `--since`.
+
+With no lane record, it uses the first watch launch time.
+
+Succession keeps that floor.
+
+A hand-opened session passes the first lane record's `launched_at` as `--since` with its repeat command.
+
+Pass `--state [OVERSEE_STATE]` with the file that [Fleet state address](oversee-takeover.md#fleet-state-address) resolves.
+
+Before every pass, and before every loop that a quiet pass makes, the watch reads every `lanes[]` record whose status is `running`.
+
+It reads the item, its window, and its `mail_root`.
+
+It uses the named host for a record that has one.
+
+Automatic close uses the directory containing `[OVERSEE_STATE]`; each lane's own workflow-state reads keep their lane-specific location.
+
+A lane launch, relaunch, or close while the watch runs needs no watch restart.
+
+Each pass prints every event it found as one block in the shape that `oversee-watch --help` states.
+
+Handle every line, even when its pass exits nonzero.
+
+Fix the cause that stderr names.
+
+The next pass starts after the `--repeat` delay. `lane-close` is the only terminal-lane close-out; [lane-reach.md § Lane close](../references/lane-reach.md#lane-close) holds how it ends a lane, what each refusal asks, and each surface's close.
+
+A successful dead-overseer or walled-overseer succession makes the single pass exit 3.
+
+The repeat command converts that status to 0 and stops after the succession helper receives the complete watch command.
+
+The helper starts and confirms the successor's detached watch even after the old claim is removed.
+
+Notice-only recovery, an exhausted retry, and a blocked recovery that no account in the fleet qualifies for also stop the repeat command with status 0, so a manual replacement starts one new watch and owns the overseer mailbox.
+
+Do not restart the old watch after any of those stops.
+
+For any other exit, fix the cause that stderr names and start it again.
+
+Never hand-roll a monitor.
+
+Without the github skill's watcher, the watch skips its pr-watch step and a `disarmed` or `awaiting-stale` pull request is invisible ([references/gates.md](../references/gates.md) § Multi-PR watching). `LINEAR_TEAM` enables triage.
+
+A fleet that tracks work elsewhere runs the same command and gets one stderr notice that triage is off.
+
+An event block prints only the pr-watch lines whose keys rose in that pass.
+
+A key that clears and recurs is news again.
+
+The heartbeat prints the full latest reducer output.
+
+The watch also reads each repository `ORCH_CONNECTED_REPOS` lists, after the `--repo` values.
+
+Pass the item repository first.
+
+The first repository and `ORCH_CONNECTED_REPOS` feed pr-watch.
+
+Additional `--repo` values feed the existing merge, heartbeat, report and repository checks, but do not add repositories to pr-watch.
+
+The first repository's baseline holds the triage, lane, and merged rows.
+
+With `--state`, each long pass reads the tracker once: `LINEAR_TEAM`'s In Progress, In Review and Verifying items or, with no team, the first repository's open `issue-N` pull requests.
+
+The heartbeat consumes that read.
+
+Verifying boxes and deadlines are printed even for queued or active lane records.
+
+They never become `owed` development work.
 
 ```bash
 .agents/skills/orch/scripts/lane-close --state-dir [OVERSEE_STATE_DIR] [ITEM_KEY]
@@ -142,7 +353,27 @@ Launch, follow and re-arm the repeat watch as [references/watch-delivery.md](../
 
 ### Bounded lane reads
 
-Use the pane payload that `oversee-watch` prints as the lane state, and never read the watch log's tail to handle an event: the follow delivers each line once. Each event carries only the lines its own handling reads, taken from below the lane's last user turn and capped by `ORCH_WATCH_TAIL_LINES`, default 12; which lines each kind carries is `oversee-watch --help` § Events. Do not capture the pane again when that payload answers the event. When the payload does not answer it and what you need is the lane's state rather than its text, run `lanes state [WINDOW]`, whose argument is the lane record's `window` as it stands, `SESSION:WINDOW`, and not the `[ITEM]` used elsewhere here, as the `lanes` help says. It prints one state word from the same judge the watch and the wake ask, reading the lane as the watch does; `lanes --help` § state lists the words; [lane-reach.md § Wake refusals](../references/lane-reach.md#wake-refusals) holds how its words differ from a wake's and what each wake refusal licenses. For a fresh status-file read, use `cp` locally or `lane-host cat` after a successful `lane-host touch` probe on a hosted lane. Run one source line, then the shared filter. Run each line in a separate tool call. The redirection keeps a hosted file out of the overseer until the filter emits its last 40 non-empty lines, to keep the file's size out of the overseer's context. A failed probe, source read, or filter stops the event. Never read a lane transcript.
+Use the pane payload that `oversee-watch` prints as the lane state, and never read the watch log's tail to handle an event: the follow delivers each line once.
+
+Each event carries only the lines its own handling reads, taken from below the lane's last user turn and capped by `ORCH_WATCH_TAIL_LINES`, default 12; which lines each kind carries is `oversee-watch --help` § Events.
+
+Do not capture the pane again when that payload answers the event.
+
+When the payload does not answer it and what you need is the lane's state rather than its text, run `lanes state [WINDOW]`, whose argument is the lane record's `window` as it stands, `SESSION:WINDOW`, and not the `[ITEM]` used elsewhere here, as the `lanes` help says.
+
+It prints one state word from the same judge the watch and the wake ask, reading the lane as the watch does; `lanes --help` § state lists the words; [lane-reach.md § Wake refusals](../references/lane-reach.md#wake-refusals) holds how its words differ from a wake's and what each wake refusal licenses.
+
+For a fresh status-file read, use `cp` locally or `lane-host cat` after a successful `lane-host touch` probe on a hosted lane.
+
+Run one source line, then the shared filter.
+
+Run each line in a separate tool call.
+
+The redirection keeps a hosted file out of the overseer until the filter emits its last 40 non-empty lines, to keep the file's size out of the overseer's context.
+
+A failed probe, source read, or filter stops the event.
+
+Never read a lane transcript.
 
 ```bash
 cp -- [STATUS_FILE] tmp/oversee-lane-status-source
@@ -152,7 +383,15 @@ awk 'NF {line[++count]=$0} END {first=count-39; if (first < 1) first=1; for (i=f
 
 ### Bounded issue reads
 
-For each `triage` pass, and the triage backstop at `heartbeat`, replace `[AGE]` with an `Nd` value that covers the fleet start and run each code line in a separate tool call. The first line redirects the complete response to ignored scratch storage, so no issue body enters the overseer. The second line is the only issue-list result the overseer reads. It emits each identifier, title, and `## Done when` body. The last line removes the complete response.
+For each `triage` pass, and the triage backstop at `heartbeat`, replace `[AGE]` with an `Nd` value that covers the fleet start and run each code line in a separate tool call.
+
+The first line redirects the complete response to ignored scratch storage, so no issue body enters the overseer.
+
+The second line is the only issue-list result the overseer reads.
+
+It emits each identifier, title, and `## Done when` body.
+
+The last line removes the complete response.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --created-since [AGE] --max --format=raw > tmp/oversee-triage-source.json
@@ -162,7 +401,9 @@ rm -f tmp/oversee-triage-source.json
 
 ### Judgement at every event
 
-Write owner summaries with communication's [reports and template](../../communication/references/reports.md). For an owner note marked as a voice request, apply orch's [approval and delivery](../references/communication-modes.md#voice-requests) before acting and communication's [voice wording](../../communication/references/voice.md) before replying.
+Write owner summaries with communication's [reports and template](../../communication/references/reports.md).
+
+For an owner note marked as a voice request, apply orch's [approval and delivery](../references/communication-modes.md#voice-requests) before acting and communication's [voice wording](../../communication/references/voice.md) before replying.
 
 - Judgement rules for every event: [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules).
 - Handling per event kind: [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
@@ -171,13 +412,31 @@ Write owner summaries with communication's [reports and template](../../communic
 
 ### Outside contributions
 
-The overseer owns each contribution the watch reports as `outside-contribution`, until it is merged or closed. `ORCH_EXTERNAL_TRIAGE`, default `on`, has each long pass of the watch list the open pull requests of every repository and the open issues of the first, and report each one whose author is outside the fleet once, and a pull request again on each new head; `off` lists nothing and changes nothing else. `oversee-watch --help` states who counts as the fleet and the event's fields. The fleet is every author GitHub marks type `Bot` or whose `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`, and every other author whose permission on the repository, read once per pass per repository and login from `GET repos/{repo}/collaborators/{login}/permission`, is `admin`, `maintain` or `write`, because no setting names the lanes app or the owner login and these reads cover them without one. The permission read is there because GitHub computes the association against the reading token: an organization member whose membership is private reads as `CONTRIBUTOR` to the app's token. A 404 is outside, and any other failed read exits the watch.
+The overseer owns each contribution the watch reports as `outside-contribution`, until it is merged or closed. `ORCH_EXTERNAL_TRIAGE`, default `on`, has each long pass of the watch list the open pull requests of every repository and the open issues of the first, and report each one whose author is outside the fleet once, and a pull request again on each new head; `off` lists nothing and changes nothing else. `oversee-watch --help` states who counts as the fleet and the event's fields.
 
-The permission read prints `outside-fleet-by-permission repo= author= permission=` on stderr for each author it admits as fleet. The note appears once per pass per repository and login. It creates no event.
+The fleet is every author GitHub marks type `Bot` or whose `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`, and every other author whose permission on the repository, read once per pass per repository and login from `GET repos/{repo}/collaborators/{login}/permission`, is `admin`, `maintain` or `write`, because no setting names the lanes app or the owner login and these reads cover them without one.
 
-A Linear mirror of a reported GitHub issue is left untouched: under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `triage`, take out of `[ISSUES]` each item whose `github_sync` in `linear.sh issues get [ID] --format=safe`, the live read, names a `[REPO]#[N]` that an `outside-contribution` event in the same block, or its step 1 fleet-log row, names. Post nothing on it, change none of its fields, and record it in `triaged` as `kept` with the reason `mirror of [REPO]#[N]`. Every other item goes to the verifier.
+The permission read is there because GitHub computes the association against the reading token: an organization member whose membership is private reads as `CONTRIBUTOR` to the app's token.
 
-The asset's SKILL.md frontmatter `source:` names the repository that owns it, never its install path. A contribution against an asset this repository does not own is investigated and asked like any other, with `close` recommended; on that answer, repost it to the owning repository, cross-link the two, close it with the reason, and tell that repository's overseer with `lane-mail peer send --repo [NAME] --file [PATH]` under [peer-mail.md](../references/peer-mail.md). Never fix another repository's defect here.
+A 404 is outside, and any other failed read exits the watch.
+
+The permission read prints `outside-fleet-by-permission repo= author= permission=` on stderr for each author it admits as fleet.
+
+The note appears once per pass per repository and login.
+
+It creates no event.
+
+A Linear mirror of a reported GitHub issue is left untouched: under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `triage`, take out of `[ISSUES]` each item whose `github_sync` in `linear.sh issues get [ID] --format=safe`, the live read, names a `[REPO]#[N]` that an `outside-contribution` event in the same block, or its step 1 fleet-log row, names.
+
+Post nothing on it, change none of its fields, and record it in `triaged` as `kept` with the reason `mirror of [REPO]#[N]`.
+
+Every other item goes to the verifier.
+
+The asset's SKILL.md frontmatter `source:` names the repository that owns it, never its install path.
+
+A contribution against an asset this repository does not own is investigated and asked like any other, with `close` recommended; on that answer, repost it to the owning repository, cross-link the two, close it with the reason, and tell that repository's overseer with `lane-mail peer send --repo [NAME] --file [PATH]` under [peer-mail.md](../references/peer-mail.md).
+
+Never fix another repository's defect here.
 
 A fix, take-over or closure of a contribution follows only the owner's answer to its one ask, never the overseer's own judgement, and lands on the contribution's home system: a GitHub issue or pull request is commented on and closed on GitHub, a Linear item through the linear skill.
 
@@ -217,9 +476,45 @@ Answering, directing, waking, Pane paste and resuming a dead or walled lane: [ov
 
 ## 5. Stop
 
-Run [verify.md](verify.md) once before stopping, retaining the watch's supplied box lines. A Stop with due boxes still open requires `ORCH_VERIFY_SCHEDULE` to name a scheduled reader that survives Stop. Confirm that the reader does not depend on this stopping overseer or its watch before reporting a handoff. Name that schedule and its remaining boxes in both the Stop report and handoff. When the setting is unset or the reader is not confirmed to survive Stop, put each open box under Waiting on you as `verification unscheduled`. Do not report those boxes as handed off.
+Run [verify.md](verify.md) once before stopping, retaining the watch's supplied box lines.
 
-Queue empty, or the user stops it. A queue empty under a standing `idle` ruling from the [§ Opening question](../references/communication-modes.md#opening-question) is not Stop: the watch keeps running, and the owner's later write arrives through it as an owner note. Stop a detached repeat watch first, as [references/watch-delivery.md](../references/watch-delivery.md) states, then end the follow, so no pass reports this overseer dead and no successor resumes a stopped fleet. On a hosted fleet, stop only when `lane-host list` has no row but `available`, or name each such host. Run `.agents/skills/orch/scripts/oversee-cycle --state-dir [OVERSEE_STATE_DIR] rollup`, which writes the per-class rollup to the fleet log, where the owner reads it against the routes that landed. Report one line per lane in the rows [../references/communication-modes.md](../references/communication-modes.md) § Status report gives: merged SHAs under Landed, the `oversee-report render` Escapes line under Escapes, still-open PRs and items skipped as owned or blocked under Running, each running lane's `validate_rounds` minutes or `none`, then its `restack_skips` count, under Validation, the `oversee-report render` Use 1 line under Use 1, the queue remainder or `none` under Next, open questions or `none` under Waiting on you. Reapply the [takeover path check](oversee-takeover.md#1-read-the-mailbox-and-handoff). Rewrite the handoff's State, Sub-agents, Instructions in force and Progress log sections under [communication-modes.md § Handoff](../references/communication-modes.md#handoff), at Stop and succession. The handoff file carries no tmux command: a pane write it hands on names `pane-write`, as Pane paste in [oversee-lanes.md § Talking to a lane](../references/oversee-lanes.md#talking-to-a-lane) gives it. Write each status report given in chat, this one included, to the path `workflow-state progress-report-path` prints as well. At that rewrite, here and at a succession, run the retention [schemas/workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states. Where it prints a `kept=` line, record that line in the fleet log; its other outputs are [§ Prune](../schemas/workflow-state.md#prune)'s. A succession writes its report through § Succession below before these preparation steps. Under a repeat watch, keep that watch's `[RUN_DIR]`:
+A Stop with due boxes still open requires `ORCH_VERIFY_SCHEDULE` to name a scheduled reader that survives Stop.
+
+Confirm that the reader does not depend on this stopping overseer or its watch before reporting a handoff.
+
+Name that schedule and its remaining boxes in both the Stop report and handoff.
+
+When the setting is unset or the reader is not confirmed to survive Stop, put each open box under Waiting on you as `verification unscheduled`.
+
+Do not report those boxes as handed off.
+
+Queue empty, or the user stops it.
+
+A queue empty under a standing `idle` ruling from the [§ Opening question](../references/communication-modes.md#opening-question) is not Stop: the watch keeps running, and the owner's later write arrives through it as an owner note.
+
+Stop a detached repeat watch first, as [references/watch-delivery.md](../references/watch-delivery.md) states, then end the follow, so no pass reports this overseer dead and no successor resumes a stopped fleet.
+
+On a hosted fleet, stop only when `lane-host list` has no row but `available`, or name each such host.
+
+Run `.agents/skills/orch/scripts/oversee-cycle --state-dir [OVERSEE_STATE_DIR] rollup`, which writes the per-class rollup to the fleet log, where the owner reads it against the routes that landed.
+
+Report one line per lane in the rows [../references/communication-modes.md](../references/communication-modes.md) § Status report gives: merged SHAs under Landed, the `oversee-report render` Escapes line under Escapes, still-open PRs and items skipped as owned or blocked under Running, each running lane's `validate_rounds` minutes or `none`, then its `restack_skips` count, under Validation, the `oversee-report render` Use 1 line under Use 1, the queue remainder or `none` under Next, open questions or `none` under Waiting on you.
+
+Reapply the [takeover path check](oversee-takeover.md#1-read-the-mailbox-and-handoff).
+
+Rewrite the handoff's State, Sub-agents, Instructions in force and Progress log sections under [communication-modes.md § Handoff](../references/communication-modes.md#handoff), at Stop and succession.
+
+The handoff file carries no tmux command: a pane write it hands on names `pane-write`, as Pane paste in [oversee-lanes.md § Talking to a lane](../references/oversee-lanes.md#talking-to-a-lane) gives it.
+
+Write each status report given in chat, this one included, to the path `workflow-state progress-report-path` prints as well.
+
+At that rewrite, here and at a succession, run the retention [schemas/workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states.
+
+Where it prints a `kept=` line, record that line in the fleet log; its other outputs are [§ Prune](../schemas/workflow-state.md#prune)'s.
+
+A succession writes its report through § Succession below before these preparation steps.
+
+Under a repeat watch, keep that watch's `[RUN_DIR]`:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state prune --keep [RUN_DIR]
@@ -227,13 +522,23 @@ Queue empty, or the user stops it. A queue empty under a standing `idle` ruling 
 
 Single passes, and Stop, whose watch is already stopped, run `prune` with no `--keep`.
 
-After these reads, reports and retention steps, prepare the complete headerless body in a separate ignored scratch file under [communication-modes.md § Handoff](../references/communication-modes.md#handoff). At Stop and succession, write the snapshot without a pane or launch choice:
+After these reads, reports and retention steps, prepare the complete headerless body in a separate ignored scratch file under [communication-modes.md § Handoff](../references/communication-modes.md#handoff).
+
+At Stop and succession, write the snapshot without a pane or launch choice:
 
 ```bash
 .agents/skills/orch/scripts/oversee-succeed --write-only --handoff-body [BODY] --handoff [HANDOFF_PATH]
 ```
 
-Require this write to succeed before completing preparation. On failure, stop preparation and report the cause. Claim a current installed snapshot or record it for manual recovery only after the write succeeds. At succession, continue with § Succession below for the launch and refusal handling. The installed snapshot is ready even when succession is disabled or no account qualifies.
+Require this write to succeed before completing preparation.
+
+On failure, stop preparation and report the cause.
+
+Claim a current installed snapshot or record it for manual recovery only after the write succeeds.
+
+At succession, continue with § Succession below for the launch and refusal handling.
+
+The installed snapshot is ready even when succession is disabled or no account qualifies.
 
 ### Succession
 

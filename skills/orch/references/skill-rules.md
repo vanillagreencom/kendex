@@ -1,6 +1,6 @@
 # Skill rules
 
-Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules routes here; load this file when a workflow cites one of these sections.
+Read the named section when an orch workflow delegates work, closes a round, coordinates lanes or writes lane output. [../SKILL.md](../SKILL.md) § Skill Rules routes here. The sections below own these contracts.
 
 ## Delegation
 
@@ -10,13 +10,74 @@ Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules rout
 | Message only | Re-delegation to a live agent | Send delegation to the running agent |
 | Self-create | No team context | Full instructions in the prompt |
 
-**Claude Code reviewer names.** For a reviewer, omit `name` from the `Agent` call or start it with the reviewer's canonical agent name, such as `reviewer-correctness`. The `reviewer-read-only` hook matches `agent_type` against `reviewer-*`; Claude Code uses the spawn name for that field. A nickname such as `rr-correctness` can bypass the protection.
+### Claude Code reviewer names
 
-**Model class.** An item's class is `standard`. Use `top` only when the overseer writes `Model class: top` and its reason into the item's brief. Use `fast` only when the overseer writes `Model class: fast` for an extremely low-stakes change: a typo, a label, a config line or a doc sentence. Nothing selects `fast` by default. Never derive the class from an estimate, a workflow tier (`micro`, `small`, `standard`), complexity or a risk category. Select effort for each task; the class table holds no efforts. When the lane's brief names `Model class:`, carry that field on each dev, review or QA delegation. On Claude Code, set the `Agent` call's `model` to the class's family alias from `kendex tier-model claude [N]`, where `[N]` is the requested class's rank. On Pi, set the `subagent` call's `model` to `[CLASS]:[EFFORT]`. On other harnesses, the agent file's class stands.
+For a reviewer, omit `name` from the `Agent` call or start it with the reviewer's canonical agent name, such as `reviewer-correctness`.
 
-When the caller requests a technical implementation plan, delegate to the installed `planner`. Report a missing planner instead of planning in the primary session. Pass any TPM handoff through the caller. `roadmap-plan` consumes a finished plan; it does not launch planner.
+The `reviewer-read-only` hook matches `agent_type` against `reviewer-*`; Claude Code uses the spawn name for that field.
 
-**Stored-ID reuse.** On Codex MultiAgentV2, apply [Codex thread reuse](#codex-thread-reuse) before selecting a fresh instance. On other surfaces, before every re-delegation, read that agent's own context figure and the reuse guard's threshold through the harness status API for the target working directory and model. Never substitute the parent's context or cumulative usage. Reuse the stored ID only when the guard permits it, including equality at the threshold. Above the threshold, retire the prior idle session and start a fresh agent of the same type. Send the new task with the prior agent's final result attached, then replace the stored ID. If the context figure is unavailable, choose fresh instead of guessing. An explicit same-session request keeps the guard's refusal text and fresh-agent remedy. Never duplicate a role's running task; stall recovery follows § Round Closure. Pi status calls and automatic background handoff are [pi-runtime.md § Context before reuse](pi-runtime.md#context-before-reuse).
+A nickname such as `rr-correctness` can bypass the protection.
+
+### Model class
+
+An item's class is `standard`.
+
+Use `top` only when the overseer writes `Model class: top` and its reason into the item's brief.
+
+Use `fast` only when the overseer writes `Model class: fast` for an extremely low-stakes change: a typo, a label, a config line or a doc sentence.
+
+Nothing selects `fast` by default.
+
+Never derive the class from an estimate, a workflow tier (`micro`, `small`, `standard`), complexity or a risk category.
+
+Select effort for each task; the class table holds no efforts.
+
+When the lane's brief names `Model class:`, carry that field on each dev, review or QA delegation.
+
+On Claude Code, set the `Agent` call's `model` to the class's family alias from `kendex tier-model claude [N]`, where `[N]` is the requested class's rank.
+
+On Pi, set the `subagent` call's `model` to `[CLASS]:[EFFORT]`.
+
+On other harnesses, the agent file's class stands.
+
+When the caller requests a technical implementation plan, delegate to the installed `planner`.
+
+Report a missing planner instead of planning in the primary session.
+
+Pass any TPM handoff through the caller. `roadmap-plan` consumes a finished plan; it does not launch planner.
+
+### Stored-ID reuse
+
+On Codex MultiAgentV2, apply [Codex thread reuse](#codex-thread-reuse) before selecting a fresh instance.
+
+On other surfaces, before every re-delegation, read that agent's own context figure and the reuse guard's threshold through the harness status API for the target working directory and model.
+
+Never substitute the parent's context or cumulative usage.
+
+Reuse the stored ID only when the guard permits it, including equality at the threshold.
+
+Above the threshold, retire the prior idle session and start a fresh agent of the same type.
+
+Send the new task with the prior agent's final result attached, then replace the stored ID.
+
+If the context figure is unavailable, choose fresh instead of guessing.
+
+An explicit same-session request keeps the guard's refusal text and fresh-agent remedy.
+
+Never duplicate a role's running task; stall recovery follows § Round Closure.
+
+Pi status calls and automatic background handoff are [pi-runtime.md § Context before reuse](pi-runtime.md#context-before-reuse).
+
+### Source-only inputs
+
+Before substantive source work, the launch owner records the complete known input set by role in the task's existing artifacts. Include mandatory protocol, source, retained evidence and reviewer inputs. Identify unavailable inputs, uncertain estimates and newly discovered requirements. Record known source bytes and read units separately from native context/account admission; do not infer token capacity from file bytes or count.
+
+Before delegating an opinion, the caller admits the complete reviewer packet: the canonical role and required standards, source evidence, repository/ref/HEAD/dirty bindings, design and input table, retained artifacts and unresolved inputs. Give the reviewer its full role context. Do not allocate the remainder of a local-read count or launch an opinion with known mandatory inputs missing. Report that phase as incomplete with its exact missing inputs. The existing [pre-panel context check](../workflows/review-pr.md#2-prepare-reviewers) still decides attached room; missing required context is no permission to attach.
+
+Record unique source files, each full-file or slice attempt, metadata calls, service commands and truncations separately. A search or truncated output does not complete a source read. Re-evaluate the inventory when a required source or standard is discovered, output truncates, an artifact becomes unavailable or a source binding changes. Continue through the existing admission and [source-only handoff](oversee-events.md#source-only-continuation) owners. This inventory adds no independent read-count limit, setting or service allowance.
+
+A complete adverse opinion contains performed review and actual blockers. Missing evidence, an unperformed opinion or an incomplete review establishes no pass or adverse design judgement. Preserve the original opinion artifacts and their performed/completeness status; empty findings do not clear an unperformed review. The acceptance owner decides any permitted completion of the same pending opinion. No boundary automatically launches another opinion.
+
 
 ### Format Tags Are Literal
 
@@ -24,9 +85,15 @@ When the caller requests a technical implementation plan, delegate to the instal
 
 ### Single Return Message
 
-An agent sends exactly one completion message. A second return is a violation: diff it against the first and flag unrequested commits.
+An agent sends exactly one completion message.
 
-**Codex dual-channel completion.** The Codex runtime delivers one completion over two channels, a `send_input` `MESSAGE` then a `FINAL_ANSWER` echoing it: treat the pair as **one completion** and deduplicate it. Still diff them; a new commit or extra changes is a genuine second return and is flagged.
+A second return is a violation: diff it against the first and flag unrequested commits.
+
+### Codex dual-channel completion
+
+The Codex runtime delivers one completion over two channels, a `send_input` `MESSAGE` then a `FINAL_ANSWER` echoing it: treat the pair as **one completion** and deduplicate it.
+
+Still diff them; a new commit or extra changes is a genuine second return and is flagged.
 
 ---
 
@@ -36,9 +103,21 @@ An agent sends exactly one completion message. A second return is a violation: d
 
 **Dev agents persist** across fix rounds while [§ Delegation](#delegation) permits reuse. Shut down on explicit user request, a confirmed stall, or a context handoff.
 
-**Reviewer persistence is budget-conditional.** On Codex MultiAgentV2, use [Codex thread reuse](#codex-thread-reuse): finished threads still hold slots. On other surfaces, reviewer slots = `orch-env REVIEWER_SLOT_BUDGET 0` minus the primary session minus live `child_sessions` entries whose `status` is `active` (no `status` counts as active), minimum 1, recomputed at every review-cycle start; `0` means unlimited. Within the slot budget, apply [§ Delegation](#delegation) before reusing reviewers by exact name and spawn only the missing or context-exhausted subset. Over budget, or on a thread-limit spawn error, run waves and persist the wave size as `reviewer_slots_observed`. Review state lives on disk, never in reviewer session memory.
+### Reviewer persistence is budget-conditional
 
-QA agents spawn and shut down per agent on surfaces with a close call. Codex MultiAgentV2 keeps finished threads for eligible reuse.
+On Codex MultiAgentV2, use [Codex thread reuse](#codex-thread-reuse): finished threads still hold slots.
+
+On other surfaces, reviewer slots = `orch-env REVIEWER_SLOT_BUDGET 0` minus the primary session minus live `child_sessions` entries whose `status` is `active` (no `status` counts as active), minimum 1, recomputed at every review-cycle start; `0` means unlimited.
+
+Within the slot budget, apply [§ Delegation](#delegation) before reusing reviewers by exact name and spawn only the missing or context-exhausted subset.
+
+Over budget, or on a thread-limit spawn error, run waves and persist the wave size as `reviewer_slots_observed`.
+
+Review state lives on disk, never in reviewer session memory.
+
+QA agents spawn and shut down per agent on surfaces with a close call.
+
+Codex MultiAgentV2 keeps finished threads for eligible reuse.
 
 ### Codex thread reuse
 
@@ -54,7 +133,9 @@ A tracked render lands with its source in the same commit; `ORCH_SIZE_RENDER_ROO
 
 ### Round Closure
 
-The orchestrator owns round closure. Every dev/QA delegation carries three mechanics:
+The orchestrator owns round closure.
+
+Every dev/QA delegation carries three mechanics:
 
 1. **Round token.** Immediately before delegating, run `workflow-state new-round-id [ISSUE_ID] dev_round_id` for the `Round ID:` line and re-stamp `dev_delegated_at`. `dev_delegated_at` marks the delegation: the escalation's 10-minute quiet window is measured from it, the watchdog armed at the same moment keeps its own clock and never reads it, and `round-recover` accepts a reported pass only from a validation run started at or after it, so a delegation that skips the re-stamp re-admits an earlier round's passing run. A fix round first completes [dev-fix.md § 2's base-freshness gate](../workflows/dev-fix.md#2-delegate), including recovered and redirected rounds. It then runs `dev-round-write`, which records HEAD, items, and optional `Adds:` paths in an immutable round record under the worktree's `tmp/`. A missing or mismatched record requires a fresh round; never recreate one after delegation. A chosen cut uses `dev-round-write --cut`; [dev-round.md § Declared cuts](../schemas/dev-round.md#declared-cuts) owns its acceptance rule. Follow the consumer's selected orch cleanup policy. Call `round-prune [ISSUE_ID]` only when that policy selects Cargo round cleanup. Without that selection, keep the round stamps and delegation and skip the helper. When selected, run it between the round-id stamp and the `dev_delegated_at` stamp, so its time never counts against the agent's quiet window. It reads the use of the volume holding the item worktree's `target/`. At or past `ORCH_ROUND_PRUNE_DISK_PCT` (default 75) it prunes that worktree's Cargo profiles under the item's own lease, however recent, and leaves `node_modules/` and `.next/`, which nothing reinstalls between rounds; it records the bytes under `round_prunes` in workflow state. Below the mark it prunes nothing, so the round's validation starts warm. It resolves its own target: the worktree the state names, else the linked worktree holding the state's branch, with the lease owner its branch's issue id and the Cargo target `CARGO_TARGET_DIR` names, `target/` by default. A state matching no worktree records `no-worktree` and the round goes ahead; a Cargo target outside the worktree's `target/` is past the prune's reach, so past the mark it records `target-elsewhere` and exits 1. It runs between rounds, so no validation run deletes anything. A non-zero exit stops the delegation: report its lines, because a round delegated past the mark with its target not reclaimed starts its validation on a full disk.
 2. **Arm a single-shot wall-clock watchdog** at the same moment: one backgrounded `dev-artifact-check --wait 600 --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`): returns when the artifact lands (`accept`/`retry`) or at the deadline (`wait`). Run A/B on its return; re-arm only on a new escalation step, never poll. The one exception is a watchdog that returned NO verdict — a keyed refusal, or any exit status outside the verdict set — which means it stopped clocking the round before the round ended: replace it immediately rather than at the next escalation step, because the alternative is the untimed round this rule exists to prevent. **ONE replacement, never two.** A watchdog ends without a verdict because its own probe broke, and those failures persist — a `jq` that cannot run, a machine out of processes — so a replacement that also ends without one is an environment failure, not a round to keep clocking: stop there and report it, naming the status and the keyed line if one arrived. Arming a third, or waiting for the probe to recover, spends processes on a machine that has none and leaves the failure unreported. Statuses are in each check's `--help`; [artifact-checks.md](artifact-checks.md).
@@ -62,11 +143,35 @@ The orchestrator owns round closure. Every dev/QA delegation carries three mecha
 
 For dev rounds that write a dev-return artifact, Codex holds this watchdog through [codex-runtime.md § Delegated round wait](codex-runtime.md#delegated-round-wait), which replaces item 2's background launch and the generic lane-notice turn-end route.
 
-The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1); the return message is display-only, except that `round-recover` parses a stalled round's return block from the agent's transcript; tracker corroboration (**B**) applies only where that table names it. `ci-fix.md` writes no dev-return artifact. Its CI-fix and integration-analysis delegations mint `ci_round_id`, which starts no dev stage. They keep `dev_delegated_at` and arm item 2's watchdog with that CI token; its missing-artifact `wait` is expected. They accept by return message plus pushed commit and use the escalation ladder when no return arrives.
+The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1); the return message is display-only, except that `round-recover` parses a stalled round's return block from the agent's transcript; tracker corroboration (**B**) applies only where that table names it. `ci-fix.md` writes no dev-return artifact.
 
-**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged, no session-log entries for 10+ minutes, or the process exited): re-message once naming the missing step → wait 5 minutes → still inactive: end the stalled task, re-create tasks, select the instance under [Codex thread reuse](#codex-thread-reuse) on Codex or respawn fresh on other surfaces, then re-delegate. The replacement takes a fresh round id; the canonical agent name is the identity every record is keyed on and stays as it was. For a dev-return round, run item 1's round-start mechanics before re-delegating. A round accepted on a dev-return artifact skips this ladder when it is a stalled round.
+Its CI-fix and integration-analysis delegations mint `ci_round_id`, which starts no dev stage.
 
-**Stalled round.** The watchdog returned `wait`, the harness reports the agent idle, its transcript has not changed since the idle notice, and no process of the round is alive. Do not re-message the stalled task. Complete recovery before selecting a thread under [Codex thread reuse](#codex-thread-reuse). Run `round-recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --transcript [PATH]`, with the path from [agent-transcripts.md](agent-transcripts.md), and act on its line. A bundled round's report carries no `Commit:` line, so a bundled round always takes the `redelegate` row.
+They keep `dev_delegated_at` and arm item 2's watchdog with that CI token; its missing-artifact `wait` is expected.
+
+They accept by return message plus pushed commit and use the escalation ladder when no return arrives.
+
+### Escalation
+
+Only after the 10-minute quiet window AND a confirmed stall (task status unchanged, no session-log entries for 10+ minutes, or the process exited): re-message once naming the missing step → wait 5 minutes → still inactive: end the stalled task, re-create tasks, select the instance under [Codex thread reuse](#codex-thread-reuse) on Codex or respawn fresh on other surfaces, then re-delegate.
+
+The replacement takes a fresh round id; the canonical agent name is the identity every record is keyed on and stays as it was.
+
+For a dev-return round, run item 1's round-start mechanics before re-delegating.
+
+A round accepted on a dev-return artifact skips this ladder when it is a stalled round.
+
+### Stalled round
+
+The watchdog returned `wait`, the harness reports the agent idle, its transcript has not changed since the idle notice, and no process of the round is alive.
+
+Do not re-message the stalled task.
+
+Complete recovery before selecting a thread under [Codex thread reuse](#codex-thread-reuse).
+
+Run `round-recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --transcript [PATH]`, with the path from [agent-transcripts.md](agent-transcripts.md), and act on its line.
+
+A bundled round's report carries no `Commit:` line, so a bundled round always takes the `redelegate` row.
 
 | Line | Action |
 |---|---|
@@ -77,31 +182,175 @@ The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev
 
 #### Directive During A Round
 
-A lane never steers a running dev or fix round by message alone. The harness's send (Claude Code `SendMessage`) only queues a message for the agent's next tool round and returns no delivery receipt, so a send is not delivery, and the agent's transcript ([agent-transcripts.md](agent-transcripts.md)) is the only record of what the agent read. A directive that changes the round's scope goes first into the round's durable brief, the item comment or `tmp/` file the delegation names. The lane then reads the transcript for the change: read there, it is "delivered"; anything else, an unreadable transcript included, is "unconfirmed". An unconfirmed directive overrides whatever the watchdog returns, since a report or an `accept` answers the old scope: at that return, shut the agent down and run `round-recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --directive-unconfirmed`. It ends the worktree's validation runs first, and a run it cannot end is its `stop-failed` refusal: stop and report it. Past a refusal it prints only `redelegate`; take that row, which keeps the uncommitted tree and delegates the updated brief under the fresh round id, with one change: on a fix round, the fresh round's record holds the updated scope, never the `from` round's authorization. Write its items file and run `dev-round-write` for the fresh id as step 4 of [dev-fix.md § 2](../workflows/dev-fix.md#2-delegate) does for a new delegation, with the items, `--source`, `--adds` and `--cut` the updated brief names, so `--expect-items-from-round` checks the receipt against the scope the agent was given. The lane's notice to the overseer says "confirmed in the dev agent's transcript at [TIME]" or "unconfirmed, re-delegating", never "reached" on a send.
+A lane never steers a running dev or fix round by message alone.
+
+The harness's send (Claude Code `SendMessage`) only queues a message for the agent's next tool round and returns no delivery receipt, so a send is not delivery, and the agent's transcript ([agent-transcripts.md](agent-transcripts.md)) is the only record of what the agent read.
+
+A directive that changes the round's scope goes first into the round's durable brief, the item comment or `tmp/` file the delegation names.
+
+The lane then reads the transcript for the change: read there, it is "delivered"; anything else, an unreadable transcript included, is "unconfirmed".
+
+An unconfirmed directive overrides whatever the watchdog returns, since a report or an `accept` answers the old scope: at that return, shut the agent down and run `round-recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --directive-unconfirmed`.
+
+It ends the worktree's validation runs first, and a run it cannot end is its `stop-failed` refusal: stop and report it.
+
+Past a refusal it prints only `redelegate`; take that row, which keeps the uncommitted tree and delegates the updated brief under the fresh round id, with one change: on a fix round, the fresh round's record holds the updated scope, never the `from` round's authorization.
+
+Write its items file and run `dev-round-write` for the fresh id as step 4 of [dev-fix.md § 2](../workflows/dev-fix.md#2-delegate) does for a new delegation, with the items, `--source`, `--adds` and `--cut` the updated brief names, so `--expect-items-from-round` checks the receipt against the scope the agent was given.
+
+The lane's notice to the overseer says "confirmed in the dev agent's transcript at [TIME]" or "unconfirmed, re-delegating", never "reached" on a send.
 
 ---
 
 ## Coordination
 
-**Private settings.** A brief or workflow names the setting and the reader `orch-env NAME DEFAULT` ([scripts/orch-env](../scripts/orch-env)), never the private env file. An agent never opens, prints, greps or sources the private env file: `.env.local`, or the file `KENDEX_ENV_FILE` names. The only exception is a setup workflow that writes one named secret into it.
+### Private settings
 
-**Voice requests.** Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval and the explicit confirmation of destructive and money steps. Read communication's [voice wording](../../communication/references/voice.md) before the spoken reply.
+A brief or workflow names the setting and the reader `orch-env NAME DEFAULT` ([scripts/orch-env](../scripts/orch-env)), never the private env file.
 
-**Containers.** An issue with children or an `agent:multi` label is a CONTAINER, whatever its title. The one exception is the review audit's in-PR bundle root: an issue whose own PR works the `make_child` items its review audit filed. Its Filing record carries `**In-PR bundle**: yes`, which [review-pr.md § 8](../workflows/review-pr.md#8-summary-and-issue-audit) alone writes; linear's safe issue reads report it as `in_pr_bundle`, the one answer every reader takes, the Ancestor gate and the dev agent's bundle check included. A container is never orchestrated and never gets a PR. Each child is the PR unit. Selection operates on unblocked children. A container stays open while a child is open and closes when its last child is Done or Canceled: [container-close](../scripts/container-close) ticks its one box, "Every child Done or cancelled", run from [merge-pr.md § 5 step 2](../workflows/merge-pr.md#5-execute-the-merge) and from its Verification continuation in [oversee-events.md § Event kinds](oversee-events.md#event-kinds).
+An agent never opens, prints, greps or sources the private env file: `.env.local`, or the file `KENDEX_ENV_FILE` names.
 
-**Ancestor gate.** Read current Linear facts with `issues get --format=safe` before each launch or implementation delegation. Every selected issue walks its full `parent_id` chain. Apply the gate to the final selection. Dispatch requires the item's own `state_type` non-terminal and the union of its `blocked_by_launch` with every container ancestor's `blocked_by_launch` empty. This launch-only field excludes completed, canceled and post-merge Verifying blockers. In Progress and Backlog blockers still hold dispatch. Other readers keep `blocked_by_open`. A dependent that needs a blocker's proven outcome instead of its merged code states that need in its body. The overseer's queue order holds that dependent through verification.
+The only exception is a setup workflow that writes one named secret into it.
 
-A selected issue whose live read reports `in_pr_bundle` is the work item, delegated with its children. For it, also read the complete descendant tree through [project-management § Reading a Full Subtree](../../project-management/references/dependencies.md#reading-a-full-subtree). Read each non-terminal descendant whose work the session will implement with `issues get --format=safe`. Include its external `blocked_by_launch`. Exclude blockers that belong to the same bundle from this descendant check; the delegated session orders that work. Any remaining launch blocker stops dispatch. A missing or incomplete parent, descendant, or blocker read stops dispatch. `blocked_by` remains relation history and does not decide dispatch.
+### Voice requests
 
-**Sequencing.** Order by data flow (Creates ↔ Consumes), never by agent ordering; existing blocking relations outrank inference. Record relations under linear SKILL.md § Blocked Label vs Issue Relations. Only the review audit's in-PR bundle leaves intra-bundle ordering to the delegated session.
+Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval and the explicit confirmation of destructive and money steps.
 
-**Single-PR bundles.** Exactly two opt-ins delegate several deliverables as one session: an in-PR bundle root, whose live read reports `in_pr_bundle`, delegated with its children, or a leaf issue with an internal checklist. One composite task per sub-issue; multi-domain bundles process groups sequentially, collecting handoff notes between groups.
+Read communication's [voice wording](../../communication/references/voice.md) before the spoken reply.
 
-**Lane asks.** A lane never waits on the overseer for a step its workflow already permits; it asks only at a bound its workflow states or at a scope change.
+### Containers
 
-**Lane mail.** A lane reaches its overseer by the `channel` its host kind declares ([lane-host.md § Host kinds](../schemas/lane-host.md#host-kinds)). A `session` lane, a Claude cloud session, reaches its overseer through its branch and pull request and nothing else. It never asks: a step that needs an answer is a step the kind never takes. It reports the blocker through the route that `LAUNCH_SESSION_TEXT` in [scripts/lib/lane-launch.sh](../scripts/lib/lane-launch.sh) owns, then ends its turn. Its brief closes on those words in place of the unattended words below. The rest of this rule is the `mailbox` channel: a delegated orchestration session (lane) reaches its overseer through `scripts/lane-mail` and nothing else. Every ask gate in a lane is `lane-mail ask --item [ISSUE_ID] --file [PATH]`, whose printed `id=` feeds `lane-mail wait --item [ISSUE_ID] --id [MSGID]` run under [waiter-launch.md](waiter-launch.md); the question's own words cross the `--file`, never argv. The harness question tool is never used in a lane, on any surface. A lane sends what needs no reply with `lane-mail notice` only when its work changed since its last notice: a new head, PR, verdict, blocker, request or finish. A turn ends after a lane-mail ask or notice, or the lane status file, says where the work stands. A wait that continues updates the lane status file only. A lane reads what the overseer sent with `lane-mail inbox --item [ISSUE_ID]` at every wait point it already has. A lane that removes its own worktree sends every notice for that close-out after `worktree remove` returns, from `[MAIN_REPO_ROOT]`. An overseer brief that requests a close-out notice requests it after removal. Removal moves the worktree mailbox to the main checkout, where the watch reads a removed lane's mailbox, so a notice sent before removal still reaches the overseer. As its first step, and again at each expiry, a Claude Code lane arms a standing monitor on its mailbox, `lane-mail watch --item [ISSUE_ID]`, through its harness's background wake per [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor), and runs the `lane-mail inbox` command each announcement prints. A Copilot CLI lane arms `lane-mail watch --once --item [ISSUE_ID]` instead, a background command that exits at its first announcement, and re-arms it after each inbox read; whether that exit wakes the lane, and the overseer's route where it does not, are watch-delivery.md's. Mail therefore wakes an idle Claude Code lane by itself, and a send's receipt tells the overseer whether that monitor is running; a Pi lane arms no monitor, and the `pi-hooks` mail wake starts its turn when mail lands ([pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi)); a Codex lane arms none, and the overseer wakes it ([codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox)). On a harness that runs these hooks (`kendex show hook <name>` names the tools a hook does not run on), the `lane-mail-deliver` hook hands over anything unread after each tool call and the `lane-mail-check` hook at the lane's turn end, on Copilot the `lane-mail-start` and `lane-mail-prompt` hooks at its session start and at each prompt, and while an unread halt stands the `lane-mail-halt` hook refuses every tool call but the `lane-mail inbox` read that acknowledges it. Elsewhere a halt takes effect when a `lane-mail inbox` read or an ask wait point hands it over. A `lane-mail wait` that hands over a halt acknowledges it just as a plain inbox read does. The overseer answers with `lane-mail send --re [MSGID]`, directs with `lane-mail send --directive` and halts with `lane-mail send --halt`; [oversee.md](../workflows/oversee.md) § 4 owns its side.
+An issue with children or an `agent:multi` label is a CONTAINER, whatever its title.
 
-**Question tools.** Every command `open-terminal` builds carries the words the table below names for its harness to take the question tool away, and a `--cmd` launch on a harness that has words below carries them inside its command or is refused as `launch-question-tool-missing`. A `--cmd` launch naming no harness is not judged, so its command carries the words by hand, and a lane started through a harness's own session launcher ([oversee.md](../workflows/oversee.md) § 1) is outside `open-terminal`. The words live in `scripts/lib/lane-launch.sh` beside each harness's model and effort spellings. Where the harness runs hooks (`kendex show hook <name>` names the tools a hook does not run on), the `lane-mail-halt` hook refuses the tools below in a launched lane, by the names `hooks/lane-mail-check.sh` owns, under `lane-mail-check: question-tool=<name>`, and the `lane-mail-check` hook holds or reports to the overseer a launched lane's turn end with no `lane-mail ask` or `notice` sent and no update to its lane status file since the last judgement, never judging words in its pane; its description states when each happens. A lane that ends its turn to wait on a dispatched agent or an armed wake follows the Lane mail rule above. The question-tool refusal names the `lane-mail ask` and `lane-mail wait` route too. Every lane is also briefed with the unattended words, since a lane whose tool is taken away is still free to ask in chat: the text `LAUNCH_UNATTENDED_TEXT` in `scripts/lib/lane-launch.sh` holds. Every brief and continuation line `open-terminal` builds closes on it, on every harness, and a `--cmd` launch naming a harness carries it whole in its brief file or in one argument of its command. `open-terminal` judges the question-tool words first, so a `--cmd` launch missing both is refused as `launch-question-tool-missing`; once those words are present, one missing the unattended words is refused as `launch-unattended-missing`. The words never ride Pi's `--append-system-prompt`, which stops Pi reading its discovered `APPEND_SYSTEM.md`.
+The one exception is the review audit's in-PR bundle root: an issue whose own PR works the `make_child` items its review audit filed.
+
+Its Filing record carries `**In-PR bundle**: yes`, which [review-pr.md § 8](../workflows/review-pr.md#8-summary-and-issue-audit) alone writes; linear's safe issue reads report it as `in_pr_bundle`, the one answer every reader takes, the Ancestor gate and the dev agent's bundle check included.
+
+A container is never orchestrated and never gets a PR.
+
+Each child is the PR unit.
+
+Selection operates on unblocked children.
+
+A container stays open while a child is open and closes when its last child is Done or Canceled: [container-close](../scripts/container-close) ticks its one box, "Every child Done or cancelled", run from [merge-pr.md § 5 step 2](../workflows/merge-pr.md#5-execute-the-merge) and from its Verification continuation in [oversee-events.md § Event kinds](oversee-events.md#event-kinds).
+
+### Ancestor gate
+
+Read current Linear facts with `issues get --format=safe` before each launch or implementation delegation.
+
+Every selected issue walks its full `parent_id` chain.
+
+Apply the gate to the final selection.
+
+Dispatch requires the item's own `state_type` non-terminal and the union of its `blocked_by_launch` with every container ancestor's `blocked_by_launch` empty.
+
+This launch-only field excludes completed, canceled and post-merge Verifying blockers.
+
+In Progress and Backlog blockers still hold dispatch.
+
+Other readers keep `blocked_by_open`.
+
+A dependent that needs a blocker's proven outcome instead of its merged code states that need in its body.
+
+The overseer's queue order holds that dependent through verification.
+
+A selected issue whose live read reports `in_pr_bundle` is the work item, delegated with its children.
+
+For it, also read the complete descendant tree through [project-management § Reading a Full Subtree](../../project-management/references/dependencies.md#reading-a-full-subtree).
+
+Read each non-terminal descendant whose work the session will implement with `issues get --format=safe`.
+
+Include its external `blocked_by_launch`.
+
+Exclude blockers that belong to the same bundle from this descendant check; the delegated session orders that work.
+
+Any remaining launch blocker stops dispatch.
+
+A missing or incomplete parent, descendant, or blocker read stops dispatch. `blocked_by` remains relation history and does not decide dispatch.
+
+### Sequencing
+
+Order by data flow (Creates ↔ Consumes), never by agent ordering; existing blocking relations outrank inference.
+
+Record relations under linear SKILL.md § Blocked Label vs Issue Relations.
+
+Only the review audit's in-PR bundle leaves intra-bundle ordering to the delegated session.
+
+### Single-PR bundles
+
+Exactly two opt-ins delegate several deliverables as one session: an in-PR bundle root, whose live read reports `in_pr_bundle`, delegated with its children, or a leaf issue with an internal checklist.
+
+One composite task per sub-issue; multi-domain bundles process groups sequentially, collecting handoff notes between groups.
+
+### Lane asks
+
+A lane never waits on the overseer for a step its workflow already permits; it asks only at a bound its workflow states or at a scope change.
+
+### Lane mail
+
+A lane reaches its overseer by the `channel` its host kind declares ([lane-host.md § Host kinds](../schemas/lane-host.md#host-kinds)).
+
+A `session` lane, a Claude cloud session, reaches its overseer through its branch and pull request and nothing else.
+
+It never asks: a step that needs an answer is a step the kind never takes.
+
+It reports the blocker through the route that `LAUNCH_SESSION_TEXT` in [scripts/lib/lane-launch.sh](../scripts/lib/lane-launch.sh) owns, then ends its turn.
+
+Its brief closes on those words in place of the unattended words below.
+
+The rest of this rule is the `mailbox` channel: a delegated orchestration session (lane) reaches its overseer through `scripts/lane-mail` and nothing else.
+
+Every ask gate in a lane is `lane-mail ask --item [ISSUE_ID] --file [PATH]`, whose printed `id=` feeds `lane-mail wait --item [ISSUE_ID] --id [MSGID]` run under [waiter-launch.md](waiter-launch.md); the question's own words cross the `--file`, never argv.
+
+The harness question tool is never used in a lane, on any surface.
+
+A lane sends what needs no reply with `lane-mail notice` only when its work changed since its last notice: a new head, PR, verdict, blocker, request or finish.
+
+A turn ends after a lane-mail ask or notice, or the lane status file, says where the work stands.
+
+A wait that continues updates the lane status file only.
+
+A lane reads what the overseer sent with `lane-mail inbox --item [ISSUE_ID]` at every wait point it already has.
+
+A lane that removes its own worktree sends every notice for that close-out after `worktree remove` returns, from `[MAIN_REPO_ROOT]`.
+
+An overseer brief that requests a close-out notice requests it after removal.
+
+Removal moves the worktree mailbox to the main checkout, where the watch reads a removed lane's mailbox, so a notice sent before removal still reaches the overseer.
+
+As its first step, and again at each expiry, a Claude Code lane arms a standing monitor on its mailbox, `lane-mail watch --item [ISSUE_ID]`, through its harness's background wake per [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor), and runs the `lane-mail inbox` command each announcement prints.
+
+A Copilot CLI lane arms `lane-mail watch --once --item [ISSUE_ID]` instead, a background command that exits at its first announcement, and re-arms it after each inbox read; whether that exit wakes the lane, and the overseer's route where it does not, are watch-delivery.md's.
+
+Mail therefore wakes an idle Claude Code lane by itself, and a send's receipt tells the overseer whether that monitor is running; a Pi lane arms no monitor, and the `pi-hooks` mail wake starts its turn when mail lands ([pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi)); a Codex lane arms none, and the overseer wakes it ([codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox)).
+
+On a harness that runs these hooks (`kendex show hook <name>` names the tools a hook does not run on), the `lane-mail-deliver` hook hands over anything unread after each tool call and the `lane-mail-check` hook at the lane's turn end, on Copilot the `lane-mail-start` and `lane-mail-prompt` hooks at its session start and at each prompt, and while an unread halt stands the `lane-mail-halt` hook refuses every tool call but the `lane-mail inbox` read that acknowledges it.
+
+Elsewhere a halt takes effect when a `lane-mail inbox` read or an ask wait point hands it over.
+
+A `lane-mail wait` that hands over a halt acknowledges it just as a plain inbox read does.
+
+The overseer answers with `lane-mail send --re [MSGID]`, directs with `lane-mail send --directive` and halts with `lane-mail send --halt`; [oversee.md](../workflows/oversee.md) § 4 owns its side.
+
+### Question tools
+
+Every command `open-terminal` builds carries the words the table below names for its harness to take the question tool away, and a `--cmd` launch on a harness that has words below carries them inside its command or is refused as `launch-question-tool-missing`.
+
+A `--cmd` launch naming no harness is not judged, so its command carries the words by hand, and a lane started through a harness's own session launcher ([oversee.md](../workflows/oversee.md) § 1) is outside `open-terminal`.
+
+The words live in `scripts/lib/lane-launch.sh` beside each harness's model and effort spellings.
+
+Where the harness runs hooks (`kendex show hook <name>` names the tools a hook does not run on), the `lane-mail-halt` hook refuses the tools below in a launched lane, by the names `hooks/lane-mail-check.sh` owns, under `lane-mail-check: question-tool=<name>`, and the `lane-mail-check` hook holds or reports to the overseer a launched lane's turn end with no `lane-mail ask` or `notice` sent and no update to its lane status file since the last judgement, never judging words in its pane; its description states when each happens.
+
+A lane that ends its turn to wait on a dispatched agent or an armed wake follows the Lane mail rule above.
+
+The question-tool refusal names the `lane-mail ask` and `lane-mail wait` route too.
+
+Every lane is also briefed with the unattended words, since a lane whose tool is taken away is still free to ask in chat: the text `LAUNCH_UNATTENDED_TEXT` in `scripts/lib/lane-launch.sh` holds.
+
+Every brief and continuation line `open-terminal` builds closes on it, on every harness, and a `--cmd` launch naming a harness carries it whole in its brief file or in one argument of its command. `open-terminal` judges the question-tool words first, so a `--cmd` launch missing both is refused as `launch-question-tool-missing`; once those words are present, one missing the unattended words is refused as `launch-unattended-missing`.
+
+The words never ride Pi's `--append-system-prompt`, which stops Pi reading its discovered `APPEND_SYSTEM.md`.
 
 | Harness | Question tool | Words that take it away |
 |---------|---------------|-------------------------|
@@ -112,40 +361,156 @@ A selected issue whose live read reports `in_pr_bundle` is the work item, delega
 | Copilot CLI | `ask_user`, a name the lane-mail hooks do not refuse | `--no-ask-user` |
 | Overseer, any harness | Taken away by default on each harness whose row above names words: every question for the owner is `lane-mail ask --item overseer --to owner`, with one chat line naming the ask ([communication-modes.md § Owner asks](communication-modes.md#owner-asks)) | `ORCH_QUESTION_TOOL`, decided once by `launch_overseer_question_tool` in `scripts/lib/lane-launch.sh` and rendered by every overseer launcher: `oversee launch` for a fleet's first overseer or, with `--predecessor`, its successor, `oversee-succeed` for a successor, and a launcher outside this package through `launch_overseer_question_words [HARNESS]`. `off` gives a launched overseer that harness's words; `overseer` keeps the tool there alone. The setting alone decides: words typed on a hand-started overseer do not carry to its successors, and a hand-started overseer keeps its tool and does not use it |
 
-**Compaction.** `open-terminal` and `oversee-succeed` use the launch settings in [`scripts/lib/lane-launch.sh`](../scripts/lib/lane-launch.sh), `LAUNCH_CHOICE_FLAGS`. Claude Code disables automatic compaction with the family or default handoff budget in `scripts/lib/adapters/claude.sh`. The same rule reads transcripts and admits launches. Unknown families use the default budget and emit one `claude-window-default` notice per launch. Native family aliases stay unpinned in launch arguments and records. Claude applies its own `ANTHROPIC_DEFAULT_*_MODEL` overrides and provider rules. A fleet `--cmd` launch on Claude or Codex must carry its required settings or it refuses as `launch-compaction-missing`. Pi disables automatic compaction through its settings file. Copilot CLI names no switch that turns its automatic compaction off, so a Copilot CLI fleet session keeps it on and its capacity is the limit Copilot compacts at: the kendex Copilot extension `scripts/copilot-lane-context/extension.mjs`, which `open-terminal` installs in the lane's `COPILOT_HOME` with `enabledFeatureFlags.EXTENSIONS` on, hands `lane-mail-check` each `session.usage_info` reading, recorded as `currentTokens` against 80 percent of `tokenLimit`, the SDK's documented `backgroundCompactionThreshold` default, and a `preCompact` flag holds its next turn end as the backstop for a turn that crossed into the compaction first. Where no extension reading of the session stands, the fallback is the session record the account's status line writes, judged against the same share of its window. Every Copilot command selects the 1M window, so the 400000-token cap comes first. A fleet launch refuses a Copilot CLI lane as `unsupported-for-oversee` where neither reader serves, and a hosted one always ([copilot-runtime.md](copilot-runtime.md)). A Copilot lane launched outside a fleet runs on its own compaction. [Context handoff](oversee-events.md#judgement-rules) defines the shared handoff rule.
+### Compaction
 
-Each harness adapter resolves effective compaction settings before returning capacity. Claude reads its inherited disabling controls. Pi uses its settings judge. Native and custom `--cmd` Codex launches share one argument reader for the normalized command they execute. The launch check and child environment use its compaction settings. The resulting value replaces inherited evidence and is empty when the command has no compaction settings. Applicable launch overrides take precedence over stored settings. Disabled automatic compaction uses the known context window. A missing or unverified input leaves the point unmeasured where the adapter cannot establish it; the independent token limit still applies. Shell commands the reader cannot parse and manually started Codex sessions without this value do not establish launch-argument evidence. Complete launch overrides determine the effective values without consulting stored values they replace; incomplete evidence remains unresolved rather than treating file defaults as the whole configuration.
+`open-terminal` and `oversee-succeed` use the launch settings in [`scripts/lib/lane-launch.sh`](../scripts/lib/lane-launch.sh), `LAUNCH_CHOICE_FLAGS`. Claude Code disables automatic compaction with the family or default handoff budget in `scripts/lib/adapters/claude.sh`. The same rule reads transcripts and admits launches. Unknown families use the default budget and emit one `claude-window-default` notice per launch. Native family aliases stay unpinned in launch arguments and records. Claude applies its own `ANTHROPIC_DEFAULT_*_MODEL` overrides and provider rules. A fleet `--cmd` launch on Claude or Codex must carry its required settings or it refuses as `launch-compaction-missing`. Pi disables automatic compaction through its settings file. Copilot CLI names no switch that turns its automatic compaction off, so a Copilot CLI fleet session keeps it on and its capacity is the limit Copilot compacts at: the kendex Copilot extension `scripts/copilot-lane-context/extension.mjs`, which `open-terminal` installs in the lane's `COPILOT_HOME` with `enabledFeatureFlags.EXTENSIONS` on, hands `lane-mail-check` each `session.usage_info` reading, recorded as `currentTokens` against 80 percent of `tokenLimit`, the SDK's documented `backgroundCompactionThreshold` default, and a `preCompact` flag holds its next turn end as the backstop for a turn that crossed into the compaction first. Where no extension reading of the session stands, the fallback is the session record the account's status line writes, judged against the same share of its window. Every Copilot command selects the 1M window, so the 400000-token cap comes first. A fleet launch refuses a Copilot CLI lane as `unsupported-for-oversee` where neither reader serves, and a hosted one always ([copilot-runtime.md](copilot-runtime.md)). A Copilot lane launched outside a fleet runs on its own compaction. [Context handoff](oversee-events.md#judgement-rules) defines the shared handoff rule.
 
-Codex 0.157.1 defers normal compaction to its usable-window cap when the effective launch settings establish the controls below. The `body_after_prefix` scope uses the configured token limit directly, and the zero post-turn percentage disables the separate final-response trigger. The full-window cap still applies. The reported `token_count.info.model_context_window` equals that cap, including configured window overrides; the adapter uses that number without a second reserve only when its effective settings establish this cap. Default-scope compaction can occur earlier, and usable-window telemetry alone does not establish its resolved point. These semantics are verified in the versioned upstream [compaction checks](https://github.com/openai/codex/blob/rust-v0.157.1/codex-rs/core/src/session/context_window.rs) and [turn processing](https://github.com/openai/codex/blob/rust-v0.157.1/codex-rs/core/src/session/turn.rs). Automatic compaction remains possible if a response or tool result crosses the cap between handoff checks, if model compatibility changes, or during review-budget recovery. The frequency is unknown. Handoff checks cannot guarantee that Codex never compacts.
+Each harness adapter resolves effective compaction settings before returning capacity.
 
-**Tracked issue creation.** A delegated orchestration session (lane) never creates a tracked issue. TPM analysis from [audit-issues](../../project-management/workflows/audit-issues.md) § 2.1 / § 4.1 runs in a lane or delegated subagent, never in the overseer session. Defer a proposal until its source PR has merged or its source commit has landed on the base branch. Post a review-born proposal only when it clears [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar). Resolve the lane's tracker before recording it. Linear uses `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file [PATH]`; GitHub uses `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`. The first line is `Proposal: [TITLE]`. The comment also carries `Source: [SOURCE]`, either `Source PR: [OWNER/REPO#N]` or `Source commit: [LANDED_SHA]` for a direct push, `Priority: [1-4]`, `Reached by: [BEHAVIOR]`, `Reason: [WHY TRACKED WORK IS NEEDED]`, and `Evidence: [REPOSITORY_PATH]`. A `review`, `pr-comments`, or `local-review` source at priority 2 also carries `Symptom: [OBSERVED_FAILURE]`. The evidence path uses a semantic anchor, never a line number. After the write, send one `lane-mail notice` whose text is `Proposal comment: [TRACKER] [REPOSITORY|-] [ISSUE_ID] [COMMENT_ID_OR_URL]`. The overseer records that durable binding in the fleet log. An unbound comment is not a proposal. A gap a lane finds in a package or a workflow is a proposal through lane mail and the sweep, never a harness memory or a local note, because memory reaches one session on one machine and the package reaches every consumer. The lane status file carries no proposal. Project-management's [proposal-sweep](../../project-management/workflows/proposal-sweep.md) workflow owns tracker-specific fleet analysis. It runs in a subagent the overseer launches, returns issue-mode audit JSON and files nothing. The overseer checks that output against live fleet work before it invokes [audit-issues](../../project-management/workflows/audit-issues.md) with `--analyzed`; project-order resumes at § 2.2. It records the created issue ID or one-line decline against the source comment through the same tracker. A non-delegated primary session routes creation through TPM, except for `plan-issues`, `start-new`, and the `merge-pr` rebundle, which it may run directly with their workflow-specified label sets.
+Claude reads its inherited disabling controls.
 
-**Verifier returns.** A verifier delegated by the overseer writes its full evidence as one Linear comment on the issue it verified. It writes no report or evidence file for the overseer. Return exactly one line per requested issue, with no other text, duplicate issue or unrequested issue:
+Pi uses its settings judge.
+
+Native and custom `--cmd` Codex launches share one argument reader for the normalized command they execute.
+
+The launch check and child environment use its compaction settings.
+
+The resulting value replaces inherited evidence and is empty when the command has no compaction settings.
+
+Applicable launch overrides take precedence over stored settings.
+
+Disabled automatic compaction uses the known context window.
+
+A missing or unverified input leaves the point unmeasured where the adapter cannot establish it; the independent token limit still applies.
+
+Shell commands the reader cannot parse and manually started Codex sessions without this value do not establish launch-argument evidence.
+
+Complete launch overrides determine the effective values without consulting stored values they replace; incomplete evidence remains unresolved rather than treating file defaults as the whole configuration.
+
+Codex 0.157.1 defers normal compaction to its usable-window cap when the effective launch settings establish the controls below.
+
+The `body_after_prefix` scope uses the configured token limit directly, and the zero post-turn percentage disables the separate final-response trigger.
+
+The full-window cap still applies.
+
+The reported `token_count.info.model_context_window` equals that cap, including configured window overrides; the adapter uses that number without a second reserve only when its effective settings establish this cap.
+
+Default-scope compaction can occur earlier, and usable-window telemetry alone does not establish its resolved point.
+
+These semantics are verified in the versioned upstream [compaction checks](https://github.com/openai/codex/blob/rust-v0.157.1/codex-rs/core/src/session/context_window.rs) and [turn processing](https://github.com/openai/codex/blob/rust-v0.157.1/codex-rs/core/src/session/turn.rs).
+
+Automatic compaction remains possible if a response or tool result crosses the cap between handoff checks, if model compatibility changes, or during review-budget recovery.
+
+The frequency is unknown.
+
+Handoff checks cannot guarantee that Codex never compacts.
+
+### Tracked issue creation
+
+A delegated orchestration session (lane) never creates a tracked issue.
+
+TPM analysis from [audit-issues](../../project-management/workflows/audit-issues.md) § 2.1 / § 4.1 runs in a lane or delegated subagent, never in the overseer session.
+
+Defer a proposal until its source PR has merged or its source commit has landed on the base branch.
+
+Post a review-born proposal only when it clears [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar).
+
+Resolve the lane's tracker before recording it.
+
+Linear uses `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file [PATH]`; GitHub uses `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`.
+
+The first line is `Proposal: [TITLE]`.
+
+The comment also carries `Source: [SOURCE]`, either `Source PR: [OWNER/REPO#N]` or `Source commit: [LANDED_SHA]` for a direct push, `Priority: [1-4]`, `Reached by: [BEHAVIOR]`, `Reason: [WHY TRACKED WORK IS NEEDED]`, and `Evidence: [REPOSITORY_PATH]`.
+
+A `review`, `pr-comments`, or `local-review` source at priority 2 also carries `Symptom: [OBSERVED_FAILURE]`.
+
+The evidence path uses a semantic anchor, never a line number.
+
+After the write, send one `lane-mail notice` whose text is `Proposal comment: [TRACKER] [REPOSITORY|-] [ISSUE_ID] [COMMENT_ID_OR_URL]`.
+
+The overseer records that durable binding in the fleet log.
+
+An unbound comment is not a proposal.
+
+A gap a lane finds in a package or a workflow is a proposal through lane mail and the sweep, never a harness memory or a local note, because memory reaches one session on one machine and the package reaches every consumer.
+
+The lane status file carries no proposal.
+
+Project-management's [proposal-sweep](../../project-management/workflows/proposal-sweep.md) workflow owns tracker-specific fleet analysis.
+
+It runs in a subagent the overseer launches, returns issue-mode audit JSON and files nothing.
+
+The overseer checks that output against live fleet work before it invokes [audit-issues](../../project-management/workflows/audit-issues.md) with `--analyzed`; project-order resumes at § 2.2.
+
+It records the created issue ID or one-line decline against the source comment through the same tracker.
+
+A non-delegated primary session routes creation through TPM, except for `plan-issues`, `start-new`, and the `merge-pr` rebundle, which it may run directly with their workflow-specified label sets.
+
+### Verifier returns
+
+A verifier delegated by the overseer writes its full evidence as one Linear comment on the issue it verified.
+
+It writes no report or evidence file for the overseer.
+
+Return exactly one line per requested issue, with no other text, duplicate issue or unrequested issue:
 
 ```text
 [ISSUE] | verdict: [kept|canceled] | owner: [REPO_PATH_OR_NONE] | Done-when: [ONE_LINE_RESULT] | delta: [EXPECTED_DELTA_LINE_OR_NONE] | project: [PROJECT_NAME_OR_NONE] | agent: [agent:LABEL|none]
 ```
 
-Every field is required. `kept` means the issue clears the filing bar. `canceled` means it does not. When the issue team's project inventory is nonempty, a kept row names a project from it. With an empty inventory, return `project: none` and skip project membership validation. When `LINEAR_AGENT_LABELS` is nonempty, return an `agent:` label from that list. With an empty list, return `agent: none` and skip agent membership validation. The return contains no issue body or evidence text. The sender and receiver both apply this contract.
+Every field is required. `kept` means the issue clears the filing bar. `canceled` means it does not.
+
+When the issue team's project inventory is nonempty, a kept row names a project from it.
+
+With an empty inventory, return `project: none` and skip project membership validation.
+
+When `LINEAR_AGENT_LABELS` is nonempty, return an `agent:` label from that list.
+
+With an empty list, return `agent: none` and skip agent membership validation.
+
+The return contains no issue body or evidence text.
+
+The sender and receiver both apply this contract.
 
 ---
 
 ## Lane Output
 
-No person reads a lane's pane. The overseer learns a lane's state from lane-mail, the lane status file and what the watch reads off the pane, so every narration, recap and closing summary a lane writes for a human reader is output tokens nobody spends.
+No person reads a lane's pane.
+
+The overseer learns a lane's state from lane-mail, the lane status file and what the watch reads off the pane, so every narration, recap and closing summary a lane writes for a human reader is output tokens nobody spends.
 
 `orch-env ORCH_LANE_OUTPUT quiet` resolves the mode: `normal` prints every block as written, and every other value, an unset setting and a typo included, is `quiet`.
 
-The mode governs a lane, a session whose launch brief names a lane status file and a mailbox ([oversee.md](../workflows/oversee.md) § 3 Lane directive). A session with no such brief has a person at its pane and prints as written, whatever the setting resolves to.
+The mode governs a lane, a session whose launch brief names a lane status file and a mailbox ([oversee.md](../workflows/oversee.md) § 3 Lane directive).
 
-Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary. A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and where the step owns none to a file of its own under the worktree's `tmp/`, one file per block so no later step overwrites what a printed path named. The lane then prints `output: [PATH]` and nothing more; the workflow continues.
+A session with no such brief has a person at its pane and prints as written, whatever the setting resolves to.
 
-A block a step writes after the item worktree is gone goes under `[MAIN_REPO_ROOT]/tmp`, the repository root `git-context common-root` prints and [merge-pr.md](../workflows/merge-pr.md) § 1 binds and creates, so the printed path outlives the tree it reports on; the overseer reads it with `lane-host cat --item [ISSUE_ID] [PATH]`, as it reads the status file ([oversee.md](../workflows/oversee.md) § Bounded lane reads). The case is any block a workflow renders after merge-pr.md § 5 step 6 removed that worktree, whether the step is merge-pr's own (§ 6 Present Results, for example) or one its caller returns to after running merge-pr.md § 4-7 ([micro.md](../workflows/micro.md) § 5, for example). The condition decides the destination, so a block's citation names this rule alone and never a destination of its own.
+Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary.
 
-The lane status file is never a block destination. It carries the current step, blocker, handoff paths, validation minutes per round, the review line and the merge-attempt record (exit, exact head and returned route) under [oversee.md § 3 Lane directive](../workflows/oversee.md#lane-directive), and nothing else. That owner requires later rewrites to retain the review line and that record. A block written there is destroyed by the next step's rewrite, leaving the path already printed naming something else, or it evicts the very lines the file exists to carry.
+A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and where the step owns none to a file of its own under the worktree's `tmp/`, one file per block so no later step overwrites what a printed path named.
+
+The lane then prints `output: [PATH]` and nothing more; the workflow continues.
+
+A block a step writes after the item worktree is gone goes under `[MAIN_REPO_ROOT]/tmp`, the repository root `git-context common-root` prints and [merge-pr.md](../workflows/merge-pr.md) § 1 binds and creates, so the printed path outlives the tree it reports on; the overseer reads it with `lane-host cat --item [ISSUE_ID] [PATH]`, as it reads the status file ([oversee.md](../workflows/oversee.md) § Bounded lane reads).
+
+The case is any block a workflow renders after merge-pr.md § 5 step 6 removed that worktree, whether the step is merge-pr's own (§ 6 Present Results, for example) or one its caller returns to after running merge-pr.md § 4-7 ([micro.md](../workflows/micro.md) § 5, for example).
+
+The condition decides the destination, so a block's citation names this rule alone and never a destination of its own.
+
+The lane status file is never a block destination.
+
+It carries the current step, blocker, handoff paths, validation minutes per round, the review line and the merge-attempt record (exit, exact head and returned route) under [oversee.md § 3 Lane directive](../workflows/oversee.md#lane-directive), and nothing else.
+
+That owner requires later rewrites to retain the review line and that record.
+
+A block written there is destroyed by the next step's rewrite, leaving the path already printed naming something else, or it evicts the very lines the file exists to carry.
 
 A block standing ahead of an ask gate is that gate's own file: write it, then send it as `lane-mail ask --file [PATH]` ([§ Coordination](#coordination)), so the question carries the filled block and the pane carries the printed line alone.
 
-Harness output is never suppressed. The prompt, the usage banner, dialogs and the end-of-turn line stay as the harness prints them, so the watch's marker reads and the pane judge in [lane-state.sh](../scripts/lib/lane-state.sh) are unchanged.
+Harness output is never suppressed.
+
+The prompt, the usage banner, dialogs and the end-of-turn line stay as the harness prints them, so the watch's marker reads and the pane judge in [lane-state.sh](../scripts/lib/lane-state.sh) are unchanged.
 
 `oversee-watch` gives each event the pane lines that event's handling reads and no more, and [oversee.md](../workflows/oversee.md) § Bounded lane reads takes that payload as the lane's state; which lines a kind carries, and how many, is `oversee-watch --help` and `ORCH_WATCH_TAIL_LINES`. Under `quiet` those lines are the one line per completed step and the `output: [PATH]` lines, so the overseer reads what the lane did and opens a named file for the block itself. A subagent's own output is outside this rule: the lane reads it, and it is paid in either mode. So an `<output_format>` block nested inside a `<delegation_format>` is the delegated agent's return shape, not the lane's, and cites nothing; every other block in `../workflows` cites this section.
