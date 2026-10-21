@@ -31,6 +31,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # mutant_scripts and mutate_file, for the controls below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
+source "$TEST_DIR/lib/virtual-clock.sh"
+mkdir -p "$TMP_ROOT/clock-bin"
+virtual_clock_install "$TMP_ROOT/clock-bin" "$TMP_ROOT/clock"
 
 # One call: its status and every line it printed, newlines shown as `|`.
 standing() { # ITEM
@@ -46,13 +49,18 @@ VERDICT='workflow-state: handoff-standing'
 # A continuing native Claude session may resume only the exact handoff observed.
 # The prompt timestamp keeps the handoff-writing turn's final response exempt.
 guarded_resume_rows() {
-  local current rc result
+  local expected rc result
   "$WS" --state-dir "$STATE" init KEN-7 >/dev/null
-  local expected='{"written_at":"2026-09-18T08:05:00Z","session_id":"own"}'
   while IFS='|' read -r name session prompt response renewal want; do
-    current="$expected"
-    [[ "$renewal" != yes ]] || current='{"written_at":"2026-09-18T08:05:30Z","session_id":"own"}'
-    "$WS" --state-dir "$STATE" set KEN-7 handoff "$current" >/dev/null
+    [[ -z "${GUARDED_RESUME_CASE:-}" || "$name" == "$GUARDED_RESUME_CASE" ]] || continue
+    # The shipped hook omits written_at; the existing writer stamps seconds.
+    jq -nr '"2026-09-18T08:05:00Z" | fromdateiso8601' > "$STUB_CLOCK"
+    PATH="$TMP_ROOT/clock-bin:$PATH" "$WS" --state-dir "$STATE" set KEN-7 handoff '{"session_id":"own"}' >/dev/null
+    expected=$(jq -c '.handoff' "$STATE/workflow-state-KEN-7.json")
+    if [[ "$renewal" != no ]]; then
+      [[ "$renewal" != yes ]] || jq -nr '"2026-09-18T08:05:30Z" | fromdateiso8601' > "$STUB_CLOCK"
+      PATH="$TMP_ROOT/clock-bin:$PATH" "$WS" --state-dir "$STATE" set KEN-7 handoff '{"session_id":"own"}' >/dev/null
+    fi
     jq -nc --argjson handoff "$expected" --arg session "$session" --arg at "$response" --arg started "$prompt" \
       '{handoff:$handoff,observation:{kind:"success",session_id:$session,at:$at,started_at:$started}}' > "$TMP_ROOT/observed.json"
     rc=0
@@ -61,6 +69,9 @@ guarded_resume_rows() {
     assert_eq "rc=$rc stamp=$result" "$want" "guarded resume: $name" "$TMP_ROOT/resume.err"
   done <<'ROWS'
 later-own-work|own|2026-09-18T08:06:00Z|2026-09-18T08:06:01Z|no|rc=0 stamp=number
+next-second-work|own|2026-09-18T08:05:01.100Z|2026-09-18T08:05:01.200Z|no|rc=0 stamp=number
+same-second-final-turn|own|2026-09-18T08:05:00.100Z|2026-09-18T08:05:00.200Z|no|rc=1 stamp=null
+same-second-renewal|own|2026-09-18T08:05:00.100Z|2026-09-18T08:05:00.200Z|same|rc=1 stamp=null
 renewed-record|own|2026-09-18T08:06:00Z|2026-09-18T08:06:01Z|yes|rc=1 stamp=null
 other-session|other|2026-09-18T08:06:00Z|2026-09-18T08:06:01Z|no|rc=1 stamp=null
 final-handoff-turn|own|2026-09-18T08:04:00Z|2026-09-18T08:06:01Z|no|rc=1 stamp=null
@@ -79,6 +90,18 @@ if [[ "${KEN4507_FOCUSED:-}" != 1 || "${KEN4507_CONTROL:-}" == 1 ]]; then
   rejected=$((FAIL - before))
   FAIL=$before
   assert_eq "$rejected" 1 'control: dropping the exact-handoff guard consumes a renewed handoff'
+fi
+if [[ "${KEN4507_FOCUSED:-}" != 1 || "${KEN4507_FIX_CONTROL:-}" == 1 ]]; then
+  PRECISION_CTL="$(mutant_scripts precision-ctl workflow-state)/workflow-state" || exit 1
+  mutate_file "$PRECISION_CTL" '($r.started_at | epoch | floor)' '($r.started_at | epoch)'
+  old_ws=$WS
+  WS=$PRECISION_CTL
+  before=$FAIL
+  GUARDED_RESUME_CASE=same-second-final-turn guarded_resume_rows > "$TMP_ROOT/precision-control.log" 2>&1
+  WS=$old_ws
+  rejected=$((FAIL - before))
+  FAIL=$before
+  assert_eq "$rejected" 1 'control: fractional ordering consumes the handoff-writing turn'
 fi
 if [[ "${KEN4507_FOCUSED:-}" == 1 ]]; then
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

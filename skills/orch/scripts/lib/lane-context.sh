@@ -350,12 +350,17 @@ lane_context_transcript_owned() { # HARNESS PATH SESSION HOME
 # Usage arithmetic remains lane_context_reading's separate result.
 LANE_CONTEXT_OBSERVATION=""
 lane_context_claude_observation() { # PATH SESSION HOME
+  local missing_prompt
   LANE_CONTEXT_OBSERVATION=""
   lane_context_transcript_owned claude "$1" "$2" "$3" || return 1
   [[ -f "$1" && -r "$1" ]] || return 1
   LANE_CONTEXT_OBSERVATION=$(tail -c "$TRANSCRIPT_WINDOW" -- "$1" |
     lane_adapter_claude_observation "$2") || return 1
-  if [[ -z "$LANE_CONTEXT_OBSERVATION" ]]; then
+  missing_prompt=$(jq -r '.kind == "success" and (.started_at // "") == ""' \
+    <<<"${LANE_CONTEXT_OBSERVATION:-null}") || return 1
+  # A long tool-result turn can leave its successful response in the tail
+  # while the readable originating prompt falls outside it.
+  if [[ -z "$LANE_CONTEXT_OBSERVATION" || "$missing_prompt" == true ]]; then
     LANE_CONTEXT_OBSERVATION=$(lane_adapter_claude_observation "$2" < "$1") || return 1
   fi
   [[ -n "$LANE_CONTEXT_OBSERVATION" ]]

@@ -36,7 +36,7 @@ SITES="$TMP_ROOT/sites"
 : > "$SITES"
 section() { # NAME
   SECTION_NOW="$1"
-  [[ -z "${LIB_UNDER_TEST:-}" || -z "${LANE_CONTEXT_SUITE_ONLY:-}" || "$LANE_CONTEXT_SUITE_ONLY" == "$1" ]]
+  [[ -z "${LANE_CONTEXT_SUITE_ONLY:-}" || "$LANE_CONTEXT_SUITE_ONLY" == "$1" ]]
 }
 eval "assertions_$(declare -f pass)"
 eval "assertions_$(declare -f fail)"
@@ -111,6 +111,28 @@ codex_context gpt-6-astra > "$T/codex-none"
 { pi_line m 600000; pi_line m 1000; } > "$T/pi-last"
 claude_line claude-opus-5-5 1000 > "$T/pi-claude-spelled"
 pi_line claude-opus-5-5 1000 pi-claude > "$T/pi-provider"
+
+if section observation-prompt; then
+  # A native tool-result turn can grow beyond the tail while its prompt is
+  # still readable in the complete, bound transcript.
+  observation_home="$TMP_ROOT/observation-home"
+  observation_path="$observation_home/projects/repo/own.jsonl"
+  mkdir -p "${observation_path%/*}"
+  while IFS='|' read -r name prompt expected; do
+    : > "$observation_path"
+    if [[ "$prompt" != absent ]]; then
+      jq -nc --arg at "$prompt" '{type:"user",sessionId:"own",timestamp:$at,message:{role:"user",content:"continue"}}' >> "$observation_path"
+    fi
+    jq -nc '{type:"user",sessionId:"own",message:{role:"user",content:[{type:"tool_result",content:("x" * 1049000)}]}}' >> "$observation_path"
+    jq -nc '{type:"assistant",sessionId:"own",timestamp:"2026-09-18T08:06:01Z",message:{role:"assistant",model:"claude-opus-5-5",usage:{input_tokens:100}}}' >> "$observation_path"
+    observed=$("$BASH" -euo pipefail -c 'source "$1"; lane_context_claude_observation "$2" own "$3"; printf "%s\n" "$LANE_CONTEXT_OBSERVATION"' _ "$LIB" "$observation_path" "$observation_home")
+    assert_eq "$(jq -r '.kind + "|" + (.started_at // "unknown")' <<<"$observed")" "$expected" "observation prompt: $name"
+  done <<'ROWS'
+later-readable|2026-09-18T08:06:00Z|success|2026-09-18T08:06:00Z
+final-turn-readable|2026-09-18T08:04:00Z|success|2026-09-18T08:04:00Z
+absent|absent|success|unknown
+ROWS
+fi
 
 if section reads; then
   echo "=== each adapter reads the last reading its harness recorded ==="
@@ -746,6 +768,13 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     out="$(LANE_CONTEXT_SUITE_ONLY="$table" LIB_UNDER_TEST="$copy/lane-context.sh" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
     assert_eq "$(grep -cF -- "FAIL  $5" <<<"$out" || true)" "1" "control $1: $5 goes red"
   }
+  control observation-prompt lane-context.sh ' || "$missing_prompt" == true' '' \
+    'observation prompt: later-readable'
+  if [[ "${KEN4507_FIX_CONTROL:-}" == 1 ]]; then
+    printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+    [[ "$FAIL" -eq 0 ]]
+    exit
+  fi
   control copilot-share lane-context.sh 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=80' 'LANE_CONTEXT_COPILOT_COMPACTION_PCT=100' \
     'copilot {"session_id":"s1","cwd":"/w","current_tokens":150000'
   control native-alias adapters/claude.sh '[[ "${2:-}" != launch ]] || model=${1:-}' 'model=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}' \

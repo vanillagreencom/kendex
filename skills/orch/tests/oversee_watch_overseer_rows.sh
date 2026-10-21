@@ -18,7 +18,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/overseer-row-world.sh"
 # The envelope is from KEN-4507 projection d404f0c9; the redacted error
 # phrase is attributed to Jarvis's VGS-1967 index, not read foreign raw.
 native_context_rows() {
-  local name shape suffix expected recovery home transcript start envelope
+  local name shape suffix expected recovery home transcript start envelope stop
   while IFS='|' read -r name shape suffix expected recovery; do
     [[ -z "${NATIVE_CONTEXT_CASE:-}" || "$name" == "$NATIVE_CONTEXT_CASE" ]] || continue
     rows_case "native_context_$name" blank "$START" "$STOP"
@@ -26,7 +26,9 @@ native_context_rows() {
     transcript="$home/projects/repo/5f0c.jsonl"
     mkdir -p "${transcript%/*}"
     start=$(jq -c --arg path "$transcript" --arg home "$home" '.transcript_path=$path | .account=$home' <<<"$START")
-    printf '%s\n%s\n' "$start" "$STOP" > "$(ROWS_FILE)"
+    # session_rows_write stamps the unclassified Stop after this turn's error.
+    stop=$(jq -c '.at=1792491141' <<<"$STOP")
+    printf '%s\n%s\n' "$start" "$stop" > "$(ROWS_FILE)"
     jq --arg home "$home" '.overseer += {harness:"claude",home:$home,session_id:"5f0c"}' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp"
     mv "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
     envelope='{"type":"assistant","isSidechain":false,"sessionId":"5f0c","session_id":"5f0c","timestamp":"2026-10-20T10:12:20.094Z","isApiErrorMessage":true,"error":"invalid_request","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"Prompt is too long"}],"usage":{"input_tokens":0,"output_tokens":0}}}'
@@ -91,6 +93,20 @@ if [[ "${KEN4507_FOCUSED:-}" != 1 || "${KEN4507_CONTROL:-}" == 1 ]]; then
   env -u KEN4507_CONTROL KEN4507_FOCUSED=1 NATIVE_CONTEXT_CASE=quote WATCH_BIN="$NATIVE_CTL/oversee-watch" \
     "$BASH" "$REPO_ROOT/skills/orch/tests/oversee_watch_overseer_rows.sh" > "$TMP_ROOT/native-control.log" 2>&1 || native_rc=$?
   assert_eq "$native_rc" 1 'control: classifying ordinary assistant quotations as native errors fails the protected watch row'
+fi
+if [[ "${KEN4507_FOCUSED:-}" != 1 || "${KEN4507_FIX_CONTROL:-}" == 1 ]]; then
+  STOP_CTL="$(mutant_scripts stop-currency-ctl/orch oversee-watch)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/stop-currency-ctl/github"
+  mutate_file "$STOP_CTL/oversee-watch" '--argjson start "$native_start"' \
+    '--argjson start "$native_start" --argjson last "$saved_row"'
+  mutate_file "$STOP_CTL/oversee-watch" '>= ($start.at // 0)' \
+    '>= ([($start.at // 0), ($last.at // 0)] | max)'
+  stop_rc=0
+  env -u KEN4507_FIX_CONTROL KEN4507_FOCUSED=1 NATIVE_CONTEXT_CASE=own WATCH_BIN="$STOP_CTL/oversee-watch" \
+    "$BASH" "$REPO_ROOT/skills/orch/tests/oversee_watch_overseer_rows.sh" > "$TMP_ROOT/stop-control.log" 2>&1 || stop_rc=$?
+  assert_eq "$stop_rc" 1 'control: treating plain Stop as success suppresses native recovery'
+  assert_eq "$(grep -cF 'FAIL  native context: own' "$TMP_ROOT/stop-control.log" || true)" 1 \
+    'control: the error-before-Stop recovery assertion rejects the defect'
 fi
 if [[ "${KEN4507_FOCUSED:-}" == 1 ]]; then
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

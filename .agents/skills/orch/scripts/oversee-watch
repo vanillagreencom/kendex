@@ -4335,10 +4335,12 @@ overseer_pane_read() { # PANE
         if ! lane_context_claude_observation "$native_path" "$native_session" "$native_home" 2>"$errf"; then
           cause=native-context-unread
         elif session_rows_context_error "$LANE_CONTEXT_OBSERVATION" \
-          && jq -e --argjson start "$native_start" --argjson last "$saved_row" '
+          && jq -e --argjson start "$native_start" '
           try ((.at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)
-            >= ([($start.at // 0), ($last.at // 0)] | max)) catch false' \
+            >= ($start.at // 0)) catch false' \
           <<<"$LANE_CONTEXT_OBSERVATION" >/dev/null; then
+          # A plain Stop carries no success classification. The latest native
+          # assistant and SessionStart, not that row, settle this error's age.
           OV_STATE=walled OV_SOURCE=native-context
           OV_SCREEN="$LANE_CONTEXT_OBSERVATION"
           SESSION_ROW="$saved_row"

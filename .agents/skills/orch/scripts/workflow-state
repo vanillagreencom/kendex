@@ -1163,7 +1163,8 @@ cmd_handoff_resume() {
     done
     handoff_places "${places[@]}" || { unread="${HANDOFF_FILES[0]}"; state_message handoff-unread "$issue_id" >&2; return 1; }
     if [[ -n "$observed" ]]; then
-        # The native prompt and response must both follow this exact handoff.
+        # The writer stamps whole seconds; order within that second is unknown.
+        # The native prompt must start in a later second than this handoff.
         # Checking inside atomic_update preserves a handoff renewed after the
         # hook's standing read. Legacy relaunch callers retain the path below.
         for file in "${HANDOFF_FILES[@]}"; do
@@ -1177,7 +1178,7 @@ cmd_handoff_resume() {
                     and .handoff.resumed_at == null
                     and $r.kind == "success" and ($r.session_id | type) == "string" and $r.session_id != ""
                     and .handoff.session_id == $r.session_id
-                    and (try (($r.started_at | epoch) > (.handoff.written_at | epoch)
+                    and (try (($r.started_at | epoch | floor) > (.handoff.written_at | epoch)
                          and ($r.at | epoch) >= ($r.started_at | epoch)) catch false)
                   then .handoff.resumed_at = now
                   else error("handoff-observation-rejected") end' --slurpfile observed "$observed"; then
@@ -1730,7 +1731,9 @@ EOF
                                 {handoff, observation} object to the exact
                                 standing record under its write lock. The
                                 observation is native own success with session_id,
-                                at and started_at, both later than written_at.
+                                at and started_at; the prompt must start in a
+                                later whole second than written_at, with its
+                                response at or after the prompt.
                                 A changed record or unknown evidence refuses
                                 without stamping it; unguarded relaunch callers
                                 keep the all-standing-places behavior.
