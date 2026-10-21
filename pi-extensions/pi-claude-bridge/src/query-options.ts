@@ -3,7 +3,7 @@
 // the provided context only.
 
 import { type Model } from "@earendil-works/pi-ai";
-import { createSdkMcpServer, type query, type EffortLevel, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import { type McpSdkServerConfigWithInstance, type query, type EffortLevel, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { accountSessionScope, subscriberProfileEnv, type ClaudeAccountRoute } from "./account-router.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
@@ -52,7 +52,7 @@ export interface BuildClaudeQueryOptionsInput {
 	/** Pi reasoning level from the stream options, if any. */
 	reasoning?: string;
 	resumeSessionId: string | null;
-	mcpServers?: Record<string, ReturnType<typeof createSdkMcpServer>>;
+	mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
 	claudeExecutable?: string;
 	/**
 	 * True for a request pi marks as a one-shot it drives itself (compaction and

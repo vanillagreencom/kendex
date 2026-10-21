@@ -9,6 +9,7 @@
   You do: Select a `pi-claude` model from Pi's model menu if your saved model is absent from the list.
 
 - Safety fallback notices use registry display names when available. Unknown model notices show one plain line. Model resolution details go to the debug log.
+- The bridge-owned in-process tool server now uses public MCP SDK 1.32.1, replacing the Agent SDK's embedded server. Tool schemas, descriptions and bridge handlers stay in place; native validation wording and missing-argument defaults follow the public SDK. This does not establish that child or remote servers are patched, or enable HTTP input limits or bearer-audience validation.
 
 ### 4.2.0
 

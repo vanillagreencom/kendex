@@ -1,13 +1,8 @@
 // TypeBox (JSON Schema) → Zod conversion used by buildMcpServers.
 //
 // Pi tools declare their parameters as TypeBox objects (i.e. JSON Schema at
-// runtime). The Agent SDK's createSdkMcpServer requires Zod — its internal
-// `Z0()` detects Zod via the `~standard` marker or `_def`/`_zod` properties
-// and silently downgrades unrecognized schemas to
-// `{type: "object", properties: {}}`, which leaves the model with no
-// parameter info. This module bridges the two so MCP-exposed pi tools retain
-// their schemas. If this breaks after an SDK update, check whether `Z0()`
-// detection changed or createSdkMcpServer now accepts raw JSON Schema.
+// runtime). The public MCP server's registerTool accepts Zod input shapes,
+// so this module bridges the two so MCP-exposed pi tools retain their schemas.
 
 import { z } from "zod";
 

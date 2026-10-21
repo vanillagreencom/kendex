@@ -19,3 +19,4 @@ skills/iced-rs/**	vendored upstream iced source and examples bundled as the skil
 # this file forbids.
 .agents/skills/iced-rs/**	the committed render of the vendored tree above
 .claude/skills/iced-rs/**	the same tree again, for the day the Claude render is a copy rather than a link into .agents
+pi-extensions/pi-claude-bridge/bundle/index.js	generated esbuild bundle includes upstream SDK dependency comments; source markers remain checked

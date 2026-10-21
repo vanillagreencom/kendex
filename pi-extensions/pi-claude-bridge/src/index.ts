@@ -1,7 +1,8 @@
 import { type AssistantMessage, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions, type Tool } from "@earendil-works/pi-ai";
 import * as piAi from "@earendil-works/pi-ai";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createSdkMcpServer, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { type McpSdkServerConfigWithInstance, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
 import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { MODELS, modelDisplayName } from "./models.js";
@@ -383,7 +384,7 @@ export function reportToolBridgeGap(messageCount: number, builtinIsolationApplie
 // (tool name + arguments) against the recorded tool_use blocks, then results
 // are matched by ID. Handlers close over the captured `queryCtx`, ensuring they
 // operate on the correct query's state even across pushContext/popContext calls.
-function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, ReturnType<typeof createSdkMcpServer>> | undefined {
+function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, McpSdkServerConfigWithInstance> | undefined {
 	if (!tools.length) return undefined;
 	const mcpTools = tools.map((tool) => ({
 		name: tool.name,
@@ -451,8 +452,11 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 			});
 		},
 	}));
-	const server = createSdkMcpServer({ name: MCP_SERVER_NAME, version: "1.0.0", tools: mcpTools });
-	return { [MCP_SERVER_NAME]: server };
+	const instance = new McpServer({ name: MCP_SERVER_NAME, version: "1.0.0" });
+	for (const tool of mcpTools) {
+		instance.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, tool.handler);
+	}
+	return { [MCP_SERVER_NAME]: { type: "sdk", name: MCP_SERVER_NAME, instance } };
 }
 
 

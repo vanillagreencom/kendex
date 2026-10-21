@@ -11,13 +11,27 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { __testSetBridgeIntegrityState, __testSetSdkQueryFactory, streamClaudeAgentSdk } from "../src/index.ts";
 import { clearPackageConfigCache } from "../src/package-config.ts";
 import { resetStack } from "../src/query-state.ts";
 import { piContext } from "./lib/transcript.mjs";
+import { assertSourceControl } from "./lib/source-control.mjs";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
-const tool = { name: "read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } };
+const tool = { name: "read", description: "Read a file", parameters: {
+	type: "object",
+	properties: {
+		path: { type: "string", description: "File path to read" },
+		options: { type: "object", description: "Read options", properties: {
+			encoding: { type: "string", description: "Text encoding" },
+			preview: { type: "boolean", description: "Preview only" },
+		}, required: ["encoding"] },
+	},
+	required: ["path"],
+} };
 const SKILLS_BLOCK = [
 	"The following skills provide specialized instructions for specific tasks.",
 	"Use the read tool to load a skill's file when the task matches its description.",
@@ -77,6 +91,41 @@ describe("the provider reads Pi's 0.86 transcript", () => {
 			options.systemPrompt.append.includes("Use the read tool (mcp__custom-tools__read) to load a skill's file"),
 			"and pi's skills block is appended, rewritten for the bridged tool name",
 		);
+		const server = options.mcpServers["custom-tools"].instance;
+		const client = new Client({ name: "transcript-contract", version: "1.0.0" });
+		const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+		try {
+			await server.connect(serverTransport);
+			await client.connect(clientTransport);
+			const { tools } = await client.listTools();
+			assert.deepEqual(tools.map((entry) => entry.name), ["read"]);
+			const listed = tools[0];
+			assert.equal(listed.description, "Read a file");
+			assert.equal(listed.inputSchema.type, "object");
+			assert.deepEqual(listed.inputSchema.required, ["path"]);
+			assert.equal(listed.inputSchema.properties.path.type, "string");
+			assert.equal(listed.inputSchema.properties.path.description, "File path to read");
+			const nested = listed.inputSchema.properties.options;
+			assert.equal(nested.type, "object");
+			assert.equal(nested.description, "Read options");
+			assert.deepEqual(nested.required, ["encoding"]);
+			assert.equal(nested.properties.encoding.type, "string");
+			assert.equal(nested.properties.encoding.description, "Text encoding");
+			assert.equal(nested.properties.preview.type, "boolean");
+			assert.equal(nested.properties.preview.description, "Preview only");
+			// The child sends tools/call; invalid input must stop before the Pi handler.
+			const invalid = await client.callTool({ name: "read", arguments: { path: 42 } }, undefined, { timeout: 1_000 });
+			assert.equal(invalid.isError, true);
+			assert.ok(invalid.content.length > 0);
+			for (const block of invalid.content) {
+				assert.equal(block.type, "text");
+				assert.equal(typeof block.text, "string");
+			}
+			assert.ok(server instanceof McpServer, "bridge server uses the public MCP constructor");
+		} finally {
+			await client.close();
+			await server.close();
+		}
 	});
 
 	it("leaves Claude Code's own tools in place when the transcript declares none", async () => {
@@ -86,3 +135,15 @@ describe("the provider reads Pi's 0.86 transcript", () => {
 		assert.equal("tools" in options, false, "so the fail-soft leaves the child its own tools");
 	});
 });
+
+it("rejects the old embedded server construction owner", { timeout: 60_000 }, () => assertSourceControl({
+	source: "src/index.ts",
+	before: 'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
+	after: `import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+class McpServer {
+	constructor({ name, version }) { return createSdkMcpServer({ name, version, tools: [] }).instance; }
+}`,
+	suite: "unit-transcript-contract.mjs",
+	pattern: "bridges the tools a system entry declares and appends the prompt it carries",
+	failure: /bridge server uses the public MCP constructor/,
+}));
