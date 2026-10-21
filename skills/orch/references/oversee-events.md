@@ -132,9 +132,7 @@ The overseer runs no normal merge for a lane.
 
 Its own GitHub App acts for the head approvals [copilot-head-notices.md](copilot-head-notices.md) sets, and for nothing else except an emergency merge in a consumer whose ruleset lists that app as a bypass actor, which that step's "Who acts" names.
 
-A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in [review-gate SKILL.md § 4.
-
-Operations](../../review-gate/SKILL.md#4-operations).
+A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in [review-gate SKILL.md § 4. Operations](../../review-gate/SKILL.md#4-operations).
 
 ### Hand off a lane before it runs out
 
