@@ -210,6 +210,8 @@ Deliver its brief under [§ Brief file](../references/lane-directive.md#brief-fi
 
 For a source-only design, investigation or opinion, replace the implementation-start instruction with a brief for that phase. Name the source-only outcome, admitted source and scratch paths, required artifacts, acceptance owner and permitted effects. Do not send an unstarted source phase through `start`'s implementation preparation. Keep helper-owned status, mailbox, context, admission and reviewer completion outputs at their required paths.
 
+Before source work or a first handoff write, follow only the state-existence/init branches in [start-worktree.md § 1 step 6](start-worktree.md#1-open-the-session): initialize absent state and preserve existing state and history.
+
 Use [Delegation § Source-only inputs](../references/skill-rules.md#source-only-inputs) for the complete known input set by role and reviewer admission. The brief names that inventory, each explicitly authorized cumulative service ceiling, and the retained continuation and return paths. Local file reads have no arbitrary per-brief count stop. Existing native context and account admission bound continuation; their model, reserve and cap owners stay unchanged.
 
 At a native handoff or an explicit service/scope boundary, use [Source-only continuation](../references/oversee-events.md#source-only-continuation). A boundary does not grant a new phase or effects beyond this brief.
