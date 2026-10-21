@@ -16,7 +16,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { __testSetBridgeIntegrityState, __testSetSdkQueryFactory, streamClaudeAgentSdk } from "../src/index.ts";
 import { clearPackageConfigCache } from "../src/package-config.ts";
-import { resetStack } from "../src/query-state.ts";
+import { QueryContext, resetStack } from "../src/query-state.ts";
 import { piContext } from "./lib/transcript.mjs";
 import { assertSourceControl } from "./lib/source-control.mjs";
 
@@ -79,7 +79,7 @@ async function optionsFor(context) {
 }
 
 describe("the provider reads Pi's 0.86 transcript", () => {
-	it("bridges the tools a system entry declares and appends the prompt it carries", async () => {
+	it("bridges the tools a system entry declares and appends the prompt it carries", async (t) => {
 		const options = await optionsFor(piContext({
 			messages: [{ role: "user", content: "read the file" }],
 			tools: [tool],
@@ -114,6 +114,7 @@ describe("the provider reads Pi's 0.86 transcript", () => {
 			assert.equal(nested.properties.preview.type, "boolean");
 			assert.equal(nested.properties.preview.description, "Preview only");
 			// The child sends tools/call; invalid input must stop before the Pi handler.
+			const claimToolCall = t.mock.method(QueryContext.prototype, "claimToolCall");
 			const invalid = await client.callTool({ name: "read", arguments: { path: 42 } }, undefined, { timeout: 1_000 });
 			assert.equal(invalid.isError, true);
 			assert.ok(invalid.content.length > 0);
@@ -121,6 +122,7 @@ describe("the provider reads Pi's 0.86 transcript", () => {
 				assert.equal(block.type, "text");
 				assert.equal(typeof block.text, "string");
 			}
+			assert.equal(claimToolCall.mock.callCount(), 0, "invalid input must stop before the Pi handler");
 			assert.ok(server instanceof McpServer, "bridge server uses the public MCP constructor");
 		} finally {
 			await client.close();
@@ -136,14 +138,27 @@ describe("the provider reads Pi's 0.86 transcript", () => {
 	});
 });
 
-it("rejects the old embedded server construction owner", { timeout: 60_000 }, () => assertSourceControl({
-	source: "src/index.ts",
-	before: 'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
-	after: `import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+for (const row of [
+	{
+		name: "rejects the old embedded server construction owner",
+		before: 'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
+		after: `import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 class McpServer {
 	constructor({ name, version }) { return createSdkMcpServer({ name, version, tools: [] }).instance; }
 }`,
-	suite: "unit-transcript-contract.mjs",
-	pattern: "bridges the tools a system entry declares and appends the prompt it carries",
-	failure: /bridge server uses the public MCP constructor/,
-}));
+		failure: /bridge server uses the public MCP constructor/,
+	},
+	{
+		name: "rejects invalid input reaching the Pi handler",
+		before: '\tconst instance = new McpServer({ name: MCP_SERVER_NAME, version: "1.0.0" });',
+		after: '\tconst instance = new McpServer({ name: MCP_SERVER_NAME, version: "1.0.0" });\n\tinstance.validateToolInput = async (_tool, args) => args;',
+		failure: /invalid input must stop before the Pi handler/,
+	},
+]) {
+	it(row.name, { timeout: 60_000 }, () => assertSourceControl({
+		...row,
+		source: "src/index.ts",
+		suite: "unit-transcript-contract.mjs",
+		pattern: "bridges the tools a system entry declares and appends the prompt it carries",
+	}));
+}
