@@ -266,7 +266,7 @@ state_message() {
       ;;
     handoff-arguments)
       printf 'workflow-state: handoff-arguments args=%s\n' "$*"
-      printf '%s\n' "Error: the handoff verbs take <issue_id> [--worktree <root>]"
+      printf '%s\n' "Error: handoff-standing takes <issue_id> [--worktree <root>]; handoff-resume also accepts --observed FILE"
       ;;
     handoff-unread)
       printf 'workflow-state: handoff-unread state-file=%s\n' "$unread"
@@ -1147,8 +1147,49 @@ cmd_handoff_standing() {
 # spent record standing. Prints one line per stamped file; exits 1 where a
 # place could not be read or none stood.
 cmd_handoff_resume() {
-    local issue_id="$1" file stamped="" unread=""
-    handoff_places "$@" || { unread="${HANDOFF_FILES[0]}"; state_message handoff-unread "$@" >&2; return 1; }
+    local issue_id="$1" file stamped="" unread="" observed=""
+    shift
+    local -a places=("$issue_id")
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --observed)
+                [[ $# -ge 2 && -f "$2" ]] || { state_message handoff-arguments "$@" >&2; return 2; }
+                observed="$2"; shift 2 ;;
+            --worktree)
+                [[ $# -ge 2 ]] || { state_message handoff-arguments "$@" >&2; return 2; }
+                places+=(--worktree "$2"); shift 2 ;;
+            *) state_message handoff-arguments "$@" >&2; return 2 ;;
+        esac
+    done
+    handoff_places "${places[@]}" || { unread="${HANDOFF_FILES[0]}"; state_message handoff-unread "$issue_id" >&2; return 1; }
+    if [[ -n "$observed" ]]; then
+        # The native prompt and response must both follow this exact handoff.
+        # Checking inside atomic_update preserves a handoff renewed after the
+        # hook's standing read. Legacy relaunch callers retain the path below.
+        for file in "${HANDOFF_FILES[@]}"; do
+            [[ -f "$file" ]] || continue
+            if atomic_update "$file" '
+                def epoch:
+                  capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<fraction>[.][0-9]+)?Z$")
+                  | ((.base + "Z" | fromdateiso8601) + (("0" + (.fraction // "")) | tonumber));
+                $observed[0] as $o | $o.observation as $r
+                | if ($observed | length) == 1 and .handoff == $o.handoff
+                    and .handoff.resumed_at == null
+                    and $r.kind == "success" and ($r.session_id | type) == "string" and $r.session_id != ""
+                    and .handoff.session_id == $r.session_id
+                    and (try (($r.started_at | epoch) > (.handoff.written_at | epoch)
+                         and ($r.at | epoch) >= ($r.started_at | epoch)) catch false)
+                  then .handoff.resumed_at = now
+                  else error("handoff-observation-rejected") end' --slurpfile observed "$observed"; then
+                printf 'workflow-state: handoff-resumed file=%s\n' "$file"
+                stamped=1
+            else
+                return 1
+            fi
+        done
+        [[ -n "$stamped" ]] || { state_message handoff-none "$issue_id" >&2; return 1; }
+        return 0
+    fi
     for file in "${HANDOFF_FILES[@]}"; do
         handoff_read "$file"
         case "$HANDOFF_WORD" in
@@ -1680,12 +1721,19 @@ EOF
                                 unknown command, and a settings file bash 3.2
                                 cannot parse kills the script before dispatch —
                                 and is never read as "no record stands"
-  handoff-resume <issue_id> [--worktree <root>]
+  handoff-resume <issue_id> [--worktree <root>] [--observed FILE]
                                 Stamp .handoff.resumed_at on the record in
                                 every place it stands, printing
                                 `workflow-state: handoff-resumed file=F` per
                                 file; exits 1 where none stands or a place
-                                could not be read
+                                could not be read. --observed FILE binds a
+                                {handoff, observation} object to the exact
+                                standing record under its write lock. The
+                                observation is native own success with session_id,
+                                at and started_at, both later than written_at.
+                                A changed record or unknown evidence refuses
+                                without stamping it; unguarded relaunch callers
+                                keep the all-standing-places behavior.
   remove <issue_id> [--archive PATH]...
                                 The item's close-out: delete every entry of the
                                 state directory whose name carries the key as a

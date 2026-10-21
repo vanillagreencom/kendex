@@ -95,6 +95,8 @@ T="$TMP_ROOT/t"; mkdir -p "$T"
 { claude_line claude-opus-5-5 1000; printf '{"type":"assistant","message":{"usa'; } > "$T/claude-partial"
 { claude_line claude-fable-5-1 700000
   jq -nc '{type:"assistant",message:{model:"<synthetic>",usage:{input_tokens:0,cache_read_input_tokens:0,cache_creation_input_tokens:0}}}'; } > "$T/claude-synthetic"
+# Actual projected fields sum to 976825, separately from the native error.
+jq -nc '{type:"assistant",message:{model:"claude-opus-5-5",usage:{input_tokens:2,cache_read_input_tokens:976017,cache_creation_input_tokens:644,output_tokens:162}}}' > "$T/claude-projected"
 claude_line claude-sonnet-5 400000 > "$T/claude-sonnet"
 claude_line claude-haiku-4-5-20251001 150000 > "$T/claude-haiku"
 claude_line MyProviderModel 150000 > "$T/claude-unknown"
@@ -119,6 +121,7 @@ if section reads; then
 claude-last|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-partial|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-synthetic|claude||rc=0 700000|1000000|claude-fable-5-1
+claude-projected|claude||rc=0 976825|1000000|claude-opus-5-5
 claude-sonnet|claude||rc=0 400000|200000|claude-sonnet-5
 claude-haiku|claude||rc=0 150000|200000|claude-haiku-4-5-20251001
 claude-unknown|claude||rc=0 150000|200000|MyProviderModel

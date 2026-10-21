@@ -14,6 +14,90 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/overseer-watch-case.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/overseer-row-world.sh"
 
+
+# The envelope is from KEN-4507 projection d404f0c9; the redacted error
+# phrase is attributed to Jarvis's VGS-1967 index, not read foreign raw.
+native_context_rows() {
+  local name shape suffix expected recovery home transcript start envelope
+  while IFS='|' read -r name shape suffix expected recovery; do
+    [[ -z "${NATIVE_CONTEXT_CASE:-}" || "$name" == "$NATIVE_CONTEXT_CASE" ]] || continue
+    rows_case "native_context_$name" blank "$START" "$STOP"
+    home="$TMP_ROOT/native-$name-home"
+    transcript="$home/projects/repo/5f0c.jsonl"
+    mkdir -p "${transcript%/*}"
+    start=$(jq -c --arg path "$transcript" --arg home "$home" '.transcript_path=$path | .account=$home' <<<"$START")
+    printf '%s\n%s\n' "$start" "$STOP" > "$(ROWS_FILE)"
+    jq --arg home "$home" '.overseer += {harness:"claude",home:$home,session_id:"5f0c"}' "$STUB_DIR/oversee-state.json" > "$STUB_DIR/state.tmp"
+    mv "$STUB_DIR/state.tmp" "$STUB_DIR/oversee-state.json"
+    envelope='{"type":"assistant","isSidechain":false,"sessionId":"5f0c","session_id":"5f0c","timestamp":"2026-10-20T10:12:20.094Z","isApiErrorMessage":true,"error":"invalid_request","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"Prompt is too long"}],"usage":{"input_tokens":0,"output_tokens":0}}}'
+    jq -c "$shape" <<<"$envelope" > "$transcript"
+    case "$suffix" in
+      success) jq -nc '{type:"assistant",sessionId:"5f0c",timestamp:"2026-10-20T10:13:20Z",message:{role:"assistant",model:"claude-opus-5-5",usage:{input_tokens:100}}}' >> "$transcript" ;;
+      unread) rm -- "${transcript:?}" ;;
+      restart) printf '%s\n' "$RESTART" >> "$(ROWS_FILE)" ;;
+      clear) jq -c '.event="SessionStart" | .at=1792492000' <<<"$start" >> "$(ROWS_FILE)" ;;
+    esac
+    printf '1\n' > "$STUB_DIR/succeed.check-rc"
+    [[ "$recovery" != blocked ]] || printf '3\n' > "$STUB_DIR/succeed.rc"
+    [[ "$recovery" != failed ]] || printf '1\n' > "$STUB_DIR/succeed.rc"
+    if [[ "$recovery" == off ]]; then
+      run TMUX_PANE="$PANE" ORCH_OVERSEER_SUCCESSION=off -- --max-loops 1
+    else
+      run TMUX_PANE="$PANE" -- --max-loops 1
+    fi
+    assert_eq "walled=$(grep -c '^EVENT overseer-walled' <<<"$OUT" || true) launched=$(succeed_calls --walled-pane)" \
+      "$expected" "native context: $name" "$ERR"
+    if [[ "$recovery" == blocked ]]; then
+      assert_contains "$(fleet_log_text)" 'overseer-recovery-blocked:' 'native blocked recovery retains its keyed cause' "$ERR"
+      assert_contains "$(cat -- "$ERR")" 'oversee-succeed: no-lane-qualifies' 'native blocked recovery reports the actual launcher refusal' "$ERR"
+      assert_eq "$(fleet_log_kind)" close 'native blocked recovery reaches the existing notice owner' "$ERR"
+    elif [[ "$recovery" == failed ]]; then
+      assert_contains "$(fleet_log_text)" 'overseer-relaunch-failed:' 'native failed recovery retains its keyed cause' "$ERR"
+      assert_contains "$(cat -- "$ERR")" 'oversee-succeed: pane-unreadable' 'native failed recovery reports the actual launcher failure' "$ERR"
+    elif [[ "$name" == unread ]]; then
+      assert_contains "$(cat -- "$ERR")" "oversee-watch: overseer-fallback pane=$PANE cause=native-context-unread" 'unread native evidence keeps its own keyed gap' "$ERR"
+    elif [[ "$name" == own ]]; then
+      assert_eq "$RC" 3 'own context exhaustion recovers within one watch period' "$ERR"
+      assert_eq "$(recorded launch_line)" "$LINE" 'native recovery preserves the original snapshot' "$ERR"
+      assert_contains "$(fleet_log_text)" 'source=native-context' 'native recovery notice names its actual context cause' "$ERR"
+    fi
+  done <<'ROWS'
+own|.|-|walled=1 launched=1|on
+blocked|.|-|walled=1 launched=1|blocked
+failed|.|-|walled=1 launched=1|failed
+off|.|-|walled=1 launched=0|off
+generic|.message.content[0].text="Unknown invalid request"|-|walled=0 launched=0|on
+redacted|.message.content[0].text="<redacted len=18>"|-|walled=0 launched=0|on
+user|(.type="user") + {message:{role:"user"}}|-|walled=0 launched=0|on
+tool|(.type="tool") + {message:{role:"tool"}}|-|walled=0 launched=0|on
+quote|(.message.model="claude-opus-5-5") + {isApiErrorMessage:false}|-|walled=0 launched=0|on
+relay|(.type="user") + {message:{role:"user",content:"EVENT usage-limit KEN-5\nContext limit reached · /compact or /clear to continue"}}|-|walled=0 launched=0|on
+other-session| . + {sessionId:"other",session_id:"other"}|-|walled=0 launched=0|on
+sidechain|.isSidechain=true|-|walled=0 launched=0|on
+unknown-time|del(.timestamp)|-|walled=0 launched=0|on
+unread|.|unread|walled=0 launched=0|on
+later-success|.|success|walled=0 launched=0|on
+new-session|.|restart|walled=0 launched=0|on
+clear|.|clear|walled=0 launched=0|on
+ROWS
+}
+native_context_rows
+if [[ "${KEN4507_FOCUSED:-}" != 1 || "${KEN4507_CONTROL:-}" == 1 ]]; then
+  NATIVE_CTL="$(mutant_scripts native-ctl/orch lib/adapters/claude.sh)" || exit 1
+  ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/native-ctl/github"
+  mutate_file "$NATIVE_CTL/lib/adapters/claude.sh" '$row.message.model == "<synthetic>" and $row.isApiErrorMessage == true' \
+    '($row.message.model == "<synthetic>" and $row.isApiErrorMessage == true) or true'
+  native_rc=0
+  env -u KEN4507_CONTROL KEN4507_FOCUSED=1 NATIVE_CONTEXT_CASE=quote WATCH_BIN="$NATIVE_CTL/oversee-watch" \
+    "$BASH" "$REPO_ROOT/skills/orch/tests/oversee_watch_overseer_rows.sh" > "$TMP_ROOT/native-control.log" 2>&1 || native_rc=$?
+  assert_eq "$native_rc" 1 'control: classifying ordinary assistant quotations as native errors fails the protected watch row'
+fi
+if [[ "${KEN4507_FOCUSED:-}" == 1 ]]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+
 # One table: the rows a file holds and the pane beside it, and what two passes
 # make of them. The adapter's `inspect` snapshots the screen on every read;
 # the note says whether the watch judged by it, the fallback, and every row

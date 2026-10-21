@@ -115,6 +115,16 @@ append_transcript "$TRANSCRIPT" 700000
 overseer_tool "$TRANSCRIPT"
 assert_eq "RC=$RC context=$(context_line) record=$(tool_record)" "RC=0 context=- record=700000 null" \
   "an overseer whose own handoff record stands is handed nothing, its reading still recorded" "$ERR_FILE"
+# After a new successful native turn, the same writer again receives its
+# existing context mark. The preceding legacy/unknown row stays exempt.
+tool_overseer overseer_tool_resumed
+record_overseer_handoff
+jq -nc '{type:"user",sessionId:"s1",timestamp:"2026-09-20T06:21:00Z",message:{role:"user",content:"continue"}}' > "$TRANSCRIPT"
+jq -nc '{type:"assistant",sessionId:"s1",timestamp:"2026-09-20T06:21:01Z",message:{role:"assistant",model:"claude-opus-5-5",usage:{input_tokens:600000}}}' >> "$TRANSCRIPT"
+overseer_tool "$TRANSCRIPT"
+assert_eq "RC=$RC context=$(context_line) record=$(tool_record)" \
+  'RC=0 context=PostToolUse lane-mail-check: context=600000 record=600000 null' \
+  'later own successful work restores the tool context notice past an old handoff' "$ERR_FILE"
 variant never-held -e 's/^    stands) handoff_is_mine ;;$/    stands) return 1 ;;/'
 tool_overseer control_overseer_tool_held "$VARIANT_PATH"
 write_transcript "$TRANSCRIPT" 600000

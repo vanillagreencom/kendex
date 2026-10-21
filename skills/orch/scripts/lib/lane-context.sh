@@ -4,7 +4,7 @@
 # the adapter for its harness (lib/adapters/), which answers the tokens the last
 # response left in the context and its verified compaction point, and records that
 # reading in the session's mailbox directory. Every other reader, `lanes
-# context`, `oversee-succeed` and the watch through it, reads that record, so a
+# context` and `oversee-succeed`, reads that usage record, so a
 # hosted lane reads the same as a local one and a scrolled or quiet pane changes
 # nothing.
 #
@@ -343,6 +343,22 @@ lane_context_transcript_owned() { # HARNESS PATH SESSION HOME
     LANE_CONTEXT_OWNED_REASON="$LANE_ADAPTER_OWNED_REASON"
     return 1
   fi
+}
+
+# The same bound native observation serves handoff continuation and watch
+# recovery. A missing binding/read is unavailable, never positive exhaustion.
+# Usage arithmetic remains lane_context_reading's separate result.
+LANE_CONTEXT_OBSERVATION=""
+lane_context_claude_observation() { # PATH SESSION HOME
+  LANE_CONTEXT_OBSERVATION=""
+  lane_context_transcript_owned claude "$1" "$2" "$3" || return 1
+  [[ -f "$1" && -r "$1" ]] || return 1
+  LANE_CONTEXT_OBSERVATION=$(tail -c "$TRANSCRIPT_WINDOW" -- "$1" |
+    lane_adapter_claude_observation "$2") || return 1
+  if [[ -z "$LANE_CONTEXT_OBSERVATION" ]]; then
+    LANE_CONTEXT_OBSERVATION=$(lane_adapter_claude_observation "$2" < "$1") || return 1
+  fi
+  [[ -n "$LANE_CONTEXT_OBSERVATION" ]]
 }
 
 # Normalize the requested handoff percentage for the judge and its reports.

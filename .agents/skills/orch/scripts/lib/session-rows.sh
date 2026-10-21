@@ -177,6 +177,14 @@ session_rows_last() { # FILE [EVENT]
 # outgrows the window; an overseer run with DISABLE_AUTO_COMPACT=1 met it on
 # every turn once its context filled.
 SESSION_ROWS_PROMPT_TOO_LONG='["prompt is too long"]'
+# The Claude adapter supplies only an own native synthetic API-error body.
+# Keep this classification at the same owner/table as StopFailure wedges.
+session_rows_context_error() { # OBSERVATION
+  jq -e --argjson too_long "$SESSION_ROWS_PROMPT_TOO_LONG" '
+    .kind == "error" and .error == "invalid_request"
+    and ((.message | ascii_downcase) as $text
+      | any($too_long[]; . as $p | $text | contains($p)))' <<<"$1" >/dev/null
+}
 SESSION_ROWS_VERDICT=none
 SESSION_ROWS_WALL_KIND=""
 session_rows_verdict() { # FILE

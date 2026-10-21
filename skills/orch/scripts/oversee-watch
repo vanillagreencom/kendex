@@ -3742,6 +3742,10 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
   elif [[ "$kind" == walled ]]; then
     reading=walled
     relaunch_text='A successor is being launched into that window on an account the lane pick judged, never on the spent one.'
+    if [[ "$OV_SOURCE" == native-context ]]; then
+      reading=context-exhausted
+      relaunch_text='The native Claude session cannot accept another prompt. A successor is being selected through the existing eligible-account recovery.'
+    fi
   else
     reading=exited
     [[ "$OV_SOURCE" != context ]] || reading='wedged at its context window'
@@ -3770,7 +3774,7 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
       "$2" "$3" "${OVERSEER_MARK_ACCOUNT:-unknown}" "$plan_text"
   else
     printf -v headline 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s, source=%s. %s' \
-      "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$OV_SOURCE" "$plan_text"
+      "$kind" "$3" "$2" "$reading" "${8:-$DEAD_PASSES}" "${now:-an unreadable clock}" "$OV_SOURCE" "$plan_text"
   fi
   [[ "$kind" != walled ]] || remedy="$(overseer_unlifted_remedy)" || remedy=""
   [[ -z "$remedy" ]] || headline+=" $remedy"
@@ -4313,6 +4317,37 @@ overseer_pane_read() { # PANE
     cause=unreadable
     if session_rows_verdict "$rows"; then cause="$SESSION_ROWS_VERDICT"; fi
   fi
+  # Claude can append a synthetic own-session API error without StopFailure.
+  # Bind its transcript to both the current launch and latest native start;
+  # inspect no user/tool text and keep the last successful usage independent.
+  if [[ "$cause" == live && "$bare" -eq 0 && -n "$rows" ]]; then
+    local launch native_start saved_row="$SESSION_ROW" native_session native_path native_home
+    if launch=$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
+        "$OL_JQ_DEFS .overseer | select(ol_names(\"$server\"; \"$OV_START\"; \"$pane\"))" 2>"$errf") \
+      && session_rows_last "$rows" SessionStart; then
+      native_start="$SESSION_ROW"
+      native_session=$(jq -r '.session_id // ""' <<<"${native_start:-null}") || native_session=""
+      native_path=$(jq -r '.transcript_path // ""' <<<"${native_start:-null}") || native_path=""
+      native_home=$(jq -r '.home // ""' <<<"${launch:-null}") || native_home=""
+      if [[ -n "$native_session" ]] \
+        && jq -e --arg session "$native_session" '.harness == "claude" and .session_id == $session' <<<"${launch:-null}" >/dev/null \
+        && jq -e '.harness == "claude"' <<<"${native_start:-null}" >/dev/null; then
+        if ! lane_context_claude_observation "$native_path" "$native_session" "$native_home" 2>"$errf"; then
+          cause=native-context-unread
+        elif session_rows_context_error "$LANE_CONTEXT_OBSERVATION" \
+          && jq -e --argjson start "$native_start" --argjson last "$saved_row" '
+          try ((.at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)
+            >= ([($start.at // 0), ($last.at // 0)] | max)) catch false' \
+          <<<"$LANE_CONTEXT_OBSERVATION" >/dev/null; then
+          OV_STATE=walled OV_SOURCE=native-context
+          OV_SCREEN="$LANE_CONTEXT_OBSERVATION"
+          SESSION_ROW="$saved_row"
+          return 0
+        fi
+      fi
+    fi
+    SESSION_ROW="$saved_row"
+  fi
   # A SessionEnd settles the session only over the bare shell its harness's
   # exit leaves, the fact the recorded-exit rung reads: over a live harness it
   # says nothing about the session running now.
@@ -4332,7 +4367,7 @@ overseer_pane_read() { # PANE
       OV_STATE=working; OV_SOURCE=rows
       (( ! bare )) || { OV_STATE=exited; OV_SOURCE=process; }
       return 0 ;;
-    none | unsupported | unrecorded | unreadable | state-unreadable) ;;
+    none | unsupported | unrecorded | unreadable | state-unreadable | native-context-unread) ;;
   esac
   overseer_note overseer-fallback "pane=$pane" "cause=$cause"
   OV_SOURCE=pane
@@ -4366,7 +4401,7 @@ overseer_judge() { # PANE
   case "$OV_STATE" in
     exited) OV_VERDICT=exited ;;
     walled)
-      if overseer_auth_wall; then
+      if [[ "$OV_SOURCE" == native-context ]] || overseer_auth_wall; then
         OV_VERDICT=walled
       elif [[ "$OV_SOURCE" == rows ]]; then
         if ! overseer_marks_judge || [[ "$OVERSEER_MARK_KEY" != below-mark ]]; then OV_VERDICT=walled
@@ -4565,6 +4600,8 @@ check_overseer() {
     # under the reasons check_lanes gives them.
     if [[ "$ov_case" == walled && "$OV_SOURCE" == rows ]]; then
       jq -r '.message // "message=unrecorded"' <<<"$SESSION_ROW" || die limit-banner-missing "" "pane=$pane"
+    elif [[ "$ov_case" == walled && "$OV_SOURCE" == native-context ]]; then
+      jq -r '.message' <<<"$OV_SCREEN" || die limit-banner-missing "" "pane=$pane"
     elif [[ "$ov_case" == walled && "$OV_SOURCE" == account ]]; then
       echo "account=${OVERSEER_MARK_ACCOUNT:-unknown} headroom=0 resets=${OVERSEER_MARK_RESETS:-none}"
     elif [[ "$ov_case" == walled ]]; then
@@ -4576,7 +4613,7 @@ check_overseer() {
       banner_payload "$below" "$banner" || die limit-banner-missing "" "pane=$pane"
     fi
     PASS_EVENT=1
-    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$record_mine"
+    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$record_mine" "${passes:-$DEAD_PASSES}"
   fi
   if [[ "$plan" != relaunch ]]; then
     [[ "$ov_case" == reserve ]] || OVERSEER_STOP=1

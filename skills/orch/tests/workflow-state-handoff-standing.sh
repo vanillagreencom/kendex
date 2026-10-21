@@ -42,6 +42,50 @@ standing() { # ITEM
 # The verdict line's key, spelled once for every row below.
 VERDICT='workflow-state: handoff-standing'
 
+
+# A continuing native Claude session may resume only the exact handoff observed.
+# The prompt timestamp keeps the handoff-writing turn's final response exempt.
+guarded_resume_rows() {
+  local current rc result
+  "$WS" --state-dir "$STATE" init KEN-7 >/dev/null
+  local expected='{"written_at":"2026-09-18T08:05:00Z","session_id":"own"}'
+  while IFS='|' read -r name session prompt response renewal want; do
+    current="$expected"
+    [[ "$renewal" != yes ]] || current='{"written_at":"2026-09-18T08:05:30Z","session_id":"own"}'
+    "$WS" --state-dir "$STATE" set KEN-7 handoff "$current" >/dev/null
+    jq -nc --argjson handoff "$expected" --arg session "$session" --arg at "$response" --arg started "$prompt" \
+      '{handoff:$handoff,observation:{kind:"success",session_id:$session,at:$at,started_at:$started}}' > "$TMP_ROOT/observed.json"
+    rc=0
+    "$WS" --state-dir "$STATE" handoff-resume KEN-7 --observed "$TMP_ROOT/observed.json" >"$TMP_ROOT/resume.out" 2>"$TMP_ROOT/resume.err" || rc=$?
+    result="$(jq -r '.handoff.resumed_at | type' "$STATE/workflow-state-KEN-7.json")"
+    assert_eq "rc=$rc stamp=$result" "$want" "guarded resume: $name" "$TMP_ROOT/resume.err"
+  done <<'ROWS'
+later-own-work|own|2026-09-18T08:06:00Z|2026-09-18T08:06:01Z|no|rc=0 stamp=number
+renewed-record|own|2026-09-18T08:06:00Z|2026-09-18T08:06:01Z|yes|rc=1 stamp=null
+other-session|other|2026-09-18T08:06:00Z|2026-09-18T08:06:01Z|no|rc=1 stamp=null
+final-handoff-turn|own|2026-09-18T08:04:00Z|2026-09-18T08:06:01Z|no|rc=1 stamp=null
+unknown-time|own||2026-09-18T08:06:01Z|no|rc=1 stamp=null
+ROWS
+}
+guarded_resume_rows
+if [[ "${KEN4507_FOCUSED:-}" != 1 || "${KEN4507_CONTROL:-}" == 1 ]]; then
+  GUARD_CTL="$(mutant_scripts guard-ctl workflow-state)/workflow-state" || exit 1
+  mutate_file "$GUARD_CTL" '.handoff == $o.handoff' '(.handoff == $o.handoff or true)'
+  old_ws=$WS
+  WS=$GUARD_CTL
+  before=$FAIL
+  guarded_resume_rows > "$TMP_ROOT/guard-control.log" 2>&1
+  WS=$old_ws
+  rejected=$((FAIL - before))
+  FAIL=$before
+  assert_eq "$rejected" 1 'control: dropping the exact-handoff guard consumes a renewed handoff'
+fi
+if [[ "${KEN4507_FOCUSED:-}" == 1 ]]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+
 echo "=== workflow-state handoff-standing ==="
 
 assert_eq "$(standing KEN-1)" "rc=0 out=$VERDICT=none file=$STATE/workflow-state-KEN-1.json" \

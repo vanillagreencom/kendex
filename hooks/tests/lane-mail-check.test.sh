@@ -14,6 +14,50 @@ case "$(uname -s)" in MINGW*|MSYS*) export MSYS=winsymlinks:nativestrict ;; esac
 # shellcheck source=lib/lane-mail-world.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
 
+
+# Incident-shaped continuation, not a replay of the unread historical hook stdin.
+oversee_resumed_work() {
+  local name prompt response session renewal expected
+  while IFS='|' read -r name prompt response session renewal expected; do
+    overseer_transcript
+    new_overseer "overseer_resumed_$name"
+    judge_says "$CONTEXT_MARK_LINE"
+    record_overseer_handoff
+    if [ "$renewal" = yes ]; then
+      (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee handoff \
+        '{"written_at":"2026-09-20T06:22:00Z","session_id":"s1"}' >/dev/null)
+    fi
+    jq -nc --arg at "$prompt" --arg session "$session" \
+      '{type:"user",sessionId:$session,timestamp:$at,message:{role:"user",content:"continue"}}' > "$TRANSCRIPT"
+    jq -nc --arg at "$response" --arg session "$session" \
+      '{type:"assistant",sessionId:$session,timestamp:$at,message:{role:"assistant",model:"claude-opus-5-5",usage:{input_tokens:2,cache_creation_input_tokens:644,cache_read_input_tokens:976017,output_tokens:162}}}' >> "$TRANSCRIPT"
+    # shellcheck disable=SC2046
+    stop_at "$TRANSCRIPT" false $(overseer_env)
+    assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "$expected" \
+      "native handoff continuation: $name" "$ERR_FILE"
+  done <<'ROWS'
+continued|2026-09-20T06:21:00Z|2026-09-20T06:21:01Z|s1|no|RC=2 first=lane-mail-check: context=612000 judged=1
+final-turn|2026-09-20T06:19:00Z|2026-09-20T06:21:01Z|s1|no|RC=0 first=- judged=0
+unknown-time||2026-09-20T06:21:01Z|s1|no|RC=0 first=- judged=0
+other-session|2026-09-20T06:21:00Z|2026-09-20T06:21:01Z|other|no|RC=0 first=- judged=0
+renewed|2026-09-20T06:21:00Z|2026-09-20T06:21:01Z|s1|yes|RC=0 first=- judged=0
+ROWS
+}
+oversee_resumed_work
+if [ -z "${HOOK_UNDER_TEST:-}" ] && { [ "${KEN4507_FOCUSED:-}" != 1 ] || [ "${KEN4507_CONTROL:-}" = 1 ]; }; then
+  wake_mutant resumed-carrier '    HANDOFF_STATE=none' '    : # HANDOFF_STATE=none'
+  resume_control_rc=0
+  env -i "HOME=$HOME" "PATH=$PATH" LANE_MAIL_WORLD=started KEN4507_FOCUSED=1 \
+    "HOOK_UNDER_TEST=$MUTANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check.test.sh" --native-context-row \
+    > "$TMP_ROOT/resumed-carrier-control.log" 2>&1 || resume_control_rc=$?
+  assert_eq "$resume_control_rc" 1 'control: dropping the resumed handoff result suppresses the context judge'
+fi
+if [ "${KEN4507_FOCUSED:-}" = 1 ] || [ "${1:-}" = --native-context-row ]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+
 echo "=== lane-mail-check ==="
 
 new_lane plain ken-1

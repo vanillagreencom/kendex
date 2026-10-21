@@ -133,3 +133,32 @@ lane_adapter_claude_transcript_owned() { # PATH SESSION HOME
     *) LANE_ADAPTER_OWNED_REASON=home-mismatch; return 1 ;;
   esac
 }
+
+
+# Native observations keep successful usage apart from Claude's zero-usage
+# synthetic errors. Only an own top-level assistant envelope exposes error
+# text; user/tool content is never inspected for a failure phrase.
+lane_adapter_claude_observation() { # SESSION — transcript on stdin
+  jq -Rnc --arg session "$1" '
+    def own:
+      .isSidechain != true and (.sessionId // .session_id // "") == $session
+      and (.session_id == null or .session_id == $session)
+      and (.sessionId == null or .sessionId == $session);
+    reduce (inputs | fromjson? | objects | select(own)) as $row
+      ({prompt:null, observation:null};
+       if $row.type == "user" and $row.message.role == "user"
+          and (($row.message.content | type) == "string"
+            or (($row.message.content | type) == "array"
+              and any($row.message.content[]; .type != "tool_result")))
+       then .prompt = $row.timestamp
+       elif $row.type == "assistant" and $row.message.role == "assistant" then
+         .observation = ({session_id:$session,at:$row.timestamp,started_at:.prompt}
+           + if $row.message.model == "<synthetic>" and $row.isApiErrorMessage == true then
+               {kind:"error",error:$row.error,
+                message:([$row.message.content[]? | select(.type == "text") | .text | strings] | join("\n"))}
+             elif ($row.message.model | type) == "string" and $row.message.model != "<synthetic>"
+                  and $row.isApiErrorMessage != true and ($row.message.usage | type) == "object"
+             then {kind:"success"} else {kind:"unknown"} end)
+       else . end)
+    | .observation // empty'
+}
