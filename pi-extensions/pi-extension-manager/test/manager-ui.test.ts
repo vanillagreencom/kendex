@@ -7,7 +7,11 @@ import { mutantManager, processAlive, settleWithin, startedPid, waitFor, writeCo
 
 // Neutral terminal primitives; the production components own rendering.
 mock.module("@earendil-works/pi-tui", () => ({
-	matchesKey: (input: string, key: string) => input === key,
+	matchesKey: (input: string, key: string) => {
+		if (key === "escape") return input === "escape" || input === "\u001b" || input === "\u001b[27u";
+		if (key === "ctrl+c") return input === "ctrl+c" || input === "\u0003";
+		return input === key;
+	},
 	truncateToWidth: (text: string) => text,
 	visibleWidth: (text: string) => text.length,
 	wrapTextWithAnsi: (text: string) => [text],
@@ -16,6 +20,7 @@ mock.module("@earendil-works/pi-tui", () => ({
 type ManagerUiModule = typeof import("../extensions/manager/manager-ui.ts");
 type InventoryModule = typeof import("../extensions/manager/inventory.ts");
 interface Component { handleInput(data: string): void; render(width: number): string[] }
+interface SettingsAction { type: string }
 
 const rootTmp = join(import.meta.dir, "..", "tmp", "manager-ui-test");
 const agent = join(rootTmp, "home", ".pi", "agent");
@@ -115,6 +120,68 @@ async function cancelHungUninstall(ui: ManagerUiModule, inventory: InventoryModu
 }
 
 const pi = {} as never;
+
+async function openSettingsComponent(): Promise<{
+	component: Component;
+	actions: SettingsAction[];
+	opened: Promise<void>;
+}> {
+	const { selectHost } = await import("../extensions/manager/host.ts");
+	const { openQuickSettings } = await import("../extensions/manager/quick-settings-ui.ts");
+	await selectHost({ getAgentDir: () => agent, SettingsManager: class {} }, async () => { throw new Error("not OMP"); });
+	writeJson(join(agent, "settings.json"), { packages: ["npm:@example/alpha", "npm:@example/beta"] });
+	for (const [name, key] of [["alpha", "alphaSetting"], ["beta", "betaSetting"]]) {
+		writeJson(join(agent, "npm", "node_modules", "@example", name, "package.json"), {
+			name: `@example/${name}`,
+			version: "1.0.0",
+			kendex: { extensionManager: { displayName: name.toUpperCase(), settings: [{ key, label: key, type: "string", default: "value" }] } },
+		});
+	}
+	clearPackageConfigCache();
+	const actions: SettingsAction[] = [];
+	let resolveComponent!: (component: Component) => void;
+	const created = new Promise<Component>((resolve) => { resolveComponent = resolve; });
+	const opened = openQuickSettings(pi, { cwd: project, isProjectTrusted: () => true, ui: {
+		custom: async (factory: (tui: { terminal: { rows: number }; requestRender(): void }, theme: typeof theme, keybindings: object, done: (action: SettingsAction) => void) => Component) => {
+			return new Promise<SettingsAction>((resolve) => {
+				const component = factory(
+					{ terminal: { rows: 40 }, requestRender() {} },
+					theme,
+					{},
+					(action) => { actions.push(action); resolve(action); },
+				);
+				resolveComponent(component);
+			});
+		},
+		notify: () => {},
+	} } as never);
+	return { component: await created, actions, opened };
+}
+
+test("quick settings decodes plain and Kitty Escape in browsing and inline editing; navigation and Ctrl+C remain available", async () => {
+	for (const escape of ["\u001b", "\u001b[27u"]) {
+		const browsing = await openSettingsComponent();
+		browsing.component.handleInput(escape);
+		expect(browsing.actions).toEqual([{ type: "close" }]);
+		await browsing.opened;
+
+		const editing = await openSettingsComponent();
+		editing.component.handleInput("enter");
+		expect(editing.component.render(80).join("\n")).toContain("Editing inline value");
+		editing.component.handleInput(escape);
+		expect(editing.actions).toEqual([]);
+		expect(editing.component.render(80).join("\n")).not.toContain("Editing inline value");
+	}
+
+	const navigation = await openSettingsComponent();
+	navigation.component.handleInput("tab");
+	const rendered = navigation.component.render(80).join("\n");
+	expect(rendered).toContain("alphaSetting");
+	expect(rendered).not.toContain("betaSetting");
+	navigation.component.handleInput("\u0003");
+	expect(navigation.actions).toEqual([{ type: "close" }]);
+	await navigation.opened;
+});
 
 test("escape or session end cancels a running uninstall; controls: an ignored escape, an action blind to the session, or one shutdown does not wait for", async () => {
 	const { selectHost } = await import("../extensions/manager/host.ts");

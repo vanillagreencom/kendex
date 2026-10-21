@@ -4,6 +4,7 @@
 
 ### Unreleased
 
+- Escape exits inline editing and closes quick settings when terminals encode it as a Kitty key event.
 - Uninstalling a package installed through kendex runs `kendex remove <name> --kind pi-extension`, so a skill, hook or other item with the same name in that scope is no longer removed with it.
 
 ### 3.0.5

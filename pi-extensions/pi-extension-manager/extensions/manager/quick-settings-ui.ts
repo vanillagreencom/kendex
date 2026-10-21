@@ -239,7 +239,7 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 
 	function handleInput(data: string): void {
 		if (ui.editing) {
-			if (data === "\u001b" || matchesKey(data, "ctrl+c")) {
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 				ui.editing = undefined;
 				requestRender();
 				return;
@@ -250,7 +250,7 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 			}
 			return;
 		}
-		if (data === "\u001b" || matchesKey(data, "ctrl+c")) return done({ type: "close" });
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return done({ type: "close" });
 		if (matchesKey(data, "tab")) {
 			switchTab(1);
 			return;
