@@ -92,6 +92,7 @@ export function applyTaskPanelContentVisibility(
 ): void {
 	if (options.remainingTasks === 0 && options.hasTasks) {
 		autoHideTaskPanel(state);
+		state.autoShownThisSession = false;
 		return;
 	}
 	if (options.remainingTasks > 0) autoShowTaskPanelOnce(state, options);
