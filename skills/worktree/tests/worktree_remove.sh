@@ -436,7 +436,7 @@ remove_err() {
     unmerged) unmerged_block ;;
     locked) locked_block ;;
     refused) refused_block ;;
-    unread) printf '%s' 'worktree-remove-failed: <wt>;worktree-remove-recovery: repository=<main> path=<wt> branch=topic registration=unread directory=remaining recovery=manual' ;;
+    unread) printf '%s' 'worktree-remove-failed: <wt>;worktree-remove-registration-unread: operation=worktree-list status=1 cause=simulated registration read failure;worktree-remove-recovery: repository=<main> path=<wt> branch=topic registration=unread directory=remaining recovery=manual' ;;
     held-map) map_block ;;
     unidentified) printf '%s' 'worktree-remove-unidentified: <alias>;worktree-remove-recovery: repository=<main> path=<alias> branch=unknown registration=unresolved recovery=manual' ;;
     partial) printf '%s' 'worktree-lease-released: path=<wt> owner=TOPIC;worktree-remove-failed: <wt>;worktree-remove-recovery: repository=<main> path=<wt> branch=topic registration=missing directory=remaining recovery=manual' ;;

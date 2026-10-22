@@ -3627,13 +3627,26 @@ case "${1:-}" in
         worktree_message remove-failed "$WT_PATH" "Error: Git could not remove the worktree; preserving it for manual recovery: $WT_PATH" >&2
         [[ -n "$GIT_REMOVE_OUTPUT" ]] && printf '%s\n' "$GIT_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
         REMOVE_REGISTRATION_STATE=unread
-        if REMOVE_REGISTRATION_LIST="$(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)"; then
-          if [[ -d "$REMOVE_GIT_DIR" ]]; then
-            REMOVE_REGISTRATION_STATE=present
-          elif [[ ! -e "$REMOVE_GIT_DIR" && ! -L "$REMOVE_GIT_DIR" ]] &&
-               ! grep -qxF -- "worktree ${WT_REAL:-$WT_PATH}" <<<"$REMOVE_REGISTRATION_LIST"; then
-            REMOVE_REGISTRATION_STATE=missing
-          fi
+        REMOVE_REGISTRATION_STATUS=0
+        # The list and Git's failure cause are captured apart: folded together,
+        # a warning line would join the registration list being matched.
+        if REMOVE_REGISTRATION_ERR="$(mktemp "${TMPDIR:-/tmp}/worktree-remove-list.XXXXXX" 2>&1)"; then
+          REMOVE_REGISTRATION_LIST="$(git -C "$PROJECT_ROOT" worktree list --porcelain 2>"$REMOVE_REGISTRATION_ERR")" || REMOVE_REGISTRATION_STATUS=$?
+          REMOVE_REGISTRATION_CAUSE="$(cat -- "$REMOVE_REGISTRATION_ERR")"
+          rm -f -- "$REMOVE_REGISTRATION_ERR"
+          REMOVE_REGISTRATION_OPERATION=worktree-list
+        else
+          REMOVE_REGISTRATION_STATUS=$?
+          REMOVE_REGISTRATION_CAUSE="$REMOVE_REGISTRATION_ERR"
+          REMOVE_REGISTRATION_OPERATION=scratch-file
+        fi
+        if [[ "$REMOVE_REGISTRATION_STATUS" != 0 ]]; then
+          worktree_message remove-registration-unread "operation=$REMOVE_REGISTRATION_OPERATION status=$REMOVE_REGISTRATION_STATUS cause=$REMOVE_REGISTRATION_CAUSE" >&2
+        elif [[ -d "$REMOVE_GIT_DIR" ]]; then
+          REMOVE_REGISTRATION_STATE=present
+        elif [[ ! -e "$REMOVE_GIT_DIR" && ! -L "$REMOVE_GIT_DIR" ]] &&
+             ! grep -qxF -- "worktree ${WT_REAL:-$WT_PATH}" <<<"$REMOVE_REGISTRATION_LIST"; then
+          REMOVE_REGISTRATION_STATE=missing
         fi
         REMOVE_DIRECTORY_STATE=absent
         if [[ -L "$WT_PATH" ]]; then
