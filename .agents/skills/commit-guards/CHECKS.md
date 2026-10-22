@@ -232,16 +232,18 @@ Comment text is extracted per family, by extension or, for a path with none, by 
 | Dash | `sql` `lua` | `--` to end of line; SQL `/* */` and Lua `--[[ ]]` across lines | `"…"` `'…'` with escapes |
 | Markup | `html` `htm` `xml` `svg` `vue` `svelte` | `<!-- -->` across lines | none |
 
+In JavaScript and TypeScript code state, a slash preceded on its line only by whitespace, `if`, optional whitespace, `(` and optional whitespace opens a same-line regex body. Escapes skip the next byte; bracket classes keep their slashes inside the body. Quotes, backticks and comment leaders in that body are data. Only an unescaped slash outside a class closes it. A missing same-line closer leaves the file unmeasured with `comment-reader:unclosed-regex line=N`.
+
 The scanner is a character walk, not a parser. Its limits, each pinned by a control in [`tests/comments.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/comments.test.sh):
 
-- A `//` inside a JavaScript regex literal, a `#` glued to a Python or TOML value (`x = 1#c`), and a `--` inside a Lua long string `[[…]]` are read by the rules above, not the language's.
+- Outside the leading `if (` form above, a `//` inside a JavaScript regex literal, a `#` glued to a Python or TOML value (`x = 1#c`), and a `--` inside a Lua long string `[[…]]` are read by the rules above, not the language's.
 - A JavaScript template literal is one string to its closing backtick; a nested template inside `${…}` is not tracked.
 - A Rust nested block comment closes at the first `*/`; a Lua `--[==[` level is not tracked.
 - A `)` ending an unparenthesised `case` pattern inside a double-quoted `$(…)` closes the substitution, so a comment after that pattern is read as string text; a `(a)` pattern is tracked.
 - A shell line opening two heredocs honours the first; a Ruby heredoc, a YAML block scalar (`key: |`) and a Makefile recipe's shell are read as code, so a `#` inside them is a comment.
 - A Vue or Svelte file is judged for `<!-- -->` only; the `//` inside its script block is not read.
 - A C or JavaScript string ends at its line (a trailing backslash continuation is not tracked); a Rust string does not.
-- A file that ends inside a block comment, a heredoc body or a string spanning lines is unmeasured, and the refusal names the reader as the cause, `comment-reader:unclosed-string line=N` for a quote, with the opener's line. The remaining files are scanned before the lane exits 2. A JavaScript regex literal holding an odd number of backticks or quotes leaves the file in that state.
+- A file that ends inside a block comment, a heredoc body or a string spanning lines is unmeasured, and the refusal names the reader as the cause, `comment-reader:unclosed-string line=N` for a quote, with the opener's line. The remaining files are scanned before the lane exits 2. Outside the leading `if (` form above, a JavaScript regex literal holding an odd number of backticks or quotes can leave the file in that state.
 
 ## commit-msg
 

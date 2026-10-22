@@ -44,7 +44,8 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
   esac
   case "$ext" in
     rs) printf 'c-rust' ;;
-    go | js | mjs | cjs | jsx | ts | tsx) printf 'c-tmpl' ;;
+    go) printf 'c-tmpl' ;;
+    js | mjs | cjs | jsx | ts | tsx) printf 'c-js' ;;
     c | h | cc | cpp | hpp | java | kt | kts | swift | wgsl | scss | less) printf 'c' ;;
     css) printf 'cblock' ;;
     sh | bash | zsh) printf 'hash-shell' ;;
@@ -67,7 +68,7 @@ gg_comment_family() { # PATH BLOBFILE — family token on stdout, empty when non
         *sh | *sh[[:space:]]* | *env[[:space:]]*sh*) printf 'hash-shell' ;;
         *python*) printf 'hash-py' ;;
         *ruby*) printf 'hash-rb' ;;
-        *node* | *deno* | *bun*) printf 'c-tmpl' ;;
+        *node* | *deno* | *bun*) printf 'c-js' ;;
       esac
       ;;
   esac
@@ -93,6 +94,8 @@ leaves that string open, or the quoting is a shape the reader does not model:
 CHECKS.md § comments lists both." ;;
     unclosed-block) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
 The block comment opened on line $line never closes." ;;
+    unclosed-regex) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
+The regex body opened on line $line has no closing slash on that line." ;;
     unclosed-heredoc) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
 The heredoc opened on line $line never reaches its terminator line: $word" ;;
     unclosed-substitution) GG_COMMENT_ERROR_DETAIL="comment-reader:$kind line=$line
@@ -117,13 +120,14 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
   [ "$want" != strings ] || want_str=1
   GG_COMMENT_ERROR=""
   GG_COMMENT_ERROR_DETAIL=""
-  local base=c rust=0 tmpl=0 shell=0 esc_single=1 triple=0 str_multi=0
+  local base=c rust=0 tmpl=0 js=0 shell=0 esc_single=1 triple=0 str_multi=0
   case "$fam" in
     c) ;;
     # A Rust string literal spans lines, with or without a trailing
     # backslash; a C or JavaScript one ends at the line.
     c-rust) rust=1 str_multi=1 ;;
     c-tmpl) tmpl=1 ;;
+    c-js) tmpl=1 js=1 ;;
     cblock) base=cblock ;;
     hash-shell) base=hash shell=1 esc_single=0 str_multi=1 ;;
     hash-py) base=hash triple=1 ;;
@@ -135,7 +139,7 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
   esac
   # The apostrophe arrives as a variable: the program is a single-quoted
   # literal, and not every awk reads a hex escape.
-  LC_ALL=C awk -v fam="$base" -v rust="$rust" -v tmpl="$tmpl" -v shell="$shell" \
+  LC_ALL=C awk -v fam="$base" -v rust="$rust" -v tmpl="$tmpl" -v js="$js" -v shell="$shell" \
     -v esc_single="$esc_single" -v triple="$triple" -v str_multi="$str_multi" \
     -v want_str="$want_str" -v sq="'" '
   function word(ch) { return ch ~ /[A-Za-z0-9_]/ }
@@ -157,6 +161,7 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
   }
   {
     line = $0; n = length(line); i = 1
+    if (st == "regex") next
     if (NR == 1 && fam == "hash" && substr(line, 1, 2) == "#!") next
     if (st == "heredoc") {
       probe = line
@@ -214,6 +219,20 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
         if (fam == "c") sub(/^[\/!]/, "", t)
         print NR "\t" t
         i = n + 1; break
+      }
+      # Only the leading if condition opener distinguishes this regex from
+      # division without tracking the surrounding expression grammar.
+      if (js && c == "/" && substr(line, 1, i - 1) ~ /^[[:space:]]*if[[:space:]]*\([[:space:]]*$/) {
+        in_class = 0
+        for (j = i + 1; j <= n; j++) {
+          rc = substr(line, j, 1)
+          if (rc == "\\") { j++; continue }
+          if (rc == "[") in_class = 1
+          else if (rc == "]") in_class = 0
+          else if (rc == "/" && !in_class) break
+        }
+        if (j > n) { st = "regex"; opened = NR; i = n + 1; break }
+        i = j + 1; continue
       }
       if (shell && subn > 0 && c == "(") { subdepth[subn]++; i++; continue }
       # Outside a string a shell backslash quotes the next character, so an
@@ -306,6 +325,7 @@ gg_comment_text() { # FAMILY FILE PATH [WANT] — records on stdout
     if (st == "bad") exit 3
     if (st == "code" && subn == 0) exit 0
     if (st == "block") what = "unclosed-block"
+    else if (st == "regex") what = "unclosed-regex"
     else if (st == "heredoc") what = "unclosed-heredoc"
     else if (st == "code" && subn > 0) { what = "unclosed-substitution"; opened = substart[subn] }
     else what = "unclosed-string"

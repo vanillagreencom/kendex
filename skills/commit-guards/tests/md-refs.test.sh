@@ -409,6 +409,11 @@ fx_toml_ok() { world_src toml-ok; put kendex.toml 'note = "AGENTS.md \302\247 Ru
 fx_toml_dead() { world_src toml-dead; put kendex.toml 'note = "AGENTS.md \302\247 Gone"\n'; }
 fx_rs_string() { world_src rs-string; put src/lib.rs 'fn f() -> &'"'"'static str { "AGENTS.md \302\247 Gone" }\n'; }
 fx_rs_comment() { world_src rs-comment; put src/lib.rs '// AGENTS.md \302\247 Gone\nfn f() {}\n'; }
+fx_js_regex() { # NAME HEADING
+  world_src "$1"
+  put src/reader.ts "  if (/^[\`\`\`\"'//*]/.test(s)) {}\n// \`value\` doesn't change the rule.\n// AGENTS.md \302\247 $2\n"
+}
+fx_js_regex_open() { world_src "$1"; put src/reader.ts 'if (/[x/\n// AGENTS.md \302\247 Rules\n'; }
 fx_dec_ok() { world_src_dec dec-ok; put scripts/smoke.sh "$SH"'# What this covers is D008 \302\247 Scope.\ntrue\n'; }
 fx_dec_dead() { world_src_dec dec-dead; put scripts/smoke.sh "$SH"'# What this covers is D008 \302\247 Reach.\ntrue\n'; }
 # The bare ID sits beside a live citation: a file holding no section sign is
@@ -447,6 +452,10 @@ run_rows \
   "a TOML string citing a heading the target does not have is dead|fx_toml_dead||--all|rc=1 $(dead kendex.toml 1 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1)" \
   "a string literal outside a manifest is not judged|fx_rs_string||--all|rc=0 $(clean 0 2 1)" \
   "control: the same citation in that file's comment is judged|fx_rs_comment||--all|rc=1 $(dead src/lib.rs 1 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1)" \
+  "a citation after a leading if regex and backtick apostrophe prose is counted and resolves|fx_js_regex js-regex-ok Rules||--all|rc=0 $(clean 1 2 1)" \
+  "the missing-heading twin after that regex is a citation violation|fx_js_regex js-regex-dead Gone||--all|rc=1 $(dead src/reader.ts 3 "$(noprefix 'AGENTS.md § Gone' AGENTS.md Gone)");$(failed 1 1 2 1)" \
+  "an incomplete leading if regex leaves citations unjudged in advisory mode|fx_js_regex_open js-regex-open||--all|rc=0 md-refs: extraction=src/reader.ts:unclosed-regex:1;$(clean 0 2 0 "$DEC_NO" "$(unmeasured 1 extraction=1)")" \
+  "strict mode refuses the same incomplete regex|fx_js_regex_open js-regex-open-strict||--all --strict|rc=2 md-refs: extraction=src/reader.ts:unclosed-regex:1;md-refs: incomplete=files=1 skipped=$(unmeasured 1 extraction=1)" \
   "a decision citation in comment text checks the heading|fx_dec_ok||--all|rc=0 $(clean 1 2 1 "$DEC_YES")" \
   "a decision citing a heading it does not have is dead|fx_dec_dead||--all|rc=1 $(dead scripts/smoke.sh 2 "$(noprefix 'D008 § Reach.' docs/decisions/D008-scope.md 'Reach.')");$(failed 1 1 2 1 "$DEC_YES")" \
   "a bare decision ID in a comment is prose, not a citation, beside the § one it is|fx_dec_bare||--all|rc=0 $(clean 1 2 1 "$DEC_YES")" \
@@ -477,6 +486,12 @@ run_rows \
   "the document extra adds to the default list|fx_extra_docs extra-docs|COMMIT_GUARDS_MD_REFS_PATHS_EXTRA=docs/*.md|--all|rc=1 $(dead docs/guide.md 1 "$(untracked '](nope.md)' docs/nope.md)");$(failed 1 1 3)" \
   "control: without it the default list does not read that document|fx_extra_docs extra-docs-unset||--all|rc=0 $(clean 0 2)" \
   "an extra is checked as the list is|fx_comment_ok extra-absolute|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=/etc/x|--all|rc=2 ${ERR}path-absolute=md-refs:/etc/x"
+fx_js_regex js-regex-control Rules
+gg_mutant MUTANT_READER lib/comment-text.sh '      if (js && c == "/"' '      if (0 && js && c == "/"'
+MDR="${MUTANT_READER%/lib/comment-text.sh}/md-refs"
+assert_eq "control: former regex handling leaves the resolving citation unjudged" \
+  "rc=0 md-refs: extraction=src/reader.ts:unclosed-string:2;$(clean 0 2 0 "$DEC_NO" "$(unmeasured 1 extraction=1)")" "$(run "" --all)"
+MDR="$SKILL_DIR/scripts/md-refs"
 # The notice's explanation opens with the reader's cause at the opener's
 # line and says no citation in the file was judged, so the citation is not
 # what an author edits.

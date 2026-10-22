@@ -197,7 +197,19 @@ run_files \
   "a template literal spanning lines is one string|a.ts|const t = \`line one\n  // $W\n  line three\`;\n|||rc=0 $(ok_idx 1)" \
   "control: the comment after a template literal is judged|a.ts|const t = \`x\`;\n// $W\n|||rc=1 $(hit "$ID" a.ts 2 " $W");$(idx 1 1)" \
   "a single-quoted string holding a leader is a string|a.ts|const s = '// $W';\n|||rc=0 $(ok_idx 1)" \
-  "control: a JavaScript trailing comment is judged|a.ts|const s = \"a\"; // $W\n|||rc=1 $(hit "$ID" a.ts 1 " $W");$(idx 1 1)"
+  "control: a JavaScript trailing comment is judged|a.ts|const s = \"a\"; // $W\n|||rc=1 $(hit "$ID" a.ts 1 " $W");$(idx 1 1)" \
+  "a leading if regex keeps backticks and quotes out of later comment state|a.js|  if (/^[\`\`\`\"']/.test(s)) {}\n// \`value\` doesn't change $W\n|||rc=1 $(hit "$ID" a.js 2 " \`value\` doesn't change $W");$(idx 1 1)" \
+  "class slashes and comment leaders stay regex data until the real closer|a.ts|if(/[\"'\`//*]/.test(s)) {} // $W\n|||rc=1 $(hit "$ID" a.ts 1 " $W");$(idx 1 1)" \
+  "escaped slash and closing bracket cannot end the regex or its class|a.ts|if (/\\\\/\\\\\`[\\\\]/\"']/.test(s)) {} // $W\n|||rc=1 $(hit "$ID" a.ts 1 " $W");$(idx 1 1)" \
+  "a regex closes before a genuine string and its following comment|a.js|if (/x/.test(s)) { const t = \`// $W\`; const q = '// $W'; } // $W\n|||rc=1 $(hit "$ID" a.js 1 " $W");$(idx 1 1)" \
+  "division in an if condition keeps the trailing comment|a.ts|if (total / count > 1) {} // $W\n|||rc=1 $(hit "$ID" a.ts 1 " $W");$(idx 1 1)" \
+  "pure line-comment apostrophes and backticks never open strings|a.js|// \`value\` doesn't change $W\n|||rc=1 $(hit "$ID" a.js 1 " \`value\` doesn't change $W");$(idx 1 1)" \
+  "Go raw strings and division keep their existing boundaries|a.go|var s = \`if (/\n// $W\n\`\nif (total / count > 1) {} // $W\n|||rc=1 $(hit "$ID" a.go 4 " $W");$(idx 1 1)" \
+  "an identifier ending in if does not admit a regex|a.js|diff(/\`/);\n// $W\n|||rc=2 $(extraction a.js unclosed-string:1);$(incomplete 1 0 0)$(unread 1)" \
+  "a method named if does not admit a regex|a.js|obj.if(/\`/);\n// $W\n|||rc=2 $(extraction a.js unclosed-string:1);$(incomplete 1 0 0)$(unread 1)" \
+  "a regex with no same-line closer stays unjudged even if a later slash exists|a.ts|if (/x\n/); // $W\n|||rc=2 $(extraction a.ts unclosed-regex:1);$(incomplete 1 0 0)$(unread 1)" \
+  "an escaped final slash is not a regex closer|a.ts|if (/x\\\\/\n// $W\n|||rc=2 $(extraction a.ts unclosed-regex:1);$(incomplete 1 0 0)$(unread 1)" \
+  "a slash inside an unclosed class is not a regex closer|a.ts|if (/[x/\n// $W\n|||rc=2 $(extraction a.ts unclosed-regex:1);$(incomplete 1 0 0)$(unread 1)"
 
 SECTION=hash
 echo "=== hash family: word-start hashes, strings, shebang, heredocs ==="
