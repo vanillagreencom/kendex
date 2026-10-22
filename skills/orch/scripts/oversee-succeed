@@ -393,7 +393,11 @@
 #                    does (step 2). `mark-reached` carries
 #                    `kind` (context, headroom, rate or qualifying), the `value` it read, the
 #                    `mark` it crossed and `succession`, the effective
-#                    ORCH_OVERSEER_SUCCESSION. A reading that could not be
+#                    ORCH_OVERSEER_SUCCESSION, and where a context judgement
+#                    ran, `context_decision`, the shared judge's decision JSON
+#                    (lib/lane-context.sh § lane_context_handoff_decision),
+#                    which the turn-end hook writes into the overseer's
+#                    handoff record. A reading that could not be
 #                    taken at all is `mark-unmeasured kind=<context|headroom|rate|qualifying>
 #                    reason=<...>`,
 #                    which is not a mark that lifted: a caller holding a
@@ -1012,18 +1016,18 @@ if (( JUDGES )); then
   CONTEXT_PCT="$(lane_context_handoff_pct "$requested_pct")" \
     || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$requested_pct"
 fi
+context_fields=()
 if (( JUDGES )) && [[ "$CONTEXT_STATE" == unmeasured ]]; then
   due_rc=0
-  lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT" >"$DEP_ERR" || due_rc=$?
-  due="$(cat -- "$DEP_ERR")"
+  due="$(lane_context_handoff_due "$tokens" "$window" "$CONTEXT_PCT")" || due_rc=$?
   case "$due_rc" in
     0) CONTEXT_STATE="$due" ;;
     1) CONTEXT_STATE=unmeasured ;;
     *) die invalid-context-mark "ORCH_HANDOFF_CONTEXT_PCT=$CONTEXT_PCT" ;;
   esac
+  # The judged reading, which the turn-end hook writes into the handoff record.
+  context_fields=("context_decision=$(lane_context_handoff_decision "$tokens" "$window" "$CONTEXT_PCT")")
 fi
-context_fields=()
-[[ "${LANE_CONTEXT_DECISION:-null}" == null ]] || context_fields+=("context_decision=$LANE_CONTEXT_DECISION")
 if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then
   message mark-reached kind=context "value=$tokens" "mark=$CONTEXT_PCT" \
     "succession=$SUCCESSION" headroom=unreadable "window=$window" ${context_fields[@]+"${context_fields[@]}"}

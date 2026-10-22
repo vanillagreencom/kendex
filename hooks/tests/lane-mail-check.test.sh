@@ -344,7 +344,7 @@ assert_eq "$(grep -cF -- " set KEN-50 handoff " "$ERR_FILE")" "1" \
 assert_eq "$(template_fields)" "$HANDOFF_FIELDS,context" \
   "the record template it names carries every field a relaunch reads"
 assert_eq "$(template_record | jq -cS .)" \
-  "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:null,traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:50,cap_mark:400000,window_mark:500000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
+  "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:"[PR_NUMBER_OR_NULL]",traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:50,cap_mark:400000,window_mark:500000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
   "the parsed record preserves recovery fields and the actual plain decision and source"
 assert_eq "$(template_omits_written_at && echo yes || echo no)" "yes" \
   "and asks the lane for no written_at, which the set stamps"
@@ -2953,7 +2953,7 @@ assert_eq "$([ "$RC" -eq 2 ] && echo refused || echo passed)" "passed" \
   "control: without its exit the halt hook with no judge beside it does not refuse"
 
 # Each handoff mark's refusal replaced by a pass, its judgement still made.
-mutant no-context-mark -e 's@^    0) \[ "\$DUE" != due \] || refuse_handoff context "\$TOKENS" ;;$@    0) : ;;@'
+mutant no-context-mark -e 's@^    0) \[ "\$DUE" != due \] || refuse_judged_handoff .* context "\$TOKENS" ;;$@    0) : ;;@'
 new_handoff_lane control_context KEN-56
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
@@ -3096,9 +3096,9 @@ expect 0 "$GAP" \
 
 # The record's time put back in the template: the lane is asked for it again,
 # and the row above that says it is not goes red.
-assert_eq "$(grep -cF -- '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",' "$HOOK")" "1" \
+assert_eq "$(grep -cF -- '{"merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]",' "$HOOK")" "1" \
   "control: written_at mutation names one live record constructor"
-mutant asks-written-at -e 's@{merged:\["\[PR\]"\],remaining:@{written_at:"[NOW]",merged:["[PR]"],remaining:@'
+mutant asks-written-at -e 's@{"merged":@{"written_at":"[NOW]","merged":@'
 new_handoff_lane control_written_at KEN-94
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000

@@ -2106,11 +2106,19 @@ done <<'ROWS'
 ROWS
 # Control: main's unconditional reserve hands over at 260000.
 RESERVECTL="$(mutant_scripts agent-reserve-always oversee-succeed)" || exit 1
-mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT" >"$DEP_ERR" || due_rc' '"$CONTEXT_PCT" 150000 >"$DEP_ERR" || due_rc'
+mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT")" || due_rc' '"$CONTEXT_PCT" 150000)" || due_rc'
 new_caller "$UNDER_MARK"
 AGENT_RESERVE=default CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 260000:1000000
 assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" '0|mark-reached' \
   'control: an unconditional reserve hands over at 260000 of 1000000'
+# A room judgement leaves nothing a later refusal prints as its dependency's
+# own words.
+new_caller "$UNDER_MARK"
+fixture_watch_neighbor "$SUCCEED"
+RC=0
+OUT="$(TMUX='' TMUX_PANE='' CONTEXT_PCT=90 "$TMP_ROOT/succeed-env" roomtmux '' --check-marks --context 1000:1000000 2>&1)" || RC=$?
+assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")|$(grep -cx room <<<"$OUT" || true)" '1|tmux-missing|0' \
+  'a refusal after a room judgement prints no verdict'
 
 # A stored due reading never supplies context to either judging mode.
 while IFS='|' read -r check expected; do

@@ -609,11 +609,14 @@ if section pre-panel; then
   # review-pr consumes this command's room/due stdout. Start with no recorded
   # context, as lane-marker does for a new session, then refresh mid-turn from
   # the native transcript. Copilot has no status-line file in this home.
+  panel_run() { # LIB_ARGUMENT...
+    env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
+      DISABLE_AUTO_COMPACT=1 ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
+      "$BASH" "$LIB" "$@" 2>"$T/panel.err"
+  }
   panel_read() { # HARNESS TRANSCRIPT [OPERATION]
     local out rc=0
-    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
-      DISABLE_AUTO_COMPACT=1 ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
-      "$BASH" "$LIB" --reading ${3:+"$3"} "$1" s1 "$2" "$PANEL_BOX" "$T" 2>"$T/panel.err") || rc=$?
+    out=$(panel_run --reading ${3:+"$3"} "$1" s1 "$2" "$PANEL_BOX" "$T") || rc=$?
     printf '%s\n' "$out" > "$T/panel-reading.json"
     if [ "$rc" -eq 0 ]; then out=$(jq -r '.verdict' "$T/panel-reading.json"); fi
     printf 'rc=%s verdict=%s' "$rc" "$out"
@@ -629,12 +632,23 @@ if section pre-panel; then
       "[$tokens,400000,90,250000,750000,true,150000,\"claude\",\"s1\"]" \
       "attached launch decision fields at $tokens"
   done
+  # A lane holding the earlier review-pr text sends the unflagged five- or
+  # six-argument form before its attached panel, which keeps the reserve.
+  claude_line claude-opus-5-5 300000 > "$T/panel-transcript"
+  for form in five six; do
+    legacy=(claude s1 "$T/panel-transcript" "$PANEL_BOX" "$T")
+    [ "$form" = five ] || legacy+=("")
+    rc=0
+    out=$(panel_run "${legacy[@]}") || rc=$?
+    assert_eq "rc=$rc verdict=$out" "rc=0 verdict=due" \
+      "unflagged $form-argument pre-panel 300000 of 1000000: due" "$T/panel.err"
+  done
   # The same native command guards panels, dev-fix and diagnosis launches;
-  # checkpoints without an impending attached launch keep the plain mark.
+  # an ordinary checkpoint asks for the plain mark.
   for row in '274811|room' '276194|room' '399999|room' '400000|due'; do
     IFS='|' read -r tokens want <<<"$row"
     claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
-    assert_eq "$(panel_read claude "$T/panel-transcript")" "rc=0 verdict=$want" \
+    assert_eq "$(panel_read claude "$T/panel-transcript" --checkpoint)" "rc=0 verdict=$want" \
       "ordinary checkpoint $tokens: $want" "$T/panel.err"
     assert_eq "$(jq -c '[.decision.tokens,.decision.cap_mark,.decision.reserve_applied,.decision.reserve_tokens]' "$T/panel-reading.json")" \
       "[$tokens,400000,false,0]" "ordinary checkpoint decision fields at $tokens"
@@ -808,19 +822,21 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'dry launch claude-lyra-9-9 notice count'
   control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
     'claude configuration 0 gives point unresolved'
-  control strict-mark lane-context.sh '-gt $(($2 * pct))' '-ge $(($2 * pct))' \
+  control strict-mark lane-context.sh 'elif [ "$1" -gt "$window_mark" ]; then' 'elif [ "$1" -ge "$window_mark" ]; then' \
     '232560 of 258400 at 90: rc=0 room'
-  control agent-reserve lane-context.sh 'if [ "$#" -ge 4 ]; then' 'if false; then' \
+  control agent-reserve lane-context.sh '    cap_mark=$((400000 - $4))' '    cap_mark=400000' \
     'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
-  control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false' \
+  control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false SOURCE=' \
     'pre-panel fresh transcript 250001: due'
-  control launch-only-reserve lane-context.sh '    if [ "$CLI_ATTACHED_LAUNCH" = true ]; then' '    if [ "$CLI_ATTACHED_LAUNCH" = true ] || [ "$CLI_ATTACHED_LAUNCH" = false ]; then' \
+  control launch-only-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if true; then' \
     'ordinary checkpoint 274811: room'
-  control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \
+  control unflagged-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if [ "$CLI_OPERATION" = attached-launch ]; then' \
+    'unflagged five-argument pre-panel 300000 of 1000000: due'
+  control absolute-cap lane-context.sh 'if [ "$1" -ge "$cap_mark" ]; then' 'if [ "$1" -gt "$cap_mark" ]; then' \
     '400000 of no window at 90: rc=0 due'
   control mandatory-pct lane-context.sh '[ "$1" -gt 90 ]' '[ "$1" -gt 100 ]' \
     '180001 of 200000 at 100: rc=0 due'
-  control window-read-as-room lane-context.sh "case \"\${2:-}\" in '' | 0) return 1 ;;" "case \"\${2:-}\" in '' | 0) printf 'room\\n'; return 0 ;;" \
+  control window-read-as-room lane-context.sh "case \"\$window_mark\" in '') return 1 ;;" "case \"\$window_mark\" in '') printf 'room\\n'; return 0 ;;" \
     '5 of no window at 90: rc=1'
   control window-full-copilot lane-context.sh '    copilot) return 1 ;;' '    copilot) ;;' \
     'window full: 800000 of 800000 on copilot: rc=1'

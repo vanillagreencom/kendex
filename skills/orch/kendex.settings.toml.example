@@ -312,9 +312,12 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # Earlier context handoff percentage. Shared rule and boundary behavior:
 # references/oversee-events.md, Judgement rules.
 # ORCH_HANDOFF_CONTEXT_PCT = "90"
-# Attached agent result reserve before the earlier context mark, applied to an
-# attached launch only while an attached agent may still be out. Nonnegative
-# whole tokens; equality refuses a launch. Missing context refuses the launch.
+# Attached agent result reserve before the earlier context mark. The native
+# launch refusal holds it while an attached agent this session launched may
+# still be out; the review-pr pre-panel admission (`lane-context.sh
+# --attached-launch`) holds it for the impending launch whatever the roster
+# reads. Nonnegative whole tokens; equality refuses a launch. Missing context
+# refuses the launch.
 # ORCH_HANDOFF_AGENT_RESERVE_TOKENS = "150000"
 
 # The recording policy: the most bytes one fleet log row's text may carry,

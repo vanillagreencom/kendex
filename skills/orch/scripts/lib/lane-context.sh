@@ -363,52 +363,96 @@ lane_context_handoff_pct() { # PCT
 # would read as octal. Every reader of a reading asks here, so a lane, the
 # overseer and the report cannot judge one reading two ways.
 lane_context_handoff_due() { # TOKENS WINDOW PCT [AGENT_RESERVE]
-  local pct reserve budget
-  # The handoff writer consumes this reading only from a direct judge call.
-  # A rejected input leaves no decision for the writer to reconstruct.
-  LANE_CONTEXT_DECISION=null
-  pct=$(lane_context_handoff_pct "${3:-}") || return 2
-  case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-  reserve=${4-0}
-  case "$reserve" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-  LANE_CONTEXT_DECISION=$(jq -nc --argjson tokens "$1" --arg window "${2:-}" \
-    --argjson pct "$pct" --argjson reserve "$reserve" --argjson applied "$([ "$#" -ge 4 ] && printf true || printf false)" '
-    ($window | tonumber? // null) as $w
-    | {tokens:$tokens, window:$w, cap:400000, mark_pct:$pct,
-       cap_mark:([400000 - $reserve, 0] | max),
-       window_mark:(if $w == null or $w == 0 then null else $w * $pct / 100 - $reserve end),
-       reserve_applied:$applied, reserve_tokens:$reserve}') || return 2
+  local pct cap_mark window_mark
+  lane_context_marks "$@" || return 2
+  if [ "$1" -ge "$cap_mark" ]; then printf 'due\n'; return 0; fi
+  case "$window_mark" in '') return 1 ;; invalid) return 2 ;; esac
   # A launch must keep its reserve before either mark. Equality refuses a
   # launch, while the existing handoff percentage remains strictly greater.
   if [ "$#" -ge 4 ]; then
-    reserve=$4
-    case "$reserve" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-    # No arithmetic uses an unbounded setting: any reserve this large leaves
-    # no room below the absolute mark, even if the capacity is unknown.
-    if [ "${#reserve}" -gt 6 ] || [ "$reserve" -ge 400000 ]; then
-      printf 'due\n'
-      return 0
-    fi
-    budget=$((400000 - reserve))
-    if [ "$1" -ge "$budget" ]; then printf 'due\n'; return 0; fi
-    case "${2:-}" in "" | 0) return 1 ;; *[!0-9]* | 0*) LANE_CONTEXT_DECISION=null; return 2 ;; esac
-    if [ $((($1 + reserve) * 100)) -ge $(($2 * pct)) ]; then
-      printf 'due\n'
-    else
-      printf 'room\n'
-    fi
-    return 0
-  fi
-  if [ "$1" -ge 400000 ]; then
-    printf 'due\n'
-    return 0
-  fi
-  case "${2:-}" in '' | 0) return 1 ;; *[!0-9]* | 0*) LANE_CONTEXT_DECISION=null; return 2 ;; esac
-  if [ $(($1 * 100)) -gt $(($2 * pct)) ]; then
+    if [ "$1" -ge "$window_mark" ]; then printf 'due\n'; else printf 'room\n'; fi
+  elif [ "$1" -gt "$window_mark" ]; then
     printf 'due\n'
   else
     printf 'room\n'
   fi
+}
+
+# The marks lane_context_handoff_due and lane_context_handoff_decision judge
+# and record for the same arguments, computed once, into the CALLER's locals
+# pct, cap_mark and window_mark. cap_mark is the token count due at or past.
+# window_mark is the whole token count the window percentage leaves after any
+# reserve: due strictly past it without a reserve and at or past it with one,
+# which is exact for whole token counts. It is empty where WINDOW is empty or
+# 0, `invalid` where WINDOW is malformed, and empty with cap_mark 0 where the
+# reserve leaves no room below the absolute mark. Exit 2 where PCT, TOKENS or
+# the reserve is rejected.
+lane_context_marks() { # TOKENS WINDOW PCT [AGENT_RESERVE]
+  pct=$(lane_context_handoff_pct "${3:-}") || return 2
+  case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
+  cap_mark=400000
+  window_mark=""
+  if [ "$#" -ge 4 ]; then
+    case "$4" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
+    # No arithmetic uses an unbounded setting: any reserve this large leaves
+    # no room below the absolute mark, even if the capacity is unknown.
+    if [ "${#4}" -gt 6 ] || [ "$4" -ge 400000 ]; then
+      cap_mark=0
+      return 0
+    fi
+    cap_mark=$((400000 - $4))
+  fi
+  case "${2:-}" in
+    '' | 0) ;;
+    *[!0-9]* | 0*) window_mark=invalid ;;
+    *)
+      if [ "$#" -ge 4 ]; then
+        window_mark=$((($2 * pct + 99) / 100 - $4))
+      else
+        window_mark=$(($2 * pct / 100))
+      fi
+      ;;
+  esac
+}
+
+# lane_context_handoff_decision TOKENS WINDOW PCT [AGENT_RESERVE] — the
+# reading lane_context_handoff_due judges for the same arguments, as the one
+# JSON object a handoff records: tokens, window, the absolute cap, the
+# effective mark_pct, the cap_mark and window_mark it compared against, and
+# whether and how much reserve applied. A window or window mark nothing
+# measured is null. Exit 2, printing nothing, where that judge exits 2. Only
+# a caller that records the decision asks for it.
+lane_context_handoff_decision() { # TOKENS WINDOW PCT [AGENT_RESERVE]
+  local pct cap_mark window_mark window=null applied=false reserve=0
+  lane_context_marks "$@" || return 2
+  case "$window_mark" in
+    '') window_mark=null ;;
+    invalid)
+      [ "$1" -ge "$cap_mark" ] || return 2
+      window_mark=null
+      ;;
+  esac
+  case "${2:-}" in '' | *[!0-9]* | 0?*) ;; *) window=$2 ;; esac
+  if [ "$#" -ge 4 ]; then
+    applied=true
+    reserve=$4
+  fi
+  printf '{"tokens":%s,"window":%s,"cap":400000,"mark_pct":%s,"cap_mark":%s,"window_mark":%s,"reserve_applied":%s,"reserve_tokens":%s}\n' \
+    "$1" "$window" "$pct" "$cap_mark" "$window_mark" "$applied" "$reserve"
+}
+
+# lane_context_handoff_context DECISION HARNESS SESSION TRANSCRIPT PANE_KEY
+# SOURCE COMPACTED — the `context` a handoff record carries: DECISION, a
+# lane_context_handoff_decision object or null, beside the native session it
+# was read for. An empty field stays null, as does COMPACTED unless it reads
+# true or false. Exit nonzero, printing nothing, where DECISION is not JSON.
+lane_context_handoff_context() { # DECISION HARNESS SESSION TRANSCRIPT PANE_KEY SOURCE COMPACTED
+  jq -nc --argjson decision "$1" --arg harness "$2" --arg session "$3" --arg transcript "$4" \
+    --arg pane "$5" --arg source "$6" --arg compacted "$7" '
+    def nul: if . == "" then null else . end;
+    {decision:$decision, source:{harness:($harness | nul), session_id:($session | nul),
+      transcript:($transcript | nul), pane_key:($pane | nul), capacity_source:($source | nul),
+      compacted:({"true":true, "false":false}[$compacted])}}'
 }
 
 # lane_context_window_full TOKENS WINDOW HARNESS — whether a reading of a
@@ -889,7 +933,6 @@ TRANSCRIPT_WINDOW=1048576
 # and never read as room. The record is read beside an extension reading too,
 # for its stop cause alone, reported as `stop-cause=<cause>`.
 context_read_and_record() { # BOX PANE_KEY
-  LANE_CONTEXT_DECISION=null
   TOKENS=""
   WINDOW=""
   MODEL=""
@@ -1038,31 +1081,42 @@ copilot_reading_pending() {
   return 1
 }
 
-# The checkpoint or attached-launch caller invokes this library with the native session inputs a hook
-# payload supplies, but for its window: HARNESS SESSION TRANSCRIPT BOX
-# PROJECT. A session runs it from its own shell tool, where no payload exists,
-# so a window there could only be a number the caller typed, and the adapter
-# finds a Pi window itself (lane_adapter_pi_reading). A sixth argument, empty
-# or not, is the window the earlier review-pr text passed, which a lane that
-# loaded that text still sends: it reads, unused, with one warning naming this
-# form, until the next kendex major release. The caller's launch home stays in the harness
-# environment. --attached-launch selects the reserve for an impending child;
-# an ordinary checkpoint uses the plain mark. The only stdout result is the judge's
-# room/due answer; an unavailable read exits nonzero. The hook keeps its own
-# callbacks and never enters this arm.
+# The checkpoint or attached-launch caller invokes this library with the
+# native session inputs a hook payload supplies, but for its window: HARNESS
+# SESSION TRANSCRIPT BOX PROJECT. A session runs it from its own shell tool,
+# where no payload exists, so a window there could only be a number the caller
+# typed, and the adapter finds a Pi window itself (lane_adapter_pi_reading). A
+# sixth argument, empty or not, is the window the earlier review-pr text
+# passed, which a lane that loaded that text still sends: it reads, unused,
+# with one warning naming this form, until the next kendex major release. The
+# caller's launch home stays in the harness environment. Without --checkpoint
+# the reading is judged with the agent reserve, for an impending attached
+# launch, which --attached-launch names; --checkpoint, an ordinary
+# checkpoint, uses the plain mark.
+# stdout is the judge's room or due answer, or with --reading one JSON object
+# carrying `verdict`, `decision` and `source`; an unavailable read exits
+# nonzero. The hook keeps its own callbacks and never enters this arm.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  CLI_ATTACHED_LAUNCH=false
+  CLI_OPERATION=""
   CLI_OUTPUT_READING=false
   while :; do
     case "${1:-}" in
-      --attached-launch) CLI_ATTACHED_LAUNCH=true; shift ;;
+      --attached-launch | --checkpoint)
+        if [ -n "$CLI_OPERATION" ]; then
+          printf '%s\n' "lane-context: operation=$1" 'Pass one of --attached-launch and --checkpoint.' >&2
+          exit 2
+        fi
+        CLI_OPERATION=${1#--}
+        shift
+        ;;
       --reading) CLI_OUTPUT_READING=true; shift ;;
       *) break ;;
     esac
   done
   if [ "${1:-}" = --help ]; then
-    printf '%s\n' 'Usage: bash lib/lane-context.sh [--attached-launch] [--reading] HARNESS SESSION TRANSCRIPT BOX PROJECT' \
-      'Print room or due at the plain mark; apply the agent reserve only for an impending attached launch.' \
+    printf '%s\n' 'Usage: bash lib/lane-context.sh [--attached-launch | --checkpoint] [--reading] HARNESS SESSION TRANSCRIPT BOX PROJECT' \
+      'Print room or due for the current session context. The agent reserve applies, as for an impending attached launch,' \
+      'unless --checkpoint asks for the plain mark of an ordinary checkpoint.' \
       '--reading prints the native verdict, decision and source binding as JSON for the handoff record.'
     exit 0
   fi
@@ -1070,7 +1124,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     5) ;;
     6)
       printf '%s\n' "lane-context: window-argument=$6" \
-        'The window argument is no longer read: run lane-context.sh HARNESS SESSION TRANSCRIPT BOX PROJECT.' >&2
+        'The window argument is no longer read: run lane-context.sh --attached-launch --reading HARNESS SESSION TRANSCRIPT BOX PROJECT.' >&2
       ;;
     *)
       printf '%s\n' 'lane-context: arguments=unavailable' >&2
@@ -1101,14 +1155,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     fi
     MARK=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90) || exit 2
     JUDGE_ARGS=("$TOKENS" "$WINDOW" "$MARK")
-    if [ "$CLI_ATTACHED_LAUNCH" = true ]; then
+    if [ "$CLI_OPERATION" != checkpoint ]; then
       AGENT_RESERVE=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_AGENT_RESERVE_TOKENS "") || exit 2
       AGENT_RESERVE=${AGENT_RESERVE:-150000}
       JUDGE_ARGS+=("$AGENT_RESERVE")
     fi
     JUDGE_RC=0
-    lane_context_handoff_due "${JUDGE_ARGS[@]}" >"$WORK_DIR/judge.out" || JUDGE_RC=$?
-    VERDICT=$(cat -- "$WORK_DIR/judge.out")
+    VERDICT=$(lane_context_handoff_due "${JUDGE_ARGS[@]}") || JUDGE_RC=$?
     case "$JUDGE_RC" in
       0) ;;
       1) message context-unmeasured window-unavailable; exit 2 ;;
@@ -1116,12 +1169,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     esac
   fi
   if [ "$CLI_OUTPUT_READING" = true ]; then
-    jq -nc --arg verdict "$VERDICT" --argjson decision "${LANE_CONTEXT_DECISION:-null}" \
-      --arg harness "$HARNESS" --arg session "$SESSION" --arg transcript "$TRANSCRIPT" \
-      --arg source "$SOURCE" --argjson compacted "$COMPACTED" '
-      def nul: if . == "" then null else . end;
-      {verdict:$verdict, decision:$decision, source:{harness:($harness | nul), session_id:($session | nul),
-        transcript:($transcript | nul), pane_key:null, capacity_source:($source | nul), compacted:$compacted}}'
+    # Compaction is due before any judgement, so it records no decision.
+    DECISION=null
+    if [ "$COMPACTED" != true ]; then
+      DECISION=$(lane_context_handoff_decision "${JUDGE_ARGS[@]}") || exit 2
+    fi
+    CONTEXT=$(lane_context_handoff_context "$DECISION" "$HARNESS" "$SESSION" "$TRANSCRIPT" "" "$SOURCE" "$COMPACTED") || exit 2
+    jq -c --arg verdict "$VERDICT" '{verdict:$verdict} + .' <<<"$CONTEXT"
   else
     printf '%s\n' "$VERDICT"
   fi

@@ -290,7 +290,7 @@ for name, record, extra, args, status, key in rows:
             result(name + ': base ' + field, int(compared[i] == before[i]), 1)
         if name in ('context-due', 'context-due-before-runtime') and compared == before[:3]:
             original = (scripts / 'oversee-succeed').read_text()
-            needle = '[[ "${LANE_CONTEXT_DECISION:-null}" == null ]] || context_fields+=("context_decision=$LANE_CONTEXT_DECISION")'
+            needle = '  context_fields=("context_decision=$(lane_context_handoff_decision "$tokens" "$window" "$CONTEXT_PCT")")'
             assert original.count(needle) == 1, needle
             wrong = json.dumps({**CONTEXT_DECISION, 'reserve_tokens': 1}, separators=(',', ':'))
             for defect, replacement in (
