@@ -37,18 +37,24 @@ test("task panel auto-shows first task once, then user hide blocks later task mu
 	assert.equal(panel.lastVisiblePanel, "compact");
 });
 
-test("task panel auto-reopens for pending work after an all-done hide", () => {
-	const panel = createTaskPanelVisibility("hidden");
-	pendingChange(panel);
-	allDoneChange(panel);
-	assert.equal(panel.panel, "hidden");
-	assert.equal(panel.autoShownThisSession, false);
+for (const [defaultPanel, selectedPanel] of [["compact", "expanded"], ["expanded", "compact"]] as const) {
+	test(`task panel auto-reopens in ${selectedPanel} after an all-done hide with ${defaultPanel} default`, () => {
+		const panel = createTaskPanelVisibility("hidden");
+		const options = { autoShowOnFirstTask: true, defaultPanel, hasTasks: true };
+		applyTaskPanelContentVisibility(panel, { ...options, remainingTasks: 1 });
+		assert.equal(panel.panel, defaultPanel);
 
-	pendingChange(panel);
-	assert.equal(panel.panel, "compact");
-	assert.equal(panel.hiddenByUser, false);
-	assert.equal(panel.lastVisiblePanel, "compact");
-});
+		userShowTaskPanel(panel, selectedPanel);
+		applyTaskPanelContentVisibility(panel, { ...options, remainingTasks: 0 });
+		assert.equal(panel.panel, "hidden");
+		assert.equal(panel.lastVisiblePanel, selectedPanel);
+
+		applyTaskPanelContentVisibility(panel, { ...options, remainingTasks: 1 });
+		assert.equal(panel.panel, selectedPanel);
+		assert.equal(panel.hiddenByUser, false);
+		assert.equal(panel.lastVisiblePanel, selectedPanel);
+	});
+}
 
 test("task panel stays hidden when auto-show is disabled or its default is hidden", () => {
 	for (const options of [

@@ -126,7 +126,7 @@
         {
           "key": "autoShowOnFirstTask",
           "label": "Auto-show on first task",
-          "description": "Show the panel automatically only for the first non-empty task state in a session; user-hidden panels stay hidden until explicit show/toggle.",
+          "description": "Show the panel automatically when unfinished work arrives, using the configured default initially and the remembered mode after completion; user-hidden panels stay hidden until explicit show/toggle.",
           "type": "boolean",
           "default": true,
           "category": "Panel",
