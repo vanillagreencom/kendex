@@ -609,20 +609,35 @@ if section pre-panel; then
   # review-pr consumes this command's room/due stdout. Start with no recorded
   # context, as lane-marker does for a new session, then refresh mid-turn from
   # the native transcript. Copilot has no status-line file in this home.
-  panel_read() { # HARNESS TRANSCRIPT
+  panel_read() { # HARNESS TRANSCRIPT [OPERATION]
     local out rc=0
     out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
       DISABLE_AUTO_COMPACT=1 ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
-      "$BASH" "$LIB" "$1" s1 "$2" "$PANEL_BOX" "$T" "" 2>"$T/panel.err") || rc=$?
+      "$BASH" "$LIB" --reading ${3:+"$3"} "$1" s1 "$2" "$PANEL_BOX" "$T" 2>"$T/panel.err") || rc=$?
+    printf '%s\n' "$out" > "$T/panel-reading.json"
+    if [ "$rc" -eq 0 ]; then out=$(jq -r '.verdict' "$T/panel-reading.json"); fi
     printf 'rc=%s verdict=%s' "$rc" "$out"
   }
   for row in '249999|room' '250000|due' '250001|due'; do
     IFS='|' read -r tokens want <<<"$row"
     claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
-    assert_eq "$(panel_read claude "$T/panel-transcript")" "rc=0 verdict=$want" \
+    assert_eq "$(panel_read claude "$T/panel-transcript" --attached-launch)" "rc=0 verdict=$want" \
       "pre-panel fresh transcript $tokens: $want" "$T/panel.err"
     assert_eq "$(jq -r '.tokens' "$PANEL_BOX/context.json" 2>/dev/null || echo absent)" "$tokens" \
       "pre-panel records the current $tokens reading without a prior record"
+    assert_eq "$(jq -c '[.decision.tokens,.decision.cap,.decision.mark_pct,.decision.cap_mark,.decision.window_mark,.decision.reserve_applied,.decision.reserve_tokens,.source.harness,.source.session_id]' "$T/panel-reading.json")" \
+      "[$tokens,400000,90,250000,750000,true,150000,\"claude\",\"s1\"]" \
+      "attached launch decision fields at $tokens"
+  done
+  # The same native command guards panels, dev-fix and diagnosis launches;
+  # checkpoints without an impending attached launch keep the plain mark.
+  for row in '274811|room' '276194|room' '399999|room' '400000|due'; do
+    IFS='|' read -r tokens want <<<"$row"
+    claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
+    assert_eq "$(panel_read claude "$T/panel-transcript")" "rc=0 verdict=$want" \
+      "ordinary checkpoint $tokens: $want" "$T/panel.err"
+    assert_eq "$(jq -c '[.decision.tokens,.decision.cap_mark,.decision.reserve_applied,.decision.reserve_tokens]' "$T/panel-reading.json")" \
+      "[$tokens,400000,false,0]" "ordinary checkpoint decision fields at $tokens"
   done
   "$BASH" -c 'source "$1"; lane_context_record "$2" copilot 100000 800000 "" s1 "" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' _ "$LIB" "$PANEL_BOX"
   assert_eq "$(panel_read copilot '')" 'rc=0 verdict=room' \
@@ -671,7 +686,7 @@ STUB
     local out rc=0
     out=$(env -i PATH="$PI_STUB/bin:$PATH" HOME="$PANEL_HOME" PI_CODING_AGENT_DIR="$PI_PANEL_AGENT" \
       STUB_PI_WINDOW="$1" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
-      "$BASH" "$LIB" pi s1 "$T/pi-panel" "$PI_PANEL_BOX" "$PI_READ_PROJECT" "${@:2}" 2>"$T/panel.err") || rc=$?
+      "$BASH" "$LIB" --attached-launch pi s1 "$T/pi-panel" "$PI_PANEL_BOX" "$PI_READ_PROJECT" "${@:2}" 2>"$T/panel.err") || rc=$?
     printf 'rc=%s verdict=%s' "$rc" "$out"
   }
   # `row|compaction enabled|registry window|record session and model|window
@@ -799,6 +814,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
   control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false' \
     'pre-panel fresh transcript 250001: due'
+  control launch-only-reserve lane-context.sh '    if [ "$ATTACHED_LAUNCH" = true ]; then' '    if [ "$ATTACHED_LAUNCH" = true ] || [ "$ATTACHED_LAUNCH" = false ]; then' \
+    'ordinary checkpoint 274811: room'
   control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \
     '400000 of no window at 90: rc=0 due'
   control mandatory-pct lane-context.sh '[ "$1" -gt 90 ]' '[ "$1" -gt 100 ]' \

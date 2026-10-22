@@ -1980,6 +1980,15 @@ handoff_instruction() {
   if [ "$ARM" = halt ]; then
     AGENT_INSTRUCTION="lane-mail-check: detached-route=orch-job-runner${NL}Use the orch job runner described in waiter-launch.md, Launch, or a separate session for work that must survive this session.$NL$AGENT_INSTRUCTION"
   fi
+  # Preserve the native decision and its actual session input. Refusals before
+  # a context judgement carry null, rather than an inferred threshold reading.
+  HANDOFF_CONTEXT=$(jq -nc --argjson decision "${LANE_CONTEXT_DECISION:-null}" \
+    --arg harness "$HARNESS" --arg session "$SESSION" --arg transcript "$TRANSCRIPT" \
+    --arg pane "${CALLER_KEY:-}" --arg source "${SOURCE:-}" --arg compacted "${COMPACTED:-}" '
+    def nul: if . == "" then null else . end;
+    {decision:$decision, source:{harness:($harness | nul), session_id:($session | nul),
+      transcript:($transcript | nul), pane_key:($pane | nul), capacity_source:($source | nul),
+      compacted:(if $compacted == "" then null else $compacted == "true" end)}}')
   if [ "$ROLE" = overseer ]; then
     # The record carries the two names of the session writing it, so the next
     # overseer of this fleet reads it as somebody else's and meets its own
@@ -1987,12 +1996,12 @@ handoff_instruction() {
     # the overseer knows neither its own tmux server pid nor the id its
     # harness put in the payload.
     printf -v OVERSEER_RECORD \
-      '{"handoff_file":"[OVERSEER_HANDOFF_PATH]","pane_key":"%s","session_id":"%s"}' \
-      "$CALLER_KEY" "$SESSION"
+      '{"handoff_file":"[OVERSEER_HANDOFF_PATH]","pane_key":"%s","session_id":"%s","context":%s}' \
+      "$CALLER_KEY" "$SESSION" "$HANDOFF_CONTEXT"
     printf -v HANDOFF_INSTRUCTION \
-      'Reach a safe point first, with no merged event part-handled and no lane waiting on an answer only the root can give. There, rewrite the overseer handoff file and succeed this session:\n  %q%s -- [THE PERMISSION, MODEL AND EFFORT FLAGS THIS SESSION RUNS UNDER]\nWhere that refuses, tell the user a fresh overseer session must be started by hand, then record the handoff and end this session:\n  %q set %q handoff %s\nWrite the record as it stands above: the two names in it are what end this refusal for this session and for no other. It repeats at every turn end until the succession lands or that record stands.' \
+      'Reach a safe point first, with no merged event part-handled and no lane waiting on an answer only the root can give. There, rewrite the overseer handoff file and succeed this session:\n  %q%s -- [THE PERMISSION, MODEL AND EFFORT FLAGS THIS SESSION RUNS UNDER]\nWhere that refuses, tell the user a fresh overseer session must be started by hand, then record the handoff and end this session:\n  %q set %q handoff %q\nWrite the record as it stands above: the two names in it are what end this refusal for this session and for no other. It repeats at every turn end until the succession lands or that record stands.' \
       "$SCRIPTS/oversee-succeed" "${JUDGE_ARGS[*]+ ${JUDGE_ARGS[*]}}" \
-      "$SCRIPTS/workflow-state" "$ITEM" "'$OVERSEER_RECORD'"
+      "$SCRIPTS/workflow-state" "$ITEM" "$OVERSEER_RECORD"
     HANDOFF_INSTRUCTION="$AGENT_INSTRUCTION$NL$HANDOFF_INSTRUCTION"
     return 0
   fi
@@ -2007,11 +2016,14 @@ handoff_instruction() {
       printf -v INIT_LINE '  %q%s init %q --branch %q\n' "$SCRIPTS/workflow-state" "$STATE_ARGS" "$ITEM" "$BRANCH"
     fi
   fi
+  LANE_HANDOFF_RECORD=$(jq -nc --argjson context "$HANDOFF_CONTEXT" \
+    '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",
+      open_pr:null,traps:["[TRAP]"],context:$context}')
   printf -v HANDOFF_INSTRUCTION \
-    'Reach the next safe point first, a pushed head, a landed merge or a held PR; never interrupt a round or leave an unpushed tree. There, write the handoff record and send the notice, then end the session:\n%s  %q%s set %q handoff %s\n  %q notice --item %q --file [FILE NAMING WHAT IS LEFT]\nThis refusal repeats at every turn end until that record stands.' \
+    'Reach the next safe point first, a pushed head, a landed merge or a held PR; never interrupt a round or leave an unpushed tree. There, write the handoff record and send the notice, then end the session:\n%s  %q%s set %q handoff %q\n  %q notice --item %q --file [FILE NAMING WHAT IS LEFT]\nThis refusal repeats at every turn end until that record stands.' \
     "$INIT_LINE" \
     "$SCRIPTS/workflow-state" "$STATE_ARGS" "$ITEM" \
-    ''\''{"merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]","open_pr":[PR_NUMBER_OR_NULL],"traps":["[TRAP]"]}'\''' \
+    "$LANE_HANDOFF_RECORD" \
     "$READER" "$ITEM"
   HANDOFF_INSTRUCTION="$AGENT_INSTRUCTION$NL$HANDOFF_INSTRUCTION"
 }
@@ -2348,14 +2360,16 @@ attached_launch_check() {
     refuse_handoff agent-input "${READ_GAP:-usage-absent}"
   # The plain mark is the one the turn end and every succession judge, so only
   # it names the handoff, whatever the roster reads.
-  due=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK") || due_rc=$?
+  lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK" >"$WORK_DIR/judge.out" || due_rc=$?
+  due=$(cat -- "$WORK_DIR/judge.out")
   case "$due_rc:$due" in
     0:due) refuse_handoff agent-launch "$TOOL tokens=$TOKENS" ;;
     0:room) ;;
     *) refuse_handoff agent-input context-unmeasured ;;
   esac
   due_rc=0
-  due=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK" "$AGENT_RESERVE") || due_rc=$?
+  lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK" "$AGENT_RESERVE" >"$WORK_DIR/judge.out" || due_rc=$?
+  due=$(cat -- "$WORK_DIR/judge.out")
   case "$due_rc:$due" in
     0:room) return 0 ;;
     0:due) ;;
@@ -2425,7 +2439,11 @@ context_mark_setting() {
 # Called plainly, with a reading taken.
 context_mark_judge() {
   DUE_RC=0
-  DUE=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK") || DUE_RC=$?
+  lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK" >"$WORK_DIR/judge.out" || DUE_RC=$?
+  if ! DUE=$(cat -- "$WORK_DIR/judge.out"); then
+    message context-judge output-unread
+    return 0
+  fi
   case "$DUE_RC" in
     0) [ "$DUE" != due ] || refuse_handoff context "$TOKENS" ;;
     1) message window-unread "${MODEL:-$HARNESS}" ;;
@@ -3008,6 +3026,7 @@ overseer_unrecorded() {
 # tested where it is taken.
 overseer_marks() {
   [ -x "$SCRIPTS/oversee-succeed" ] || refuse_handoff script "$SCRIPTS/oversee-succeed"
+  LANE_CONTEXT_DECISION=null
 
   # Bounded by BOUND_BY, for the reason stated where it is set: this judgement
   # reads the one account the overseer session runs on, through the same
@@ -3055,6 +3074,7 @@ overseer_marks() {
       mark=*) MARK=${field#mark=} ;;
       headroom=*) MARK_HEADROOM=${field#headroom=} ;;
       succession=*) SUCCESSION=${field#succession=} ;;
+      context_decision=*) LANE_CONTEXT_DECISION=${field#context_decision=} ;;
     esac
   done
   # A line missing one of the three is an answer this hook cannot act on, and

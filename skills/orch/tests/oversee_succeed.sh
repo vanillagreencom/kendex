@@ -150,6 +150,8 @@ SERVER_START="$(tm display-message -p '#{start_time}')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
 UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
+UNDER_CONTEXT_FIELD='context_decision={"tokens":100000,"window":1000000,"cap":400000,"mark_pct":50,"cap_mark":400000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}'
+MARK_CONTEXT_FIELD='context_decision={"tokens":520000,"window":1000000,"cap":400000,"mark_pct":50,"cap_mark":400000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}'
 # A codex caller, whose account's reset is parsed from a Unix epoch.
 CODEX_SCREEN='  Context 48% left'
 # A codex caller at exactly 90 percent of the 258400 window its rollout names.
@@ -1405,7 +1407,7 @@ new_caller "$MARK"
 BEFORE_LINE="$(recorded_line)"
 run_succeed checkcontext '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)|$(recorded claude)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=unreadable window=1000000|0|yes|none" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=unreadable window=1000000 $MARK_CONTEXT_FIELD|0|yes|none" \
   "--check-marks at the context mark: the mark is reported, nothing is launched"
 assert_eq "$(recorded_line)" "$BEFORE_LINE" \
   "and the fleet state keeps the launch line it had: a judgement records none"
@@ -1440,7 +1442,7 @@ printf 'account=%s\tharness=claude\tstatus=plan_ended\tdetail=http-403-oauth_not
 hosted_caller
 RUN_DIR="$HOSTED_WORK" LANE_HOST_ACCOUNTS="$TMP_ROOT/accounts-ended.tsv" run_succeed hostedended '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=headroom value=0 mark=$TRIGGER succession=on account=claude resets=none status=plan_ended" \
+  "0|oversee-succeed: mark-reached kind=headroom value=0 mark=$TRIGGER succession=on account=claude resets=none status=plan_ended $UNDER_CONTEXT_FIELD" \
   "a plan_ended caller account reaches the headroom mark carrying its status"
 
 # The projected wall is measured from the displaced cache sample. A fast burn
@@ -1451,7 +1453,7 @@ stage_usage_pair ratefast 40 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=30 run_succeed ratefast '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude|0" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude $UNDER_CONTEXT_FIELD|0" \
   "a sixty-point headroom burning two points a minute fires the rate trigger"
 new_caller "$UNDER_MARK"
 WALL_MINUTES=30 run_succeed ratefast ''
@@ -1468,7 +1470,7 @@ stage_usage_pair ratedefaultat 60 40 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=default run_succeed ratedefaultat '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=rate value=20 mark=20 succession=on account=claude|0" \
+  "0|oversee-succeed: mark-reached kind=rate value=20 mark=20 succession=on account=claude $UNDER_CONTEXT_FIELD|0" \
   "the default wall notice fires at twenty projected minutes"
 stage_usage_pair ratedefaultabove 58 38 600
 new_caller "$UNDER_MARK"
@@ -1540,7 +1542,7 @@ stage_usage_pair rateleadingzero 40 20 600
 new_caller "$UNDER_MARK"
 WALL_MINUTES=030 run_succeed rateleadingzero '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude" \
+  "0|oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=claude $UNDER_CONTEXT_FIELD" \
   "a leading-zero wall setting remains valid decimal input"
 
 # The chooser itself counts the accounts above the trigger, and this session's
@@ -1576,7 +1578,7 @@ new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$EXCLUSIVECTL/oversee-succeed" \
   run_succeed exclusivectl '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=40" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=40 $UNDER_CONTEXT_FIELD" \
   "control: a count that leaves this session's own account out fires on the same two accounts"
 
 # One account above the trigger other than this session's own, whose own is
@@ -1586,7 +1588,7 @@ mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyingone '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none|0" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none $UNDER_CONTEXT_FIELD|0" \
   "one account above the trigger, this session's own not, fires the named qualifying-set trigger"
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
@@ -1610,8 +1612,8 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
 # over, and a preference the walk cannot read refuses the judgement.
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 for pref_row in \
-  "codex:gpt-6-astra:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
-  "pi:openai/gpt-5:high,codex:gpt-6-astra:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "codex:gpt-6-astra:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40 $UNDER_CONTEXT_FIELD" \
+  "pi:openai/gpt-5:high,codex:gpt-6-astra:high|0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40 $UNDER_CONTEXT_FIELD" \
   "bogus|1|oversee-succeed: invalid-preference entry=bogus"; do
   IFS='|' read -r pref_value pref_rc pref_want <<<"$pref_row"
   new_caller "$UNDER_MARK"
@@ -1664,14 +1666,14 @@ new_caller "$UNDER_MARK"
 caller_record claude claude-sonnet-5
 qualifying_cross_row crossctlpi 'pi:pi-claude/claude-fable-5-1:high' "$CROSSCTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40 $UNDER_CONTEXT_FIELD" \
   "control: a judgement without the transfer test fires on the claude caller's pi entry"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 new_caller "$UNDER_MARK"
 caller_record pi pi-claude/claude-fable-5-1
 qualifying_cross_row crossctlpicaller 'codex:gpt-6-astra:high' "$CROSSCTL/oversee-succeed"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40 $UNDER_CONTEXT_FIELD" \
   "control: a judgement without the transfer test fires on the pi caller's codex entry"
 mv -- "$FLEET_STATE.held" "$FLEET_STATE"
 new_caller "$UNDER_MARK"
@@ -1687,7 +1689,7 @@ new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$SETTLECTL/oversee-succeed" \
   run_succeed settlectl '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40" \
+  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=40 $UNDER_CONTEXT_FIELD" \
   "control: a judgement that ignores the walk fires on a count no successor settles"
 # The successor count's control: never judged, so the walk opens the successor
 # onto the other account.
@@ -1991,7 +1993,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed checkheadroom '' --check-marks
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=$CLAUDE_USAGE_SESSION_RESET|0|yes" \
+  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=$CLAUDE_USAGE_SESSION_RESET $UNDER_CONTEXT_FIELD|0|yes" \
   "--check-marks at the account mark: the headroom mark, its account and its reset"
 
 # Succession off launches nothing, and a judgement launches nothing either: the
@@ -2000,7 +2002,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
 new_caller "$MARK"
 SUCCESSION=off run_succeed checkoff '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=off headroom=unreadable window=1000000|0|yes" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=off headroom=unreadable window=1000000 $MARK_CONTEXT_FIELD|0|yes" \
   "--check-marks with succession off still judges, and says the setting is off"
 
 # A reading that could not be taken is not a mark that did not fire, and only
@@ -2018,7 +2020,7 @@ new_caller "$MARK"
 LANE_DIRS="$H/.openclaude" CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.openclaude" \
   run_succeed checkunmeasuredpast '' --check-marks
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=unreadable window=1000000|0" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=50 succession=on headroom=unreadable window=1000000 $MARK_CONTEXT_FIELD|0" \
   "and a context mark that fired outranks it: a mark the caller must act on is reported"
 
 # A reading whose window its adapter could not name: the context mark could not
@@ -2043,7 +2045,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
 
 # The real hook's --context input: independent limits, settings resolution,
 # and a node pane with no recorded identity. Only due checks skip identity.
-while IFS='|' read -r pane reading mark expected; do
+while IFS='|' read -r pane reading mark decision expected; do
   if [[ "$pane" == node ]]; then
     new_caller "$NO_CONTEXT" "$NO_CONTEXT" "cat '$TMP_ROOT/caller.screen'; exec '$BIN/node' 100000"
   else
@@ -2051,28 +2053,35 @@ while IFS='|' read -r pane reading mark expected; do
   fi
   [[ "$pane" != foreign ]] || record_caller "$UNDER_MARK" '%999'
   CONTEXT_PCT="$mark" run_succeed independentcontext '' --check-marks --context "$reading"
-  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" "${expected//PANE/$CALLER_PANE}|0" \
+  result=$(sed -n 1p <<<"$OUT")
+  actual_decision=null
+  case "$result" in
+    *' context_decision='*) actual_decision=${result##* context_decision=}; result=${result% context_decision=*} ;;
+  esac
+  assert_eq "$RC|$result|$(overseers)" "${expected//PANE/$CALLER_PANE}|0" \
     "the $pane caller judges $reading at requested percent $mark"
+  assert_eq "$(jq -c 'if . == null then null else [.tokens,.window,.cap,.mark_pct,.cap_mark,.window_mark,.reserve_applied,.reserve_tokens] end' <<<"$actual_decision")" \
+    "$decision" "native context decision for $pane $reading at $mark"
 done <<'ROWS'
-record|520000:1000000|60|0|oversee-succeed: mark-reached kind=context value=520000 mark=60 succession=on headroom=unreadable window=1000000
-record|520000:1000000|40|0|oversee-succeed: mark-reached kind=context value=520000 mark=40 succession=on headroom=unreadable window=1000000
-record|520000:1000000|percent|0|oversee-succeed: mark-reached kind=context value=520000 mark=90 succession=on headroom=unreadable window=1000000
-record|520000:1000000|050|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=050
-record|520000:1000000|101|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=101
-record|399999:1000000|90|0|oversee-succeed: context-below-mark tokens=399999 window=1000000 mark=90 headroom=80
-record|400000:1000000|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
-record|400000:|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
-record|399999:|90|0|oversee-succeed: mark-unmeasured kind=context reason=window-unnamed succession=on
-record|180000:200000|100|0|oversee-succeed: context-below-mark tokens=180000 window=200000 mark=90 headroom=80
-record|180001:200000|100|0|oversee-succeed: mark-reached kind=context value=180001 mark=90 succession=on headroom=unreadable window=200000
-record|160000:200000|80|0|oversee-succeed: context-below-mark tokens=160000 window=200000 mark=80 headroom=80
-record|160001:200000|80|0|oversee-succeed: mark-reached kind=context value=160001 mark=80 succession=on headroom=unreadable window=200000
-node|400000:1000000|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
-node|400000:|90|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
-node|232561:258400|90|0|oversee-succeed: mark-reached kind=context value=232561 mark=90 succession=on headroom=unreadable window=258400
-node|232560:258400|90|1|oversee-succeed: harness-unnamed pane=PANE
-node|399999:|90|1|oversee-succeed: harness-unnamed pane=PANE
-foreign|100000:1000000|50|1|oversee-succeed: harness-unnamed pane=PANE
+record|520000:1000000|60|[520000,1000000,400000,60,400000,600000,false,0]|0|oversee-succeed: mark-reached kind=context value=520000 mark=60 succession=on headroom=unreadable window=1000000
+record|520000:1000000|40|[520000,1000000,400000,40,400000,400000,false,0]|0|oversee-succeed: mark-reached kind=context value=520000 mark=40 succession=on headroom=unreadable window=1000000
+record|520000:1000000|percent|[520000,1000000,400000,90,400000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=520000 mark=90 succession=on headroom=unreadable window=1000000
+record|520000:1000000|050|null|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=050
+record|520000:1000000|101|null|1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_PCT=101
+record|399999:1000000|90|null|0|oversee-succeed: context-below-mark tokens=399999 window=1000000 mark=90 headroom=80
+record|400000:1000000|90|[400000,1000000,400000,90,400000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
+record|400000:|90|[400000,null,400000,90,400000,null,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
+record|399999:|90|null|0|oversee-succeed: mark-unmeasured kind=context reason=window-unnamed succession=on
+record|180000:200000|100|null|0|oversee-succeed: context-below-mark tokens=180000 window=200000 mark=90 headroom=80
+record|180001:200000|100|[180001,200000,400000,90,400000,180000,false,0]|0|oversee-succeed: mark-reached kind=context value=180001 mark=90 succession=on headroom=unreadable window=200000
+record|160000:200000|80|null|0|oversee-succeed: context-below-mark tokens=160000 window=200000 mark=80 headroom=80
+record|160001:200000|80|[160001,200000,400000,80,400000,160000,false,0]|0|oversee-succeed: mark-reached kind=context value=160001 mark=80 succession=on headroom=unreadable window=200000
+node|400000:1000000|90|[400000,1000000,400000,90,400000,900000,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=1000000
+node|400000:|90|[400000,null,400000,90,400000,null,false,0]|0|oversee-succeed: mark-reached kind=context value=400000 mark=90 succession=on headroom=unreadable window=
+node|232561:258400|90|[232561,258400,400000,90,400000,232560,false,0]|0|oversee-succeed: mark-reached kind=context value=232561 mark=90 succession=on headroom=unreadable window=258400
+node|232560:258400|90|null|1|oversee-succeed: harness-unnamed pane=PANE
+node|399999:|90|null|1|oversee-succeed: harness-unnamed pane=PANE
+foreign|100000:1000000|50|null|1|oversee-succeed: harness-unnamed pane=PANE
 ROWS
 
 # The turn-end judge (--check-marks) and a succession judge by the plain mark
@@ -2097,7 +2106,7 @@ done <<'ROWS'
 ROWS
 # Control: main's unconditional reserve hands over at 260000.
 RESERVECTL="$(mutant_scripts agent-reserve-always oversee-succeed)" || exit 1
-mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT")" || due_rc' '"$CONTEXT_PCT" 150000)" || due_rc'
+mutate_file "$RESERVECTL/oversee-succeed" '"$CONTEXT_PCT" >"$DEP_ERR" || due_rc' '"$CONTEXT_PCT" 150000 >"$DEP_ERR" || due_rc'
 new_caller "$UNDER_MARK"
 AGENT_RESERVE=default CONTEXT_PCT=90 SUCCEED_BIN="$RESERVECTL/oversee-succeed" run_succeed agentreservectl '' --check-marks --context 260000:1000000
 assert_eq "$RC|$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' <<<"$OUT")" '0|mark-reached' \

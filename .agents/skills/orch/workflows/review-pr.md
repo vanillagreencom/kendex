@@ -63,15 +63,15 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Prepare Reviewers
 
-**Pre-panel context check.** Before sizing or starting any attached reviewer, a lane refreshes its current context through the same reader `lane-mail-check` calls. Take `[HARNESS]`, `[SESSION_ID]` and `[TRANSCRIPT_PATH]` from this session's native inputs, not from `context.json`. Pass no window: a number the session types is no window source. Keep the session's launch home in its harness environment. Run from `[WORKTREE_PATH]`:
+**Pre-panel context check.** When this round will start attached reviewers, refresh the current context through the same reader `lane-mail-check` calls before sizing or starting them. Take `[HARNESS]`, `[SESSION_ID]` and `[TRANSCRIPT_PATH]` from this session's native inputs, not from `context.json`. Pass no window: a number the session types is no window source. Keep the session's launch home in its harness environment. Run from `[WORKTREE_PATH]`:
 
 ```bash
-bash .agents/skills/orch/scripts/lib/lane-context.sh "[HARNESS]" "[SESSION_ID]" "[TRANSCRIPT_PATH]" "[WORKTREE_PATH]/tmp/lane-mail/[ISSUE_ID]" "[WORKTREE_PATH]"
+bash .agents/skills/orch/scripts/lib/lane-context.sh --attached-launch --reading "[HARNESS]" "[SESSION_ID]" "[TRANSCRIPT_PATH]" "[WORKTREE_PATH]/tmp/lane-mail/[ISSUE_ID]" "[WORKTREE_PATH]"
 ```
 
-The shared reader refreshes Claude, Codex and Pi through their existing adapters. A Pi window comes from this session's context record in that mailbox when it names the transcript's model, or else from Pi's own model registry for that `provider/model`. With neither, the command refuses as `context-unmeasured=window-unavailable`. Copilot uses its extension reading, pending-marker check and status-line fallback. No prior `context.json` is required. The command reads `ORCH_HANDOFF_CONTEXT_PCT` and `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`, then calls the hook's existing threshold judge. Only a successful `room` result permits attached panel sizing below. A failed read or judge starts no attached panel; report the cause and repair it before re-entering § 2.
+The shared reader refreshes Claude, Codex and Pi through their existing adapters. A Pi window comes from this session's context record in that mailbox when it names the transcript's model, or else from Pi's own model registry for that `provider/model`. With neither, the command refuses as `context-unmeasured=window-unavailable`. Copilot uses its extension reading, pending-marker check and status-line fallback. No prior `context.json` is required. The command reads `ORCH_HANDOFF_CONTEXT_PCT` and `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`, then calls the hook's existing threshold judge. `--reading` returns JSON with `verdict`, `decision` and native `source` binding. Only a successful `verdict` of `room` permits attached panel sizing below. A failed read or judge starts no attached panel; report the cause and repair it before re-entering § 2.
 
-A `due` result means the reading is at or above the handoff mark minus `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`, or the reader found automatic compaction. Set `REVIEWER_SLOTS=0`. Before handoff, bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`, then checkpoint the committed head through the branch-publication owner:
+A `due` verdict refuses this impending attached launch because its reserve does not fit, or because the reader found automatic compaction. Ordinary checkpoints omit `--attached-launch` and use the plain mark. Preserve the returned `decision` and `source` as the handoff's `context`, and keep an unavailable decision unknown. Set `REVIEWER_SLOTS=0`. Before handoff, bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`, then checkpoint the committed head through the branch-publication owner:
 
 ```bash
 .agents/skills/orch/scripts/worktree-push --checkpoint --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream

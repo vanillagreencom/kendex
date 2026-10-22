@@ -116,6 +116,15 @@ scan_key() { # KEY
   if [ "$SCAN_AVAILABLE" -eq 1 ]; then printf '%s\n' "$1"; else printf '%s\n' "${1/agent-reserve=/agent-unobserved=}"; fi
 }
 handoffs_named() { grep -c 'set .* handoff ' "$ERR_FILE" || true; }
+# workflow-state consumes the shell argument emitted by handoff_instruction.
+# Decode that argument without running the emitted command, then parse JSON.
+handoff_context() {
+  local line record=''
+  while IFS= read -r line; do
+    case "$line" in *' set '*' handoff '*) record=${line#* handoff }; break ;; esac
+  done < "$ERR_FILE"
+  "$BASH" -c 'eval "set -- $1"; printf "%s\n" "$1"' _ "$record" | jq -c '.context'
+}
 
 launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if any
   local tokens="$1" tool="$2"
@@ -243,7 +252,13 @@ while IFS='|' read -r agents tokens tool reserve rc key; do
   expect "$rc" "$key" "launch $tool at $tokens with reserve $reserve and agents $agents"
   case "$key" in
     *agent-reserve=*) assert_eq "$(handoffs_named)" 0 "the reserve refusal at $tokens with agents $agents names no handoff" ;;
-    *agent-unobserved=* | *agent-launch=*) assert_eq "$(handoffs_named)" 1 "the refusal at $tokens with agents $agents names the lane handoff" ;;
+    *agent-unobserved=* | *agent-launch=*)
+      assert_eq "$(handoffs_named)" 1 "the refusal at $tokens with agents $agents names the lane handoff"
+      case "$key" in *agent-launch=*) applied=false; amount=0 ;; *) applied=true; amount=${reserve:-150000} ;; esac
+      assert_eq "$(handoff_context | jq -c '[.decision.tokens,.decision.cap,.decision.mark_pct,.decision.reserve_applied,.decision.reserve_tokens,.source.harness,.source.session_id,.source.transcript]')" \
+        "[$tokens,400000,50,$applied,$amount,\"claude\",\"s1\",\"$TRANSCRIPT\"]" \
+        "parsed handoff decision for $agents at $tokens"
+      ;;
   esac
 done <<'ROWS'
 out|249999|Agent||0|-
@@ -355,6 +370,8 @@ run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p
 expect 2 'lane-mail-check: agent-input=context-unmeasured' 'an unknown capacity establishes no launch room'
 run_payload '{"session_id":"s1","tool_name":"Agent"}'
 expect 2 'lane-mail-check: agent-input=transcript-unnamed' 'an absent reading establishes no launch room'
+assert_eq "$(handoff_context | jq -c '[.decision,.source.session_id,.source.transcript]')" \
+  '[null,"s1",null]' 'an absent reading leaves handoff decision unknown with its actual session binding'
 ARM_ARGS=()
 
 # A retained edited orch install can keep the released three-argument judge
@@ -521,6 +538,19 @@ record_overseer_handoff
 # shellcheck disable=SC2046
 launch 600000 Agent $(overseer_env)
 expect 0 - 'a standing handoff retains its escape'
+
+# The real supplied-context result crosses the process boundary into the
+# hook's existing workflow-state handoff argument, without a second judge.
+new_overseer agent_native_decision
+rm -- "$LANE/.claude/skills/orch/scripts/oversee-succeed"
+ln -s "$REPO_ROOT/skills/orch/scripts/oversee-succeed" "$LANE/.claude/skills/orch/scripts/oversee-succeed"
+write_transcript "$TRANSCRIPT" 600000
+# shellcheck disable=SC2046
+run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,stop_hook_active:false}')" $(overseer_env)
+expect 2 'lane-mail-check: context=600000' 'the real native mark result retains its refusal'
+assert_eq "$(handoff_context | jq -c '[.decision.tokens,.decision.cap,.decision.mark_pct,.decision.cap_mark,.decision.window_mark,.decision.reserve_applied,.decision.reserve_tokens,.source.session_id,.source.transcript]')" \
+  "[600000,400000,50,400000,500000,false,0,\"s1\",\"$TRANSCRIPT\"]" \
+  'the real native result reaches the parsed overseer handoff record'
 
 new_overseer agent_children
 judge_says "$CONTEXT_MARK_LINE"
