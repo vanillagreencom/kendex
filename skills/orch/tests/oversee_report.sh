@@ -1359,6 +1359,8 @@ markdown-mixed-key~either-strip~    else gsub(/<https~    gsub(/<https
 markdown-italic-header~bold-only~\*\*?[^*]+\*\*?:?$/~\*\*[^*]+\*\*:?$/
 mrkdwn-bold-header~mrkdwn-only-header~\*\*?[^*]+\*\*?:?$/~\*[^*]+\*:?$/
 mrkdwn-markdown-label~mrkdwn-only-label~[[:space:]]*\*\*?[^*<>]+:~[[:space:]]*\*[^*<>]+:
+markdown-star-label~two-star-close~[^*<>]+:\*\*?/~[^*<>]+:\*\*/
+mrkdwn-star-label~two-star-close-mrkdwn~[^*<>]+:\*\*?/~[^*<>]+:\*\*/
 mrkdwn-other-key~held-links-only~key_link) finding("bare-id"~/$^/) finding("bare-id"
 markdown-suffix~mrkdwn-suffix~substr(after, 1, length(bold(item_suffix))) != bold(item_suffix)~substr(after, 1, length(item_suffix)) != item_suffix
 markdown-half-bracket~open-bracket~/^\[\\\[[A-Z]+-[0-9]+\\\]\]\(/ :~/^\[\\\[/ :
@@ -1411,6 +1413,7 @@ key-last~item-line~~oversee-report: summary-shape=item-line line=6~- Outcome (*<
 item-suffix~item-line~~oversee-report: summary-shape=item-line line=6~- *<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]> Outcome
 mrkdwn-bold-header~item-line~~oversee-report: summary-shape=label line=6~**Next steps**
 mrkdwn-markdown-label~item-line~~oversee-report: summary-shape=label line=6~> **Whats not going well:** Two reports arrived late.
+mrkdwn-star-label~item-line~~oversee-report: summary-shape=label line=6~> *Whats not going well:* Two reports arrived late.
 mrkdwn-other-key~item-line~~oversee-report: summary-shape=bare-id line=6~_**[\[HT-1\]](https://linear.app/vanillagreen/issue/HT-1)** cuts it._
 two-keys~item-line~~oversee-report: summary-shape=item-line line=6~- *<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]>* waits on *<https://linear.app/vanillagreen/issue/KEN-43|[KEN-43]>*
 header~header~~oversee-report: summary-shape=label line=4
@@ -1426,6 +1429,7 @@ markdown-mixed-key~markdown-item~~oversee-report: summary-shape=bare-id line=27;
 markdown-misspelled~markdown-item~~oversee-report: summary-shape=label line=27~> **Whats not going well:** Two reports arrived late.
 markdown-header~markdown-item~~oversee-report: summary-shape=label line=27~**Next steps**
 markdown-italic-header~markdown-item~~oversee-report: summary-shape=label line=27~*Next steps*
+markdown-star-label~markdown-item~~oversee-report: summary-shape=label line=27~> *Whats not going well:* Two reports arrived late.
 markdown-other-key~markdown-item~~oversee-report: summary-shape=bare-id line=27~_*<https://linear.app/vanillagreen/issue/HT-1|[HT-1]>* cuts it._
 markdown-suffix~markdown-item~~oversee-report: summary-shape=item-line line=27~- **[\[KEN-43\]](https://linear.app/vanillagreen/issue/KEN-43)* Clearer reports
 markdown-half-bracket~markdown-item~~oversee-report: summary-shape=bare-id line=27;oversee-report: summary-shape=item-line line=27~- **[\[HT-3](https://linear.app/vanillagreen/issue/HT-3)** Clearer reports
