@@ -18,8 +18,8 @@
 #
 # The `worktree` script's own per-issue claim lock requires flock(1) (`create`
 # refuses to run without it), so this integration suite can only run where
-# flock exists. The guard itself does not: its mutation mutex falls back to a
-# mkdir mutex on hosts with no flock, reached here by running the guard on a
+# flock exists. The guard itself does not: its mutation mutex falls back to an
+# exclusive-file mutex on hosts with no flock, reached here by running the guard on a
 # PATH built without flock.
 set -euo pipefail
 # The fixtures' origin is a local path that names no GitHub repository, so
@@ -563,9 +563,9 @@ assert_eq "rc=$missing_helper_rc record=${missing_helper_err%%$'\n'*}" \
   "rc=1 record=worktree-message-library: path=${BROKEN_GUARD_DIR//$'\n'/\\n}/lib/messages.sh recovery=fix-links-from-main" \
   "a missing helper path containing a newline stays in one bootstrap record"
 
-echo "=== the mkdir mutex serializes claims on a flock-less host ==="
+echo "=== the exclusive-file mutex serializes claims on a flock-less host ==="
 
-# Stock macOS ships no flock(1), so there the mkdir mutex is not a fallback:
+# Stock macOS ships no flock(1), so there the exclusive-file mutex is not a fallback:
 # it is the only thing serializing a claim, and a failure makes concurrent
 # claims fail open unnoticed. The probe PATH is derived from the real one
 # minus flock rather than naming the tools the guard uses, so it stays true as
@@ -594,7 +594,7 @@ else
   pass "the probe PATH resolves no flock"
 fi
 
-RACE_ROOT="$TMP_ROOT/mkdir-race"
+RACE_ROOT="$TMP_ROOT/exclusive-file-race"
 make_repo "$RACE_ROOT"
 MAIN="$RACE_ROOT/main"; ROOT="$RACE_ROOT"; add_merged_tree issue-race
 RACE_WT="$RACE_ROOT/trees/issue-race"

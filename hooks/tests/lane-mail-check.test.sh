@@ -3853,7 +3853,9 @@ start_watch() {
   local state
   state="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee)"
   mkdir -p "${state%/*}"
-  env -i "PATH=$PATH" bash -c 'exec -a oversee-watch sleep 600' &
+  source "$REPO_ROOT/skills/orch/tests/lib/named-process.sh"
+  fixture_named_process "$TMP_ROOT/oversee-watch"
+  env -i "PATH=$PATH" "$TMP_ROOT/oversee-watch" 600 &
   FAKE_WATCH=$!
   printf 'pid=%s\nstate=%s\npane=none\norigin=hand\ncwd=%s\n' "$FAKE_WATCH" "$state" "$LANE" > "${state%/*}/oversee-watch.pid"
   start_follow

@@ -2184,7 +2184,7 @@ readonly SESSION_GUARD_DEFAULT_TTL_MINUTES=720
 # An unavailable guard must be loud: every lifecycle integration would
 # otherwise silently no-op, and cleanup would collect live worktrees, which is
 # what the guard exists to prevent. Warned once per invocation, not once per
-# worktree. The guard does not require flock — it falls back to a mkdir mutex
+# worktree. The guard does not require flock — it falls back to an exclusive-file mutex
 # — so "the script is not executable" is the one way to lose the guard
 # silently; a guard that cannot take its lock fails its own commands loudly.
 SESSION_GUARD_WARNED=false

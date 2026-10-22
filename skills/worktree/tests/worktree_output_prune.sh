@@ -15,6 +15,7 @@
 # trees/topic; the command runs from the main checkout; the row pins the exit
 # status, stdout, stderr whole, and every path left in the worktree.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../../orch/tests/lib/named-process.sh"
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -251,7 +252,7 @@ step() {
     # A prune here unlinks a binary out from under a live process.
     exe-holder)
       local exe_marker="$ROOT/exe-ready"
-      cp "$(command -v sleep)" "$WT/target/debug/sleeper"
+      fixture_named_process "$WT/target/debug/sleeper"
       age "$WT/target"
       (cd "$WT" && touch "$exe_marker" && exec "$WT/target/debug/sleeper" 120) &
       ROW_PIDS+=("$!")

@@ -29,6 +29,7 @@
 # `claude` CLI.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 # A row naming no --state-dir resolves the fixture's state, never the caller's.
 unset ORCH_LANE_HOST ORCH_STATE_DIR CCR_FORCE_BUNDLE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
 export ORCH_OVERSEER_LANES=1000
@@ -667,7 +668,7 @@ echo "=== an account refusal names the session the CLI already made ==="
 # reader's own predicate deciding.
 OTHER_LANE="$TMP_ROOT/.other"
 mkdir -p "$OTHER_LANE" "$TMP_ROOT/mismatch-bin"
-cp "$(command -v sleep)" "$TMP_ROOT/mismatch-bin/claude"
+fixture_named_process "$TMP_ROOT/mismatch-bin/claude"
 mismatch_row() { # SCRIPT ITEM — the launch, its result in MISMATCH
   local tree child="$TMP_ROOT/mismatch-child"
   bash -c 'env CLAUDE_CONFIG_DIR="$1" "$3" 30 & echo "$!" > "$2"; wait' _ "$OTHER_LANE" "$child" "$TMP_ROOT/mismatch-bin/claude" & tree=$!
@@ -710,7 +711,7 @@ echo "=== a claude under a pane reading as its shell is not an exited CLI ==="
 # composer takes one nudge.
 CHILD_BIN="$TMP_ROOT/child-bin"
 mkdir -p "$CHILD_BIN"
-cp "$(command -v sleep)" "$CHILD_BIN/claude"
+fixture_named_process "$CHILD_BIN/claude"
 child_row() { # SCRIPT ITEM — the launch, its result in CHILD
   local child
   "$CHILD_BIN/claude" 30 & child=$!

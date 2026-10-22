@@ -12,6 +12,7 @@
 # kill-server closes.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, the two halves of each control.
@@ -71,9 +72,9 @@ for harness in claude codex pi; do
   printf '#!/bin/sh\necho "esc to interrupt"\nexec sleep 100000\n' > "$BIN/$harness"
 done
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/pi"
-# A caller whose foreground process names claude: a copy of sleep, since a
+# A caller whose foreground process names claude: a native fixture, since a
 # script or a shell named for the harness can reset the name tmux reads.
-cp "$(command -v sleep)" "$BIN/hclaude"
+fixture_named_process "$BIN/hclaude"
 
 new_home fleet
 make_lane "$H" claude
@@ -966,7 +967,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: pi-account-unknown mo
 # reports pi, which the pane reader maps to no one harness, so its reading
 # names the harness, and the provider its model names the account.
 mkdir -p "$TMP_ROOT/pibin"
-cp "$(command -v sleep)" "$TMP_ROOT/pibin/pi"
+fixture_named_process "$TMP_ROOT/pibin/pi"
 pi_reading_row() { # [SUCCEED_BIN]
   tm kill-window -a -t "$KEEP_WINDOW"
   tm move-window -r -t fleet

@@ -74,7 +74,8 @@ for dependency in timeout gtimeout; do
   ln -s "$(command -v sh)" "$TMP_ROOT/$dependency-bin/sh"
   ln -s "$TMP_ROOT/bin/sleep" "$TMP_ROOT/$dependency-bin/sleep"
   ln -s "$(command -v bash)" "$TMP_ROOT/$dependency-bin/bash"
-  ln -s "$TIMEOUT" "$TMP_ROOT/$dependency-bin/$dependency"
+  printf '#!%s\nexec %q "$@"\n' "$BASH" "$TIMEOUT" > "$TMP_ROOT/$dependency-bin/$dependency"
+  chmod +x "$TMP_ROOT/$dependency-bin/$dependency"
 done
 cp "$TMP_ROOT/poll" "$TMP_ROOT/timeout-only-poll"
 mutate_file "$TMP_ROOT/timeout-only-poll" \

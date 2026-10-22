@@ -7,6 +7,7 @@
 # and print the interrupt hint a running turn draws. The success row runs the
 # script inside the caller's own pane, whose close HUPs it.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 case "${OSTYPE:-}" in msys*|mingw*) export MSYS=winsymlinks:nativestrict ;; esac
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/copilot-context-world.sh
@@ -70,7 +71,7 @@ checkout_world "$TMP_ROOT/work" || { echo "fixture: the work checkout could not 
 # is what a successor launched without the entry meets. The codex stub asks
 # none, its trust being the launch-home rows' subject.
 for harness in claude codex copilot; do
-  cp "$(command -v sleep)" "$BIN/processes/$harness"
+  fixture_named_process "$BIN/processes/$harness"
   case "$harness" in
     claude) lane_var=CLAUDE_CONFIG_DIR ;;
     codex) lane_var=CODEX_HOME ;;
@@ -100,8 +101,8 @@ done
 #
 # A COPY of sleep, never a shell or script named for the harness: both can reset
 # the process name tmux reads, so the shape rule never sees the harness word.
-cp "$(command -v sleep)" "$BIN/hclaude"
-cp "$(command -v sleep)" "$BIN/node"
+fixture_named_process "$BIN/hclaude"
+fixture_named_process "$BIN/node"
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/copilot" "$BIN/hclaude" "$BIN/node"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
@@ -2344,7 +2345,7 @@ fleet_state
 # reads the name and no stub runs. A host with no per-process environment to
 # read names the harness and no account, and refuses the line.
 mkdir -p "$TMP_ROOT/procs"
-for proc in MainThread copilot other; do cp "$(command -v sleep)" "$TMP_ROOT/procs/$proc"; done
+for proc in MainThread copilot other; do fixture_named_process "$TMP_ROOT/procs/$proc"; done
 copilot_node_caller() { # TREE [ENV] — a node or copilot pane with no fleet record
   local p="$TMP_ROOT/procs" run
   local env="${2:-export COPILOT_HOME='$H/.1copilot' HOME='$H'}"

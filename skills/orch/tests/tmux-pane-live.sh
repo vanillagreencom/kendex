@@ -6,11 +6,12 @@
 # refusal a row writes beside it, and
 # `display-message` the same way from its own file, for tmux_server_start: the
 # start a record binds its server by. A running
-# server is a copy of sleep named tmux, a pid reused by another program is
+# server is a native fixture named tmux, a pid reused by another program is
 # this suite's own shell. A ps fixture supplies absent and failed reads.
 # The must-fail controls close the file, one per rule, each on a library copy.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # mktemp alone, so set -e stops the suite on its failure: nested in the cd,
@@ -45,7 +46,7 @@ chmod +x "$STUB_BIN/tmux"
 
 # The server outlives every row; the trap stops it.
 mkdir -p "$TMP_ROOT/server"
-cp -- "$(command -v sleep)" "$TMP_ROOT/server/tmux"
+fixture_named_process "$TMP_ROOT/server/tmux"
 "$TMP_ROOT/server/tmux" 600 &
 LIVE=$!
 REUSED=$$

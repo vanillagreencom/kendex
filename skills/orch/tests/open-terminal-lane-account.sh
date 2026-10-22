@@ -6,6 +6,7 @@
 # before drawing the harness marker. Each child has a parent-process deadline.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 source "$TEST_DIR/lib/assertions.sh"
@@ -39,7 +40,7 @@ if [[ "${1:-}" == --case ]]; then
   tm set-option -g default-shell "$BASH"
   tm set-option -g default-command "$BASH --noprofile --norc -i"
   mkdir -p "$ROOT/real-bin/harness"
-  cp "$(command -v sleep)" "$ROOT/real-bin/harness/$HARNESS"
+  fixture_named_process "$ROOT/real-bin/harness/$HARNESS"
   printf '#!%s\nprintf "%%s" "${%s:-}" > %q\nprintf "%%s\\n" %q\nexec %q 30\n' \
     "$BASH" "$VAR" "$ROOT/account" "$SCREEN" "$ROOT/real-bin/harness/$HARNESS" > "$ROOT/bin/$HARNESS-real"
   chmod +x "$ROOT/bin/$HARNESS-real"

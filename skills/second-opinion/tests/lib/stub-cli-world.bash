@@ -676,7 +676,15 @@ err_word() {
     unwritable-record) printf '→ record could not be written to <out>.failed.json: <script>: line *: <out>.failed.json: Is a directory\n' ;;
     # the clearing and the parse
     clear-error) printf "Error: cannot clear a previous run's artifact at <out>: rm: <out>: Permission denied\n" ;;
-    parent-error) printf 'Error: cannot create the --output parent directory: <outdir>/ro/sub: mkdir: <outdir>/ro/sub: Permission denied\n' ;;
+    parent-error)
+      local reason
+      # The consumer forwards mkdir's cause; GNU, BSD and uutils phrase it
+      # differently, so compare against the installed dependency's own reply.
+      if reason="$(mkdir -p -- "$ROW/out/ro/sub" 2>&1)"; then
+        printf 'fixture-parent=unexpectedly-writable\n'
+        return 1
+      fi
+      printf 'Error: cannot create the --output parent directory: %s: %s\n' "$ROW/out/ro/sub" "$reason" | alias_text ;;
     output-dir) printf 'Error: --output is a directory, not a file path: <out>\n' ;;
     requires:*) printf "Error: %s requires a value (use %s=VALUE for a value beginning with '-')\n" "$a" "$a" ;;
     bogus) printf 'Error: unknown flag: --bogus\n' ;;

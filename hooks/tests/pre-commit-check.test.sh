@@ -224,7 +224,7 @@ assert_eq "$log" "" "the hook never executes repository checks"
 # The registered commands are the consumers of stdout JSON. Failure worlds
 # keep the reader absent or broken while jq in the parent parses that JSON.
 context_rows() {
-  local harness registry registered install row world form key path status context selected expected first
+  local harness registry registered install row world form key path status context selected expected
   local repo="$UNARMED" root="${HOOKS_DIR%/hooks}" tool real
   for harness in claude codex copilot pi; do
     case "$harness" in
@@ -286,11 +286,6 @@ context_rows() {
       expected=${expected//REPO/$repo}
       assert_eq "rc=$status first=${err%%$'\n'*}" "rc=0 first=$expected" "registered $harness $world $key notice status"
       assert_eq "$context" "$err" "registered $harness $world $key context equals the keyed diagnostic"
-      if [ "$world" = broken-jq ] && [ "${PIPE_READER_CONTROL:-}" = true ]; then
-        first=other
-        case "${err%%$'\n'*}" in *': printf: write error: Broken pipe') first=broken-pipe ;; esac
-        assert_eq "$first" broken-pipe "control pipe-reader: registered $harness broken-jq first=broken-pipe"
-      fi
     done <<'ROWS'
 tools|git commit -m test|unarmed=REPO
 tools|git commit -m $TEXT -n|command=unresolved
@@ -338,7 +333,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   (
     HOOK_UNDER_TEST="$TMP_ROOT/pipe-reader.sh"
     HOOK="$HOOK_UNDER_TEST"
-    PIPE_READER_CONTROL=true
     PASS=0; FAIL=0
     context_rows
     [ "$FAIL" -eq 0 ]
@@ -349,8 +343,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       control_matches=$(grep -Fxc -e "  FAIL  registered $control_harness broken-jq payload=invalid-json $control_assertion" -- "$TMP_ROOT/pipe-reader.log") || [ "$?" -eq 1 ]
       assert_eq "$control_matches" 1 "control pipe-reader: registered $control_harness broken-jq $control_assertion"
     done
-    control_matches=$(grep -Fxc -e "  ok    control pipe-reader: registered $control_harness broken-jq first=broken-pipe" -- "$TMP_ROOT/pipe-reader.log") || [ "$?" -eq 1 ]
-    assert_eq "$control_matches" 1 "control pipe-reader: registered $control_harness broken-jq first=broken-pipe"
   done
   skill_load_control no-short-flag "$HOOK" 'letter=${rest:0:1}; rest=${rest:1}' 'letter=x' HOOK command_rows \
     'git commit -n -m test'

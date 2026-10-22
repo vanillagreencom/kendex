@@ -10,6 +10,7 @@
 # the lanes-fixture usage bodies.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 # shellcheck source=lib/copilot-context-world.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/copilot-context-world.sh"
 # shellcheck source=lib/lanes-fixture.sh
@@ -192,7 +193,7 @@ test_concurrent_fixtures() {
   control="$TMP_ROOT/control/oversee_launch.sh"
   mkdir -p "${control%/*}" "$TMP_ROOT/control-barriers"
   cp "$TEST_DIR/oversee_launch.sh" "$control"
-  for helper in git-env.sh copilot-context-world.sh lanes-fixture.sh growth-state.sh assertions.sh; do
+  for helper in git-env.sh named-process.sh copilot-context-world.sh lanes-fixture.sh growth-state.sh assertions.sh; do
     mutate_file "$control" 'source "$(dirname "${BASH_SOURCE[0]}")/lib/'"$helper"'"' \
       "source $(printf '%q' "$TEST_DIR/lib/$helper")"
   done
@@ -254,7 +255,7 @@ OVERSEE="$QUIET_SCRIPTS/oversee"
 fixture_watch_neighbor "$OVERSEE"
 mkdir -p "$BIN/processes" "$TMP_ROOT/work/tmp"
 for harness in claude codex copilot; do
-  cp "$(command -v sleep)" "$BIN/processes/$harness"
+  fixture_named_process "$BIN/processes/$harness"
 done
 # The work directory is the overseer's checkout, current with its origin, so a
 # launch's fast-forward has nothing to move or refuse until a row says so.
@@ -315,9 +316,9 @@ printf '%s\n' "$FIXTURE_REPO"
 STUB
 chmod +x "$BIN/gh"
 # A pane whose foreground process names claude, for `register` to read the
-# harness off: a copy of sleep, since a script or a shell named for the
+# harness off: a native fixture, since a script or a shell named for the
 # harness can reset the process name tmux reads.
-cp "$(command -v sleep)" "$BIN/hclaude"
+fixture_named_process "$BIN/hclaude"
 
 new_home fleet
 make_lane "$H" claude
@@ -705,9 +706,9 @@ tm kill-window -t "$(recorded window)"
 
 # register on a codex pane running under a private CODEX_HOME: the account is
 # the folder that home was built under, and the home is kept apart from it. A
-# copy of sleep named codex, since only that exact name reads as codex.
+# native fixture named codex, since only that exact name reads as codex.
 mkdir -p "$TMP_ROOT/codex-bin"
-cp "$(command -v sleep)" "$TMP_ROOT/codex-bin/codex"
+fixture_named_process "$TMP_ROOT/codex-bin/codex"
 PRIVATE_HOME="$H/.codex/lane-launch/work-1/home"
 CODEX_PANE="$(tm new-window -d -t fleet:6 -n codexhand -P -F '#{pane_id}' "exec '$TMP_ROOT/codex-bin/codex' 100000")"
 register_codex() { # [OVERSEE_BIN]
@@ -748,14 +749,14 @@ assert_eq "$(harness_ended)|$(recorded exit.at | grep -cE '^[0-9]{4}-[0-9]{2}-[0
 tm kill-window -t "$(recorded window)"
 # register on a Copilot pane. Its command reads node, the npm loader, here a
 # copy of bash under that name whose child carries Copilot's Linux name,
-# MainThread, a copy of sleep. The account is --account's, else the
+# MainThread, a native fixture. The account is --account's, else the
 # COPILOT_HOME that process was started with, never the Claude or Codex
 # variable the session happens to carry.
 CP="$TMP_ROOT/copilot-bin"
 mkdir -p "$CP"
 cp "$(command -v bash)" "$CP/node"
 cp "$(command -v bash)" "$CP/wrap"
-cp "$(command -v sleep)" "$CP/MainThread"
+fixture_named_process "$CP/MainThread"
 printf '%s\n' "'$CP/MainThread' 100000; :" > "$CP/binary.sh"
 printf '%s\n' "'$CP/wrap' '$CP/binary.sh'; :" > "$CP/tool.sh"
 printf '%s\n' "'$CP/wrap' '$CP/tool.sh'; :" > "$CP/deep.sh"

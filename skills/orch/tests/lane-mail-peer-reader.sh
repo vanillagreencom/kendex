@@ -11,6 +11,7 @@
 # each on a private copy of lane-mail.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd -P)"
@@ -46,10 +47,10 @@ cat "$PANES"
 STUB
 chmod +x "$STUB_BIN/tmux"
 
-# A running server is a copy of sleep named tmux, which outlives every row
+# A running server is a native fixture named tmux, which outlives every row
 # and the trap stops, and a gone one a child that has exited.
 mkdir -p "$TMP_ROOT/server"
-cp -- "$(command -v sleep)" "$TMP_ROOT/server/tmux"
+fixture_named_process "$TMP_ROOT/server/tmux"
 "$TMP_ROOT/server/tmux" 600 &
 LIVE=$!
 sleep 0 &

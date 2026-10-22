@@ -1068,7 +1068,7 @@ control consumer-context '  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base
   '1 --resolve-mode' 'STUB_REQUIRED_APPROVALS=1' 'rc=2 stdout=empty rules_reads=0'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded
 control retry-base-context '  [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 2; }' \
-  '  : # [[ -n "$BASE_CHECKOUT" ]] || { approval_message base-checkout-invalid >&2; return 2; }' \
+  '  [[ -n "$BASE_CHECKOUT" ]] || BASE_CHECKOUT="$PWD" # approval_message base-checkout-invalid >&2; return 2;' \
   '1 1 3 --json --mode approval' 'STUB_APPROVAL_MODE=copilot_error,STUB_NO_BASE_CHECKOUT=1' \
   'rc=2 stdout=empty requests=0 rules_reads=0'
 # shellcheck disable=SC2016 # the lines are matched literally, unexpanded

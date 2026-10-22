@@ -2,6 +2,7 @@
 # Surface: lane-mail-model-switch delivery and lane-mail-check handoff_check.
 # Inputs: hooks/lane-mail-check.sh hooks/lane-mail-model-switch.sh skills/orch/scripts/** skills/mailbox/scripts/** skills/github/scripts/lib/** hooks/tests/lib/lane-mail-world.sh hooks/tests/lib/first-line.sh
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../../skills/orch/tests/lib/named-process.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/lib/lane-mail-world.sh"
 . "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh"
 COMPANION="${COMPANION_UNDER_TEST:-$REPO_ROOT/hooks/lane-mail-model-switch.sh}"
@@ -46,7 +47,7 @@ printf '%s\n' done > "$MODEL_DONE"
 LAUNCH
   chmod +x "$S/open-terminal"
   mkdir -p "$TMP_ROOT/bin"
-  cp -- "$(command -v sleep)" "$TMP_ROOT/bin/claude"
+  fixture_named_process "$TMP_ROOT/bin/claude"
   "$TMP_ROOT/bin/claude" 90 &
   OWNED_CHILD=$!
   START=$(lane_process_start "$OWNED_CHILD")

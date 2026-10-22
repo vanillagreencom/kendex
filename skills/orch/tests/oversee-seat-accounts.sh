@@ -3,6 +3,7 @@
 # Inputs: scripts/*, scripts/lib/*, ../mailbox/scripts/*, ../github/scripts/*,
 # tests/lib/{assertions,git-env,growth-state,lanes-fixture,tier-model-path}.sh, fixtures/lane-host.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 case "${OSTYPE:-}" in msys*|mingw*) export MSYS=winsymlinks:nativestrict ;; esac
 source "${BASH_SOURCE[0]%/*}/lib/git-env.sh"
 TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
@@ -32,7 +33,7 @@ git -C "$TMP_ROOT/work" config gc.auto 0
 git -C "$TMP_ROOT/work" config maintenance.auto false
 git -C "$TMP_ROOT/work" remote add origin https://github.com/fixture/seat.git
 make_fetcher "$TMP_ROOT/fetch"
-cp "$(command -v sleep)" "$TMP_ROOT/bin/claude"
+fixture_named_process "$TMP_ROOT/bin/claude"
 tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -c "$TMP_ROOT/work" "exec '$TMP_ROOT/bin/claude' 100000"
 PANE="$(tmux -L "$SOCK" display-message -p '#{pane_id}')"
 TMUX_ADDR="$(tmux -L "$SOCK" display-message -p '#{socket_path},#{pid},0')"

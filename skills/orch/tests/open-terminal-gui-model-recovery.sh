@@ -3,6 +3,7 @@
 # Inputs: skills/orch/scripts/** skills/github/scripts/lib/** skills/mailbox/scripts/** hooks/lane-mail-check.sh hooks/lane-mail-model-switch.sh hooks/tests/lib/lane-mail-world.sh
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 TEST_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 source "$TEST_ROOT/hooks/tests/lib/lane-mail-world.sh"
 source "$TEST_ROOT/skills/orch/tests/lib/assertions.sh"
@@ -12,7 +13,7 @@ source "$TEST_ROOT/skills/orch/scripts/lib/lane-state.sh"
 source "$TEST_ROOT/skills/orch/scripts/lib/lane-launch.sh"
 
 mkdir -p "$TMP_ROOT/bin/hold"
-cp -- "$(command -v sleep)" "$TMP_ROOT/bin/hold/claude"
+fixture_named_process "$TMP_ROOT/bin/hold/claude"
 cat > "$TMP_ROOT/bin/claude" <<'HARNESS'
 #!/usr/bin/env bash
 set -euo pipefail

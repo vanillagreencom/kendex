@@ -623,9 +623,9 @@ assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=launched since=iso la
   "a record in the lane worktree's tmp retires its session where its state directory setting names another"
 PLACE_MUTANT="$(mutant_scripts place-mutant open-terminal)" || exit 1
 mutate_file "$PLACE_MUTANT/open-terminal" 'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2" --worktree "$3"' \
-  'lane_handoff_standing "" "" "$WORKFLOW_STATE" handoff-standing "$2"'
+  'lane_handoff_standing "$3" "" "$WORKFLOW_STATE" handoff-standing "$2"'
 assert_eq "$(retired_under "$PLACE_MUTANT/open-terminal")" "rc=0 retired=0 session=$CLAUDE222 since=iso launched_at=$LAUNCHED_AT" \
-  "control: a relaunch naming no worktree misses that record and resumes the retired session"
+  "control: a relaunch without the worktree override misses that record and resumes the retired session"
 rm -f -- "${TMP_ROOT:?}/wt/CC-1/kendex.settings.toml"
 # Each is a relaunch renewing running_at, so the wake row below reads the
 # stamp the last of them left.

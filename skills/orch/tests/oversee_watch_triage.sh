@@ -31,10 +31,10 @@ run() {
   [[ "$since" == no ]] || args+=(--since "$SINCE")
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
   if [[ -f "$STUB_DIR/fail-delivery" ]]; then
-    # A consumer can close its output stream. Refuse the actual write so
-    # the failure does not depend on which command reads the parent spool.
+    # Rust tools replace a closed standard descriptor with /dev/null. A
+    # read-only descriptor stays open but refuses the actual protocol write.
     OUT=""
-    run_watch "${args[@]}" >&- 2>"$ERR" && RC=0 || RC=$?
+    run_watch "${args[@]}" 1<"$STUB_DIR/fail-delivery" 2>"$ERR" && RC=0 || RC=$?
   else
     OUT="$(run_watch "${args[@]}" 2>"$ERR")" && RC=0 || RC=$?
   fi

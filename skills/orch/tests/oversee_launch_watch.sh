@@ -11,6 +11,7 @@
 # starts. What the helper does once started is oversee_succeed_watch.sh's.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # Private script layouts hold the stand-in watch beside the real launcher.
@@ -1097,10 +1098,10 @@ assert_eq "${NEW:+watched}|$WATCH_PANE" "watched|$SUCC" \
 # whatever harness the caller ran.
 CRED_BIN="$TMP_ROOT/cred-bin"
 mkdir -p "$CRED_BIN/unit" "$BIN/processes"
-# A copy of sleep named codex holds the successor's pane, since only that
+# A native fixture named codex holds the successor's pane, since only that
 # exact process name reads as codex. The stub keeps the words it was launched
 # with, one per line, the last its opening prompt.
-cp "$(command -v sleep)" "$BIN/processes/codex"
+fixture_named_process "$BIN/processes/codex"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\necho "esc to interrupt"\nexec "%s" 100000\n' \
   "$TMP_ROOT/codex.args" "$BIN/processes/codex" > "$BIN/codex"
 chmod +x "$BIN/codex"
@@ -1299,7 +1300,7 @@ assert_eq "${REFUSED_RESULT%%|*}" 0 \
 # ol_pick_lane and ol_command_line produce an account-free Pi successor.
 # Its public recovery must keep the inherited provider environment, including
 # the Claude variable an unconditional fallback prefix would clear.
-cp "$(command -v sleep)" "$BIN/processes/pi"
+fixture_named_process "$BIN/processes/pi"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\necho "esc to interrupt"\nexec "%s" 100000\n' \
   "$TMP_ROOT/pi.args" "$BIN/processes/pi" > "$BIN/pi"
 chmod +x "$BIN/pi"
@@ -1378,7 +1379,7 @@ awk '
   !setup || regression { print }
   END { if (!setup || !regression) exit 1 }
 ' "${BASH_SOURCE[0]}" > "$STARTUP_CONTROL"
-for STARTUP_HELPER in git-env.sh lanes-fixture.sh growth-state.sh assertions.sh; do
+for STARTUP_HELPER in git-env.sh named-process.sh lanes-fixture.sh growth-state.sh assertions.sh; do
   mutate_file "$STARTUP_CONTROL" 'source "$(dirname "${BASH_SOURCE[0]}")/lib/'"$STARTUP_HELPER"'"' \
     "source $(printf '%q' "$TEST_DIR/lib/$STARTUP_HELPER")"
 done

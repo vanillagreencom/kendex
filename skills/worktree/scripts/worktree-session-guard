@@ -71,8 +71,8 @@ Options (a flag a command does not take is a usage failure):
   --repo DIR         release, status, list, sweep. Repository checkout.
 
 Mutations (claim, refresh, release, sweep) serialize on a lock in the
-repository's common dir, through flock(1) where it is on PATH and a mkdir
-mutex otherwise; either refuses after waiting 60 seconds for it.
+repository's common dir, through flock(1) where it is on PATH and an
+exclusive-file mutex otherwise; either refuses after waiting 60 seconds for it.
 
 Exit codes: 0 success, 1 usage/Git failure or a lock wait that ran out,
 3 no lock, 4 non-guard lock, 5 enumeration failure or a lease sweep could
@@ -239,11 +239,11 @@ resolve_registration() {
 	return 1
 }
 
-GUARD_MUTEX_DIR=''
+GUARD_MUTEX_FILE=''
 release_guard_mutex() {
-	[[ -n "$GUARD_MUTEX_DIR" ]] || return 0
-	rmdir -- "$GUARD_MUTEX_DIR" 2>/dev/null || true
-	GUARD_MUTEX_DIR=''
+	[[ -n "$GUARD_MUTEX_FILE" ]] || return 0
+	rm -f -- "$GUARD_MUTEX_FILE" 2>/dev/null || true
+	GUARD_MUTEX_FILE=''
 }
 
 # Serializes the whole read-decide-write of every mutating command. Without it
@@ -254,8 +254,9 @@ release_guard_mutex() {
 # than dropping it between iterations.
 #
 # flock(1) is preferred because the kernel releases it however the holder dies.
-# Stock macOS ships none, so a mkdir mutex carries the claim there: mkdir is
-# atomic on POSIX filesystems, so exactly one contender creates the directory.
+# Stock macOS ships none, so Bash noclobber creates an exclusive file there.
+# uutils mkdir can report success to both concurrent creators (upstream
+# uutils/coreutils#13986); Bash's O_EXCL acquisition avoids that CLI race.
 # The two do not lock each other out, so this ASSUMES every guard process on a
 # host resolves the same one. Nothing enforces that — `command -v flock` is
 # re-evaluated per invocation — and a flock-less PATH running beside a normal
@@ -273,21 +274,18 @@ acquire_guard_mutex() {
 		flock -x -w "$GUARD_MUTEX_WAIT_SECONDS" 9 || fail guard-lock-timeout "$lock_path" "Cannot acquire the session lock within ${GUARD_MUTEX_WAIT_SECONDS}s; another guard process holds it."
 		return 0
 	fi
-	# Armed before the loop, never after it wins: with no holder liveness a
-	# leaked directory is never reclaimed, so every later mutation on this
-	# repository would wait the bound and fail. release_guard_mutex is a no-op while
-	# GUARD_MUTEX_DIR is empty, so arming early costs nothing. One command
-	# boundary is still uncovered — a signal handled between mkdir returning
-	# and the assignment below — because recording the directory before mkdir
-	# would let a losing contender rmdir the winner's mutex, which is worse
-	# than a rare leak the error message already tells an operator to clear.
+	# Keep cleanup inert until this process owns the file. A signal between
+	# acquisition and the assignment can leave a file to remove by hand; arming
+	# cleanup with the path first would let a loser remove the winner's mutex.
+	# Retain the directory mutex's path so older and newer guards exclude
+	# each other while an installed copy is being updated.
 	trap release_guard_mutex EXIT
-	while ! mkdir -- "$lock_path.d" 2>/dev/null; do
+	while ! (set -o noclobber; : >"$lock_path.d") 2>/dev/null; do
 		tries=$((tries + 1))
-		[[ "$tries" -lt $((GUARD_MUTEX_WAIT_SECONDS * 10)) ]] || fail guard-mutex-timeout "$lock_path.d" "Cannot acquire the session mutex. If no guard process is running, remove this directory."
+		[[ "$tries" -lt $((GUARD_MUTEX_WAIT_SECONDS * 10)) ]] || fail guard-mutex-timeout "$lock_path.d" "Cannot acquire the session mutex. If no guard process is running, remove this path."
 		sleep 0.1
 	done
-	GUARD_MUTEX_DIR="$lock_path.d"
+	GUARD_MUTEX_FILE="$lock_path.d"
 }
 
 write_lease() {

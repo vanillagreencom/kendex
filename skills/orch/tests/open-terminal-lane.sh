@@ -13,6 +13,7 @@
 # they share is lib/open-terminal-lane-world.sh.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 # Physical: on macOS the temp root sits under /var -> /private/var, and the
 # scripts print the resolved path.
 TMP_ROOT="$(mktemp -d)" || { echo "open-terminal-lane: scratch=mktemp-failed" >&2; exit 1; }
@@ -81,8 +82,8 @@ STUBEOF
 chmod +x "$TMP_ROOT/lane-tree"
 # The account read selects a harness by process name. These live leaves keep
 # the sleep lifetime while carrying the command name the launch promises.
-cp "$(command -v sleep)" "$TMP_ROOT/claude"
-cp "$(command -v sleep)" "$TMP_ROOT/codex"
+fixture_named_process "$TMP_ROOT/claude"
+fixture_named_process "$TMP_ROOT/codex"
 # Depth first, so a parent is never killed before the children it would orphan.
 kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tree "$p"; done; kill "$1" 2>/dev/null || true; }
 

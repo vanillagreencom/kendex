@@ -11,6 +11,7 @@
 # row reaches the headroom mark, or is the wall recovery, and walks.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, the two halves of the ladder's control.
@@ -65,13 +66,13 @@ exec sleep 100000
 STUB
 done
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/copilot" "$BIN/pi"
-# A caller whose foreground process names claude: a copy of sleep, since a
+# A caller whose foreground process names claude: a native fixture, since a
 # script or a shell named for the harness can reset the name tmux reads.
-cp "$(command -v sleep)" "$BIN/hclaude"
-# A codex caller's pane: a copy of sleep named codex, apart from the stub the
+fixture_named_process "$BIN/hclaude"
+# A codex caller's pane: a native fixture named codex, apart from the stub the
 # successor runs.
 mkdir -p "$TMP_ROOT/cbin"
-cp "$(command -v sleep)" "$TMP_ROOT/cbin/codex"
+fixture_named_process "$TMP_ROOT/cbin/codex"
 
 new_home fleet
 make_lane "$H" claude
