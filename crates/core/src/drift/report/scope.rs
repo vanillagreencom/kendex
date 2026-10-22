@@ -460,7 +460,6 @@ impl ScopeCheck<'_> {
             for (key, entry) in &lock.entries {
                 if selected.contains(key)
                     && entry.kind == ItemKind::Agent
-                    && !manifest.agents.contains_key(&entry.name)
                     && crate::mapping::skills_key(manifest, &entry.name) == Some(agent.as_str())
                 {
                     harnesses.insert(entry.harness);

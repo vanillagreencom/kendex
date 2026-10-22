@@ -1,1 +1,1 @@
-- `kendex check` recognizes skills installed through dependencies or bundles for agent assignments, including inherited reviewer assignments, without asking you to add them again.
+- `kendex check` recognizes skills installed through dependencies or bundles for agent assignments, including inherited reviewer assignments, without asking you to add them again, and still asks for a skill missing on any tool a bundle also installs the agent on.

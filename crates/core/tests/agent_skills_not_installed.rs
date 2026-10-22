@@ -298,6 +298,7 @@ fn prepare_assignment_record_case(f: &Fixture, case: &str) -> (PathBuf, PathBuf)
 fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
     let scout = "[agents.scout]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
     let reviewer = "[agents.reviewer-scout]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
+    let claude_reviewer = "[agents.reviewer-scout]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
     let recorded = "[bundles.reviewers]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
     for (case, agents, claude_only, exact, unresolved) in [
         (
@@ -335,6 +336,13 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
             false,
             true,
         ),
+        (
+            "declared agents widened by bundle",
+            format!("{scout}{claude_reviewer}{recorded}"),
+            true,
+            false,
+            true,
+        ),
     ] {
         let harnesses = if claude_only {
             "harnesses = [\"claude\"]\n"
@@ -346,7 +354,7 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
             &format!(
                 "{agents}[bundles.starter]\nsource = \"cat\"\n{harnesses}[agent-skills]\nscout = [\"recon\"]\n{assignment}"
             ),
-            "[bundles.starter]\nskills = [\"recon\"]\n[bundles.reviewers]\nagents = [\"reviewer-scout\"]\n",
+            "[bundles.starter]\nskills = [\"recon\"]\n[bundles.reviewers]\nagents = [\"scout\", \"reviewer-scout\"]\n",
         );
         fs::write(
             f.source.join("agents/reviewer-scout.md"),
@@ -365,6 +373,12 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
         let reviewer_key = entry_key(ItemKind::Agent, "reviewer-scout", HarnessId::Codex);
         let skill_key = entry_key(ItemKind::Skill, "recon", HarnessId::Codex);
         assert!(lock.entries.contains_key(&reviewer_key), "{case}");
+        assert_eq!(
+            lock.entries
+                .contains_key(&entry_key(ItemKind::Agent, "scout", HarnessId::Codex)),
+            agents.contains(recorded),
+            "{case}"
+        );
         assert_eq!(
             lock.entries.contains_key(&skill_key),
             !claude_only,
