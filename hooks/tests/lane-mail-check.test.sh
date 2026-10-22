@@ -344,7 +344,7 @@ assert_eq "$(grep -cF -- " set KEN-50 handoff " "$ERR_FILE")" "1" \
 assert_eq "$(template_fields)" "$HANDOFF_FIELDS,context" \
   "the record template it names carries every field a relaunch reads"
 assert_eq "$(template_record | jq -cS .)" \
-  "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:null,traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:90,cap_mark:400000,window_mark:900000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
+  "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:null,traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:50,cap_mark:400000,window_mark:500000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
   "the parsed record preserves recovery fields and the actual plain decision and source"
 assert_eq "$(template_omits_written_at && echo yes || echo no)" "yes" \
   "and asks the lane for no written_at, which the set stamps"

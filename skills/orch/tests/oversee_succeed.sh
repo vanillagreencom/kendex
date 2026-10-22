@@ -1724,7 +1724,7 @@ exec "$PICKLOG/lanes-real" "\$@"
 WRAPPER
 for pick_row in \
   'two|1|60|context-below-mark tokens=100000 window=1000000 mark=50 headroom=40|caller' \
-  'one|1|none|mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none|capacity' \
+  "one|1|none|mark-reached kind=qualifying value=1 mark=1 succession=on headroom=none $UNDER_CONTEXT_FIELD|capacity" \
   'equal|2|50|context-below-mark tokens=100000 window=1000000 mark=50 headroom=50|capacity'; do
   IFS='|' read -r pick_name pick_bound pick_usage pick_want pick_calls <<<"$pick_row"
   claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
