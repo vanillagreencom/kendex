@@ -446,29 +446,26 @@ impl ScopeCheck<'_> {
     ) {
         let prefix = self.prefix;
         for (agent, skills) in &manifest.agent_skills {
-            let harnesses = manifest.agents.get(agent).map_or_else(
-                || {
-                    lock.entries
-                        .iter()
-                        .filter(|(key, entry)| {
-                            selected.contains(*key)
-                                && entry.kind == ItemKind::Agent
-                                && entry.name == *agent
-                        })
-                        .map(|(_, entry)| entry.harness)
-                        .collect()
-                },
-                |decl| {
-                    crate::engine::desired::target_harnesses(
+            let mut harnesses = BTreeSet::new();
+            for (name, decl) in &manifest.agents {
+                if crate::mapping::skills_key(manifest, name) == Some(agent.as_str()) {
+                    harnesses.extend(crate::engine::desired::target_harnesses(
                         decl,
                         manifest,
                         ItemKind::Agent,
                         self.scope,
-                    )
-                    .into_iter()
-                    .collect::<BTreeSet<_>>()
-                },
-            );
+                    ));
+                }
+            }
+            for (key, entry) in &lock.entries {
+                if selected.contains(key)
+                    && entry.kind == ItemKind::Agent
+                    && !manifest.agents.contains_key(&entry.name)
+                    && crate::mapping::skills_key(manifest, &entry.name) == Some(agent.as_str())
+                {
+                    harnesses.insert(entry.harness);
+                }
+            }
             for skill in skills {
                 let installed = !harnesses.is_empty()
                     && harnesses.iter().all(|harness| {

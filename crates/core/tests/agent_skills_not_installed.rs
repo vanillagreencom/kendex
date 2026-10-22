@@ -9,8 +9,9 @@ use kendex_core::drift::{copies::CheckMode, report};
 use kendex_core::engine::{EngineReport, audit, ops};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
+use kendex_core::lock::entry_key;
 use kendex_core::manifest;
-use kendex_core::model::{ItemKind, Scope};
+use kendex_core::model::{HarnessId, ItemKind, Scope};
 
 use crate::test_util::{rooted, source_path};
 
@@ -81,6 +82,51 @@ fn missing(report: &EngineReport) -> Vec<&str> {
             Some(skill)
         })
         .collect()
+}
+
+#[allow(clippy::unwrap_used)]
+fn assert_assignment_report(f: &Fixture, unresolved: bool, case: &str) {
+    let path = manifest::manifest_path(&f.env, &f.scope);
+    let lock_path = kendex_core::lock::lock_path(&f.env, &f.scope);
+    let before = fs::read(&path).unwrap();
+    let lock_before = fs::read(&lock_path).unwrap();
+    let checked = report::check(
+        &f.env,
+        std::slice::from_ref(&f.scope),
+        CheckMode::ReportOnly,
+    );
+    let additions: Vec<_> = checked
+        .sections
+        .iter()
+        .flat_map(|section| &section.lines)
+        .filter_map(|line| match &line.remedy {
+            Some(report::Remedy::Add {
+                kind: ItemKind::Skill,
+                name,
+                ..
+            }) => {
+                assert_eq!(line.class, report::Class::Drift, "{case}");
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        additions,
+        if unresolved { vec!["recon"] } else { vec![] },
+        "{case}"
+    );
+    assert_eq!(
+        checked.status,
+        if unresolved {
+            report::CheckStatus::Drift
+        } else {
+            report::CheckStatus::Clean
+        },
+        "{case}"
+    );
+    assert_eq!(fs::read(path).unwrap(), before, "{case}");
+    assert_eq!(fs::read(lock_path).unwrap(), lock_before, "{case}");
 }
 
 #[test]
@@ -166,40 +212,10 @@ fn explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments()
             unresolved
         );
         let path = manifest::manifest_path(&f.env, &f.scope);
-        let before = fs::read(&path).unwrap();
-        let lock_path = kendex_core::lock::lock_path(&f.env, &f.scope);
-        let lock_before = fs::read(&lock_path).unwrap();
         let declared = manifest::load_for_mutation(&path).unwrap().unwrap();
         assert_eq!(declared.agent_skills["scout"], ["recon"]);
         assert_eq!(declared.skills.contains_key("recon"), explicit);
-        let checked = report::check(&f.env, &[f.scope.clone()], CheckMode::ReportOnly);
-        let additions: Vec<_> = checked
-            .sections
-            .iter()
-            .flat_map(|section| &section.lines)
-            .filter_map(|line| match &line.remedy {
-                Some(report::Remedy::Add {
-                    kind: ItemKind::Skill,
-                    name,
-                    ..
-                }) => {
-                    assert_eq!(line.class, report::Class::Drift);
-                    Some(name.as_str())
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(additions, if unresolved { vec!["recon"] } else { vec![] });
-        assert_eq!(
-            checked.status,
-            if unresolved {
-                report::CheckStatus::Drift
-            } else {
-                report::CheckStatus::Clean
-            }
-        );
-        assert_eq!(fs::read(path).unwrap(), before);
-        assert_eq!(fs::read(lock_path).unwrap(), lock_before);
+        assert_assignment_report(&f, unresolved, declaration);
     }
 }
 
@@ -275,6 +291,87 @@ fn prepare_assignment_record_case(f: &Fixture, case: &str) -> (PathBuf, PathBuf)
         _ => {}
     }
     (manifest_path, lock_path)
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
+    let scout = "[agents.scout]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
+    let reviewer = "[agents.reviewer-scout]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
+    let recorded = "[bundles.reviewers]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
+    for (case, agents, claude_only, exact, unresolved) in [
+        (
+            "reviewer only",
+            "[agents.reviewer-scout]\nsource = \"cat\"\n".to_owned(),
+            false,
+            false,
+            false,
+        ),
+        (
+            "declared reviewer missing",
+            format!("{scout}{reviewer}"),
+            true,
+            false,
+            true,
+        ),
+        (
+            "exact override",
+            format!("{scout}{reviewer}"),
+            true,
+            true,
+            false,
+        ),
+        (
+            "recorded reviewer only",
+            recorded.to_owned(),
+            false,
+            false,
+            false,
+        ),
+        (
+            "recorded reviewer missing",
+            format!("{scout}{recorded}"),
+            true,
+            false,
+            true,
+        ),
+    ] {
+        let harnesses = if claude_only {
+            "harnesses = [\"claude\"]\n"
+        } else {
+            ""
+        };
+        let assignment = if exact { "reviewer-scout = []\n" } else { "" };
+        let f = fixture(
+            &format!(
+                "{agents}[bundles.starter]\nsource = \"cat\"\n{harnesses}[agent-skills]\nscout = [\"recon\"]\n{assignment}"
+            ),
+            "[bundles.starter]\nskills = [\"recon\"]\n[bundles.reviewers]\nagents = [\"reviewer-scout\"]\n",
+        );
+        fs::write(
+            f.source.join("agents/reviewer-scout.md"),
+            AGENT.replacen("name: scout", "name: reviewer-scout", 1),
+        )
+        .unwrap();
+        let planned = audit(&f.env, &f.scope).unwrap();
+        assert!(planned.refused.is_empty(), "{case}");
+        apply::execute(&f.env, &planned.plan).unwrap();
+        let path = manifest::manifest_path(&f.env, &f.scope);
+        let lock_path = kendex_core::lock::lock_path(&f.env, &f.scope);
+        let declared = manifest::load_for_mutation(&path).unwrap().unwrap();
+        assert_eq!(declared.agent_skills["scout"], ["recon"], "{case}");
+        assert!(!declared.skills.contains_key("recon"), "{case}");
+        let lock = kendex_core::lock::load(&lock_path).unwrap();
+        let reviewer_key = entry_key(ItemKind::Agent, "reviewer-scout", HarnessId::Codex);
+        let skill_key = entry_key(ItemKind::Skill, "recon", HarnessId::Codex);
+        assert!(lock.entries.contains_key(&reviewer_key), "{case}");
+        assert_eq!(
+            lock.entries.contains_key(&skill_key),
+            !claude_only,
+            "{case}"
+        );
+        assert_assignment_report(&f, unresolved, case);
+    }
 }
 
 #[test]
