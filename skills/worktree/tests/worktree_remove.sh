@@ -266,9 +266,10 @@ STUB
       chmod +x "$ROOT/bin/git"
       ROW_PATH="$ROOT/bin:$ROW_PATH"
       ;;
-    # Git's non-atomic removal can discard its private registration and .git
-    # while a filesystem failure leaves files. Only fixture-owned paths go.
-    git-partial)
+    # Git's non-atomic removal can discard its private registration while a
+    # filesystem failure leaves files. Readdir order decides whether .git is
+    # among the files kept. Only fixture-owned paths go.
+    git-partial | git-partial-kept-git)
       mkdir -p "$ROOT/bin"
       cat >"$ROOT/bin/git" <<'STUB'
 #!/usr/bin/env bash
@@ -276,13 +277,14 @@ set -euo pipefail
 if [[ " $* " == *" worktree remove --force "* ]]; then
   target="${!#}"
   registration="$("$REAL_GIT_BIN" -C "$target" rev-parse --absolute-git-dir)"
-  rm -f -- "${target:?}/.git"
+  [[ -f "$0.kept-git" ]] || rm -f -- "${target:?}/.git"
   rm -rf -- "${registration:?}"
   echo "simulated directory deletion failure after registration removal" >&2
   exit 1
 fi
 exec "$REAL_GIT_BIN" "$@"
 STUB
+      [[ "$1" != git-partial-kept-git ]] || : >"$ROOT/bin/git.kept-git"
       chmod +x "$ROOT/bin/git"
       ROW_PATH="$ROOT/bin:$ROW_PATH"
       ROW_ENV+=("WORKTREE_BASE_DIR=$ROOT/trees")
@@ -436,11 +438,13 @@ remove_err() {
     unmerged) unmerged_block ;;
     locked) locked_block ;;
     refused) refused_block ;;
+    refused-alias) printf '%s' 'worktree-remove-failed: <alias>;worktree-remove-recovery: repository=<main> path=<wt> branch=topic registration=present directory=remaining recovery=manual' ;;
     unread) printf '%s' 'worktree-remove-failed: <wt>;worktree-remove-registration-unread: operation=worktree-list status=1 cause=simulated registration read failure;worktree-remove-recovery: repository=<main> path=<wt> branch=topic registration=unread directory=remaining recovery=manual' ;;
     held-map) map_block ;;
     unidentified) printf '%s' 'worktree-remove-unidentified: <alias>;worktree-remove-recovery: repository=<main> path=<alias> branch=unknown registration=unresolved recovery=manual' ;;
     partial) printf '%s' 'worktree-lease-released: path=<wt> owner=TOPIC;worktree-remove-failed: <wt>;worktree-remove-recovery: repository=<main> path=<wt> branch=topic registration=missing directory=remaining recovery=manual' ;;
     leftover) printf '%s' 'worktree-remove-unidentified: <wt>;worktree-remove-recovery: repository=<main> path=<wt> branch=unknown registration=unresolved recovery=manual' ;;
+    leftover-alias) printf '%s' 'worktree-remove-unidentified: <alias>;worktree-remove-recovery: repository=<main> path=<wt> branch=unknown registration=unresolved recovery=manual' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -465,8 +469,11 @@ an unmerged branch: the worktree goes, the branch stays, the diagnostic names th
 a locked worktree is refused with its owner and the unlock command, links intact|tree links lock|TOPIC|1|-|locked|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same worktree unlocked is removed|tree links lock unlock|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
 a removal git refuses after every precheck leaves the worktree, branch and links intact|tree links git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=LINKS
+a removal git refuses through a symlink records the physical worktree|tree links alias git-refuses|@alias|1|-|refused-alias|worktree=registered/yes branch=present dirs=topic links=LINKS
 a failed registration read after Git refuses keeps the state unverified|tree links git-refuses-unread|TOPIC|1|-|unread|worktree=registered/yes branch=present dirs=topic links=LINKS
 a retry after Git deletes registration preserves unidentified leftovers|tree links own-lease mail git-partial after-partial-remove|TOPIC|1|-|leftover|worktree=unregistered/no branch=present dirs=topic links=LINKS mail=main:absent wt:wt-1,wt-2+watch staged=0
+a retry after Git deletes registration but keeps .git preserves unidentified leftovers|tree links own-lease mail git-partial-kept-git after-partial-remove|TOPIC|1|-|leftover|worktree=unregistered/no branch=present dirs=topic links=LINKS mail=main:absent wt:wt-1,wt-2+watch staged=0
+the same retry through a symlink records the physical leftover|tree links own-lease mail git-partial-kept-git after-partial-remove alias|@alias|1|-|leftover-alias|worktree=unregistered/no branch=present dirs=topic links=LINKS mail=main:absent wt:wt-1,wt-2+watch staged=0
 a worktree still holding an unreconciled rebase map is refused, tree and branch intact|tree commit links unreconciled-map|TOPIC|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same refusal reaches it through a symlink, which removal accepts and would follow|tree commit links unreconciled-map alias|@alias|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same refusal covers a worktree whose directory is already gone|tree commit unreconciled-map vanished|TOPIC|1|-|held-map|worktree=registered/no branch=present dirs=- links=-
@@ -535,8 +542,8 @@ printf '%s\n' "${CONTROL_TEXT/"$RECOVERY_BRANCH"/'branch=unknown registration=$R
 PARTIAL_ROWS="$(awk -F '|' '$2 ~ /after-partial-remove/ { print }' <<<"$REMOVE_ROWS")"
 [[ -n "$PARTIAL_ROWS" ]] || { echo 'worktree_remove: control=recovery-row-missing' >&2; exit 1; }
 control_log="$(PASS=0 FAIL=0 WORKTREE_SCRIPT="$RECOVERY_CONTROL/worktree"; check_remove_rows "$PARTIAL_ROWS" recovery-control)"
-assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log")" \
-  'a retry after Git deletes registration preserves unidentified leftovers: first removal retains identity and leftovers' \
+expected_failures="$(awk -F '|' '{ print $1 ": first removal retains identity and leftovers" }' <<<"$PARTIAL_ROWS" | paste -s -d ';' -)"
+assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log" | paste -s -d ';' -)" "$expected_failures" \
   'control: losing the known branch fails the partial-removal identity assertion'
 
 # A copy without the inactive-only release must fail the recorded-PID row.

@@ -660,11 +660,11 @@ remove_recovery_guidance() {
 # the arms that proceed have to establish why: an identified registration, a
 # live directory the ownership guard judges by identity, or nothing at the path
 # at all, which is nothing to protect.
-refuse_unidentified_worktree() {
-  local wt="$1"
+refuse_unidentified_worktree() { # TARGET PHYSICAL_PATH
+  local wt="$1" physical="$2"
   worktree_message remove-unidentified "$wt" "Error: $wt could not be resolved to a registered worktree of this repository, so what removing it would delete cannot be established; refusing to remove it." >&2
   echo "Nothing was released, removed or pruned." >&2
-  worktree_message remove-recovery "repository=$PROJECT_ROOT path=$wt branch=unknown registration=unresolved recovery=manual" >&2
+  worktree_message remove-recovery "repository=$PROJECT_ROOT path=$physical branch=unknown registration=unresolved recovery=manual" >&2
   remove_recovery_guidance
   echo "Address a still-registered worktree by the path Git recorded for it:" >&2
   echo "  git -C \"$PROJECT_ROOT\" worktree list" >&2
@@ -3536,6 +3536,9 @@ case "${1:-}" in
     # are physical (pwd -P); the boundary-aware match avoids treating a
     # sibling like .../issue-10 as inside .../issue-1.
     WT_REAL="$(cd "$WT_PATH" 2>/dev/null && pwd -P)" || WT_REAL=""
+    # Recovery matches the physical directory resolved before Git ran, never
+    # an alias spelling that Git's partial deletion can leave dangling.
+    REMOVE_RECORD_PATH="${WT_REAL:-$WT_PATH}"
     CWD_REAL="$(pwd -P)"
     CWD_INSIDE_WT=false
     if [[ -n "$WT_REAL" ]] && [[ "$CWD_REAL" == "$WT_REAL" || "$CWD_REAL" == "$WT_REAL"/* ]]; then
@@ -3549,7 +3552,7 @@ case "${1:-}" in
     if REMOVE_GIT_DIR="$(registered_worktree_git_dir "$WT_PATH")"; then
       REMOVE_MAP_FILE="$REMOVE_GIT_DIR/kendex-rebase-map"
     elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
-      refuse_unidentified_worktree "$WT_PATH" || exit 1
+      refuse_unidentified_worktree "$WT_PATH" "$REMOVE_RECORD_PATH" || exit 1
     fi
     if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
       worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
@@ -3579,8 +3582,11 @@ case "${1:-}" in
       # be mutated. A foreign repo's worktree reachable through a shared or
       # symlinked base dir must not have its symlinks stripped or its
       # registration touched.
-      if [[ -z "$REMOVE_GIT_DIR" ]] && ! is_git_worktree_path "$WT_PATH"; then
-        refuse_unidentified_worktree "$WT_PATH" || exit 1
+      # Git's partial removal can leave .git naming a deleted registration,
+      # which Git cannot read; a live foreign or lookalike repository still
+      # resolves and takes the ownership refusal below.
+      if [[ -z "$REMOVE_GIT_DIR" ]] && { ! is_git_worktree_path "$WT_PATH" || ! git_common_dir_path "$WT_PATH" >/dev/null; }; then
+        refuse_unidentified_worktree "$WT_PATH" "$REMOVE_RECORD_PATH" || exit 1
       fi
       if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
         exit 1
@@ -3588,7 +3594,7 @@ case "${1:-}" in
       # Identity says this IS one of this repository's worktrees, and the
       # resolution above could not name its private Git directory. Removing
       # would delete a directory this cannot inspect, so it stops here too.
-      [[ -n "$REMOVE_GIT_DIR" ]] || refuse_unidentified_worktree "$WT_PATH" || exit 1
+      [[ -n "$REMOVE_GIT_DIR" ]] || refuse_unidentified_worktree "$WT_PATH" "$REMOVE_RECORD_PATH" || exit 1
     fi
     if [[ -n "$REMOVE_GIT_DIR" ]]; then
       # A session that claimed this worktree must be able to tear it down, and
@@ -3645,18 +3651,18 @@ case "${1:-}" in
         elif [[ -d "$REMOVE_GIT_DIR" ]]; then
           REMOVE_REGISTRATION_STATE=present
         elif [[ ! -e "$REMOVE_GIT_DIR" && ! -L "$REMOVE_GIT_DIR" ]] &&
-             ! grep -qxF -- "worktree ${WT_REAL:-$WT_PATH}" <<<"$REMOVE_REGISTRATION_LIST"; then
+             ! grep -qxF -- "worktree $REMOVE_RECORD_PATH" <<<"$REMOVE_REGISTRATION_LIST"; then
           REMOVE_REGISTRATION_STATE=missing
         fi
         REMOVE_DIRECTORY_STATE=absent
-        if [[ -L "$WT_PATH" ]]; then
+        if [[ -L "$REMOVE_RECORD_PATH" ]]; then
           REMOVE_DIRECTORY_STATE=symlink
-        elif [[ -d "$WT_PATH" ]]; then
+        elif [[ -d "$REMOVE_RECORD_PATH" ]]; then
           REMOVE_DIRECTORY_STATE=remaining
-        elif [[ -e "$WT_PATH" ]]; then
+        elif [[ -e "$REMOVE_RECORD_PATH" ]]; then
           REMOVE_DIRECTORY_STATE=changed
         fi
-        worktree_message remove-recovery "repository=$PROJECT_ROOT path=$WT_PATH branch=${BRANCH:-unknown} registration=$REMOVE_REGISTRATION_STATE directory=$REMOVE_DIRECTORY_STATE recovery=manual" >&2
+        worktree_message remove-recovery "repository=$PROJECT_ROOT path=$REMOVE_RECORD_PATH branch=${BRANCH:-unknown} registration=$REMOVE_REGISTRATION_STATE directory=$REMOVE_DIRECTORY_STATE recovery=manual" >&2
         echo "  Branch: ${BRANCH:-unknown} (not deleted)" >&2
         echo "Git's deletion is not atomic. A missing registration with a remaining directory means Git removed registration but left files; retry refuses unidentified leftovers. An unread registration state stays unverified." >&2
         remove_recovery_guidance
