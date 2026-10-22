@@ -1334,7 +1334,8 @@ REPORT
       fi ;;
   esac
   # Each control restores one wrong reading of a summary's form; its row,
-  # judged by the verb that row runs, must reject it.
+  # judged by the verb that row runs, must reject it. Fields split on `~`,
+  # so a target names no awk match operator.
   while IFS='~' read -r row control old new; do
     [[ "$row" == "$name" ]] || continue
     mutant="$(mutant_scripts "shape-form-$control/orch" oversee-report)/oversee-report" || exit 1
@@ -1351,11 +1352,14 @@ REPORT
   done <<'CONTROLS'
 markdown-summary~mrkdwn-only~markdown = markdown_ok && index($0, markdown_bold(labels[opening])) == 1~markdown = 0
 markdown-summary~markdown-unstripped~if (markdown) gsub(/\[~if (0) gsub(/\[
-markdown-key-last~item-match~|\[(\\\[)?[A-Z]+-[0-9]+(\\\])?\]\(https?:\/\/[^()[:space:]]+\)/)) {~/)) {
+markdown-key-last~item-match~|\\[(\\\\\\[)?[A-Z]+-[0-9]+(\\\\\\])?\\]\\(https?://[^()[:space:]]+\\)"~"
 markdown-write~write-markdown~[[ "$VERB" != check-summary ]] || MARKDOWN_OK=1~MARKDOWN_OK=1
 markdown-mixed-label~either-label~index($0, bold(labels[key])) != 1~index($0, labels[key]) != 1 && index($0, markdown_bold(labels[key])) != 1
 markdown-mixed-key~either-strip~    else gsub(/<https~    gsub(/<https
-markdown-misspelled~mrkdwn-fallback~(markdown ? $0~(0 ? $0
+markdown-italic-header~bold-only~\*\*?[^*]+\*\*?:?$/~\*\*[^*]+\*\*:?$/
+mrkdwn-bold-header~mrkdwn-only-header~\*\*?[^*]+\*\*?:?$/~\*[^*]+\*:?$/
+mrkdwn-markdown-label~mrkdwn-only-label~[[:space:]]*\*\*?[^*<>]+:~[[:space:]]*\*[^*<>]+:
+mrkdwn-other-key~held-links-only~key_link) finding("bare-id"~/$^/) finding("bare-id"
 markdown-suffix~mrkdwn-suffix~substr(after, 1, length(bold(item_suffix))) != bold(item_suffix)~substr(after, 1, length(item_suffix)) != item_suffix
 markdown-half-bracket~open-bracket~/^\[\\\[[A-Z]+-[0-9]+\\\]\]\(/ :~/^\[\\\[/ :
 item-suffix~no-suffix~ || substr(after, 1, length(bold(item_suffix))) != bold(item_suffix)~
@@ -1405,6 +1409,9 @@ waiting-on-you~missing~~oversee-report: summary-shape=waiting-on-you
 conforming~normal~~
 key-last~item-line~~oversee-report: summary-shape=item-line line=6~- Outcome (*<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]>*)
 item-suffix~item-line~~oversee-report: summary-shape=item-line line=6~- *<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]> Outcome
+mrkdwn-bold-header~item-line~~oversee-report: summary-shape=label line=6~**Next steps**
+mrkdwn-markdown-label~item-line~~oversee-report: summary-shape=label line=6~> **Whats not going well:** Two reports arrived late.
+mrkdwn-other-key~item-line~~oversee-report: summary-shape=bare-id line=6~_**[\[HT-1\]](https://linear.app/vanillagreen/issue/HT-1)** cuts it._
 two-keys~item-line~~oversee-report: summary-shape=item-line line=6~- *<https://linear.app/vanillagreen/issue/KEN-42|[KEN-42]>* waits on *<https://linear.app/vanillagreen/issue/KEN-43|[KEN-43]>*
 header~header~~oversee-report: summary-shape=label line=4
 inline-header~inline-header~~oversee-report: summary-shape=label line=3
@@ -1418,8 +1425,10 @@ markdown-mixed-label~markdown-item~~oversee-report: summary-shape=label line=27~
 markdown-mixed-key~markdown-item~~oversee-report: summary-shape=bare-id line=27;oversee-report: summary-shape=item-line line=27~- *<https://linear.app/vanillagreen/issue/KEN-43|[KEN-43]>* Clearer reports
 markdown-misspelled~markdown-item~~oversee-report: summary-shape=label line=27~> **Whats not going well:** Two reports arrived late.
 markdown-header~markdown-item~~oversee-report: summary-shape=label line=27~**Next steps**
+markdown-italic-header~markdown-item~~oversee-report: summary-shape=label line=27~*Next steps*
+markdown-other-key~markdown-item~~oversee-report: summary-shape=bare-id line=27~_*<https://linear.app/vanillagreen/issue/HT-1|[HT-1]>* cuts it._
 markdown-suffix~markdown-item~~oversee-report: summary-shape=item-line line=27~- **[\[KEN-43\]](https://linear.app/vanillagreen/issue/KEN-43)* Clearer reports
-markdown-half-bracket~markdown-item~~oversee-report: summary-shape=item-line line=27~- **[\[HT-3](https://linear.app/vanillagreen/issue/HT-3)** Clearer reports
+markdown-half-bracket~markdown-item~~oversee-report: summary-shape=bare-id line=27;oversee-report: summary-shape=item-line line=27~- **[\[HT-3](https://linear.app/vanillagreen/issue/HT-3)** Clearer reports
 markdown-key-last~markdown-item~~oversee-report: summary-shape=item-line line=27~- Clearer reports (**[\[KEN-43\]](https://linear.app/vanillagreen/issue/KEN-43)**)
 markdown-unbracketed~markdown-item~~oversee-report: summary-shape=bare-id line=27;oversee-report: summary-shape=item-line line=27~- **[KEN-43](https://linear.app/vanillagreen/issue/KEN-43)** Clearer reports
 markdown-words~markdown-item~~oversee-report: summary-shape=layout line=27 words=21~- **[\[KEN-43\]](https://linear.app/vanillagreen/issue/KEN-43)** one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty

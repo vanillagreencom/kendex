@@ -419,6 +419,10 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" -v markdown_ok="$MAR
   function bold(text) {
     return markdown ? markdown_bold(text) : text
   }
+  # A linked key in either form, approved or not.
+  BEGIN {
+    key_link = "<https?://[^<>|[:space:]]+\\|\\[?[A-Z]+-[0-9]+\\]?>|\\[(\\\\\\[)?[A-Z]+-[0-9]+(\\\\\\])?\\]\\(https?://[^()[:space:]]+\\)"
+  }
   function label_text(line) {
     sub(/^[[:space:]>-]+/, "", line)
     sub(/^:[[:alnum:]_+-]+:[[:space:]]*/, "", line)
@@ -462,8 +466,10 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" -v markdown_ok="$MAR
     text = $0
     if (markdown) gsub(/\[\\\[[A-Z]+-[0-9]+\\\]\]\(https?:\/\/[^()[:space:]]+\)/, "", text)
     else gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
+    # A key link left after the held form is stripped renders as literal
+    # markup or an unbracketed key, whatever its project.
     if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
-        text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) finding("bare-id", " line=" line)
+        text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/ || text ~ key_link) finding("bare-id", " line=" line)
     if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) finding("github-link", " line=" line)
     key = label_text($0)
     if (key ~ /^Waiting on you$/) waiting = 1
@@ -477,8 +483,8 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" -v markdown_ok="$MAR
       if (!($0 in sections) && !session_header) finding("label", " line=" line)
     } else if (key in sections || key in labels) {
       if (!(key in labels) || index($0, bold(labels[key])) != 1) finding("label", " line=" line)
-    } else if ((markdown ? $0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*\*[^*]+\*\*:?$/ || $0 ~ /^>?[[:space:]]*\*\*[^*<>]+:\*\*/ \
-                         : $0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*[^*]+\*:?$/ || $0 ~ /^>?[[:space:]]*\*[^*<>]+:\*/) || $0 ~ /^```.+/) {
+    } else if ($0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*\*?[^*]+\*\*?:?$/ || $0 ~ /^>?[[:space:]]*\*\*?[^*<>]+:\*\*?/ || $0 ~ /^```.+/) {
+      # An unapproved bold label or header is a finding in either markup.
       finding("label", " line=" line)
     }
     if ($0 ~ /^[[:space:]]*[-*][[:space:]]+/) {
@@ -487,7 +493,7 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" -v markdown_ok="$MAR
       sub(/^[[:space:]]*[-*][[:space:]]+/, "", item)
       rest = item
       keys = 0
-      while (match(rest, /<https?:\/\/[^<>|[:space:]]+\|\[?[A-Z]+-[0-9]+\]?>|\[(\\\[)?[A-Z]+-[0-9]+(\\\])?\]\(https?:\/\/[^()[:space:]]+\)/)) {
+      while (match(rest, key_link)) {
         keys++
         if (keys == 1) {
           prefix = substr(rest, 1, RSTART - 1)
