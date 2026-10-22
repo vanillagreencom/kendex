@@ -437,7 +437,6 @@ preparing|fish_child|question|1|lane-asking|0|true|0|live
 preparing|fish_child|question|1|lane-asking|7|true|0|live
 running|fish_child|question|1|lane-exited|0|true|1|live
 running|fish_child|question|1|lane-asking|7|false|1|live
-none|fish_child|question|1|lane-asking|0|false|1|control
 stopped|fish_child|question|1|lane-asking|0|false|1|control
 ROWS
 
