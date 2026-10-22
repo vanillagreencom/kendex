@@ -1371,7 +1371,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			"Before final replies that claim work is done, fixed, committed, verified, or no longer relevant, call tasks_write to reconcile the panel first: mark_done completed tasks, drop_task obsolete tasks, and add_task follow-ups.",
 			"Do not leave stale in_progress tasks; if the active task no longer matches the work, call start_task or drop_task before continuing.",
 			"tasks_write runs sequentially and automatically advances to the next pending task after mark_done/drop_task; do not issue a separate start_task unless switching to a non-next task.",
-			"tasks_write hides the panel when all tasks are complete; auto-show happens only for the first non-empty task state in a session and never overrides a user-hidden panel.",
+			"tasks_write hides the panel when all tasks are complete; with autoShowOnFirstTask enabled and a visible default, unfinished work opens it using the configured default initially and the remembered mode after completion, unless the user explicitly hid it.",
 		],
 		parameters: TaskToolParams,
 		async execute(_id, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
