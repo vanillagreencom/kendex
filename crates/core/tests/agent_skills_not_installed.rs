@@ -300,6 +300,7 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
     let reviewer = "[agents.reviewer-scout]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
     let claude_reviewer = "[agents.reviewer-scout]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
     let recorded = "[bundles.reviewers]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
+    let widened = "[bundles.widened]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
     for (case, agents, claude_only, exact, unresolved) in [
         (
             "reviewer only",
@@ -338,7 +339,7 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
         ),
         (
             "declared agents widened by bundle",
-            format!("{scout}{claude_reviewer}{recorded}"),
+            format!("{scout}{claude_reviewer}{widened}"),
             true,
             false,
             true,
@@ -354,7 +355,7 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
             &format!(
                 "{agents}[bundles.starter]\nsource = \"cat\"\n{harnesses}[agent-skills]\nscout = [\"recon\"]\n{assignment}"
             ),
-            "[bundles.starter]\nskills = [\"recon\"]\n[bundles.reviewers]\nagents = [\"scout\", \"reviewer-scout\"]\n",
+            "[bundles.starter]\nskills = [\"recon\"]\n[bundles.reviewers]\nagents = [\"reviewer-scout\"]\n[bundles.widened]\nagents = [\"scout\", \"reviewer-scout\"]\n",
         );
         fs::write(
             f.source.join("agents/reviewer-scout.md"),
@@ -376,7 +377,7 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
         assert_eq!(
             lock.entries
                 .contains_key(&entry_key(ItemKind::Agent, "scout", HarnessId::Codex)),
-            agents.contains(recorded),
+            agents.contains(widened),
             "{case}"
         );
         assert_eq!(
