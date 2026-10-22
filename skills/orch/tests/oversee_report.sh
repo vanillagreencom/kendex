@@ -1185,6 +1185,73 @@ _I changed the reminder._
 `Next report: 8 am`
 REPORT
 )" ;;
+    markdown|markdown-item)
+      # The same report as a post without a file renders it: Standard
+      # Markdown bold labels and bold, visibly bracketed linked keys.
+      lead='> **Overall:** Work reaches people within the day.'
+      rows="$(cat <<'REPORT'
+
+> **What's going well:** Reports reach the owner.
+
+> **What's not going well:** Two reports arrived late; **[\[KEN-41\]](https://linear.app/vanillagreen/issue/KEN-41)** sends them earlier.
+
+```
+Readings
+```
+
+- Reports arrive on time.
+  - **[\[KEN-42\]](https://linear.app/vanillagreen/issue/KEN-42)** _(17 h)_
+    - _The morning report includes overnight work._
+
+_**[\[KEN-44\]](https://linear.app/vanillagreen/issue/KEN-44)** cuts the wait; I read it after it merges._
+
+```
+Completed
+```
+
+- **[\[KEN-43\]](https://linear.app/vanillagreen/issue/KEN-43)** Clearer reports
+
+```
+In progress
+```
+
+- The next report is being written.
+
+```
+Blocked
+```
+
+- One report needs its source.
+
+```
+Waiting on you
+```
+
+- Choose the report time.
+
+_The morning report needs this choice._
+
+```
+Headroom remaining
+```
+
+- **Claude:** 40% _(2 accounts)_
+- **Codex:** 27% _(3 accounts)_
+- **Copilot:** 9% _(1 account)_
+
+```
+Overseer self-analysis
+```
+
+- **Good:** I read the reports before sending.
+- **Bad:** I sent one report late.
+
+_I changed the reminder._
+
+`Next report: 8 am`
+REPORT
+)"
+      [[ "$mode" != markdown-item ]] || rows="${rows/- The next report is being written./$replacement}" ;;
     sub-words|sub-id)
       item='KEN-42'
       if [[ "$mode" == sub-words ]]; then
@@ -1243,11 +1310,12 @@ REPORT
       ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "${mutant%/orch/scripts/*}/github"
       case "$name" in
         key-last|two-keys)
-          mutate_file "$mutant" 'if (keys && (keys != 1' 'if (0 && keys && (keys != 1' ;;
+          mutate_file "$mutant" 'if (keys) {' 'if (0) {' ;;
         header)
           mutate_file "$mutant" 'if (!($0 in sections) && !session_header)' 'if (0 && !($0 in sections) && !session_header)' ;;
         opening)
-          mutate_file "$mutant" 'if (!(key in labels) || index($0, labels[key]) != 1)' 'if (0 && (!(key in labels) || index($0, labels[key]) != 1))' ;;
+          mutate_file "$mutant" 'if (!(key in labels) || (index($0, labels[key]) != 1 && index($0, markdown_bold(labels[key])) != 1))' \
+            'if (0 && (!(key in labels) || (index($0, labels[key]) != 1 && index($0, markdown_bold(labels[key])) != 1)))' ;;
       esac
       if (FAIL=0; REPORT_UNDER_TEST="$mutant" summary_write disabled; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/shape-original-$name.out"; then
         fail "disabled checker passed the changed $name row"
@@ -1256,6 +1324,24 @@ REPORT
           "the $name row rejects removed production behavior"
       fi ;;
   esac
+  # Each row restores one reading the former, mrkdwn-only checker made.
+  while IFS='~' read -r row control old new; do
+    [[ "$row" == "$name" ]] || continue
+    mutant="$(mutant_scripts "shape-markdown-$control/orch" oversee-report)/oversee-report" || exit 1
+    ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "${mutant%/orch/scripts/*}/github"
+    mutate_file "$mutant" "$old" "$new"
+    if (FAIL=0; REPORT_UNDER_TEST="$mutant" summary_write "mrkdwn-$control"; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/shape-markdown-$control.out"; then
+      fail "mrkdwn-only $control reading passed the $name row"
+    else
+      assert_file_contains "$TMP_ROOT/shape-markdown-$control.out" "  FAIL  summary $name sends and prints each keyed finding" \
+        "the $name row rejects the mrkdwn-only $control reading"
+    fi
+  done <<'CONTROLS'
+markdown-summary~label~index($0, markdown_bold(labels[key])) != 1~1
+markdown-summary~bare-id~gsub(/\[\\\[[A-Z]+-[0-9]+\\\]\]\(https?:\/\/[^()[:space:]]+\)/, "", text)~text = text
+markdown-summary~item-form~if (link ~ /^\[/) {~if (0) {
+markdown-key-last~item-match~|\[(\\\[)?[A-Z]+-[0-9]+(\\\])?\]\(https?:\/\/[^()[:space:]]+\)/)) {~/)) {
+CONTROLS
   if [[ "$name" == tiered-summary ]]; then
     mutant="$(mutant_scripts shape-nested-cap/orch oversee-report)/oversee-report" || exit 1
     ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/shape-nested-cap/github"
@@ -1307,6 +1393,11 @@ unclosed-header~unclosed-header~~oversee-report: summary-shape=label line=22
 opening~opening~~oversee-report: summary-shape=label line=1
 bullet-label~bullet-label~~oversee-report: summary-shape=label line=22
 tiered-summary~tiered~ORCH_REPORT_SUMMARY_LINES=10~
+markdown-summary~markdown~~
+markdown-key-last~markdown-item~~oversee-report: summary-shape=item-line line=27~- Clearer reports (**[\[KEN-43\]](https://linear.app/vanillagreen/issue/KEN-43)**)
+markdown-unbracketed~markdown-item~~oversee-report: summary-shape=bare-id line=27;oversee-report: summary-shape=item-line line=27~- **[KEN-43](https://linear.app/vanillagreen/issue/KEN-43)** Clearer reports
+markdown-words~markdown-item~~oversee-report: summary-shape=layout line=27 words=21~- **[\[KEN-43\]](https://linear.app/vanillagreen/issue/KEN-43)** one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty
+markdown-cap~markdown~ORCH_REPORT_SUMMARY_LINES=9~oversee-report: summary-shape=layout item-lines=10 cap=9
 sub-bullet-words~sub-words~~oversee-report: summary-shape=layout line=22 words=21
 sub-bullet-id~sub-id~~oversee-report: summary-shape=bare-id line=22
 label-spacing~spacing~~

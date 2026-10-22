@@ -148,7 +148,8 @@ write    prints the rows and writes the same bytes to the path
          leaves the report file standing and the owner already holding the
          same text, under the notice id that line names.
          Before rendering, writing or sending, write checks the summary in
-         its posted mrkdwn form. Each finding prints one stderr line:
+         its posted form: the template's mrkdwn, or the Standard Markdown a
+         post without a file uses. Each finding prints one stderr line:
          oversee-report: summary-shape=RULE, with RULE bare-id, github-link,
          waiting-on-you, label, item-line or layout. A matched line adds line=N. Each bullet
          over 20 words adds words=W. A top-level bullet count above
@@ -164,7 +165,9 @@ check-summary
          and sends no notice. Findings remain advisory and exit 0; missing
          or empty input and an invalid summary cap refuse. An unreadable or
          incomplete communication template prints summary-shape=unavailable.
-         The installed template supplies the labels and opening item form.
+         The installed template supplies the labels and opening item form
+         in mrkdwn. Their Standard Markdown rendering, `**` for each `*` and
+         `[\[KEY-N\]](URL)` for each `<URL|[KEY-N]>`, meets the same rules.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, with a
@@ -397,6 +400,12 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
   function finding(rule, detail) {
     printf "oversee-report: summary-shape=%s%s\n", rule, detail
   }
+  # The template is mrkdwn, `*X*` bold; a post without a file renders the
+  # same bold as Standard Markdown, `**X**` (reports.md § Summary template).
+  function markdown_bold(text) {
+    gsub(/\*/, "**", text)
+    return text
+  }
   function label_text(line) {
     sub(/^[[:space:]>-]+/, "", line)
     sub(/^:[[:alnum:]_+-]+:[[:space:]]*/, "", line)
@@ -428,6 +437,7 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
     line = FNR
     text = $0
     gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
+    gsub(/\[\\\[[A-Z]+-[0-9]+\\\]\]\(https?:\/\/[^()[:space:]]+\)/, "", text)
     if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
         text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) finding("bare-id", " line=" line)
     if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) finding("github-link", " line=" line)
@@ -442,7 +452,7 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
       session_header = length($0) > length(suffix) && substr($0, length($0) - length(suffix)) == " " suffix
       if (!($0 in sections) && !session_header) finding("label", " line=" line)
     } else if (key in sections || key in labels) {
-      if (!(key in labels) || index($0, labels[key]) != 1) finding("label", " line=" line)
+      if (!(key in labels) || (index($0, labels[key]) != 1 && index($0, markdown_bold(labels[key])) != 1)) finding("label", " line=" line)
     } else if ($0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*[^*]+\*:?$/ || $0 ~ /^>?[[:space:]]*\*[^*<>]+:\*/ || $0 ~ /^```.+/) {
       finding("label", " line=" line)
     }
@@ -452,7 +462,7 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
       sub(/^[[:space:]]*[-*][[:space:]]+/, "", item)
       rest = item
       keys = 0
-      while (match(rest, /<https?:\/\/[^<>|[:space:]]+\|\[?[A-Z]+-[0-9]+\]?>/)) {
+      while (match(rest, /<https?:\/\/[^<>|[:space:]]+\|\[?[A-Z]+-[0-9]+\]?>|\[(\\\[)?[A-Z]+-[0-9]+(\\\])?\]\(https?:\/\/[^()[:space:]]+\)/)) {
         keys++
         if (keys == 1) {
           prefix = substr(rest, 1, RSTART - 1)
@@ -461,7 +471,17 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
         }
         rest = substr(rest, RSTART + RLENGTH)
       }
-      if (keys && (keys != 1 || prefix != item_prefix || substr(after, 1, length(item_suffix)) != item_suffix || link !~ /\|\[[A-Z]+-[0-9]+\]>/)) finding("item-line", " line=" line)
+      if (keys) {
+        want_prefix = item_prefix
+        want_suffix = item_suffix
+        bracketed = link ~ /\|\[[A-Z]+-[0-9]+\]>/
+        if (link ~ /^\[/) {
+          want_prefix = markdown_bold(item_prefix)
+          want_suffix = markdown_bold(item_suffix)
+          bracketed = link ~ /^\[\\\[/
+        }
+        if (keys != 1 || prefix != want_prefix || substr(after, 1, length(want_suffix)) != want_suffix || !bracketed) finding("item-line", " line=" line)
+      }
       words = item
       gsub(/<https?:\/\/[^<>|[:space:]]+\|/, "", words)
       gsub(/>/, "", words)
