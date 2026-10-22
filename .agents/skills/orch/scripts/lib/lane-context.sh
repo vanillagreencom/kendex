@@ -1051,12 +1051,12 @@ copilot_reading_pending() {
 # room/due answer; an unavailable read exits nonzero. The hook keeps its own
 # callbacks and never enters this arm.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  ATTACHED_LAUNCH=false
-  READING=false
+  CLI_ATTACHED_LAUNCH=false
+  CLI_OUTPUT_READING=false
   while :; do
     case "${1:-}" in
-      --attached-launch) ATTACHED_LAUNCH=true; shift ;;
-      --reading) READING=true; shift ;;
+      --attached-launch) CLI_ATTACHED_LAUNCH=true; shift ;;
+      --reading) CLI_OUTPUT_READING=true; shift ;;
       *) break ;;
     esac
   done
@@ -1101,7 +1101,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     fi
     MARK=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90) || exit 2
     JUDGE_ARGS=("$TOKENS" "$WINDOW" "$MARK")
-    if [ "$ATTACHED_LAUNCH" = true ]; then
+    if [ "$CLI_ATTACHED_LAUNCH" = true ]; then
       AGENT_RESERVE=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_AGENT_RESERVE_TOKENS "") || exit 2
       AGENT_RESERVE=${AGENT_RESERVE:-150000}
       JUDGE_ARGS+=("$AGENT_RESERVE")
@@ -1115,7 +1115,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
       *) message context-judge invalid-input; exit 2 ;;
     esac
   fi
-  if [ "$READING" = true ]; then
+  if [ "$CLI_OUTPUT_READING" = true ]; then
     jq -nc --arg verdict "$VERDICT" --argjson decision "${LANE_CONTEXT_DECISION:-null}" \
       --arg harness "$HARNESS" --arg session "$SESSION" --arg transcript "$TRANSCRIPT" \
       --arg source "$SOURCE" --argjson compacted "$COMPACTED" '

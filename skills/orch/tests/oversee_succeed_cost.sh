@@ -189,6 +189,25 @@ def run(script, name, extra=None, args=(), check=True):
         pane_cost = counter.total(part, commands, {str(proc.pid)})
     return status, (root / (name + '.out')).read_bytes(), (root / (name + '.err')).read_bytes(), count, caller_cost(trace, list(external.values()), str(proc.pid)), pane_cost
 
+# The hook consumes this additive field; all other bytes retain KEN-3907's contract.
+CONTEXT_DECISION = {'tokens': 950, 'window': 1000, 'cap': 400000, 'mark_pct': 90,
+                    'cap_mark': 400000, 'window_mark': 900, 'reserve_applied': False,
+                    'reserve_tokens': 0}
+
+def without_context_decision(stdout):
+    first = stdout.partition(b'\n')[0]
+    fields = list(re.finditer(rb' context_decision=([^ \t\r\n]+)(?= |$)', first))
+    if first.count(b'context_decision=') != 1 or len(fields) != 1:
+        return None
+    field = fields[0]
+    try:
+        decision = json.loads(field[1])
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if json.dumps(decision, sort_keys=True) != json.dumps(CONTEXT_DECISION, sort_keys=True):
+        return None
+    return stdout[:field.start()] + stdout[field.end():]
+
 rows = [
     ('complete', identity, {}, (), 0, b'mark-unmeasured'),
     ('complete-absolute', identity, {'ORCH_STATE_DIR': str(record_file.parent)}, (), 0, b'mark-unmeasured'),
@@ -262,8 +281,31 @@ for name, record, extra, args, status, key in rows:
             complete = actual
     if baseline:
         before = run(root / 'base/orch/scripts/oversee-succeed', name + '-base', extra, args)
+        compared = actual
+        if name in ('context-due', 'context-due-before-runtime'):
+            remaining = without_context_decision(actual[1])
+            result(name + ': exact native context decision', int(remaining is not None), 1)
+            compared = (actual[0], remaining, actual[2])
         for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes')):
-            result(name + ': base ' + field, int(actual[i] == before[i]), 1)
+            result(name + ': base ' + field, int(compared[i] == before[i]), 1)
+        if name in ('context-due', 'context-due-before-runtime') and compared == before[:3]:
+            original = (scripts / 'oversee-succeed').read_text()
+            needle = '[[ "${LANE_CONTEXT_DECISION:-null}" == null ]] || context_fields+=("context_decision=$LANE_CONTEXT_DECISION")'
+            assert original.count(needle) == 1, needle
+            wrong = json.dumps({**CONTEXT_DECISION, 'reserve_tokens': 1}, separators=(',', ':'))
+            for defect, replacement in (
+                ('missing', 'context_fields=()'),
+                ('wrong', "context_fields=('context_decision=" + wrong + "')"),
+            ):
+                private = root / (name + '-' + defect + '-decision')
+                shutil.copytree(root / 'candidate', private)
+                path = private / 'orch/scripts/oversee-succeed'
+                path.write_text(original.replace(needle, needle + '\n' + replacement))
+                assert path.read_text() != original
+                control = run(path, name + '-' + defect + '-decision', extra, args)
+                result(name + ': ' + defect + ' decision control exit', control[0], actual[0])
+                result(name + ': ' + defect + ' decision control stderr', int(control[2] == actual[2]), 1)
+                result(name + ': rejects ' + defect + ' decision', int(without_context_decision(control[1]) is None), 1)
         if name in ('complete', 'complete-absolute'):
             print('metric', 'base-own-processes', before[3], sep='\t')
             print('metric', name + '-baseline-pane-and-runtime-processes', before[5], sep='\t')

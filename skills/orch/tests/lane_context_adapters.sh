@@ -814,7 +814,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
   control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false' \
     'pre-panel fresh transcript 250001: due'
-  control launch-only-reserve lane-context.sh '    if [ "$ATTACHED_LAUNCH" = true ]; then' '    if [ "$ATTACHED_LAUNCH" = true ] || [ "$ATTACHED_LAUNCH" = false ]; then' \
+  control launch-only-reserve lane-context.sh '    if [ "$CLI_ATTACHED_LAUNCH" = true ]; then' '    if [ "$CLI_ATTACHED_LAUNCH" = true ] || [ "$CLI_ATTACHED_LAUNCH" = false ]; then' \
     'ordinary checkpoint 274811: room'
   control absolute-cap lane-context.sh '[ "$1" -ge 400000 ]' '[ "$1" -gt 400000 ]' \
     '400000 of no window at 90: rc=0 due'

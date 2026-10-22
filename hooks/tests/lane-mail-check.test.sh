@@ -301,10 +301,21 @@ new_handoff_lane() { # NAME ITEM
 # lane cannot hand it one that names a moment the clock has not reached.
 HANDOFF_FIELDS='merged,remaining,branch,worktree,open_pr,traps'
 
-# The keys of the JSON template the refusal told the lane to write, in order.
+# workflow-state consumes the emitted shell argument, including its escaping.
+template_record() {
+  local line record=''
+  while IFS= read -r line; do
+    case "$line" in *' set '*' handoff '*) record=${line#* handoff }; break ;; esac
+  done < "$ERR_FILE"
+  "$BASH" -c 'eval "set -- $1"; [ "$#" -eq 1 ] && printf "%s\n" "$1"' _ "$record"
+}
+
 template_fields() {
-  sed -n "s/.*handoff '\\({.*}\\)'.*/\\1/p" "$ERR_FILE" |
-    grep -o '"[a-z_]*":' | tr -d '":' | tr '\n' ',' | sed 's/,$//'
+  template_record | jq -r 'keys_unsorted | join(",")'
+}
+
+template_omits_written_at() {
+  template_record | jq -e 'has("written_at") | not' >/dev/null
 }
 
 # The record the lane writes at the safe point, and the field a relaunch sets
@@ -330,9 +341,12 @@ stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=500000" "a lane at the context mark is refused with the figure it reached"
 assert_eq "$(grep -cF -- " set KEN-50 handoff " "$ERR_FILE")" "1" \
   "the refusal names the one command that writes the record"
-assert_eq "$(template_fields)" "$HANDOFF_FIELDS" \
+assert_eq "$(template_fields)" "$HANDOFF_FIELDS,context" \
   "the record template it names carries every field a relaunch reads"
-assert_eq "$(template_fields | tr ',' '\n' | grep -cx written_at || true)" "0" \
+assert_eq "$(template_record | jq -cS .)" \
+  "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:null,traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:90,cap_mark:400000,window_mark:900000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
+  "the parsed record preserves recovery fields and the actual plain decision and source"
+assert_eq "$(template_omits_written_at && echo yes || echo no)" "yes" \
   "and asks the lane for no written_at, which the set stamps"
 assert_eq "$(grep -cF -- "lane-mail notice --item KEN-50 --file" "$ERR_FILE")" "1" \
   "the refusal names the handoff notice beside it"
@@ -1816,9 +1830,10 @@ record_overseer_handoff other-session
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: context=612000" \
   "a record another session wrote holds nobody, so this overseer meets the mark"
-assert_eq "record=$(overseer_record_named) named=$(grep -cF -- '"session_id":"s1"' "$ERR_FILE")" \
-  "record=1 named=1" "and the record it is told to write names this session"
-assert_eq "$(grep -cF -- "\"pane_key\":\"$OVERSEER_SERVER $OVERSEER_PANE\"" "$ERR_FILE")" "1" \
+assert_eq "record=$(overseer_record_named) named=$(template_record | jq -c '[.session_id,.context.source.session_id]')" \
+  'record=1 named=["s1","s1"]' "and the record it is told to write names this session"
+assert_eq "$(template_record | jq -cS .)" \
+  "$(jq -ncS --arg pane "$OVERSEER_SERVER $OVERSEER_PANE" --arg transcript "$TRANSCRIPT" '{handoff_file:"[OVERSEER_HANDOFF_PATH]",pane_key:$pane,session_id:"s1",context:{decision:null,source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:$pane,capacity_source:null,compacted:false}}}')" \
   "with the pane key beside it, for a harness that names no session" "$ERR_FILE"
 
 # The account mark is the judge's own, on the judge's own setting: this hook
@@ -3081,12 +3096,14 @@ expect 0 "$GAP" \
 
 # The record's time put back in the template: the lane is asked for it again,
 # and the row above that says it is not goes red.
-mutant asks-written-at -e 's@{"merged":@{"written_at":"[NOW]","merged":@'
+assert_eq "$(grep -cF -- '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",' "$HOOK")" "1" \
+  "control: written_at mutation names one live record constructor"
+mutant asks-written-at -e 's@{merged:\["\[PR\]"\],remaining:@{written_at:"[NOW]",merged:["[PR]"],remaining:@'
 new_handoff_lane control_written_at KEN-94
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "$(template_fields | tr ',' '\n' | grep -cx written_at || true)" "1" \
+assert_eq "$(template_omits_written_at && echo yes || echo no)" "no" \
   "control: with written_at back in the template the lane is asked for the record's time"
 
 # Control: a gate that asks the library about an empty path reports it as an
