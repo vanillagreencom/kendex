@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use kendex_core::apply;
+use kendex_core::drift::{copies::CheckMode, report};
 use kendex_core::engine::{EngineReport, audit, ops};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::error::CoreError;
@@ -139,23 +140,187 @@ fn agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply() {
 #[allow(clippy::unwrap_used)]
 fn explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments() {
     let cases = [
-        ("[skills.recon]\nsource = \"cat\"\n", ""),
+        ("[skills.recon]\nsource = \"cat\"\n", "", true, false),
         (
             "[bundles.starter]\nsource = \"cat\"\n",
             "[bundles.starter]\nskills = [\"recon\"]\n",
+            false,
+            false,
         ),
-        ("[skills.parent]\nsource = \"cat\"\n", ""),
+        ("[skills.parent]\nsource = \"cat\"\n", "", false, false),
+        ("", "", false, true),
     ];
-    for (declaration, bundle) in cases {
+    for (declaration, bundle, explicit, unresolved) in cases {
         let f = fixture(
-            &format!("[agents.scout]\nsource = \"cat\"\n{declaration}"),
+            &format!(
+                "[agents.scout]\nsource = \"cat\"\n{declaration}[agent-skills]\nscout = [\"recon\"]\n"
+            ),
             &format!("[agent-skills]\nscout = [\"recon\"]\n{bundle}"),
         );
         let report = audit(&f.env, &f.scope).unwrap();
-        assert!(missing(&report).is_empty());
+        assert_eq!(!missing(&report).is_empty(), unresolved);
         assert!(report.refused.is_empty());
         apply::execute(&f.env, &report.plan).unwrap();
-        assert!(missing(&audit(&f.env, &f.scope).unwrap()).is_empty());
+        assert_eq!(
+            !missing(&audit(&f.env, &f.scope).unwrap()).is_empty(),
+            unresolved
+        );
+        let path = manifest::manifest_path(&f.env, &f.scope);
+        let before = fs::read(&path).unwrap();
+        let lock_path = kendex_core::lock::lock_path(&f.env, &f.scope);
+        let lock_before = fs::read(&lock_path).unwrap();
+        let declared = manifest::load_for_mutation(&path).unwrap().unwrap();
+        assert_eq!(declared.agent_skills["scout"], ["recon"]);
+        assert_eq!(declared.skills.contains_key("recon"), explicit);
+        let checked = report::check(&f.env, &[f.scope.clone()], CheckMode::ReportOnly);
+        let additions: Vec<_> = checked
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .filter_map(|line| match &line.remedy {
+                Some(report::Remedy::Add {
+                    kind: ItemKind::Skill,
+                    name,
+                    ..
+                }) => {
+                    assert_eq!(line.class, report::Class::Drift);
+                    Some(name.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(additions, if unresolved { vec!["recon"] } else { vec![] });
+        assert_eq!(
+            checked.status,
+            if unresolved {
+                report::CheckStatus::Drift
+            } else {
+                report::CheckStatus::Clean
+            }
+        );
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert_eq!(fs::read(lock_path).unwrap(), lock_before);
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+fn prepare_assignment_record_case(f: &Fixture, case: &str) -> (PathBuf, PathBuf) {
+    let manifest_path = manifest::manifest_path(&f.env, &f.scope);
+    let mut declared = manifest::load_for_mutation(&manifest_path)
+        .unwrap()
+        .unwrap();
+    let lock_path = kendex_core::lock::lock_path(&f.env, &f.scope);
+    let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+    match case {
+        "cross-catalog" => {
+            let source = declared.sources["cat"].clone();
+            declared.sources.insert("other".into(), source);
+            declared.skills.get_mut("parent").unwrap().source = "other".into();
+            for entry in lock.entries.values_mut() {
+                if entry.kind == ItemKind::Skill {
+                    entry.source = "other".into();
+                    entry.reasons = entry
+                        .reasons
+                        .iter()
+                        .cloned()
+                        .map(|mut reason| {
+                            if let kendex_core::lock::Reason::RequiredBy { by } = &mut reason {
+                                by.source = "other".into();
+                            }
+                            reason
+                        })
+                        .collect();
+                }
+            }
+        }
+        "disabled skill" => {
+            for entry in lock
+                .entries
+                .values_mut()
+                .filter(|entry| entry.name == "recon")
+            {
+                entry.enabled = false;
+            }
+        }
+        "disabled declaration" => {
+            declared
+                .skills
+                .insert("recon".into(), declared.skills["parent"].clone());
+            declared.skills.get_mut("recon").unwrap().enabled = false;
+        }
+        "removed skill" => declared.suppress(ItemKind::Skill, "recon"),
+        "removed parent" => {
+            declared.skills.remove("parent");
+        }
+        "other harness" => {
+            lock.entries.retain(|_, entry| {
+                entry.name != "recon" || entry.harness == kendex_core::model::HarnessId::Codex
+            });
+        }
+        "wrong parent source" => {
+            declared
+                .sources
+                .insert("other".into(), declared.sources["cat"].clone());
+            declared.skills.get_mut("parent").unwrap().source = "other".into();
+        }
+        "absent lock" | "unreadable lock" | "unreadable manifest" => {}
+        _ => unreachable!(),
+    }
+    fs::write(&manifest_path, toml::to_string(&declared).unwrap()).unwrap();
+    kendex_core::lock::save(&lock_path, &lock).unwrap();
+    match case {
+        "absent lock" => fs::remove_file(&lock_path).unwrap(),
+        "unreadable lock" => fs::write(&lock_path, "{").unwrap(),
+        "unreadable manifest" => fs::write(&manifest_path, "[").unwrap(),
+        _ => {}
+    }
+    (manifest_path, lock_path)
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn check_assignments_require_selected_records_on_each_agent_harness() {
+    for (case, unresolved, unknown) in [
+        ("cross-catalog", false, false),
+        ("disabled skill", true, false),
+        ("disabled declaration", false, false),
+        ("removed skill", true, false),
+        ("removed parent", true, false),
+        ("other harness", true, false),
+        ("wrong parent source", true, false),
+        ("absent lock", true, false),
+        ("unreadable lock", false, true),
+        ("unreadable manifest", false, true),
+    ] {
+        let f = fixture(
+            "[agents.scout]\nsource = \"cat\"\n[skills.parent]\nsource = \"cat\"\n[agent-skills]\nscout = [\"recon\"]\n",
+            "",
+        );
+        let installed = audit(&f.env, &f.scope).unwrap();
+        apply::execute(&f.env, &installed.plan).unwrap();
+        let (manifest_path, lock_path) = prepare_assignment_record_case(&f, case);
+        let manifest_before = fs::read(&manifest_path).unwrap();
+        let lock_before = fs::read(&lock_path).ok();
+        let checked = report::check(&f.env, &[f.scope.clone()], CheckMode::ReportOnly);
+        let lines: Vec<_> = checked
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .collect();
+        assert_eq!(lines.iter().any(|line| matches!(&line.remedy, Some(report::Remedy::Add { kind: ItemKind::Skill, name, .. }) if name == "recon")), unresolved, "{case}");
+        assert_eq!(
+            lines
+                .iter()
+                .any(|line| line.class == report::Class::Unknown),
+            unknown,
+            "{case}"
+        );
+        if unresolved || unknown {
+            assert_ne!(checked.status, report::CheckStatus::Clean, "{case}");
+        }
+        assert!(lines.iter().all(|line| !matches!(&line.remedy, Some(report::Remedy::Add { kind: ItemKind::Skill, name, .. }) if name == "recon") || line.class == report::Class::Drift), "{case}");
+        assert_eq!(fs::read(manifest_path).unwrap(), manifest_before, "{case}");
+        assert_eq!(fs::read(lock_path).ok(), lock_before, "{case}");
     }
 }
 

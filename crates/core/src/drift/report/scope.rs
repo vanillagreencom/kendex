@@ -394,8 +394,7 @@ impl ScopeCheck<'_> {
     }
 
     /// The manifest: parse failures — a v1 file among them — are
-    /// could-not-check, and the one hard failure this check has always had
-    /// — an agent referencing an undeclared skill — stays one.
+    /// could-not-check.
     fn manifest_lines(&self, sections: &mut Sections) -> (ManifestRead, ManifestState) {
         let prefix = self.prefix;
         let (manifest, state) =
@@ -434,26 +433,65 @@ impl ScopeCheck<'_> {
                     }),
                 ));
             }
-            for (agent, skills) in &manifest.agent_skills {
-                for skill in skills {
-                    if !manifest.skills.contains_key(skill) {
-                        sections.references.push(drift(
-                            format!(
-                                "{prefix}agent '{}' references skill '{}' which is not declared",
-                                shown(agent),
-                                shown(skill)
-                            ),
-                            Some(Remedy::Add {
-                                kind: ItemKind::Skill,
-                                name: skill.clone(),
-                                global: self.global,
-                            }),
-                        ));
-                    }
+        }
+        (manifest, state)
+    }
+
+    fn assignment_lines(
+        &self,
+        manifest: &crate::manifest::Manifest,
+        lock: &crate::lock::Lock,
+        selected: &BTreeSet<String>,
+        sections: &mut Sections,
+    ) {
+        let prefix = self.prefix;
+        for (agent, skills) in &manifest.agent_skills {
+            let harnesses = manifest.agents.get(agent).map_or_else(
+                || {
+                    lock.entries
+                        .iter()
+                        .filter(|(key, entry)| {
+                            selected.contains(*key)
+                                && entry.kind == ItemKind::Agent
+                                && entry.name == *agent
+                        })
+                        .map(|(_, entry)| entry.harness)
+                        .collect()
+                },
+                |decl| {
+                    crate::engine::desired::target_harnesses(
+                        decl,
+                        manifest,
+                        ItemKind::Agent,
+                        self.scope,
+                    )
+                    .into_iter()
+                    .collect::<BTreeSet<_>>()
+                },
+            );
+            for skill in skills {
+                let installed = !harnesses.is_empty()
+                    && harnesses.iter().all(|harness| {
+                        let key = crate::lock::entry_key(ItemKind::Skill, skill, *harness);
+                        selected.contains(&key)
+                            && lock.entries.get(&key).is_some_and(|entry| entry.enabled)
+                    });
+                if !manifest.skills.contains_key(skill) && !installed {
+                    sections.references.push(drift(
+                        format!(
+                            "{prefix}agent '{}' references skill '{}' which is not declared",
+                            shown(agent),
+                            shown(skill)
+                        ),
+                        Some(Remedy::Add {
+                            kind: ItemKind::Skill,
+                            name: skill.clone(),
+                            global: self.global,
+                        }),
+                    ));
                 }
             }
         }
-        (manifest, state)
     }
 
     /// The lock: what should be on disk. A file the lock says an enabled
@@ -474,6 +512,9 @@ impl ScopeCheck<'_> {
                     ManifestRead::Absent => Some(BTreeSet::new()),
                     ManifestRead::Unreadable => None,
                 };
+                if let (Some(manifest), Some(selected)) = (manifest.current(), selected.as_ref()) {
+                    self.assignment_lines(manifest, lock, selected, sections);
+                }
                 let mut missing: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
                 let mut unselected: BTreeMap<(ItemKind, String), BTreeSet<_>> = BTreeMap::new();
                 for (key, entry) in &lock.entries {
@@ -531,38 +572,57 @@ impl ScopeCheck<'_> {
                         }),
                     ));
                 }
-                for ((kind, name), harnesses) in unselected {
-                    let mut text = format!(
-                        "{prefix}{} does not list recorded {} '{}' ({})",
-                        crate::manifest::manifest_file_name(self.env, self.scope),
-                        kind.name(),
-                        shown(&name),
-                        harness_list(&harnesses)
+                self.record_cleanup_lines(manifest, unselected, sections);
+            }
+            Ok(crate::lock::LockFile::Absent) => {
+                if let Some(manifest) = manifest.current() {
+                    self.assignment_lines(
+                        manifest,
+                        &crate::lock::Lock::default(),
+                        &BTreeSet::new(),
+                        sections,
                     );
-                    let remedy = match manifest {
-                        ManifestRead::Current(_) => {
-                            text.push_str("; preview cleanup");
-                            Remedy::Plan {
-                                global: self.global,
-                            }
-                        }
-                        ManifestRead::Absent => Remedy::Remove {
-                            kind,
-                            name,
-                            global: self.global,
-                        },
-                        ManifestRead::Unreadable => {
-                            unreachable!("an unreadable manifest produces no cleanup set")
-                        }
-                    };
-                    sections.record_cleanup.push(drift(text, Some(remedy)));
                 }
             }
-            Ok(crate::lock::LockFile::Absent) => {}
             Err(error) => sections.unknown.push(unknown(format!(
                 "{prefix}lock: {}",
                 shown(&error.to_string())
             ))),
+        }
+    }
+
+    fn record_cleanup_lines(
+        &self,
+        manifest: &ManifestRead,
+        unselected: BTreeMap<(ItemKind, String), BTreeSet<HarnessId>>,
+        sections: &mut Sections,
+    ) {
+        let prefix = self.prefix;
+        for ((kind, name), harnesses) in unselected {
+            let mut text = format!(
+                "{prefix}{} does not list recorded {} '{}' ({})",
+                crate::manifest::manifest_file_name(self.env, self.scope),
+                kind.name(),
+                shown(&name),
+                harness_list(&harnesses)
+            );
+            let remedy = match manifest {
+                ManifestRead::Current(_) => {
+                    text.push_str("; preview cleanup");
+                    Remedy::Plan {
+                        global: self.global,
+                    }
+                }
+                ManifestRead::Absent => Remedy::Remove {
+                    kind,
+                    name,
+                    global: self.global,
+                },
+                ManifestRead::Unreadable => {
+                    unreachable!("an unreadable manifest produces no cleanup set")
+                }
+            };
+            sections.record_cleanup.push(drift(text, Some(remedy)));
         }
     }
 

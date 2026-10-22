@@ -1,0 +1,1 @@
+- `kendex check` recognizes agent skills installed through dependencies or bundles without asking you to add them again.
