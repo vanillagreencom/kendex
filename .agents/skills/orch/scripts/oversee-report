@@ -148,8 +148,7 @@ write    prints the rows and writes the same bytes to the path
          leaves the report file standing and the owner already holding the
          same text, under the notice id that line names.
          Before rendering, writing or sending, write checks the summary in
-         its posted form: the template's mrkdwn, or the Standard Markdown a
-         post without a file uses. Each finding prints one stderr line:
+         its posted mrkdwn form. Each finding prints one stderr line:
          oversee-report: summary-shape=RULE, with RULE bare-id, github-link,
          waiting-on-you, label, item-line or layout. A matched line adds line=N. Each bullet
          over 20 words adds words=W. A top-level bullet count above
@@ -160,14 +159,19 @@ write    prints the rows and writes the same bytes to the path
          ../communication/references/reports.md § Summary template.
 
 check-summary
-         checks only --summary-file, with the same findings as write. Needs
-         no fleet state, repository, tracker or delivery. Prints no report
-         and sends no notice. Findings remain advisory and exit 0; missing
-         or empty input and an invalid summary cap refuse. An unreadable or
-         incomplete communication template prints summary-shape=unavailable.
+         checks only --summary-file, with write's findings and the form
+         rule below. Needs no fleet state, repository, tracker or delivery.
+         Prints no report and sends no notice. Findings remain advisory and
+         exit 0; missing or empty input and an invalid summary cap refuse.
+         An unreadable or incomplete communication template prints
+         summary-shape=unavailable.
          The installed template supplies the labels and opening item form
-         in mrkdwn. Their Standard Markdown rendering, `**` for each `*` and
-         `[\[KEY-N\]](URL)` for each `<URL|[KEY-N]>`, meets the same rules.
+         in mrkdwn. A summary whose opening label line starts with that
+         label in Standard Markdown, `> **Overall:**` for `> *Overall:*`,
+         the form a post without a file uses, is held on every line to that
+         rendering instead: `**` for each `*` and `[\[KEY-N\]](URL)` for
+         each `<URL|[KEY-N]>`. Any other summary is held to mrkdwn, as write
+         holds every summary.
 
 Rows:
   Landed          each fleet item, a lanes[] record of any status, with a
@@ -396,15 +400,24 @@ fi
 # an item link. Findings advise the writer, including unavailable template
 # evidence, and never refuse the send. Hold them behind a later refusal key.
 TEMPLATE="$SCRIPT_DIR/../../communication/references/reports.md"
-if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
+# write's summary is always the file's mrkdwn comment; a check-summary caller
+# may post without a file, in the Standard Markdown the template allows there.
+MARKDOWN_OK=0
+[[ "$VERB" != check-summary ]] || MARKDOWN_OK=1
+# The check reads the summary twice: once for its form, then line by line.
+printf '%s\n' "$SUMMARY_TEXT" > "$WORK_DIR/summary" || refuse summary "$SUMMARY"
+if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" -v markdown_ok="$MARKDOWN_OK" '
   function finding(rule, detail) {
     printf "oversee-report: summary-shape=%s%s\n", rule, detail
   }
-  # The template is mrkdwn, `*X*` bold; a post without a file renders the
-  # same bold as Standard Markdown, `**X**` (reports.md § Summary template).
+  # The template is mrkdwn, `*X*` bold; Standard Markdown writes `**X**`.
   function markdown_bold(text) {
     gsub(/\*/, "**", text)
     return text
+  }
+  # Template markup in the form this summary is held to.
+  function bold(text) {
+    return markdown ? markdown_bold(text) : text
   }
   function label_text(line) {
     sub(/^[[:space:]>-]+/, "", line)
@@ -414,7 +427,8 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
     sub(/[[:space:]]+$/, "", line)
     return line
   }
-  FNR == NR {
+  FNR == 1 { file++ }
+  file == 1 {
     if ($0 == "````text") { example = 1; next }
     if ($0 == "````") { example = 0; next }
     if (!example) next
@@ -422,6 +436,7 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
     if (fenced) { sections[$0] = 1; last_section = $0; next }
     if ($0 ~ /^> \*[^*]+:\*/ || $0 ~ /^- \*[^*<>]+:\*/) {
       key = label_text($0)
+      if (!opening) opening = key
       match($0, /:\*/)
       labels[key] = substr($0, 1, RSTART + 1)
     }
@@ -432,12 +447,21 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
     }
     next
   }
+  # The opening label decides one form for the whole summary, so a line in
+  # the other form is a finding: the post renders it as literal markup.
+  file == 2 {
+    if (!formed && opening && label_text($0) == opening) {
+      formed = 1
+      markdown = markdown_ok && index($0, markdown_bold(labels[opening])) == 1
+    }
+    next
+  }
   {
     if (!item_prefix || !last_section) exit 3
     line = FNR
     text = $0
-    gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
-    gsub(/\[\\\[[A-Z]+-[0-9]+\\\]\]\(https?:\/\/[^()[:space:]]+\)/, "", text)
+    if (markdown) gsub(/\[\\\[[A-Z]+-[0-9]+\\\]\]\(https?:\/\/[^()[:space:]]+\)/, "", text)
+    else gsub(/<https?:\/\/[^<>|[:space:]]+\|[^<>]+>/, "", text)
     if (text ~ /(^|[^[:alnum:]_])KEN-[0-9]+([^[:alnum:]_]|$)/ ||
         text ~ /(^|[^[:alnum:]_])#[0-9]+([^[:alnum:]_]|$)/) finding("bare-id", " line=" line)
     if ($0 ~ /https?:\/\/github\.com\/[^\/[:space:]<>]+\/[^\/[:space:]<>]+\/(pull|commit)\//) finding("github-link", " line=" line)
@@ -452,8 +476,9 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
       session_header = length($0) > length(suffix) && substr($0, length($0) - length(suffix)) == " " suffix
       if (!($0 in sections) && !session_header) finding("label", " line=" line)
     } else if (key in sections || key in labels) {
-      if (!(key in labels) || (index($0, labels[key]) != 1 && index($0, markdown_bold(labels[key])) != 1)) finding("label", " line=" line)
-    } else if ($0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*[^*]+\*:?$/ || $0 ~ /^>?[[:space:]]*\*[^*<>]+:\*/ || $0 ~ /^```.+/) {
+      if (!(key in labels) || index($0, bold(labels[key])) != 1) finding("label", " line=" line)
+    } else if ((markdown ? $0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*\*[^*]+\*\*:?$/ || $0 ~ /^>?[[:space:]]*\*\*[^*<>]+:\*\*/ \
+                         : $0 ~ /^(:[[:alnum:]_+-]+:[[:space:]]*)?\*[^*]+\*:?$/ || $0 ~ /^>?[[:space:]]*\*[^*<>]+:\*/) || $0 ~ /^```.+/) {
       finding("label", " line=" line)
     }
     if ($0 ~ /^[[:space:]]*[-*][[:space:]]+/) {
@@ -471,17 +496,8 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
         }
         rest = substr(rest, RSTART + RLENGTH)
       }
-      if (keys) {
-        want_prefix = item_prefix
-        want_suffix = item_suffix
-        bracketed = link ~ /\|\[[A-Z]+-[0-9]+\]>/
-        if (link ~ /^\[/) {
-          want_prefix = markdown_bold(item_prefix)
-          want_suffix = markdown_bold(item_suffix)
-          bracketed = link ~ /^\[\\\[/
-        }
-        if (keys != 1 || prefix != want_prefix || substr(after, 1, length(want_suffix)) != want_suffix || !bracketed) finding("item-line", " line=" line)
-      }
+      bracketed = markdown ? link ~ /^\[\\\[[A-Z]+-[0-9]+\\\]\]\(/ : link ~ /^<[^<>]+\|\[[A-Z]+-[0-9]+\]>$/
+      if (keys && (keys != 1 || prefix != bold(item_prefix) || substr(after, 1, length(bold(item_suffix))) != bold(item_suffix) || !bracketed)) finding("item-line", " line=" line)
       words = item
       gsub(/<https?:\/\/[^<>|[:space:]]+\|/, "", words)
       gsub(/>/, "", words)
@@ -495,7 +511,7 @@ if ! SHAPE_FINDINGS="$(LC_ALL=C awk -v cap="$SUMMARY_LINES" '
     if (header) finding("label", " line=" fence_line)
     if (!waiting) finding("waiting-on-you", "")
     if (items > cap) finding("layout", " item-lines=" items " cap=" cap)
-  }' "$TEMPLATE" - <<<"$SUMMARY_TEXT")"; then
+  }' "$TEMPLATE" "$WORK_DIR/summary" "$WORK_DIR/summary")"; then
   SHAPE_FINDINGS="oversee-report: summary-shape=unavailable template=$TEMPLATE"
 fi
 [[ -z "$SHAPE_FINDINGS" ]] || printf '%s\n' "$SHAPE_FINDINGS" >&2
