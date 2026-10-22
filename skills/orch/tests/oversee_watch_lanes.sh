@@ -315,6 +315,61 @@ for row in 'exited|0|true|live|1' 'running|0|false|live|1' 'exited|2|false|live|
   assert_eq "$(grep -c '^status --item issue-2 --harness claude ' "$STUB_DIR/host.calls" || true)" "$calls" "$calls remote harness call per lane per pass"
 done
 
+echo "=== hosted lane relaunch inside a long pass ==="
+RECORD_WATCH="$(mutant_scripts record-watch/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/record-watch/github"
+# shellcheck disable=SC2016
+mutate_file "$RECORD_WATCH" \
+  $'[.lanes[]? | select(running and .item == $item)][0] // empty\x27 "$STATE_FILE")' \
+  $'[.lanes[]? | select(running and .item == $item)][0] // empty\x27 <<<"${FLEET_STATE:-null}")'
+for row in 'pi|running|live|false|pi' 'pi|running|control|true|claude' 'pi|stopped|live|false|none' 'claude|running|live|true|claude'; do
+  IFS='|' read -r next_harness next_status judge want_exit probed_harness <<<"$row"
+  new_case "record_${next_harness}_${next_status}_$judge"
+  remote_disk="$STUB_DIR/remote"; ERR="$STUB_DIR/err"
+  mkdir -p "$remote_disk/srv/lane/tmp" "$remote_disk/srv/clone/tmp"
+  printf 'gitdir: /srv/clone/.git/worktrees/ken-1\n' > "$remote_disk/srv/lane/.git"
+  printf 'started\n' > "$remote_disk/srv/lane/tmp/lane-status-KEN-1.md"
+  cat > "$STUB_DIR/provider" <<'PROVIDER'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == status ]]; then
+  printf '%s\n' "$5" >> "$STUB_DIR/probed-harness"
+  case "$5" in claude) echo exited ;; pi) echo running ;; *) exit 2 ;; esac
+else
+  exec "$RECORD_PROVIDER" "$@"
+fi
+PROVIDER
+  # pr-watch runs in the long-pass child, after the fleet snapshot and before
+  # check_lanes. Its synchronous rewrite proves the relaunch landed there.
+  cat > "$STUB_DIR/relaunch" <<'RELAUNCH'
+#!/usr/bin/env bash
+set -euo pipefail
+jq -e '.lanes[0] | .harness == "claude" and .status == "running" and .running_at == "2026-08-15T09:00:00Z"' "$STUB_DIR/fleet.json" >/dev/null
+jq --arg harness "$NEXT_HARNESS" --arg status "$NEXT_STATUS" \
+  '.lanes[0] |= (.harness = $harness | .status = $status | .running_at = "2026-08-15T09:01:00Z")' \
+  "$STUB_DIR/fleet.json" > "$STUB_DIR/fleet.next"
+mv -- "$STUB_DIR/fleet.next" "$STUB_DIR/fleet.json"
+exec "$RECORD_PR_WATCH" "$@"
+RELAUNCH
+  chmod +x "$STUB_DIR/provider" "$STUB_DIR/relaunch"
+  jq -cn --arg host "$STUB_DIR/provider" \
+    '{issue_id:"oversee",triaged:[],lanes:[{item:"KEN-1",window:"kendex:KEN-1",host:$host,mail_root:"/srv/lane",harness:"claude",status:"running",running_at:"2026-08-15T09:00:00Z"}]}' > "$STUB_DIR/fleet.json"
+  printf 'KEN-1\n' > "$STUB_DIR/windows-kendex.txt"
+  printf 'fish\n' > "$STUB_DIR/cmd-kendex:KEN-1.txt"
+  printf '2747883 ssh\n' > "$STUB_DIR/kids-9000.txt"
+  printf 'Working\n' > "$STUB_DIR/pane-kendex:KEN-1.txt"
+  target="$REPO_ROOT/skills/orch/scripts/oversee-watch"; [[ "$judge" == live ]] || target="$RECORD_WATCH"
+  OUT="$(WATCH_BIN="$target" run_watch RECORD_PROVIDER="$provider" RECORD_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
+    NEXT_HARNESS="$next_harness" NEXT_STATUS="$next_status" OVERSEE_WATCH_PR_WATCH="$STUB_DIR/relaunch" \
+    LANE_HOST_STUB_LOG="$STUB_DIR/host.calls" LANE_HOST_STUB_DIR="$remote_disk" \
+    -- --state "$STUB_DIR/fleet.json" --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
+  expect="rc=0 out~EVENT+lane-exited+kendex:KEN-1=$want_exit"
+  assert_eq "$(watch "$expect")" "$expect" "at-judgement record $next_harness/$next_status/$judge" "$ERR"
+  actual_harness=none
+  [[ ! -f "$STUB_DIR/probed-harness" ]] || actual_harness="$(cat "$STUB_DIR/probed-harness")"
+  assert_eq "$actual_harness" "$probed_harness" "provider probes the recorded harness once: $row" "$ERR"
+done
+
 echo "=== a provider is asked status only where its kind declares status=verb ==="
 # A provider line declaring files=verb and status=pane: the files are read
 # through lane-host, and the pane, not the provider, judges the lane. The
