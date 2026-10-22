@@ -642,6 +642,18 @@ registered_worktree_git_dir() {
   return 1
 }
 
+# Git can remove registration before directory deletion fails. Missing identity
+# never authorizes a retry to delete the directory; recovery stays with its owner.
+remove_recovery_guidance() {
+  echo "Manual recovery from the main checkout:" >&2
+  echo "  1. Match the original lane owner's records and the first failure's repository, physical path and branch. A matching directory name or missing registration proves neither ownership nor merge status." >&2
+  echo "  2. Resolve the configured worktree base and target parent physically. Require the exact lane directory inside that base (or the recorded hosted lane path), outside the main checkout. Refuse symlink paths, foreign repositories, lookalikes and any changed or unread identity." >&2
+  echo "  3. Confirm with the lane owner that every session, writer and container has stopped. Read Git's worktree list from the recorded repository; a live or registered worktree takes the normal remove route. An unread list or unverified active-lane status stops recovery." >&2
+  echo "  4. Inspect and preserve remaining work, mailbox data and rewrite records. Have the owner repair only the verified leftovers' permissions or ownership. fix-links repairs links in a registered worktree; it cannot restore deleted Git registration." >&2
+  echo "  5. Fetch the repository's default branch from origin and read the retained local branch tip. Require a successful merge-base --is-ancestor check of that exact tip against the fetched default-branch tip. A missing branch, failed fetch, failed read or unproved ancestry stops deletion; a squash merge alone does not prove ancestry." >&2
+  echo "  6. From outside the target, recheck identity, containment, no symlinks, no active lane and no registration. Only then manually delete the exact owned leftover directory. Delete the retained local branch only if its tip is unchanged, its ancestry is still proved and no worktree uses it. Otherwise keep it." >&2
+}
+
 # Removing a worktree deletes the private Git directory that holds its rewrite
 # record, so a target this cannot resolve to a registration is not permission
 # to delete whatever is registered under it. Refusing is the default here, and
@@ -652,7 +664,9 @@ refuse_unidentified_worktree() {
   local wt="$1"
   worktree_message remove-unidentified "$wt" "Error: $wt could not be resolved to a registered worktree of this repository, so what removing it would delete cannot be established; refusing to remove it." >&2
   echo "Nothing was released, removed or pruned." >&2
-  echo "Address it by the path Git recorded for it:" >&2
+  worktree_message remove-recovery "repository=$PROJECT_ROOT path=$wt branch=unknown registration=unresolved recovery=manual" >&2
+  remove_recovery_guidance
+  echo "Address a still-registered worktree by the path Git recorded for it:" >&2
   echo "  git -C \"$PROJECT_ROOT\" worktree list" >&2
   return 1
 }
@@ -3565,6 +3579,9 @@ case "${1:-}" in
       # be mutated. A foreign repo's worktree reachable through a shared or
       # symlinked base dir must not have its symlinks stripped or its
       # registration touched.
+      if [[ -z "$REMOVE_GIT_DIR" ]] && ! is_git_worktree_path "$WT_PATH"; then
+        refuse_unidentified_worktree "$WT_PATH" || exit 1
+      fi
       if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
@@ -3609,9 +3626,27 @@ case "${1:-}" in
       if [[ "$REMOVE_RC" == 1 ]]; then
         worktree_message remove-failed "$WT_PATH" "Error: Git could not remove the worktree; preserving it for manual recovery: $WT_PATH" >&2
         [[ -n "$GIT_REMOVE_OUTPUT" ]] && printf '%s\n' "$GIT_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+        REMOVE_REGISTRATION_STATE=unread
+        if REMOVE_REGISTRATION_LIST="$(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)"; then
+          if [[ -d "$REMOVE_GIT_DIR" ]]; then
+            REMOVE_REGISTRATION_STATE=present
+          elif [[ ! -e "$REMOVE_GIT_DIR" && ! -L "$REMOVE_GIT_DIR" ]] &&
+               ! grep -qxF -- "worktree ${WT_REAL:-$WT_PATH}" <<<"$REMOVE_REGISTRATION_LIST"; then
+            REMOVE_REGISTRATION_STATE=missing
+          fi
+        fi
+        REMOVE_DIRECTORY_STATE=absent
+        if [[ -L "$WT_PATH" ]]; then
+          REMOVE_DIRECTORY_STATE=symlink
+        elif [[ -d "$WT_PATH" ]]; then
+          REMOVE_DIRECTORY_STATE=remaining
+        elif [[ -e "$WT_PATH" ]]; then
+          REMOVE_DIRECTORY_STATE=changed
+        fi
+        worktree_message remove-recovery "repository=$PROJECT_ROOT path=$WT_PATH branch=${BRANCH:-unknown} registration=$REMOVE_REGISTRATION_STATE directory=$REMOVE_DIRECTORY_STATE recovery=manual" >&2
         echo "  Branch: ${BRANCH:-unknown} (not deleted)" >&2
-        echo "Nothing was removed before Git ran, so a refusal made before deletion started (a lock, for example) leaves the worktree exactly as it was." >&2
-        echo "Git's deletion is not atomic: if it failed partway through, the worktree may be partially removed — inspect its contents before retrying, and restore links with: $0 fix-links \"$WT_PATH\"" >&2
+        echo "Git's deletion is not atomic. A missing registration with a remaining directory means Git removed registration but left files; retry refuses unidentified leftovers. An unread registration state stays unverified." >&2
+        remove_recovery_guidance
         exit 1
       fi
       # Safety net: remove directory if git left it behind

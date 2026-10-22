@@ -57,6 +57,14 @@ A branch is rebased through `worktree push`, `create --restack`, or `create --re
 
 A branch whose pull request the merge lookup confirms merged is not rebased by `create`. A squash merge rewrites the branch into a fresh commit, so a rebase replays the merged work onto its own squash and stops on conflicts: `create --reuse` keeps the tree as it stands, and `create --restack` and `create --replay` refuse, all three naming the merge commit. When the lookup cannot answer, `create` records `worktree-merge-unverified` and rebases as for a branch in flight (`merged --help`).
 
+## Recovering a failed removal
+
+Git removal is not atomic. It can delete a worktree's registration while leaving its directory. The first `remove` failure reports the repository, worktree path, retained branch and observed registration and directory state. Keep that diagnostic with the lane owner's records. A retry refuses unidentified leftovers; missing registration proves neither ownership nor merged ancestry.
+
+Follow the failure or refusal's manual recovery steps from the main checkout. The owner must prove the exact lane's identity, physical path containment, no symlink or foreign target, no active sessions or writers, and the retained branch tip's ancestry into the freshly fetched default branch before deleting leftovers. Failed or unread proof stops recovery. Review remaining work, mailbox data and rewrite records before deletion. Keep an unproved branch. These checks are manual; `remove` never adopts an unknown directory.
+
+`fix-links` repairs configured links only while Git can still identify the registered worktree. It cannot restore deleted Git registration. When registration remains, inspect the partial checkout and repair its links before the normal removal route.
+
 ## Recovering a broken `.agents` entry
 
 Route by shape, not by whether `test -L .agents` passes. Ask both indexes what sits under the path: `git -C <worktree> ls-files -- '.agents/'`, and the same command against the main checkout. The trailing slash is the query; descendants decide the layout and the entry itself does not count. Neither index alone decides, and both answer while the path itself is broken:
