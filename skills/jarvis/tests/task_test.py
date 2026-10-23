@@ -601,26 +601,33 @@ sys.exit(task.main())
 
                             errors = io.StringIO()
                             with patch.object(session, "backend", side_effect=at_stop), redirect_stderr(errors):
-                                if mode == "changed-start":
-                                    with self.assertRaises(runtime["Refusal"]) as refused:
-                                        session.succeed()
-                                    self.assertEqual(refused.exception.reason, "handover-failed")
-                                else:
-                                    try:
-                                        answer = session.succeed()
-                                    except runtime["Refusal"] as failure:
-                                        self.fail(failure.reason)
-                                    self.assertEqual(answer[1], 0)
+                                try:
+                                    if mode == "changed-start":
+                                        with self.assertRaises(runtime["Refusal"]) as refused:
+                                            session.succeed()
+                                        self.assertEqual(refused.exception.reason, "handover-failed")
+                                    else:
+                                        try:
+                                            answer = session.succeed()
+                                        except runtime["Refusal"] as failure:
+                                            self.fail(failure.reason)
+                                        self.assertEqual(answer[1], 0)
+                                finally:
+                                    if session.read()["generation"] != record["generation"]:
+                                        world.settle("running")
                             self.assertEqual(stops, [pid])
                             if mode != "live":
-                                fields = dict(word.split("=", 1) for word in shlex.split(errors.getvalue())[1:])
-                                self.assertEqual((fields["cause"], fields["pid"]), ("identity-stale", str(pid)))
+                                diagnostics = [line for line in errors.getvalue().splitlines()
+                                               if line.startswith("jarvis-session: operation=stop-process ")]
+                                self.assertTrue(diagnostics, errors.getvalue())
+                                for line in diagnostics:
+                                    fields = dict(word.split("=", 1) for word in shlex.split(line)[1:])
+                                    self.assertEqual((fields["cause"], fields["pid"]), ("identity-stale", str(pid)))
                             if mode == "changed-start":
                                 self.assertEqual(session.read(), record)
                                 self.assertTrue(world.jarvis_live())
                                 self.assertEqual(backend("worker-live", pid, identity["started_at"]).returncode, 0)
                             else:
-                                world.settle("running")
                                 windows = world.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
                                 self.assertNotIn(task["terminal"]["window"], windows)
                     finally:
