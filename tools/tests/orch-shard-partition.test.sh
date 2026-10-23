@@ -383,6 +383,8 @@ family_rows='dev_future|orch-dev
 review_future|orch-dev
 lane_future|orch-state
 workflow-state_future|orch-state
+lanes_future|orch-rest|orch-state
+lanes_context_future|orch-rest|orch-state
 dev_review_lane_workflow-state_future|orch-dev
 other_future|orch-rest'
 while IFS='|' read -r name profile; do
@@ -392,7 +394,8 @@ for PARTITION_RUNNER_OS in Linux macOS; do
   for profile in orch-dev orch-state orch-rest; do
     selected --shard "$profile" > "$TMP/$profile.names"
   done
-  while IFS='|' read -r name owner; do
+  while IFS='|' read -r name owner mac_owner; do
+    [[ "$PARTITION_RUNNER_OS" != macOS || -z "$mac_owner" ]] || owner=$mac_owner
     claims=0
     for profile in orch-dev orch-state orch-rest; do
       if grep -qxF "$name" "$TMP/$profile.names"; then
@@ -411,6 +414,7 @@ for PARTITION_RUNNER_OS in Linux macOS; do
   # A planted assertion uses a private suite file and the workflow profile's
   # real entry. A selected failure must propagate to the shard verdict.
   while IFS='|' read -r name profile; do
+    if [[ "$name" == lanes_future && "$PARTITION_RUNNER_OS" == macOS ]]; then profile=orch-state; fi
     printf '#!/usr/bin/env bash\ntest green = red\n' > "$SANDBOX/$name.sh"
     rc=0
     RUNNER_OS="$PARTITION_RUNNER_OS" bash "$SANDBOX/run-all.sh" --shard "$profile" \
@@ -421,6 +425,7 @@ for PARTITION_RUNNER_OS in Linux macOS; do
   done <<'ROWS'
 dev_future|orch-dev
 lane_future|orch-state
+lanes_future|orch-rest
 ROWS
 done
 while IFS='|' read -r name profile; do

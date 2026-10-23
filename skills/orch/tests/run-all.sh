@@ -324,6 +324,11 @@ shard_of() { # BASE
     oversee_launch*|oversee_watch_owed*) OWNING_SHARD=orch-dev ;;
     *oversee*) OWNING_SHARD=orch-oversee ;;
     *dev*|*review*) OWNING_SHARD=orch-dev ;;
+    # The account-reader family exhausted orch-state in merge-group run
+    # 39876878565. Keep it together in Linux's existing rest worker pool.
+    lanes*)
+      if [ "${RUNNER_OS:-Linux}" = Linux ]; then OWNING_SHARD=orch-rest
+      else OWNING_SHARD=orch-state; fi ;;
     *lane*|*workflow-state*) OWNING_SHARD=orch-state ;;
     *) OWNING_SHARD=orch-rest ;;
   esac

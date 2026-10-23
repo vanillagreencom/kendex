@@ -765,9 +765,9 @@ jobs:
       # profiles and their complement. Dev/review names enter `orch-dev`,
       # including names that also carry lane or workflow-state, and so does
       # the oversee launch family; the owed-work family joins it on Linux.
-      # `orch-state`
-      # takes the remaining lane/workflow-state names. `orch-rest` rejects
-      # both families and the terminal/oversee names on Linux. The macOS
+      # On Linux, the account-reader `lanes*` family joins `orch-rest`;
+      # `orch-state` keeps the other lane/workflow-state names. `orch-rest`
+      # takes the remaining suites after these families. The macOS
       # profiles spread watch contracts across these same jobs. New suites
       # join one family by name. orch-shard-partition.test.sh reads the actual
       # workflow calls and proves complete, unique ownership on both OSes.
