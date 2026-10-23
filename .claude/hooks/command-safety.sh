@@ -693,6 +693,47 @@ environment_receiver() {
 
 environment_receiver_evidence() {
   local remaining=$1 matched
+  case "$program" in
+    python | python3)
+      local source=$1 executable="" span quote c i=0 end found uncertain=""
+      local dynamic_re='(^|[^A-Za-z0-9_])(exec|eval|compile)([^A-Za-z0-9_]|$)'
+      local span_re="^[^\"'#]+"
+      # Source-edit replacement strings are data. Prefixed strings and code
+      # evaluation keep raw evidence because their contents can execute.
+      if [[ ! $source =~ $dynamic_re ]]; then
+        while [ "$i" -lt "${#source}" ]; do
+          c=${source:i:1}
+          case "$c" in
+            '#')
+              span=${source:i}; span=${span%%$'\n'*}
+              executable=$executable$span; i=$((i + ${#span})) ;;
+            "'" | '"')
+              if [ "$i" -gt 0 ]; then
+                case "${source:i-1:1}" in [A-Za-z0-9_] | \\) uncertain=1; break ;; esac
+              fi
+              quote=$c
+              [ "${source:i:3}" != "$c$c$c" ] || quote=$c$c$c
+              end=$((i + ${#quote})); found=""
+              while [ "$end" -lt "${#source}" ]; do
+                if [ "${source:end:1}" = '\' ]; then end=$((end + 2)); continue; fi
+                if [ "${source:end:${#quote}}" = "$quote" ]; then
+                  end=$((end + ${#quote})); found=1; break
+                fi
+                if [ "${#quote}" -eq 1 ] && [ "${source:end:1}" = $'\n' ]; then break; fi
+                end=$((end + 1))
+              done
+              [ -n "$found" ] || { uncertain=1; break; }
+              span=${source:i:end-i}
+              executable=$executable${span//[!$'\n']/ }; i=$end ;;
+            *)
+              [[ ${source:i} =~ $span_re ]] || { uncertain=1; break; }
+              span=${BASH_REMATCH[0]}
+              executable=$executable$span; i=$((i + ${#span})) ;;
+          esac
+        done
+        [ -n "$uncertain" ] || remaining=$executable
+      fi ;;
+  esac
   while [[ $remaining =~ $receiver_pattern ]]; do
     matched=${BASH_REMATCH[0]}
     remaining=${remaining#*"$matched"}

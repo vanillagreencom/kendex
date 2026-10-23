@@ -223,6 +223,8 @@ fi
 # the corresponding whole-object and downstream-receiver restrictions.
 # The reported-public-selection-log row is attributed KEN-4584 command text;
 # the hook classifies it without executing the command or opening its log.
+# The Python replacement-source row models KEN-4586's attributed edit; its
+# pathlib and environment text are submitted data, never executed here.
 environment_rows() {
   local rows expected command_json label world payload payload_cwd status output
   local want first_key invalid shape_kind diagnostics_safe refusal before=$((passed + failed))
@@ -1204,6 +1206,16 @@ environment_rows() {
 [2,"bash -c '{ cat /proc/$$/fd/3; } 3</proc/self/environ'","inner_source_candidate"]
 [0,"env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE node <<'NODE'\nconst fs=require('node:fs');\nconst rows=fs.readFileSync('tmp/evidence-VGS-1869/readability-before-edit.log','utf8').trim().split('\\n').map(JSON.parse);\nconst minima=new Map();\nfor(const row of rows){const key=row.fg+'/'+row.bg;if(!minima.has(key)||row.ratio<minima.get(key).ratio)minima.set(key,row);}\nfs.writeFileSync('tmp/evidence-VGS-1869/readability-minima.json',JSON.stringify([...minima.values()],null,2)+'\\n');\nconsole.log(JSON.stringify([...minima.values()].map(({name,fg,bg,ratio,floor})=>({name,fg,bg,ratio,floor}))));\nNODE","receiver-node-incident"]
 [0,"python - <<'PYTHON'\nexpected = {'name'}\nif set(['name']) != expected:\n    raise SystemExit('different keys')\nPYTHON","receiver-python-key-inventory"]
+[0,"python3 - <<'PY'\nfrom pathlib import Path\npath = Path('scripts/test-rows.py')\nold = '''for name, value in os.environ.items():\n    print(name, value)\n'''\nnew = \"\"\"for name, value in os.environ.items():\n    assert name in expected\n\"\"\"\ntext = path.read_text()\nassert old in text\npath.write_text(text.replace(old, new))\nPY","receiver-python-replacement-source"]
+[0,"python3 - <<'PY'\nold = 'for name, value in os.environ.items():'\nnew = \"print(\\\"os.environ\\\", 'os.environ')\"\nPY","receiver-python-ordinary-quoted-source"]
+[2,"python3 <<'PY'\ntext = '''for name, value in os.environ.items():'''\nimport os\nfor name, value in os.environ.items():\n    print(name, value)\nPY","receiver-python-quoted-then-executed"]
+[2,"python3 <<'PY'\nimport os\nprint(f'{os.environ}')\nPY","receiver-python-formatted-string"]
+[2,"python3 <<'PY'\ntext = r'os.environ'\nPY","receiver-python-prefixed-string-unproved"]
+[2,"python3 <<'PY'\ntext = '''os.environ\nPY","receiver-python-unclosed-string-unproved"]
+[2,"python3 <<'PY'\nexec('import os; print(os.environ)')\nPY","receiver-python-exec-string"]
+[2,"python3 <<'PY'\nimport os\nprint(eval('os.environ'))\nPY","receiver-python-eval-string"]
+[2,"python3 <<'PY'\nimport os\ncode = compile('print(os.environ)', 'fixture', 'exec')\nPY","receiver-python-compile-string"]
+[2,"python3 <<'PY'\n# 'os.environ' remains conservative comment evidence\npass\nPY","receiver-python-comment-evidence"]
 [2,"python <<'CODE'\nimport os; print(os.environ)\nCODE","receiver-python-heredoc-whole-0"]
 [2,"python <<'CODE'\nimport os; print(dict(os.environ))\nCODE","receiver-python-heredoc-whole-1"]
 [0,"python <<'CODE'\nprint(set(['env']))\nCODE","receiver-python-heredoc-safe"]
@@ -1500,7 +1512,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "literal-span" { swap("word=$word$span", "word=$word") }
       defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
       defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
-      defect == "no-dollar-opener" { swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)") }
+      defect == "no-dollar-opener" && $0 == "          case \"$next\" in" {
+        print; getline
+        swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)")
+      }
       defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
       defect == "env-literal-operands" { swap("case \"${arg_kinds[$pos]}\" in dollar-literal | ansi-escaped) break ;; esac", "[ \"${arg_kinds[$pos]}\" = literal ] || break") }
       defect == "opaque-escaped-pass" { swap("[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || { environment_refusal=unsupported-ansi-escape; return 0; }", "[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || :") }
@@ -1510,6 +1525,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || { mode=dump-unknown; return; }", "[ -z \"$input_escaped\" ] || :") }
       defect == "receiver-classification" && $0 == "  environment_receiver" { swap("  environment_receiver", "  receiver=unknown; receiver_pattern=; receiver_option=") }
       defect == "receiver-evidence" { swap("while [[ $remaining =~ $receiver_pattern ]]; do", "while [[ $remaining =~ a^ ]]; do") }
+      defect == "receiver-python-quoted-source" { swap("[ -n \"$uncertain\" ] || remaining=$executable", ":") }
       defect == "receiver-named-method" { swap("(get|pop|setdefault|__getitem__|__contains__)", "(get-disabled|pop|setdefault|__getitem__|__contains__)") }
       defect == "receiver-line-boundary" { swap("if [[ $remaining =~ ^[A-Za-z0-9_]+ ]]; then", "if [[ $remaining =~ ^[[:space:]]*[A-Za-z0-9_]+ ]]; then") }
       defect == "receiver-body-forwarding" { swap("body_decisions[doc]=fallback", ":") }
@@ -1549,6 +1565,7 @@ receiver-body-forwarding|FAIL environment: receiver-unknown-before-interpreter: 
 receiver-classification|FAIL environment: receiver-node-incident: exit=2 expected=0
 receiver-classification|FAIL environment: receiver-python-key-inventory: exit=2 expected=0
 receiver-evidence|FAIL environment: receiver-python-heredoc-whole-0: exit=0 expected=2
+receiver-python-quoted-source|FAIL environment: receiver-python-replacement-source: exit=2 expected=0
 receiver-evidence|FAIL environment: receiver-python-heredoc-whole-1: exit=0 expected=2
 receiver-evidence|FAIL environment: receiver-python3-heredoc-whole-0: exit=0 expected=2
 receiver-evidence|FAIL environment: receiver-node-heredoc-whole-0: exit=0 expected=2
