@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 5.0.2
+
+- The shipped bridge bundles use zod 4.6.7, which fixes the oversized-collection validation memory advisory GHSA-mrhx-c7xc-m3w5.
+
 ### 5.0.1
 
 - A tool that asks the active Pi Claude provider a separate question in the same conversation gets an error it can retry after the tool finishes. The outer turn can finish instead of hanging on the nested request. Nested requests with their own session remain independent.
