@@ -133,6 +133,7 @@ class NativeContracts(unittest.TestCase):
 
     def test_real_runner_applies_profile_before_launch(self):
         files = ("skills/orch/tests/run-all.sh", "skills/orch/tests/lib/git-env.sh",
+                 "skills/orch/tests/lib/suite-process.sh",
                  "skills/orch/scripts/lib/lane-state.sh", "skills/github/scripts/lib/group-leader.sh")
         for path in files:
             target = self.root / path

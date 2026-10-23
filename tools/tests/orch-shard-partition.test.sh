@@ -1188,10 +1188,11 @@ fi
 # mutations, but keep the production runner's discovery and selection intact.
 # The control driver needs Bash 4; its two jobs remain Linux-only.
 if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+  source "$ROOT/skills/linear/tests/lib/control-runner.sh"
   LINEAR_RUNNER=skills/linear/tests/must-fail-controls.sh
   LINEAR_FIXTURE="$TMP/linear"
   mkdir -p "$LINEAR_FIXTURE/tests/controls" "$LINEAR_FIXTURE/scripts" "$TMP/linear-claims"
-  cp "$ROOT/$LINEAR_RUNNER" "$LINEAR_FIXTURE/tests/must-fail-controls.sh"
+  control_runner_install "$LINEAR_FIXTURE"
   printf 'VALUE=green\n' >"$LINEAR_FIXTURE/scripts/value.sh"
   for f in "$ROOT"/skills/linear/tests/controls/*.control.sh; do
     [[ -f "$f" ]] || { bad "linear control discovery found no files"; break; }
