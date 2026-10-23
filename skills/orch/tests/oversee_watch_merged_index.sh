@@ -19,7 +19,7 @@ for arg in "$@"; do
     measure=true
     old='def lane_merged($item; $owner; $pr; $since):'
     [[ "$arg" == *"$old"* ]] || exit 1
-    replacement="$old (length | debug) as \$visits |"
+    replacement="$old (length | debug) as \$visits | ([length, (map(((.title // \"\") + (.body // \"\")) | utf8bytelength) | add // 0)] | debug) as \$work |"
     arg="${arg/"$old"/$replacement}"
   fi
   args+=("$arg")
@@ -32,7 +32,9 @@ printf '  rc=0; %q "${args[@]}" 2>"$cost_file" || rc=$?\n' "$REAL_JQ" >>"$TMP_RO
 cat >>"$TMP_ROOT/count-bin/jq" <<'STUB'
   while IFS= read -r line; do
     if [[ "$line" == '["DEBUG:",'* ]]; then
-      printf '%s\n' "$line" >>"$STUB_DIR/row-visits"
+      if [[ "$line" == '["DEBUG:",['* ]]; then
+        printf '%s\n' "$line" >>"$STUB_DIR/ownership-work"
+      else printf '%s\n' "$line" >>"$STUB_DIR/row-visits"; fi
     else printf '%s\n' "$line" >&2; fi
   done <"$cost_file"
   exit "$rc"
@@ -214,5 +216,202 @@ for variant in current control; do
   assert_eq "$rc" 2 "$variant: a page at the search limit refuses"
   assert_contains "$(cat "$STUB_DIR/$variant.truncated.err")" 'merged-search-truncated' "$variant: truncation retains its machine key"
 done
+
+# Completed-stage workloads use the same watch harness, candidate instrument
+# and process counter. Search pages are local complete responses, so CPU
+# includes fixture evidence I/O and tracing; it is not a live API forecast.
+mkdir -p "$TMP_ROOT/stage-bin"
+cat >"$TMP_ROOT/stage-bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2" == 'pr list' && " $* " == *' --state merged '* ]]; then
+  repo=""
+  args=("$@")
+  for ((i=0; i<$#; i++)); do
+    [[ ${args[$i]} != --repo ]] || repo=${args[$((i+1))]}
+  done
+  [[ -n "$repo" ]] || exit 1
+  # This complete fixture response is one physical search read and one page.
+  printf '%s\n' "$repo" >>"$STUB_DIR/search-pages"
+  if [[ ! -f "$STUB_DIR/read-${repo//\//_}" ]]; then
+    : >"$STUB_DIR/read-${repo//\//_}"
+    cat "$STUB_DIR/stage-merged.json"
+  else printf '[]\n'; fi
+  exit
+fi
+STUB
+printf 'exec %q "$@"\n' "$TMP_ROOT/bin/gh" >>"$TMP_ROOT/stage-bin/gh"
+chmod +x "$TMP_ROOT/stage-bin/gh"
+
+# The reviewed pure-record budget: one inventory parse, one index per
+# repository and one final reconciliation. Scalar parser/judge/output work
+# and per-item full-state scans must disappear, irrespective of measured CPU.
+stage_work_contract() {
+  assert_le "$stage_jq" "$((stage_repos + 2))" 'stage jq work is bounded by repositories'
+  assert_le "$stage_scalar" 0 'stage has no per-item parser judge or output process'
+  assert_le "$stage_scans" 2 'stage scans saved state at most once in and once out'
+}
+
+# case | items | unrelated saved rows | bundled ownership
+while IFS='|' read -r name count saved bundle; do
+  new_case "stage_$name"
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' '{"issue_id":"oversee","triaged":[],"launch_queue":[],"lanes":[]}' >"$STUB_DIR/state.json"
+  python3 - "$STUB_DIR" "$count" "$saved" "$bundle" <<'PY'
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+root, n, saved, bundle = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == 'yes'
+description = ('## Done when\n- [ ] Post-merge: Read health; Where: service; '
+               'Why after merge: live health; Trigger: merge; Deadline: +24h')
+items = [dict(id=f'KEN-{i+100}', state='Verifying', priority=2,
+              created_at='2026-09-20T00:00:00Z', description=description) for i in range(n)]
+rows = [dict(number=i+1, headRefName=item['id'].lower(), title='health', body='',
+             headRepositoryOwner=dict(login='owner'), mergedAt='2026-10-01T00:00:00Z',
+             mergeCommit=dict(oid='1'*40)) for i, item in enumerate(items)]
+if bundle:
+    rows = [dict(number=1, headRefName='cloud', title='fix: health',
+                 body='Context ' + 'x'*4096 + '\n' + '\n'.join('Closes ' + item['id'] for item in items),
+                 headRepositoryOwner=dict(login='owner'), mergedAt='2026-10-01T00:00:00Z',
+                 mergeCommit=dict(oid='1'*40))]
+# Unrelated merged rows force the candidate index to select rather than
+# reporting the input size as ownership work.
+if n:
+    rows += [dict(number=10000+i, headRefName='unrelated', title='other', body='context',
+                  headRepositoryOwner=dict(login='owner'), mergedAt='2026-10-01T00:00:00Z') for i in range(32)]
+state = ''.join(f'untouched\tkey-{i}\t' + 'x'*96 + '\n' for i in range(saved))
+state += 'untouched\tsentinel\tliteral\\value\n'
+(root/'tracker.out').write_text(json.dumps(items))
+(root/'stage-merged.json').write_text(json.dumps(rows))
+(root/'state'/'owner_repo__none').write_text(state)
+(root/'unrelated.expected').write_text(state)
+(root/'now.epoch').write_text(str(int(datetime(2026, 10, 1, 12, tzinfo=timezone.utc).timestamp())) + '\n')
+expected_rows = []
+expected_events = []
+for item in items:
+    expected_rows.append(f'verifying {item["id"]} box=1 trigger="merge" status=due '
+                         'deadline=2026-10-02T00:00:00Z '
+                         'blocked_by=- reading="Read health" where="service" why="live health"')
+    expected_events.append(f'EVENT verifying-deadline {item["id"]} box=1 trigger="merge" '
+                           'status=due deadline=2026-10-02T00:00:00Z')
+for key, lines in [('rows', expected_rows), ('events', expected_events)]:
+    (root/f'{key}.expected').write_text('\n'.join(lines) + ('\n' if lines else ''))
+(root/'workload.json').write_text(json.dumps(dict(N=n, R=2 if n else 0,
+    description_bytes=sum(len(item['description'].encode()) for item in items),
+    saved_state_bytes=len(state.encode()), boxes=n, merged_rows=len(rows)*2,
+    merged_text_bytes=sum(len((row['title']+row['body']).encode()) for row in rows)*2,
+    expected_W=(n*len((rows[0]['title']+rows[0]['body']).encode()) if bundle else n*len('health'))*2)))
+PY
+  : >"$STUB_DIR/row-visits"; : >"$STUB_DIR/ownership-work"; : >"$STUB_DIR/search-pages"
+  counter="$STUB_DIR/stage-count"
+  process_path="$TMP_ROOT/stage-bin:$TMP_ROOT/count-bin:$TMP_ROOT/bin:$PATH"
+  if [[ -n "${BASHPID:-}" ]]; then
+    python3 "$REPO_ROOT/skills/orch/tests/lib/process-count.py" install "$counter" "$process_path" "$BASH" "$REPO_ROOT/skills/orch/scripts/oversee-watch" passes
+    cat >>"$counter/bash-env" <<'TRACE'
+_pc_stage=outside
+_pc_stage_pid=0
+_pc_step() {
+  local i active=outside
+  for ((i=1; i<${#FUNCNAME[@]}; i++)); do
+    [[ ${FUNCNAME[$i]} != verifying_read ]] || active=long_pass.verifying_read
+  done
+  _KENDEX_PROCESS_COUNT_STEP=$active
+  export _KENDEX_PROCESS_COUNT_STEP
+  # times is a builtin: these boundaries add no measured child process.
+  if [[ $active != outside && $_pc_stage_pid == 0 ]]; then _pc_stage_pid=${BASHPID:-$$}; fi
+  if [[ ${BASHPID:-$$} == "$_pc_stage_pid" && $active != "$_pc_stage" ]]; then
+    times >>"$STUB_DIR/stage.times"
+    [[ $active == outside ]] || printf '%s' "${PW_SEEN[0]}" >"$STUB_DIR/stage-state"
+    _pc_stage=$active
+  fi
+  [[ $active != outside ]] || return 0
+  case "$BASH_COMMAND" in
+    'local row prefix='*)
+      case ${FUNCNAME[1]} in
+        lane_row_get) printf '%s\n' "${#PW_SEEN[0]}" >>"$STUB_DIR/state-scans" ;;
+        lane_row_set) printf '%s\n' "${#state}" >>"$STUB_DIR/state-scans" ;;
+      esac ;;
+    'verifying_parse '*|'verifying_judge '*|'jq -r --arg id '*)
+      [[ ${FUNCNAME[1]} != verifying_read ]] || printf 'scalar\n' >>"$STUB_DIR/scalar-starts" ;;
+  esac
+}
+TRACE
+    trace_env="$counter/bash-env"
+  else trace_env=/dev/null; fi
+  rc=0
+  run_watch BASH_ENV="$trace_env" PATH="$counter/bin:$process_path" -- --max-loops 1 \
+    --repo owner/repo --repo owner/other --state "$STUB_DIR/state.json" >"$STUB_DIR/stage.out" 2>"$STUB_DIR/stage.err" || rc=$?
+  assert_eq "$rc" 0 "$name: the measured stage completes" "$STUB_DIR/stage.err"
+  assert_eq "$(awk '/^verifying /' "$STUB_DIR/stage.out")" "$(cat "$STUB_DIR/rows.expected")" "$name: box output has an independent expected value"
+  assert_eq "$(awk '/^EVENT verifying-deadline /' "$STUB_DIR/stage.out")" "$(cat "$STUB_DIR/events.expected")" "$name: first pass emits each due key"
+  assert_eq "$(awk '/^(verifying-|oversee-watch: verifying-|done-when)/' "$STUB_DIR/stage.err")" '' "$name: readable stage evidence has no error"
+  assert_eq "$(awk -F'\t' '$1 == "untouched"' "$STATE_DIR/owner_repo__none")" "$(cat "$STUB_DIR/unrelated.expected")" "$name: state reconciliation preserves unrelated rows"
+  if [[ -n "${BASHPID:-}" ]]; then
+    python3 - "$counter" "$REPO_ROOT/skills/orch/tests/lib" "$STUB_DIR" >"$STUB_DIR/metrics" <<'PY'
+import importlib.util
+import json
+from pathlib import Path
+import re
+import sys
+counter, lib, root = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('process_count', lib/'process-count.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+existing = set((counter/'existing').read_text().splitlines())
+births = module.pass_births(module.read_trace(counter), (counter/'steps').read_text().splitlines(), existing)
+external = {pid: name for _, pid, _, name, owner in
+            (line.split() for line in (counter/'external').read_text().splitlines()) if owner in existing}
+selected = {pid for pid, step in births.items() if step == 'long_pass.verifying_read'}
+def lines(name):
+    path = root/name
+    return path.read_text().splitlines() if path.exists() else []
+work = json.loads((root/'workload.json').read_text())
+expected_w = work.pop('expected_W')
+work['saved_state_bytes'] = (root/'stage-state').stat().st_size
+associations = [json.loads(line)[1] for line in lines('ownership-work')]
+work.update(A=sum(row[0] for row in associations), W=sum(row[1] for row in associations),
+            physical_search_reads=len(lines('search-pages')), pages=len(lines('search-pages')),
+            release_evidence_tasks=0, jq_starts=sum(external.get(pid) == 'jq' for pid in selected),
+            fork_only_starts=len(selected-external.keys()), scalar_starts=len(lines('scalar-starts')),
+            full_state_scans=len(lines('state-scans')), state_scan_bytes=sum(map(int, lines('state-scans'))))
+times = [sum(int(m)*60+float(s) for m, s in re.findall(r'(\d+)m([\d.]+)s', line)) for line in lines('stage.times')]
+assert len(times) == 4, times  # shell and reaped children at entry and exit
+work['cpu_seconds'] = round(sum(times[2:])-sum(times[:2]), 3)
+print(work['jq_starts'], work['R'], work['scalar_starts'], work['full_state_scans'])
+print('verifying-stage evidence: ' + json.dumps(work, sort_keys=True))
+# The fixture's independent shape proves it reached ownership, including W
+# for every child of the bundle, rather than timing an empty/error path.
+assert work['A'] == work['N']*2, work
+assert work['W'] == expected_w, work
+PY
+    read -r stage_jq stage_repos stage_scalar stage_scans <"$STUB_DIR/metrics"
+    sed -n '2p' "$STUB_DIR/metrics"
+    control_rc=0
+    ( FAIL=0; stage_work_contract; [[ "$FAIL" == 0 ]] ) >"$STUB_DIR/structural-control.log" || control_rc=$?
+    if [[ "$count" == 0 ]]; then
+      assert_eq "$control_rc" 0 "$name: empty clean run meets the shared structural bound"
+    else
+      assert_le "$count" "$stage_scalar" "$name: scalar instrument observes the per-item path"
+      assert_le "$count" "$stage_scans" "$name: scan instrument observes repeated full-state work"
+      assert_eq "$control_rc" 1 "$name: main per-item loop fails the same structural bound"
+    fi
+  else printf 'skip: completed-stage work and CPU attribution requires BASHPID\n'; fi
+  # Reset only fixture search delivery. Keep production state to prove event
+  # suppression independently of output and of the structural assertion.
+  rm -f "$STUB_DIR/read-owner_repo" "$STUB_DIR/read-owner_other"
+  rc=0
+  run_watch PATH="$process_path" -- --max-loops 1 --repo owner/repo --repo owner/other \
+    --state "$STUB_DIR/state.json" >"$STUB_DIR/repeat.out" 2>"$STUB_DIR/repeat.err" || rc=$?
+  assert_eq "$rc" 0 "$name: unchanged pass completes"
+  assert_eq "$(awk '/^EVENT verifying-deadline /' "$STUB_DIR/repeat.out")" '' "$name: saved keys suppress every unchanged event"
+  assert_eq "$(awk '/^verifying /' "$STUB_DIR/repeat.out")" "$(cat "$STUB_DIR/rows.expected")" "$name: heartbeat replays the full box inventory"
+done <<'ROWS'
+empty|0|0|no
+recorded|66|0|no
+inventory|132|0|no
+saved_state|66|512|no
+bundle|6|0|yes
+ROWS
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

@@ -1574,12 +1574,15 @@ box_key_sequence() {
   jq '[.[] | select(.id == "KEN-1")]' "$STUB_DIR/tracker.out" > "$STUB_DIR/box-keys.json"
   mv -- "$STUB_DIR/box-keys.json" "$STUB_DIR/tracker.out"
   fleet '[]' "$(record KEN-1 running claude)"
+  mkdir -p "$STATE_DIR"
+  printf 'untouched\tbox-key-sentinel\tliteral\\value\n' >"$STATE_DIR/owner_repo__none"
   while IFS='|' read -r phase stamp expected events; do
     jq -nr --arg stamp "$stamp" '$stamp | fromdateiso8601' > "$STUB_DIR/now.epoch"
     watch_pass -- --state "$STUB_DIR/state.json"
     printf '%s\n' "$OUT" > "$BOX_KEY_DIR/$phase.out"
     printf '%s\n' "$RC" > "$BOX_KEY_DIR/$phase.rc"
     cp "$ERR" "$BOX_KEY_DIR/$phase.err"
+    awk -F'\t' '$1 == "untouched"' "$STATE_DIR/owner_repo__none" >"$BOX_KEY_DIR/$phase.unrelated"
   done <<<"$BOX_KEY_ROWS"
 }
 box_key_contract() {
@@ -1587,6 +1590,9 @@ box_key_contract() {
   while IFS='|' read -r phase stamp expected events; do
     out="$(cat "$BOX_KEY_DIR/$phase.out")"
     assert_eq "$(cat "$BOX_KEY_DIR/$phase.rc")" 0 "$phase box-key pass completes" "$BOX_KEY_DIR/$phase.err"
+    assert_eq "$(awk '/^(verifying-|oversee-watch: verifying-|done-when)/' "$BOX_KEY_DIR/$phase.err")" '' "$phase box-key evidence has no error"
+    assert_eq "$(cat "$BOX_KEY_DIR/$phase.unrelated")" $'untouched\tbox-key-sentinel\tliteral\\value' \
+      "$phase box-key reconciliation preserves unrelated state"
     assert_eq "$(awk '$1 == "verifying" && $2 == "KEN-1" {for(i=1;i<=NF;i++) if($i ~ /^status=/) print $3 "/" $i}' <<<"$out" | paste -sd, -)" \
       "$expected" "$phase prints only its selected box keys" "$BOX_KEY_DIR/$phase.err"
     assert_eq "$(awk '$1 == "EVENT" && $2 == "verifying-deadline" && $3 == "KEN-1" {print $4}' <<<"$out" | paste -sd, -)" \
