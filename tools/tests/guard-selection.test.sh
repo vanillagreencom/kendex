@@ -588,8 +588,8 @@ git -C "$timing" config user.email test@example.com
 git -C "$timing" config core.hooksPath "$TMP/nohooks"
 git -C "$timing" config gc.auto 0
 git -C "$timing" config maintenance.auto false
-timing_suite=orch-shard-partition.test
-timing_pair=harness-smoke.test
+timing_suite=harness-smoke.test
+timing_pair=orch-shard-partition.test
 timing_tests=tools/tests
 timing_env=(env -i PATH="$TIMING_PATH" HOME="$TMP" LC_ALL=C ORCH_STATE_DIR="$timing/tmp")
 timing_run() {
@@ -609,7 +609,7 @@ ORCH_PR_ORDER = "review-first"
 DEV_VALIDATE_CMD = "$BASH $timing_tests/$timing_suite.sh"
 DEV_VALIDATE_RANGE_CMD = "$BASH $timing_tests/$timing_suite.sh"
 DEV_VALIDATE_SELECTION_CMD = "$GUARD --selection --range \$DEV_VALIDATE_BASE"
-DEV_VALIDATE_TIMEOUT_SECS = "359"
+DEV_VALIDATE_TIMEOUT_SECS = "413"
 TOML
 cat > "$timing/$timing_tests/$timing_suite.sh" <<'SH'
 #!/usr/bin/env bash
@@ -624,15 +624,19 @@ git -C "$timing" update-ref refs/remotes/origin/main "$timing_base"
 printf '# selected\n' >> "$timing/$timing_tests/$timing_suite.sh"
 
 # Native expected-secs is consumed by dev-validate-run. These values are
-# independent of the parser: platform maximum 287 -> ceil(287 * 1.25) = 359;
-# adding the other suite's maximum of 330 gives ceil(617 * 1.25) = 772.
-for row in 'single|359' 'pair|772' 'full|' 'mixed|' 'uncovered|' 'shard-total|' 'unread|' 'unread-selected|' 'incomplete|'; do
+# independent of the parser: platform maximum 330 -> ceil(330 * 1.25) = 413.
+# Partition timings cover --shell-only; guard runs combined, so neither its
+# single invocation nor a selection containing it has complete coverage.
+for row in 'single|413' 'pair|' 'partition|' 'full|' 'mixed|' 'uncovered|' 'shard-total|' 'unread|' 'unread-selected|' 'incomplete|'; do
   IFS='|' read -r label expected <<<"$row"
   git -C "$timing" reset -q --hard "$timing_base"
   timing_preview_base="$timing_base"
   printf '# selected\n' >> "$timing/$timing_tests/$timing_suite.sh"
   case "$label" in
     pair) printf '# selected\n' >> "$timing/$timing_tests/$timing_pair.sh" ;;
+    partition)
+      git -C "$timing" checkout -- "$timing_tests/$timing_suite.sh"
+      printf '# selected\n' >> "$timing/$timing_tests/$timing_pair.sh" ;;
     mixed) printf '\n' >> "$timing/ui/package.json" ;;
     uncovered) printf '# selected\n' >> "$timing/skills/orch/tests/dev_validate_run_selection.sh" ;;
     shard-total)
@@ -641,7 +645,7 @@ for row in 'single|359' 'pair|772' 'full|' 'mixed|' 'uncovered|' 'shard-total|' 
       git -C "$timing" add "$timing_tests/$shard_suite.sh" ;;
     unread) rm "$timing/.github/workflows/skill-tests.yml" ;;
     unread-selected)
-      sed 's/187-287s/unread/' "$timing/.github/workflows/skill-tests.yml" > "$TMP/unread-workflow"
+      sed 's/302-330s/unread/' "$timing/.github/workflows/skill-tests.yml" > "$TMP/unread-workflow"
       mv "$TMP/unread-workflow" "$timing/.github/workflows/skill-tests.yml" ;;
     incomplete)
       sed '/# suite sums over those legs, Linux then macOS:/d' "$timing/.github/workflows/skill-tests.yml" > "$TMP/incomplete-workflow"
@@ -658,6 +662,17 @@ for row in 'single|359' 'pair|772' 'full|' 'mixed|' 'uncovered|' 'shard-total|' 
   [ "$RC" -eq 0 ] && [ "$estimate" = "$expected" ] && [ ! -e "$timing/tmp/attempts" ] \
     && ok "measured preview $label has estimate [$expected] without execution" \
     || bad "measured preview $label has estimate [$expected] without execution" "rc=$RC out=$OUT"
+  if [ "$label" = partition ]; then
+    if [ "$(grep -Fc 'if (selected[i] == "tools/tests/orch-shard-partition.test.sh") exit 1' "$GUARD")" -eq 1 ] \
+      && mutant_guard 's/if (selected\[i\] == "tools\/tests\/orch-shard-partition.test.sh") exit 1/if (0 \&\& selected[i] == "tools\/tests\/orch-shard-partition.test.sh") exit 1/'; then
+      timing_preview "$MUTANT_TOOLS/guard"
+      [ "$RC" -eq 0 ] && [ "$(sed -n '/^expected-secs=/p' <<<"$OUT")" = expected-secs=359 ] \
+        && ok 'control: accepting shell timing for combined mode turns the coverage oracle red' \
+        || bad 'control: accepting shell timing for combined mode turns the coverage oracle red' "$OUT"
+    else
+      bad 'the invocation coverage control changes exactly one condition'
+    fi
+  fi
 done
 unset timing_preview_base
 git -C "$timing" reset -q --hard "$timing_base"
@@ -715,9 +730,9 @@ timing_run "$BASH" -c 'cd -- "$1" && "$2" "$3"' _ "$timing" "$BASH" "$timing_tes
   || { bad 'the focused repair passes before recovery admission' "$OUT"; exit 1; }
 cp "$timing/tmp/attempts" "$TMP/proved-attempts"
 timing_preview "$GUARD"
-[ "$RC" -eq 0 ] && [ "$(sed -n '/^expected-secs=/p' <<<"$OUT")" = expected-secs=359 ] \
-  && ok 'native repaired preview fits the unchanged 359-second fixture bound' \
-  || { bad 'native repaired preview fits the unchanged 359-second fixture bound' "$OUT"; exit 1; }
+[ "$RC" -eq 0 ] && [ "$(sed -n '/^expected-secs=/p' <<<"$OUT")" = expected-secs=413 ] \
+  && ok 'native repaired preview fits the unchanged 413-second fixture bound' \
+  || { bad 'native repaired preview fits the unchanged 413-second fixture bound' "$OUT"; exit 1; }
 timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
 recovery_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
 [ "$RC" -eq 0 ] && [ -n "$recovery_run" ] \
@@ -745,10 +760,12 @@ timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing 
   --branch main --commit "$timing_head" --recovery --validate pass --validate-run-dir "$recovery_run" --validate-note measured --no-summary
 [ "$RC" -eq 2 ] && ok 'a second terminal recovery receipt remains refused' \
   || bad 'a second terminal recovery receipt remains refused' "$OUT"
-printf '# over bound\n' >> "$timing/$timing_tests/$timing_pair.sh"
+# Change the covered fixture so its earlier passing tree cannot answer this
+# admission check. The recovery above kept its 413-second bound throughout.
+printf '# over bound\n' >> "$timing/$timing_tests/$timing_suite.sh"
 attempts_before="$(cat "$timing/tmp/attempts")"
-timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
-[ "$RC" -eq 2 ] && grep -Fxq 'dev-validate-run: over-bound expected-secs=772 bound=359' <<<"$OUT" \
+timing_run env DEV_VALIDATE_TIMEOUT_SECS=412 "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
+[ "$RC" -eq 2 ] && grep -Fxq 'dev-validate-run: over-bound expected-secs=413 bound=412' <<<"$OUT" \
   && [ "$(cat "$timing/tmp/attempts")" = "$attempts_before" ] \
   && ok 'the native admission owner refuses a measured over-bound selection before execution' \
   || bad 'the native admission owner refuses a measured over-bound selection before execution' "$OUT"

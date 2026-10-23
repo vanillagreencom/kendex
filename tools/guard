@@ -2292,6 +2292,9 @@ selection_expected_secs() {
       for (i = 1; i <= count; i++) {
         if (selected[i] == "" || selected[i] in seen) continue
         seen[selected[i]] = 1
+        # The recorded partition timing covers --shell-only. The local runner
+        # uses combined mode, including the untimed Cargo harness compilation.
+        if (selected[i] == "tools/tests/orch-shard-partition.test.sh") exit 1
         if (!(selected[i] in timings) || samples[selected[i]] != 2) exit 1
         total += timings[selected[i]]
       }
