@@ -16,3 +16,10 @@ control_expect "bulk writes nothing"
 control_replace scripts/commands/issues.sh 1 \
     '        [ "$preflight_failed" = 0 ] || return 1' \
     '        :'
+
+# Remove only the canceled-type refusal so the mocked API receives the unsafe
+# cancellation, without touching the descendant reader or the existing guards.
+control_expect "cancel-child writes nothing"
+control_replace scripts/commands/issues.sh 1 \
+    '    if [ "$state_type" = canceled ]; then' \
+    '    if false; then'

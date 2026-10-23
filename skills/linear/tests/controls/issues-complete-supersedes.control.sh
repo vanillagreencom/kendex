@@ -10,10 +10,10 @@ control_replace scripts/commands/issues.sh 1 \
 
 control_expect "children-fail leaves related items unchanged"
 control_replace scripts/commands/issues.sh 1 \
-    '        if [ -n "$pending_children" ]; then' \
-    '        if false; then'
+    '        pending_children=$(pending_issue_descendants "$superseded_result") || return 1' \
+    '        pending_children=$(pending_issue_descendants "$superseded_result") || return 1; pending_children=""'
 
 control_expect "deep-children-fail names all open descendants for disposition"
 control_replace scripts/commands/issues.sh 1 \
-    '            frontier="$next_frontier"' \
-    '            frontier=""'
+    '        frontier="$next_frontier"' \
+    '        frontier=""'
