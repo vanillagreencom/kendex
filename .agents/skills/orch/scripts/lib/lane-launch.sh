@@ -1256,14 +1256,16 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
   ( umask 077 && mkdir -p -- "$lane/sessions" ) || { LANE_TRUST_REASON=account-store; return 1; }
   # The account's own files by link, never by copy: a token the harness renews
   # under this lane is renewed in the account's auth.json, and the transcripts a
-  # resumed launch is scanned for stay where the account keeps them. config.toml
-  # is the one file this home owns, and `lane-launch` holds this home, so
+  # resumed launch is scanned for stay where the account keeps them. A private
+  # plugins directory is retained below. config.toml is written here, and
+  # `lane-launch` holds this home, so
   # linking it in would nest the tree inside itself.
   for entry in "$lane"/* "$lane"/.[!.]*; do
     [ -e "$entry" ] || [ -L "$entry" ] || continue
     name="${entry##*/}"
     { [ "$name" != config.toml ] && [ "$name" != lane-launch ]; } || continue
-    # A REAL directory at the name refuses. `ln -s -f` replaces a link and
+    # A real directory other than the retained plugins below refuses.
+    # `ln -s -f` replaces a link and
     # replaces a plain file, but at a directory it descends INTO it, creates the
     # link inside and reports success, so a home that once held a directory of
     # its own gains another level under that name at every launch. A plain file
@@ -1274,6 +1276,11 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
     # here detaches a link: the codex write that puts a credential at this name
     # opens the existing path, so it lands in the account's own file.
     if [ -d "$home/$name" ] && [ ! -L "$home/$name" ]; then
+      # Codex can create plugins before the account has that entry. Keep the
+      # whole private directory, including data whose producer is unknown:
+      # neither its name nor cache-shaped contents prove deletion safe. The
+      # later account plugins stay hidden while this private home is used.
+      [ "$name" != plugins ] || continue
       LANE_TRUST_REASON=home-entry
       return 1
     fi

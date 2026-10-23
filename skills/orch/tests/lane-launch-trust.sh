@@ -175,16 +175,62 @@ assert_eq "$(readlink "$LINK_HOME/models_cache.json" || printf none) $(cat "$LIN
   "$LINK_LANE/models_cache.json shipped $LINK_LANE/plugins renewed" \
   "a second preparation links a private file at a name the account has since gained, and a directory the account gained"
 
-# A real directory at a name that should be a link is what the loop cannot put
-# right, and it refuses instead of creating the link inside it.
-rm -f -- "${LINK_HOME:?}/plugins"
-mkdir -p "$LINK_HOME/plugins"
-link_rc=0
-lane_codex_trust_prepare "$LINK_LANE" "$TMP_ROOT/trusts-another/wt" || link_rc=$?
-assert_eq "$link_rc reason=$LANE_TRUST_REASON $(ls "$LINK_HOME/plugins" | wc -l | tr -d ' ')" \
-  "1 reason=home-entry 0" \
-  "a real directory where a link belongs refuses, and nothing is created inside it"
-rm -rf -- "${LINK_HOME:?}/plugins"
+# Codex creates missing entries inside its supplied home. Reproduce that
+# sequence before the account gains the same name, then prepare from that home
+# as a relaunch does. A plugin directory stays private, including unknown data;
+# an unknown directory still refuses. Both keep their complete fixture tree.
+directory_conflict_row() ( # LIB NAME TAG
+  local lib="$1" name="$2" tag="$3" lane="$TMP_ROOT/$3/.1codex" dir="$TMP_ROOT/$3/wt"
+  local home rc=0 repeat=skip absent=no preserved=no nested=no same=no sessions=other trusted=no
+  source "$lib"
+  mkdir -p "$dir" || return 1
+  account_config "$tag" "$(config_for trusts-another)" no-store
+  lane_trust_prepare codex "$lane" "$dir" || return 1
+  home="$LANE_TRUST_HOME"
+  [ -e "$lane/$name" ] || [ -L "$lane/$name" ] || absent=yes
+  mkdir -p "$home/$name/cache/openai-curated-remote" "$home/$name/.remote-plugin-install-staging" || return 1
+  printf 'cache\n' > "$home/$name/cache/openai-curated-remote/entry" || return 1
+  printf 'unproved private data\n' > "$home/$name/private" || return 1
+  cp -R "$home/$name" "$TMP_ROOT/$tag-before" || return 1
+  mkdir -p "$lane/$name" || return 1
+  printf 'shipped\n' > "$lane/$name/account" || return 1
+  printf 'renewed\n' > "$home/auth.json" || return 1
+  lane_trust_prepare codex "$home" "$dir" || rc=$?
+  if [ "$rc" = 0 ]; then
+    repeat=0
+    lane_trust_prepare codex "$home" "$dir" || repeat=$?
+  fi
+  if [ -d "$home/$name" ] && [ ! -L "$home/$name" ] && diff -r "$TMP_ROOT/$tag-before" "$home/$name" >/dev/null; then preserved=yes; fi
+  [ ! -e "$home/$name/$name" ] && [ ! -L "$home/$name/$name" ] || nested=yes
+  [ "$LANE_TRUST_HOME" != "$home" ] || same=yes
+  [ "$(readlink "$home/sessions" || printf none)" != "$lane/sessions" ] || sessions=account
+  ! lane_codex_trusted "$home/config.toml" "$dir" || trusted=yes
+  printf 'absent=%s rc=%s route=%s reason=%s repeat=%s preserved=%s nested=%s same=%s sessions=%s trusted=%s hooks=%s account=%s auth=%s\n' \
+    "$absent" "$rc" "$LANE_TRUST_ROUTE" "$LANE_TRUST_REASON" "$repeat" "$preserved" "$nested" "$same" "$sessions" "$trusted" \
+    "$(grep -c -F -e "$HOOK_ENTRY" "$home/config.toml" || true)" "$(cat "$lane/$name/account")" "$(cat "$lane/auth.json")"
+)
+DIRECTORY_ROWS=(
+  'plugins|rc=0 route=launch-home reason= repeat=0 preserved=yes nested=no same=yes'
+  'unknown|rc=1 route= reason=home-entry repeat=skip preserved=yes nested=no same=no'
+)
+for row in "${DIRECTORY_ROWS[@]}"; do
+  name="${row%%|*}"; want="${row#*|}"
+  assert_eq "$(directory_conflict_row "$SCRIPTS_DIR/lib/lane-launch.sh" "$name" "directory-$name")" \
+    "absent=yes $want sessions=account trusted=yes hooks=1 account=shipped auth=renewed" \
+    "directory collision: $name preserves private data and trust/account behavior"
+done
+
+# Disable only private-plugin retention in a disposable copy. These same
+# sequence rows then reach the original home-entry refusal, proving the cache
+# conflict without treating cache-shaped data as deletion authority.
+MUTANT_DIRECTORY="$(mutant_scripts lane-launch-directory lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
+mutate_file "$MUTANT_DIRECTORY" '[ "$name" != plugins ] || continue' '[ "$name" != plugins ] || :'
+for row in "${DIRECTORY_ROWS[@]}"; do
+  name="${row%%|*}"
+  assert_eq "$(directory_conflict_row "$MUTANT_DIRECTORY" "$name" "control-directory-$name")" \
+    'absent=yes rc=1 route= reason=home-entry repeat=skip preserved=yes nested=no same=no sessions=account trusted=yes hooks=1 account=shipped auth=renewed' \
+    "control: $name reaches home-entry without private-plugin retention"
+done
 
 # An answer recorded in the PRIVATE HOME refuses the next launch exactly as one
 # recorded in the account does. On the launch-home route the session runs with
