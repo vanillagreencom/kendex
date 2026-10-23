@@ -16,6 +16,10 @@ use kendex_core::model::Scope;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::codex_and_pi_share_one_project_variant_and_claude_links_while_equal"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     // Canonical up front: macOS reaches its temp dirs through a symlink,
     // and the engine hands back canonical paths.
@@ -77,6 +81,10 @@ fn codex_and_pi_share_one_project_variant_and_claude_links_while_equal() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_large_skill_is_one_tree_every_surface_links_to() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_large_skill_is_one_tree_every_surface_links_to"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     // Canonical up front: macOS reaches its temp dirs through a symlink,
     // and the engine hands back canonical paths.
@@ -134,6 +142,10 @@ fn a_large_skill_is_one_tree_every_surface_links_to() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_skill_lands_in_the_shared_tree_and_only_non_readers_link_at_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_global_skill_lands_in_the_shared_tree_and_only_non_readers_link_at_it"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -195,6 +207,10 @@ fn a_global_skill_lands_in_the_shared_tree_and_only_non_readers_link_at_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn verify_reads_a_global_skill_from_the_shared_tree() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::verify_reads_a_global_skill_from_the_shared_tree"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -235,6 +251,10 @@ fn verify_reads_a_global_skill_from_the_shared_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_copy_for_codex_writes_the_directory_only_codex_reads() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_global_copy_for_codex_writes_the_directory_only_codex_reads"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);

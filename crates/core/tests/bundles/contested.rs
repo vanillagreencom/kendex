@@ -15,6 +15,10 @@ use super::{apply_now, catalog_bundles, fixture, installed, lock_of, manifest_of
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_removed_while_the_catalog_is_offline_stays_removed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_member_removed_while_the_catalog_is_offline_stays_removed"
+    ));
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(installed(&f, ItemKind::Skill, "docs"));
@@ -59,6 +63,10 @@ fn a_member_removed_while_the_catalog_is_offline_stays_removed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_member_is_not_held_back_by_a_recorded_removal() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_declared_member_is_not_held_back_by_a_recorded_removal"
+    ));
     let f = fixture(
         "[bundles.starter]\nsource = \"cat\"\n\n[skills.docs]\nsource = \"cat\"\n\n[suppressed]\nskill = [\"docs\"]\n",
     );
@@ -87,6 +95,10 @@ fn a_declared_member_is_not_held_back_by_a_recorded_removal() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_two_sets_carry_installs_on_and_names_what_they_disagree_about() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_member_two_sets_carry_installs_on_and_names_what_they_disagree_about"
+    ));
     let f = fixture(
         "[bundles.alpha]\nsource = \"cat\"\nenabled = false\nmethod = \"copy\"\n\n[bundles.zulu]\nsource = \"cat\"\n",
     );

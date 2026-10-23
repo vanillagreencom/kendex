@@ -36,6 +36,10 @@ fn recorder_forwards_to_parent_path_git_and_its_helpers() {
         return;
     }
 
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::recorder_forwards_to_parent_path_git_and_its_helpers"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let bin = root.join("Git installation's bin");

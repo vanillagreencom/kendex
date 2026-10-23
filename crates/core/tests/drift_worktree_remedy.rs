@@ -147,6 +147,10 @@ fn declare_unreadably(env: &Env, scope: &Scope) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_holds_the_manifest() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_holds_the_manifest"
+    ));
     let (_tmp, env, main, linked) = repository();
     record_a_missing_agent(&env, &scope(&linked));
     record_a_missing_agent(&env, &scope(&main));
@@ -214,6 +218,10 @@ fn the_remedy_target_is_the_worktree_that_declares_and_the_main_checkout_that_ho
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command"
+    ));
     let (_tmp, env, _main, linked) = repository();
     let scope = scope(&linked);
     declare(&env, &scope);
@@ -263,6 +271,10 @@ fn a_rendered_fix_inside_a_worktree_that_declares_is_the_bare_command() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn record_cleanup_alone_keeps_the_plan_command_bare_in_the_worktree_that_declares() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::record_cleanup_alone_keeps_the_plan_command_bare_in_the_worktree_that_declares"
+    ));
     let (_tmp, env, _main, linked) = repository();
     let scope = scope(&linked);
     declare(&env, &scope);
@@ -298,6 +310,10 @@ fn record_cleanup_alone_keeps_the_plan_command_bare_in_the_worktree_that_declare
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_worktree_whose_manifest_will_not_load_names_itself() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_worktree_whose_manifest_will_not_load_names_itself"
+    ));
     let (_tmp, env, main, linked) = repository();
     declare(&env, &scope(&main));
     declare_unreadably(&env, &scope(&linked));
@@ -327,6 +343,10 @@ fn a_worktree_whose_manifest_will_not_load_names_itself() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_below_the_git_top_level_maps_onto_the_same_place_in_the_main_checkout() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_project_below_the_git_top_level_maps_onto_the_same_place_in_the_main_checkout"
+    ));
     let (_tmp, env, main, linked) = repository();
     for root in [main.join("app"), linked.join("app"), linked.join("lib")] {
         fs::create_dir_all(root.join(".claude")).unwrap();
@@ -370,6 +390,10 @@ fn a_project_below_the_git_top_level_maps_onto_the_same_place_in_the_main_checko
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_clean_report_resolves_no_destination() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_clean_report_resolves_no_destination"
+    ));
     let (_tmp, env, _main, linked) = repository();
     let scope = scope(&linked);
     declare(&env, &scope);
@@ -392,6 +416,10 @@ fn a_clean_report_resolves_no_destination() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_below_the_worktree_root_that_declares_is_its_own() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_project_below_the_worktree_root_that_declares_is_its_own"
+    ));
     let (_tmp, env, _main, linked) = repository();
     fs::create_dir_all(linked.join("app/.claude")).unwrap();
     let app = scope(&linked.join("app"));

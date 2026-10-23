@@ -62,6 +62,10 @@ fn repo_named(parent: &Path, name: OsString) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn a_checkout_whose_name_is_not_utf8_is_found() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_checkout_whose_name_is_not_utf8_is_found"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     // 0xFF is not valid UTF-8 in any position.
     let name = OsString::from_vec(b"caf\xffe".to_vec());
@@ -100,6 +104,10 @@ fn a_checkout_whose_name_is_not_utf8_is_found() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn a_checkout_whose_name_contains_a_newline_is_found() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_checkout_whose_name_contains_a_newline_is_found"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let root = repo_named(tmp.path(), OsString::from_vec(b"two\nlines".to_vec()));
 
@@ -117,6 +125,10 @@ fn a_checkout_whose_name_contains_a_newline_is_found() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn an_ordinary_checkout_resolves_the_same_way() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_ordinary_checkout_resolves_the_same_way"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let root = repo_named(tmp.path(), OsString::from("plain"));
 

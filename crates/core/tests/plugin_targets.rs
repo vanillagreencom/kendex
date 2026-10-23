@@ -59,6 +59,10 @@ fn json(path: &Path) -> Value {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copilot_plugin_lands_in_copilots_settings_and_nowhere_else() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_copilot_plugin_lands_in_copilots_settings_and_nowhere_else"
+    ));
     let f = fixture("[plugins.\"fmt@copilot-plugins\"]\nenabled = true\nharness = \"copilot\"\n");
     apply_now(&f);
 
@@ -78,6 +82,10 @@ fn a_copilot_plugin_lands_in_copilots_settings_and_nowhere_else() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declaration_with_no_harness_stays_claude_codes() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_declaration_with_no_harness_stays_claude_codes"
+    ));
     let f = fixture("[plugins.\"fmt@marketplace\"]\nenabled = true\n");
     apply_now(&f);
 
@@ -101,6 +109,10 @@ fn a_declaration_with_no_harness_stays_claude_codes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_tools_plugins_stay_in_that_tools_file() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::each_tools_plugins_stay_in_that_tools_file"
+    ));
     let f = fixture(
         "[plugins.\"fmt@copilot-plugins\"]\nenabled = true\nharness = \"copilot\"\n\n[plugins.\"lint@marketplace\"]\nenabled = false\nharness = \"claude\"\n",
     );
@@ -120,6 +132,10 @@ fn each_tools_plugins_stay_in_that_tools_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_machine_on_copilots_older_settings_file_is_told_rather_than_written_to() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_machine_on_copilots_older_settings_file_is_told_rather_than_written_to"
+    ));
     let f = fixture("[plugins.\"fmt@copilot-plugins\"]\nenabled = true\nharness = \"copilot\"\n");
     fs::write(f.env.home.join(".copilot/config.json"), "{}").unwrap();
 
@@ -142,6 +158,10 @@ fn a_machine_on_copilots_older_settings_file_is_told_rather_than_written_to() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plugin_refused_this_pass_keeps_its_record_under_refreshs_sweep() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_plugin_refused_this_pass_keeps_its_record_under_refreshs_sweep"
+    ));
     let f = fixture("[plugins.\"fmt@copilot-plugins\"]\nenabled = true\nharness = \"copilot\"\n");
     apply_now(&f);
     let key = kendex_core::lock::entry_key(

@@ -44,6 +44,10 @@ use kendex_core::model::Scope;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn command_collection_uses_accepted_native_and_copy_trees() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::command_collection_uses_accepted_native_and_copy_trees"
+    ));
     for (harnesses, method, repaired, delivered) in [
         ("\"codex\"", "symlink", false, false),
         ("\"claude\", \"codex\"", "symlink", false, false),
@@ -208,6 +212,10 @@ fn world() -> World {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_new_tool_dependency_keeps_an_in_place_instruction_block() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_new_tool_dependency_keeps_an_in_place_instruction_block"
+    ));
     use kendex_core::engine::ops::{self, AddRequest};
     use kendex_core::lock::{entry_key, load};
     use kendex_core::model::{HarnessId, ItemKind};
@@ -285,6 +293,10 @@ fn drift_rows(report: &kendex_core::engine::EngineReport) -> Vec<(String, String
 #[test]
 #[allow(clippy::unwrap_used)]
 fn apply_writes_the_instructions_block_and_nothing_else() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::apply_writes_the_instructions_block_and_nothing_else"
+    ));
     use kendex_core::model::HarnessId::{Claude, Codex, Copilot, Pi};
     let sentence = format!("{}. ", "a".repeat(498));
     let long = format!(
@@ -389,6 +401,10 @@ fn apply_writes_the_instructions_block_and_nothing_else() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn legacy_agent_labels_survive_outside_the_managed_block() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::legacy_agent_labels_survive_outside_the_managed_block"
+    ));
     let world = world();
     let authored = "---\nname: deploy\ndescription: Delegate to agent:generalist\n---\nOwned agent:generalist and agent:engineer text.\n";
     fs::write(world.skill_file(), authored).unwrap();
@@ -422,6 +438,10 @@ fn legacy_agent_labels_survive_outside_the_managed_block() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_to_the_tree_raises_no_row_and_moves_no_record() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_to_the_tree_raises_no_row_and_moves_no_record"
+    ));
     let world = world();
     world.apply();
     let recorded = world.read(&world.lock_path());
@@ -458,6 +478,10 @@ fn an_edit_to_the_tree_raises_no_row_and_moves_no_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_changed_instruction_rewrites_the_block_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_changed_instruction_rewrites_the_block_alone"
+    ));
     let world = world();
     world.apply();
     let mut skill = world.read(&world.skill_file());
@@ -503,6 +527,10 @@ fn a_changed_instruction_rewrites_the_block_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_file_that_is_not_text_is_refused_and_not_written() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_skill_file_that_is_not_text_is_refused_and_not_written"
+    ));
     let world = world();
     let mut authored = AUTHORED.as_bytes().to_vec();
     authored.extend_from_slice(b"Caf\xe9.\n");
@@ -535,6 +563,10 @@ fn a_skill_file_that_is_not_text_is_refused_and_not_written() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_copy_delivered_from_an_in_place_declaration_is_a_render"
+    ));
     let world = world();
     world.declare_as("deploy", "\"claude\"", "copy", Some("shared rule"));
     let mut authored = AUTHORED.as_bytes().to_vec();
@@ -624,6 +656,10 @@ fn a_copy_delivered_from_an_in_place_declaration_is_a_render() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_namespaced_in_place_name_is_not_served_and_nothing_is_written() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_namespaced_in_place_name_is_not_served_and_nothing_is_written"
+    ));
     let world = world();
     let source = world.project.join(".agents/skills/pl__deploy");
     fs::create_dir_all(&source).unwrap();
@@ -662,6 +698,10 @@ fn a_namespaced_in_place_name_is_not_served_and_nothing_is_written() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_old_record_is_re_recorded_by_one_refresh() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_old_record_is_re_recorded_by_one_refresh"
+    ));
     let world = world();
     world.apply();
     let mut lock = kendex_core::lock::load(&world.lock_path()).unwrap();

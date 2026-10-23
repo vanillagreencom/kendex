@@ -26,6 +26,10 @@ use super::rules::{rules_hit, severity_of, skill};
     reason = "one table: every block boundary the span reading has to honour, one document per row"
 )]
 fn safety_bypass_reads_a_switch_as_a_use_exactly_where_no_span_quotes_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::safety_bypass_reads_a_switch_as_a_use_exactly_where_no_span_quotes_it"
+    ));
     type Row = (&'static str, &'static str, Option<Severity>);
     let rows: &[Row] = &[
         // A document naming the switch in a code span is naming it. The control
@@ -609,6 +613,10 @@ fn safety_bypass_reads_a_switch_as_a_use_exactly_where_no_span_quotes_it() {
 /// condition would do.
 #[test]
 fn safety_bypass_reads_a_declaration_the_same_in_either_case() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::safety_bypass_reads_a_declaration_the_same_in_either_case"
+    ));
     let lower = skill(&[(
         "SKILL.md",
         "The bypass is `git commit\n<!doctype html>\n--no-verify`, never run it.\n",
@@ -641,6 +649,10 @@ fn safety_bypass_reads_a_declaration_the_same_in_either_case() {
 /// one does break the paragraph, and the switch below stands in the open.
 #[test]
 fn safety_bypass_opens_no_leaf_block_four_spaces_in() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::safety_bypass_opens_no_leaf_block_four_spaces_in"
+    ));
     for opener in ["# heading", "=========", "***", "- item", "<div>"] {
         let deep = skill(&[(
             "SKILL.md",
@@ -679,6 +691,10 @@ fn safety_bypass_opens_no_leaf_block_four_spaces_in() {
 /// because without the extension the label is prose like any other.
 #[test]
 fn safety_bypass_survives_a_footnote_label_above_an_indented_block() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::safety_bypass_survives_a_footnote_label_above_an_indented_block"
+    ));
     let labelled = skill(&[(
         "SKILL.md",
         "[^a]: note\n\n    The bypass is `git commit --no-verify`, never run it.\n",

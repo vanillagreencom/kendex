@@ -144,6 +144,10 @@ fn shim_bytes(path: &Path) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn claude_declared_plans_no_root_or_nested_instruction_shim() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::claude_declared_plans_no_root_or_nested_instruction_shim"
+    ));
     let f = fixture("\"claude\"", true);
     let nested = f.project.join("crates/core");
     fs::create_dir_all(&nested).unwrap();
@@ -173,6 +177,10 @@ fn record_claude_shims(f: &Fixture, paths: &[&str]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn recorded_claude_shims_stay_with_the_consumer_without_generated_records() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::recorded_claude_shims_stay_with_the_consumer_without_generated_records"
+    ));
     for (harnesses, remove_agents) in [
         ("\"claude\"", false),
         ("\"codex\"", false),
@@ -233,6 +241,10 @@ fn recorded_claude_shims_stay_with_the_consumer_without_generated_records() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_former_claude_shim_position_is_not_read_or_removed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_former_claude_shim_position_is_not_read_or_removed"
+    ));
     let f = fixture("\"claude\"", true);
     let path = f.project.join("CLAUDE.md");
     record_claude_shims(&f, &["CLAUDE.md"]);
@@ -256,6 +268,10 @@ fn a_former_claude_shim_position_is_not_read_or_removed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn personal_claude_files_stay_untouched_without_rows_or_takeover() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::personal_claude_files_stay_untouched_without_rows_or_takeover"
+    ));
     for (what, listed, linked, bytes) in [
         ("extra line", true, false, "@AGENTS.md\nmy own line\n"),
         ("symlink", true, true, CLAUDE_SHIM),
@@ -293,6 +309,10 @@ fn personal_claude_files_stay_untouched_without_rows_or_takeover() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_old_claude_link_retires_independently_of_the_root_file() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_old_claude_link_retires_independently_of_the_root_file"
+    ));
     for (harnesses, root_bytes) in [
         ("\"claude\"", None),
         ("\"claude\"", Some("# personal\n")),
@@ -344,6 +364,10 @@ fn gemini_settings(f: &Fixture) -> serde_json::Value {
 
 #[test]
 fn gemini_settings_are_created_naming_geminis_own_file_first() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::gemini_settings_are_created_naming_geminis_own_file_first"
+    ));
     let f = fixture("\"gemini\"", true);
     let report = apply_now(&f);
     assert_eq!(touched(&f, &report), [".gemini/settings.json"]);
@@ -374,6 +398,10 @@ fn gemini_settings_are_created_naming_geminis_own_file_first() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn gemini_settings_are_edited_around_what_they_already_hold() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::gemini_settings_are_edited_around_what_they_already_hold"
+    ));
     let f = fixture("\"gemini\"", true);
     let settings = f.project.join(".gemini/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
@@ -428,6 +456,10 @@ fn gemini_settings_are_edited_around_what_they_already_hold() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn unparseable_gemini_settings_are_refused_not_rewritten() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::unparseable_gemini_settings_are_refused_not_rewritten"
+    ));
     for (harnesses, declared, recorded) in [
         ("\"gemini\"", true, true),
         ("\"codex\"", false, true),
@@ -510,6 +542,10 @@ fn unparseable_gemini_settings_are_refused_not_rewritten() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_persons_key_beside_the_gemini_shim_stays_out_of_commit_and_restore() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_persons_key_beside_the_gemini_shim_stays_out_of_commit_and_restore"
+    ));
     let f = fixture("\"gemini\"", true);
     let settings = f.project.join(".gemini/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
@@ -557,6 +593,10 @@ fn a_persons_key_beside_the_gemini_shim_stays_out_of_commit_and_restore() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_gemini_shim_goes_where_the_project_has_no_repository_of_its_own() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_gemini_shim_goes_where_the_project_has_no_repository_of_its_own"
+    ));
     let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
     for (what, outer_repository) in [
         ("nested in a larger repository", true),
@@ -624,6 +664,10 @@ fn the_gemini_shim_goes_where_the_project_has_no_repository_of_its_own() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_gemini_shim_goes_once_and_a_file_of_the_persons_stays_quiet() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_gemini_shim_goes_once_and_a_file_of_the_persons_stays_quiet"
+    ));
     let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
     let f = fixture("\"gemini\"", true);
     let settings = f.project.join(".gemini/settings.json");
@@ -679,6 +723,10 @@ fn recorded_shims(f: &Fixture) -> serde_json::Value {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_gemini_shim_written_before_the_record_was_kept_is_recorded_then_retired() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_gemini_shim_written_before_the_record_was_kept_is_recorded_then_retired"
+    ));
     let theirs = "{\n  \"ui\": {\n    \"theme\": \"Dark\"\n  }\n}\n";
     for (what, recorded_first) in [
         ("dropped in the very next apply", false),
@@ -813,6 +861,10 @@ enum Left {
     reason = "one table: every retirement a dropped tool makes, each row a write, an edit of the person's and a drop of its own"
 )]
 fn every_retirement_leaves_a_file_holding_the_persons_content() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::every_retirement_leaves_a_file_holding_the_persons_content"
+    ));
     struct Row {
         what: &'static str,
         /// The tools declared first, and after the drop.
@@ -959,6 +1011,10 @@ fn every_retirement_leaves_a_file_holding_the_persons_content() {
 /// Only Gemini needs a shim, including when Claude Code is also declared.
 #[test]
 fn shims_follow_the_declared_harnesses() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::shims_follow_the_declared_harnesses"
+    ));
     let f = fixture("\"codex\"", true);
     let report = plan(&f);
     assert!(report.plan.is_empty() && report.drift.is_empty());
@@ -975,6 +1031,10 @@ fn shims_follow_the_declared_harnesses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn generated_inventory_tracks_renders_and_excludes_source() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::generated_inventory_tracks_renders_and_excludes_source"
+    ));
     let f = fixture("\"claude\", \"gemini\"", true);
     let catalog = f.project.join("catalog");
     fs::create_dir_all(catalog.join("skills/generated")).unwrap();
@@ -1057,6 +1117,10 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
 
 #[test]
 fn refused_outputs_stay_out_of_inventory_and_later_ownership() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::refused_outputs_stay_out_of_inventory_and_later_ownership"
+    ));
     let f = fixture("\"claude\"", true);
     let catalog = f.project.join("catalog");
     fs::create_dir_all(catalog.join("agents")).unwrap();

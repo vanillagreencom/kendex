@@ -81,6 +81,10 @@ fn deploy_row(rows: &[DriftRow]) -> &DriftRow {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_install_never_owns_the_shared_tree() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_copy_install_never_owns_the_shared_tree"
+    ));
     let w = with_method("copy");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -137,6 +141,10 @@ fn a_copy_install_never_owns_the_shared_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn changing_how_a_skill_installs_never_claims_the_new_position() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::changing_how_a_skill_installs_never_claims_the_new_position"
+    ));
     let w = with_method("copy");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -178,6 +186,10 @@ fn changing_how_a_skill_installs_never_claims_the_new_position() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_declaration_does_not_hide_the_shared_folder() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_copy_declaration_does_not_hide_the_shared_folder"
+    ));
     let w = with_method("copy");
     let handmade = w.home.join("app/.agents/skills/deploy");
     fs::create_dir_all(&handmade).unwrap();
@@ -206,6 +218,10 @@ fn a_copy_declaration_does_not_hide_the_shared_folder() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_switched_off_install_is_still_ours_to_update() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_switched_off_install_is_still_ours_to_update"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let catalog = home.join("catalog/agents");
@@ -278,6 +294,10 @@ fn deploy_row_named<'a>(rows: &'a [DriftRow], name: &str) -> &'a DriftRow {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn what_kendex_already_looks_after_is_never_adopted() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::what_kendex_already_looks_after_is_never_adopted"
+    ));
     let w = with_method("copy");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -311,6 +331,10 @@ fn what_kendex_already_looks_after_is_never_adopted() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_take_over_shows_the_path_it_moves() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_take_over_shows_the_path_it_moves"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let catalog = home.join("catalog/skills/deploy");
@@ -362,6 +386,10 @@ fn the_take_over_shows_the_path_it_moves() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_pointing_at_an_installation_is_never_captured() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_pointing_at_an_installation_is_never_captured"
+    ));
     let w = with_method("copy");
     declare_for(&w, "[\"claude\", \"codex\"]");
     let report = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();

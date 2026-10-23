@@ -96,6 +96,10 @@ fn manifest_of(env: &Env, scope: &Scope) -> manifest::Manifest {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_an_agent_carries_the_catalogs_mapping_tables() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::keeping_an_agent_carries_the_catalogs_mapping_tables"
+    ));
     let (_tmp, env, scope, catalog) = world(
         "[agents.scout]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n",
         "",
@@ -152,6 +156,10 @@ fn keeping_an_agent_carries_the_catalogs_mapping_tables() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_a_package_refuses_an_assignment_the_scope_would_lose() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::keeping_a_package_refuses_an_assignment_the_scope_would_lose"
+    ));
     let (_tmp, env, scope, catalog) = world("[agents.scout]\nsource = \"cat\"\n", "");
     skill(&catalog, "recon", "body");
     fs::create_dir_all(catalog.join("agents")).unwrap();
@@ -198,6 +206,10 @@ fn keeping_a_package_refuses_an_assignment_the_scope_would_lose() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_a_package_refuses_a_local_source_reached_through_a_link() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::keeping_a_package_refuses_a_local_source_reached_through_a_link"
+    ));
     let (_tmp, env, scope, catalog) = world_via_link("[skills.gh]\nsource = \"cat\"\n", "");
     skill(&catalog, "gh", "Upstream.");
     apply_now(&env, &scope);

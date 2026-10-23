@@ -108,6 +108,10 @@ fn trashed(dir: &Path) -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_where_a_tree_goes_is_taken_over_too() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_file_where_a_tree_goes_is_taken_over_too"
+    ));
     let w = world("[skills.deploy]\nsource = \"cat\"\n");
     let position = w.home.join("app/.claude/skills/deploy");
     fs::create_dir_all(position.parent().unwrap()).unwrap();
@@ -137,6 +141,10 @@ fn a_file_where_a_tree_goes_is_taken_over_too() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_directory_where_a_file_goes_is_taken_over_too() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_directory_where_a_file_goes_is_taken_over_too"
+    ));
     let w = world("[agents.scout]\nsource = \"cat\"\n");
     let position = w.home.join("app/.claude/agents/scout.md");
     fs::create_dir_all(&position).unwrap();
@@ -169,6 +177,10 @@ fn a_directory_where_a_file_goes_is_taken_over_too() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_tree_shared_by_two_tools_is_moved_aside_once() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::one_tree_shared_by_two_tools_is_moved_aside_once"
+    ));
     let w = shared("[skills.deploy]\nsource = \"cat\"\n");
     let canonical = w.home.join("app/.agents/skills/deploy");
     fs::create_dir_all(canonical.parent().unwrap()).unwrap();
@@ -204,6 +216,10 @@ fn one_tree_shared_by_two_tools_is_moved_aside_once() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_where_a_folder_goes_is_never_offered_the_keep() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_file_where_a_folder_goes_is_never_offered_the_keep"
+    ));
     let w = world("[skills.deploy]\nsource = \"cat\"\n");
     let position = w.home.join("app/.claude/skills/deploy");
     fs::create_dir_all(position.parent().unwrap()).unwrap();
@@ -234,6 +250,10 @@ fn a_file_where_a_folder_goes_is_never_offered_the_keep() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_folder_where_a_file_goes_is_never_offered_the_keep() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_folder_where_a_file_goes_is_never_offered_the_keep"
+    ));
     let w = world("[agents.scout]\nsource = \"cat\"\n");
     let position = w.home.join("app/.claude/agents/scout.md");
     fs::create_dir_all(&position).unwrap();
@@ -268,6 +288,10 @@ fn a_folder_where_a_file_goes_is_never_offered_the_keep() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_tree_write_says_which_tool_it_is_for() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_tree_write_says_which_tool_it_is_for"
+    ));
     let w = shared("[skills.deploy]\nsource = \"cat\"\n");
     let blocked = w.home.join("app/.claude/skills/deploy");
     fs::create_dir_all(&blocked).unwrap();
@@ -297,6 +321,10 @@ fn a_tree_write_says_which_tool_it_is_for() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_position_reaches_the_row_as_the_path_it_is() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_position_reaches_the_row_as_the_path_it_is"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let catalog = home.join("catalog");

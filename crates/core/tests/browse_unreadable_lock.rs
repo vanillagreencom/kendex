@@ -129,6 +129,10 @@ fn drop_the_member(f: &Fixture) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_damaged_lock_still_lists_what_the_catalog_offers() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_damaged_lock_still_lists_what_the_catalog_offers"
+    ));
     let f = fixture();
     fs::write(&f.lock_path, "{not json").unwrap();
     assert_eq!(offered(&f), [("gh".to_owned(), InstallState::Unknown)]);
@@ -139,6 +143,10 @@ fn a_damaged_lock_still_lists_what_the_catalog_offers() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn another_scope_reading_the_same_catalog_is_untouched() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::another_scope_reading_the_same_catalog_is_untouched"
+    ));
     let broken = fixture();
     fs::write(&broken.lock_path, "{not json").unwrap();
     let healthy = fixture();
@@ -157,6 +165,10 @@ fn another_scope_reading_the_same_catalog_is_untouched() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_suppressed_member_under_an_unreadable_lock_offers_no_restore() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_suppressed_member_under_an_unreadable_lock_offers_no_restore"
+    ));
     let f = fixture();
     let manifest = fs::read_to_string(f.manifest_path()).unwrap();
     put(
@@ -179,6 +191,10 @@ fn a_suppressed_member_under_an_unreadable_lock_offers_no_restore() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_package_page_carries_the_same_unknown_the_row_showed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_package_page_carries_the_same_unknown_the_row_showed"
+    ));
     let f = fixture();
     let preview = |f: &Fixture| {
         browse::package_preview(&f.env, &catalog(&f.scope), ItemKind::Skill, "gh", None)
@@ -199,6 +215,10 @@ fn the_package_page_carries_the_same_unknown_the_row_showed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_set_carries_the_scopes_answer_even_where_no_member_shows_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_set_carries_the_scopes_answer_even_where_no_member_shows_it"
+    ));
     let f = fixture();
     drop_the_member(&f);
     assert!(
@@ -379,6 +399,10 @@ fn redirected_detail(r: &Redirect) -> browse::BundleDetail {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_package_page_is_judged_at_the_destination() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_package_page_is_judged_at_the_destination"
+    ));
     let r = redirect();
     assert_eq!(
         redirected_state(&r),
@@ -416,6 +440,10 @@ fn the_package_page_is_judged_at_the_destination() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_set_page_is_judged_at_the_destination() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_set_page_is_judged_at_the_destination"
+    ));
     let member = |r: &Redirect| redirected_detail(r).members.first().map(|m| m.state);
     let count = |r: &Redirect| redirected_detail(r).installed_members;
 
@@ -512,6 +540,10 @@ fn redirected_safety(r: &Redirect) -> browse::PackageSafety {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_clash_is_read_where_the_install_lands() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_name_clash_is_read_where_the_install_lands"
+    ));
     let r = redirect();
     assert_eq!(
         redirected_preview(&r).collision,
@@ -547,6 +579,10 @@ fn a_name_clash_is_read_where_the_install_lands() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_safety_note_is_about_the_place_the_install_lands_in() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_safety_note_is_about_the_place_the_install_lands_in"
+    ));
     let r = redirect();
     assert!(
         redirected_safety(&r).notes.is_empty(),

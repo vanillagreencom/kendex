@@ -9,6 +9,10 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_made_while_disabled_survives_being_re_enabled() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_made_while_disabled_survives_being_re_enabled"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -70,6 +74,10 @@ fn an_edit_made_while_disabled_survives_being_re_enabled() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_landing_after_the_enable_was_planned_refuses_the_toggle"
+    ));
     let w = world();
     let dir = w.upstream.join("agents");
     fs::create_dir_all(&dir).unwrap();
@@ -128,6 +136,10 @@ fn an_edit_landing_after_the_enable_was_planned_refuses_the_toggle() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn upstream_changing_while_disabled_is_not_a_false_edit() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::upstream_changing_while_disabled_is_not_a_false_edit"
+    ));
     let w = world();
     let dir = w.upstream.join("agents");
     fs::create_dir_all(&dir).unwrap();
@@ -178,6 +190,10 @@ fn upstream_changing_while_disabled_is_not_a_false_edit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_disabled_skills_edit_forks_in_source_form() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_disabled_skills_edit_forks_in_source_form"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -255,6 +271,10 @@ fn beside_rev_edited(w: &World) -> Result<apply::Plan, CoreError> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_refuses_an_occupant_of_a_disabled_agents_destination() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_refuses_an_occupant_of_a_disabled_agents_destination"
+    ));
     let w = disabled_edited_agent_world();
     let occupied = w.home.join("app/.claude/agents/rev-edited.md.disabled");
     fs::write(&occupied, "not kendex's").unwrap();
@@ -285,6 +305,10 @@ fn fork_beside_refuses_an_occupant_of_a_disabled_agents_destination() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_ignores_the_enabled_path_for_a_disabled_agent() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_ignores_the_enabled_path_for_a_disabled_agent"
+    ));
     let w = disabled_edited_agent_world();
     let stray = w.home.join("app/.claude/agents/rev-edited.md");
     fs::write(&stray, "not in the way").unwrap();
@@ -306,6 +330,10 @@ fn fork_beside_ignores_the_enabled_path_for_a_disabled_agent() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_tree_with_both_skill_files_is_not_forkable() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_tree_with_both_skill_files_is_not_forkable"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");

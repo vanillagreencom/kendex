@@ -48,6 +48,10 @@ fn canned(status: u16, body: &str) -> Canned {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_collection_link_parses_and_junk_refuses() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_collection_link_parses_and_junk_refuses"
+    ));
     let parsed = parse_typed("https://kendex.ai/c/aB3-_dEf12345678").unwrap();
     assert_eq!(
         parsed,
@@ -63,6 +67,10 @@ fn a_collection_link_parses_and_junk_refuses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_resolver_parses_strictly_and_refuses_junk() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_resolver_parses_strictly_and_refuses_junk"
+    ));
     let good = canned(
         200,
         r#"{"schema":1,"id":"aB3-_dEf12345678","name":"starter","description":null,
@@ -132,6 +140,10 @@ fn scoped(manifest: &str) -> (tempfile::TempDir, Env, Scope) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_scope_subscribes_each_repo_at_the_snapshot() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fresh_scope_subscribes_each_repo_at_the_snapshot"
+    ));
     let (_tmp, env, scope) = scoped("schema = 7\n");
     let collection = Collection {
         id: "i".to_owned(),
@@ -180,6 +192,10 @@ fn a_fresh_scope_subscribes_each_repo_at_the_snapshot() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_personal_scope_reuses_the_seeded_default_marketplace() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fresh_personal_scope_reuses_the_seeded_default_marketplace"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);
@@ -203,6 +219,10 @@ fn a_fresh_personal_scope_reuses_the_seeded_default_marketplace() {
 
 #[test]
 fn a_malformed_manifest_refuses_collection_planning() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_malformed_manifest_refuses_collection_planning"
+    ));
     let (_tmp, env, scope) = scoped("schema = [broken\n");
     let collection = Collection {
         id: "i".to_owned(),
@@ -219,6 +239,10 @@ fn a_malformed_manifest_refuses_collection_planning() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_existing_subscription_is_reused_when_its_pin_matches() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_existing_subscription_is_reused_when_its_pin_matches"
+    ));
     let (_tmp, env, scope) = scoped(
         "schema = 7\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"ab12cd34ef12345678901234567890123456abcd\"\n",
     );
@@ -243,6 +267,10 @@ fn an_existing_subscription_is_reused_when_its_pin_matches() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_mismatched_pin_refuses_naming_both_halves() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_mismatched_pin_refuses_naming_both_halves"
+    ));
     let (_tmp, env, scope) =
         scoped("schema = 7\n[sources.kit]\nrepo = \"acme/kit\"\nrev = \"1111111111\"\n");
     let collection = Collection {
@@ -269,6 +297,10 @@ fn a_mismatched_pin_refuses_naming_both_halves() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_repo_pinned_at_two_commits_is_not_a_snapshot() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::one_repo_pinned_at_two_commits_is_not_a_snapshot"
+    ));
     let (_tmp, env, scope) = scoped("schema = 7\n");
     let collection = Collection {
         id: "i".to_owned(),
@@ -295,6 +327,10 @@ fn one_repo_pinned_at_two_commits_is_not_a_snapshot() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_repo_cannot_be_a_filesystem_path() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_member_repo_cannot_be_a_filesystem_path"
+    ));
     for repo in ["../.ssh", "..", "./x", "/etc", ".hidden/repo"] {
         let body = format!(
             r#"{{"schema":1,"id":"aB3-_dEf12345678","name":"n","members":[{{"repo":"{repo}","kind":"skill","name":"x","commit":"ab12cd34ef12345678901234567890123456abcd"}}]}}"#
@@ -328,6 +364,10 @@ fn replacement_catalog(catalog: &std::path::Path, names: &[&str]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn collection_replacements_and_retained_readings_are_checked_before_installation() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::collection_replacements_and_retained_readings_are_checked_before_installation"
+    ));
     use kendex_core::{apply, engine, error::CoreError, lock, source_ops};
 
     for (reverse, retained) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -532,6 +572,10 @@ fn assert_agent_collection_holds(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn collection_member_holds_preserve_automatic_skill_revision_choices() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::collection_member_holds_preserve_automatic_skill_revision_choices"
+    ));
     use kendex_core::{apply, engine, source_ops};
 
     for (direct_hold, held, explicit_skill) in [

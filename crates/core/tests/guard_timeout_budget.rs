@@ -35,6 +35,10 @@ fn declared_budget() -> u64 {
 
 #[test]
 fn the_checks_two_timeouts_fit_inside_the_hooks_budget_together() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_checks_two_timeouts_fit_inside_the_hooks_budget_together"
+    ));
     let budget = declared_budget();
     let spent = CHECK_TIMEOUT.as_secs() + DEEP_PASS_BUDGET.as_secs();
     assert!(

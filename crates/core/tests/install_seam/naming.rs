@@ -19,6 +19,10 @@ use super::{add_and_apply, agent, manifest_of, manifest_with, skill, world};
 /// prompt, no default, no download.
 #[test]
 fn a_bare_name_one_subscription_offers_installs_from_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_bare_name_one_subscription_offers_installs_from_it"
+    ));
     let f = world();
     let a = f.home.join("a");
     skill(&a, "docs");
@@ -44,6 +48,10 @@ fn a_bare_name_one_subscription_offers_installs_from_it() {
 /// marketplace.
 #[test]
 fn a_broken_subscription_does_not_block_bare_name_installs_from_others() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_broken_subscription_does_not_block_bare_name_installs_from_others"
+    ));
     let f = world();
     let good = f.home.join("good");
     skill(&good, "gh");
@@ -126,6 +134,10 @@ fn upstream(home: &Path, repo: &str) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bare_name_offered_twice_refuses_printing_qualified_forms_and_repos() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_bare_name_offered_twice_refuses_printing_qualified_forms_and_repos"
+    ));
     let f = world();
     let base = format!("file://{}", f.home.join("base").display());
     let env = Env::fake(&f.home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
@@ -175,6 +187,10 @@ fn a_bare_name_offered_twice_refuses_printing_qualified_forms_and_repos() {
 /// neither add asks a question.
 #[test]
 fn a_cross_kind_name_needs_no_qualifier_because_the_flag_says_the_kind() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_cross_kind_name_needs_no_qualifier_because_the_flag_says_the_kind"
+    ));
     let f = world();
     let a = f.home.join("a");
     skill(&a, "gh");
@@ -200,6 +216,10 @@ fn a_cross_kind_name_needs_no_qualifier_because_the_flag_says_the_kind() {
 /// when others offer the same name.
 #[test]
 fn a_qualified_name_installs_from_exactly_that_subscription() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_qualified_name_installs_from_exactly_that_subscription"
+    ));
     let f = world();
     let a = f.home.join("a");
     skill(&a, "gh");
@@ -222,6 +242,10 @@ fn a_qualified_name_installs_from_exactly_that_subscription() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_qualifier_naming_no_subscription_refuses_naming_the_subscribed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_qualifier_naming_no_subscription_refuses_naming_the_subscribed"
+    ));
     let f = world();
     let a = f.home.join("a");
     skill(&a, "gh");
@@ -259,6 +283,10 @@ fn a_qualifier_naming_no_subscription_refuses_naming_the_subscribed() {
 /// called `team`; the `::` spelling is the only qualifier.
 #[test]
 fn a_slash_name_is_a_plugin_item_never_a_qualifier() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_slash_name_is_a_plugin_item_never_a_qualifier"
+    ));
     let f = world();
     let team = f.home.join("team");
     skill(&team, "docs");
@@ -291,6 +319,10 @@ fn a_slash_name_is_a_plugin_item_never_a_qualifier() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_positional_owner_repo_source_still_declares_a_repository() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_positional_owner_repo_source_still_declares_a_repository"
+    ));
     let f = world();
     let a = f.home.join("a");
     skill(&a, "gh");
@@ -317,6 +349,10 @@ fn a_positional_owner_repo_source_still_declares_a_repository() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unoffered_bare_name_is_not_found_and_nothing_is_declared() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_unoffered_bare_name_is_not_found_and_nothing_is_declared"
+    ));
     let f = world();
     let a = f.home.join("a");
     skill(&a, "gh");

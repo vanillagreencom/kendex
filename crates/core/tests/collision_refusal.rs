@@ -30,6 +30,10 @@ fn skill_catalog(dir: &std::path::Path, body: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_name_cannot_be_rebound_before_apply() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_declared_name_cannot_be_rebound_before_apply"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let env = Env::fake(home, FakeOs::Linux);

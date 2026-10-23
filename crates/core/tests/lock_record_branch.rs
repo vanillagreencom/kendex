@@ -70,6 +70,10 @@ fn off(head: Option<&str>, records_on: &str) -> Recording {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_checkout_shape_answers_where_the_record_is_written() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::each_checkout_shape_answers_where_the_record_is_written"
+    ));
     type Shape = fn(&Path) -> PathBuf;
     let rows: [(&str, Shape, Recording); 7] = [
         (
@@ -168,6 +172,10 @@ fn each_checkout_shape_answers_where_the_record_is_written() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn outside_git_and_the_global_scope_record_here() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::outside_git_and_the_global_scope_record_here"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     assert_eq!(recording(&project(&home)).unwrap(), Recording::Here);
@@ -180,6 +188,10 @@ fn outside_git_and_the_global_scope_record_here() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_remote_head_naming_no_remote_branch_is_refused() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_remote_head_naming_no_remote_branch_is_refused"
+    ));
     let (_tmp, root) = repository();
     git(
         &root,

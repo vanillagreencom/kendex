@@ -68,6 +68,10 @@ fn checked(link: &str) -> CatalogCheck {
 /// `feat`, the existing file is `x/skills/...`, which is not there.
 #[test]
 fn a_broken_shipped_link_is_an_advisory_at_its_line() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_broken_shipped_link_is_an_advisory_at_its_line"
+    ));
     let source = "https://github.com/acme/cat/blob";
     for (link, broken) in [
         ("[dev](DEVELOPMENT.md)".to_owned(), true),

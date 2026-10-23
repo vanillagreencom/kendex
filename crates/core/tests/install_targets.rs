@@ -15,6 +15,10 @@ use kendex_core::settings::AppSettings;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_manifest_targets_the_tools_it_can_write_to() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fresh_manifest_targets_the_tools_it_can_write_to"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let env = Env::fake(home, FakeOs::Linux);

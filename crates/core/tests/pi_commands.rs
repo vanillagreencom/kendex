@@ -109,6 +109,10 @@ fn scanned(f: &Fixture, scope: &Scope) -> Vec<(String, Option<bool>)> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_installs_as_the_projects_prompt_template_and_toggles_by_rename() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_command_installs_as_the_projects_prompt_template_and_toggles_by_rename"
+    ));
     let f = fixture("[commands.ship]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert_eq!(report.warnings, Vec::new(), "nothing to warn about in SHIP");
@@ -136,6 +140,10 @@ fn a_command_installs_as_the_projects_prompt_template_and_toggles_by_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_installs_under_the_global_root_too() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_command_installs_under_the_global_root_too"
+    ));
     let f = fixture("");
     let manifest = f.env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
@@ -165,6 +173,10 @@ fn a_command_installs_under_the_global_root_too() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_shell_inline_installs_with_a_warning() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_shell_inline_installs_with_a_warning"
+    ));
     let f = fixture("[commands.diff]\nsource = \"cat\"\n");
     let report = apply_now(&f);
 

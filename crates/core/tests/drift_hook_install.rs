@@ -74,6 +74,10 @@ fn declare_on(w: &World, source_extra: &str, tools: &str, body: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_drift_hook_installs_as_a_declared_item_and_is_idempotent"
+    ));
     let w = world();
     declare(&w, "", "");
 
@@ -115,6 +119,10 @@ fn the_drift_hook_installs_as_a_declared_item_and_is_idempotent() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_install_pins_the_tools_the_script_runs_in_unless_install_gives_it_them() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_install_pins_the_tools_the_script_runs_in_unless_install_gives_it_them"
+    ));
     use kendex_core::model::HarnessId::{Claude, Pi};
     for (tools, pinned) in [
         ("[\"claude\"]", Some(&[Claude, Pi][..])),
@@ -142,6 +150,10 @@ fn the_install_pins_the_tools_the_script_runs_in_unless_install_gives_it_them() 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn installing_over_a_switched_off_declaration_switches_it_back_on() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::installing_over_a_switched_off_declaration_switches_it_back_on"
+    ));
     let w = world();
     declare(
         &w,
@@ -199,6 +211,10 @@ fn root_of(scope: &Scope) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_install_at_a_moved_project_refuses_and_leaves_the_old_path_empty() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_install_at_a_moved_project_refuses_and_leaves_the_old_path_empty"
+    ));
     let w = world();
     declare(&w, "", "");
     let root = root_of(&w.scope);
@@ -227,6 +243,10 @@ fn an_install_at_a_moved_project_refuses_and_leaves_the_old_path_empty() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_folder_that_goes_away_after_the_plan_refuses_at_the_apply() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_folder_that_goes_away_after_the_plan_refuses_at_the_apply"
+    ));
     let w = world();
     declare(&w, "", "");
     let root = root_of(&w.scope);

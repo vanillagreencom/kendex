@@ -115,6 +115,10 @@ fn install(w: &World) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn files_list_sorted_with_the_readme_marked() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::files_list_sorted_with_the_readme_marked"
+    ));
     let w = world();
     install(&w);
     let files = detail::package_files(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
@@ -155,6 +159,10 @@ fn files_list_sorted_with_the_readme_marked() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_reads_capped_and_traversal_is_refused() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_file_reads_capped_and_traversal_is_refused"
+    ));
     let w = world();
     install(&w);
     let file = detail::package_file(
@@ -183,6 +191,10 @@ fn a_file_reads_capped_and_traversal_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_past_the_cap_is_cut_at_it_and_says_so() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_file_past_the_cap_is_cut_at_it_and_says_so"
+    ));
     const CAP: usize = 64 * 1024;
     let w = world();
     let big = w.upstream.join("skills/gh/references/big.md");
@@ -200,6 +212,10 @@ fn a_file_past_the_cap_is_cut_at_it_and_says_so() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_exact_readme_wins_over_case_variants() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_exact_readme_wins_over_case_variants"
+    ));
     let w = world();
     install(&w);
     let readme = detail::package_readme(&w.env, &w.scope, ItemKind::Skill, "gh")
@@ -215,6 +231,10 @@ fn the_exact_readme_wins_over_case_variants() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_undeclared_item_still_reads_from_disk() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_undeclared_item_still_reads_from_disk"
+    ));
     let w = world();
     let dir = w.home.join("app/.claude/skills/loose");
     fs::create_dir_all(&dir).unwrap();
@@ -241,6 +261,10 @@ fn an_undeclared_item_still_reads_from_disk() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_v1_manifest_still_lets_disk_items_preview() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_v1_manifest_still_lets_disk_items_preview"
+    ));
     let w = world();
     let path = manifest::manifest_path(&w.env, &w.scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -261,6 +285,10 @@ fn a_v1_manifest_still_lets_disk_items_preview() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn meta_has_no_install_time_where_this_machine_recorded_none() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::meta_has_no_install_time_where_this_machine_recorded_none"
+    ));
     let w = world();
     install(&w);
     let lock = kendex_core::lock::lock_path(&w.env, &w.scope);
@@ -276,6 +304,10 @@ fn meta_has_no_install_time_where_this_machine_recorded_none() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn neither_declared_nor_on_disk_is_a_plain_not_found() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::neither_declared_nor_on_disk_is_a_plain_not_found"
+    ));
     let w = world();
     let error = detail::package_files(&w.env, &w.scope, ItemKind::Skill, "ghost").unwrap_err();
     assert!(
@@ -289,6 +321,10 @@ fn neither_declared_nor_on_disk_is_a_plain_not_found() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn meta_names_the_version_the_link_and_the_fork() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::meta_names_the_version_the_link_and_the_fork"
+    ));
     let w = world();
     let commit = install(&w);
     let meta = detail::package_meta(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
@@ -334,6 +370,10 @@ fn meta_names_the_version_the_link_and_the_fork() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_shared_install_reached_through_a_symlink_still_reads() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_shared_install_reached_through_a_symlink_still_reads"
+    ));
     let w = world();
     let real = w.home.join(".agents/skills/shared");
     fs::create_dir_all(&real).unwrap();
@@ -385,6 +425,10 @@ fn hook_manifest(source: &str) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_record_reads_its_tools_from_the_installed_header() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hook_record_reads_its_tools_from_the_installed_header"
+    ));
     use kendex_core::model::HarnessId::*;
     use kendex_core::package::support::{RecordSupport, UnsupportedTool};
     let w = world();
@@ -429,6 +473,10 @@ fn a_hook_record_reads_its_tools_from_the_installed_header() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_record_whose_source_cannot_be_read_names_the_cause() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hook_record_whose_source_cannot_be_read_names_the_cause"
+    ));
     use kendex_core::package::support::RecordSupport;
     let rows: [(&str, &str, &str); 3] = [
         (

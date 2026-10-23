@@ -14,6 +14,10 @@ const ALL: &str = "\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\", \"ge
 #[test]
 #[allow(clippy::unwrap_used)]
 fn requiring_hook_scopes_companions_without_scoping_required_skills() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::requiring_hook_scopes_companions_without_scoping_required_skills"
+    ));
     use kendex_core::engine::DeclarationStatus::{Complete, Incomplete};
     const FOUR: &str = "\"claude\", \"codex\", \"pi\", \"copilot\"";
     for (tools, recorder, warning) in [
@@ -117,6 +121,10 @@ fn requiring_hook_scopes_companions_without_scoping_required_skills() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn bare_cd_only_installs_on_shells_that_persist_between_calls() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::bare_cd_only_installs_on_shells_that_persist_between_calls"
+    ));
     let f = world();
     fs::write(
         f.source.join("hooks/block-bare-cd.sh"),
@@ -231,6 +239,10 @@ fn by(kind: ItemKind, name: &str, harness: HarnessId) -> Reason {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_needed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hook_installs_required_skills_on_every_tool_and_its_companion_only_where_needed"
+    ));
     let f = world();
     // A hook sharing the skill's name must not satisfy the skill edge.
     fs::write(f.source.join("hooks/commit-guards.sh"), RECORDER).unwrap();
@@ -347,6 +359,10 @@ const OPT_OUTS: [(ItemKind, &str, &str, Missing); 5] = [
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removed_or_disabled_requirements_withhold_only_tools_that_need_them() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::removed_or_disabled_requirements_withhold_only_tools_that_need_them"
+    ));
     for (kind, dep, extra, cause) in OPT_OUTS {
         for refresh in [false, true] {
             let f = world();
@@ -444,6 +460,10 @@ fn same_named_hook_and_skill() -> std::io::Result<Fixture> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_same_named_hook_does_not_undo_a_skill_removal_when_its_catalog_returns() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_same_named_hook_does_not_undo_a_skill_removal_when_its_catalog_returns"
+    ));
     for (kind, offline) in [
         (Some(ItemKind::Skill), true),
         (Some(ItemKind::Skill), false),

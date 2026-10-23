@@ -109,6 +109,10 @@ fn planned_links(plan: &apply::Plan) -> Vec<PathBuf> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_inside_the_scope_is_written_through_and_planned_by_where_it_lands() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_inside_the_scope_is_written_through_and_planned_by_where_it_lands"
+    ));
     let f = fixture();
     let elsewhere = f.project.join("shared");
     link_agents_dir(&f, &elsewhere);
@@ -133,6 +137,10 @@ fn a_link_inside_the_scope_is_written_through_and_planned_by_where_it_lands() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_out_of_the_scope_is_refused_by_the_place_it_lands() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_out_of_the_scope_is_refused_by_the_place_it_lands"
+    ));
     let f = fixture();
     let outside = f.home.join("victim");
     link_agents_dir(&f, &outside);
@@ -156,6 +164,10 @@ fn a_link_out_of_the_scope_is_refused_by_the_place_it_lands() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_recorded_path_that_now_lands_outside_takes_nothing_with_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_recorded_path_that_now_lands_outside_takes_nothing_with_it"
+    ));
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
@@ -196,6 +208,10 @@ fn a_recorded_path_that_now_lands_outside_takes_nothing_with_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_the_landing_moved_still_reaches_the_tree_it_named() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_the_landing_moved_still_reaches_the_tree_it_named"
+    ));
     let f = fixture();
     let shared = f.project.join("shared");
     fs::create_dir_all(&shared).unwrap();
@@ -229,6 +245,10 @@ fn a_link_the_landing_moved_still_reaches_the_tree_it_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_harness_directory_kept_in_a_dotfiles_repo_is_written_through() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_global_harness_directory_kept_in_a_dotfiles_repo_is_written_through"
+    ));
     let f = fixture();
     let dotfiles = f.home.join("dotfiles/.claude");
     fs::create_dir_all(dotfiles.join("skills")).unwrap();
@@ -262,6 +282,10 @@ fn a_global_harness_directory_kept_in_a_dotfiles_repo_is_written_through() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_line_a_confirmation_draws_names_the_landed_position() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_line_a_confirmation_draws_names_the_landed_position"
+    ));
     let f = fixture();
     let elsewhere = f.project.join("shared");
     link_agents_dir(&f, &elsewhere);
@@ -300,6 +324,10 @@ fn the_line_a_confirmation_draws_names_the_landed_position() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_op_joining_a_plan_is_landed_against_the_root_the_plan_fixed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_op_joining_a_plan_is_landed_against_the_root_the_plan_fixed"
+    ));
     let f = fixture();
     let elsewhere = f.project.join("shared");
     link_agents_dir(&f, &elsewhere);
@@ -335,6 +363,10 @@ fn an_op_joining_a_plan_is_landed_against_the_root_the_plan_fixed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_op_joining_a_plan_after_the_project_was_swapped_is_refused() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_op_joining_a_plan_after_the_project_was_swapped_is_refused"
+    ));
     let f = fixture();
     let mut plan = apply::Plan::landed(f.scope.clone(), Vec::new()).unwrap();
 
@@ -375,6 +407,10 @@ fn an_op_joining_a_plan_after_the_project_was_swapped_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_op_joining_a_plan_cannot_walk_out_of_its_root() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_op_joining_a_plan_cannot_walk_out_of_its_root"
+    ));
     let f = fixture();
     let mut plan = apply::Plan::landed(f.scope.clone(), Vec::new()).unwrap();
 
@@ -405,6 +441,10 @@ fn an_op_joining_a_plan_cannot_walk_out_of_its_root() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_that_reads_like_a_slot_is_drawn_as_itself() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_name_that_reads_like_a_slot_is_drawn_as_itself"
+    ));
     let f = fixture();
     put(
         &f.home.join("catalog/skills/{}/SKILL.md"),
@@ -434,6 +474,10 @@ fn a_name_that_reads_like_a_slot_is_drawn_as_itself() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_restore_reaches_through_a_link_that_never_moved() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_restore_reaches_through_a_link_that_never_moved"
+    ));
     let f = fixture();
     let elsewhere = f.project.join("shared");
     link_agents_dir(&f, &elsewhere);
@@ -463,6 +507,10 @@ fn a_restore_reaches_through_a_link_that_never_moved() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_subscription_says_the_file_its_write_lands_in() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_subscription_says_the_file_its_write_lands_in"
+    ));
     let f = fixture();
     let dotfiles = f.home.join("dotfiles/config");
     fs::create_dir_all(dotfiles.join("kendex")).unwrap();

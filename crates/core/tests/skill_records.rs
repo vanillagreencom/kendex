@@ -122,6 +122,10 @@ fn as_written_under_the_old_layout(f: &Fixture, key: &str, link: &Path) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_the_render_stopped_producing_comes_off_by_its_record() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_the_render_stopped_producing_comes_off_by_its_record"
+    ));
     let f = fixture();
     declare(&f, "\"claude\"");
     apply_now(&f);
@@ -151,6 +155,10 @@ fn a_link_the_render_stopped_producing_comes_off_by_its_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_orphaned_install_comes_off_by_the_paths_it_recorded() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_orphaned_install_comes_off_by_the_paths_it_recorded"
+    ));
     let f = fixture();
     declare(&f, "\"claude\", \"codex\"");
     apply_now(&f);
@@ -182,6 +190,10 @@ fn an_orphaned_install_comes_off_by_the_paths_it_recorded() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::shared_orphans_keep_bytes_and_ownership_until_removal_is_safe"
+    ));
     for (harnesses, departed, edit) in [
         ("\"codex\", \"opencode\"", "skill:ship:opencode", None),
         ("\"codex\", \"claude\"", "skill:ship:claude", None),
@@ -252,6 +264,10 @@ fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_held_install_keeps_the_link_it_recorded() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_held_install_keeps_the_link_it_recorded"
+    ));
     let f = fixture();
     declare(&f, "\"claude\"");
     apply_now(&f);

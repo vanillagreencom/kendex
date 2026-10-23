@@ -132,6 +132,10 @@ fn row<'a>(rows: &'a [updates::UpdateRow], name: &str) -> &'a updates::UpdateRow
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_commit_pin_holds_every_package_it_reaches() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_commit_pin_holds_every_package_it_reaches"
+    ));
     type Upstream = fn(&Path);
     type Declare = fn(&str) -> (String, String);
     let rows: [(&str, Upstream, Declare, &str); 3] = [
@@ -215,6 +219,10 @@ fn a_commit_pin_holds_every_package_it_reaches() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_report_carries_when_its_mirrors_were_last_fetched() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_report_carries_when_its_mirrors_were_last_fetched"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -252,6 +260,10 @@ fn the_report_carries_when_its_mirrors_were_last_fetched() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_stamp_too_large_to_report_reads_as_never_checked() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_stamp_too_large_to_report_reads_as_never_checked"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -271,6 +283,10 @@ fn a_stamp_too_large_to_report_reads_as_never_checked() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_gone_from_its_source_is_a_fact_not_a_silent_skip() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_package_gone_from_its_source_is_a_fact_not_a_silent_skip"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -291,6 +307,10 @@ fn a_package_gone_from_its_source_is_a_fact_not_a_silent_skip() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_history_is_a_warning_never_current() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_unreadable_history_is_a_warning_never_current"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -341,6 +361,10 @@ fn an_unreadable_history_is_a_warning_never_current() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_foreground_fetch_retires_missing_commit_evidence() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_foreground_fetch_retires_missing_commit_evidence"
+    ));
     use drift::copies::CheckMode;
     use drift::report::{CheckStatus, Class, Remedy};
 
@@ -446,6 +470,10 @@ fn a_foreground_fetch_retires_missing_commit_evidence() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_foreground_fetch_rederives_package_verdicts() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_foreground_fetch_rederives_package_verdicts"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -476,6 +504,10 @@ fn a_foreground_fetch_rederives_package_verdicts() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_old_snapshot_is_rederived_despite_a_fresh_mirror() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_old_snapshot_is_rederived_despite_a_fresh_mirror"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -506,6 +538,10 @@ fn an_old_snapshot_is_rederived_despite_a_fresh_mirror() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_snapshot_carries_stale_and_holding_silences_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_snapshot_carries_stale_and_holding_silences_it"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "one");
@@ -557,6 +593,10 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn installations_disagreeing_on_their_commit_read_as_mixed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::installations_disagreeing_on_their_commit_read_as_mixed"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -602,6 +642,10 @@ fn installations_disagreeing_on_their_commit_read_as_mixed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "one");
@@ -677,6 +721,10 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_already_holds_an_entry_keeps_it_when_the_source_re_resolves() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_record_that_already_holds_an_entry_keeps_it_when_the_source_re_resolves"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "one");
@@ -737,6 +785,10 @@ fn a_record_that_already_holds_an_entry_keeps_it_when_the_source_re_resolves() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pinned_declaration_is_measured_at_the_commit_its_pin_resolved() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_pinned_declaration_is_measured_at_the_commit_its_pin_resolved"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "one");
@@ -792,6 +844,10 @@ fn a_pinned_declaration_is_measured_at_the_commit_its_pin_resolved() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_job_derives_the_snapshot_of_a_scope_with_a_remote_source() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_job_derives_the_snapshot_of_a_scope_with_a_remote_source"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");

@@ -18,6 +18,10 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_carries_the_projects_denies_without_taking_them() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_beside_carries_the_projects_denies_without_taking_them"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -63,6 +67,10 @@ fn forking_beside_carries_the_projects_denies_without_taking_them() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_keeps_a_deny_the_catalog_never_configured() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_beside_keeps_a_deny_the_catalog_never_configured"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n",
@@ -120,6 +128,10 @@ fn forking_beside_keeps_a_deny_the_catalog_never_configured() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::renaming_an_agent_fork_carries_its_denies_and_instructions"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -163,6 +175,10 @@ fn renaming_an_agent_fork_carries_its_denies_and_instructions() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row"
+    ));
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
     let agents = w.upstream.join("agents");
@@ -256,6 +272,10 @@ fn renaming_an_agent_carries_the_skill_assignment_it_read_through_the_base_row()
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -311,6 +331,10 @@ fn an_agent_scoped_hook_reaches_the_copy_and_follows_a_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone"
+    ));
     let w = world();
     let agents = w.upstream.join("agents");
     fs::create_dir_all(&agents).unwrap();
@@ -376,6 +400,10 @@ fn renaming_an_agent_named_for_a_role_leaves_the_roles_hook_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_a_skill_beside_leaves_a_same_named_agents_settings_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_a_skill_beside_leaves_a_same_named_agents_settings_alone"
+    ));
     let w = world();
     write_skill(&w.upstream, "rev", "Upstream skill.");
     let agents = w.upstream.join("agents");
@@ -424,6 +452,10 @@ fn forking_a_skill_beside_leaves_a_same_named_agents_settings_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_refuses_a_name_that_already_carries_settings() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_beside_refuses_a_name_that_already_carries_settings"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -462,6 +494,10 @@ fn forking_beside_refuses_a_name_that_already_carries_settings() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_refuses_a_name_that_reads_the_base_agents_skill_row() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_beside_refuses_a_name_that_reads_the_base_agents_skill_row"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -534,6 +570,10 @@ fn forking_beside_refuses_a_name_that_reads_the_base_agents_skill_row() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_beside_takes_a_name_that_reads_the_source_agents_own_skill_row() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_beside_takes_a_name_that_reads_the_source_agents_own_skill_row"
+    ));
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
     write_agent(&w.upstream, "go", "Upstream body.");
@@ -583,6 +623,10 @@ fn forking_beside_takes_a_name_that_reads_the_source_agents_own_skill_row() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_population_name_is_refused_where_a_hook_gates_the_agent_by_name() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_population_name_is_refused_where_a_hook_gates_the_agent_by_name"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -640,6 +684,10 @@ fn a_population_name_is_refused_where_a_hook_gates_the_agent_by_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_population_name_is_free_where_no_hook_gates_the_agent() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_population_name_is_free_where_no_hook_gates_the_agent"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -668,6 +716,10 @@ fn a_population_name_is_free_where_no_hook_gates_the_agent() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_named_all_leaves_the_shared_instructions_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::renaming_an_agent_named_all_leaves_the_shared_instructions_alone"
+    ));
     let w = world();
     let agents = w.upstream.join("agents");
     fs::create_dir_all(&agents).unwrap();

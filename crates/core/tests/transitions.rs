@@ -49,6 +49,10 @@ fn world() -> World {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_tools_sharing_one_root_still_applies() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::two_tools_sharing_one_root_still_applies"
+    ));
     let w = world();
     let shared_root = w.home.join(".codex");
     let env = Env::fake(&w.home, FakeOs::Linux)

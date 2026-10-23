@@ -16,6 +16,10 @@ const REV_AGENT: &str = "---\nname: rev\ndescription: agent rev\n---\nUpstream b
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_old() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_keeps_the_edit_under_a_new_name_and_lands_the_source_under_the_old"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -112,6 +116,10 @@ fn moved_revision_world() -> (World, String) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_refuses_mismatched_and_missing_recorded_revisions() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_refuses_mismatched_and_missing_recorded_revisions"
+    ));
     for missing in [false, true] {
         let (w, two) = moved_revision_world();
         let path = lock_path(&w.env, &w.scope);
@@ -149,6 +157,10 @@ fn fork_beside_refuses_mismatched_and_missing_recorded_revisions() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_local_agent_with_no_recorded_revisions_still_forks_beside() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_local_agent_with_no_recorded_revisions_still_forks_beside"
+    ));
     let w = agent_world("\"claude\", \"pi\"", REV_AGENT, "", "");
     edit_body(&rendered(&w, HarnessId::Claude, "rev"));
     let plan = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
@@ -174,6 +186,10 @@ fn a_local_agent_with_no_recorded_revisions_still_forks_beside() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_refuses_before_writing_when_the_target_cannot_be_proven() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_refuses_before_writing_when_the_target_cannot_be_proven"
+    ));
     let (w, _one, _two) = edited_world();
     // A commit the item is absent at: the repository's history starts
     // before gh existed.
@@ -215,6 +231,10 @@ fn fork_beside_refuses_before_writing_when_the_target_cannot_be_proven() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_refuses_an_original_its_source_no_longer_carries() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_refuses_an_original_its_source_no_longer_carries"
+    ));
     // A following original: the tree an apply reads is the source's tip.
     // (A held one keeps reading its held commit, where the item still is.)
     let w = world();
@@ -261,6 +281,10 @@ fn fork_beside_refuses_an_original_its_source_no_longer_carries() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_refuses_a_commit_the_item_is_absent_at() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_refuses_a_commit_the_item_is_absent_at"
+    ));
     let w = world();
     write_skill(&w.upstream, "docs", "Docs.");
     commit(&w.upstream, "zero");
@@ -295,6 +319,10 @@ fn fork_beside_refuses_a_commit_the_item_is_absent_at() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_without_a_rev_keeps_the_hold_and_records_the_commit() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_without_a_rev_keeps_the_hold_and_records_the_commit"
+    ));
     let (w, one, _two) = edited_world();
     let plan = fork::fork_beside(
         &w.env,
@@ -334,6 +362,10 @@ fn fork_beside_without_a_rev_keeps_the_hold_and_records_the_commit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_keeps_an_edited_agent_under_the_new_name() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_keeps_an_edited_agent_under_the_new_name"
+    ));
     let w = world();
     write_agent(&w.upstream, "rev", "Agent body.");
     commit(&w.upstream, "one");
@@ -385,6 +417,10 @@ fn fork_beside_keeps_an_edited_agent_under_the_new_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_records_the_captured_harness_own_commit() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_records_the_captured_harness_own_commit"
+    ));
     let (w, one, _two) = edited_world();
     // A second tool's record at another commit, keyed to iterate first: the
     // harness lookup must decide, not iteration order.
@@ -429,6 +465,10 @@ fn fork_beside_records_the_captured_harness_own_commit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_rewrites_the_copys_name_line() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_rewrites_the_copys_name_line"
+    ));
     let cases = [
         (
             "---\nname : gh\ndescription: d\n---\nBody.\n",
@@ -517,6 +557,10 @@ fn fork_beside_rewrites_the_copys_name_line() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_takes_a_name_followed_by_an_explicit_key() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_beside_takes_a_name_followed_by_an_explicit_key"
+    ));
     let w = world();
     let gh = w.upstream.join("skills/gh/SKILL.md");
     fs::create_dir_all(gh.parent().unwrap()).unwrap();

@@ -117,6 +117,10 @@ fn settings(f: &Fixture) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_installs_in_geminis_own_format_and_toggles_by_rename() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_agent_installs_in_geminis_own_format_and_toggles_by_rename"
+    ));
     let f = fixture("[agents.rust]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -145,6 +149,10 @@ fn an_agent_installs_in_geminis_own_format_and_toggles_by_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_installs_into_the_shared_tree_gemini_reads() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_skill_installs_into_the_shared_tree_gemini_reads"
+    ));
     let f = fixture("[skills.deploy]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -172,6 +180,10 @@ fn a_skill_installs_into_the_shared_tree_gemini_reads() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_delivery_writes_geminis_own_skills_directory() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_copy_delivery_writes_geminis_own_skills_directory"
+    ));
     let f = fixture("[skills.deploy]\nsource = \"cat\"\nmethod = \"copy\"\n");
     apply_now(&f);
 
@@ -183,6 +195,10 @@ fn a_copy_delivery_writes_geminis_own_skills_directory() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_installs_as_a_toml_table_and_toggles_by_rename() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_command_installs_as_a_toml_table_and_toggles_by_rename"
+    ));
     let f = fixture("[commands.ship]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -212,6 +228,10 @@ fn a_command_installs_as_a_toml_table_and_toggles_by_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_registers_under_geminis_event_name_in_milliseconds() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hook_registers_under_geminis_event_name_in_milliseconds"
+    ));
     let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
     fs::write(settings(&f), "{\n  \"ui\": {\"theme\": \"Dark\"}\n}\n").unwrap();
     apply_now(&f);
@@ -256,6 +276,10 @@ fn a_hook_registers_under_geminis_event_name_in_milliseconds() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_server_is_declared_in_the_projects_settings_and_left_alone_otherwise() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_project_server_is_declared_in_the_projects_settings_and_left_alone_otherwise"
+    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.docs]\nsource = \"cat\"\n");
     fs::write(
         f._tmp.path().join("catalog/mcp/docs.toml"),
@@ -294,6 +318,10 @@ fn a_project_server_is_declared_in_the_projects_settings_and_left_alone_otherwis
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_scope_server_says_so_instead_of_switching_off() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_project_scope_server_says_so_instead_of_switching_off"
+    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\nenabled = false\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
@@ -309,6 +337,10 @@ fn a_project_scope_server_says_so_instead_of_switching_off() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_server_switches_off_in_the_file_gemini_keeps_that_state_in() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_global_server_switches_off_in_the_file_gemini_keeps_that_state_in"
+    ));
     let f = fixture("");
     let manifest = f.env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();

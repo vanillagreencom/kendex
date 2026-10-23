@@ -21,6 +21,10 @@ use super::{
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updating_one_follower_leaves_its_siblings_at_their_commits() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::updating_one_follower_leaves_its_siblings_at_their_commits"
+    ));
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -70,6 +74,10 @@ fn updating_one_follower_leaves_its_siblings_at_their_commits() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn moving_a_hold_leaves_the_scopes_followers_at_their_commits() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::moving_a_hold_leaves_the_scopes_followers_at_their_commits"
+    ));
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -109,6 +117,10 @@ fn moving_a_hold_leaves_the_scopes_followers_at_their_commits() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updating_a_name_nothing_declares_or_records_is_refused() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::updating_a_name_nothing_declares_or_records_is_refused"
+    ));
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     commit(&w.upstream, "one");
@@ -143,6 +155,10 @@ fn manifest_op(report: &kendex_core::engine::EngineReport) -> &apply::Op {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_the_pass_updated_writes_no_synthetic_hold() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_manifest_the_pass_updated_writes_no_synthetic_hold"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "", "gh version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -194,6 +210,10 @@ fn a_manifest_the_pass_updated_writes_no_synthetic_hold() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hold_move_scoped_by_for_package_leaves_the_siblings_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hold_move_scoped_by_for_package_leaves_the_siblings_alone"
+    ));
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -233,6 +253,10 @@ fn a_hold_move_scoped_by_for_package_leaves_the_siblings_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_v1_manifest_refuses_a_single_package_update() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_v1_manifest_refuses_a_single_package_update"
+    ));
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     commit(&w.upstream, "one");
@@ -251,6 +275,10 @@ fn a_v1_manifest_refuses_a_single_package_update() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn discarding_one_packages_edits_moves_that_package_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::discarding_one_packages_edits_moves_that_package_alone"
+    ));
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
