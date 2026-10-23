@@ -6,7 +6,9 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/guard-world.sh"
+TIMING_PATH="$PATH"
 
+if [ "${1:-all}" != timing ]; then
 SUITE_LOG="$TMP/suites"
 mkdir -p "$R/tools/tests"
 printf '#!/usr/bin/env bash\nprintf "demo\\n" >> "$SUITE_LOG"\n' > "$R/skills/demo/tests/demo.test.sh"
@@ -570,6 +572,186 @@ for row in \
       || bad "$mode input $input with declaration $declaration maps glob consumer $expected" "rc=$RC out=$OUT"
   done
 done
+fi
+
+# Keep the actual repository's dependency graph and workflow timing evidence.
+# The configured command below is a tiny failure/repair fixture: it proves
+# estimate consumption and receipt ownership, not the sampled suites' runtime.
+timing="$TMP/timing-checkout"
+mkdir -p "$timing"
+git -C "$REPO" ls-files -z > "$TMP/timing-files"
+tar -C "$REPO" --null -T "$TMP/timing-files" -cf "$TMP/timing-tree.tar"
+tar -xf "$TMP/timing-tree.tar" -C "$timing"
+git -C "$timing" init -q -b main
+git -C "$timing" config user.name test
+git -C "$timing" config user.email test@example.com
+git -C "$timing" config core.hooksPath "$TMP/nohooks"
+git -C "$timing" config gc.auto 0
+git -C "$timing" config maintenance.auto false
+timing_suite=orch-shard-partition.test
+timing_pair=harness-smoke.test
+timing_tests=tools/tests
+timing_env=(env -i PATH="$TIMING_PATH" HOME="$TMP" LC_ALL=C ORCH_STATE_DIR="$timing/tmp")
+timing_run() {
+  RC=0
+  OUT="$("${timing_env[@]}" "$@" 2>&1)" || RC=$?
+}
+timing_preview() { # GUARD [MODE]
+  if [ "${2:-range}" = full ]; then
+    timing_run "$BASH" -c 'cd -- "$1" && "$2" --selection --full' _ "$timing" "$1"
+  else
+    timing_run "$BASH" -c 'cd -- "$1" && "$2" --selection --range "$3"' _ "$timing" "$1" "${timing_preview_base:-$timing_base}"
+  fi
+}
+cat > "$timing/kendex.settings.toml" <<TOML
+[env]
+ORCH_PR_ORDER = "review-first"
+DEV_VALIDATE_CMD = "$BASH $timing_tests/$timing_suite.sh"
+DEV_VALIDATE_RANGE_CMD = "$BASH $timing_tests/$timing_suite.sh"
+DEV_VALIDATE_SELECTION_CMD = "$GUARD --selection --range \$DEV_VALIDATE_BASE"
+DEV_VALIDATE_TIMEOUT_SECS = "359"
+TOML
+cat > "$timing/$timing_tests/$timing_suite.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'attempt\n' >> tmp/attempts
+grep -Fxq '# repair=done' "$0" || exit 1
+printf 'validate: lanes=fixture selection=subset\n'
+SH
+git -C "$timing" add -A
+git -C "$timing" commit -q -m fixture
+timing_base="$(git -C "$timing" rev-parse HEAD)"
+git -C "$timing" update-ref refs/remotes/origin/main "$timing_base"
+printf '# selected\n' >> "$timing/$timing_tests/$timing_suite.sh"
+
+# Native expected-secs is consumed by dev-validate-run. These values are
+# independent of the parser: platform maximum 287 -> ceil(287 * 1.25) = 359;
+# adding the other suite's maximum of 330 gives ceil(617 * 1.25) = 772.
+for row in 'single|359' 'pair|772' 'full|' 'mixed|' 'uncovered|' 'shard-total|' 'unread|' 'unread-selected|' 'incomplete|'; do
+  IFS='|' read -r label expected <<<"$row"
+  git -C "$timing" reset -q --hard "$timing_base"
+  timing_preview_base="$timing_base"
+  printf '# selected\n' >> "$timing/$timing_tests/$timing_suite.sh"
+  case "$label" in
+    pair) printf '# selected\n' >> "$timing/$timing_tests/$timing_pair.sh" ;;
+    mixed) printf '\n' >> "$timing/ui/package.json" ;;
+    uncovered) printf '# selected\n' >> "$timing/skills/orch/tests/dev_validate_run_selection.sh" ;;
+    shard-total)
+      shard_suite=guards-tools.test
+      printf '#!/usr/bin/env bash\nexit 0\n' > "$timing/$timing_tests/$shard_suite.sh"
+      git -C "$timing" add "$timing_tests/$shard_suite.sh" ;;
+    unread) rm "$timing/.github/workflows/skill-tests.yml" ;;
+    unread-selected)
+      sed 's/187-287s/unread/' "$timing/.github/workflows/skill-tests.yml" > "$TMP/unread-workflow"
+      mv "$TMP/unread-workflow" "$timing/.github/workflows/skill-tests.yml" ;;
+    incomplete)
+      sed '/# suite sums over those legs, Linux then macOS:/d' "$timing/.github/workflows/skill-tests.yml" > "$TMP/incomplete-workflow"
+      mv "$TMP/incomplete-workflow" "$timing/.github/workflows/skill-tests.yml" ;;
+  esac
+  case "$label" in
+    unread | unread-selected | incomplete)
+      git -C "$timing" add .github/workflows/skill-tests.yml
+      git -C "$timing" commit -q -m timing-source
+      timing_preview_base="$(git -C "$timing" rev-parse HEAD)" ;;
+  esac
+  if [ "$label" = full ]; then timing_preview "$GUARD" full; else timing_preview "$GUARD"; fi
+  estimate="$(sed -n 's/^expected-secs=//p' <<<"$OUT")"
+  [ "$RC" -eq 0 ] && [ "$estimate" = "$expected" ] && [ ! -e "$timing/tmp/attempts" ] \
+    && ok "measured preview $label has estimate [$expected] without execution" \
+    || bad "measured preview $label has estimate [$expected] without execution" "rc=$RC out=$OUT"
+done
+unset timing_preview_base
+git -C "$timing" reset -q --hard "$timing_base"
+printf '# selected\n' >> "$timing/$timing_tests/$timing_suite.sh"
+timing_preview "$GUARD"
+[ "$(sed -n '/^selection=/p' <<<"$OUT")" = selection=subset ] \
+  && ok 'the measured single-suite preview is a real kendex subset' \
+  || bad 'the measured single-suite preview is a real kendex subset' "$OUT"
+if [ "$(grep -Fc '    selection_expected_secs' "$GUARD")" -eq 1 ] \
+  && mutant_guard 's/^    selection_expected_secs$/    : selection_expected_secs/'; then
+  timing_preview "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ -z "$(sed -n '/^expected-secs=/p' <<<"$OUT")" ] \
+    && ok 'control: removing estimate output turns the measured preview red' \
+    || bad 'control: removing estimate output turns the measured preview red' "$OUT"
+else
+  bad 'the estimate control changes exactly one call'
+fi
+
+runner="$REPO/skills/orch/scripts/dev-validate-run"
+writer="$REPO/skills/orch/scripts/dev-return-write"
+checker="$REPO/skills/orch/scripts/dev-artifact-check"
+state="$REPO/skills/orch/scripts/workflow-state"
+mkdir -p "$timing/tmp"
+timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
+failed_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
+[ "$RC" -eq 1 ] && [ "$(cat "$timing/tmp/attempts")" = attempt ] && [ -n "$failed_run" ] \
+  && ok 'the native admission owner runs the within-bound original once and records failure' \
+  || { bad 'the native admission owner runs the within-bound original once and records failure' "$OUT"; exit 1; }
+cp -R "$failed_run" "$TMP/failed-run-bytes"
+git -C "$timing" add "$timing_tests/$timing_suite.sh"
+git -C "$timing" commit -q -m original
+timing_head="$(git -C "$timing" rev-parse HEAD)"
+# The receipt binds the run's staged tree after the fixture commit.
+timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing --round-id timing \
+  --branch main --commit "$timing_head" --validate 'FAILING: fixture' --validate-run-dir "$failed_run" --no-summary
+original="$OUT"
+[ "$RC" -eq 0 ] && [ -f "$original" ] \
+  && ok 'the failed native run writes its original immutable receipt' \
+  || { bad 'the failed native run writes its original immutable receipt' "$OUT"; exit 1; }
+cp "$original" "$TMP/original-receipt"
+timing_run "$state" --state-dir "$timing/tmp" init local-timing --worktree "$timing" --branch main
+timing_run "$state" --state-dir "$timing/tmp" set local-timing dev_round_id timing
+for row in cycles:2 rereview_cycles:3 submit_cycles:4; do
+  timing_run "$state" --state-dir "$timing/tmp" set local-timing "${row%:*}" "${row#*:}"
+done
+timing_run "$checker" --worktree "$timing" --issue local-timing --round-id timing
+before_counters="$(jq -c '{cycles,rereview_cycles,submit_cycles}' "$timing/tmp/workflow-state-local-timing.json")"
+
+printf '# repair=done\n' >> "$timing/$timing_tests/$timing_suite.sh"
+git -C "$timing" add "$timing_tests/$timing_suite.sh"
+# The focused repair proof executes the changed fixture, outside the configured
+# attempt counter, just as the workflow requires before native admission.
+timing_run "$BASH" -c 'cd -- "$1" && "$2" "$3"' _ "$timing" "$BASH" "$timing_tests/$timing_suite.sh"
+[ "$RC" -eq 0 ] && ok 'the focused repair passes before recovery admission' \
+  || { bad 'the focused repair passes before recovery admission' "$OUT"; exit 1; }
+cp "$timing/tmp/attempts" "$TMP/proved-attempts"
+timing_preview "$GUARD"
+[ "$RC" -eq 0 ] && [ "$(sed -n '/^expected-secs=/p' <<<"$OUT")" = expected-secs=359 ] \
+  && ok 'native repaired preview fits the unchanged 359-second fixture bound' \
+  || { bad 'native repaired preview fits the unchanged 359-second fixture bound' "$OUT"; exit 1; }
+timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
+recovery_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
+[ "$RC" -eq 0 ] && [ -n "$recovery_run" ] \
+  && [ "$(wc -l < "$timing/tmp/attempts")" -eq "$(( $(wc -l < "$TMP/proved-attempts") + 1 ))" ] \
+  && ok 'measured admission permits exactly one configured recovery attempt' \
+  || { bad 'measured admission permits exactly one configured recovery attempt' "$OUT"; exit 1; }
+git -C "$timing" commit -q -m repair
+timing_head="$(git -C "$timing" rev-parse HEAD)"
+timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing --round-id timing \
+  --branch main --commit "$timing_head" --recovery --validate pass --validate-run-dir "$recovery_run" --validate-note measured --no-summary
+companion="$OUT"
+[ "$RC" -eq 0 ] && [ -f "$companion" ] && cmp -s "$original" "$TMP/original-receipt" \
+  && diff -r "$failed_run" "$TMP/failed-run-bytes" >/dev/null \
+  && ok 'recovery preserves the original failure receipt and native evidence bytes' \
+  || { bad 'recovery preserves the original failure receipt and native evidence bytes' "$OUT"; exit 1; }
+timing_run "$checker" --worktree "$timing" --issue local-timing --round-id timing
+[ "$RC" -eq 0 ] && [ "$(jq -r '.verdict' <<<"$OUT")" = accept ] \
+  && [ "$(jq -c '{cycles,rereview_cycles,submit_cycles}' "$timing/tmp/workflow-state-local-timing.json")" = "$before_counters" ] \
+  && jq -e --arg old "${original##*/}" --arg new "${companion##*/}" \
+    '.validate_rounds | map(.receipt) | index($old) != null and index($new) != null' \
+    "$timing/tmp/workflow-state-local-timing.json" >/dev/null \
+  && ok 'the recovery checker retains both validation rounds without spending another round counter' \
+  || bad 'the recovery checker retains both validation rounds without spending another round counter' "$OUT"
+timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing --round-id timing \
+  --branch main --commit "$timing_head" --recovery --validate pass --validate-run-dir "$recovery_run" --validate-note measured --no-summary
+[ "$RC" -eq 2 ] && ok 'a second terminal recovery receipt remains refused' \
+  || bad 'a second terminal recovery receipt remains refused' "$OUT"
+printf '# over bound\n' >> "$timing/$timing_tests/$timing_pair.sh"
+attempts_before="$(cat "$timing/tmp/attempts")"
+timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
+[ "$RC" -eq 2 ] && grep -Fxq 'dev-validate-run: over-bound expected-secs=772 bound=359' <<<"$OUT" \
+  && [ "$(cat "$timing/tmp/attempts")" = "$attempts_before" ] \
+  && ok 'the native admission owner refuses a measured over-bound selection before execution' \
+  || bad 'the native admission owner refuses a measured over-bound selection before execution' "$OUT"
 
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

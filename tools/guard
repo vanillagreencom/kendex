@@ -353,6 +353,8 @@ case "${1:-}" in
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
       '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.' \
       '--selection: report selection=all|subset without running checks or suites.' \
+      '  Emits expected-secs=N only with measured coverage of every selected suite,' \
+      '  including a selector-owned 25% margin, rounded up.' \
       '--released-packages BINARY [--part K/N] --range BASE: in each changed shell package' \
       '        calling kendex, run the suites a Linux CI leg gives a kendex' \
       '        (run-all.sh --checkout-kendex) with BINARY first on PATH, without scans or' \
@@ -1976,6 +1978,8 @@ mapped_suites() { # DIR REL
 # The final report uses the runner's subset vocabulary only for a smaller
 # mapped set. Empty means no tree was selected; any whole set makes it all.
 suite_selection=""
+preview_suites=""
+preview_unmeasured=0
 suite_trees=()
 suite_runs=()
 suite_scripts=()
@@ -2082,6 +2086,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
         suite_selection=all
+        preview_unmeasured=1
         [ "$selection_only" -eq 0 ] || [ "$scoped_only" -eq 1 ] || continue
         if ! command -v jq >/dev/null 2>&1; then
           unrun missing-tool jq
@@ -2149,6 +2154,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           note suites "$selected_count/$total_count reason=mapped tree=$d"
           [ -n "$run" ] || continue
         fi
+        preview_suites+="$run"$'\n'
         if [ "$selection_only" -eq 1 ] && [ "$scoped_only" -eq 0 ] && [ -z "$release_version" ]; then continue; fi
         ;;
     esac
@@ -2249,6 +2255,55 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   trap - TERM INT HUP
 fi
 [ -n "$suite_selection" ] || suite_selection=all
+# The workflow records per-suite Linux and macOS ranges from named merge groups.
+# Use the largest observed maximum, never shard sums or the job bound. run-all.sh now
+# publishes suite=<name> seconds=<n> for new samples; no complete timing inventory
+# exists yet. These observations cover suite-file changes alone: a full run or
+# other changed inputs can also launch untimed compiler and UI work.
+selection_expected_secs() {
+  local estimate
+  [ "$MODE" = range ] && [ "$preview_unmeasured" -eq 0 ] && [ -n "$preview_suites" ] || return 0
+  estimate=$(LC_ALL=C awk -v suites="$preview_suites" -v touched="$touched" '
+    /# the merge groups of runs 36522803055, 36523768409, 36525040329,/ {
+      starts++
+      reading = 1
+    }
+    reading && /# suite sums over those legs, Linux then macOS:/ { ends++; reading = 0 }
+    reading { sub(/^[[:space:]]*# */, ""); text = text " " $0 }
+    END {
+      if (starts != 1 || ends != 1) exit 1
+      gsub(/[,.]/, " ", text)
+      n = split(text, words, /[[:space:]]+/)
+      for (i = 1; i <= n; i++) {
+        if (words[i] ~ /^[[:alnum:]_-]+$/ && words[i+1] == "at") {
+          path = "tools/tests/" words[i] ".test.sh"
+          if (path in named) exit 1
+          named[path] = 1
+        }
+        if (path != "" && words[i] ~ /^[0-9]+-[0-9]+s$/) {
+          samples[path]++
+          split(words[i], range, "-")
+          sub(/s$/, "", range[2])
+          if (range[1]+0 > range[2]+0 || range[2]+0 <= 0) exit 1
+          if (range[2]+0 > timings[path]) timings[path] = range[2]+0
+        }
+      }
+      count = split(suites, selected, "\n")
+      for (i = 1; i <= count; i++) {
+        if (selected[i] == "" || selected[i] in seen) continue
+        seen[selected[i]] = 1
+        if (!(selected[i] in timings) || samples[selected[i]] != 2) exit 1
+        total += timings[selected[i]]
+      }
+      count = split(touched, inputs, "\n")
+      for (i = 1; i <= count; i++)
+        if (inputs[i] != "" && !(inputs[i] in seen)) exit 1
+      if (total <= 0) exit 1
+      printf "%.0f\n", int((total * 125 + 99) / 100)
+    }
+  ' .github/workflows/skill-tests.yml 2>/dev/null) || return 0
+  printf 'expected-secs=%s\n' "$estimate"
+}
 if [ "$selection_only" -eq 1 ]; then
   if [ -n "$release_version" ]; then
     printf 'catalog-release: version=%s leg=package-suites result=%s\n' "$release_version" "$fail"
@@ -2257,6 +2312,7 @@ if [ "$selection_only" -eq 1 ]; then
     printf 'scoped=true\n'
   else
     printf 'selection=%s\n' "$suite_selection"
+    selection_expected_secs
   fi
   exit "$fail"
 fi
