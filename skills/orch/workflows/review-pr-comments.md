@@ -19,6 +19,13 @@ Resolve `ORCH_DECISION_MODE` once for this post-PR workflow:
 
 **Standalone init** (`lifecycle: "self"`): `gh pr view --json number -q .number` gives `PR_NUMBER`, and `git-context issue-from-branch .` gives `ISSUE_ID` when the branch carries an issue id. When it does not, `ISSUE_ID` is `pr-[PR_NUMBER]`, the same repository-local fallback key [`ci-fix.md` § 1](ci-fix.md) and [`merge-pr.md` § 3](merge-pr.md) use; a branch with no issue id is ordinary, not a stop. Except under `--dry-run`, when `workflow-state exists --json [ISSUE_ID]` reports false, resolve `WT_PATH`, read the branch with `git-context branch`, and run `workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`, since the round-start prune reads the worktree from state.
 
+**Dry-run recurrence context.** Under `--dry-run`, check `workflow-state exists --json [ISSUE_ID]` once the key is resolved from caller context or standalone init. Carry the result into §§ 3–5 without writing state:
+
+| State exists | Recurrence handling |
+|---|---|
+| `true` | Read the existing recurrence records as § 5 requires. |
+| `false` | Report `unavailable: workflow state absent`. Skip the state-dependent recurrence lookup. History remains unknown, never empty or zero. |
+
 Both commands below write to that state, so the key must resolve and the state must exist before either runs. Except under `--dry-run`, this triage pass is a continuing action:
 
 ```bash
@@ -97,6 +104,7 @@ PR: #[PR_NUMBER] - [TITLE]
 Parent Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
 Review round: [TRIAGE_REVIEW_ROUND_ID, or unavailable under --dry-run]
+Recurrence history: [available, or unavailable: workflow state absent under --dry-run]
 
 Decision context (read before classifying — do NOT suggest changes that contradict these):
 [For each verified decision: "[DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -115,7 +123,7 @@ Blocking: [true/false]
 URL: [URL]
 ---
 
-1. Read `.agents/skills/reviewer/references/finding-disposition.md` and apply its verification prerequisite and decision flow to every finding — read the actual source files before classifying any comment.
+1. Read `.agents/skills/reviewer/references/finding-disposition.md` and apply its verification prerequisite and decision flow to every finding — read the actual source files before classifying any comment. When the supplied dry-run recurrence history is unavailable, skip that reference's state-dependent recurrence lookup and retain history as unknown in the report. Otherwise read both recurrence records as it requires.
 2. Classify into arrays per `../../reviewer/schemas/review-finding.md`:
    - `blockers[]`: verified and blocking, or P1/P2
    - `suggestions[]`: verified, non-blocking
@@ -139,7 +147,7 @@ Collect each agent's report path and its bound review-round token for § 5.
 
 **Skip if** the comments came from a single domain.
 
-Delegate to the architecture reviewer with the domain report paths and this batch's `[TRIAGE_REVIEW_ROUND_ID]`, asking for cross-cutting findings only: issues spanning domains, dependencies between suggestions (`dependency: #A blocks #B (reason)`), gaps at domain boundaries, and conflicts between domain recommendations (flag both, resolve neither). It must not modify or overrule domain findings — only add its own, in the same JSON schema at `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json`, returning the same `Report:`/`Verdict:` pair. It copies the supplied token into `qa_metadata.review_round_id`, or uses `null` under `--dry-run`. Add the returned path and its bound token to the set.
+Delegate to the architecture reviewer with the domain report paths, this batch's `[TRIAGE_REVIEW_ROUND_ID]`, and the same recurrence-history context and lookup instruction as § 3, asking for cross-cutting findings only: issues spanning domains, dependencies between suggestions (`dependency: #A blocks #B (reason)`), gaps at domain boundaries, and conflicts between domain recommendations (flag both, resolve neither). It must not modify or overrule domain findings — only add its own, in the same JSON schema at `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json`, returning the same `Report:`/`Verdict:` pair. It copies the supplied token into `qa_metadata.review_round_id`, or uses `null` under `--dry-run`. Add the returned path and its bound token to the set.
 
 ## 5. Triage Report
 
@@ -147,7 +155,7 @@ After the existing disposition pass below, and before routing to § 6 even for a
 
 Read every report and aggregate across agents preserving attribution. Keep every review-body item with its source identity and verified reply draft through § 6.3; do not deduplicate it away. Deduplicate other items by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions. Show verified body declines in SKIPPING with their draft reason. These reply-only items never enter the fix set.
 
-**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. Read both records with the command that section states, before any item below is dispositioned. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
+**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. Apply the Dry-run recurrence context above: when history is unavailable, report that status in the triage output and leave recurrence unverified. Otherwise read both records with the command that section states, before any item below is dispositioned. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
 
 Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), carries a root cause § Recurrence dispositions (→ `RECURRENCE`, never an auto-fix), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
 
