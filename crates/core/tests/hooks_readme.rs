@@ -272,10 +272,7 @@ fn rendered(hooks: &[HookSource]) -> String {
 
 #[test]
 fn the_committed_readme_is_what_the_hooks_render() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_committed_readme_is_what_the_hooks_render"
-    ));
+    crate::diagnostic::parent!(the_committed_readme_is_what_the_hooks_render);
     let committed = fs::read_to_string(readme_path()).unwrap_or_default();
     if let Err(finding) = compare(&committed, &rendered(&catalog_hooks())) {
         panic!("{finding}");
@@ -289,8 +286,7 @@ fn the_committed_readme_is_what_the_hooks_render() {
     reason = "a README that cannot be written is the command's own failure"
 )]
 fn regenerate_hooks_readme() {
-    let _diagnostic =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::regenerate_hooks_readme"));
+    crate::diagnostic::parent!(regenerate_hooks_readme);
     fs::write(readme_path(), rendered(&catalog_hooks())).expect("hooks/README.md is writable");
 }
 
@@ -300,10 +296,7 @@ fn regenerate_hooks_readme() {
     reason = "the catalog must hold the hook and its companion"
 )]
 fn a_companion_is_required_only_on_its_own_harnesses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_is_required_only_on_its_own_harnesses"
-    ));
+    crate::diagnostic::parent!(a_companion_is_required_only_on_its_own_harnesses);
     let hooks = catalog_hooks();
     let hook = hooks
         .iter()
@@ -474,10 +467,7 @@ fn planted_rows() -> [PlantedRow; 9] {
     reason = "a planted defect that is not refused is the failure this test names"
 )]
 fn each_planted_defect_is_refused_on_its_keyed_line() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::each_planted_defect_is_refused_on_its_keyed_line"
-    ));
+    crate::diagnostic::parent!(each_planted_defect_is_refused_on_its_keyed_line);
     let hooks = catalog_hooks();
     let clean = rendered(&hooks);
 

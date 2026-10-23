@@ -85,10 +85,7 @@ fn missing(report: &EngineReport) -> Vec<&str> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply"
-    ));
+    crate::diagnostic::parent!(agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply);
     let cases = [
         ("", "[agent-skills]\nscout = [\"recon\"]\n", vec!["recon"]),
         (
@@ -142,10 +139,9 @@ fn agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments"
-    ));
+    crate::diagnostic::parent!(
+        explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments
+    );
     let cases = [
         ("[skills.recon]\nsource = \"cat\"\n", ""),
         (
@@ -170,10 +166,7 @@ fn explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments()
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_recorded_agent_fork_still_refuses_an_unresolved_assignment() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_recorded_agent_fork_still_refuses_an_unresolved_assignment"
-    ));
+    crate::diagnostic::parent!(a_recorded_agent_fork_still_refuses_an_unresolved_assignment);
     let f = fixture(
         "[agents.scout]\nsource = \"local\"\n[agent-skills]\nscout = [\"ghost\"]\n[forks.agent.scout]\nsource = \"cat\"\nforked-at = \"2026-10-11T00:00:00Z\"\n",
         "",

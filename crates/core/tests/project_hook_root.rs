@@ -228,10 +228,7 @@ fn each_hook_runs(f: &Fixture, from: &Path, ceiling: &Path) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_in_a_project_that_is_no_repository_runs_the_projects_script() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_in_a_project_that_is_no_repository_runs_the_projects_script"
-    ));
+    crate::diagnostic::parent!(a_hook_in_a_project_that_is_no_repository_runs_the_projects_script);
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let f = fixture(tmp, root.join("plain/my $app"));
@@ -251,10 +248,9 @@ fn a_hook_in_a_project_that_is_no_repository_runs_the_projects_script() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_in_a_project_below_the_git_top_level_runs_the_projects_script() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_in_a_project_below_the_git_top_level_runs_the_projects_script"
-    ));
+    crate::diagnostic::parent!(
+        a_hook_in_a_project_below_the_git_top_level_runs_the_projects_script
+    );
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let repo = root.join("repo");
@@ -278,10 +274,7 @@ fn a_hook_in_a_project_below_the_git_top_level_runs_the_projects_script() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_projects_at_different_paths_register_the_same_text() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_projects_at_different_paths_register_the_same_text"
-    ));
+    crate::diagnostic::parent!(two_projects_at_different_paths_register_the_same_text);
     let here = somewhere("here");
     let there = somewhere("a much longer name over there");
     assert_ne!(here.project, there.project);
@@ -306,10 +299,7 @@ fn somewhere(at: &str) -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn a_hook_with_no_script_above_the_working_directory_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_with_no_script_above_the_working_directory_refuses"
-    ));
+    crate::diagnostic::parent!(a_hook_with_no_script_above_the_working_directory_refuses);
     let f = somewhere("app");
     let (_, command) = commands(&f).into_iter().next().unwrap();
     let gone = f.project.parent().unwrap().join("gone");
@@ -375,10 +365,9 @@ fn a_hook_with_no_script_above_the_working_directory_refuses() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn a_declared_environment_reaches_each_harnesss_script_and_an_edit_re_renders_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_declared_environment_reaches_each_harnesss_script_and_an_edit_re_renders_it"
-    ));
+    crate::diagnostic::parent!(
+        a_declared_environment_reaches_each_harnesss_script_and_an_edit_re_renders_it
+    );
     let f = somewhere("app");
     let source = f.project.parent().unwrap().join("catalog");
     fs::write(

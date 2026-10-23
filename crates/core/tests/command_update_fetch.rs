@@ -140,10 +140,7 @@ fn download_retry_returns_third_attempt_and_names_exhaustion() {
         );
         return;
     }
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::download_retry_returns_third_attempt_and_names_exhaustion"
-    ));
+    crate::diagnostic::parent!(download_retry_returns_third_attempt_and_names_exhaustion);
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let curl = root.join("curl");
@@ -205,10 +202,7 @@ fn real_curl_counts_failed_transfers_in_both_policies() {
         );
         return;
     }
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::real_curl_counts_failed_transfers_in_both_policies"
-    ));
+    crate::diagnostic::parent!(real_curl_counts_failed_transfers_in_both_policies);
     let real = std::env::split_paths(&std::env::var_os("PATH").unwrap())
         .map(|directory| directory.join("curl"))
         .find(|path| path.is_file())

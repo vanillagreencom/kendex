@@ -41,10 +41,7 @@ fn apply_now(f: &Fixture) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn subsumption_keeps_every_member_the_user_shaped() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::subsumption_keeps_every_member_the_user_shaped"
-    ));
+    crate::diagnostic::parent!(subsumption_keeps_every_member_the_user_shaped);
     let f = world();
     let catalog = f.home.join("catalog");
     for name in ["copied", "off", "plain"] {
@@ -108,10 +105,9 @@ fn subsumption_keeps_every_member_the_user_shaped() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn installing_the_whole_bundle_subsumes_equal_members_and_keeps_shaped_ones() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::installing_the_whole_bundle_subsumes_equal_members_and_keeps_shaped_ones"
-    ));
+    crate::diagnostic::parent!(
+        installing_the_whole_bundle_subsumes_equal_members_and_keeps_shaped_ones
+    );
     let f = world();
     let catalog = starter_catalog(&f, "catalog");
     manifest_with(
@@ -185,10 +181,7 @@ fn installing_the_whole_bundle_subsumes_equal_members_and_keeps_shaped_ones() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_second_marketplaces_same_named_bundle_is_refused_naming_the_first() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_second_marketplaces_same_named_bundle_is_refused_naming_the_first"
-    ));
+    crate::diagnostic::parent!(a_second_marketplaces_same_named_bundle_is_refused_naming_the_first);
     let f = world();
     let catalog = starter_catalog(&f, "catalog");
     let rival = starter_catalog(&f, "rival");
@@ -239,10 +232,7 @@ fn a_second_marketplaces_same_named_bundle_is_refused_naming_the_first() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_set_whose_members_the_catalog_does_not_offer_is_refused"
-    ));
+    crate::diagnostic::parent!(a_set_whose_members_the_catalog_does_not_offer_is_refused);
     let f = world();
     let catalog = f.home.join("catalog");
     skill(&catalog, "dev");
@@ -274,10 +264,7 @@ fn a_set_whose_members_the_catalog_does_not_offer_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_whose_member_the_catalog_offers_installs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_set_whose_member_the_catalog_offers_installs"
-    ));
+    crate::diagnostic::parent!(a_set_whose_member_the_catalog_offers_installs);
     let f = world();
     let catalog = starter_catalog(&f, "catalog");
     manifest_with(&f, &[("cat", &catalog)], "");
@@ -309,10 +296,7 @@ fn servers_catalog(f: &Fixture) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_mcp_server_set_asked_for_on_pi_alone_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_mcp_server_set_asked_for_on_pi_alone_is_refused"
-    ));
+    crate::diagnostic::parent!(an_mcp_server_set_asked_for_on_pi_alone_is_refused);
     let f = world();
     let catalog = servers_catalog(&f);
     manifest_with(&f, &[("cat", &catalog)], "");
@@ -342,10 +326,7 @@ fn an_mcp_server_set_asked_for_on_pi_alone_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_same_set_asked_for_on_claude_installs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_same_set_asked_for_on_claude_installs"
-    ));
+    crate::diagnostic::parent!(the_same_set_asked_for_on_claude_installs);
     let f = world();
     let catalog = servers_catalog(&f);
     manifest_with(&f, &[("cat", &catalog)], "");
@@ -366,10 +347,7 @@ fn the_same_set_asked_for_on_claude_installs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_already_declared_for_one_tool_is_judged_on_that_tool() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_set_already_declared_for_one_tool_is_judged_on_that_tool"
-    ));
+    crate::diagnostic::parent!(a_set_already_declared_for_one_tool_is_judged_on_that_tool);
     let f = world();
     let catalog = servers_catalog(&f);
     manifest_with(&f, &[("cat", &catalog)], "");
@@ -443,10 +421,7 @@ fn request(name: &str) -> ops::AddRequest {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_set_keeps_its_member_and_what_that_member_requires() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unreadable_set_keeps_its_member_and_what_that_member_requires"
-    ));
+    crate::diagnostic::parent!(an_unreadable_set_keeps_its_member_and_what_that_member_requires);
     let f = world();
     let catalog = f.home.join("catalog");
     write(
@@ -523,10 +498,7 @@ fn kept_notes<'a>(report: &'a kendex_core::engine::EngineReport, source: &str) -
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_readable_catalog_sweeps_what_its_set_dropped() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_readable_catalog_sweeps_what_its_set_dropped"
-    ));
+    crate::diagnostic::parent!(a_readable_catalog_sweeps_what_its_set_dropped);
     let f = world();
     let catalog = starter_catalog(&f, "catalog");
     manifest_with(
@@ -568,10 +540,7 @@ fn a_readable_catalog_sweeps_what_its_set_dropped() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_sweep_with_no_declaration_left_reads_the_catalog_itself() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_sweep_with_no_declaration_left_reads_the_catalog_itself"
-    ));
+    crate::diagnostic::parent!(a_sweep_with_no_declaration_left_reads_the_catalog_itself);
     let f = world();
     let catalog = starter_catalog(&f, "catalog");
     manifest_with(
@@ -665,10 +634,7 @@ fn a_sweep_with_no_declaration_left_reads_the_catalog_itself() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_sweep_with_no_subscription_left_says_what_it_kept() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_sweep_with_no_subscription_left_says_what_it_kept"
-    ));
+    crate::diagnostic::parent!(a_sweep_with_no_subscription_left_says_what_it_kept);
     let f = world();
     let catalog = starter_catalog(&f, "catalog");
     manifest_with(
@@ -731,10 +697,7 @@ fn a_sweep_with_no_subscription_left_says_what_it_kept() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_sweep_with_no_declaration_left_reads_a_plugins_own_members() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_sweep_with_no_declaration_left_reads_a_plugins_own_members"
-    ));
+    crate::diagnostic::parent!(a_sweep_with_no_declaration_left_reads_a_plugins_own_members);
     let f = world();
     let catalog = f.home.join("market");
     write(
@@ -784,10 +747,7 @@ fn a_sweep_with_no_declaration_left_reads_a_plugins_own_members() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_member_keeps_its_set_edge_when_the_set_stops_reading() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_declared_member_keeps_its_set_edge_when_the_set_stops_reading"
-    ));
+    crate::diagnostic::parent!(a_declared_member_keeps_its_set_edge_when_the_set_stops_reading);
     let f = world();
     let catalog = f.home.join("catalog");
     skill(&catalog, "dev");

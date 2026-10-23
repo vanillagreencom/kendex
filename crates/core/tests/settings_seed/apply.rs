@@ -14,10 +14,7 @@ use super::scope::{TEMPLATE, arrive, fixture, refresh_now, without_key};
 #[test]
 #[allow(clippy::unwrap_used)]
 fn seeds_env_defaults_and_never_overwrites_user_values() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::seeds_env_defaults_and_never_overwrites_user_values"
-    ));
+    crate::diagnostic::parent!(seeds_env_defaults_and_never_overwrites_user_values);
     let f = fixture(true);
     arrive(&f, &["review"]);
 
@@ -61,10 +58,7 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refresh_writes_nothing_the_arrival_already_settled() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_refresh_writes_nothing_the_arrival_already_settled"
-    ));
+    crate::diagnostic::parent!(a_refresh_writes_nothing_the_arrival_already_settled);
     let f = fixture(true);
     arrive(&f, &["review"]);
     let settings_path = f.project.join("kendex.settings.toml");
@@ -112,10 +106,7 @@ fn a_refresh_writes_nothing_the_arrival_already_settled() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_second_skill_arriving_later_seeds_only_its_own() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_second_skill_arriving_later_seeds_only_its_own"
-    ));
+    crate::diagnostic::parent!(a_second_skill_arriving_later_seeds_only_its_own);
     let f = fixture(true);
     arrive(&f, &["review"]);
     let settings_path = f.project.join("kendex.settings.toml");
@@ -164,10 +155,9 @@ fn a_second_skill_arriving_later_seeds_only_its_own() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn add_arrives_what_the_manifest_gains_and_a_second_add_arrives_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::add_arrives_what_the_manifest_gains_and_a_second_add_arrives_nothing"
-    ));
+    crate::diagnostic::parent!(
+        add_arrives_what_the_manifest_gains_and_a_second_add_arrives_nothing
+    );
     let f = fixture(true);
     // The declaration is already in the fixture manifest, so this scope
     // starts from one that declares nothing and adds `review` for real.
@@ -212,10 +202,7 @@ fn add_arrives_what_the_manifest_gains_and_a_second_add_arrives_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_arrives_the_skills_it_carries() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_bundle_arrives_the_skills_it_carries"
-    ));
+    crate::diagnostic::parent!(a_bundle_arrives_the_skills_it_carries);
     let f = fixture(true);
     let catalog = f
         .project
@@ -279,10 +266,7 @@ fn a_bundle_arrives_the_skills_it_carries() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_arrives_with_the_skill_that_needs_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dependency_arrives_with_the_skill_that_needs_it"
-    ));
+    crate::diagnostic::parent!(a_dependency_arrives_with_the_skill_that_needs_it);
     let f = fixture(true);
     let catalog = f
         .project
@@ -339,8 +323,7 @@ fn a_dependency_arrives_with_the_skill_that_needs_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn disabled_skill_does_not_seed() {
-    let _diagnostic =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::disabled_skill_does_not_seed"));
+    crate::diagnostic::parent!(disabled_skill_does_not_seed);
     let f = fixture(false);
     arrive(&f, &["review"]);
     assert!(!f.project.join("kendex.settings.toml").exists());
@@ -357,10 +340,7 @@ fn disabled_skill_does_not_seed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_revised_template_does_not_follow_its_comment_into_the_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_revised_template_does_not_follow_its_comment_into_the_file"
-    ));
+    crate::diagnostic::parent!(a_revised_template_does_not_follow_its_comment_into_the_file);
     let f = fixture(true);
     arrive(&f, &["review"]);
     let settings_path = f.project.join("kendex.settings.toml");
@@ -414,10 +394,7 @@ fn a_revised_template_does_not_follow_its_comment_into_the_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_with_findings_installs_and_seeds_like_any_other() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_with_findings_installs_and_seeds_like_any_other"
-    ));
+    crate::diagnostic::parent!(a_skill_with_findings_installs_and_seeds_like_any_other);
     let f = fixture(true);
     let hostile = f
         .project
@@ -468,10 +445,7 @@ fn a_skill_with_findings_installs_and_seeds_like_any_other() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_installed_on_no_harness_seeds_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_installed_on_no_harness_seeds_nothing"
-    ));
+    crate::diagnostic::parent!(a_skill_installed_on_no_harness_seeds_nothing);
     let f = fixture(true);
     let manifest = f.project.join("kendex.toml");
     let text = fs::read_to_string(&manifest).unwrap();

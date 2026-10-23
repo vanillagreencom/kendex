@@ -33,10 +33,7 @@ fn rev_conflict_message(report: &kendex_core::engine::EngineReport, name: &str) 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updating_a_bundle_member_moves_its_bundle_and_no_one_else() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updating_a_bundle_member_moves_its_bundle_and_no_one_else"
-    ));
+    crate::diagnostic::parent!(updating_a_bundle_member_moves_its_bundle_and_no_one_else);
     let w = world();
     write_skill(&w.upstream, "m1", "", "m1 version one.");
     write_skill(&w.upstream, "m2", "", "m2 version one.");
@@ -124,10 +121,7 @@ fn reports_a_rev_conflict(report: &kendex_core::engine::EngineReport, name: &str
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updating_a_declared_package_a_set_also_carries_moves_it_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updating_a_declared_package_a_set_also_carries_moves_it_alone"
-    ));
+    crate::diagnostic::parent!(updating_a_declared_package_a_set_also_carries_moves_it_alone);
     let w = world();
     let (first, second) = a_declared_member_of_a_set(
         &w,
@@ -174,10 +168,9 @@ fn updating_a_declared_package_a_set_also_carries_moves_it_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn moving_the_rest_of_the_set_afterwards_leaves_the_declared_member_put() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::moving_the_rest_of_the_set_afterwards_leaves_the_declared_member_put"
-    ));
+    crate::diagnostic::parent!(
+        moving_the_rest_of_the_set_afterwards_leaves_the_declared_member_put
+    );
     let w = world();
     let (_, second) = a_declared_member_of_a_set(
         &w,
@@ -210,10 +203,7 @@ fn moving_the_rest_of_the_set_afterwards_leaves_the_declared_member_put() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hold_the_person_wrote_against_their_set_still_conflicts() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hold_the_person_wrote_against_their_set_still_conflicts"
-    ));
+    crate::diagnostic::parent!(a_hold_the_person_wrote_against_their_set_still_conflicts);
     let w = world();
     let (first, second) = a_declared_member_of_a_set(
         &w,
@@ -255,10 +245,7 @@ fn a_hold_the_person_wrote_against_their_set_still_conflicts() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updating_a_package_a_set_reaches_through_a_parent_still_moves_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updating_a_package_a_set_reaches_through_a_parent_still_moves_it"
-    ));
+    crate::diagnostic::parent!(updating_a_package_a_set_reaches_through_a_parent_still_moves_it);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(
@@ -306,10 +293,7 @@ fn updating_a_package_a_set_reaches_through_a_parent_still_moves_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_that_moved_alone_no_longer_says_where_its_set_is() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_member_that_moved_alone_no_longer_says_where_its_set_is"
-    ));
+    crate::diagnostic::parent!(a_member_that_moved_alone_no_longer_says_where_its_set_is);
     let w = world();
     let (first, _) = a_declared_member_of_a_set(
         &w,
@@ -344,10 +328,7 @@ fn a_member_that_moved_alone_no_longer_says_where_its_set_is() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hand_pinned_set_conflicts_with_a_member_this_pass_pinned() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hand_pinned_set_conflicts_with_a_member_this_pass_pinned"
-    ));
+    crate::diagnostic::parent!(a_hand_pinned_set_conflicts_with_a_member_this_pass_pinned);
     let w = world();
     let (first, _) = a_declared_member_of_a_set(
         &w,
@@ -391,10 +372,7 @@ fn a_hand_pinned_set_conflicts_with_a_member_this_pass_pinned() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_conflict_with_a_hand_pinned_set_names_no_invented_commit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_conflict_with_a_hand_pinned_set_names_no_invented_commit"
-    ));
+    crate::diagnostic::parent!(a_conflict_with_a_hand_pinned_set_names_no_invented_commit);
     let w = world();
     let (first, second) = a_declared_member_of_a_set(
         &w,
@@ -432,10 +410,7 @@ fn a_conflict_with_a_hand_pinned_set_names_no_invented_commit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_whose_members_are_all_declared_stays_where_it_is() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_set_whose_members_are_all_declared_stays_where_it_is"
-    ));
+    crate::diagnostic::parent!(a_set_whose_members_are_all_declared_stays_where_it_is);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -496,10 +471,7 @@ fn a_set_whose_members_are_all_declared_stays_where_it_is() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updating_a_member_of_an_all_declared_set_leaves_the_set_where_it_is() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updating_a_member_of_an_all_declared_set_leaves_the_set_where_it_is"
-    ));
+    crate::diagnostic::parent!(updating_a_member_of_an_all_declared_set_leaves_the_set_where_it_is);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -556,10 +528,7 @@ fn updating_a_member_of_an_all_declared_set_leaves_the_set_where_it_is() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_whose_members_split_across_commits_still_holds() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_set_whose_members_split_across_commits_still_holds"
-    ));
+    crate::diagnostic::parent!(a_set_whose_members_split_across_commits_still_holds);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -623,10 +592,9 @@ fn a_set_whose_members_split_across_commits_still_holds() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updating_a_package_its_set_also_owns_through_a_parent_still_moves_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updating_a_package_its_set_also_owns_through_a_parent_still_moves_it"
-    ));
+    crate::diagnostic::parent!(
+        updating_a_package_its_set_also_owns_through_a_parent_still_moves_it
+    );
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(
@@ -675,10 +643,7 @@ fn updating_a_package_its_set_also_owns_through_a_parent_still_moves_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_naming_another_version_is_refused_in_both_directions() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_lock_naming_another_version_is_refused_in_both_directions"
-    ));
+    crate::diagnostic::parent!(a_lock_naming_another_version_is_refused_in_both_directions);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     commit(&w.upstream, "one");

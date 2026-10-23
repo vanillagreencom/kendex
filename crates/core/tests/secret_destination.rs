@@ -154,10 +154,7 @@ fn save(f: &Fixture, file: &str, choose: bool) -> Result<(), CoreError> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_git_already_tracks_is_refused_however_it_is_ignored() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_file_git_already_tracks_is_refused_however_it_is_ignored"
-    ));
+    crate::diagnostic::parent!(a_file_git_already_tracks_is_refused_however_it_is_ignored);
     let f = fixture(true);
     fs::write(f.project.join(".env.local"), "OTHER='kept'\n").unwrap();
     git(&f.project, &["add", "-f", ".env.local"]);
@@ -188,10 +185,7 @@ fn a_file_git_already_tracks_is_refused_however_it_is_ignored() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_existing_file_git_does_not_ignore_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_existing_file_git_does_not_ignore_is_refused"
-    ));
+    crate::diagnostic::parent!(an_existing_file_git_does_not_ignore_is_refused);
     let f = fixture(true);
     fs::write(f.project.join(".env.local"), "OTHER='kept'\n").unwrap();
     let state = state(&f, None, None);
@@ -205,10 +199,7 @@ fn an_existing_file_git_does_not_ignore_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_where_the_private_file_belongs_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_link_where_the_private_file_belongs_is_refused"
-    ));
+    crate::diagnostic::parent!(a_link_where_the_private_file_belongs_is_refused);
     let f = fixture(true);
     let elsewhere = f.project.join("elsewhere.env");
     fs::write(&elsewhere, "").unwrap();
@@ -222,10 +213,7 @@ fn a_link_where_the_private_file_belongs_is_refused() {
 /// text before anything is touched — and a path that stays inside is not.
 #[test]
 fn a_path_that_leaves_the_project_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_path_that_leaves_the_project_is_refused"
-    ));
+    crate::diagnostic::parent!(a_path_that_leaves_the_project_is_refused);
     let f = fixture(true);
     let named = |file: &str| format!("[env]\nKENDEX_ENV_FILE = \"{file}\"\n");
     // The last row is the one only the spelling rule catches: every
@@ -263,10 +251,9 @@ fn a_path_that_leaves_the_project_is_refused() {
 /// must not quietly write a credential into the default instead.
 #[test]
 fn a_private_file_key_nothing_can_read_is_refused_rather_than_defaulted() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_private_file_key_nothing_can_read_is_refused_rather_than_defaulted"
-    ));
+    crate::diagnostic::parent!(
+        a_private_file_key_nothing_can_read_is_refused_rather_than_defaulted
+    );
     let f = fixture(true);
     let twice = "[env]\nKENDEX_ENV_FILE = \".env.a\"\nKENDEX_ENV_FILE = \".env.b\"\n";
     let state = state(&f, Some(twice), None);
@@ -282,10 +269,7 @@ fn a_private_file_key_nothing_can_read_is_refused_rather_than_defaulted() {
 /// would keep the row green.
 #[test]
 fn a_path_that_spells_its_way_out_is_refused_with_no_repository() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_path_that_spells_its_way_out_is_refused_with_no_repository"
-    ));
+    crate::diagnostic::parent!(a_path_that_spells_its_way_out_is_refused_with_no_repository);
     let f = fixture(false);
     // Every ancestor is missing, so the walk that resolves links finds the
     // project root and answers that the path is inside it.
@@ -301,10 +285,7 @@ fn a_path_that_spells_its_way_out_is_refused_with_no_repository() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_on_the_way_out_of_the_project_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_link_on_the_way_out_of_the_project_is_refused"
-    ));
+    crate::diagnostic::parent!(a_link_on_the_way_out_of_the_project_is_refused);
     let f = fixture(true);
     let outside = f.project.parent().unwrap().join("outside");
     fs::create_dir_all(&outside).unwrap();
@@ -322,10 +303,7 @@ fn a_link_on_the_way_out_of_the_project_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_settings_file_no_loader_reads_refuses_the_destination() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_settings_file_no_loader_reads_refuses_the_destination"
-    ));
+    crate::diagnostic::parent!(a_settings_file_no_loader_reads_refuses_the_destination);
     let f = fixture(true);
     for (settings, why) in [
         (
@@ -373,10 +351,7 @@ fn a_settings_file_no_loader_reads_refuses_the_destination() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_owed_ignore_rule_matches_the_file_it_names() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_owed_ignore_rule_matches_the_file_it_names"
-    ));
+    crate::diagnostic::parent!(an_owed_ignore_rule_matches_the_file_it_names);
     let f = fixture(true);
     for (named, want) in [
         (".env.[prod]", "/.env.\\[prod\\]"),
@@ -421,10 +396,7 @@ fn an_owed_ignore_rule_matches_the_file_it_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn kendex_own_configuration_is_refused_with_no_repository() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::kendex_own_configuration_is_refused_with_no_repository"
-    ));
+    crate::diagnostic::parent!(kendex_own_configuration_is_refused_with_no_repository);
     let f = fixture(false);
     for named in [
         // Every root file kendex writes itself, each named by the module
@@ -453,10 +425,7 @@ fn kendex_own_configuration_is_refused_with_no_repository() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn kendex_own_configuration_is_refused_even_where_git_ignores_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::kendex_own_configuration_is_refused_even_where_git_ignores_it"
-    ));
+    crate::diagnostic::parent!(kendex_own_configuration_is_refused_even_where_git_ignores_it);
     let f = fixture(true);
     fs::write(f.project.join(".gitignore"), "kendex.settings.toml\n").unwrap();
     let settings = "[env]\nKENDEX_ENV_FILE = \"./kendex.settings.toml\"\n";
@@ -473,10 +442,7 @@ fn kendex_own_configuration_is_refused_even_where_git_ignores_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_credential_is_refused_where_git_does_not_honour_the_owed_rule() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_credential_is_refused_where_git_does_not_honour_the_owed_rule"
-    ));
+    crate::diagnostic::parent!(a_credential_is_refused_where_git_does_not_honour_the_owed_rule);
     // A nearer .gitignore takes the file back out of the root rule.
     let nested = fixture(true);
     fs::create_dir_all(nested.project.join("keys")).unwrap();
@@ -521,10 +487,7 @@ fn a_credential_is_refused_where_git_does_not_honour_the_owed_rule() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_outside_any_repository_needs_no_ignore_rule() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_outside_any_repository_needs_no_ignore_rule"
-    ));
+    crate::diagnostic::parent!(a_project_outside_any_repository_needs_no_ignore_rule);
     let f = fixture(false);
     assert!(matches!(
         state(&f, None, None),
@@ -545,10 +508,7 @@ fn a_project_outside_any_repository_needs_no_ignore_rule() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_chosen_file_is_recorded_where_the_loaders_read_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_chosen_file_is_recorded_where_the_loaders_read_it"
-    ));
+    crate::diagnostic::parent!(a_chosen_file_is_recorded_where_the_loaders_read_it);
     let f = fixture(true);
     save(&f, ".env.secrets", true).unwrap();
 
@@ -580,10 +540,7 @@ fn a_chosen_file_is_recorded_where_the_loaders_read_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn saving_into_the_default_records_no_choice() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::saving_into_the_default_records_no_choice"
-    ));
+    crate::diagnostic::parent!(saving_into_the_default_records_no_choice);
     let f = fixture(true);
     save(&f, ".env.local", false).unwrap();
     let settings = fs::read_to_string(f.project.join("kendex.settings.toml"));
@@ -599,10 +556,7 @@ fn saving_into_the_default_records_no_choice() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_named_file_is_recorded_with_no_credential_typed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_named_file_is_recorded_with_no_credential_typed"
-    ));
+    crate::diagnostic::parent!(a_named_file_is_recorded_with_no_credential_typed);
     let f = fixture(true);
     let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
         &f.env, &f.scope,
@@ -639,10 +593,7 @@ fn a_named_file_is_recorded_with_no_credential_typed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_named_file_git_tracks_is_refused_before_the_choice_is_recorded() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_named_file_git_tracks_is_refused_before_the_choice_is_recorded"
-    ));
+    crate::diagnostic::parent!(a_named_file_git_tracks_is_refused_before_the_choice_is_recorded);
     let f = fixture(true);
     fs::write(f.project.join(".env.secrets"), "OTHER='kept'\n").unwrap();
     git(&f.project, &["add", "-f", ".env.secrets"]);
@@ -677,10 +628,7 @@ fn a_named_file_git_tracks_is_refused_before_the_choice_is_recorded() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_save_that_neither_stores_nor_names_writes_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_save_that_neither_stores_nor_names_writes_nothing"
-    ));
+    crate::diagnostic::parent!(a_save_that_neither_stores_nor_names_writes_nothing);
     let f = fixture(true);
     let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
         &f.env, &f.scope,
@@ -712,10 +660,7 @@ fn a_save_that_neither_stores_nor_names_writes_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_higher_settings_layer_names_the_private_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_higher_settings_layer_names_the_private_file"
-    ));
+    crate::diagnostic::parent!(the_higher_settings_layer_names_the_private_file);
     let f = fixture(true);
     fs::create_dir_all(f.project.join(".kendex")).unwrap();
     fs::write(
@@ -750,10 +695,7 @@ fn the_higher_settings_layer_names_the_private_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_empty_assignment_in_the_higher_layer_resolves_to_the_default() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_empty_assignment_in_the_higher_layer_resolves_to_the_default"
-    ));
+    crate::diagnostic::parent!(an_empty_assignment_in_the_higher_layer_resolves_to_the_default);
     let f = fixture(true);
     fs::create_dir_all(f.project.join(".kendex")).unwrap();
     let root = "[env]\nKENDEX_ENV_FILE = \".env.root\"\n";
@@ -785,10 +727,7 @@ fn an_empty_assignment_in_the_higher_layer_resolves_to_the_default() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_choice_the_higher_layer_would_override_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_choice_the_higher_layer_would_override_is_refused"
-    ));
+    crate::diagnostic::parent!(a_choice_the_higher_layer_would_override_is_refused);
     let f = fixture(true);
     fs::create_dir_all(f.project.join(".kendex")).unwrap();
     fs::write(
@@ -809,10 +748,7 @@ fn a_choice_the_higher_layer_would_override_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_destination_that_moved_before_the_save_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_destination_that_moved_before_the_save_is_refused"
-    ));
+    crate::diagnostic::parent!(a_destination_that_moved_before_the_save_is_refused);
     let f = fixture(true);
     fs::write(
         f.project.join("kendex.settings.toml"),

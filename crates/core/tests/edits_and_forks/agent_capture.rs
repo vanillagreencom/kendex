@@ -108,10 +108,9 @@ const INSTRUCTION_CASES: [InstructionCase; 10] = [
 /// into source text that survives removal of the manifest's instructions.
 #[test]
 fn historical_instruction_whitespace_is_not_captured_by_either_fork_route() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::historical_instruction_whitespace_is_not_captured_by_either_fork_route"
-    ));
+    crate::diagnostic::parent!(
+        historical_instruction_whitespace_is_not_captured_by_either_fork_route
+    );
     for case in INSTRUCTION_CASES {
         for harness in [HarnessId::Claude, HarnessId::Gemini, HarnessId::Pi] {
             for beside in [false, true] {
@@ -183,10 +182,7 @@ fn instruction_capture_world(case: InstructionCase, harness: HarnessId, disabled
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_keeps_relative_link_targets_after_capture_and_apply() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_fork_keeps_relative_link_targets_after_capture_and_apply"
-    ));
+    crate::diagnostic::parent!(a_fork_keeps_relative_link_targets_after_capture_and_apply);
     for harness in [HarnessId::Claude, HarnessId::Gemini, HarnessId::Pi] {
         for (name, source_prefix) in [
             ("rev", "../"),
@@ -313,10 +309,9 @@ fn assert_instruction_capture(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section"
-    ));
+    crate::diagnostic::parent!(
+        a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section
+    );
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
     write_agent(&w.upstream, "rev", "Use the Read tool.\n\nUpstream body.");
@@ -384,10 +379,7 @@ fn a_gemini_fork_keeps_its_words_and_one_copy_of_each_generated_section() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_claude_fork_renders_back_the_bytes_it_was_captured_from() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_claude_fork_renders_back_the_bytes_it_was_captured_from"
-    ));
+    crate::diagnostic::parent!(a_claude_fork_renders_back_the_bytes_it_was_captured_from);
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
     write_agent(&w.upstream, "rev", "Upstream body.");
@@ -430,10 +422,7 @@ fn a_claude_fork_renders_back_the_bytes_it_was_captured_from() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_banner_line_the_body_spells_as_an_example_is_kept() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_banner_line_the_body_spells_as_an_example_is_kept"
-    ));
+    crate::diagnostic::parent!(a_banner_line_the_body_spells_as_an_example_is_kept);
     let example = format!("    {BANNER}");
     let w = agent_world(
         "\"claude\"",
@@ -480,10 +469,7 @@ fn a_banner_line_the_body_spells_as_an_example_is_kept() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_crlf_rendering_forks_with_its_wrapper_off_and_its_endings_kept() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_crlf_rendering_forks_with_its_wrapper_off_and_its_endings_kept"
-    ));
+    crate::diagnostic::parent!(a_crlf_rendering_forks_with_its_wrapper_off_and_its_endings_kept);
     let w = world();
     write_agent(&w.upstream, "rev", "Upstream body.\n\nSecond line.");
     commit(&w.upstream, "one");
@@ -551,10 +537,9 @@ fn a_crlf_rendering_forks_with_its_wrapper_off_and_its_endings_kept() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_refuses_an_unrecorded_delivery_rather_than_guessing_the_paths() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_fork_refuses_an_unrecorded_delivery_rather_than_guessing_the_paths"
-    ));
+    crate::diagnostic::parent!(
+        a_fork_refuses_an_unrecorded_delivery_rather_than_guessing_the_paths
+    );
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
     write_agent(&w.upstream, "rev", "Upstream body.");
@@ -599,10 +584,7 @@ fn a_fork_refuses_an_unrecorded_delivery_rather_than_guessing_the_paths() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_refuses_a_lock_it_cannot_read_rather_than_guessing_the_paths() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_fork_refuses_a_lock_it_cannot_read_rather_than_guessing_the_paths"
-    ));
+    crate::diagnostic::parent!(a_fork_refuses_a_lock_it_cannot_read_rather_than_guessing_the_paths);
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
     write_agent(&w.upstream, "rev", "Upstream body.");

@@ -112,10 +112,9 @@ fn is_clean(f: &Fixture) -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_installs_with_copilots_double_extension_and_toggles_by_rename() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agent_installs_with_copilots_double_extension_and_toggles_by_rename"
-    ));
+    crate::diagnostic::parent!(
+        an_agent_installs_with_copilots_double_extension_and_toggles_by_rename
+    );
     let f = fixture("[agents.rust]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -150,10 +149,7 @@ fn an_agent_installs_with_copilots_double_extension_and_toggles_by_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_installs_into_the_shared_tree_copilot_reads() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_installs_into_the_shared_tree_copilot_reads"
-    ));
+    crate::diagnostic::parent!(a_skill_installs_into_the_shared_tree_copilot_reads);
     let f = fixture("[skills.deploy]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -180,10 +176,7 @@ fn a_skill_installs_into_the_shared_tree_copilot_reads() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_delivery_writes_copilots_own_skills_directory() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_copy_delivery_writes_copilots_own_skills_directory"
-    ));
+    crate::diagnostic::parent!(a_copy_delivery_writes_copilots_own_skills_directory);
     let f = fixture("[skills.deploy]\nsource = \"cat\"\nmethod = \"copy\"\n");
     apply_now(&f);
 
@@ -197,10 +190,7 @@ fn a_copy_delivery_writes_copilots_own_skills_directory() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_registers_in_a_hook_file_of_its_own() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_registers_in_a_hook_file_of_its_own"
-    ));
+    crate::diagnostic::parent!(a_hook_registers_in_a_hook_file_of_its_own);
     let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -246,10 +236,7 @@ fn a_hook_registers_in_a_hook_file_of_its_own() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_empty_matcher_registers_without_the_key_copilot_skips() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_empty_matcher_registers_without_the_key_copilot_skips"
-    ));
+    crate::diagnostic::parent!(an_empty_matcher_registers_without_the_key_copilot_skips);
     let f = fixture("[hooks.every]\nsource = \"cat\"\n");
     fs::write(
         f.source.join("hooks/every.sh"),
@@ -270,10 +257,7 @@ fn an_empty_matcher_registers_without_the_key_copilot_skips() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registered_hook_is_read_back_from_copilots_own_directory() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_registered_hook_is_read_back_from_copilots_own_directory"
-    ));
+    crate::diagnostic::parent!(a_registered_hook_is_read_back_from_copilots_own_directory);
     let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -298,10 +282,9 @@ fn a_registered_hook_is_read_back_from_copilots_own_directory() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_server_is_declared_in_githubs_mcp_file_and_left_alone_otherwise() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_server_is_declared_in_githubs_mcp_file_and_left_alone_otherwise"
-    ));
+    crate::diagnostic::parent!(
+        a_project_server_is_declared_in_githubs_mcp_file_and_left_alone_otherwise
+    );
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.docs]\nsource = \"cat\"\n");
     fs::write(
         f._tmp.path().join("catalog/mcp/docs.toml"),
@@ -353,10 +336,7 @@ fn a_project_server_is_declared_in_githubs_mcp_file_and_left_alone_otherwise() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_declared_for_copilot_writes_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_declared_for_copilot_writes_nothing"
-    ));
+    crate::diagnostic::parent!(a_command_declared_for_copilot_writes_nothing);
     let f = fixture("[commands.ship]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(!f.project.join(".github/commands").exists());
@@ -372,10 +352,7 @@ fn a_command_declared_for_copilot_writes_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refresh_leaves_an_entry_registered_under_their_own_matcher() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_refresh_leaves_an_entry_registered_under_their_own_matcher"
-    ));
+    crate::diagnostic::parent!(a_refresh_leaves_an_entry_registered_under_their_own_matcher);
     let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
     apply_now(&f);
     let registry = f.project.join(".github/hooks/audit.json");

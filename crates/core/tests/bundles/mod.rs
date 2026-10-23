@@ -167,10 +167,9 @@ pub fn required_by(source: &str, name: &str) -> Reason {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_installs_its_members_and_the_manifest_holds_only_the_bundle() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_bundle_installs_its_members_and_the_manifest_holds_only_the_bundle"
-    ));
+    crate::diagnostic::parent!(
+        a_bundle_installs_its_members_and_the_manifest_holds_only_the_bundle
+    );
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -203,10 +202,7 @@ fn a_bundle_installs_its_members_and_the_manifest_holds_only_the_bundle() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn uninstalling_a_bundle_removes_only_what_nothing_else_holds() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::uninstalling_a_bundle_removes_only_what_nothing_else_holds"
-    ));
+    crate::diagnostic::parent!(uninstalling_a_bundle_removes_only_what_nothing_else_holds);
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n\n[agents.writer]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -248,10 +244,7 @@ fn uninstalling_a_bundle_removes_only_what_nothing_else_holds() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_multi_edge_member_behaves_through_every_removal_order() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_multi_edge_member_behaves_through_every_removal_order"
-    ));
+    crate::diagnostic::parent!(a_multi_edge_member_behaves_through_every_removal_order);
     let declarations = "[bundles.starter]\nsource = \"cat\"\n\n[skills.github]\nsource = \"cat\"\n";
 
     // The set goes first: github was asked for and dev still needs it.
@@ -303,10 +296,7 @@ fn a_multi_edge_member_behaves_through_every_removal_order() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_removed_from_a_bundle_stays_removed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_member_removed_from_a_bundle_stays_removed"
-    ));
+    crate::diagnostic::parent!(a_member_removed_from_a_bundle_stays_removed);
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(installed(&f, ItemKind::Skill, "docs"));

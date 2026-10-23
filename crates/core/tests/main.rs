@@ -135,6 +135,31 @@ mod validate_output;
 // The lane reads these transient wall spans from the existing REST job log.
 // This stays local to each test binary; elapsed time does not identify CPU use.
 mod diagnostic {
+
+    // Emit into the caller's scope so the parent lives until return or unwind.
+    macro_rules! parent {
+        ($name:ident) => {
+            let _diagnostic =
+                $crate::diagnostic::Span::begin(concat!(module_path!(), "::", stringify!($name)));
+        };
+    }
+    pub(crate) use parent;
+
+    macro_rules! span {
+        ($guard:ident; $suffix:literal) => {
+            let $guard = $crate::diagnostic::Span::begin(concat!(module_path!(), $suffix));
+        };
+    }
+    pub(crate) use span;
+
+    // Keep the original block, expression evaluation and guard drop boundary.
+    macro_rules! phase {
+        ($guard:ident; $suffix:literal; $expression:expr) => {{
+            let $guard = $crate::diagnostic::Span::begin(concat!(module_path!(), $suffix));
+            $expression
+        }};
+    }
+    pub(crate) use phase;
     use std::io::{self, Write};
     use std::thread::ThreadId;
     use std::time::Instant;
@@ -218,6 +243,47 @@ mod diagnostic {
                 panic!("KEN4527 write_failed phase=end");
             }
         }
+    }
+
+    #[test]
+    fn diagnostic_contract_macros() {
+        parent!(diagnostic_contract_macros);
+        span!(_parent; "::control::parent");
+        let mut evaluations = 0;
+        let value = phase!(_phase; "::control::phase"; {
+            evaluations += 1;
+            41
+        });
+        assert_eq!((value, evaluations), (41, 1));
+        span!(scope; "::control::scope");
+        assert_eq!(scope.label, concat!(module_path!(), "::control::scope"));
+        drop(scope);
+
+        fn propagate() -> Result<u8, &'static str> {
+            span!(_parent; "::control::propagate");
+            let value = phase!(_phase; "::control::question"; Err::<u8, _>("original")?);
+            Ok(value)
+        }
+        assert_eq!(propagate(), Err("original"));
+
+        fn leave() -> u8 {
+            span!(_parent; "::control::leave");
+            phase!(_phase; "::control::return"; return 43)
+        }
+        assert_eq!(leave(), 43);
+
+        // Only the control catches: observed test work keeps its panic target.
+        let panic = std::panic::catch_unwind(|| {
+            span!(_parent; "::control::unwind");
+            phase!(_phase; "::control::panic"; std::panic::panic_any("original"));
+        });
+        assert_eq!(
+            panic
+                .err()
+                .and_then(|payload| payload.downcast::<&str>().ok())
+                .as_deref(),
+            Some(&"original")
+        );
     }
 
     #[test]

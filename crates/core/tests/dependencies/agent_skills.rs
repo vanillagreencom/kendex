@@ -73,10 +73,7 @@ fn on_scout(report: &kendex_core::engine::EngineReport) -> usize {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_required_agent_brings_the_skills_its_assignment_names() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_required_agent_brings_the_skills_its_assignment_names"
-    ));
+    crate::diagnostic::parent!(a_required_agent_brings_the_skills_its_assignment_names);
     let rows: [(&str, &str, &[&str], &[&str]); 5] = [
         ("catalog assignment", "", &["github", "linear"], &[]),
         (
@@ -143,10 +140,7 @@ fn a_required_agent_brings_the_skills_its_assignment_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_assigned_skill_turned_away_leaves_the_declarations_complete() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_assigned_skill_turned_away_leaves_the_declarations_complete"
-    ));
+    crate::diagnostic::parent!(an_assigned_skill_turned_away_leaves_the_declarations_complete);
     // Each row: the declarations, the skills scout is warned it lacks, and
     // whether linear is written on Claude Code switched off.
     let rows: [(&str, &str, &[&str], bool); 3] = [
@@ -207,10 +201,7 @@ fn an_assigned_skill_turned_away_leaves_the_declarations_complete() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_does_not_require_the_skill_that_requires_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agent_does_not_require_the_skill_that_requires_it"
-    ));
+    crate::diagnostic::parent!(an_agent_does_not_require_the_skill_that_requires_it);
     for sweep in [false, true] {
         let f = scout_fixture("", "[\"lead\", \"linear\"]");
         apply_now(&f);
@@ -248,10 +239,7 @@ fn an_agent_does_not_require_the_skill_that_requires_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on"
-    ));
+    crate::diagnostic::parent!(an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on);
     let scout = "dependencies:\n  agents: [scout]\n";
     let helper = "dependencies:\n  agents: [helper]\n";
     let requires_shared = "dependencies:\n  required: [shared]\n";

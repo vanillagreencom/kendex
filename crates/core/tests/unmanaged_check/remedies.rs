@@ -32,10 +32,7 @@ fn link_at(path: &Path, target: &Path) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_take_over_is_named_only_where_the_sweep_settles_the_scope() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_take_over_is_named_only_where_the_sweep_settles_the_scope"
-    ));
+    crate::diagnostic::parent!(the_take_over_is_named_only_where_the_sweep_settles_the_scope);
     type Plant = fn(&World);
     let rows: [(&str, &str, Plant, &str); 3] = [
         (

@@ -59,10 +59,7 @@ fn apply_scope(w: &World, scope: &Scope) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::refresh_reads_each_installs_own_recorded_source_across_scopes"
-    ));
+    crate::diagnostic::parent!(refresh_reads_each_installs_own_recorded_source_across_scopes);
     let w = world();
     write_catalog(&w.home.join("catA"), "From catalog A.");
     write_catalog(&w.home.join("catB"), "From catalog B.");
@@ -117,10 +114,7 @@ fn refresh_reads_each_installs_own_recorded_source_across_scopes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_write_ends_in_one_terminator_and_settles() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_manifest_write_ends_in_one_terminator_and_settles"
-    ));
+    crate::diagnostic::parent!(a_manifest_write_ends_in_one_terminator_and_settles);
     let w = world();
     write_catalog(&w.home.join("cat"), "Body.");
     let manifest_path = w.project.join("kendex.toml");
@@ -169,10 +163,7 @@ fn a_manifest_write_ends_in_one_terminator_and_settles() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn corrupt_state_fails_closed_instead_of_defaulting() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::corrupt_state_fails_closed_instead_of_defaulting"
-    ));
+    crate::diagnostic::parent!(corrupt_state_fails_closed_instead_of_defaulting);
     let w = world();
     let scope = Scope::Project {
         root: w.project.clone(),
@@ -226,10 +217,7 @@ fn corrupt_state_fails_closed_instead_of_defaulting() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn add_writes_nothing_before_validation_and_confirmation() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::add_writes_nothing_before_validation_and_confirmation"
-    ));
+    crate::diagnostic::parent!(add_writes_nothing_before_validation_and_confirmation);
     let w = world();
     write_catalog(&w.home.join("cat"), "Body.");
     let manifest_text = format!(

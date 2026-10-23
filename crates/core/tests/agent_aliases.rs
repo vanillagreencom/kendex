@@ -75,10 +75,7 @@ fn fixture(consumer: &str) -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn lookup_reads_old_names_through_the_catalog_resolver() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::lookup_reads_old_names_through_the_catalog_resolver"
-    ));
+    crate::diagnostic::parent!(lookup_reads_old_names_through_the_catalog_resolver);
     let f = fixture("schema = 7");
     let sealed = SealedSource::open(&f.source).unwrap();
     let config = source_config(&sealed, "cat").unwrap();
@@ -102,10 +99,9 @@ fn lookup_reads_old_names_through_the_catalog_resolver() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_legacy_consumer_renders_with_skills_labels_templates_and_one_warning_per_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_legacy_consumer_renders_with_skills_labels_templates_and_one_warning_per_name"
-    ));
+    crate::diagnostic::parent!(
+        a_legacy_consumer_renders_with_skills_labels_templates_and_one_warning_per_name
+    );
     let f = fixture(include_str!("fixtures/agent_aliases.toml"));
     fs::write(f.project.join("kendex.settings.toml"), "# consumer settings\n[env]\nKEEP = 'untouched' # consumer\nLINEAR_AGENT_LABELS = 'agent:generalist,agent:engineer,agent:rust' # taxonomy\n").unwrap();
     let report = audit(&f.env, &f.scope).unwrap();
@@ -271,10 +267,7 @@ fn assert_custom_hooks(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_taxonomy_without_an_arriving_skill_still_resolves_legacy_labels() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_taxonomy_without_an_arriving_skill_still_resolves_legacy_labels"
-    ));
+    crate::diagnostic::parent!(a_taxonomy_without_an_arriving_skill_still_resolves_legacy_labels);
     let f = fixture("schema = 7");
     fs::write(
         f.project.join("kendex.settings.toml"),
@@ -293,10 +286,7 @@ fn a_taxonomy_without_an_arriving_skill_still_resolves_legacy_labels() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_settings_for_one_agent_are_refused_before_writes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_settings_for_one_agent_are_refused_before_writes"
-    ));
+    crate::diagnostic::parent!(two_settings_for_one_agent_are_refused_before_writes);
     for (section, settings) in [
         (
             "agents",
@@ -336,10 +326,7 @@ enum LocalOrigin {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn local_forks_and_adoptions_keep_their_names_and_customizations() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::local_forks_and_adoptions_keep_their_names_and_customizations"
-    ));
+    crate::diagnostic::parent!(local_forks_and_adoptions_keep_their_names_and_customizations);
     for origin in [LocalOrigin::Fork, LocalOrigin::Adopt] {
         let f = fixture(include_str!("fixtures/agent_aliases_local.toml"));
         for scope in [Scope::Global, f.scope.clone()] {

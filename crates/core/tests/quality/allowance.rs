@@ -203,10 +203,9 @@ fn rows() -> Vec<Row<'static>> {
 /// accepted line included, changes nothing.
 #[test]
 fn a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names"
-    ));
+    crate::diagnostic::parent!(
+        a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names
+    );
     let at = "skills/launch/scripts/launch.sh";
     for (row, script, publisher, allowance, flagged, accepted) in rows() {
         let result = skill(script, publisher, &allowance);
@@ -244,10 +243,7 @@ fn a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names() {
 /// path the row spells.
 #[test]
 fn a_one_file_package_is_never_accepted() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_one_file_package_is_never_accepted"
-    ));
+    crate::diagnostic::parent!(a_one_file_package_is_never_accepted);
     let text = "---\ndescription: ship it\n---\nclaude --dangerously-skip-permissions\n";
     let input = || AuditInput {
         kind: ItemKind::Command,
@@ -279,10 +275,7 @@ fn a_one_file_package_is_never_accepted() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_table_reads_back_as_written_and_refuses_a_key_it_does_not_read() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_table_reads_back_as_written_and_refuses_a_key_it_does_not_read"
-    ));
+    crate::diagnostic::parent!(the_table_reads_back_as_written_and_refuses_a_key_it_does_not_read);
     let table = accepting(ItemKind::Skill, "launch", "scripts/launch.sh");
     let text = table.to_toml().unwrap();
     assert!(text.starts_with("# Findings kendex accepts"), "{text}");
@@ -357,10 +350,9 @@ fn interleaved_rows() -> Allowance {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_refresh_reads_interleaved_rules_once_each_and_keys_each_row_by_its_line() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_refresh_reads_interleaved_rules_once_each_and_keys_each_row_by_its_line"
-    ));
+    crate::diagnostic::parent!(
+        the_refresh_reads_interleaved_rules_once_each_and_keys_each_row_by_its_line
+    );
     let (_tmp, sealed) = catalog(INTERLEAVED);
     let config = kendex_core::source::source_config(&sealed, "cat").unwrap();
     let script = sealed.root().join("skills/launch/scripts/launch.sh");
@@ -421,10 +413,7 @@ fn the_refresh_reads_interleaved_rules_once_each_and_keys_each_row_by_its_line()
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_refresh_refuses_each_row_the_catalog_no_longer_warrants() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_refresh_refuses_each_row_the_catalog_no_longer_warrants"
-    ));
+    crate::diagnostic::parent!(the_refresh_refuses_each_row_the_catalog_no_longer_warrants);
     let with = |edit: fn(&mut Allowance)| {
         let mut table = interleaved_rows();
         edit(&mut table);

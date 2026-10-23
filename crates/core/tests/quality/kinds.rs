@@ -25,10 +25,9 @@ fn plugin(sources: PluginSources) -> AuditResult {
 
 #[test]
 fn plugin_source_trust_reports_a_missing_manifest_and_an_untracked_copy() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::plugin_source_trust_reports_a_missing_manifest_and_an_untracked_copy"
-    ));
+    crate::diagnostic::parent!(
+        plugin_source_trust_reports_a_missing_manifest_and_an_untracked_copy
+    );
     let loose = plugin(PluginSources::default());
     let severities: Vec<Severity> = loose
         .findings
@@ -48,10 +47,7 @@ fn plugin_source_trust_reports_a_missing_manifest_and_an_untracked_copy() {
 
 #[test]
 fn plugin_lifecycle_scripts_weigh_a_fetching_script_over_a_quiet_one() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::plugin_lifecycle_scripts_weigh_a_fetching_script_over_a_quiet_one"
-    ));
+    crate::diagnostic::parent!(plugin_lifecycle_scripts_weigh_a_fetching_script_over_a_quiet_one);
     let fetching = plugin(PluginSources {
         manifests: vec!["package.json".into()],
         git_origin: Some("github.com/owner/repo".into()),
@@ -79,10 +75,7 @@ fn plugin_lifecycle_scripts_weigh_a_fetching_script_over_a_quiet_one() {
 /// say so rather than pass an item nobody read.
 #[test]
 fn plugin_rules_are_not_applicable_without_readable_sources() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::plugin_rules_are_not_applicable_without_readable_sources"
-    ));
+    crate::diagnostic::parent!(plugin_rules_are_not_applicable_without_readable_sources);
     let result = audit(AuditInput {
         kind: ItemKind::Plugin,
         name: "sample@market".into(),
@@ -108,10 +101,7 @@ fn plugin_rules_are_not_applicable_without_readable_sources() {
 /// of scope is not the same as having no bytes to read.
 #[test]
 fn out_of_scope_rules_are_not_reported_as_skipped() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::out_of_scope_rules_are_not_reported_as_skipped"
-    ));
+    crate::diagnostic::parent!(out_of_scope_rules_are_not_reported_as_skipped);
     let result = skill(&[(
         "SKILL.md",
         "---\nname: sample\ndescription: when to use it\n---\n# sample\n",
@@ -129,10 +119,7 @@ fn out_of_scope_rules_are_not_reported_as_skipped() {
 /// be judged from the observation alone.
 #[test]
 fn an_unread_mcp_entry_reports_its_three_rules_as_not_applicable() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unread_mcp_entry_reports_its_three_rules_as_not_applicable"
-    ));
+    crate::diagnostic::parent!(an_unread_mcp_entry_reports_its_three_rules_as_not_applicable);
     let result = audit(AuditInput {
         kind: ItemKind::McpServer,
         name: "sample".into(),
@@ -155,10 +142,7 @@ fn an_unread_mcp_entry_reports_its_three_rules_as_not_applicable() {
 
 #[test]
 fn a_clean_skill_scores_a_hundred_with_nothing_found() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_clean_skill_scores_a_hundred_with_nothing_found"
-    ));
+    crate::diagnostic::parent!(a_clean_skill_scores_a_hundred_with_nothing_found);
     let result = skill(&[(
         "SKILL.md",
         "---\nname: sample\ndescription: Use this when reviewing a pull request.\n---\n\n# sample\n\n- read the diff\n- name the risks in `plain` words\n",
@@ -169,10 +153,7 @@ fn a_clean_skill_scores_a_hundred_with_nothing_found() {
 
 #[test]
 fn secrets_in_mcp_env_and_headers_are_both_found() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::secrets_in_mcp_env_and_headers_are_both_found"
-    ));
+    crate::diagnostic::parent!(secrets_in_mcp_env_and_headers_are_both_found);
     let mut env = BTreeMap::new();
     env.insert(
         "GITHUB_TOKEN".to_owned(),

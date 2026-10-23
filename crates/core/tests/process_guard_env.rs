@@ -83,10 +83,7 @@ fn guard_hook_preserves_hook_env_and_relays_verdict() {
         return;
     }
 
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::guard_hook_preserves_hook_env_and_relays_verdict"
-    ));
+    crate::diagnostic::parent!(guard_hook_preserves_hook_env_and_relays_verdict);
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let proof = root.join("inner-proof");
@@ -231,10 +228,7 @@ fn package_script_tool_lookup_is_selected_before_changing_directory() {
         return;
     }
 
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::package_script_tool_lookup_is_selected_before_changing_directory"
-    ));
+    crate::diagnostic::parent!(package_script_tool_lookup_is_selected_before_changing_directory);
     let tmp = tempfile::tempdir().unwrap();
     let base = rooted(&tmp);
     let root = base.join("project");
@@ -552,10 +546,7 @@ fn trusted_scripts_exclude_enclosing_worktrees() {
         std::fs::write(PathBuf::from(base).join("portable-proof"), "verified").unwrap();
         return;
     }
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::trusted_scripts_exclude_enclosing_worktrees"
-    ));
+    crate::diagnostic::parent!(trusted_scripts_exclude_enclosing_worktrees);
     let tmp = tempfile::tempdir().unwrap();
     let base = rooted(&tmp);
     let safe = base.join("safe-tools");

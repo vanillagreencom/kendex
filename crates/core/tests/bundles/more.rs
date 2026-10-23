@@ -18,10 +18,7 @@ use super::{Fixture, apply_now, catalog_bundles, fixture, installed, lock_of, ma
 #[test]
 #[allow(clippy::unwrap_used)]
 fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::workflow_bundles_plan_the_worktree_session_claim_and_registration"
-    ));
+    crate::diagnostic::parent!(workflow_bundles_plan_the_worktree_session_claim_and_registration);
     let catalog = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let sealed = SealedSource::open(&catalog).unwrap();
     let catalog = sealed.root();
@@ -129,10 +126,7 @@ fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_upstream_member_removal_previews_before_anything_uninstalls() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_upstream_member_removal_previews_before_anything_uninstalls"
-    ));
+    crate::diagnostic::parent!(an_upstream_member_removal_previews_before_anything_uninstalls);
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(installed(&f, ItemKind::Skill, "docs"));
@@ -176,10 +170,7 @@ fn an_upstream_member_removal_previews_before_anything_uninstalls() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_upstream_member_addition_previews_too() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_upstream_member_addition_previews_too"
-    ));
+    crate::diagnostic::parent!(an_upstream_member_addition_previews_too);
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     apply_now(&f);
     write(
@@ -219,10 +210,7 @@ fn an_upstream_member_addition_previews_too() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plugin_registry_plugin_installs_as_a_bundle() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_plugin_registry_plugin_installs_as_a_bundle"
-    ));
+    crate::diagnostic::parent!(a_plugin_registry_plugin_installs_as_a_bundle);
     let f = fixture("");
     let market = f.project.parent().unwrap().parent().unwrap().join("market");
     write(
@@ -280,10 +268,7 @@ fn a_plugin_registry_plugin_installs_as_a_bundle() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_the_catalog_lacks_is_a_finding_naming_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_member_the_catalog_lacks_is_a_finding_naming_it"
-    ));
+    crate::diagnostic::parent!(a_member_the_catalog_lacks_is_a_finding_naming_it);
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     let elsewhere = f.source.parent().unwrap().join("other");
     write(
@@ -316,10 +301,7 @@ fn a_member_the_catalog_lacks_is_a_finding_naming_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_whose_name_a_shell_would_expand_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_member_whose_name_a_shell_would_expand_is_refused"
-    ));
+    crate::diagnostic::parent!(a_member_whose_name_a_shell_would_expand_is_refused);
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     let hostile = "x$(id)";
     write(
@@ -351,10 +333,7 @@ fn a_member_whose_name_a_shell_would_expand_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_the_catalog_does_not_offer_is_reported() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_bundle_the_catalog_does_not_offer_is_reported"
-    ));
+    crate::diagnostic::parent!(a_bundle_the_catalog_does_not_offer_is_reported);
     let f = fixture("[bundles.nope]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
@@ -372,10 +351,7 @@ fn a_bundle_the_catalog_does_not_offer_is_reported() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn add_declares_the_set_and_refuses_a_name_no_catalog_offers() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::add_declares_the_set_and_refuses_a_name_no_catalog_offers"
-    ));
+    crate::diagnostic::parent!(add_declares_the_set_and_refuses_a_name_no_catalog_offers);
     let f = fixture("");
     let report = ops::add(&f.env, &f.scope, &request("starter")).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
@@ -404,10 +380,7 @@ fn request(bundle: &str) -> ops::AddRequest {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_two_bundles_carry_stays_until_both_are_gone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_member_two_bundles_carry_stays_until_both_are_gone"
-    ));
+    crate::diagnostic::parent!(a_member_two_bundles_carry_stays_until_both_are_gone);
     let f: Fixture =
         fixture("[bundles.starter]\nsource = \"cat\"\n\n[bundles.extra]\nsource = \"cat\"\n");
     catalog_bundles(
@@ -443,10 +416,7 @@ fn a_member_two_bundles_carry_stays_until_both_are_gone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn members_that_fold_onto_one_file_install_neither() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::members_that_fold_onto_one_file_install_neither"
-    ));
+    crate::diagnostic::parent!(members_that_fold_onto_one_file_install_neither);
     let f = fixture("[bundles.starter]\nsource = \"cat\"\n");
     for name in ["Deploy", "deploy"] {
         write(
@@ -482,10 +452,7 @@ fn members_that_fold_onto_one_file_install_neither() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_reads_a_set_member_from_the_place_the_sets_method_wrote() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agent_reads_a_set_member_from_the_place_the_sets_method_wrote"
-    ));
+    crate::diagnostic::parent!(an_agent_reads_a_set_member_from_the_place_the_sets_method_wrote);
     let f = fixture(
         "[bundles.starter]\nsource = \"cat\"\nmethod = \"copy\"\nharnesses = [\"gemini\"]\n\n[agent-skills]\nwriter = [\"dev\"]\n",
     );
@@ -507,10 +474,7 @@ fn an_agent_reads_a_set_member_from_the_place_the_sets_method_wrote() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_reads_a_linked_set_member_from_the_shared_tree() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agent_reads_a_linked_set_member_from_the_shared_tree"
-    ));
+    crate::diagnostic::parent!(an_agent_reads_a_linked_set_member_from_the_shared_tree);
     let f = fixture(
         "[bundles.starter]\nsource = \"cat\"\nharnesses = [\"gemini\"]\n\n[agent-skills]\nwriter = [\"dev\"]\n",
     );

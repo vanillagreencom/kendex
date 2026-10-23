@@ -16,10 +16,7 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn catalog_role_access_survives_fork_beside_and_detach() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::catalog_role_access_survives_fork_beside_and_detach"
-    ));
+    crate::diagnostic::parent!(catalog_role_access_survives_fork_beside_and_detach);
     struct Rule {
         role: Option<&'static str>,
         catalog: &'static str,
@@ -200,10 +197,7 @@ fn catalog_role_access_survives_fork_beside_and_detach() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn a_hand_edit_the_fork_cannot_carry_refuses_and_names_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hand_edit_the_fork_cannot_carry_refuses_and_names_it"
-    ));
+    crate::diagnostic::parent!(a_hand_edit_the_fork_cannot_carry_refuses_and_names_it);
     type Edit = fn(&World, &std::path::Path);
     type Row = (
         &'static str,
@@ -397,10 +391,9 @@ fn a_hand_edit_the_fork_cannot_carry_refuses_and_names_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not"
-    ));
+    crate::diagnostic::parent!(
+        a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not
+    );
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\ncolor: blue\n---\nUpstream body.\n",
@@ -442,10 +435,7 @@ fn a_settings_edit_rides_into_the_manifest_and_a_description_edit_does_not() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_deleted_effort_is_carried_as_cleared() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_deleted_effort_is_carried_as_cleared"
-    ));
+    crate::diagnostic::parent!(a_deleted_effort_is_carried_as_cleared);
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\nmodel: sonnet\neffort: high\ncolor: blue\n---\nUpstream body.\n",
@@ -481,10 +471,7 @@ fn a_deleted_effort_is_carried_as_cleared() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_narrowed_pi_delegation_list_survives_the_fork() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_narrowed_pi_delegation_list_survives_the_fork"
-    ));
+    crate::diagnostic::parent!(a_narrowed_pi_delegation_list_survives_the_fork);
     let w = agent_world(
         "\"pi\"",
         "---\nname: rev\ndescription: agent rev\nrole: engineer\n---\nUpstream body.\n",
@@ -527,10 +514,7 @@ fn a_narrowed_pi_delegation_list_survives_the_fork() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_deleted_pi_delegation_list_survives_the_fork() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_deleted_pi_delegation_list_survives_the_fork"
-    ));
+    crate::diagnostic::parent!(a_deleted_pi_delegation_list_survives_the_fork);
     let w = agent_world(
         "\"pi\"",
         "---\nname: rev\ndescription: agent rev\nrole: engineer\n---\nUpstream body.\n",
@@ -572,10 +556,7 @@ fn a_deleted_pi_delegation_list_survives_the_fork() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rendering_replaced_with_prose_still_forks() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_rendering_replaced_with_prose_still_forks"
-    ));
+    crate::diagnostic::parent!(a_rendering_replaced_with_prose_still_forks);
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",

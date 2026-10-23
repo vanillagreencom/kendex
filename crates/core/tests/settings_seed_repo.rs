@@ -81,10 +81,7 @@ const EMPTY: &str = "[env]\n";
 /// templates and that a merge over them can add something at all.
 #[test]
 fn an_arrival_writes_the_keys_the_templates_mark_required() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_arrival_writes_the_keys_the_templates_mark_required"
-    ));
+    crate::diagnostic::parent!(an_arrival_writes_the_keys_the_templates_mark_required);
     let entries = shipped_entries();
     assert!(
         !entries.is_empty(),
@@ -111,10 +108,7 @@ fn an_arrival_writes_the_keys_the_templates_mark_required() {
 /// asked of an empty file, where anything it wanted to write would show.
 #[test]
 fn a_refresh_writes_nothing_whatever_the_file_is_missing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_refresh_writes_nothing_whatever_the_file_is_missing"
-    ));
+    crate::diagnostic::parent!(a_refresh_writes_nothing_whatever_the_file_is_missing);
     let entries = shipped_entries();
     assert!(
         !entries.is_empty(),
@@ -132,10 +126,7 @@ fn a_refresh_writes_nothing_whatever_the_file_is_missing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refresh_of_this_repository_leaves_its_settings_file_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_refresh_of_this_repository_leaves_its_settings_file_alone"
-    ));
+    crate::diagnostic::parent!(a_refresh_of_this_repository_leaves_its_settings_file_alone);
     let entries = shipped_entries();
     let settings = std::fs::read_to_string(root().join(SETTINGS_FILE)).unwrap();
     // Without this, a file with nowhere to write would report the clean

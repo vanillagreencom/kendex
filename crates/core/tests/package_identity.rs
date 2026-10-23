@@ -179,10 +179,7 @@ fn marketplace(catalog: &Path) -> Origin {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_hook_across_every_tool_is_one_package_from_its_marketplace() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_hook_across_every_tool_is_one_package_from_its_marketplace"
-    ));
+    crate::diagnostic::parent!(one_hook_across_every_tool_is_one_package_from_its_marketplace);
     let f = fixture("[hooks.block-worktree-refresh]\nsource = \"cat\"\n");
     apply_now(&f);
     let rows = observed(&rows(&f), &f);
@@ -222,10 +219,7 @@ fn one_hook_across_every_tool_is_one_package_from_its_marketplace() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_surface_recorded_per_member_is_still_one_package() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_surface_recorded_per_member_is_still_one_package"
-    ));
+    crate::diagnostic::parent!(one_surface_recorded_per_member_is_still_one_package);
     let f = fixture_for("[skills.gh]\nsource = \"cat\"\n", "symlink", HARNESSES);
     apply_now(&f);
     let rows = observed(&rows(&f), &f);
@@ -253,10 +247,7 @@ fn one_surface_recorded_per_member_is_still_one_package() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_at_an_unclaimed_position_stays_nobody_s() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_file_at_an_unclaimed_position_stays_nobody_s"
-    ));
+    crate::diagnostic::parent!(a_file_at_an_unclaimed_position_stays_nobody_s);
     // Copy delivery for Claude: the record claims Claude's own directory
     // and nothing in the shared tree, which Claude also reads.
     let f = fixture_for("[skills.gh]\nsource = \"cat\"\n", "copy", "\"claude\"");
@@ -304,10 +295,7 @@ fn a_file_at_an_unclaimed_position_stays_nobody_s() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_claiming_record_answers_for_a_tree_every_tool_reads() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_claiming_record_answers_for_a_tree_every_tool_reads"
-    ));
+    crate::diagnostic::parent!(the_claiming_record_answers_for_a_tree_every_tool_reads);
     let f = fixture_for("[skills.gh]\nsource = \"cat\"\n", "symlink", "\"cursor\"");
     apply_now(&f);
     let rows = observed(&rows(&f), &f);
@@ -336,10 +324,7 @@ fn the_claiming_record_answers_for_a_tree_every_tool_reads() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registration_running_another_script_is_not_this_package() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_registration_running_another_script_is_not_this_package"
-    ));
+    crate::diagnostic::parent!(a_registration_running_another_script_is_not_this_package);
     let f = fixture_for(
         "[hooks.block-worktree-refresh]\nsource = \"cat\"\n",
         "copy",
@@ -390,10 +375,7 @@ fn a_registration_running_another_script_is_not_this_package() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_same_registration_in_another_scanned_file_is_not_this_package() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_same_registration_in_another_scanned_file_is_not_this_package"
-    ));
+    crate::diagnostic::parent!(the_same_registration_in_another_scanned_file_is_not_this_package);
     let f = fixture_for(
         "[hooks.block-worktree-refresh]\nsource = \"cat\"\n",
         "copy",
@@ -436,10 +418,7 @@ fn the_same_registration_in_another_scanned_file_is_not_this_package() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unrecorded_rule_that_looks_generated_stays_its_own() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unrecorded_rule_that_looks_generated_stays_its_own"
-    ));
+    crate::diagnostic::parent!(an_unrecorded_rule_that_looks_generated_stays_its_own);
     let f = fixture("[hooks.block-worktree-refresh]\nsource = \"cat\"\n");
     apply_now(&f);
     let rules = f.project.join(".cursor/rules");
@@ -463,10 +442,7 @@ fn an_unrecorded_rule_that_looks_generated_stays_its_own() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_kind_resolves_to_the_package_it_was_declared_as() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_kind_resolves_to_the_package_it_was_declared_as"
-    ));
+    crate::diagnostic::parent!(every_kind_resolves_to_the_package_it_was_declared_as);
     let f = fixture(&EVERY_KIND.concat());
     apply_now(&f);
     let rows = observed(&rows(&f), &f);
@@ -517,10 +493,7 @@ fn every_kind_resolves_to_the_package_it_was_declared_as() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_generated_artifact_is_not_offered_as_unmanaged() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_generated_artifact_is_not_offered_as_unmanaged"
-    ));
+    crate::diagnostic::parent!(a_generated_artifact_is_not_offered_as_unmanaged);
     let f = fixture("[hooks.block-worktree-refresh]\nsource = \"cat\"\n");
     apply_now(&f);
     fs::write(
@@ -549,10 +522,7 @@ fn a_generated_artifact_is_not_offered_as_unmanaged() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_switched_off_artifact_is_still_the_package_that_wrote_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_switched_off_artifact_is_still_the_package_that_wrote_it"
-    ));
+    crate::diagnostic::parent!(a_switched_off_artifact_is_still_the_package_that_wrote_it);
     let f = fixture("[hooks.block-worktree-refresh]\nsource = \"cat\"\nenabled = false\n");
     apply_now(&f);
     let rows = observed(&rows(&f), &f);
@@ -576,10 +546,7 @@ fn a_switched_off_artifact_is_still_the_package_that_wrote_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn identity_survives_a_move_of_the_project_folder() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::identity_survives_a_move_of_the_project_folder"
-    ));
+    crate::diagnostic::parent!(identity_survives_a_move_of_the_project_folder);
     let f = fixture("[hooks.block-worktree-refresh]\nsource = \"cat\"\n");
     apply_now(&f);
     let moved = f.home.join("dev/vsys-renamed");

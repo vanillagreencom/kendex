@@ -27,10 +27,7 @@ fn round_trip(path: &Path) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_path_holding_either_toml_delimiter_parses_back_to_itself() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_path_holding_either_toml_delimiter_parses_back_to_itself"
-    ));
+    crate::diagnostic::parent!(a_path_holding_either_toml_delimiter_parses_back_to_itself);
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let real = root.join("o'brien").join("catalog");

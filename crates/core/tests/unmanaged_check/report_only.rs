@@ -29,10 +29,7 @@ fn report(w: &super::World, mode: CheckMode) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_report_only_check_names_every_missing_row_and_records_none() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_report_only_check_names_every_missing_row_and_records_none"
-    ));
+    crate::diagnostic::parent!(a_report_only_check_names_every_missing_row_and_records_none);
     let w = world();
     super::declare(
         &w,
@@ -92,10 +89,7 @@ fn a_report_only_check_names_every_missing_row_and_records_none() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_report_only_check_still_settles_the_global_record() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_report_only_check_still_settles_the_global_record"
-    ));
+    crate::diagnostic::parent!(a_report_only_check_still_settles_the_global_record);
     let w = super::memo::global_world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();
@@ -126,10 +120,7 @@ fn a_report_only_check_still_settles_the_global_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_memoized_proof_that_moved_is_not_reported_as_a_matching_render() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_memoized_proof_that_moved_is_not_reported_as_a_matching_render"
-    ));
+    crate::diagnostic::parent!(a_memoized_proof_that_moved_is_not_reported_as_a_matching_render);
     type Move = fn(&std::path::Path);
     let moves: [(&str, Move); 2] = [
         ("agent 'scout'", |app| {

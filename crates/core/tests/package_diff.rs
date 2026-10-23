@@ -110,10 +110,7 @@ const V2: &str = "---\nname: gh\ndescription: github flows\n---\nline one\nline 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_version_diff_counts_lines_and_shapes_hunks() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_version_diff_counts_lines_and_shapes_hunks"
-    ));
+    crate::diagnostic::parent!(a_version_diff_counts_lines_and_shapes_hunks);
     let w = world();
     write_gh(
         &w,
@@ -175,10 +172,7 @@ fn a_version_diff_counts_lines_and_shapes_hunks() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_diff_publishes_history_it_holds_and_dates_at_materialization() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_diff_publishes_history_it_holds_and_dates_at_materialization"
-    ));
+    crate::diagnostic::parent!(a_diff_publishes_history_it_holds_and_dates_at_materialization);
     let mut w = world();
     w.env = w.env.clone().with_var(store::KEEP_VAR, "1");
     write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
@@ -241,10 +235,7 @@ fn a_diff_publishes_history_it_holds_and_dates_at_materialization() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_diff_in_an_unregistered_project_keeps_what_its_lock_names() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_diff_in_an_unregistered_project_keeps_what_its_lock_names"
-    ));
+    crate::diagnostic::parent!(a_diff_in_an_unregistered_project_keeps_what_its_lock_names);
     let mut w = world();
     write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
     let installed = commit(&w.upstream, "one");
@@ -285,10 +276,7 @@ fn a_diff_in_an_unregistered_project_keeps_what_its_lock_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn installed_vs_version_shows_the_local_edit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::installed_vs_version_shows_the_local_edit"
-    ));
+    crate::diagnostic::parent!(installed_vs_version_shows_the_local_edit);
     let w = world();
     // The package's tests, evaluation sets and maintainer notes never reach
     // an install, so they are not a difference from one.
@@ -343,10 +331,7 @@ fn installed_vs_version_shows_the_local_edit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn binary_and_oversize_files_are_labeled_not_diffed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::binary_and_oversize_files_are_labeled_not_diffed"
-    ));
+    crate::diagnostic::parent!(binary_and_oversize_files_are_labeled_not_diffed);
     let w = world();
     let big = "x\n".repeat(20_000);
     write_gh(

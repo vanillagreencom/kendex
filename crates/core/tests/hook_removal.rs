@@ -133,10 +133,7 @@ fn move_the_registration(f: &Fixture) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_moved_registration_comes_out_with_the_script_it_names() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_moved_registration_comes_out_with_the_script_it_names"
-    ));
+    crate::diagnostic::parent!(a_moved_registration_comes_out_with_the_script_it_names);
     for asked in ["by name", "by nothing wanting it"] {
         let f = fixture();
         apply_now(&f);
@@ -189,10 +186,7 @@ fn a_moved_registration_comes_out_with_the_script_it_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn switching_off_a_hook_whose_event_changed_leaves_nothing_registered() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::switching_off_a_hook_whose_event_changed_leaves_nothing_registered"
-    ));
+    crate::diagnostic::parent!(switching_off_a_hook_whose_event_changed_leaves_nothing_registered);
     let f = fixture();
     apply_now(&f);
     let settings = f.project.join(".claude/settings.json");
@@ -254,10 +248,7 @@ fn switching_off_a_hook_whose_event_changed_leaves_nothing_registered() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_changed_matcher_retires_kendexs_entry_and_leaves_theirs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_changed_matcher_retires_kendexs_entry_and_leaves_theirs"
-    ));
+    crate::diagnostic::parent!(a_changed_matcher_retires_kendexs_entry_and_leaves_theirs);
     let f = fixture();
     apply_now(&f);
     let settings = f.project.join(".claude/settings.json");
@@ -321,10 +312,7 @@ fn a_changed_matcher_retires_kendexs_entry_and_leaves_theirs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_command_bodied_hook_leaves_their_own_matcher_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_a_command_bodied_hook_leaves_their_own_matcher_alone"
-    ));
+    crate::diagnostic::parent!(removing_a_command_bodied_hook_leaves_their_own_matcher_alone);
     let f = fixture();
     let manifest = f.project.join("kendex.toml");
     let text = fs::read_to_string(&manifest).unwrap();
@@ -389,10 +377,7 @@ fn removing_a_command_bodied_hook_leaves_their_own_matcher_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::hook_removal_trashes_generated_settings_and_preserves_user_keys"
-    ));
+    crate::diagnostic::parent!(hook_removal_trashes_generated_settings_and_preserves_user_keys);
     const RETAINED: &str = ".opencode/instructions/kendex-hook-retained.md";
     for (retained_event, user_permission) in [
         (None, None),
@@ -448,10 +433,9 @@ fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn claude_default_ownership_preserves_user_values_and_deletions_through_removal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::claude_default_ownership_preserves_user_values_and_deletions_through_removal"
-    ));
+    crate::diagnostic::parent!(
+        claude_default_ownership_preserves_user_values_and_deletions_through_removal
+    );
     use ClaudeProjectDefault::{Owned, Released};
     let user_settings = json!({
         "permissions": {"allow": ["Read"]},
@@ -519,10 +503,9 @@ fn claude_default_ownership_preserves_user_values_and_deletions_through_removal(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn claude_owned_default_stays_until_the_last_enabled_installation_leaves() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::claude_owned_default_stays_until_the_last_enabled_installation_leaves"
-    ));
+    crate::diagnostic::parent!(
+        claude_owned_default_stays_until_the_last_enabled_installation_leaves
+    );
     let f = fixture();
     let manifest = f.project.join("kendex.toml");
     let declared = fs::read_to_string(&manifest).unwrap();

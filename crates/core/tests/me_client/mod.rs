@@ -263,10 +263,7 @@ fn fixture_status(path: &[&str]) -> u16 {
 
 #[test]
 fn no_credential_answers_signed_out_without_the_network() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::no_credential_answers_signed_out_without_the_network"
-    ));
+    crate::diagnostic::parent!(no_credential_answers_signed_out_without_the_network);
     let dir = tempfile::tempdir().expect("tempdir");
     let fetch = Canned::new(vec![]);
     let state = me::load(&env_in(dir.path()), &fetch, &MemoryStore::signed_out()).expect("load");
@@ -276,10 +273,7 @@ fn no_credential_answers_signed_out_without_the_network() {
 
 #[test]
 fn the_fixture_with_github_body_reads_as_signed_in() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_fixture_with_github_body_reads_as_signed_in"
-    ));
+    crate::diagnostic::parent!(the_fixture_with_github_body_reads_as_signed_in);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let status = fixture_status(&["with_github", "status"]);
@@ -304,10 +298,7 @@ fn the_fixture_with_github_body_reads_as_signed_in() {
 
 #[test]
 fn the_fixture_without_github_body_reads_as_no_github_login() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_fixture_without_github_body_reads_as_no_github_login"
-    ));
+    crate::diagnostic::parent!(the_fixture_without_github_body_reads_as_no_github_login);
     let dir = tempfile::tempdir().expect("tempdir");
     let fetch = Canned::new(vec![ok(
         fixture_status(&["without_github", "status"]),
@@ -326,10 +317,9 @@ fn the_fixture_without_github_body_reads_as_no_github_login() {
 /// status, and a body that is not the directory's at all.
 #[test]
 fn a_directory_that_cannot_answer_serves_the_cached_identity_as_offline() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_directory_that_cannot_answer_serves_the_cached_identity_as_offline"
-    ));
+    crate::diagnostic::parent!(
+        a_directory_that_cannot_answer_serves_the_cached_identity_as_offline
+    );
     type Answer = fn() -> Result<FetchResponse>;
     let rows: [(&str, Answer); 3] = [
         ("network away", away),
@@ -366,10 +356,7 @@ fn a_directory_that_cannot_answer_serves_the_cached_identity_as_offline() {
 /// what failed.
 #[test]
 fn a_refusing_keychain_is_not_served_as_offline() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_refusing_keychain_is_not_served_as_offline"
-    ));
+    crate::diagnostic::parent!(a_refusing_keychain_is_not_served_as_offline);
     let dir = tempfile::tempdir().expect("tempdir");
     let root = rooted(&dir);
     let env = env_in(&root);
@@ -408,10 +395,7 @@ fn a_refusing_keychain_is_not_served_as_offline() {
 /// a warm cache must answer for none of them.
 #[test]
 fn a_local_failure_in_rotation_is_never_served_as_offline() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_local_failure_in_rotation_is_never_served_as_offline"
-    ));
+    crate::diagnostic::parent!(a_local_failure_in_rotation_is_never_served_as_offline);
     const LOCK: &str = "/kendex/credentials.lock";
     const REJECTED: &str = r#"{"error":"invalid_token"}"#;
     const ROTATED: &str =
@@ -471,10 +455,7 @@ fn a_local_failure_in_rotation_is_never_served_as_offline() {
 /// guess from where in the sequence it happened.
 #[test]
 fn a_request_that_never_went_out_is_not_served_as_offline() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_request_that_never_went_out_is_not_served_as_offline"
-    ));
+    crate::diagnostic::parent!(a_request_that_never_went_out_is_not_served_as_offline);
     // `Canned` serves one queue to both verbs, so the second answer is
     // what the refresh POST gets.
     let scripts: [fn() -> Vec<Result<FetchResponse>>; 2] = [
@@ -509,10 +490,7 @@ fn a_request_that_never_went_out_is_not_served_as_offline() {
 /// `create_dir_all` refuses whatever the process's euid.
 #[test]
 fn a_cache_that_cannot_be_written_still_answers_the_fresh_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_cache_that_cannot_be_written_still_answers_the_fresh_name"
-    ));
+    crate::diagnostic::parent!(a_cache_that_cannot_be_written_still_answers_the_fresh_name);
     let dir = tempfile::tempdir().expect("tempdir");
     let root = rooted(&dir);
     let env = env_in(&root);
@@ -536,10 +514,7 @@ fn a_cache_that_cannot_be_written_still_answers_the_fresh_name() {
 /// someone as signed in under a credential the server has ended.
 #[test]
 fn an_expiry_survives_a_cache_that_cannot_be_dropped() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_expiry_survives_a_cache_that_cannot_be_dropped"
-    ));
+    crate::diagnostic::parent!(an_expiry_survives_a_cache_that_cannot_be_dropped);
     let dir = tempfile::tempdir().expect("tempdir");
     let root = rooted(&dir);
     let env = env_in(&root);
@@ -559,10 +534,7 @@ fn an_expiry_survives_a_cache_that_cannot_be_dropped() {
 
 #[test]
 fn network_away_with_nothing_cached_is_an_error() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::network_away_with_nothing_cached_is_an_error"
-    ));
+    crate::diagnostic::parent!(network_away_with_nothing_cached_is_an_error);
     let dir = tempfile::tempdir().expect("tempdir");
     let down = Canned::new(vec![away()]);
     let refused = me::load(&env_in(dir.path()), &down, &MemoryStore::signed_in()).unwrap_err();
@@ -574,10 +546,7 @@ fn network_away_with_nothing_cached_is_an_error() {
 
 #[test]
 fn a_dead_refresh_grant_reads_as_expired() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dead_refresh_grant_reads_as_expired"
-    ));
+    crate::diagnostic::parent!(a_dead_refresh_grant_reads_as_expired);
     let dir = tempfile::tempdir().expect("tempdir");
     let store = MemoryStore::signed_in();
     let fetch = Canned::new(vec![
@@ -598,10 +567,7 @@ fn a_dead_refresh_grant_reads_as_expired() {
 
 #[test]
 fn an_expired_credential_drops_the_cached_identity() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_expired_credential_drops_the_cached_identity"
-    ));
+    crate::diagnostic::parent!(an_expired_credential_drops_the_cached_identity);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -626,10 +592,7 @@ fn an_expired_credential_drops_the_cached_identity() {
 
 #[test]
 fn a_rotation_the_server_still_rejects_reads_as_expired() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_rotation_the_server_still_rejects_reads_as_expired"
-    ));
+    crate::diagnostic::parent!(a_rotation_the_server_still_rejects_reads_as_expired);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -659,10 +622,7 @@ fn a_rotation_the_server_still_rejects_reads_as_expired() {
 }
 #[test]
 fn revalidation_sends_the_etag_and_304_keeps_the_identity() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::revalidation_sends_the_etag_and_304_keeps_the_identity"
-    ));
+    crate::diagnostic::parent!(revalidation_sends_the_etag_and_304_keeps_the_identity);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -681,10 +641,7 @@ fn revalidation_sends_the_etag_and_304_keeps_the_identity() {
 
 #[test]
 fn a_cache_from_another_endpoint_is_never_served() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_cache_from_another_endpoint_is_never_served"
-    ));
+    crate::diagnostic::parent!(a_cache_from_another_endpoint_is_never_served);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let registry_dir = env.registry_cache_dir();
@@ -713,10 +670,7 @@ fn a_cache_from_another_endpoint_is_never_served() {
 
 #[test]
 fn sign_out_revokes_and_forgets_the_cached_identity() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::sign_out_revokes_and_forgets_the_cached_identity"
-    ));
+    crate::diagnostic::parent!(sign_out_revokes_and_forgets_the_cached_identity);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -739,10 +693,7 @@ fn sign_out_revokes_and_forgets_the_cached_identity() {
 
 #[test]
 fn a_failed_revocation_keeps_credential_and_cache_for_retry() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_failed_revocation_keeps_credential_and_cache_for_retry"
-    ));
+    crate::diagnostic::parent!(a_failed_revocation_keeps_credential_and_cache_for_retry);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -762,10 +713,7 @@ fn a_failed_revocation_keeps_credential_and_cache_for_retry() {
 
 #[test]
 fn a_fresh_sign_in_never_inherits_the_previous_identity() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_fresh_sign_in_never_inherits_the_previous_identity"
-    ));
+    crate::diagnostic::parent!(a_fresh_sign_in_never_inherits_the_previous_identity);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let store = MemoryStore::signed_in();
@@ -799,10 +747,7 @@ fn a_fresh_sign_in_never_inherits_the_previous_identity() {
 
 #[test]
 fn a_304_with_nothing_cached_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_304_with_nothing_cached_is_refused"
-    ));
+    crate::diagnostic::parent!(a_304_with_nothing_cached_is_refused);
     let dir = tempfile::tempdir().expect("tempdir");
     let unchanged = Canned::new(vec![ok(304, None, "")]);
     assert!(
@@ -818,10 +763,7 @@ fn a_304_with_nothing_cached_is_refused() {
 
 #[test]
 fn an_oversized_identity_cache_reads_as_no_cache() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_oversized_identity_cache_reads_as_no_cache"
-    ));
+    crate::diagnostic::parent!(an_oversized_identity_cache_reads_as_no_cache);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     // This endpoint's and this sign-in's own generation, holding an

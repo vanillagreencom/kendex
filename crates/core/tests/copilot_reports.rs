@@ -93,10 +93,7 @@ fn json(path: &std::path::Path) -> Value {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_event_copilot_does_not_have_is_reported_never_faked() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_event_copilot_does_not_have_is_reported_never_faked"
-    ));
+    crate::diagnostic::parent!(an_event_copilot_does_not_have_is_reported_never_faked);
     let f = fixture("\"copilot\"", "[hooks.done]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
@@ -124,10 +121,7 @@ fn an_event_copilot_does_not_have_is_reported_never_faked() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hooks_switched_off_in_claudes_settings_are_reported_inert() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::hooks_switched_off_in_claudes_settings_are_reported_inert"
-    ));
+    crate::diagnostic::parent!(hooks_switched_off_in_claudes_settings_are_reported_inert);
     let f = fixture("\"copilot\"", "[hooks.audit]\nsource = \"cat\"\n");
     let claude = f.project.join(".claude/settings.json");
     for disabled in [true, false] {
@@ -156,10 +150,9 @@ fn hooks_switched_off_in_claudes_settings_are_reported_inert() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_a_personal_setting_holds_down_cannot_be_switched_back_on_here() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_a_personal_setting_holds_down_cannot_be_switched_back_on_here"
-    ));
+    crate::diagnostic::parent!(
+        a_skill_a_personal_setting_holds_down_cannot_be_switched_back_on_here
+    );
     let f = fixture("\"copilot\"", "[skills.deploy]\nsource = \"cat\"\n");
     fs::write(
         f.env.home.join(".copilot/settings.json"),
@@ -184,10 +177,7 @@ fn a_skill_a_personal_setting_holds_down_cannot_be_switched_back_on_here() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_shared_skill_names_only_readers_that_accept_its_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_shared_skill_names_only_readers_that_accept_its_name"
-    ));
+    crate::diagnostic::parent!(a_shared_skill_names_only_readers_that_accept_its_name);
     for (name, expected) in [("deploy", true), ("Deploy", false)] {
         let f = fixture(
             "\"claude\"",
@@ -228,10 +218,7 @@ fn a_shared_skill_names_only_readers_that_accept_its_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_model_the_repository_will_not_run_is_named() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_model_the_repository_will_not_run_is_named"
-    ));
+    crate::diagnostic::parent!(a_model_the_repository_will_not_run_is_named);
     // A selector no harness can load is refused at render, and the refusal
     // names it, so the agent file it withholds is never missing in silence.
     for (model, record, refusal) in [
@@ -293,10 +280,7 @@ fn a_model_the_repository_will_not_run_is_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_copilots_loader_rejects_is_refused_with_the_one_that_works() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_name_copilots_loader_rejects_is_refused_with_the_one_that_works"
-    ));
+    crate::diagnostic::parent!(a_name_copilots_loader_rejects_is_refused_with_the_one_that_works);
     let f = fixture("\"copilot\"", "[skills.Deploy_Thing]\nsource = \"cat\"\n");
     let source = f.env.home.join("catalog/skills/Deploy_Thing");
     fs::create_dir_all(&source).unwrap();
@@ -328,10 +312,7 @@ fn a_name_copilots_loader_rejects_is_refused_with_the_one_that_works() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_declared_only_for_copilot_says_it_installed_nowhere() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_declared_only_for_copilot_says_it_installed_nowhere"
-    ));
+    crate::diagnostic::parent!(a_command_declared_only_for_copilot_says_it_installed_nowhere);
     let f = fixture("\"copilot\"", "[commands.ship]\nsource = \"cat\"\n");
     let source = f.env.home.join("catalog/commands");
     fs::create_dir_all(&source).unwrap();

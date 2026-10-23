@@ -92,10 +92,7 @@ fn skill_md(f: &Fixture, skill: &str) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_placing_skill_renders_the_paragraph_where_its_token_sits() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::each_placing_skill_renders_the_paragraph_where_its_token_sits"
-    ));
+    crate::diagnostic::parent!(each_placing_skill_renders_the_paragraph_where_its_token_sits);
     let f = fixture(&format!(
         "[shared-text]\ndelivery = \"{PARAGRAPH}\\n\\n\"\n\
          [skill-instructions]\n\

@@ -11,10 +11,7 @@ use super::rules::{document, severity_of, skill, skill_bytes};
 /// command, including when the pattern and body share a line.
 #[test]
 fn a_case_pattern_naming_sudo_is_not_running_sudo() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_case_pattern_naming_sudo_is_not_running_sudo"
-    ));
+    crate::diagnostic::parent!(a_case_pattern_naming_sudo_is_not_running_sudo);
     let rows = [
         (
             "case \"$tok\" in\n  sudo | command | env) continue ;;\nesac\n",
@@ -51,10 +48,7 @@ fn a_case_pattern_naming_sudo_is_not_running_sudo() {
 /// shipping an identity nothing checked.
 #[test]
 fn every_rule_says_what_it_fired_on() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_rule_says_what_it_fired_on"
-    ));
+    crate::diagnostic::parent!(every_rule_says_what_it_fired_on);
     let items = [
         authored_text(),
         read_files(),
@@ -204,10 +198,7 @@ fn each_match_is_its_own_question(findings: &[kendex_core::quality::Finding], le
 /// decode at all, whose bytes are gone by the time any rule sees them.
 #[test]
 fn a_file_rule_tells_two_files_apart_without_naming_either() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_file_rule_tells_two_files_apart_without_naming_either"
-    ));
+    crate::diagnostic::parent!(a_file_rule_tells_two_files_apart_without_naming_either);
     // Six shared code points and a seventh that differs, so both files
     // print the same six and the same "and 1 more".
     const SHARED: &str = "\u{00AD}\u{180E}\u{200B}\u{200C}\u{200D}\u{200E}";
@@ -244,10 +235,7 @@ fn a_file_rule_tells_two_files_apart_without_naming_either() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_finding_says_what_it_found_not_where() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_file_finding_says_what_it_found_not_where"
-    ));
+    crate::diagnostic::parent!(a_file_finding_says_what_it_found_not_where);
     let tree = skill(&[
         (
             "SKILL.md",

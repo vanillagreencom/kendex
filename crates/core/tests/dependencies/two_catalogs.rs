@@ -91,10 +91,7 @@ fn landed(f: &Fixture, name: &str, harness: HarnessId) -> (bool, bool) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_wrapper_is_withheld_where_the_judge_the_plan_writes_is_not() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_wrapper_is_withheld_where_the_judge_the_plan_writes_is_not"
-    ));
+    crate::diagnostic::parent!(a_wrapper_is_withheld_where_the_judge_the_plan_writes_is_not);
     let (f, other) =
         two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
     fs::write(other.join("hooks/judge.sh"), LATE_JUDGE_ALONE).unwrap();
@@ -130,10 +127,7 @@ fn a_wrapper_is_withheld_where_the_judge_the_plan_writes_is_not() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_judge_retired_by_the_catalog_it_comes_from_withholds_the_wrapper() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_judge_retired_by_the_catalog_it_comes_from_withholds_the_wrapper"
-    ));
+    crate::diagnostic::parent!(a_judge_retired_by_the_catalog_it_comes_from_withholds_the_wrapper);
     let (f, other) =
         two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[bundles.judges]\nsource = \"other\"\n");
     fs::write(
@@ -178,10 +172,7 @@ fn a_judge_retired_by_the_catalog_it_comes_from_withholds_the_wrapper() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash"
-    ));
+    crate::diagnostic::parent!(a_withheld_rebind_reaches_the_provenance_conflict_and_not_the_trash);
     let (f, other) = two_catalogs("[hooks.deliver]\nsource = \"other\"\n");
     apply_now(&f);
     assert_eq!(landed(&f, "deliver", HarnessId::Codex), (true, true));
@@ -274,10 +265,9 @@ const CRITIC_MAX: &str =
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_the_trash() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_the_trash"
-    ));
+    crate::diagnostic::parent!(
+        a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_the_trash
+    );
     /// The declaration's kind, its catalog file, the other catalog's
     /// bytes, the wrapper catalog's bytes, and the record line of Codex's
     /// refusal, where it refuses.
@@ -388,10 +378,9 @@ fn a_rebind_planning_nothing_on_a_tool_reaches_the_provenance_conflict_and_not_t
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rebind_to_a_catalog_that_cannot_answer_keeps_the_record_without_a_row() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_rebind_to_a_catalog_that_cannot_answer_keeps_the_record_without_a_row"
-    ));
+    crate::diagnostic::parent!(
+        a_rebind_to_a_catalog_that_cannot_answer_keeps_the_record_without_a_row
+    );
     /// What the wrapper's catalog holds: its copy of the agent, if any,
     /// and whether its control file parses.
     type Row = (&'static str, Option<&'static str>, bool);
@@ -502,10 +491,7 @@ impl Expected {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_kept_rebind_keeps_the_withheld_wrapper_it_requires"
-    ));
+    crate::diagnostic::parent!(a_kept_rebind_keeps_the_withheld_wrapper_it_requires);
     /// Whether the hook above is rebound; the rows the plan leaves on each
     /// of the three on Codex; and whether the three stay on Codex.
     type Row = (bool, [&'static [Expected]; 3], (bool, bool));
@@ -603,10 +589,7 @@ fn a_kept_rebind_keeps_the_withheld_wrapper_it_requires() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_whose_catalog_will_not_open_keeps_the_wrapper_installed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_whose_catalog_will_not_open_keeps_the_wrapper_installed"
-    ));
+    crate::diagnostic::parent!(a_companion_whose_catalog_will_not_open_keeps_the_wrapper_installed);
     let (f, other) =
         two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
     apply_now(&f);
@@ -670,10 +653,7 @@ fn a_companion_whose_catalog_will_not_open_keeps_the_wrapper_installed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_whose_catalog_never_opened_withholds_a_fresh_install() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_whose_catalog_never_opened_withholds_a_fresh_install"
-    ));
+    crate::diagnostic::parent!(a_companion_whose_catalog_never_opened_withholds_a_fresh_install);
     let (f, other) = two_catalogs(
         "[hooks.top]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n",
     );
@@ -721,10 +701,9 @@ fn a_companion_whose_catalog_never_opened_withholds_a_fresh_install() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_whose_catalog_hides_its_content_keeps_the_wrapper_installed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_whose_catalog_hides_its_content_keeps_the_wrapper_installed"
-    ));
+    crate::diagnostic::parent!(
+        a_companion_whose_catalog_hides_its_content_keeps_the_wrapper_installed
+    );
     let (f, other) = two_catalogs(
         "[hooks.top]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n",
     );
@@ -805,10 +784,7 @@ fn trash_ops(report: &kendex_core::engine::EngineReport) -> Vec<&PathBuf> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_refusal_holds_when_the_companion_catalog_is_silent() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_manifest_refusal_holds_when_the_companion_catalog_is_silent"
-    ));
+    crate::diagnostic::parent!(a_manifest_refusal_holds_when_the_companion_catalog_is_silent);
     let (f, other) =
         two_catalogs("[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"other\"\n");
     apply_now(&f);
@@ -861,10 +837,9 @@ fn a_manifest_refusal_holds_when_the_companion_catalog_is_silent() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one"
-    ));
+    crate::diagnostic::parent!(
+        a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one
+    );
     /// Whether the hook's own catalog still offers `extra`; the rows the
     /// plan leaves on the hook; and whether the hook and `extra` stay on
     /// Codex.
@@ -954,10 +929,7 @@ fn a_silent_companion_catalog_takes_nothing_and_yields_to_a_missing_one() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_is_orphaned_only_by_its_requirers_final_withholding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_is_orphaned_only_by_its_requirers_final_withholding"
-    ));
+    crate::diagnostic::parent!(a_companion_is_orphaned_only_by_its_requirers_final_withholding);
     for (label, extra) in [("three steps", EXTRA_MID_X), ("one step", EXTRA_MID_Y)] {
         let (f, other) =
             two_catalogs("[hooks.boss]\nsource = \"cat\"\n\n[hooks.z]\nsource = \"other\"\n");

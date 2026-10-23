@@ -117,10 +117,7 @@ fn installed(f: &Fixture, name: &str) -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_installation_records_every_reason_it_exists() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_installation_records_every_reason_it_exists"
-    ));
+    crate::diagnostic::parent!(an_installation_records_every_reason_it_exists);
     let f = fixture("[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -141,10 +138,7 @@ fn an_installation_records_every_reason_it_exists() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_installs_without_being_declared() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dependency_installs_without_being_declared"
-    ));
+    crate::diagnostic::parent!(a_dependency_installs_without_being_declared);
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -162,10 +156,7 @@ fn a_dependency_installs_without_being_declared() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_multi_edge_installation_survives_every_removal_order() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_multi_edge_installation_survives_every_removal_order"
-    ));
+    crate::diagnostic::parent!(a_multi_edge_installation_survives_every_removal_order);
     let f = fixture("[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -203,10 +194,7 @@ fn a_multi_edge_installation_survives_every_removal_order() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_suppressed_dependency_survives_refresh_and_lock_loss() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_suppressed_dependency_survives_refresh_and_lock_loss"
-    ));
+    crate::diagnostic::parent!(a_suppressed_dependency_survives_refresh_and_lock_loss);
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(installed(&f, "github"));
@@ -253,10 +241,7 @@ fn a_suppressed_dependency_survives_refresh_and_lock_loss() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_the_last_dependent_offers_to_sweep_what_it_needed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_the_last_dependent_offers_to_sweep_what_it_needed"
-    ));
+    crate::diagnostic::parent!(removing_the_last_dependent_offers_to_sweep_what_it_needed);
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -283,10 +268,7 @@ fn removing_the_last_dependent_offers_to_sweep_what_it_needed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_the_catalog_lacks_is_a_finding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dependency_the_catalog_lacks_is_a_finding"
-    ));
+    crate::diagnostic::parent!(a_dependency_the_catalog_lacks_is_a_finding);
     for key in ["required", "agents"] {
         let f = fixture("[skills.dev]\nsource = \"cat\"\n");
         skill(
@@ -314,10 +296,7 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn required_agents_only_land_where_the_tool_installs_agents() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::required_agents_only_land_where_the_tool_installs_agents"
-    ));
+    crate::diagnostic::parent!(required_agents_only_land_where_the_tool_installs_agents);
     for global in [false, true] {
         let mut f = fixture("");
         if global {
@@ -378,10 +357,7 @@ fn required_agents_only_land_where_the_tool_installs_agents() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn skills_that_require_each_other_install_and_are_reported() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::skills_that_require_each_other_install_and_are_reported"
-    ));
+    crate::diagnostic::parent!(skills_that_require_each_other_install_and_are_reported);
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     skill(&f.source, "github", "dependencies:\n  required: [dev]\n");
 
@@ -404,10 +380,7 @@ fn skills_that_require_each_other_install_and_are_reported() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_that_requires_itself_is_named() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_that_requires_itself_is_named"
-    ));
+    crate::diagnostic::parent!(a_skill_that_requires_itself_is_named);
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     skill(&f.source, "dev", "dependencies:\n  required: [dev]\n");
 
@@ -437,10 +410,7 @@ fn a_skill_that_requires_itself_is_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_reference_that_does_not_reach_every_tool_claims_no_co_install() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_reference_that_does_not_reach_every_tool_claims_no_co_install"
-    ));
+    crate::diagnostic::parent!(a_reference_that_does_not_reach_every_tool_claims_no_co_install);
     let rows: [(&str, &str, &str, bool); 3] = [
         ("split across tools", "[\"claude\"]", "[\"codex\"]", true),
         (

@@ -35,10 +35,7 @@ fn an_explicit_root_outranks_os_directories() {
         return;
     }
 
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_explicit_root_outranks_os_directories"
-    ));
+    crate::diagnostic::parent!(an_explicit_root_outranks_os_directories);
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     let home = root.join("portable home");
@@ -86,10 +83,7 @@ fn fixture_data_and_trash_stay_inside_each_home() {
         return;
     }
 
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::fixture_data_and_trash_stay_inside_each_home"
-    ));
+    crate::diagnostic::parent!(fixture_data_and_trash_stay_inside_each_home);
     let fixtures = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
     let launch = |home: &std::path::Path, system: bool| {
         let mut command = Command::new(std::env::current_exe().unwrap());

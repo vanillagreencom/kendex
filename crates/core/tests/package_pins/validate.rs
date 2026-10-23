@@ -8,10 +8,7 @@ const REPO: &str = "owner/catalog";
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_item_rev_that_is_not_a_commit_id_is_a_finding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_item_rev_that_is_not_a_commit_id_is_a_finding"
-    ));
+    crate::diagnostic::parent!(an_item_rev_that_is_not_a_commit_id_is_a_finding);
     let table: toml::Table = format!(
         "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[skills.gh]\nsource = \"cat\"\nrev = \"v1\"\n"
     )
@@ -37,10 +34,7 @@ fn an_item_rev_that_is_not_a_commit_id_is_a_finding() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rev_on_a_path_source_is_a_finding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_rev_on_a_path_source_is_a_finding"
-    ));
+    crate::diagnostic::parent!(a_rev_on_a_path_source_is_a_finding);
     let table: toml::Table = format!(
         "schema = 7\n[sources.here]\npath = \"catalog\"\n[skills.gh]\nsource = \"here\"\nrev = \"{}\"\n",
         "a".repeat(40)

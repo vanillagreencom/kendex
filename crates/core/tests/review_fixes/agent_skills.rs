@@ -17,10 +17,7 @@ use super::{add_skill, apply_now, declare, loaded_manifest, project, put, world}
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_renders_the_skills_it_actually_has() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agent_renders_the_skills_it_actually_has"
-    ));
+    crate::diagnostic::parent!(an_agent_renders_the_skills_it_actually_has);
     let w = world();
     let scope = project(&w);
     declare(
@@ -56,10 +53,7 @@ fn an_agent_renders_the_skills_it_actually_has() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declaration_under_the_base_agents_key_holds_on_the_first_apply() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_declaration_under_the_base_agents_key_holds_on_the_first_apply"
-    ));
+    crate::diagnostic::parent!(a_declaration_under_the_base_agents_key_holds_on_the_first_apply);
     let w = world();
     let scope = project(&w);
     add_skill(&w.source, "rust-perf");
@@ -91,10 +85,7 @@ fn a_declaration_under_the_base_agents_key_holds_on_the_first_apply() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_the_declaration_drops_the_planners_own_manifest_save() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::keeping_the_declaration_drops_the_planners_own_manifest_save"
-    ));
+    crate::diagnostic::parent!(keeping_the_declaration_drops_the_planners_own_manifest_save);
     let w = world();
     let scope = project(&w);
     declare(
@@ -155,10 +146,7 @@ fn keeping_the_declaration_drops_the_planners_own_manifest_save() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_the_declaration_leaves_a_reviewers_skill_list_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::keeping_the_declaration_leaves_a_reviewers_skill_list_alone"
-    ));
+    crate::diagnostic::parent!(keeping_the_declaration_leaves_a_reviewers_skill_list_alone);
     let w = world();
     let scope = project(&w);
     put(

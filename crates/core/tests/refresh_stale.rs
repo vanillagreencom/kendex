@@ -65,10 +65,7 @@ fn world() -> World {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_job_finishes_the_plan_over_unrecorded_copies() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_job_finishes_the_plan_over_unrecorded_copies"
-    ));
+    crate::diagnostic::parent!(the_job_finishes_the_plan_over_unrecorded_copies);
     let w = world();
     let memo = drift::copies::memo_path(&w.env, &w.scope);
     assert!(!memo.exists());
@@ -101,10 +98,7 @@ fn the_job_finishes_the_plan_over_unrecorded_copies() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_scope_of_path_sources_gets_no_snapshot_from_the_job() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_scope_of_path_sources_gets_no_snapshot_from_the_job"
-    ));
+    crate::diagnostic::parent!(a_scope_of_path_sources_gets_no_snapshot_from_the_job);
     let w = world();
     drift::refresh::refresh_stale(&w.env, std::slice::from_ref(&w.scope));
     assert!(

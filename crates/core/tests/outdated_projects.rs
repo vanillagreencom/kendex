@@ -9,10 +9,7 @@ use kendex_core::{manifest, settings};
 #[test]
 #[allow(clippy::expect_used, reason = "fixture preconditions")]
 fn only_a_readable_older_root_schema_is_outdated() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::only_a_readable_older_root_schema_is_outdated"
-    ));
+    crate::diagnostic::parent!(only_a_readable_older_root_schema_is_outdated);
     let tmp = tempfile::tempdir().expect("fixture home");
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);

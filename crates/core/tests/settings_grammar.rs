@@ -161,10 +161,7 @@ fn spelled(verdict: &Verdict) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_corpus_records_what_both_loaders_do() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_corpus_records_what_both_loaders_do"
-    ));
+    crate::diagnostic::parent!(the_corpus_records_what_both_loaders_do);
     let rows = rows();
     let observed = observed();
     assert_eq!(rows.len(), observed.len(), "one observation per row");
@@ -182,10 +179,7 @@ fn the_corpus_records_what_both_loaders_do() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_reader_flags_exactly_what_the_loaders_cannot_read() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_reader_flags_exactly_what_the_loaders_cannot_read"
-    ));
+    crate::diagnostic::parent!(the_reader_flags_exactly_what_the_loaders_cannot_read);
     for row in rows() {
         let found = read(&row.body).findings;
         match &row.verdict {
@@ -209,10 +203,7 @@ fn the_reader_flags_exactly_what_the_loaders_cannot_read() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_readable_value_decodes_to_what_the_loaders_export() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_readable_value_decodes_to_what_the_loaders_export"
-    ));
+    crate::diagnostic::parent!(a_readable_value_decodes_to_what_the_loaders_export);
     for row in rows() {
         let Verdict::Loads(exported) = &row.verdict else {
             continue;
@@ -239,10 +230,7 @@ fn a_readable_value_decodes_to_what_the_loaders_export() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_harness_runs_in_a_controlled_environment() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_harness_runs_in_a_controlled_environment"
-    ));
+    crate::diagnostic::parent!(the_harness_runs_in_a_controlled_environment);
     assert!(
         std::env::var_os("HOME").is_some(),
         "this test reads HOME as a variable every caller has; without one it proves nothing"
@@ -272,10 +260,7 @@ fn the_harness_runs_in_a_controlled_environment() {
 /// load created, and no load can create one.
 #[test]
 fn the_observation_ignores_a_hostile_environment() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_observation_ignores_a_hostile_environment"
-    ));
+    crate::diagnostic::parent!(the_observation_ignores_a_hostile_environment);
     let hostile = harness(&[
         ("WAIT", "ambient"),
         ("_WAIT", "ambient"),
@@ -298,10 +283,7 @@ fn the_observation_ignores_a_hostile_environment() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_relative_repo_root_observes_the_same_thing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_relative_repo_root_observes_the_same_thing"
-    ));
+    crate::diagnostic::parent!(a_relative_repo_root_observes_the_same_thing);
     let output = controlled_bash()
         .arg(script_path())
         .arg(".")

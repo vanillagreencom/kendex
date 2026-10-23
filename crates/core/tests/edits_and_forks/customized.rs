@@ -11,10 +11,7 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_settings_customized_package_is_not_edited_until_a_file_is_changed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_settings_customized_package_is_not_edited_until_a_file_is_changed"
-    ));
+    crate::diagnostic::parent!(a_settings_customized_package_is_not_edited_until_a_file_is_changed);
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     fs::write(

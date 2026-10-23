@@ -14,10 +14,7 @@ use serde_json::{Value, json};
 
 #[test]
 fn builtin_mcp_toggle_verify_and_removal_use_the_native_switch() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::builtin_mcp_toggle_verify_and_removal_use_the_native_switch"
-    ));
+    crate::diagnostic::parent!(builtin_mcp_toggle_verify_and_removal_use_the_native_switch);
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -121,10 +118,7 @@ fn builtin_mcp_toggle_verify_and_removal_use_the_native_switch() {
 
 #[test]
 fn configured_copilot_root_owns_native_mcp_reads_writes_and_removal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::configured_copilot_root_owns_native_mcp_reads_writes_and_removal"
-    ));
+    crate::diagnostic::parent!(configured_copilot_root_owns_native_mcp_reads_writes_and_removal);
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux).with_var(
@@ -224,10 +218,9 @@ fn configured_copilot_root_owns_native_mcp_reads_writes_and_removal() {
 
 #[test]
 fn commented_native_mcp_settings_refuse_toggle_removal_and_reconciliation() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::commented_native_mcp_settings_refuse_toggle_removal_and_reconciliation"
-    ));
+    crate::diagnostic::parent!(
+        commented_native_mcp_settings_refuse_toggle_removal_and_reconciliation
+    );
     for (project, text) in [
         (
             false,
@@ -293,10 +286,9 @@ fn commented_native_mcp_settings_refuse_toggle_removal_and_reconciliation() {
 
 #[test]
 fn project_local_builtin_hold_warns_on_enable_and_verify_without_writes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::project_local_builtin_hold_warns_on_enable_and_verify_without_writes"
-    ));
+    crate::diagnostic::parent!(
+        project_local_builtin_hold_warns_on_enable_and_verify_without_writes
+    );
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -346,10 +338,7 @@ fn project_local_builtin_hold_warns_on_enable_and_verify_without_writes() {
 
 #[test]
 fn native_mcp_settings_union_holds_and_bad_layers_never_report_on() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::native_mcp_settings_union_holds_and_bad_layers_never_report_on"
-    ));
+    crate::diagnostic::parent!(native_mcp_settings_union_holds_and_bad_layers_never_report_on);
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -452,10 +441,7 @@ fn native_mcp_settings_union_holds_and_bad_layers_never_report_on() {
 
 #[test]
 fn builtin_source_refuses_non_native_declarations_and_legacy_settings() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::builtin_source_refuses_non_native_declarations_and_legacy_settings"
-    ));
+    crate::diagnostic::parent!(builtin_source_refuses_non_native_declarations_and_legacy_settings);
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -522,10 +508,7 @@ fn builtin_source_refuses_non_native_declarations_and_legacy_settings() {
 
 #[test]
 fn a_native_row_never_claims_or_toggles_a_same_named_catalog_server() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_native_row_never_claims_or_toggles_a_same_named_catalog_server"
-    ));
+    crate::diagnostic::parent!(a_native_row_never_claims_or_toggles_a_same_named_catalog_server);
     for (name, project, bundle) in [
         ("githubiq", false, false),
         ("githubiq", true, false),
@@ -609,10 +592,9 @@ fn a_native_row_never_claims_or_toggles_a_same_named_catalog_server() {
 
 #[test]
 fn a_bundle_native_named_member_can_be_declared_and_toggled_from_its_source() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_bundle_native_named_member_can_be_declared_and_toggled_from_its_source"
-    ));
+    crate::diagnostic::parent!(
+        a_bundle_native_named_member_can_be_declared_and_toggled_from_its_source
+    );
     for (name, project) in [
         ("githubiq", false),
         ("githubiq", true),
@@ -688,10 +670,7 @@ fn a_bundle_native_named_member_can_be_declared_and_toggled_from_its_source() {
 
 #[test]
 fn a_builtin_record_never_claims_a_handwritten_registration() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_builtin_record_never_claims_a_handwritten_registration"
-    ));
+    crate::diagnostic::parent!(a_builtin_record_never_claims_a_handwritten_registration);
     for (name, project) in [
         ("githubiq", false),
         ("githubiq", true),

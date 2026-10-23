@@ -51,10 +51,7 @@ fn declare(world: &World, hook_lines: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_every_agent_hook_registers_on_codex_and_removal_reverses_it"
-    ));
+    crate::diagnostic::parent!(an_every_agent_hook_registers_on_codex_and_removal_reverses_it);
     let w = world();
     declare(
         &w,
@@ -106,10 +103,7 @@ fn an_every_agent_hook_registers_on_codex_and_removal_reverses_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_custom_hook_refusal_names_its_delivery_limit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_custom_hook_refusal_names_its_delivery_limit"
-    ));
+    crate::diagnostic::parent!(a_custom_hook_refusal_names_its_delivery_limit);
     for (harness, event, agents, record) in [
         (
             "codex",
@@ -155,10 +149,7 @@ fn a_custom_hook_refusal_names_its_delivery_limit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_disabled_hook_keeps_its_entry_and_registers_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_disabled_hook_keeps_its_entry_and_registers_nothing"
-    ));
+    crate::diagnostic::parent!(a_disabled_hook_keeps_its_entry_and_registers_nothing);
     let w = world();
     declare(
         &w,
@@ -179,10 +170,7 @@ fn a_disabled_hook_keeps_its_entry_and_registers_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_every_agent_hook_on_claude_lives_in_settings_not_agent_files() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_every_agent_hook_on_claude_lives_in_settings_not_agent_files"
-    ));
+    crate::diagnostic::parent!(an_every_agent_hook_on_claude_lives_in_settings_not_agent_files);
     let w = world();
     fs::create_dir_all(w.project.join(".claude")).unwrap();
     fs::write(
@@ -269,10 +257,9 @@ fn claude_settings_catalog(w: &World) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn claude_project_settings_default_reaches_enabled_claude_installations_only_in_project_scope() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::claude_project_settings_default_reaches_enabled_claude_installations_only_in_project_scope"
-    ));
+    crate::diagnostic::parent!(
+        claude_project_settings_default_reaches_enabled_claude_installations_only_in_project_scope
+    );
     for &(harness, global, declaration, existing, expected, settings_exist) in CLAUDE_SETTINGS_ROWS
     {
         let w = world();
@@ -361,10 +348,7 @@ fn claude_project_settings_default_reaches_enabled_claude_installations_only_in_
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dangerous_command_is_scored_like_a_dangerous_catalog_script() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dangerous_command_is_scored_like_a_dangerous_catalog_script"
-    ));
+    crate::diagnostic::parent!(a_dangerous_command_is_scored_like_a_dangerous_catalog_script);
     let w = world();
     declare(
         &w,

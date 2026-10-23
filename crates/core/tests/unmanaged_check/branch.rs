@@ -30,10 +30,7 @@ fn git(dir: &Path, args: &[&str]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_branch_that_cannot_be_read_records_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_branch_that_cannot_be_read_records_nothing"
-    ));
+    crate::diagnostic::parent!(a_branch_that_cannot_be_read_records_nothing);
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();

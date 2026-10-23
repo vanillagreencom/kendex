@@ -62,10 +62,7 @@ fn declared_roots() -> BTreeSet<String> {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn a_root_for_every_harness_skills_surface() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_root_for_every_harness_skills_surface"
-    ));
+    crate::diagnostic::parent!(a_root_for_every_harness_skills_surface);
     let declared = declared_roots();
     let searched: BTreeSet<String> = kendex_core::guard::SEARCH_ROOTS
         .iter()
@@ -107,10 +104,7 @@ fn a_root_for_every_harness_skills_surface() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn the_packages_own_list_is_the_same_roots_in_the_same_order() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_packages_own_list_is_the_same_roots_in_the_same_order"
-    ));
+    crate::diagnostic::parent!(the_packages_own_list_is_the_same_roots_in_the_same_order);
     let ours: Vec<String> = kendex_core::guard::SEARCH_ROOTS
         .iter()
         .map(|root| (*root).to_owned())
@@ -131,10 +125,7 @@ fn the_packages_own_list_is_the_same_roots_in_the_same_order() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn the_packages_own_list_covers_every_harness_skills_surface() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_packages_own_list_covers_every_harness_skills_surface"
-    ));
+    crate::diagnostic::parent!(the_packages_own_list_covers_every_harness_skills_surface);
     let theirs: BTreeSet<String> = package_skill_roots().into_iter().collect();
     let declared = declared_roots();
     let unsearched: Vec<&String> = declared.difference(&theirs).collect();

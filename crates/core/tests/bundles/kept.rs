@@ -60,10 +60,9 @@ fn refresh(f: &Fixture) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_shared_member_keeps_the_kept_sets_edge_after_the_other_set_drops_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_shared_member_keeps_the_kept_sets_edge_after_the_other_set_drops_it"
-    ));
+    crate::diagnostic::parent!(
+        a_shared_member_keeps_the_kept_sets_edge_after_the_other_set_drops_it
+    );
     for (shared, kept_edge) in [
         ("docs", member_of("cat", "starter")),
         ("github", required_by("cat", "dev")),
@@ -107,10 +106,9 @@ fn a_shared_member_keeps_the_kept_sets_edge_after_the_other_set_drops_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kept_members_dependency_stays_with_no_row_in_the_plan_verify_reads() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_kept_members_dependency_stays_with_no_row_in_the_plan_verify_reads"
-    ));
+    crate::diagnostic::parent!(
+        a_kept_members_dependency_stays_with_no_row_in_the_plan_verify_reads
+    );
     for (name, kept) in kept_rows("") {
         let f = fixture(STARTER);
         apply_now(&f);
@@ -140,10 +138,7 @@ fn a_kept_members_dependency_stays_with_no_row_in_the_plan_verify_reads() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_a_rendered_member_no_longer_requires_goes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dependency_a_rendered_member_no_longer_requires_goes"
-    ));
+    crate::diagnostic::parent!(a_dependency_a_rendered_member_no_longer_requires_goes);
     for (name, kept) in kept_rows("\"dev\"") {
         let f = fixture(BOTH);
         catalog_bundles(&f.source, &offered("\"dev\""));
@@ -172,10 +167,7 @@ fn a_dependency_a_rendered_member_no_longer_requires_goes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_a_retired_set_keeps_is_held_to_its_record() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_copy_a_retired_set_keeps_is_held_to_its_record"
-    ));
+    crate::diagnostic::parent!(a_copy_a_retired_set_keeps_is_held_to_its_record);
     for (kind, name, path, edited) in [
         (ItemKind::Agent, "writer", ".claude/agents/writer.md", false),
         (
@@ -229,10 +221,7 @@ fn a_copy_a_retired_set_keeps_is_held_to_its_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_the_other_set_leaves_a_member_the_kept_set_holds() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_the_other_set_leaves_a_member_the_kept_set_holds"
-    ));
+    crate::diagnostic::parent!(removing_the_other_set_leaves_a_member_the_kept_set_holds);
     for (name, kept) in kept_rows("\"docs\"") {
         let f = fixture(BOTH);
         catalog_bundles(&f.source, &offered("\"docs\""));
@@ -255,10 +244,7 @@ fn removing_the_other_set_leaves_a_member_the_kept_set_holds() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_removal_on_another_tool_leaves_the_tree_a_kept_copy_links() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_removal_on_another_tool_leaves_the_tree_a_kept_copy_links"
-    ));
+    crate::diagnostic::parent!(a_removal_on_another_tool_leaves_the_tree_a_kept_copy_links);
     let f = fixture("");
     write(
         &f.project,

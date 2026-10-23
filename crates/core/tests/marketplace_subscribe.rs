@@ -78,10 +78,7 @@ fn fixture() -> (tempfile::TempDir, Env, Scope, PathBuf) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_full_url_reference_declares_a_remote_not_a_path() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_full_url_reference_declares_a_remote_not_a_path"
-    ));
+    crate::diagnostic::parent!(a_full_url_reference_declares_a_remote_not_a_path);
     let (_tmp, env, scope, project) = fixture();
     let report = source_ops::add_source(
         &env,
@@ -102,10 +99,7 @@ fn a_full_url_reference_declares_a_remote_not_a_path() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skills_sh_url_subscribes_the_repo_and_names_the_package_lead() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skills_sh_url_subscribes_the_repo_and_names_the_package_lead"
-    ));
+    crate::diagnostic::parent!(a_skills_sh_url_subscribes_the_repo_and_names_the_package_lead);
     let (_tmp, env, scope, project) = fixture();
     let subscribed = source_ops::subscribe(
         &env,
@@ -131,10 +125,7 @@ fn a_skills_sh_url_subscribes_the_repo_and_names_the_package_lead() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_tree_url_subscribes_the_whole_repo_and_surfaces_the_path() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_tree_url_subscribes_the_whole_repo_and_surfaces_the_path"
-    ));
+    crate::diagnostic::parent!(a_tree_url_subscribes_the_whole_repo_and_surfaces_the_path);
     let (_tmp, env, scope, project) = fixture();
     let dir = upstream(env.home.as_path(), "o/r");
     git(&dir, &["branch", "feat/x"]);
@@ -171,10 +162,7 @@ fn a_tree_url_subscribes_the_whole_repo_and_surfaces_the_path() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_ambiguous_tree_ref_is_refused_naming_both_and_writes_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_ambiguous_tree_ref_is_refused_naming_both_and_writes_nothing"
-    ));
+    crate::diagnostic::parent!(an_ambiguous_tree_ref_is_refused_naming_both_and_writes_nothing);
     let (_tmp, env, scope, project) = fixture();
     let dir = upstream(env.home.as_path(), "o/r");
     git(&dir, &["branch", "a/b"]);
@@ -193,10 +181,7 @@ fn an_ambiguous_tree_ref_is_refused_naming_both_and_writes_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_offline_tree_url_is_refused_before_any_write() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_offline_tree_url_is_refused_before_any_write"
-    ));
+    crate::diagnostic::parent!(an_offline_tree_url_is_refused_before_any_write);
     let (_tmp, env, scope, project) = fixture();
     let existing = "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n";
     fs::write(project.join("kendex.toml"), existing).unwrap();
@@ -224,10 +209,7 @@ fn an_offline_tree_url_is_refused_before_any_write() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_repo_already_subscribed_under_another_alias_is_refused_naming_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_repo_already_subscribed_under_another_alias_is_refused_naming_it"
-    ));
+    crate::diagnostic::parent!(a_repo_already_subscribed_under_another_alias_is_refused_naming_it);
     let (_tmp, env, scope, project) = fixture();
     let report = source_ops::add_source(&env, &scope, "first", "o/r").unwrap();
     apply::execute(&env, &report.plan).unwrap();
@@ -258,10 +240,9 @@ fn a_repo_already_subscribed_under_another_alias_is_refused_naming_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn subscribing_a_project_from_a_personal_subscription_mutates_only_the_project() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::subscribing_a_project_from_a_personal_subscription_mutates_only_the_project"
-    ));
+    crate::diagnostic::parent!(
+        subscribing_a_project_from_a_personal_subscription_mutates_only_the_project
+    );
     let (_tmp, env, _scope, project) = fixture();
     let report = source_ops::subscribe(&env, &Scope::Global, "team/tools@v2", Some("mkt"))
         .unwrap()
@@ -339,10 +320,7 @@ fn add_all(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_default_add_lands_on_the_subscription_with_the_default_repo() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_default_add_lands_on_the_subscription_with_the_default_repo"
-    ));
+    crate::diagnostic::parent!(a_default_add_lands_on_the_subscription_with_the_default_repo);
     let (_tmp, env, scope, project) = fixture();
     upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
     remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
@@ -367,10 +345,7 @@ fn a_default_add_lands_on_the_subscription_with_the_default_repo() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_default_repo_subscriptions_prefer_the_seeded_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_default_repo_subscriptions_prefer_the_seeded_name"
-    ));
+    crate::diagnostic::parent!(two_default_repo_subscriptions_prefer_the_seeded_name);
     let (_tmp, env, scope, project) = fixture();
     upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
     remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
@@ -393,10 +368,7 @@ fn two_default_repo_subscriptions_prefer_the_seeded_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_default_repo_subscriptions_neither_seeded_refuse_naming_both() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_default_repo_subscriptions_neither_seeded_refuse_naming_both"
-    ));
+    crate::diagnostic::parent!(two_default_repo_subscriptions_neither_seeded_refuse_naming_both);
     let (_tmp, env, scope, project) = fixture();
     fs::write(
         project.join("kendex.toml"),
@@ -424,10 +396,7 @@ fn two_default_repo_subscriptions_neither_seeded_refuse_naming_both() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_with_no_manifest_reaches_the_personal_scopes_default() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_with_no_manifest_reaches_the_personal_scopes_default"
-    ));
+    crate::diagnostic::parent!(a_project_with_no_manifest_reaches_the_personal_scopes_default);
     let (_tmp, env, scope, project) = fixture();
     upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
     remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
@@ -452,10 +421,9 @@ fn a_project_with_no_manifest_reaches_the_personal_scopes_default() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_project_writes_nothing_where_the_personal_default_cannot_serve() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_fresh_project_writes_nothing_where_the_personal_default_cannot_serve"
-    ));
+    crate::diagnostic::parent!(
+        a_fresh_project_writes_nothing_where_the_personal_default_cannot_serve
+    );
     let (_tmp, env, scope, project) = fixture();
     upstream(env.home.as_path(), DEFAULT_SOURCE_REPO);
     remote::sync(&env, DEFAULT_SOURCE_REPO, None).unwrap();
@@ -494,10 +462,7 @@ fn a_fresh_project_writes_nothing_where_the_personal_default_cannot_serve() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn no_default_subscription_anywhere_is_a_typed_error_never_a_guess() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::no_default_subscription_anywhere_is_a_typed_error_never_a_guess"
-    ));
+    crate::diagnostic::parent!(no_default_subscription_anywhere_is_a_typed_error_never_a_guess);
     let (_tmp, env, scope, project) = fixture();
     let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
     fs::create_dir_all(personal.parent().unwrap()).unwrap();
@@ -530,10 +495,7 @@ fn no_default_subscription_anywhere_is_a_typed_error_never_a_guess() {
 
 #[test]
 fn catalog_aliases_never_use_reserved_source_names() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::catalog_aliases_never_use_reserved_source_names"
-    ));
+    crate::diagnostic::parent!(catalog_aliases_never_use_reserved_source_names);
     use kendex_core::manifest::{self, ItemDecl, SourceDecl};
     use kendex_core::model::{HarnessId, ItemKind};
     for (reserved, project) in [

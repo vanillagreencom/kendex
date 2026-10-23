@@ -22,10 +22,7 @@ fn add_skills(w: &World, skills: &[&str]) -> kendex_core::engine::EngineReport {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_leaves_the_scopes_followers_at_their_commits() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_add_leaves_the_scopes_followers_at_their_commits"
-    ));
+    crate::diagnostic::parent!(an_add_leaves_the_scopes_followers_at_their_commits);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     let first = commit(&w.upstream, "one");
@@ -54,10 +51,7 @@ fn an_add_leaves_the_scopes_followers_at_their_commits() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_changes_only_new_packages_and_their_dependencies() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_add_changes_only_new_packages_and_their_dependencies"
-    ));
+    crate::diagnostic::parent!(an_add_changes_only_new_packages_and_their_dependencies);
     use kendex_core::lock::{load, lock_path};
     use kendex_core::model::ItemKind;
     for (missing, edit_source) in [(false, false), (true, false), (false, true)] {
@@ -143,10 +137,9 @@ fn an_add_changes_only_new_packages_and_their_dependencies() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_retains_installed_paths_for_verification_and_commit_ownership() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_add_retains_installed_paths_for_verification_and_commit_ownership"
-    ));
+    crate::diagnostic::parent!(
+        an_add_retains_installed_paths_for_verification_and_commit_ownership
+    );
     use kendex_core::attest::{self, Reading};
     use kendex_core::engine::generated_paths::INVENTORY;
 
@@ -261,10 +254,7 @@ fn an_add_retains_installed_paths_for_verification_and_commit_ownership() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_named_package_installed_at_another_commit_is_said_to_move() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_named_package_installed_at_another_commit_is_said_to_move"
-    ));
+    crate::diagnostic::parent!(a_named_package_installed_at_another_commit_is_said_to_move);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     let first = commit(&w.upstream, "one");
@@ -302,10 +292,7 @@ fn a_named_package_installed_at_another_commit_is_said_to_move() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_shared_with_a_held_package_is_wanted_at_one_commit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dependency_shared_with_a_held_package_is_wanted_at_one_commit"
-    ));
+    crate::diagnostic::parent!(a_dependency_shared_with_a_held_package_is_wanted_at_one_commit);
     let w = world();
     let requires_z = "dependencies:\n  required: [z]\n";
     write_skill(&w.upstream, "a", requires_z, "a.");
@@ -345,10 +332,7 @@ fn a_dependency_shared_with_a_held_package_is_wanted_at_one_commit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_refuses_dependency_revision_conflicts_before_any_write() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_add_refuses_dependency_revision_conflicts_before_any_write"
-    ));
+    crate::diagnostic::parent!(an_add_refuses_dependency_revision_conflicts_before_any_write);
     use kendex_core::error::CoreError;
     use kendex_core::model::ItemKind;
 
@@ -449,10 +433,7 @@ fn an_add_refuses_dependency_revision_conflicts_before_any_write() {
     reason = "one contract table: retained bytes, positions and provenance across tools and pending edits"
 )]
 fn a_new_tool_dependency_keeps_installed_shared_bytes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_new_tool_dependency_keeps_installed_shared_bytes"
-    ));
+    crate::diagnostic::parent!(a_new_tool_dependency_keeps_installed_shared_bytes);
     use kendex_core::lock::{entry_key, load, lock_path};
     use kendex_core::model::{HarnessId, ItemKind};
 
@@ -594,10 +575,7 @@ fn a_new_tool_dependency_keeps_installed_shared_bytes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_refuses_a_different_package_at_a_retained_position() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_add_refuses_a_different_package_at_a_retained_position"
-    ));
+    crate::diagnostic::parent!(an_add_refuses_a_different_package_at_a_retained_position);
     use kendex_core::error::CoreError;
     use kendex_core::model::{HarnessId, ItemKind};
 
@@ -680,10 +658,7 @@ fn write_hook(root: &std::path::Path, name: &str, requires: &[&str], body: &str)
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_new_tool_dependency_refuses_an_unrecorded_shared_target() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_new_tool_dependency_refuses_an_unrecorded_shared_target"
-    ));
+    crate::diagnostic::parent!(a_new_tool_dependency_refuses_an_unrecorded_shared_target);
     use kendex_core::{error::CoreError, lock, manifest};
     let w = world();
     write_skill(&w.upstream, "shared", "", "shared bytes.");
@@ -725,10 +700,7 @@ fn a_new_tool_dependency_refuses_an_unrecorded_shared_target() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn adding_a_required_skill_refuses_its_held_requirers_revision() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::adding_a_required_skill_refuses_its_held_requirers_revision"
-    ));
+    crate::diagnostic::parent!(adding_a_required_skill_refuses_its_held_requirers_revision);
     let w = world();
     let requires_z = "dependencies:\n  required: [z]\n";
     write_skill(&w.upstream, "a", requires_z, "a version one.");
@@ -757,10 +729,7 @@ fn adding_a_required_skill_refuses_its_held_requirers_revision() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn adding_an_installed_set_again_brings_it_current_and_no_one_else() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::adding_an_installed_set_again_brings_it_current_and_no_one_else"
-    ));
+    crate::diagnostic::parent!(adding_an_installed_set_again_brings_it_current_and_no_one_else);
     let w = world();
     write_skill(&w.upstream, "m1", "", "m1 version one.");
     write_skill(&w.upstream, "solo", "", "solo version one.");
@@ -807,10 +776,7 @@ fn adding_an_installed_set_again_brings_it_current_and_no_one_else() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn overlapping_sets_added_to_different_tools_share_their_member() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::overlapping_sets_added_to_different_tools_share_their_member"
-    ));
+    crate::diagnostic::parent!(overlapping_sets_added_to_different_tools_share_their_member);
     use kendex_core::lock::{entry_key, load as load_lock, lock_path};
     use kendex_core::model::{HarnessId, ItemKind};
     let w = world();
@@ -851,10 +817,7 @@ fn overlapping_sets_added_to_different_tools_share_their_member() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_reads_an_explicitly_redeclared_source() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_add_reads_an_explicitly_redeclared_source"
-    ));
+    crate::diagnostic::parent!(an_add_reads_an_explicitly_redeclared_source);
     for replacement_repo in [false, true] {
         let w = world();
         write_skill(&w.upstream, "a", "", "a version one.");

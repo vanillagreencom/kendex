@@ -99,10 +99,7 @@ impl CredentialRefreshGuard for MemoryGuard {}
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_credential_submits_in_one_call() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_fresh_credential_submits_in_one_call"
-    ));
+    crate::diagnostic::parent!(a_fresh_credential_submits_in_one_call);
     let fetch = Canned::new(vec![(
         201,
         r#"{"ok":true,"repo":"jane/skills","status":"pending"}"#,
@@ -119,10 +116,9 @@ fn a_fresh_credential_submits_in_one_call() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_hour_old_rejected_access_token_refreshes_once_and_saves_the_rotation() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_hour_old_rejected_access_token_refreshes_once_and_saves_the_rotation"
-    ));
+    crate::diagnostic::parent!(
+        an_hour_old_rejected_access_token_refreshes_once_and_saves_the_rotation
+    );
     let fetch = Canned::new(vec![
         (401, r#"{"error":"invalid_token"}"#),
         (
@@ -150,10 +146,7 @@ fn an_hour_old_rejected_access_token_refreshes_once_and_saves_the_rotation() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dead_refresh_grant_signs_this_machine_out() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dead_refresh_grant_signs_this_machine_out"
-    ));
+    crate::diagnostic::parent!(a_dead_refresh_grant_signs_this_machine_out);
     let fetch = Canned::new(vec![
         (401, r#"{"error":"invalid_token"}"#),
         (401, r#"{"error":"invalid_grant"}"#),
@@ -173,10 +166,7 @@ fn a_dead_refresh_grant_signs_this_machine_out() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn signed_out_asks_for_login_before_any_network_call() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::signed_out_asks_for_login_before_any_network_call"
-    ));
+    crate::diagnostic::parent!(signed_out_asks_for_login_before_any_network_call);
     let fetch = Canned::new(vec![]);
     let store = MemoryStore(RefCell::new(None));
     let refused = submit(&fetch, &store, "jane/skills").unwrap_err();
@@ -187,10 +177,7 @@ fn signed_out_asks_for_login_before_any_network_call() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_server_refusal_sentence_reaches_the_caller_verbatim() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_server_refusal_sentence_reaches_the_caller_verbatim"
-    ));
+    crate::diagnostic::parent!(the_server_refusal_sentence_reaches_the_caller_verbatim);
     let fetch = Canned::new(vec![(
         403,
         r#"{"error":"you do not hold push authority over this repository"}"#,
@@ -205,10 +192,7 @@ fn the_server_refusal_sentence_reaches_the_caller_verbatim() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn submissions_parse_the_versioned_rows() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::submissions_parse_the_versioned_rows"
-    ));
+    crate::diagnostic::parent!(submissions_parse_the_versioned_rows);
     let fetch = Canned::new(vec![(
         200,
         r#"{"schema":1,"submissions":[{"repo":"jane/skills","status":"needs-changes","status_reason":"description missing","head_commit":null,"indexed_at":null}]}"#,
@@ -229,10 +213,7 @@ fn submissions_parse_the_versioned_rows() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_transient_refresh_failure_keeps_the_credential() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_transient_refresh_failure_keeps_the_credential"
-    ));
+    crate::diagnostic::parent!(a_transient_refresh_failure_keeps_the_credential);
     for status in [503, 408, 429] {
         let fetch = Canned::new(vec![
             (401, r#"{"error":"invalid_token"}"#),
@@ -396,10 +377,7 @@ impl Fetch for ConcurrentFetch {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn concurrent_cli_and_app_calls_rotate_one_refresh_token_once() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::concurrent_cli_and_app_calls_rotate_one_refresh_token_once"
-    ));
+    crate::diagnostic::parent!(concurrent_cli_and_app_calls_rotate_one_refresh_token_once);
     let fetch = Arc::new(ConcurrentFetch {
         old_access: Arc::new(Barrier::new(2)),
         old_calls: AtomicUsize::new(0),
@@ -480,10 +458,7 @@ impl Fetch for LogoutFetch {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn logout_while_waiting_for_refresh_does_not_resurrect_the_credential() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::logout_while_waiting_for_refresh_does_not_resurrect_the_credential"
-    ));
+    crate::diagnostic::parent!(logout_while_waiting_for_refresh_does_not_resurrect_the_credential);
     let store = Arc::new(ConcurrentStore::signed_in());
     let held = store.refresh_guard().unwrap();
     let (old_seen, observed) = mpsc::channel();
@@ -633,10 +608,7 @@ fn replacement_login() -> Credential {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_login_waiting_for_refresh_commits_the_new_family_last() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_login_waiting_for_refresh_commits_the_new_family_last"
-    ));
+    crate::diagnostic::parent!(a_login_waiting_for_refresh_commits_the_new_family_last);
     let (store, fetch, refresh_started, allow_refresh) = transaction_fixture();
     let refresh = spawn_refresh(&fetch, &store);
     refresh_started.recv().unwrap();
@@ -665,10 +637,7 @@ fn a_login_waiting_for_refresh_commits_the_new_family_last() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_logout_waiting_for_refresh_revokes_the_rotated_family_last() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_logout_waiting_for_refresh_revokes_the_rotated_family_last"
-    ));
+    crate::diagnostic::parent!(a_logout_waiting_for_refresh_revokes_the_rotated_family_last);
     let (store, fetch, refresh_started, allow_refresh) = transaction_fixture();
     let refresh = spawn_refresh(&fetch, &store);
     refresh_started.recv().unwrap();

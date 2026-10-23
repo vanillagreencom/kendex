@@ -81,10 +81,9 @@ fn found_in(findings: &[kendex_core::quality::Finding]) -> Vec<(&str, Severity, 
 /// a verbose reading shows.
 #[test]
 fn commit_guards_scans_clean_and_names_the_switch_only_where_it_names_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::commit_guards_scans_clean_and_names_the_switch_only_where_it_names_it"
-    ));
+    crate::diagnostic::parent!(
+        commit_guards_scans_clean_and_names_the_switch_only_where_it_names_it
+    );
     let result = shipped("commit-guards");
     assert_eq!(found(&result), vec![], "{:#?}", result.findings);
     assert_eq!(result.safety.score, 100);
@@ -114,8 +113,7 @@ fn commit_guards_scans_clean_and_names_the_switch_only_where_it_names_it() {
 /// script, each scans clean.
 #[test]
 fn the_guard_hooks_scan_clean() {
-    let _diagnostic =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::the_guard_hooks_scan_clean"));
+    crate::diagnostic::parent!(the_guard_hooks_scan_clean);
     for hook in ["block-unsafe-rm.sh", "pre-commit-check.sh"] {
         let path = root().join("../hooks").join(hook);
         let script = std::fs::read_to_string(&path)
@@ -157,10 +155,9 @@ fn the_guard_hooks_scan_clean() {
 /// (`allowance.rs::a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names`).
 #[test]
 fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted"
-    ));
+    crate::diagnostic::parent!(
+        orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted
+    );
     let result = shipped("orch");
     let lane_launch = "skills/orch/scripts/lib/lane-launch.sh";
     let fixtures = [
@@ -234,10 +231,9 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
 /// accepts in review-gate cost the score nothing.
 #[test]
 fn a_quoted_letter_a_corpus_and_a_function_named_for_eval_are_not_findings() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_quoted_letter_a_corpus_and_a_function_named_for_eval_are_not_findings"
-    ));
+    crate::diagnostic::parent!(
+        a_quoted_letter_a_corpus_and_a_function_named_for_eval_are_not_findings
+    );
     for name in ["iced-rs", "review-gate", "harness-ci"] {
         let result = shipped(name);
         assert_eq!(found(&result), vec![], "{name}: {:#?}", result.findings);

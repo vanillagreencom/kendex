@@ -11,10 +11,7 @@ use super::{put, world};
 /// silently hides everything the user put where they said to put it.
 #[test]
 fn a_relocated_tool_folder_is_still_scanned_for_unmanaged_items() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_relocated_tool_folder_is_still_scanned_for_unmanaged_items"
-    ));
+    crate::diagnostic::parent!(a_relocated_tool_folder_is_still_scanned_for_unmanaged_items);
     let w = world();
     let elsewhere = w.home.join("elsewhere/claude");
     kendex_core::settings::mutate(&w.env, |settings| {

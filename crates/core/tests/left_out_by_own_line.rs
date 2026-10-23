@@ -13,10 +13,9 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_is_left_out_only_when_its_own_line_leaves_off_every_planned_tool() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_package_is_left_out_only_when_its_own_line_leaves_off_every_planned_tool"
-    ));
+    crate::diagnostic::parent!(
+        a_package_is_left_out_only_when_its_own_line_leaves_off_every_planned_tool
+    );
     let mut report = EngineReport::observed(Plan::landed(Scope::Global, Vec::new()).unwrap());
     report.excluded_hooks.push(ExcludedHook {
         name: "claude-only".into(),

@@ -13,10 +13,7 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_a_source_only_offers_answers_the_assignment_it_makes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_a_source_only_offers_answers_the_assignment_it_makes"
-    ));
+    crate::diagnostic::parent!(a_skill_a_source_only_offers_answers_the_assignment_it_makes);
     let w = world();
     write_skill(&w.upstream, "spare", "Spare.");
     write_agent(&w.upstream, "rev", "Upstream body.");

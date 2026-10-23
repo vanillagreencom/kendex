@@ -255,8 +255,7 @@ fn record(env: &Env, root: &Path) -> Result<Lock, String> {
 /// plan keeps only those the inventory at `HEAD` lists, and that drops the
 /// render of a package the branch adds.
 fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
-    let _diagnostic_fixture =
-        diagnostic::Span::begin(concat!(module_path!(), "::fixture::committed_copy"));
+    diagnostic::span!(_diagnostic_fixture; "::fixture::committed_copy");
     let tmp = tempfile::tempdir().map_err(|error| format!("scratch directory: {error}"))?;
     let repository = crate::test_util::rooted(&tmp);
     let copy = repository.join("checkout");
@@ -264,9 +263,7 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
     // every planted defect still has a separate scratch tree.
     static LISTED: OnceLock<String> = OnceLock::new();
     let listed = LISTED.get_or_init(|| {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::checkout_list"));
-        crate::test_util::git(
+        diagnostic::phase!(_diagnostic_phase; "::phase::checkout_list"; crate::test_util::git(
             root,
             &[
                 "ls-files",
@@ -275,7 +272,7 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
                 "--others",
                 "--exclude-standard",
             ],
-        )
+        ))
     });
     // Git lists an untracked nested repository, such as a linked worktree,
     // as its directory with a trailing slash: none of its files is this
@@ -283,7 +280,7 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
     let carried = listed
         .split('\0')
         .filter(|carried| !carried.is_empty() && !carried.ends_with('/'));
-    let diagnostic_copy = diagnostic::Span::begin(concat!(module_path!(), "::phase::file_copy"));
+    diagnostic::span!(diagnostic_copy; "::phase::file_copy");
     let mut directories = BTreeSet::new();
     for carried in carried {
         let from = root.join(carried);
@@ -306,7 +303,7 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
         copied.map_err(|error| format!("copy {carried}: {error}"))?;
     }
     drop(diagnostic_copy);
-    let _diagnostic_git = diagnostic::Span::begin(concat!(module_path!(), "::phase::fixture_git"));
+    diagnostic::span!(_diagnostic_git; "::phase::fixture_git");
     crate::test_util::git(&repository, &["init", "-q"]);
     crate::test_util::git(&repository, &["add", "-A", "-f"]);
     Ok((tmp, copy))
@@ -333,10 +330,7 @@ fn check(root: &Path) -> Standing {
 /// this repository renders. The passing direction, through the whole path.
 #[test]
 fn the_committed_renders_are_the_bytes_this_checkout_renders() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_committed_renders_are_the_bytes_this_checkout_renders"
-    ));
+    diagnostic::parent!(the_committed_renders_are_the_bytes_this_checkout_renders);
     let root = crate::test_util::checkout_root();
     if let Standing::Refused(finding) = check(&root) {
         panic!("{}", refusal(&finding));
@@ -346,15 +340,11 @@ fn the_committed_renders_are_the_bytes_this_checkout_renders() {
 /// A refresh may hold an edited copy that its source no longer installs,
 /// so comparing desired render bytes alone cannot prove record agreement.
 fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
-    let _diagnostic_fixture =
-        diagnostic::Span::begin(concat!(module_path!(), "::fixture::refresh_and_verify"));
+    diagnostic::span!(_diagnostic_fixture; "::fixture::refresh_and_verify");
     let scope = Scope::Project {
         root: root.to_path_buf(),
     };
-    let refresh = {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::refresh_plan"));
-        plan_apply(
+    let refresh = diagnostic::phase!(_diagnostic_phase; "::phase::refresh_plan"; plan_apply(
             env,
             &scope,
             &PlanOptions {
@@ -362,34 +352,24 @@ fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
                 ..PlanOptions::current()
             },
         )
-        .map_err(|error| error.to_string())?
-    };
+        .map_err(|error| error.to_string())?);
     if !complete_declarations(&refresh) {
         return Ok(Standing::Refused(Finding::Incomplete));
     }
-    {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::refresh_apply"));
-        crate::apply::execute(env, &refresh.plan).map_err(|error| error.to_string())?
-    };
+    diagnostic::phase!(_diagnostic_phase; "::phase::refresh_apply"; crate::apply::execute(env, &refresh.plan).map_err(|error| error.to_string())?);
     verify_records(env, root)
 }
 
 /// Read the completed refresh's record and compare it with ordinary
 /// verification. Both the repository proof and its controls use this phase.
 fn verify_records(env: &Env, root: &Path) -> Result<Standing, String> {
-    let _diagnostic_fixture =
-        diagnostic::Span::begin(concat!(module_path!(), "::fixture::verify_records"));
+    diagnostic::span!(_diagnostic_fixture; "::fixture::verify_records");
     let scope = Scope::Project {
         root: root.to_path_buf(),
     };
     let lock = record(env, root)?;
-    let verified = {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::verify_plan"));
-        plan_apply(env, &scope, &crate::attest::Reading::Current.plan_options())
-            .map_err(|error| error.to_string())?
-    };
+    let verified = diagnostic::phase!(_diagnostic_phase; "::phase::verify_plan"; plan_apply(env, &scope, &crate::attest::Reading::Current.plan_options())
+            .map_err(|error| error.to_string())?);
     if !complete_declarations(&verified) {
         return Ok(Standing::Refused(Finding::Incomplete));
     }
@@ -424,10 +404,7 @@ fn complete_declarations(report: &EngineReport) -> bool {
 
 #[test]
 fn refresh_then_verify_agrees_on_every_committed_install_record() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::refresh_then_verify_agrees_on_every_committed_install_record"
-    ));
+    diagnostic::parent!(refresh_then_verify_agrees_on_every_committed_install_record);
     let (tmp, copy) =
         committed_copy(&crate::test_util::checkout_root()).expect("the committed checkout copies");
     let env = Env::fake(crate::test_util::rooted(&tmp).join("home"), FakeOs::Linux);
@@ -496,10 +473,7 @@ impl RefreshFixture {
 /// leave every installed byte current, so drift alone cannot prove agreement.
 #[test]
 fn changed_record_metadata_is_unsettled_without_disk_drift() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::changed_record_metadata_is_unsettled_without_disk_drift"
-    ));
+    diagnostic::parent!(changed_record_metadata_is_unsettled_without_disk_drift);
     let f = RefreshFixture::new();
     assert_eq!(
         refresh_and_verify(&f.env, &f.project),
@@ -540,10 +514,7 @@ fn changed_record_metadata_is_unsettled_without_disk_drift() {
 /// edit; the repository check must reject them before the merge.
 #[test]
 fn an_edited_copy_on_an_excluded_tool_is_unsettled() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_edited_copy_on_an_excluded_tool_is_unsettled"
-    ));
+    diagnostic::parent!(an_edited_copy_on_an_excluded_tool_is_unsettled);
     let f = RefreshFixture::new();
     assert_eq!(
         refresh_and_verify(&f.env, &f.project),
@@ -575,10 +546,7 @@ fn an_edited_copy_on_an_excluded_tool_is_unsettled() {
 /// declaration set even when an inactive source is legitimate CLI state.
 #[test]
 fn an_incomplete_declaration_set_cannot_prove_record_agreement() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_incomplete_declaration_set_cannot_prove_record_agreement"
-    ));
+    diagnostic::parent!(an_incomplete_declaration_set_cannot_prove_record_agreement);
     #[derive(Debug)]
     enum SourceChange {
         Deleted,
@@ -750,10 +718,7 @@ impl Planted {
 /// spelled independently of the renderer.
 #[test]
 fn a_render_its_source_no_longer_renders_is_refused() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_its_source_no_longer_renders_is_refused"
-    ));
+    diagnostic::parent!(a_render_its_source_no_longer_renders_is_refused);
     let mut planted = Planted::new();
     let skill = instructed_skill(&planted.declared);
     planted.grow(&skill);
@@ -771,10 +736,7 @@ fn a_render_its_source_no_longer_renders_is_refused() {
 #[test]
 #[allow(clippy::expect_used)]
 fn a_render_of_a_package_the_record_does_not_hold_is_refused() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_of_a_package_the_record_does_not_hold_is_refused"
-    ));
+    diagnostic::parent!(a_render_of_a_package_the_record_does_not_hold_is_refused);
     let mut planted = Planted::new();
     let skill = "planted-package";
     let render = format!(".agents/skills/{skill}/SKILL.md");
@@ -812,10 +774,7 @@ fn a_render_of_a_package_the_record_does_not_hold_is_refused() {
 /// bytes it renders.
 #[test]
 fn a_render_tree_holding_a_file_it_does_not_render_is_refused() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_tree_holding_a_file_it_does_not_render_is_refused"
-    ));
+    diagnostic::parent!(a_render_tree_holding_a_file_it_does_not_render_is_refused);
     let planted = Planted::new();
     let skill = instructed_skill(&planted.declared);
     let tree = format!(".agents/skills/{skill}");
@@ -831,6 +790,36 @@ fn a_render_tree_holding_a_file_it_does_not_render_is_refused() {
 // The lane reads these transient wall spans from the existing REST job log.
 // This stays local to each test binary; elapsed time does not identify CPU use.
 mod diagnostic {
+
+    // Emit into the caller's scope so the parent lives until return or unwind.
+    macro_rules! parent {
+        ($name:ident) => {
+            let _diagnostic = $crate::engine::generated_paths::own_renders::diagnostic::Span::begin(
+                concat!(module_path!(), "::", stringify!($name)),
+            );
+        };
+    }
+    pub(crate) use parent;
+
+    macro_rules! span {
+        ($guard:ident; $suffix:literal) => {
+            let $guard = $crate::engine::generated_paths::own_renders::diagnostic::Span::begin(
+                concat!(module_path!(), $suffix),
+            );
+        };
+    }
+    pub(crate) use span;
+
+    // Keep the original block, expression evaluation and guard drop boundary.
+    macro_rules! phase {
+        ($guard:ident; $suffix:literal; $expression:expr) => {{
+            let $guard = $crate::engine::generated_paths::own_renders::diagnostic::Span::begin(
+                concat!(module_path!(), $suffix),
+            );
+            $expression
+        }};
+    }
+    pub(crate) use phase;
     use std::io::{self, Write};
     use std::thread::ThreadId;
     use std::time::Instant;
@@ -914,6 +903,47 @@ mod diagnostic {
                 panic!("KEN4527 write_failed phase=end");
             }
         }
+    }
+
+    #[test]
+    fn diagnostic_contract_macros() {
+        parent!(diagnostic_contract_macros);
+        span!(_parent; "::control::parent");
+        let mut evaluations = 0;
+        let value = phase!(_phase; "::control::phase"; {
+            evaluations += 1;
+            41
+        });
+        assert_eq!((value, evaluations), (41, 1));
+        span!(scope; "::control::scope");
+        assert_eq!(scope.label, concat!(module_path!(), "::control::scope"));
+        drop(scope);
+
+        fn propagate() -> Result<u8, &'static str> {
+            span!(_parent; "::control::propagate");
+            let value = phase!(_phase; "::control::question"; Err::<u8, _>("original")?);
+            Ok(value)
+        }
+        assert_eq!(propagate(), Err("original"));
+
+        fn leave() -> u8 {
+            span!(_parent; "::control::leave");
+            phase!(_phase; "::control::return"; return 43)
+        }
+        assert_eq!(leave(), 43);
+
+        // Only the control catches: observed test work keeps its panic target.
+        let panic = std::panic::catch_unwind(|| {
+            span!(_parent; "::control::unwind");
+            phase!(_phase; "::control::panic"; std::panic::panic_any("original"));
+        });
+        assert_eq!(
+            panic
+                .err()
+                .and_then(|payload| payload.downcast::<&str>().ok())
+                .as_deref(),
+            Some(&"original")
+        );
     }
 
     #[test]

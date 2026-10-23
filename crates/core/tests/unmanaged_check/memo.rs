@@ -21,10 +21,7 @@ use crate::test_util::rooted;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_same_state_is_judged_once_and_read_after() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_same_state_is_judged_once_and_read_after"
-    ));
+    crate::diagnostic::parent!(the_same_state_is_judged_once_and_read_after);
     let w = world();
     write_at(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),
@@ -77,10 +74,7 @@ fn the_same_state_is_judged_once_and_read_after() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pass_past_the_budget_is_given_up_and_finished_in_the_background() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_pass_past_the_budget_is_given_up_and_finished_in_the_background"
-    ));
+    crate::diagnostic::parent!(a_pass_past_the_budget_is_given_up_and_finished_in_the_background);
     let w = world();
     write_at(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),
@@ -140,10 +134,7 @@ fn a_pass_past_the_budget_is_given_up_and_finished_in_the_background() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_will_not_write_is_could_not_check() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_record_that_will_not_write_is_could_not_check"
-    ));
+    crate::diagnostic::parent!(a_record_that_will_not_write_is_could_not_check);
     use std::os::unix::fs::PermissionsExt;
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
@@ -195,10 +186,7 @@ fn a_record_that_will_not_write_is_could_not_check() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_write_retires_the_memo() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_record_write_retires_the_memo"
-    ));
+    crate::diagnostic::parent!(a_record_write_retires_the_memo);
     use std::os::unix::fs::PermissionsExt;
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
@@ -256,10 +244,7 @@ fn a_record_write_retires_the_memo() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_proven_copy_that_vanished_is_refused_by_the_binding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_proven_copy_that_vanished_is_refused_by_the_binding"
-    ));
+    crate::diagnostic::parent!(a_proven_copy_that_vanished_is_refused_by_the_binding);
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();
@@ -316,10 +301,7 @@ fn a_proven_copy_that_vanished_is_refused_by_the_binding() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_proven_registration_taken_out_is_refused_by_the_binding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_proven_registration_taken_out_is_refused_by_the_binding"
-    ));
+    crate::diagnostic::parent!(a_proven_registration_taken_out_is_refused_by_the_binding);
     // What the settings file holds after the plan, and the reason the
     // refusal names for it.
     let rows: [(&str, &str); 2] = [
@@ -394,10 +376,7 @@ fn a_proven_registration_taken_out_is_refused_by_the_binding() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_proven_registration_whose_target_moved_is_refused_by_the_binding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_proven_registration_whose_target_moved_is_refused_by_the_binding"
-    ));
+    crate::diagnostic::parent!(a_proven_registration_whose_target_moved_is_refused_by_the_binding);
     let w = global_world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();
@@ -502,10 +481,7 @@ pub(super) fn global_world() -> super::World {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_removed_after_a_silent_claim_is_recorded_again() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_lock_removed_after_a_silent_claim_is_recorded_again"
-    ));
+    crate::diagnostic::parent!(a_lock_removed_after_a_silent_claim_is_recorded_again);
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();

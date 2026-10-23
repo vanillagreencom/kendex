@@ -101,10 +101,9 @@ fn refresh() -> PlanOptions {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_carried_from_another_checkout_resolves_here_and_that_checkout_stands() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_lock_carried_from_another_checkout_resolves_here_and_that_checkout_stands"
-    ));
+    crate::diagnostic::parent!(
+        a_lock_carried_from_another_checkout_resolves_here_and_that_checkout_stands
+    );
     let tmp = tempfile::tempdir().unwrap();
     // Resolved: the engine resolves a scope root before writing any of the
     // paths it records, and on macOS the temp directory is reached through
@@ -183,10 +182,7 @@ fn a_lock_carried_from_another_checkout_resolves_here_and_that_checkout_stands()
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_naming_its_own_project_refreshes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_lock_naming_its_own_project_refreshes"
-    ));
+    crate::diagnostic::parent!(a_lock_naming_its_own_project_refreshes);
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let catalog = home.join("catalog");
@@ -231,10 +227,9 @@ fn claim(lock: &Path, key: &str, paths: &[PathBuf]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_stands() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_stands"
-    ));
+    crate::diagnostic::parent!(
+        a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_stands
+    );
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let catalog = home.join("catalog");
@@ -316,10 +311,9 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_from_a_checkout_nested_inside_the_project_resolves_here_and_that_checkout_stands() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_lock_from_a_checkout_nested_inside_the_project_resolves_here_and_that_checkout_stands"
-    ));
+    crate::diagnostic::parent!(
+        a_lock_from_a_checkout_nested_inside_the_project_resolves_here_and_that_checkout_stands
+    );
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let catalog = home.join("catalog");

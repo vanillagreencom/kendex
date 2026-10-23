@@ -29,16 +29,14 @@ struct World {
 
 #[allow(clippy::unwrap_used)]
 fn git(dir: &Path, args: &[&str]) {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::git"));
+    crate::diagnostic::span!(_diagnostic_fixture; "::fixture::git");
     let output = Hardened::git(args, Some(dir)).run().unwrap();
     assert!(output.status.success(), "git {args:?}");
 }
 
 #[allow(clippy::unwrap_used)]
 fn commit(dir: &Path, message: &str) -> String {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::commit"));
+    crate::diagnostic::span!(_diagnostic_fixture; "::fixture::commit");
     git(dir, &["add", "-A"]);
     git(
         dir,
@@ -83,8 +81,7 @@ fn write_agent(dir: &Path, name: &str, body: &str) {
 
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::world"));
+    crate::diagnostic::span!(_diagnostic_fixture; "::fixture::world");
     world_at(REPO)
 }
 
@@ -92,8 +89,7 @@ fn world() -> World {
 /// scope that still names the repository kendex moved from needs.
 #[allow(clippy::unwrap_used)]
 fn world_at(repo: &str) -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::world_at"));
+    crate::diagnostic::span!(_diagnostic_fixture; "::fixture::world_at");
     let tmp = tempfile::tempdir().unwrap();
     let home = crate::test_util::rooted(&tmp);
     let upstream = home.join("git").join(repo);
@@ -139,28 +135,12 @@ fn write_manifest(w: &World, text: &str) {
 
 #[allow(clippy::unwrap_used)]
 fn sync_and_apply(w: &World) {
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+    let loaded = crate::diagnostic::phase!(_diagnostic_phase; "::phase::manifest"; manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
             .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+            .unwrap());
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::sync_sources"; remote::sync_sources(&w.env, &loaded).unwrap());
+    let report = crate::diagnostic::phase!(_diagnostic_phase; "::phase::audit"; audit(&w.env, &w.scope).unwrap());
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::apply"; apply::execute(&w.env, &report.plan).unwrap());
 }
 
 /// What the report says, in the words a person reads: the warnings'
@@ -191,10 +171,7 @@ fn installed_body(w: &World, name: &str) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pinned_item_holds_while_the_source_moves_and_reports_the_update() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_pinned_item_holds_while_the_source_moves_and_reports_the_update"
-    ));
+    crate::diagnostic::parent!(a_pinned_item_holds_while_the_source_moves_and_reports_the_update);
     let w = world();
     write_skill(&w.upstream, "gh", "", "Version one.");
     let first = commit(&w.upstream, "one");
@@ -215,22 +192,14 @@ fn a_pinned_item_holds_while_the_source_moves_and_reports_the_update() {
         installed_body(&w, "gh").contains("Version one."),
         "a held item must not move with its source"
     );
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
+    let report = crate::diagnostic::phase!(_diagnostic_phase; "::phase::audit"; audit(&w.env, &w.scope).unwrap());
     assert_eq!(report.drift, vec![], "a held item is clean, never stale");
     let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
     let entry = &lock.entries[&entry_key(ItemKind::Skill, "gh", HarnessId::Claude)];
     assert_eq!(entry.source_commit.as_deref(), Some(first.as_str()));
     assert!(entry.rendered_hash.is_some());
 
-    let updates = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        kendex_core::package::updates::updates(&w.env, &w.scope)
-    }
+    let updates = crate::diagnostic::phase!(_diagnostic_call; "::phase::updates_updates"; kendex_core::package::updates::updates(&w.env, &w.scope))
     .unwrap();
     let row = updates.rows.iter().find(|row| row.name == "gh").unwrap();
     assert!(row.update_available);
@@ -248,10 +217,7 @@ fn a_pinned_item_holds_while_the_source_moves_and_reports_the_update() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn more_pins_than_the_cache_keeps_all_install_in_one_pass() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::more_pins_than_the_cache_keeps_all_install_in_one_pass"
-    ));
+    crate::diagnostic::parent!(more_pins_than_the_cache_keeps_all_install_in_one_pass);
     let w = world();
     let mut pinned = Vec::new();
     for n in 0..=DEFAULT_KEEP {
@@ -272,21 +238,14 @@ fn more_pins_than_the_cache_keeps_all_install_in_one_pass() {
             "{name} did not install"
         );
     }
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
+    let report = crate::diagnostic::phase!(_diagnostic_phase; "::phase::audit"; audit(&w.env, &w.scope).unwrap());
     assert_eq!(report.notes, Vec::<String>::new());
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn set_rev_normalizes_a_tag_to_its_commit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::set_rev_normalizes_a_tag_to_its_commit"
-    ));
+    crate::diagnostic::parent!(set_rev_normalizes_a_tag_to_its_commit);
     let w = world();
     write_skill(&w.upstream, "gh", "", "Tagged.");
     let first = commit(&w.upstream, "one");
@@ -295,11 +254,7 @@ fn set_rev_normalizes_a_tag_to_its_commit() {
     sync_and_apply(&w);
 
     let report = package::set_rev(&w.env, &w.scope, ItemKind::Skill, "gh", Some("v1")).unwrap();
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::apply"; apply::execute(&w.env, &report.plan).unwrap());
 
     let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
     assert!(
@@ -312,10 +267,7 @@ fn set_rev_normalizes_a_tag_to_its_commit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn pin_to_unknown_version_is_refused_before_any_write() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::pin_to_unknown_version_is_refused_before_any_write"
-    ));
+    crate::diagnostic::parent!(pin_to_unknown_version_is_refused_before_any_write);
     let w = world();
     write_skill(&w.upstream, "gh", "", "One.");
     commit(&w.upstream, "one");
@@ -333,10 +285,7 @@ fn pin_to_unknown_version_is_refused_before_any_write() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn set_rev_refuses_a_commit_where_the_item_is_missing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::set_rev_refuses_a_commit_where_the_item_is_missing"
-    ));
+    crate::diagnostic::parent!(set_rev_refuses_a_commit_where_the_item_is_missing);
     let w = world();
     write_skill(&w.upstream, "other", "", "Only other.");
     let without = commit(&w.upstream, "one");
@@ -359,10 +308,7 @@ fn set_rev_refuses_a_commit_where_the_item_is_missing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn set_rev_refuses_an_undeclared_item() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::set_rev_refuses_an_undeclared_item"
-    ));
+    crate::diagnostic::parent!(set_rev_refuses_an_undeclared_item);
     let w = world();
     write_skill(&w.upstream, "gh", "", "One.");
     commit(&w.upstream, "one");
@@ -377,26 +323,15 @@ fn set_rev_refuses_an_undeclared_item() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hold_at_install_writes_the_resolved_commit_as_rev() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::hold_at_install_writes_the_resolved_commit_as_rev"
-    ));
+    crate::diagnostic::parent!(hold_at_install_writes_the_resolved_commit_as_rev);
     let w = world();
     write_skill(&w.upstream, "gh", "", "One.");
     let first = commit(&w.upstream, "one");
     declare(&w, "");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+    let loaded = crate::diagnostic::phase!(_diagnostic_phase; "::phase::manifest"; manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
             .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+            .unwrap());
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::sync_sources"; remote::sync_sources(&w.env, &loaded).unwrap());
 
     let request = kendex_core::engine::ops::AddRequest {
         source: Some("cat".to_owned()),
@@ -405,11 +340,7 @@ fn hold_at_install_writes_the_resolved_commit_as_rev() {
         ..Default::default()
     };
     let report = kendex_core::engine::ops::add(&w.env, &w.scope, &request).unwrap();
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::apply"; apply::execute(&w.env, &report.plan).unwrap());
 
     let text = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
     assert!(
@@ -421,10 +352,7 @@ fn hold_at_install_writes_the_resolved_commit_as_rev() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pinned_items_dependencies_resolve_at_the_pinned_commit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_pinned_items_dependencies_resolve_at_the_pinned_commit"
-    ));
+    crate::diagnostic::parent!(a_pinned_items_dependencies_resolve_at_the_pinned_commit);
     let w = world();
     write_skill(
         &w.upstream,
@@ -449,11 +377,7 @@ fn a_pinned_items_dependencies_resolve_at_the_pinned_commit() {
         installed_body(&w, "helper").contains("Helper one."),
         "a pinned parent's dependency must read the pinned catalog"
     );
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
+    let report = crate::diagnostic::phase!(_diagnostic_phase; "::phase::audit"; audit(&w.env, &w.scope).unwrap());
     assert_eq!(report.drift, vec![]);
 }
 
@@ -464,10 +388,7 @@ fn a_pinned_items_dependencies_resolve_at_the_pinned_commit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install"
-    ));
+    crate::diagnostic::parent!(a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install);
     let w = world();
     write_skill(
         &w.upstream,
@@ -501,24 +422,12 @@ fn a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install() {
             "[skills.wrap]\nsource = \"cat\"\nrev = \"{first}\"\n\n[skills.stop]\nsource = \"cat\"\nrev = \"{second}\"\n"
         ),
     );
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+    let loaded = crate::diagnostic::phase!(_diagnostic_phase; "::phase::manifest"; manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
             .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+            .unwrap());
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::sync_sources"; remote::sync_sources(&w.env, &loaded).unwrap());
 
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
+    let report = crate::diagnostic::phase!(_diagnostic_phase; "::phase::audit"; audit(&w.env, &w.scope).unwrap());
     assert!(
         report
             .warnings
@@ -535,11 +444,7 @@ fn a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install() {
         "a co-install note claims a skill written nowhere: {:?}",
         notes(&report)
     );
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::apply"; apply::execute(&w.env, &report.plan).unwrap());
     assert!(
         !w.home.join("app/.agents/skills/judge").exists(),
         "a skill wanted at two revisions was written"
@@ -549,10 +454,7 @@ fn a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_parents_pinning_different_revs_of_one_dependency_change_nothing"
-    ));
+    crate::diagnostic::parent!(two_parents_pinning_different_revs_of_one_dependency_change_nothing);
     let w = world();
     write_skill(
         &w.upstream,
@@ -583,27 +485,15 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
             "[skills.gh]\nsource = \"cat\"\nrev = \"{first}\"\n\n[skills.top]\nsource = \"cat\"\nrev = \"{second}\"\n"
         ),
     );
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+    let loaded = crate::diagnostic::phase!(_diagnostic_phase; "::phase::manifest"; manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
             .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+            .unwrap());
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::sync_sources"; remote::sync_sources(&w.env, &loaded).unwrap());
     let options = PlanOptions {
         remove_orphans: true,
         ..PlanOptions::current()
     };
-    let report = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::plan_apply"));
-        plan_apply(&w.env, &w.scope, &options)
-    }
+    let report = crate::diagnostic::phase!(_diagnostic_call; "::phase::plan_apply"; plan_apply(&w.env, &w.scope, &options))
     .unwrap();
 
     let conflicted: Vec<_> = report
@@ -631,11 +521,7 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
         "nothing is written for a conflicted item: {:?}",
         report.plan.ops
     );
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::apply"; apply::execute(&w.env, &report.plan).unwrap());
     assert!(installed_body(&w, "helper") == before);
 
     // Agreeing pins settle it.
@@ -645,33 +531,17 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
             "[skills.gh]\nsource = \"cat\"\nrev = \"{first}\"\n\n[skills.top]\nsource = \"cat\"\nrev = \"{first}\"\n"
         ),
     );
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    let report = crate::diagnostic::phase!(_diagnostic_phase; "::phase::audit"; audit(&w.env, &w.scope).unwrap());
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::apply"; apply::execute(&w.env, &report.plan).unwrap());
     assert!(installed_body(&w, "helper").contains("Helper one."));
 }
 
 #[allow(clippy::unwrap_used)]
 fn fetch_mirrors(w: &World) {
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+    let loaded = crate::diagnostic::phase!(_diagnostic_phase; "::phase::manifest"; manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
             .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+            .unwrap());
+    crate::diagnostic::phase!(_diagnostic_phase; "::phase::sync_sources"; remote::sync_sources(&w.env, &loaded).unwrap());
 }
 
 #[allow(clippy::unwrap_used)]
@@ -688,13 +558,9 @@ fn locked_commit(w: &World, name: &str) -> String {
 /// nobody chose: that package stops updating, forever and silently.
 #[allow(clippy::unwrap_used)]
 fn declared_rev(w: &World, name: &str) -> Option<String> {
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+    let loaded = crate::diagnostic::phase!(_diagnostic_phase; "::phase::manifest"; manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
             .unwrap()
-            .unwrap()
-    };
+            .unwrap());
     loaded.declared(ItemKind::Skill)[name].rev.clone()
 }
 
@@ -709,10 +575,7 @@ mod validate;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_plugin_by_kind_does_not_panic() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_a_plugin_by_kind_does_not_panic"
-    ));
+    crate::diagnostic::parent!(removing_a_plugin_by_kind_does_not_panic);
     let w = world();
     write_skill(&w.upstream, "gh", "", "One.");
     commit(&w.upstream, "one");
@@ -738,10 +601,7 @@ fn removing_a_plugin_by_kind_does_not_panic() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agents_assigned_skill_held_elsewhere_keeps_its_own_revision() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agents_assigned_skill_held_elsewhere_keeps_its_own_revision"
-    ));
+    crate::diagnostic::parent!(an_agents_assigned_skill_held_elsewhere_keeps_its_own_revision);
     let rows: [(&str, &str, &str, bool); 3] = [
         ("brought by scout alone", "", "Linear two.", true),
         (
@@ -789,11 +649,7 @@ fn an_agents_assigned_skill_held_elsewhere_keeps_its_own_revision() {
         commit(&w.upstream, "two");
         sync_and_apply(&w);
 
-        let report = {
-            let _diagnostic_phase =
-                crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-            audit(&w.env, &w.scope).unwrap()
-        };
+        let report = crate::diagnostic::phase!(_diagnostic_phase; "::phase::audit"; audit(&w.env, &w.scope).unwrap());
         assert_eq!(
             report.declaration_status,
             kendex_core::engine::DeclarationStatus::Complete,

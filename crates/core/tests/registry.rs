@@ -76,10 +76,7 @@ fn env_in(dir: &Path) -> Env {
 
 #[test]
 fn a_malformed_manifest_fails_the_directory_subscription_join() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_malformed_manifest_fails_the_directory_subscription_join"
-    ));
+    crate::diagnostic::parent!(a_malformed_manifest_fails_the_directory_subscription_join);
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
     let env = env_in(&root);
@@ -104,10 +101,9 @@ fn a_malformed_manifest_fails_the_directory_subscription_join() {
 /// the shorthand a blind browse fetches by.
 #[test]
 fn a_directory_row_is_subscribed_by_identity_however_the_manifest_spells_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_directory_row_is_subscribed_by_identity_however_the_manifest_spells_it"
-    ));
+    crate::diagnostic::parent!(
+        a_directory_row_is_subscribed_by_identity_however_the_manifest_spells_it
+    );
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
     let env = env_in(&root);
@@ -158,10 +154,7 @@ fn a_directory_row_is_subscribed_by_identity_however_the_manifest_spells_it() {
 
 #[test]
 fn parse_caps_and_drops_unusable_rows() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::parse_caps_and_drops_unusable_rows"
-    ));
+    crate::diagnostic::parent!(parse_caps_and_drops_unusable_rows);
     let many_tags: Vec<String> = (0..20).map(|n| format!(r#""t{n}""#)).collect();
     let body = body_with(&format!(
         r#"{{"repo":"good/repo","name":"{}","tags":[{}],"status":"featured",
@@ -186,10 +179,7 @@ fn parse_caps_and_drops_unusable_rows() {
 
 #[test]
 fn parse_refuses_malformed_and_unknown_schema() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::parse_refuses_malformed_and_unknown_schema"
-    ));
+    crate::diagnostic::parent!(parse_refuses_malformed_and_unknown_schema);
     assert!(matches!(
         index::parse(b"not json"),
         Err(CoreError::RegistryMalformed { .. })
@@ -202,10 +192,7 @@ fn parse_refuses_malformed_and_unknown_schema() {
 
 #[test]
 fn fresh_cache_is_served_without_the_network() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::fresh_cache_is_served_without_the_network"
-    ));
+    crate::diagnostic::parent!(fresh_cache_is_served_without_the_network);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let first = Canned::new(vec![ok(
@@ -230,10 +217,7 @@ fn fresh_cache_is_served_without_the_network() {
 
 #[test]
 fn refresh_revalidates_with_the_etag_and_304_keeps_the_body() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::refresh_revalidates_with_the_etag_and_304_keeps_the_body"
-    ));
+    crate::diagnostic::parent!(refresh_revalidates_with_the_etag_and_304_keeps_the_body);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let first = Canned::new(vec![ok(
@@ -252,10 +236,7 @@ fn refresh_revalidates_with_the_etag_and_304_keeps_the_body() {
 
 #[test]
 fn network_failure_serves_the_last_fetch_as_stale() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::network_failure_serves_the_last_fetch_as_stale"
-    ));
+    crate::diagnostic::parent!(network_failure_serves_the_last_fetch_as_stale);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let first = Canned::new(vec![ok(
@@ -279,10 +260,7 @@ fn network_failure_serves_the_last_fetch_as_stale() {
 
 #[test]
 fn no_cache_and_no_network_is_an_error() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::no_cache_and_no_network_is_an_error"
-    ));
+    crate::diagnostic::parent!(no_cache_and_no_network_is_an_error);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let down = Canned::new(vec![Err(CoreError::RegistryUnavailable {
@@ -299,10 +277,7 @@ fn no_cache_and_no_network_is_an_error() {
 
 #[test]
 fn malformed_refresh_keeps_the_stale_copy() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::malformed_refresh_keeps_the_stale_copy"
-    ));
+    crate::diagnostic::parent!(malformed_refresh_keeps_the_stale_copy);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let first = Canned::new(vec![ok(
@@ -320,10 +295,7 @@ fn malformed_refresh_keeps_the_stale_copy() {
 
 #[test]
 fn skillssh_parses_the_pinned_shape_and_drops_bad_rows() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::skillssh_parses_the_pinned_shape_and_drops_bad_rows"
-    ));
+    crate::diagnostic::parent!(skillssh_parses_the_pinned_shape_and_drops_bad_rows);
     let canned = Canned::new(vec![ok(
         200,
         None,
@@ -345,10 +317,7 @@ fn skillssh_parses_the_pinned_shape_and_drops_bad_rows() {
 
 #[test]
 fn skillssh_refuses_a_shape_it_does_not_know() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::skillssh_refuses_a_shape_it_does_not_know"
-    ));
+    crate::diagnostic::parent!(skillssh_refuses_a_shape_it_does_not_know);
     let canned = Canned::new(vec![ok(200, None, r#"{"results":[]}"#)]);
     assert!(matches!(
         skillssh::search(&canned, "react"),
@@ -358,10 +327,7 @@ fn skillssh_refuses_a_shape_it_does_not_know() {
 
 #[test]
 fn skillssh_empty_query_asks_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::skillssh_empty_query_asks_nothing"
-    ));
+    crate::diagnostic::parent!(skillssh_empty_query_asks_nothing);
     let canned = Canned::new(vec![]);
     let hits = skillssh::search(&canned, "   ").expect("empty");
     assert!(hits.is_empty());
@@ -370,10 +336,7 @@ fn skillssh_empty_query_asks_nothing() {
 
 #[test]
 fn skillssh_refuses_names_its_install_url_cannot_carry() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::skillssh_refuses_names_its_install_url_cannot_carry"
-    ));
+    crate::diagnostic::parent!(skillssh_refuses_names_its_install_url_cannot_carry);
     let canned = Canned::new(vec![ok(
         200,
         None,
@@ -392,10 +355,7 @@ fn skillssh_refuses_names_its_install_url_cannot_carry() {
 
 #[test]
 fn etag_and_body_are_one_generation_on_disk() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::etag_and_body_are_one_generation_on_disk"
-    ));
+    crate::diagnostic::parent!(etag_and_body_are_one_generation_on_disk);
     let dir = tempfile::tempdir().expect("tempdir");
     let env = env_in(dir.path());
     let first = Canned::new(vec![ok(
@@ -414,10 +374,7 @@ fn etag_and_body_are_one_generation_on_disk() {
 
 #[test]
 fn leaderboard_parses_the_proxy_shape_and_absence_hides_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::leaderboard_parses_the_proxy_shape_and_absence_hides_it"
-    ));
+    crate::diagnostic::parent!(leaderboard_parses_the_proxy_shape_and_absence_hides_it);
     let canned = Canned::new(vec![ok(
         200,
         None,
@@ -438,10 +395,7 @@ fn leaderboard_parses_the_proxy_shape_and_absence_hides_it() {
 
 #[test]
 fn login_start_and_poll_speak_the_device_protocol() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::login_start_and_poll_speak_the_device_protocol"
-    ));
+    crate::diagnostic::parent!(login_start_and_poll_speak_the_device_protocol);
     let canned = Canned::new(vec![ok(
         200,
         None,

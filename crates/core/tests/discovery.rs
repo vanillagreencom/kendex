@@ -47,10 +47,7 @@ fn read(root: &Path) -> (SealedSource, SourceConfig) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_repo_past_the_cap_yields_the_cap_and_says_so() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_repo_past_the_cap_yields_the_cap_and_says_so"
-    ));
+    crate::diagnostic::parent!(a_repo_past_the_cap_yields_the_cap_and_says_so);
     let (_tmp, root) = repo();
     for n in 0..600 {
         skill(&root, &format!("skills/s{n:04}"), &format!("s{n:04}"));
@@ -68,10 +65,7 @@ fn a_repo_past_the_cap_yields_the_cap_and_says_so() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_flat_skills_repo_lists_exactly_its_skills() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_flat_skills_repo_lists_exactly_its_skills"
-    ));
+    crate::diagnostic::parent!(a_flat_skills_repo_lists_exactly_its_skills);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
     skill(&root, "skills/review", "review");
@@ -89,10 +83,7 @@ fn a_flat_skills_repo_lists_exactly_its_skills() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn category_nested_skills_are_found_and_named_by_their_leaf_directory() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::category_nested_skills_are_found_and_named_by_their_leaf_directory"
-    ));
+    crate::diagnostic::parent!(category_nested_skills_are_found_and_named_by_their_leaf_directory);
     let (_tmp, root) = repo();
     skill(&root, "skills/data/eda", "eda");
     let (sealed, config) = read(&root);
@@ -106,10 +97,7 @@ fn category_nested_skills_are_found_and_named_by_their_leaf_directory() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn dot_claude_skills_is_a_recognized_root() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::dot_claude_skills_is_a_recognized_root"
-    ));
+    crate::diagnostic::parent!(dot_claude_skills_is_a_recognized_root);
     let (_tmp, root) = repo();
     skill(&root, ".claude/skills/gh", "gh");
     let (sealed, config) = read(&root);
@@ -126,10 +114,7 @@ fn dot_claude_skills_is_a_recognized_root() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_root_skill_md_is_a_one_skill_repo_named_by_its_frontmatter() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_root_skill_md_is_a_one_skill_repo_named_by_its_frontmatter"
-    ));
+    crate::diagnostic::parent!(a_root_skill_md_is_a_one_skill_repo_named_by_its_frontmatter);
     let (_tmp, root) = repo();
     fs::write(
         root.join("SKILL.md"),
@@ -148,10 +133,9 @@ fn a_root_skill_md_is_a_one_skill_repo_named_by_its_frontmatter() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_root_skill_md_without_a_name_takes_the_display_name_the_caller_passed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_root_skill_md_without_a_name_takes_the_display_name_the_caller_passed"
-    ));
+    crate::diagnostic::parent!(
+        a_root_skill_md_without_a_name_takes_the_display_name_the_caller_passed
+    );
     let (_tmp, root) = repo();
     fs::write(root.join("SKILL.md"), "No frontmatter at all.\n").unwrap();
     let sealed = SealedSource::open(&root).unwrap();
@@ -174,10 +158,9 @@ fn a_root_skill_md_without_a_name_takes_the_display_name_the_caller_passed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_root_skill_md_without_a_name_is_named_by_the_provenance_leaf_or_the_directory() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_root_skill_md_without_a_name_is_named_by_the_provenance_leaf_or_the_directory"
-    ));
+    crate::diagnostic::parent!(
+        a_root_skill_md_without_a_name_is_named_by_the_provenance_leaf_or_the_directory
+    );
     for (provenance, named) in [
         (".", "catalog"),
         ("./catalog", "catalog"),
@@ -202,10 +185,7 @@ fn a_root_skill_md_without_a_name_is_named_by_the_provenance_leaf_or_the_directo
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plugin_registry_wins_outright_and_root_dirs_are_not_read() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_plugin_registry_wins_outright_and_root_dirs_are_not_read"
-    ));
+    crate::diagnostic::parent!(a_plugin_registry_wins_outright_and_root_dirs_are_not_read);
     let (_tmp, root) = repo();
     skill(&root, "skills/loose", "loose");
     skill(&root, "plugins/kit/skills/eda", "eda");
@@ -224,10 +204,7 @@ fn a_plugin_registry_wins_outright_and_root_dirs_are_not_read() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_frontmatter_name_disagreeing_with_the_directory_is_a_finding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_frontmatter_name_disagreeing_with_the_directory_is_a_finding"
-    ));
+    crate::diagnostic::parent!(a_frontmatter_name_disagreeing_with_the_directory_is_a_finding);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "github-helper");
     let (sealed, config) = read(&root);
@@ -243,10 +220,7 @@ fn a_frontmatter_name_disagreeing_with_the_directory_is_a_finding() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unparseable_kendex_toml_makes_the_source_unusable_with_a_finding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unparseable_kendex_toml_makes_the_source_unusable_with_a_finding"
-    ));
+    crate::diagnostic::parent!(an_unparseable_kendex_toml_makes_the_source_unusable_with_a_finding);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
     fs::write(root.join("kendex.toml"), "[catalog\nskills = broken").unwrap();
@@ -269,10 +243,7 @@ fn an_unparseable_kendex_toml_makes_the_source_unusable_with_a_finding() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_wrong_typed_catalog_array_never_falls_through_to_discovery() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_wrong_typed_catalog_array_never_falls_through_to_discovery"
-    ));
+    crate::diagnostic::parent!(a_wrong_typed_catalog_array_never_falls_through_to_discovery);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
     fs::write(root.join("kendex.toml"), "[catalog]\nskills = \"skills\"\n").unwrap();
@@ -290,10 +261,7 @@ fn a_wrong_typed_catalog_array_never_falls_through_to_discovery() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_present_but_broken_registry_offers_nothing_and_says_why() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_present_but_broken_registry_offers_nothing_and_says_why"
-    ));
+    crate::diagnostic::parent!(a_present_but_broken_registry_offers_nothing_and_says_why);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
     fs::create_dir_all(root.join(".claude-plugin")).unwrap();
@@ -312,10 +280,7 @@ fn a_present_but_broken_registry_offers_nothing_and_says_why() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_directory_reachable_twice_is_one_item() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_directory_reachable_twice_is_one_item"
-    ));
+    crate::diagnostic::parent!(one_directory_reachable_twice_is_one_item);
     let (_tmp, root) = repo();
     skill(&root, "skills/.curated/gh", "gh");
     let (sealed, config) = read(&root);
@@ -327,10 +292,7 @@ fn one_directory_reachable_twice_is_one_item() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_directories_folding_to_one_name_with_different_bytes_both_skip() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_directories_folding_to_one_name_with_different_bytes_both_skip"
-    ));
+    crate::diagnostic::parent!(two_directories_folding_to_one_name_with_different_bytes_both_skip);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
     skill(&root, ".claude/skills/GH", "GH");
@@ -351,10 +313,7 @@ fn two_directories_folding_to_one_name_with_different_bytes_both_skip() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_skill_copied_under_two_roots_is_one_item() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_skill_copied_under_two_roots_is_one_item"
-    ));
+    crate::diagnostic::parent!(one_skill_copied_under_two_roots_is_one_item);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
     skill(&root, ".claude/skills/gh", "gh");
@@ -370,10 +329,7 @@ fn one_skill_copied_under_two_roots_is_one_item() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_symlinked_skill_entry_is_skipped() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_symlinked_skill_entry_is_skipped"
-    ));
+    crate::diagnostic::parent!(a_symlinked_skill_entry_is_skipped);
     let (tmp, root) = repo();
     let outside = tmp.path().join("outside");
     fs::create_dir_all(&outside).unwrap();
@@ -388,10 +344,7 @@ fn a_symlinked_skill_entry_is_skipped() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_walk_stops_below_a_found_skill() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_walk_stops_below_a_found_skill"
-    ));
+    crate::diagnostic::parent!(the_walk_stops_below_a_found_skill);
     let (_tmp, root) = repo();
     skill(&root, "skills/outer", "outer");
     skill(&root, "skills/outer/fixtures/inner", "inner");
@@ -402,10 +355,7 @@ fn the_walk_stops_below_a_found_skill() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_nested_past_the_depth_cap_is_not_found() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_nested_past_the_depth_cap_is_not_found"
-    ));
+    crate::diagnostic::parent!(a_skill_nested_past_the_depth_cap_is_not_found);
     let (_tmp, root) = repo();
     skill(&root, "skills/a/b/c/deep", "deep");
     let (sealed, config) = read(&root);
@@ -418,10 +368,7 @@ fn a_skill_nested_past_the_depth_cap_is_not_found() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hooks_folder_in_a_skills_repo_is_not_offered() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hooks_folder_in_a_skills_repo_is_not_offered"
-    ));
+    crate::diagnostic::parent!(a_hooks_folder_in_a_skills_repo_is_not_offered);
     let (_tmp, root) = repo();
     skill(&root, ".claude/skills/gh", "gh");
     fs::create_dir_all(root.join("hooks")).unwrap();
@@ -453,10 +400,7 @@ fn a_hooks_folder_in_a_skills_repo_is_not_offered() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn submodule_and_lfs_pointers_under_a_root_are_findings_not_content() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::submodule_and_lfs_pointers_under_a_root_are_findings_not_content"
-    ));
+    crate::diagnostic::parent!(submodule_and_lfs_pointers_under_a_root_are_findings_not_content);
     let (_tmp, root) = repo();
     skill(&root, "skills/real", "real");
     fs::create_dir_all(root.join("skills/vendored")).unwrap();
@@ -486,10 +430,7 @@ fn submodule_and_lfs_pointers_under_a_root_are_findings_not_content() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_about_report_counts_skills_per_root() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_about_report_counts_skills_per_root"
-    ));
+    crate::diagnostic::parent!(the_about_report_counts_skills_per_root);
     let (_tmp, root) = repo();
     skill(&root, "skills/a", "a");
     skill(&root, "skills/b", "b");
@@ -522,10 +463,7 @@ fn the_about_report_counts_skills_per_root() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_sibling_costs_only_its_own_rows() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unreadable_sibling_costs_only_its_own_rows"
-    ));
+    crate::diagnostic::parent!(an_unreadable_sibling_costs_only_its_own_rows);
     use std::os::unix::fs::PermissionsExt;
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
@@ -587,10 +525,7 @@ fn an_unreadable_sibling_costs_only_its_own_rows() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kind_directory_that_is_not_there_lists_as_empty() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_kind_directory_that_is_not_there_lists_as_empty"
-    ));
+    crate::diagnostic::parent!(a_kind_directory_that_is_not_there_lists_as_empty);
     let (_tmp, root) = repo();
     skill(&root, "skills/gh", "gh");
     fs::write(

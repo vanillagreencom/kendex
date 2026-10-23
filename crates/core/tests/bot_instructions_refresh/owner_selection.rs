@@ -105,10 +105,7 @@ fn selected_fixture(row: Selection) -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn only_the_selected_armed_owner_reports_files_and_regions() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::only_the_selected_armed_owner_reports_files_and_regions"
-    ));
+    crate::diagnostic::parent!(only_the_selected_armed_owner_reports_files_and_regions);
     for &row in SELECTIONS {
         for write in [true, false] {
             assert_selection(row, write);
@@ -166,10 +163,7 @@ fn assert_selection(row: Selection, write: bool) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn automatic_lapse_checks_use_only_the_selected_configuration_owner() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::automatic_lapse_checks_use_only_the_selected_configuration_owner"
-    ));
+    crate::diagnostic::parent!(automatic_lapse_checks_use_only_the_selected_configuration_owner);
     for (row, unreadable_new) in SELECTIONS
         .iter()
         .copied()
@@ -245,10 +239,7 @@ fn assert_lapsed_owner(row: Selection, unreadable_new: bool) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn packages_without_configuration_effects_do_not_gain_automatic_runs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::packages_without_configuration_effects_do_not_gain_automatic_runs"
-    ));
+    crate::diagnostic::parent!(packages_without_configuration_effects_do_not_gain_automatic_runs);
     let fixture = selected_fixture(SELECTIONS[0]);
     let plain = install(&fixture, NEW, true);
     fs::write(
@@ -269,10 +260,7 @@ fn packages_without_configuration_effects_do_not_gain_automatic_runs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn selected_owner_failures_keep_write_and_discovery_failed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::selected_owner_failures_keep_write_and_discovery_failed"
-    ));
+    crate::diagnostic::parent!(selected_owner_failures_keep_write_and_discovery_failed);
     for body in [
         "printf 'wrote fixture.md\\n'; exit 1\n",
         "printf 'wrote ../outside.md\\nwould write ../outside.md\\n'\n",
@@ -315,10 +303,7 @@ fn selected_owner_failures_keep_write_and_discovery_failed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_commit_offer_checks_only_the_selected_configuration_owner() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_commit_offer_checks_only_the_selected_configuration_owner"
-    ));
+    crate::diagnostic::parent!(the_commit_offer_checks_only_the_selected_configuration_owner);
     for (row, changed) in [
         (SELECTIONS[0], &[OLD][..]),
         (SELECTIONS[1], &[NEW][..]),
@@ -387,10 +372,7 @@ fn assert_commit_owner(row: Selection, changed: &[&str]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn linked_worktree_consent_stays_with_the_selected_owner() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::linked_worktree_consent_stays_with_the_selected_owner"
-    ));
+    crate::diagnostic::parent!(linked_worktree_consent_stays_with_the_selected_owner);
     let fixture = selected_fixture(SELECTIONS[2]);
     commit_fixture(&fixture.root);
     let linked = fixture.root.parent().unwrap().join("linked");
@@ -431,10 +413,7 @@ fn linked_worktree_consent_stays_with_the_selected_owner() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_one_run_licence_uses_the_selected_owner_without_arming_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_one_run_licence_uses_the_selected_owner_without_arming_it"
-    ));
+    crate::diagnostic::parent!(a_one_run_licence_uses_the_selected_owner_without_arming_it);
     let fixture = selected_fixture(SELECTIONS[3]);
     assert_eq!(
         bot_instructions::render_once(&fixture.env, &fixture.scope)

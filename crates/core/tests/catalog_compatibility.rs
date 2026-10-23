@@ -21,10 +21,7 @@ const FUTURE: &str = "999999.0.0";
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn check_reads_every_scope_minimum_before_settling_any_record() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::check_reads_every_scope_minimum_before_settling_any_record"
-    ));
+    crate::diagnostic::parent!(check_reads_every_scope_minimum_before_settling_any_record);
     use kendex_core::drift::copies::CheckMode;
     use kendex_core::drift::report::{CheckStatus, check_with_refusals};
 
@@ -127,10 +124,7 @@ fn check_reads_every_scope_minimum_before_settling_any_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_resolves_catalogs_only_for_settlement_with_time_remaining() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::check_resolves_catalogs_only_for_settlement_with_time_remaining"
-    ));
+    crate::diagnostic::parent!(check_resolves_catalogs_only_for_settlement_with_time_remaining);
     use crate::test_util::git;
     use kendex_core::drift::copies::CheckMode;
     use kendex_core::drift::report::{CheckStatus, check_within};
@@ -225,8 +219,7 @@ enum Verdict {
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn catalog_minimum_table() {
-    let _diagnostic =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::catalog_minimum_table"));
+    crate::diagnostic::parent!(catalog_minimum_table);
     let current = format!("min_kendex = {:?}", env!("CARGO_PKG_VERSION"));
     let build_metadata = format!(
         "min_kendex = '{}+catalog'",
@@ -334,10 +327,9 @@ fn catalog_minimum_table() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn compatible_minima_render_the_same_bytes_and_newer_minima_write_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::compatible_minima_render_the_same_bytes_and_newer_minima_write_nothing"
-    ));
+    crate::diagnostic::parent!(
+        compatible_minima_render_the_same_bytes_and_newer_minima_write_nothing
+    );
     for min in [
         None,
         Some("0.0.0"),
@@ -421,10 +413,7 @@ fn compatible_minima_render_the_same_bytes_and_newer_minima_write_nothing() {
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn minimum_refuses_before_the_plugin_registry_is_read() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::minimum_refuses_before_the_plugin_registry_is_read"
-    ));
+    crate::diagnostic::parent!(minimum_refuses_before_the_plugin_registry_is_read);
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     fs::write(
@@ -663,10 +652,7 @@ const REMOVAL_ROWS: &[RemovalRow] = &[
 #[test]
 #[allow(clippy::unwrap_used)]
 fn prepared_removal_checks_only_its_remaining_readings() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::prepared_removal_checks_only_its_remaining_readings"
-    ));
+    crate::diagnostic::parent!(prepared_removal_checks_only_its_remaining_readings);
     for row in REMOVAL_ROWS {
         let (_tmp, env, scope, project) = removal_world(row);
         let before = fs::read(project.join("kendex.toml")).unwrap();

@@ -104,10 +104,7 @@ fn is_clean(f: &Fixture) -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_reaches_claude_as_a_file_and_codex_as_a_skill() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_reaches_claude_as_a_file_and_codex_as_a_skill"
-    ));
+    crate::diagnostic::parent!(a_command_reaches_claude_as_a_file_and_codex_as_a_skill);
     let f = fixture(
         "\"claude\", \"codex\"",
         "[commands.ship]\nsource = \"cat\"\n",
@@ -146,10 +143,7 @@ fn a_command_reaches_claude_as_a_file_and_codex_as_a_skill() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_installs_as_a_skill_at_global_scope_too() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_installs_as_a_skill_at_global_scope_too"
-    ));
+    crate::diagnostic::parent!(a_command_installs_as_a_skill_at_global_scope_too);
     let f = fixture("\"codex\"", "");
     let manifest = f.env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
@@ -181,10 +175,7 @@ fn a_command_installs_as_a_skill_at_global_scope_too() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_of_the_same_name_keeps_it_and_the_command_is_renamed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_of_the_same_name_keeps_it_and_the_command_is_renamed"
-    ));
+    crate::diagnostic::parent!(a_skill_of_the_same_name_keeps_it_and_the_command_is_renamed);
     let f = fixture(
         "\"codex\"",
         "[skills.ship]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n",
@@ -223,10 +214,7 @@ fn a_skill_of_the_same_name_keeps_it_and_the_command_is_renamed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_taken_rename_falls_through_to_the_shorter_suffix() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_taken_rename_falls_through_to_the_shorter_suffix"
-    ));
+    crate::diagnostic::parent!(a_taken_rename_falls_through_to_the_shorter_suffix);
     let f = fixture("\"codex\"", "[commands.ship]\nsource = \"cat\"\n");
     add_skill(&f, "ship", "The real skill.");
     add_skill(&f, "ship__command", "Something else entirely.");
@@ -243,10 +231,7 @@ fn a_taken_rename_falls_through_to_the_shorter_suffix() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn toggling_a_command_off_parks_the_generated_skill() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::toggling_a_command_off_parks_the_generated_skill"
-    ));
+    crate::diagnostic::parent!(toggling_a_command_off_parks_the_generated_skill);
     let f = fixture("\"codex\"", "[commands.ship]\nsource = \"cat\"\n");
     apply_now(&f);
     let tree = f.project.join(".agents/skills/ship");
@@ -269,10 +254,7 @@ fn toggling_a_command_off_parks_the_generated_skill() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_command_takes_the_generated_skill_with_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_a_command_takes_the_generated_skill_with_it"
-    ));
+    crate::diagnostic::parent!(removing_a_command_takes_the_generated_skill_with_it);
     let f = fixture("\"codex\"", "[commands.ship]\nsource = \"cat\"\n");
     apply_now(&f);
     let tree = f.project.join(".agents/skills/ship");
@@ -287,10 +269,7 @@ fn removing_a_command_takes_the_generated_skill_with_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn harnesses_that_only_read_commands_get_nothing_written() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::harnesses_that_only_read_commands_get_nothing_written"
-    ));
+    crate::diagnostic::parent!(harnesses_that_only_read_commands_get_nothing_written);
     let f = fixture("\"cursor\"", "[commands.ship]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(report.plan.ops.is_empty(), "{:?}", report.plan.ops);
@@ -313,10 +292,7 @@ fn harnesses_that_only_read_commands_get_nothing_written() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_cross_read_warning_skips_a_loader_that_would_reject_the_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_cross_read_warning_skips_a_loader_that_would_reject_the_name"
-    ));
+    crate::diagnostic::parent!(the_cross_read_warning_skips_a_loader_that_would_reject_the_name);
     let rejecting = ["OpenCode", "GitHub Copilot"];
 
     let f = fixture(

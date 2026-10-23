@@ -44,10 +44,7 @@ fn commit(dir: &Path) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_a_pinned_item_leaves_the_scope_plannable() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::keeping_a_pinned_item_leaves_the_scope_plannable"
-    ));
+    crate::diagnostic::parent!(keeping_a_pinned_item_leaves_the_scope_plannable);
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let upstream = home.join("git").join(REPO);

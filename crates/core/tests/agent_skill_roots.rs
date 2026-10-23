@@ -62,10 +62,7 @@ fn installed(home: &Path, method: &str, vars: &[(&str, String)]) -> (Env, String
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copied_skill_is_read_from_the_relocated_root_the_copy_wrote() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_copied_skill_is_read_from_the_relocated_root_the_copy_wrote"
-    ));
+    crate::diagnostic::parent!(a_copied_skill_is_read_from_the_relocated_root_the_copy_wrote);
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let elsewhere = home.join("alt/codex");
@@ -91,10 +88,7 @@ fn a_copied_skill_is_read_from_the_relocated_root_the_copy_wrote() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_linked_skill_is_read_from_the_shared_tree_the_link_wrote() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_linked_skill_is_read_from_the_shared_tree_the_link_wrote"
-    ));
+    crate::diagnostic::parent!(a_linked_skill_is_read_from_the_shared_tree_the_link_wrote);
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let elsewhere = home.join("alt/codex");

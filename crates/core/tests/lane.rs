@@ -36,10 +36,9 @@ enum Case {
     reason = "one marker identity table shares its fixture and assertions"
 )]
 fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane"
-    ));
+    crate::diagnostic::parent!(
+        only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane
+    );
     for case in [
         Case::Marked,
         Case::NestedMarked,
@@ -204,10 +203,7 @@ fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
 #[test]
 #[allow(clippy::expect_used, reason = "a fixture operation must succeed")]
 fn a_linked_marker_component_is_not_an_absent_marker() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_linked_marker_component_is_not_an_absent_marker"
-    ));
+    crate::diagnostic::parent!(a_linked_marker_component_is_not_an_absent_marker);
     use std::os::unix::fs::symlink;
     for component in ["file", "directory"] {
         let fixture = Fixture::new("KEN-2299");

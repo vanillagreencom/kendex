@@ -51,10 +51,7 @@ fn lock_writes(report: &kendex_core::engine::EngineReport) -> usize {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_place_of_followers_comes_current_in_one_pass() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_place_of_followers_comes_current_in_one_pass"
-    ));
+    crate::diagnostic::parent!(a_place_of_followers_comes_current_in_one_pass);
     let w = world();
     for name in ["a", "b", "c", "sibling"] {
         write_skill(&w.upstream, name, "", &format!("{name} version one."));
@@ -108,10 +105,7 @@ fn a_place_of_followers_comes_current_in_one_pass() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hold_move_and_a_follow_travel_in_one_plan() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hold_move_and_a_follow_travel_in_one_plan"
-    ));
+    crate::diagnostic::parent!(a_hold_move_and_a_follow_travel_in_one_plan);
     let w = world();
     write_skill(&w.upstream, "pinned", "", "pinned version one.");
     write_skill(&w.upstream, "free", "", "free version one.");
@@ -163,10 +157,7 @@ fn a_hold_move_and_a_follow_travel_in_one_plan() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_unresolvable_hold_leaves_the_whole_batch_unwritten() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_unresolvable_hold_leaves_the_whole_batch_unwritten"
-    ));
+    crate::diagnostic::parent!(one_unresolvable_hold_leaves_the_whole_batch_unwritten);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     write_skill(&w.upstream, "b", "", "b version one.");
@@ -211,10 +202,7 @@ fn one_unresolvable_hold_leaves_the_whole_batch_unwritten() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_batch_naming_a_stranger_is_refused_whole() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_batch_naming_a_stranger_is_refused_whole"
-    ));
+    crate::diagnostic::parent!(a_batch_naming_a_stranger_is_refused_whole);
     let w = world();
     write_skill(&w.upstream, "a", "", "a version one.");
     let first = commit(&w.upstream, "one");
@@ -249,10 +237,7 @@ fn a_batch_naming_a_stranger_is_refused_whole() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_batch_over_declared_members_leaves_the_sets_membership_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_batch_over_declared_members_leaves_the_sets_membership_alone"
-    ));
+    crate::diagnostic::parent!(a_batch_over_declared_members_leaves_the_sets_membership_alone);
     let w = world();
     for name in ["a", "b", "spare"] {
         write_skill(&w.upstream, name, "", &format!("{name} version one."));
@@ -331,10 +316,7 @@ fn a_batch_over_declared_members_leaves_the_sets_membership_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_derived_target_frees_its_set_even_beside_a_declared_one() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_derived_target_frees_its_set_even_beside_a_declared_one"
-    ));
+    crate::diagnostic::parent!(a_derived_target_frees_its_set_even_beside_a_declared_one);
     let w = world();
     write_skill(&w.upstream, "member", "", "member version one.");
     write_skill(&w.upstream, "solo", "", "solo version one.");
