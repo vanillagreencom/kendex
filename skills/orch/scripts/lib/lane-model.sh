@@ -477,6 +477,7 @@ def lane_selection($model; $floor; $burn; $now; $max; $credit_floor; $pool; $clo
                              elif .projected_window == null then .binding_resets_at else .projected_window.resets_at end
                            | strings ] | min),
       unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length),
+      exclusions: [ .[] | select(.verdict != "room") | {config_dir, reason: .verdict} ],
       seats: [ .[] | select(.verdict == "seat-reserve") | {config_dir, projected_headroom_pct} ],
       cloud_repo_unset: [ .[] | select(.verdict == "cloud-repo-unset") | .config_dir ],
       cloud_credit_unread: [ .[] | select(._credit_unread) | .alias ],

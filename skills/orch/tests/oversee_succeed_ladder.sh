@@ -293,7 +293,7 @@ mutate_file "$NOMODEL/lib/overseer-launch.sh" \
   '  OL_ENTRY_HOST=""; OL_ENTRY_MODEL=""'
 new_caller
 SUCCEED_BIN="$NOMODEL/oversee-succeed" run_succeed nomodel unset
-assert_eq "$RC|$(first_key)|$(caller_open)|$(launched claude)" \
+assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2}')|$(caller_open)|$(launched claude)" \
   "3|no-lane-qualifies|yes|none" \
   "control: a walk that drops the entry's model refuses the fleet the ladder succeeds on"
 
@@ -301,7 +301,7 @@ assert_eq "$RC|$(first_key)|$(caller_open)|$(launched claude)" \
 # harness alone, on Fable, and the unset default is what reached Opus above.
 new_caller
 run_succeed empty ''
-assert_eq "$RC|$(sed -n 1p <<<"$OUT" | awk '{print $2, $3}')" \
+assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2, $3}')" \
   "3|no-lane-qualifies entries=0" \
   "an empty preference walks no ladder"
 
@@ -485,7 +485,7 @@ new_caller codex
 CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=high -a never)
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexcaller unset
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(launched codex | sed "s|^$H/.dcodex[^ ]* |dcodex |")|$(grep -cx never "$TMP_ROOT/argv.codex")" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:standard:high source=codex target=claude|none|dcodex |1" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:standard:high source=codex target=claude lane=none|none|dcodex |1" \
   "a codex caller whose permission words cannot cross skips the claude entries and succeeds on codex"
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.
@@ -547,7 +547,7 @@ claude_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_RO
 CLAUDE_SUCCESSOR="lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$CLAUDE_COMPACT"
 copilot_ladder copilotcaller walled
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(claude_argv)" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:1:high source=copilot target=claude model=claude-opus-5.5|$CLAUDE_SUCCESSOR;$BRIEF;" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:1:high source=copilot target=claude model=claude-opus-5.5 lane=none|$CLAUDE_SUCCESSOR;$BRIEF;" \
   "a Copilot caller onto claude skips the numeric entry and carries no Copilot word onto the claude line"
 # Its controls, one per rule: a walk that hands the caller's other words on,
 # as the cross-harness line once did, puts the Copilot words on the claude
@@ -602,18 +602,6 @@ SUCCESSOR_ACCOUNTS=2 copilot_ladder copilotcheck check
 assert_eq "$RC|$(keyed mark-reached)|$(keyed entry-permission-untransferable)" \
   "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=90|none" \
   "the check judgement of a model-less Copilot caller resolves the numeric Claude entry"
-# A target with no transferable permission posture stays a silent skip in
-# check mode. Pi's launch row supplies that independent permission refusal.
-SUCCESSOR_ACCOUNTS=2 copilot_ladder quietcheck check "" empty 'pi:openai/gpt-5:high,claude:1:high'
-assert_eq "$RC|$(keyed entry-permission-untransferable)" "0|none" \
-  "the check judgement keeps an untransferable permission skip silent"
-QUIETCTL="$(mutant_scripts quietctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$QUIETCTL/lib/overseer-launch.sh" \
-  $'\n  (( OL_WALK_SOURCE_ROWS )) \\' $'\n  (( OL_WALK_SOURCE_ROWS )) && false \\'
-SUCCESSOR_ACCOUNTS=2 copilot_ladder quietctl check "$QUIETCTL/oversee-succeed" empty 'pi:openai/gpt-5:high,claude:1:high'
-assert_eq "$RC|$(keyed entry-permission-untransferable)" \
-  "0|oversee-succeed: entry-permission-untransferable entry=pi:openai/gpt-5:high source=copilot target=pi" \
-  "control: a check that does not keep the permission skip silent prints it"
 cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 
 # A Copilot caller whose pool nothing measures, its login unreadable, past its
@@ -637,7 +625,7 @@ KEEPCTL="$(mutant_scripts keepctl oversee-succeed)" || exit 1
 mutate_file "$KEEPCTL/oversee-succeed" \
   '  [[ "$CALLER_STATE:$MARK_KIND" != unmeasured:context ]] || OL_WALK_KEEP_UNMEASURED="$CALLER_ACCOUNT_HARNESS"' ''
 copilot_ladder keepctl context "$KEEPCTL/oversee-succeed" caller ''
-assert_eq "$RC|$(first_key)|$(caller_open)|$(launched copilot)" "3|no-lane-qualifies|yes|none" \
+assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2}')|$(caller_open)|$(launched copilot)" "3|no-lane-qualifies|yes|none" \
   "control: a walk that never keeps the unmeasured account refuses no-lane-qualifies"
 # A Copilot-first preference with Claude room: the named Copilot entry's pick
 # finds no Copilot account with room, so it keeps the caller's own account and
@@ -849,7 +837,7 @@ pi_skip_row() { # [SUCCEED_BIN]
 }
 pi_skip_row
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched pi)|$(launched claude | awk '{print $1}')" \
-  "0|oversee-succeed: entry-permission-untransferable entry=pi:pi-claude/claude-opus-5-5:high source=claude target=pi|none|$H/.fclaude" \
+  "0|oversee-succeed: entry-permission-untransferable entry=pi:pi-claude/claude-opus-5-5:high source=claude target=pi lane=none|none|$H/.fclaude" \
   "a claude caller skips a pi entry no permission posture crosses to"
 # Its control asks the source row alone and opens the forbidden Pi successor.
 PISKIPCTL="$(mutant_scripts piskipctl lib/overseer-launch.sh)" || exit 1

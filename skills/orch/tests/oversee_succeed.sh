@@ -798,7 +798,7 @@ ENTRY_ROWS="$(printf '%s\n' \
   "claude-codex|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|20|0||$ENTRY_CODEX_LINE|" \
   "codex-claude|codex|claude:fable:high|--dangerously-bypass-approvals-and-sandbox --verbose|--print-launch-line|20|0||$ENTRY_CLAUDE_LINE|" \
   "same-harness|claude|claude:fable:high|--permission-mode dontAsk --verbose|--print-launch-line|20|0||$ENTRY_SAME_LINE|" \
-  "walled|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|95|3|no-lane-qualifies;||" \
+  "walled|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|95|3|successor-lane-excluded;no-lane-qualifies;||" \
   "restricted|claude|codex:gpt-6-astra:high|--permission-mode dontAsk|--print-launch-line|20|3|entry-permission-untransferable;no-lane-qualifies;||" \
   "malformed|claude|codex:bad model:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||" \
   "two|claude|codex:gpt-6-astra:high,claude:fable:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||" \
@@ -853,7 +853,12 @@ while IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage
       row_walled=0
       [[ "$row_name" != walled ]] || row_walled=1
       assert_eq "$(sed -n 's/^oversee-succeed: no-lane-qualifies //p' "$TMP_ROOT/entry.err")" \
-        "entries=1 fallback=none walled=$row_walled unmeasured=0 mark=none" "print entry $row_name refuses without a caller fallback" ;;
+        "entries=1 fallback=none walled=$row_walled unmeasured=0 mark=none" "print entry $row_name refuses without a caller fallback"
+      if [[ "$row_name" == walled ]]; then
+        assert_eq "$(sed -n 's/^oversee-succeed: successor-lane-excluded //p' "$TMP_ROOT/entry.err")" \
+          "entry=$row_entry lane=$H/.codex reason=walled" 'print entry exposes the picked account exclusion'
+      fi
+      ;;
     claude-codex)
       assert_eq "$(lane_codex_trusted "$STRIP_HOME/config.toml" "$TMP_ROOT/work" && echo trusted || echo untrusted)" \
         trusted 'print entry prepares the picked codex home trust' ;;
@@ -889,7 +894,7 @@ cross_permission_refuses() { # NAME FLAGS...
   codex_usage 20 > "$FIXTURE_DIR/.codex.json"
   run_succeed "$name" 'codex:gpt-6-astra:high' -- --model fable --effort high "$@"
   assert_eq "$RC|$(keyed entry-permission-untransferable "$OUT" | sed -n 1p)|$(overseers)|$(recorded codex)" \
-    "3|oversee-succeed: entry-permission-untransferable entry=codex:gpt-6-astra:high source=claude target=codex|0|none" \
+    "3|oversee-succeed: entry-permission-untransferable entry=codex:gpt-6-astra:high source=claude target=codex lane=none|0|none" \
     "$name skips the cross-harness entry"
 }
 cross_permission_refuses restricted --permission-mode dontAsk
@@ -909,7 +914,7 @@ claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-restricted 'claude:fable:high' -- \
   -m caller-model -c model_reasoning_effort=high --approve-for-me
 assert_eq "$RC|$(keyed entry-permission-untransferable "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude|0|none" \
+  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude lane=none|0|none" \
   "codex approve-for-me skips the cross-harness entry"
 
 new_caller "$CODEX_SCREEN" 'Context 48% left'
@@ -917,7 +922,7 @@ fleet_state
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-never 'claude:fable:high' -- \
   -m caller-model -c model_reasoning_effort=high -a never
 assert_eq "$RC|$(keyed entry-permission-untransferable "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude|0|none" \
+  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude lane=none|0|none" \
   "codex ask-for-approval never skips the cross-harness entry"
 
 new_caller "$CODEX_SCREEN" 'Context 48% left'
@@ -925,7 +930,7 @@ fleet_state
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-mixed 'claude:fable:high' -- \
   -m caller-model -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -a never
 assert_eq "$RC|$(keyed entry-permission-untransferable "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude|0|none" \
+  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude lane=none|0|none" \
   "codex full bypass beside ask-for-approval never skips the cross-harness entry"
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 
@@ -1695,7 +1700,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
 # onto the other account.
 REFIRECTL="$(mutant_scripts refirectl lib/overseer-launch.sh)" || exit 1
 mutate_file "$REFIRECTL/lib/overseer-launch.sh" \
-  'if (( count > 0 && count + 1 <= OL_WALK_SUCCESSOR_BOUND )); then continue; fi' ':'
+  'if (( count > 0 && count + 1 <= OL_WALK_SUCCESSOR_BOUND )); then' 'if false; then'
 new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$REFIRECTL/oversee-succeed" \
   run_succeed refirectl ''

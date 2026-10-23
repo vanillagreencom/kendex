@@ -515,7 +515,7 @@ claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_oversee -- launch --wait-secs 5
 # The refusal relays DEP_ERR after its keyed line; the pick's own model lines
 # never reach it.
-assert_eq "$RC|$(first_line)|$(overseers)|$(keyed no-lane-qualifies "$OUT" | grep -c -e '^model-resolution: ' -e '^preference-deprecated' -e 'class ladder' || :)" \
+assert_eq "$RC|$(keyed no-lane-qualifies "$OUT" | sed -n 1p)|$(overseers)|$(keyed no-lane-qualifies "$OUT" | grep -c -e '^model-resolution: ' -e '^preference-deprecated' -e 'class ladder' || :)" \
   "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0|0" \
   "no lane above the trigger: refused at 3 with the walk's counts and no kendex words beside them"
 # Claude seats use the configured provider's reading while the overseer opens
@@ -651,7 +651,7 @@ tm kill-window -t "$(recorded window)"
 pi_first_row() { # [OVERSEE_BIN]
   OVERSEE_BIN="${1:-}" LAUNCH_PREF='pi:openai/gpt-5:high,claude:fable:high' run_oversee -- launch --wait-secs 20
   assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
-  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi|claude|fable" \
+  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi lane=none|claude|fable" \
   "a first launch skips a pi entry and opens on the claude entry after it"
 }
 pi_first_row

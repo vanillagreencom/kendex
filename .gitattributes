@@ -53,6 +53,7 @@ skills/orch/scripts/lib/pr-watch-pass.sh text eol=lf
 .agents/skills/orch/scripts/lib/pr-watch-pass.sh text eol=lf
 skills/orch/scripts/lib/account-wall.sh text eol=lf
 skills/orch/scripts/lib/lane-launch.sh text eol=lf
+skills/orch/scripts/lib/overseer-launch.sh text eol=lf
 skills/orch/scripts/lib/lane-relaunch.sh text eol=lf
 skills/jarvis/scripts/jarvis-session text eol=lf
 skills/jarvis/scripts/lib/session-backend.sh text eol=lf

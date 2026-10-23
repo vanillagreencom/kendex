@@ -1003,7 +1003,7 @@ pi_bare_flag_row() { # [SUCCEED_BIN]
   SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --harness pi -- --model claude-opus-5 --thinking high
 }
 pi_bare_flag_row
-assert_eq "$RC|$(sed -n 1p <<<"$ERR" | awk '{print $2}')|$(grep -o 'mark=[a-z]*' <<<"$(sed -n 1p <<<"$ERR")")" \
+assert_eq "$RC|$(awk '/^oversee-succeed: no-lane-qualifies / {print $2}' <<<"$ERR")|$(sed -n '/^oversee-succeed: no-lane-qualifies /s/.* \(mark=[a-z]*\).*/\1/p' <<<"$ERR")" \
   "3|no-lane-qualifies|mark=headroom" \
   "the succession beside a bare --model word reads the reading's claude account"
 PIBARECTL="$(mutant_scripts pibarectl lib/overseer-launch.sh)" || exit 1
@@ -1206,7 +1206,7 @@ new_caller claude
 reading "Fable 5.1"
 state "$(record "$CALLER_PANE" "$H/.eclaude" claude-opus-5)"
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude"
-assert_eq "$RC|$(sed -n 1p <<<"$ERR" | grep -o '^oversee-succeed: no-lane-qualifies .* mark=headroom')|$(tm list-windows -t fleet -F '#{window_name}' | grep -c '^overseer$' || true)" \
+assert_eq "$RC|$(grep -o '^oversee-succeed: no-lane-qualifies .* mark=headroom' <<<"$ERR")|$(tm list-windows -t fleet -F '#{window_name}' | grep -c '^overseer$' || true)" \
   "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom|0" \
   "a succession is judged on its record's account and model, and opens nothing where none has room"
 

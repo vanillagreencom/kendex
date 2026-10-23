@@ -71,11 +71,17 @@ case "$verb" in
         # no predecessor flags, so this asks the walk about harness rows alone.
         OL_WALK_SOURCE_HARNESS="$harness" OL_WALK_SOURCE_ROWS=1
         OL_WALK_REFUSE_ID="$(ol_account_id "$account")"
-        ol_walk "$trigger" "$account" ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"} caller || {
+        walk_rc=0
+        ol_walk "$trigger" "$account" ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"} caller || walk_rc=$?
+        for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
+          IFS=$'\t' read -r -a fields <<<"$skip"
+          printf 'jarvis-session: %s\n' "${fields[*]}" >&2
+        done
+        if (( walk_rc != 0 )); then
           printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
           [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
           exit 1
-        }
+        fi
         harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
         ;;
       *) printf 'jarvis-session: selection-failed account=%s exit=%s\n' "$account" "$rc" >&2

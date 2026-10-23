@@ -228,11 +228,14 @@
 #         reserve. Copilot pool picks, through Copilot or Pi, keep seats and
 #         charge their pool claims at the monthly burn; they read no fleet state or provider seat marks. Under --json that exit
 #         also prints `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
-#         "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}]}` on stdout,
+#         "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}],
+#         "exclusions":[{config_dir:D,reason:V}]}` on stdout,
 #         the same counts, so a caller
 #         walking several picks can report what each sweep found instead of
 #         parsing the message written for a person. walled_resets_at is the
 #         earliest retry among the walled candidates' deciding allowances.
+#         Each exclusion carries the judge's verdict and also prints on stderr
+#         as `pick-account-excluded lane=DIR reason=VERDICT`.
 #         A cloud grant states no retry. A plan window uses projected_window, judged
 #         with --model as the pick is, the binding reset where one has no
 #         projection, and null where none states a reset: when a launch of
@@ -991,6 +994,9 @@ message() {
     pick-local-reading)
       printf 'lanes: pick-local-reading lane=%s host=%s age-s=%s\n' "$1" "$2" "$3"
       printf '%s\n' "the provider never read its copy of that account, so this machine's own measured reading of the config dir, younger than the window a cached figure is served within (ORCH_LANES_USAGE_TTL, or --max-age where longer), is judged in its place"
+      ;;
+    pick-account-excluded)
+      printf 'lanes: pick-account-excluded lane=%s reason=%s\n' "$1" "$2"
       ;;
     pick-lane-unlisted)
       printf 'lanes: pick-lane-unlisted lane=%s harness=%s\n' "$1" "$2"
@@ -3870,7 +3876,7 @@ overseer_seats() { # [HARNESS]
 
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5" exclude="$6" for_overseer="$7" burn="$8" credit_floor="$9"
-	local lanes hosted judged chosen walled unmeasured resets omitted="" seats=0 seat room refusals refusal_lines cause retry
+	local lanes hosted judged chosen walled unmeasured resets omitted="" seats=0 seat room refusals refusal_lines cause retry exclusions exclusion_lines reason
 	local pick_pool
 	pick_pool="$(lane_pick_pool "$harness" "$model")" || return 1
 	# A Pi account on the Copilot pool is a Pi root the provider reports a
@@ -3916,6 +3922,8 @@ cmd_pick() {
 	while read -r dir; do message cloud-credit-unread "$dir" >&2; done < <(jq -r '.cloud_credit_unread[]' <<<"$judged")
 	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
+		exclusions="$(jq -c '.exclusions' <<<"$judged")" || return 1
+		exclusion_lines="$(jq -r '.[] | [.config_dir, .reason] | @tsv' <<<"$exclusions")" || return 1
 		refusals="$(jq -c '.refusals' <<<"$judged")" || return 1
 		refusal_lines="$(jq -r '.[] | [.config_dir, .refusal.cause, (.refusal.retry_at // "none")] | @tsv' <<<"$refusals")" || return 1
 		while IFS=$'\t' read -r dir cause retry; do
@@ -3945,6 +3953,9 @@ cmd_pick() {
 			else
 				message no-candidate "$harness" "$max_pct" "${model:-none}" "${walled:-0}" "${unmeasured:-0}" "$seats"
 			fi
+			while IFS=$'\t' read -r dir reason; do
+				[[ -z "$dir" ]] || message pick-account-excluded "$dir" "$reason"
+			done <<<"$exclusion_lines"
 			while IFS=$'\t' read -r seat room; do
 				[[ -z "$seat" ]] || message pick-seat-omitted "$seat" "$room" "$SEAT_RESERVE"
 			done <<<"$omitted"
@@ -3957,7 +3968,8 @@ cmd_pick() {
 		# record there on the same exit: a caller walking several picks reports
 		# what each sweep found, and the keyed line above is a message for a
 		# person. `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
-		# "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}]}` is the object, T the judgement's own
+		# "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}],
+		# "exclusions":[{config_dir:D,reason:V}]}` is the object, T the judgement's own
 		# earliest walled reset or null; nothing else is printed on this path, so a
 		# caller reading `.walled` gets the count or a jq error, never a lane
 		# record it would mistake for a pick. `seats` is the judgement's reserve refusal count.
@@ -3970,8 +3982,8 @@ cmd_pick() {
 		[[ "${unmeasured:-}" =~ ^[0-9]+$ ]] || unmeasured=0
 		resets="$(jq -c '.walled_resets_at' <<<"$judged")" || return 1
 		[[ "$as_json" != "true" ]] || jq -nc --argjson w "$walled" --argjson u "$unmeasured" --argjson s "$seats" \
-			--argjson r "$resets" --argjson refusals "$refusals" \
-			'{walled: $w, unmeasured: $u, seats: $s, qualifying_count: 0, walled_resets_at: $r, refusals: $refusals}'
+			--argjson r "$resets" --argjson refusals "$refusals" --argjson exclusions "$exclusions" \
+			'{walled: $w, unmeasured: $u, seats: $s, qualifying_count: 0, walled_resets_at: $r, refusals: $refusals, exclusions: $exclusions}'
 		if [[ "$pick_pool" == api-credit && "$walled" -eq 0 && "$unmeasured" -gt 0 ]]; then
 			message pick-provider-unmeasured "$harness" "${model:-none}" >&2
 			return 5

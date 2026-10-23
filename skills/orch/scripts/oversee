@@ -287,6 +287,7 @@ message() { # KEY FIELD=VALUE...
     preference-class-unread) text='kendex tier-model could not classify the model this entry names, so the model its launch would run is unknown. Nothing was launched. kendex is missing, or it refused this project'"'"'s manifest or personal settings; its words follow. Install or repair kendex, or fix the setting they name.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names clears the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
+    successor-lane-excluded) text='' ;;
     successor-status-line) text='The shared installer could not configure this Copilot home or its statusLine fallback. detail names the setup failure and cause names the fallback failure. The entry is skipped.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
     model-window-unknown) text='The Claude adapter could not read the family or default handoff budget. Nothing was launched. Check the adapter error before this message.' ;;
