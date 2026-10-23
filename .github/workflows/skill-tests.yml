@@ -515,7 +515,7 @@ jobs:
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
     # Slack retains the budget of the rest shard it splits from on both OSes.
-    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest') && 30 || 15 }}
+    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || (matrix.os == 'ubuntu-latest' && matrix.shard == 'orch-dev')) && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
@@ -765,7 +765,7 @@ jobs:
       # profiles and their complement. Dev/review names enter `orch-dev`,
       # including names that also carry lane or workflow-state, and so does
       # the oversee launch family; the owed-work family joins it on Linux.
-      # On Linux, the account-reader `lanes*` family joins `orch-rest`;
+      # On Linux, the account-reader `lanes*` family joins `orch-dev`;
       # `orch-state` keeps the other lane/workflow-state names. `orch-rest`
       # takes the remaining suites after these families. The macOS
       # profiles spread watch contracts across these same jobs. New suites

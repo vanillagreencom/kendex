@@ -383,8 +383,8 @@ family_rows='dev_future|orch-dev
 review_future|orch-dev
 lane_future|orch-state
 workflow-state_future|orch-state
-lanes_future|orch-rest|orch-state
-lanes_context_future|orch-rest|orch-state
+lanes_future|orch-dev|orch-state
+lanes_context_future|orch-dev|orch-state
 dev_review_lane_workflow-state_future|orch-dev
 other_future|orch-rest'
 while IFS='|' read -r name profile; do
@@ -425,7 +425,7 @@ for PARTITION_RUNNER_OS in Linux macOS; do
   done <<'ROWS'
 dev_future|orch-dev
 lane_future|orch-state
-lanes_future|orch-rest
+lanes_future|orch-dev
 ROWS
 done
 while IFS='|' read -r name profile; do
