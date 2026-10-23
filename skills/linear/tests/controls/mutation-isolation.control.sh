@@ -30,7 +30,7 @@ control_replace tests/must-fail-controls.sh 1 \
 # 5. The verdict on a run the timeout killed.
 control_expect "the timeout report names the mutation and the cap"
 control_replace tests/must-fail-controls.sh 1 \
-	'		if [[ "$rc" -eq 124 ]]; then' \
+	'		if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then' \
 	'		if false; then'
 
 # 6. The verdict on a control that edits its copy outside a numbered mutation.
@@ -137,3 +137,18 @@ control_expect "the misnamed report names the mutation and the assertion: baseli
 control_replace tests/must-fail-controls.sh 1 \
 	"			sed -n '/^BASELINE /p' \"\$WORK/\$stem.log\"" \
 	"			[[ \"\$(cat \"\$WORK/\$stem/mutation\$n.rc\")\" -ne 0 ]] || sed -n '/^BASELINE /p' \"\$WORK/\$stem.log\""
+
+control_expect "the mutation cap kills a suite that ignores TERM: KILL completes at cap plus grace"
+control_replace tests/must-fail-controls.sh 1 \
+	'		exec 4< <(exec timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)' \
+	'		exec 4< <(exec timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)'
+
+control_expect "the baseline cap kills a suite that ignores TERM"
+control_replace tests/must-fail-controls.sh 1 \
+	'		timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &' \
+	'		timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &'
+
+control_expect "the mutation cap kills a suite that ignores TERM: cap diagnostic bypasses ordered output"
+control_replace tests/must-fail-controls.sh 1 \
+	'			"$2" "$((SECONDS - started))" "$SUITE_TIMEOUT" "$SUITE_KILL_GRACE" "$rc" >&5' \
+	'			"$2" "$((SECONDS - started))" "$SUITE_TIMEOUT" "$SUITE_KILL_GRACE" "$rc" >&2'

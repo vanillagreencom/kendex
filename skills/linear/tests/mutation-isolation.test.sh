@@ -70,6 +70,11 @@ fixture() {
     if [ "$mode" = baseline-timeout ]; then
         printf 'A=1\nsleep 2\n' >"$root/scripts/a.sh"
     fi
+    if [ "$mode" = baseline-term-ignore ]; then
+        # The finite fallback bounds the old runner too; the fixed cap must
+        # kill the suite before this timer can finish on its own.
+        printf 'A=1\ntrap "" TERM\nsleep 4\n' >"$root/scripts/a.sh"
+    fi
     if [ "$mode" = baseline-exit ]; then
         printf 'A=1\nexit 7\n' >"$root/scripts/a.sh"
     fi
@@ -157,6 +162,8 @@ control_replace scripts/c.sh 1 '"'"'C=1'"'"' '"'"'C=2'"'"'' ;;
     # The run reddens on the clock rather than on the mutation.
     capped) body='control_expect "a is one"
 control_replace scripts/a.sh 1 '"'"'A=1'"'"' '"'"'A=1; sleep 2'"'"'' ;;
+    capped-term-ignore) body='control_expect "a is one"
+control_replace scripts/a.sh 1 '\''A=1'\'' '\''A=1; trap "" TERM; sleep 4'\''' ;;
     # Duplicate and unrelated FAIL lines cannot complete the wanted set.
     # Once both wanted names print, the remaining timer work is unused.
     early) body='control_expect "a is one"
@@ -236,6 +243,7 @@ the green report names its suite|plain|green|-|verdicts|alpha.test.sh:0|rc=1;GRE
 a control whose first mutation finishes last is judged on it|plain|late|-|verdicts|alpha.test.sh:0|rc=1;GREEN alpha.test.sh suite passed with mutation 1, its only break;1 controls, 1 failing, 0 orphaned
 a slot one job frees is refilled while another still runs|plain|refill|10|verdicts|alpha.test.sh:0|rc=1;GREEN alpha.test.sh suite passed with mutation 1, its only break;1 controls, 1 failing, 0 orphaned
 the timeout report names the mutation and the cap|plain|capped|1|verdicts|alpha.test.sh:0|rc=1;TIMEOUT alpha.test.sh mutation 1 hit the 1s cap having measured nothing;1 controls, 1 failing, 0 orphaned
+the mutation cap kills a suite that ignores TERM|plain|capped-term-ignore|1|verdicts|alpha.test.sh:0|rc=1;TIMEOUT alpha.test.sh mutation 1 hit the 1s cap having measured nothing;1 controls, 1 failing, 0 orphaned
 a mutation stops after all wanted names redden before the cap|plain|early|1|verdicts|alpha.test.sh:0|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
 the ungated report says what it refuses|plain|ungated|-|verdicts|alpha.test.sh:0|rc=1;UNGATED alpha.test.sh control edits its copy outside a numbered mutation;1 controls, 1 failing, 0 orphaned
 the residue a suite writes in its own copy is not read as the edit of its control|residue|clean|-|verdicts|alpha.test.sh:0|rc=0;ok alpha.test.sh;1 controls, 0 failing, 0 orphaned
@@ -245,6 +253,7 @@ a suite with no control file is reported missing|plain|missing|-|verdicts|beta.t
 a suite failing from its unmutated copy proves nothing under mutation|broken|clean|-|verdicts|alpha.test.sh:1|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 1);1 controls, 1 failing, 0 orphaned
 the unstaged report shows the assertion the suite failed on|broken|clean|-|detail|alpha.test.sh:1|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 1); | FAIL: a is one; | FAIL: a is one;1 controls, 1 failing, 0 orphaned
 the baseline timeout report names its exit status and suite cap|baseline-timeout|clean|1|verdicts|alpha.test.sh:124|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 124; hit the 1s suite cap);1 controls, 1 failing, 0 orphaned
+the baseline cap kills a suite that ignores TERM|baseline-term-ignore|clean|1|verdicts|alpha.test.sh:137|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 137; hit the 1s suite cap);1 controls, 1 failing, 0 orphaned
 the baseline failure report names its exit status|baseline-exit|clean|-|verdicts|alpha.test.sh:7|rc=1;UNSTAGED alpha.test.sh suite fails from an unmutated copy (exit 7);1 controls, 1 failing, 0 orphaned
 a control declaring no mutation changed nothing|plain|empty|-|verdicts|alpha.test.sh:0|rc=1;NOOP alpha.test.sh control changed nothing;1 controls, 1 failing, 0 orphaned
 a mutation whose line the file lacks did not apply|plain|badctrl|-|verdicts|alpha.test.sh:0|rc=1;BADCTRL alpha.test.sh mutation 1 did not apply cleanly;1 controls, 1 failing, 0 orphaned
@@ -267,5 +276,13 @@ while IFS='|' read -r label fix ctl cap keep baselines expect; do
         }
     ' "$RUN_LOG")"
     assert_eq "$label: baseline output" "$baseline_output" "$baselines"
+    if [[ "$fix" = baseline-term-ignore || "$ctl" = capped-term-ignore ]]; then
+        cap_output=$(sed -n '/^SUITE_CAP /p' "$RUN_LOG")
+        assert_matches "$label: KILL completes at cap plus grace" "$cap_output" \
+            '^SUITE_CAP suite=alpha.test.sh elapsed=[12]s cap=1s grace=1s exit=137$'
+        # CI consumes SUITE_CAP directly, before ordered BASELINE delivery.
+        cap_order=$(awk '/^SUITE_CAP / { cap=NR } /^BASELINE / { base=NR } END { print (cap > 0 && cap < base) }' "$RUN_LOG")
+        assert_eq "$label: cap diagnostic bypasses ordered output" "$cap_order" 1
+    fi
 done <<<"$ROWS"
 

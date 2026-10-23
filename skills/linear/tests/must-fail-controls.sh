@@ -37,6 +37,9 @@ TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 CONTROLS_DIR="$TESTS_DIR/controls"
 SUITE_TIMEOUT="${CONTROL_TIMEOUT:-60}"
+SUITE_KILL_GRACE=1
+# Cap diagnostics must reach CI even while an earlier roster entry is pending.
+exec 5>&2
 
 # Jobs run concurrently, one control's checks or one of its mutations each, so
 # a control with many mutations spreads over every slot: each job stages its
@@ -280,7 +283,7 @@ flush() {
 # `timeout`, which passes it to the suite, and the job ends there rather than
 # going on to stage a copy under a scratch the runner has removed.
 timed_suite() {
-	local pid="" rc line i remaining=0 stopped=0
+	local pid="" rc line i remaining=0 stopped=0 started=$SECONDS
 	local -a wanted=()
 	trap '[[ -z $pid ]] || kill -TERM "$pid" 2>/dev/null; exit 143' TERM
 	if [[ "$#" -eq 4 ]]; then
@@ -290,7 +293,7 @@ timed_suite() {
 		done <"$4"
 		[[ "$remaining" -gt 0 ]] || die "no wanted assertions for $2"
 		: >"$3"
-		exec 4< <(exec timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)
+		exec 4< <(exec timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)
 		pid=$!
 		while IFS= read -r -u 4 line || [[ -n "$line" ]]; do
 			printf '%s\n' "$line" >>"$3"
@@ -308,12 +311,16 @@ timed_suite() {
 		done
 		exec 4<&-
 	else
-		timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &
+		timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &
 		pid=$!
 	fi
 	wait "$pid"
 	rc=$?
 	trap - TERM
+	if [[ "$stopped" -eq 0 && ( "$rc" -eq 124 || "$rc" -eq 137 ) ]]; then
+		printf 'SUITE_CAP suite=%s elapsed=%ss cap=%ss grace=%ss exit=%s\n' \
+			"$2" "$((SECONDS - started))" "$SUITE_TIMEOUT" "$SUITE_KILL_GRACE" "$rc" >&5
+	fi
 	if [[ "$#" -eq 4 ]]; then
 		if [[ "$remaining" -gt 0 ]]; then
 			printf '%s\n' "${wanted[@]}" >"$4" || die "cannot record unmatched assertions for $2"
@@ -389,7 +396,7 @@ prepare_one() {
 	out="$(<"$WORK/$stem/suite.out")" || die "cannot read the output of $suite"
 	if [[ "$rc" -ne 0 ]]; then
 		cap_note=""
-		[[ "$rc" -ne 124 ]] || cap_note="; hit the ${SUITE_TIMEOUT}s suite cap"
+		[[ "$rc" -ne 124 && "$rc" -ne 137 ]] || cap_note="; hit the ${SUITE_TIMEOUT}s suite cap"
 		printf 'UNSTAGED %-52s suite fails from an unmutated copy (exit %s%s)\n' "$suite" "$rc" "$cap_note"
 		{
 			fail_names "$out" | sed 's/^/FAIL: /'
@@ -512,7 +519,7 @@ mutate_one() {
 		# names nothing. Reported as the kill rather than left to the
 		# check below, which would say the mutation did not redden its
 		# assertion and send its author looking at the mutation.
-		if [[ "$rc" -eq 124 ]]; then
+		if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
 			printf 'TIMEOUT  %-52s mutation %d hit the %ss cap having measured nothing\n' \
 				"$suite" "$k" "$SUITE_TIMEOUT"
 			return 1
@@ -539,6 +546,7 @@ main() {
 		shift 2
 	fi
 	local -a wanted=("$@") stems=()
+	timeout --version || die "cannot read the timeout implementation"
 	local suite_path control_path suite stem want k total=0 orphans=0
 
 	for suite_path in "$TESTS_DIR"/*.test.sh; do
