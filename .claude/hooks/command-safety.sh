@@ -698,8 +698,13 @@ environment_receiver_evidence() {
       local source=$1 executable="" span quote c i=0 end found uncertain=""
       local dynamic_re='(^|[^A-Za-z0-9_])(exec|eval|compile)([^A-Za-z0-9_]|$)'
       local span_re="^[^\"'#]+"
-      # Source-edit replacement strings are data. Prefixed strings and code
-      # evaluation keep raw evidence because their contents can execute.
+      local unsafe_re='(^|[^A-Za-z0-9_])(os|__import__|importlib|getattr|globals|vars|exec|eval|compile)([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])sys[[:space:]]*\.[[:space:]]*modules([^A-Za-z0-9_]|$)'
+      local import_re='(^|[^A-Za-z0-9_])(from|import)([^A-Za-z0-9_]|$)' imports import_kind
+      local module_re='^[[:blank:]]+(pathlib|re|json|textwrap)([[:blank:]]+as[[:blank:]]+[A-Za-z_][A-Za-z0-9_]*)?[[:blank:]]*(,[[:blank:]]*(pathlib|re|json|textwrap)([[:blank:]]+as[[:blank:]]+[A-Za-z_][A-Za-z0-9_]*)?[[:blank:]]*)*$'
+      local from_re='^[[:blank:]]+(pathlib|re|json|textwrap)[[:blank:]]+import[[:blank:]]+'
+      # Source-edit literals are data only with these non-executing imports.
+      # Other imports, dynamic access and uncertain syntax keep raw evidence:
+      # child interpreters can execute a quoted environment read.
       if [[ ! $source =~ $dynamic_re ]]; then
         while [ "$i" -lt "${#source}" ]; do
           c=${source:i:1}
@@ -720,7 +725,10 @@ environment_receiver_evidence() {
                   end=$((end + ${#quote})); found=1; break
                 fi
                 if [ "${#quote}" -eq 1 ] && [ "${source:end:1}" = $'\n' ]; then break; fi
-                end=$((end + 1))
+                span=${source:end}
+                span=${span%%"$c"*}; span=${span%%\\*}
+                [ "${#quote}" -ne 1 ] || span=${span%%$'\n'*}
+                if [ -n "$span" ]; then end=$((end + ${#span})); else end=$((end + 1)); fi
               done
               [ -n "$found" ] || { uncertain=1; break; }
               span=${source:i:end-i}
@@ -731,7 +739,21 @@ environment_receiver_evidence() {
               executable=$executable$span; i=$((i + ${#span})) ;;
           esac
         done
-        [ -n "$uncertain" ] || remaining=$executable
+        if [[ $executable =~ $unsafe_re ]]; then uncertain=1; fi
+        imports=$executable
+        while [ -z "$uncertain" ] && [[ $imports =~ $import_re ]]; do
+          matched=${BASH_REMATCH[0]}; import_kind=${BASH_REMATCH[2]}
+          span=${BASH_REMATCH[3]}
+          imports=$span${imports#*"$matched"}
+          span=${imports%%$'\n'*}; span=${span%%;*}; span=${span%%#*}
+          if [ "$import_kind" = from ]; then
+            [[ $span =~ $from_re ]] || uncertain=1
+          else
+            [[ $span =~ $module_re ]] || uncertain=1
+          fi
+          imports=${imports#"$span"}
+        done
+        if [ -z "$uncertain" ]; then remaining=$executable; fi
       fi ;;
   esac
   while [[ $remaining =~ $receiver_pattern ]]; do
