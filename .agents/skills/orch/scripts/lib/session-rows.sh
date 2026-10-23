@@ -121,21 +121,22 @@ session_rows_overseer_file() { # DIR SERVER PANE
 # recorded native identity on this live server. tmux's active pane is never
 # evidence of the caller's identity.
 session_rows_controller_pane() ( # DIR HARNESS SESSION
-  local scripts="${BASH_SOURCE[0]%/lib/*}" pane="" fields server start home live_start
+  local scripts="${BASH_SOURCE[0]%/lib/*}" pane="" record fields server home live_start
   [ -n "${TMUX:-}" ] && [ -n "$3" ] || return 1
   . "$scripts/lib/overseer-launch.sh" || return 1
   home=$(lane_context_caller_home "$2") || home=""
-  fields=$(cd -- "$1" && SESSION_ROWS_NATIVE=$3 SESSION_ROWS_HARNESS=$2 SESSION_ROWS_HOME=$home \
-    "$scripts/workflow-state" get oversee "$OL_JQ_DEFS"'
+  record=$(cd -- "$1" && SESSION_ROWS_NATIVE=$3 SESSION_ROWS_HARNESS=$2 SESSION_ROWS_HOME=$home \
+    "$scripts/workflow-state" --no-private-env get oversee "$OL_JQ_DEFS"'
     .overseer | select(.session_id == $ENV.SESSION_ROWS_NATIVE
       and ol_native_match($ENV.SESSION_ROWS_HARNESS; $ENV.SESSION_ROWS_HOME; $ENV.SESSION_ROWS_NATIVE))
-    | [.server, .pane, (.server_start // "")] | @tsv' \
-    2>/dev/null) || fields=""
-  if [ -n "$fields" ]; then
-    IFS=$'\t' read -r server pane start <<<"$fields"
+    ' 2>/dev/null) || record=""
+  if [ -n "$record" ]; then
+    fields=$(jq -r '[.server, .pane] | @tsv' <<<"$record") || return 1
+    IFS=$'\t' read -r server pane <<<"$fields"
     if [ -n "$server" ] && [ -n "$pane" ]; then
       if live_start=$(tmux_server_start "$pane" "$server") &&
-          { [ -z "$start" ] || [ "$live_start" = "$start" ]; }; then
+          jq -e --arg server "$server" --arg start "$live_start" --arg pane "$pane" \
+            "$OL_JQ_DEFS"'ol_owns($server; $start; $pane)' <<<"$record" >/dev/null; then
         jq -nc --arg pane "$pane" '{controller:"overseer",pane:$pane}'
         return
       fi

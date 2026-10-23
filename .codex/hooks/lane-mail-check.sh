@@ -223,6 +223,9 @@ message() { # KEY VALUE [CAUSE]
       printf 'lane-mail-check: %s=%s\n' "$1" "$2"
     fi
     case "$1=$2" in
+      session-unjudged=missing-pane)
+        echo "this session is unjudged because TMUX_PANE is absent and no controller identity could be recovered"
+        ;;
       model-unavailable=reset-*)
         echo "the replacement's first-turn completion could not be recorded, so the recovery count is unchanged; the remaining turn-end checks continue"
         ;;
@@ -3919,7 +3922,11 @@ session_pane() {
   # A lane's item already identifies it; its mail and marks need no pane.
   [ -z "$ITEM" ] || return 0
   [ -n "${TMUX:-}" ] && [ -z "${TMUX_PANE:-}" ] && [ "$CALLER" != subagent ] || return 0
-  case "$ARM" in row | stop | deliver | halt) ;; *) return 0 ;; esac
+  case "$ARM" in
+    row | stop | deliver | halt | usage) ;;
+    compact) [ "$TRIGGER" = auto ] || return 0 ;;
+    *) return 0 ;;
+  esac
   local pane identity controller record generation
   local cause="no controller record binds this native session to a live pane" told notice
   if resolve_reader && [ -f "$SCRIPTS/lib/session-rows.sh" ]; then
@@ -3947,12 +3954,15 @@ session_pane() {
   else
     cause="the installed session-rows identity reader is unavailable"
   fi
+  # The SDK ignores stdout and retains its pending reading only on failure;
+  # PreCompact takes a warning, never a context envelope or a held turn.
+  case "$ARM" in usage | compact) refuse session-unjudged missing-pane "$cause" ;; esac
   told="${HOME:-$ROOT}/.cache/lane-mail/unjudged/$HARNESS-${SESSION:-unknown}"
   [ ! -f "$told" ] || return 0
-  notice="lane-mail-check: session-unjudged=missing-pane$NL"'This session is unjudged because TMUX_PANE is absent and '"$cause."
-  # Claude's common JSON systemMessage is visible on SessionStart and Stop;
-  # successful stderr is hidden. Other carriers consume additionalContext.
-  if [ "$HARNESS" = claude ]; then
+  notice=$(message session-unjudged missing-pane "$cause" 2>&1)
+  # Claude and Codex consume the common visible warning field on every
+  # reached event. Other carriers consume additionalContext.
+  if [ "$HARNESS" = claude ] || [ "$HARNESS" = codex ]; then
     jq -nc --arg text "$notice" '{systemMessage:$text}'
   else
     hand_over "$notice"

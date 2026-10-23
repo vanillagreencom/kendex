@@ -97,6 +97,8 @@ cp "$RECORD" "$RECORD.seed"
 while IFS='|' read -r shape label tokens active session agent expected key; do
   if [ "${1:-}" = --missing-pane ]; then
     case "$shape" in missing-pane*) ;; *) continue ;; esac
+  elif [ -n "${1:-}" ]; then
+    [ "$shape" = "$1" ] || continue
   fi
   cp "$RECORD.seed" "$RECORD"
   CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=90
@@ -122,6 +124,7 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
       ;;
     transcript) TRANSCRIPT="$ACCOUNT/projects/missing/s1.jsonl" ;;
     copilot*)
+      [ "$shape" != copilot-missing-pane ] || CALL_ENV=("${BASE_CALL_ENV[@]}")
       jq '.harness="copilot"' "$RECORD.seed" > "$RECORD"
       install_hook "$HOOK" "$LANE/.github/hooks/lane-mail-check.sh"
       TRANSCRIPT="$ACCOUNT/session-state/s1/events.jsonl"
@@ -170,7 +173,7 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
     missing-pane-foreign)
       TRANSCRIPT="$ACCOUNT/projects/jarvis/$session.jsonl"
       jarvis_mark "$tokens" "$active" "$session"
-      assert_eq "RC=$RC visible=$(jq -r 'has("systemMessage")' "$TMP_ROOT/stdout")" \
+      assert_eq "RC=$RC visible=$(jq -r '.systemMessage | if type == "string" then test("\\S") else false end' "$TMP_ROOT/stdout")" \
         'RC=0 visible=true' "$label: a new native id is visibly unjudged"
       jarvis_mark "$tokens" "$active" "$session"
       assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout")" 'RC=0 stdout=' \
@@ -236,13 +239,14 @@ transcript|a missing native transcript passes as a named gap|400000|false|s1||0|
 copilot-empty|an empty Copilot lead marker leaves context unmeasured|100000|false|s1||allow|READING_KEY
 copilot-sdk|an SDK reading below the mark passes|100000|false|s1||allow|-
 copilot-sdk|an SDK-only managed Copilot session receives succession|400000|false|s1||block|lane-mail-check: context=@TOKENS@
+copilot-missing-pane|an SDK-only Jarvis without TMUX_PANE receives succession|400000|false|s1||block|lane-mail-check: context=@TOKENS@
 copilot-absent|the same SDK session with no controller record gets no mark|400000|false|s1||allow|NO_MARK
 registered|a managed registered overseer retains its wake refusal|100000|false|s1||2|lane-mail-check: wake=unarmed
 ROWS
 
 # Keep the matched implementation text while removing its behavior. The
 # shared helper proves that the disposable source copy changed.
-if [ -z "${HOOK_UNDER_TEST:-}" ] && [ "${1:-}" != --missing-pane ]; then
+if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${1:-}" ]; then
   assert_eq "$(grep -c '^jarvis_identified() {$' "$HOOK")" 1 'control matches the role-identification owner once'
   mutant jarvis-unidentified -e '/^jarvis_identified() {$/a\
   return 1'

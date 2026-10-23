@@ -15,7 +15,8 @@
 # caller's own records, and GIT_DIR would configure the real repository. The
 # suite restarts once in that environment, so its own setup runs there too.
 if [ "${LANE_MAIL_WORLD:-}" != started ]; then
-  exec env -i "HOME=$HOME" "PATH=$PATH" ${HOOK_UNDER_TEST+"HOOK_UNDER_TEST=$HOOK_UNDER_TEST"} LANE_MAIL_WORLD=started \
+  exec env -i "HOME=$HOME" "PATH=$PATH" ${HOOK_UNDER_TEST+"HOOK_UNDER_TEST=$HOOK_UNDER_TEST"} \
+    ${SESSION_ROWS_LIB_VARIANT+"SESSION_ROWS_LIB_VARIANT=$SESSION_ROWS_LIB_VARIANT"} LANE_MAIL_WORLD=started \
     "$BASH" "${BASH_SOURCE[${#BASH_SOURCE[@]}-1]}" "$@"
 fi
 
