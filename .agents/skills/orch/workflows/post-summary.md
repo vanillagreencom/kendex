@@ -18,7 +18,9 @@ Post the session summary to the git host and issue tracker, plus selective hando
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles, post_pr_stop: .post_pr_stop}'
 ```
 
-**Skip if** every count is zero and `post_pr_stop` is null → § 2.
+Collect each actual round's Validation Routes from its completion or fix artifact, and read any later restack run's native evidence, following [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-comment). Carry those rows into this comment, preserving their original identities and outcomes. Include each child on its originating item when bundled; the parent summary may also carry the rows. A compact workflow-state projection or final verdict cannot fill fields absent from the original sources.
+
+**Skip if** every count is zero, `post_pr_stop` is null and there are no validation routes to report → § 2.
 
 Write the summary to a file first with the harness file-write tool at `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), then post it:
 
@@ -42,6 +44,9 @@ Write the summary to a file first with the harness file-write tool at `[WORKTREE
 
 ## QA Metrics
 [Results from the QA agents that ran — project-configurable.]
+
+## Validation Routes
+[Each actual round/run's fixed-field row from dev-implement.md § 9.1, including fix and restack runs.]
 
 ## Orchestration stopped
 - Stop: `[POST_PR_STOP.name]`

@@ -256,11 +256,20 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 Always required. Linear posts it to the issue you implemented: write `tmp/completion-summary-[ISSUE_ID].md`, then `linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md`, with one `--attach` per screenshot § 8 captured. GitHub and ad-hoc rounds return the same content to the orchestrator instead and ALSO carry it in the artifact via `--summary-file` (§ 10).
 
+**Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `dev-validate-run --record --run-dir [RUN_DIR]` evidence while available. Use `--record` for its reported fields and `start` for that run's actual `timeout-secs` bound. Include one row per run, with its original round id and kind, run directory, recorded head/start identity, and source references. Keep implementation, fix and restack runs separate; a restack has no dev round id. Preserve earlier attempts and recovery or reused-run references rather than replacing their outcomes with the final verdict.
+
+Print every field in the Validation Routes template below. Each missing, legacy or unread field is `unknown`, including absent `scoped` or `ci-fallback`; retain reported values such as `selection=unreported` and `verdict=unfinished`. An unread source keeps its reference and diagnostic. Preserve `FAILING` and required CI's `pending` separately from local `pass`. Keep native bound-hit and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel and any bound-run source reference; never infer fallback, scope or a bound hit from prose or elapsed seconds. `dev-validate-run --help` owns those classifications. A refused start is recorded as such and creates no validation run or verdict.
+
+A validation-routing check reads these durable comments on the originating item. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
+
 ```markdown
 ## Completion Summary
 
 **Agent**: [AGENT_NAME]
 **Branch**: `[BRANCH]`
+
+### Validation Routes
+- round=[ORIGINAL_ROUND_ID_OR_UNKNOWN] kind=[implement|fix|restack] run-dir=[RUN_DIR_OR_UNKNOWN] head=[RECORDED_HEAD_OR_UNKNOWN] start=[RECORDED_START_OR_UNKNOWN] source=[NATIVE_START_AND_RECORD_REFERENCES] validate-mode=[VALUE_OR_UNKNOWN] selection=[VALUE_OR_UNKNOWN] ci-fallback=[VALUE_OR_UNKNOWN] scoped=[VALUE_OR_UNKNOWN] seconds=[VALUE_OR_UNKNOWN] timeout-secs=[ACTUAL_BOUND_OR_UNKNOWN] verdict=[VALUE_OR_UNKNOWN] outcome=[NATIVE_CLASSIFICATION_OR_UNKNOWN]
 
 ### Files Created/Modified
 - `path/to/file` - Description
