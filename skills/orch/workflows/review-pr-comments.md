@@ -17,7 +17,7 @@ Resolve `ORCH_DECISION_MODE` once for this post-PR workflow:
 .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
 ```
 
-**Standalone init** (`lifecycle: "self"`): `gh pr view --json number -q .number` gives `PR_NUMBER`, and `git-context issue-from-branch .` gives `ISSUE_ID` when the branch carries an issue id. When it does not, `ISSUE_ID` is `pr-[PR_NUMBER]`, the same repository-local fallback key [`ci-fix.md` § 1](ci-fix.md) and [`merge-pr.md` § 3](merge-pr.md) use; a branch with no issue id is ordinary, not a stop. Then, when `workflow-state exists --json [ISSUE_ID]` reports false, resolve `WT_PATH`, read the branch with `git-context branch`, and run `workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`, since the round-start prune reads the worktree from state.
+**Standalone init** (`lifecycle: "self"`): `gh pr view --json number -q .number` gives `PR_NUMBER`, and `git-context issue-from-branch .` gives `ISSUE_ID` when the branch carries an issue id. When it does not, `ISSUE_ID` is `pr-[PR_NUMBER]`, the same repository-local fallback key [`ci-fix.md` § 1](ci-fix.md) and [`merge-pr.md` § 3](merge-pr.md) use; a branch with no issue id is ordinary, not a stop. Except under `--dry-run`, when `workflow-state exists --json [ISSUE_ID]` reports false, resolve `WT_PATH`, read the branch with `git-context branch`, and run `workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`, since the round-start prune reads the worktree from state.
 
 Both commands below write to that state, so the key must resolve and the state must exist before either runs. Except under `--dry-run`, this triage pass is a continuing action:
 
@@ -80,6 +80,14 @@ Map each comment to a domain from its source type and file path. Domain-to-agent
 
 ## 3. Analyze
 
+Before delegating each new triage batch, mint its own review-round token. Never reuse a token from an earlier internal review or triage pass:
+
+```bash
+.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] review_round_id
+```
+
+Bind the printed token as `[TRIAGE_REVIEW_ROUND_ID]` in this batch's context. Keep it with each assigned and accepted domain or synthesis report path through § 5 and subsequent passes, even after state holds a later token. Under `--dry-run`, skip this state write and leave the token unavailable; § 5 reports proposed observations only.
+
 Apply [Delegation](../references/skill-rules.md#delegation) before selecting domain, architecture, or fix agents on every pass. Delegate to the mapped domain agents in parallel.
 
 <delegation_format>
@@ -88,6 +96,7 @@ Analyze these PR review comments for your domain.
 PR: #[PR_NUMBER] - [TITLE]
 Parent Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
+Review round: [TRIAGE_REVIEW_ROUND_ID, or unavailable under --dry-run]
 
 Decision context (read before classifying — do NOT suggest changes that contradict these):
 [For each verified decision: "[DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -114,7 +123,7 @@ URL: [URL]
    - Noise or failed checks from other sources: omit.
    - Every review-body input must remain in one array, including false claims, Step 0 exclusions, vague or informational items, and other verified declines. Keep these in `questions[]`: copy the original claim into `question` and put `Declined: [VERIFIED_DECISION_FLOW_REASON]` in `draft_response`. Use the existing Question Fields; this is a reply carrier, not a fix item or a question to the user.
    - Already fixed: do NOT omit silently. Return it in `questions[]` with `outcome: "already_fixed"`, `commit: "[SHA]"`, and a `draft_response`.
-3. Preserve `source_id` and `source_type` from the input on every item. This report boundary owns disposition retention: no filter or omission rule removes a review-body input or its verified reply reason.
+3. Preserve `source_id` and `source_type` from the input on every item. Copy the supplied review-round token into `qa_metadata.review_round_id`, or use `null` under `--dry-run`. This report boundary owns disposition retention: no filter or omission rule removes a review-body input or its verified reply reason.
 4. Write the JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` with your harness file-write tool — never shell redirection, a heredoc, `tee`, or `echo >`.
 5. Return exactly:
 
@@ -124,17 +133,17 @@ URL: [URL]
    </output_format>
 </delegation_format>
 
-Collect each agent's report path for § 5.
+Collect each agent's report path and its bound review-round token for § 5.
 
 ## 4. Synthesize
 
 **Skip if** the comments came from a single domain.
 
-Delegate to the architecture reviewer with the domain report paths, asking for cross-cutting findings only: issues spanning domains, dependencies between suggestions (`dependency: #A blocks #B (reason)`), gaps at domain boundaries, and conflicts between domain recommendations (flag both, resolve neither). It must not modify or overrule domain findings — only add its own, in the same JSON schema at `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json`, returning the same `Report:`/`Verdict:` pair. Add the returned path to the set.
+Delegate to the architecture reviewer with the domain report paths and this batch's `[TRIAGE_REVIEW_ROUND_ID]`, asking for cross-cutting findings only: issues spanning domains, dependencies between suggestions (`dependency: #A blocks #B (reason)`), gaps at domain boundaries, and conflicts between domain recommendations (flag both, resolve neither). It must not modify or overrule domain findings — only add its own, in the same JSON schema at `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json`, returning the same `Report:`/`Verdict:` pair. It copies the supplied token into `qa_metadata.review_round_id`, or uses `null` under `--dry-run`. Add the returned path and its bound token to the set.
 
 ## 5. Triage Report
 
-After the existing disposition pass below, and before routing to § 6 even for a reply-only pass, [record verified findings](../schemas/workflow-state.md#record-verified-findings). Keep the native identities from § 1; copied findings never become new local observations. A source without its original review/comment binding records unknown coverage. Under `--dry-run`, report the proposed observations without writing state.
+After the existing disposition pass below, and before routing to § 6 even for a reply-only pass, [record verified findings](../schemas/workflow-state.md#record-verified-findings). Set each observation's `source.round_id` from its accepted report's bound `[TRIAGE_REVIEW_ROUND_ID]`, matching `qa_metadata.review_round_id`, never from the current mutable state token. Keep the native identities from § 1; copied findings never become new local observations, and a fresh batch token never changes their deduplication identity. A source without its original round or review/comment binding records unknown coverage. Under `--dry-run`, report the proposed observations and unavailable round provenance without writing state.
 
 Read every report and aggregate across agents preserving attribution. Keep every review-body item with its source identity and verified reply draft through § 6.3; do not deduplicate it away. Deduplicate other items by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions. Show verified body declines in SKIPPING with their draft reason. These reply-only items never enter the fix set.
 
