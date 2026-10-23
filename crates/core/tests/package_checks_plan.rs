@@ -102,6 +102,10 @@ fn own_rows(plan: &SetupPlan, role: FileRole) -> Vec<&str> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_preview_lists_every_position_the_install_writes_and_no_other_tool() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_preview_lists_every_position_the_install_writes_and_no_other_tool"
+    ));
     let w = world();
     declare(&w, "");
 
@@ -226,6 +230,10 @@ fn the_preview_lists_every_position_the_install_writes_and_no_other_tool() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn other_pending_counts_the_work_the_checks_did_not_ask_for() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::other_pending_counts_the_work_the_checks_did_not_ask_for"
+    ));
     let w = fresh_git_world();
     declare(&w, "");
     let clean = drift::setup::setup_plan(&w.env, &w.scope).unwrap();
@@ -263,6 +271,10 @@ fn other_pending_counts_the_work_the_checks_did_not_ask_for() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_preview_at_a_moved_project_refuses() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_preview_at_a_moved_project_refuses"
+    ));
     let w = world();
     declare(&w, "");
     fs::rename(&w.root, w.root.parent().unwrap().join("moved")).unwrap();
@@ -311,6 +323,10 @@ fn registration_of(w: &World, harness: HarnessId) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_target_registered_reads_each_tool_and_not_just_one() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::every_target_registered_reads_each_tool_and_not_just_one"
+    ));
     let w = world();
     // A project with a package installed and the checks off — what a card
     // reading "Off" sits over. The install record exists and names none of
@@ -372,6 +388,10 @@ fn fresh_git_world() -> World {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_never_applied_git_project_has_nothing_of_its_own_waiting() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_never_applied_git_project_has_nothing_of_its_own_waiting"
+    ));
     let w = fresh_git_world();
     assert!(!w.root.join("kendex.toml").exists());
     assert!(
@@ -409,6 +429,10 @@ fn a_never_applied_git_project_has_nothing_of_its_own_waiting() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_folder_that_goes_away_before_the_render_refuses_at_the_apply() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_folder_that_goes_away_before_the_render_refuses_at_the_apply"
+    ));
     let w = fresh_git_world();
     let declaration = drift::hook::install_plan(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &declaration).unwrap();
@@ -444,6 +468,10 @@ fn a_folder_that_goes_away_before_the_render_refuses_at_the_apply() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_narrowed_declaration_is_brought_up_to_the_tools_the_script_runs_in() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_narrowed_declaration_is_brought_up_to_the_tools_the_script_runs_in"
+    ));
     let w = fresh_git_world();
     let targets = drift::hook::target_harnesses(&w.scope);
     assert!(targets.len() > 1, "the fixture needs more than one target");
@@ -493,6 +521,10 @@ fn a_narrowed_declaration_is_brought_up_to_the_tools_the_script_runs_in() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unrelated_conflict_is_named_and_does_not_hold_the_registration() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_unrelated_conflict_is_named_and_does_not_hold_the_registration"
+    ));
     let w = fresh_git_world();
     let source = w.root.join(".kendex-local/skills/mine");
     fs::create_dir_all(&source).unwrap();
@@ -552,6 +584,10 @@ fn an_unrelated_conflict_is_named_and_does_not_hold_the_registration() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_conflict_at_the_checks_own_target_is_named_on_a_re_enable() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_conflict_at_the_checks_own_target_is_named_on_a_re_enable"
+    ));
     let w = fresh_git_world();
     declare(&w, "");
     // The checks already set up here, which is what puts the check's
@@ -618,6 +654,10 @@ fn a_conflict_at_the_checks_own_target_is_named_on_a_re_enable() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_script_already_in_place_is_not_a_change_this_action_makes() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_script_already_in_place_is_not_a_change_this_action_makes"
+    ));
     let w = fresh_git_world();
     declare(&w, "");
     install(&w);
@@ -644,6 +684,10 @@ fn a_script_already_in_place_is_not_a_change_this_action_makes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_held_setup_does_not_present_the_render_as_this_actions_writes() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_held_setup_does_not_present_the_render_as_this_actions_writes"
+    ));
     let w = fresh_git_world();
     let source = w.root.join(".kendex-local/skills/mine");
     fs::create_dir_all(&source).unwrap();
@@ -693,6 +737,10 @@ fn a_held_setup_does_not_present_the_render_as_this_actions_writes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rendered_script_is_disclosed_as_a_script_not_as_the_registration() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_rendered_script_is_disclosed_as_a_script_not_as_the_registration"
+    ));
     let w = world();
     declare(&w, "");
 
@@ -738,6 +786,10 @@ fn a_rendered_script_is_disclosed_as_a_script_not_as_the_registration() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_check_declared_from_a_marketplace_is_refused_rather_than_taken_over() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_check_declared_from_a_marketplace_is_refused_rather_than_taken_over"
+    ));
     let w = fresh_git_world();
     declare(
         &w,
@@ -776,6 +828,10 @@ fn a_check_declared_from_a_marketplace_is_refused_rather_than_taken_over() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_check_declared_locally_is_ours_and_previews() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_check_declared_locally_is_ours_and_previews"
+    ));
     let w = fresh_git_world();
     declare(
         &w,
@@ -796,6 +852,10 @@ fn a_check_declared_locally_is_ours_and_previews() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_repositorys_own_file_is_listed_and_is_still_not_pending_work() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_repositorys_own_file_is_listed_and_is_still_not_pending_work"
+    ));
     let w = fresh_git_world();
     declare(&w, "");
 
@@ -836,6 +896,10 @@ fn the_repositorys_own_file_is_listed_and_is_still_not_pending_work() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_first_enable_names_no_conflict_but_still_says_why_after() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_first_enable_names_no_conflict_but_still_says_why_after"
+    ));
     let w = fresh_git_world();
     declare(&w, "");
     // A link kendex will not follow, exactly where the check's script
@@ -886,6 +950,10 @@ fn a_first_enable_names_no_conflict_but_still_says_why_after() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_re_enable_has_nothing_of_the_persons_waiting() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_re_enable_has_nothing_of_the_persons_waiting"
+    ));
     let w = fresh_git_world();
     declare(&w, "");
     install(&w);

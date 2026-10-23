@@ -119,6 +119,10 @@ fn as_written_by(f: &Fixture, key: &str, keep: &[&str]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_names_no_registration_leaves_their_duplicate_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_record_that_names_no_registration_leaves_their_duplicate_alone"
+    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     apply_now(&f);
     assert_eq!(groups(&f), vec![("Bash".to_owned(), 1)]);
@@ -170,6 +174,10 @@ fn a_record_that_names_no_registration_leaves_their_duplicate_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_names_no_matcher_still_retires_the_entry_it_left() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_record_that_names_no_matcher_still_retires_the_entry_it_left"
+    ));
     let f = fixture(MINE);
     apply_now(&f);
     assert_eq!(groups(&f), vec![("Bash".to_owned(), 1)]);
@@ -201,6 +209,10 @@ fn a_record_that_names_no_matcher_still_retires_the_entry_it_left() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_empty_matcher_registers_once_and_stays_once() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_empty_matcher_registers_once_and_stays_once"
+    ));
     let f = fixture(&MINE.replace("matcher = \"Bash\"", "matcher = \"\""));
     apply_now(&f);
     let first = settings(&f);
@@ -227,6 +239,10 @@ fn an_empty_matcher_registers_once_and_stays_once() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_first_install_takes_nothing_that_was_already_there() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_first_install_takes_nothing_that_was_already_there"
+    ));
     let f = fixture(MINE);
     // Theirs, running the same command under an event of their own.
     fs::write(
@@ -258,6 +274,10 @@ fn a_first_install_takes_nothing_that_was_already_there() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_record_that_names_no_registration_leaves_a_moved_entry_alone() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_record_that_names_no_registration_leaves_a_moved_entry_alone"
+    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     apply_now(&f);
     assert_eq!(groups(&f), vec![("Bash".to_owned(), 1)]);
@@ -307,6 +327,10 @@ fn a_record_that_names_no_registration_leaves_a_moved_entry_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_exact_duplicate_of_the_recorded_entry_does_not_wedge_the_refresh() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_exact_duplicate_of_the_recorded_entry_does_not_wedge_the_refresh"
+    ));
     let f = fixture(MINE);
     apply_now(&f);
     assert_eq!(groups(&f), vec![("Bash".to_owned(), 1)]);
@@ -354,6 +378,10 @@ fn an_exact_duplicate_of_the_recorded_entry_does_not_wedge_the_refresh() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_recorded_entry_moved_by_hand_does_not_hold_the_hook() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_recorded_entry_moved_by_hand_does_not_hold_the_hook"
+    ));
     let f = fixture(MINE);
     apply_now(&f);
     assert_eq!(groups(&f), vec![("Bash".to_owned(), 1)]);
@@ -401,6 +429,10 @@ fn a_recorded_entry_moved_by_hand_does_not_hold_the_hook() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_spelled_another_way_replaces_the_entry_it_left() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_command_spelled_another_way_replaces_the_entry_it_left"
+    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     let manifest = f.project.join("kendex.toml");
     let text = fs::read_to_string(&manifest).unwrap();

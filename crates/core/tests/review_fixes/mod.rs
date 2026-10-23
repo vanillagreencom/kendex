@@ -96,6 +96,10 @@ fn has(report: &kendex_core::engine::EngineReport, name: &str, state: DriftState
 
 #[test]
 fn a_symlinked_disabled_sibling_is_a_conflict_not_a_write_target() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_symlinked_disabled_sibling_is_a_conflict_not_a_write_target"
+    ));
     let w = world();
     let scope = project(&w);
     declare(&w, &scope, "[agents.rust]\nsource = \"cat\"\n");
@@ -119,6 +123,10 @@ fn a_symlinked_disabled_sibling_is_a_conflict_not_a_write_target() {
 
 #[test]
 fn a_file_recreated_between_plan_and_apply_aborts_the_rename() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_file_recreated_between_plan_and_apply_aborts_the_rename"
+    ));
     let w = world();
     let scope = project(&w);
     declare(&w, &scope, "[agents.rust]\nsource = \"cat\"\n");
@@ -143,6 +151,10 @@ fn a_file_recreated_between_plan_and_apply_aborts_the_rename() {
 
 #[test]
 fn a_stale_plan_cannot_revert_a_newer_manifest() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_stale_plan_cannot_revert_a_newer_manifest"
+    ));
     let w = world();
     let scope = project(&w);
     declare(&w, &scope, "[skills.gh]\nsource = \"cat\"\n");
@@ -178,6 +190,10 @@ fn a_stale_plan_cannot_revert_a_newer_manifest() {
 
 #[test]
 fn adoption_plans_never_mutate_at_plan_time() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::adoption_plans_never_mutate_at_plan_time"
+    ));
     let w = world();
     let scope = project(&w);
     declare(&w, &scope, "");
@@ -193,6 +209,10 @@ fn adoption_plans_never_mutate_at_plan_time() {
 
 #[test]
 fn rollback_removes_directories_the_apply_created() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::rollback_removes_directories_the_apply_created"
+    ));
     let w = world();
     let scope = project(&w);
     declare(&w, &scope, "[skills.gh]\nsource = \"cat\"\n");
@@ -226,6 +246,10 @@ fn rollback_removes_directories_the_apply_created() {
 
 #[test]
 fn reviewer_agents_merge_additions_into_the_key_that_is_read() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::reviewer_agents_merge_additions_into_the_key_that_is_read"
+    ));
     let w = world();
     let scope = project(&w);
     add_skill(&w.source, "dev");
@@ -255,6 +279,10 @@ fn reviewer_agents_merge_additions_into_the_key_that_is_read() {
 
 #[test]
 fn narrowing_harnesses_orphans_the_stranded_installation() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::narrowing_harnesses_orphans_the_stranded_installation"
+    ));
     let w = world();
     let scope = Scope::Global;
     declare(
@@ -304,6 +332,10 @@ fn narrowing_harnesses_orphans_the_stranded_installation() {
 
 #[test]
 fn an_unreadable_source_item_never_orphans_its_installation() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_unreadable_source_item_never_orphans_its_installation"
+    ));
     let w = world();
     let scope = project(&w);
     declare(&w, &scope, "[agents.rust]\nsource = \"cat\"\n");
@@ -332,6 +364,10 @@ fn an_unreadable_source_item_never_orphans_its_installation() {
 
 #[test]
 fn a_disabled_declaration_still_conflicts_with_an_unmanaged_enabled_file() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_disabled_declaration_still_conflicts_with_an_unmanaged_enabled_file"
+    ));
     let w = world();
     let scope = project(&w);
     declare(
@@ -358,6 +394,10 @@ fn a_disabled_declaration_still_conflicts_with_an_unmanaged_enabled_file() {
 
 #[test]
 fn unmanaged_suppression_is_per_harness() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::unmanaged_suppression_is_per_harness"
+    ));
     let w = world();
     let scope = Scope::Global;
     declare(&w, &scope, "[skills.gh]\nsource = \"cat\"\n");
@@ -379,6 +419,10 @@ fn unmanaged_suppression_is_per_harness() {
 
 #[test]
 fn merged_manifests_do_not_leave_a_spurious_stale() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::merged_manifests_do_not_leave_a_spurious_stale"
+    ));
     let w = world();
     let scope = project(&w);
     declare(
@@ -400,6 +444,10 @@ fn merged_manifests_do_not_leave_a_spurious_stale() {
 
 #[test]
 fn a_directory_at_a_file_target_is_a_conflict_not_a_retry_loop() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_directory_at_a_file_target_is_a_conflict_not_a_retry_loop"
+    ));
     let w = world();
     let scope = project(&w);
     declare(

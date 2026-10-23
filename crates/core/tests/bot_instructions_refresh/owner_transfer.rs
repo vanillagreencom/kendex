@@ -49,12 +49,20 @@ fn assert_owner(f: &Fixture, name: &str, armed: bool) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn setup_moves_the_effect_and_record_to_the_selected_owner() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::setup_moves_the_effect_and_record_to_the_selected_owner"
+    ));
     assert_transfer(false);
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_failed_transfer_restores_the_previous_effect_and_record() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_failed_transfer_restores_the_previous_effect_and_record"
+    ));
     assert_transfer(true);
 }
 

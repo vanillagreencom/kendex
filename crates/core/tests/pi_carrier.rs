@@ -91,6 +91,10 @@ const DISPATCHED: [&str; 6] = [
 
 #[test]
 fn events_map_onto_the_listeners_pi_actually_fires() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::events_map_onto_the_listeners_pi_actually_fires"
+    ));
     for (event, listener) in [
         ("PreToolUse", Some("tool_call")),
         ("PostToolUse", Some("tool_result")),
@@ -109,6 +113,10 @@ fn events_map_onto_the_listeners_pi_actually_fires() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn carrier_presence_is_read_per_settings_layer_and_either_scope_enforces() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::carrier_presence_is_read_per_settings_layer_and_either_scope_enforces"
+    ));
     let w = world();
     let project_scope = scope(&w);
     assert!(!carrier::presence(&w.env, &project_scope).anywhere());
@@ -164,6 +172,10 @@ fn carrier_presence_is_read_per_settings_layer_and_either_scope_enforces() {
     reason = "one scope and mode table keeps package retention and PiRemove ownership assertions together"
 )]
 fn retiring_pi_inventory_keeps_declared_packages_until_pi_remove() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::retiring_pi_inventory_keeps_declared_packages_until_pi_remove"
+    ));
     use kendex_core::apply::{self, Op};
     use kendex_core::engine::{PlanOptions, plan_apply};
     use kendex_core::lock::{self, EmittedArtifact, entry_key};
@@ -341,6 +353,10 @@ fn record_installed_packages(w: &World, scope: &Scope) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unrelated_add_keeps_pending_pi_switches_unchanged() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_unrelated_add_keeps_pending_pi_switches_unchanged"
+    ));
     use kendex_core::{apply, engine, lock, manifest, pi_ext};
 
     for (global, enabled) in [(true, true), (true, false), (false, true), (false, false)] {
@@ -408,6 +424,10 @@ fn an_unrelated_add_keeps_pending_pi_switches_unchanged() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_first_project_style_add_keeps_global_pi_instructions() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_first_project_style_add_keeps_global_pi_instructions"
+    ));
     use kendex_core::{apply, engine, manifest, pi_ext};
     let w = world();
     let (catalog, source) = widgets_catalog(&w);
@@ -462,6 +482,10 @@ fn a_first_project_style_add_keeps_global_pi_instructions() {
     reason = "one walk: three toggles at two scopes, each read back from settings, instructions, record, audit and scan"
 )]
 fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::native_package_toggles_keep_files_settings_and_records_at_both_scopes"
+    ));
     use kendex_core::{apply, engine, lock, manifest, pi_ext, scan, settings};
     use serde_json::json;
     // The shared world's project walk starts where its global walk ended:
@@ -582,6 +606,10 @@ fn native_package_toggles_keep_files_settings_and_records_at_both_scopes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declaration_switch_pi_already_made_moves_only_its_block() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_declaration_switch_pi_already_made_moves_only_its_block"
+    ));
     use kendex_core::{apply, engine, manifest, pi_ext};
     use serde_json::json;
     for (declared, native_on, toggled) in [(true, false, false), (false, true, true)] {
@@ -661,6 +689,10 @@ fn a_declaration_switch_pi_already_made_moves_only_its_block() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_toggle_over_an_unreadable_append_system_refuses_and_writes_nothing() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_toggle_over_an_unreadable_append_system_refuses_and_writes_nothing"
+    ));
     use kendex_core::{engine, lock, manifest, pi_ext};
     let w = world();
     let (catalog, source) = widgets_catalog(&w);
@@ -700,6 +732,10 @@ fn a_toggle_over_an_unreadable_append_system_refuses_and_writes_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package"
+    ));
     use kendex_core::apply::{self, Op};
     use kendex_core::engine::{DriftState, PlanOptions, plan_apply};
     use kendex_core::{manifest, pi_ext};
@@ -779,6 +815,10 @@ fn a_removal_over_a_linked_or_nonregular_append_file_keeps_the_package() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_style_and_a_package_block_audit_clean_across_repeated_applies() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_style_and_a_package_block_audit_clean_across_repeated_applies"
+    ));
     use kendex_core::{apply, engine, manifest, pi_ext};
     let w = world();
     let (catalog, source) = widgets_catalog(&w);
@@ -823,6 +863,10 @@ fn a_style_and_a_package_block_audit_clean_across_repeated_applies() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn saved_pi_config_selection_refuses_native_disable_and_disabled_update() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::saved_pi_config_selection_refuses_native_disable_and_disabled_update"
+    ));
     use kendex_core::{apply, engine, error::CoreError, lock, manifest, pi_ext};
     use serde_json::json;
     let w = world();
@@ -900,6 +944,10 @@ fn saved_pi_config_selection_refuses_native_disable_and_disabled_update() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_mappable_event_renders_the_registry_in_pi_listener_names"
+    ));
     let w = world();
     register_carrier(&w.project.join(".pi"));
     declare_hook(&w, "PreToolUse");
@@ -943,6 +991,10 @@ fn a_mappable_event_renders_the_registry_in_pi_listener_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unmappable_event_installs_nothing_on_pi() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_unmappable_event_installs_nothing_on_pi"
+    ));
     let w = world();
     register_carrier(&w.project.join(".pi"));
     declare_hook(&w, "PostCompact");
@@ -973,6 +1025,10 @@ fn an_unmappable_event_installs_nothing_on_pi() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn labels_downgrade_per_item_when_the_carrier_is_missing() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::labels_downgrade_per_item_when_the_carrier_is_missing"
+    ));
     let w = world();
     declare_hook(&w, "PreToolUse");
 
@@ -1000,6 +1056,10 @@ fn labels_downgrade_per_item_when_the_carrier_is_missing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn nothing_lands_in_the_directory_names_pi_reserved() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::nothing_lands_in_the_directory_names_pi_reserved"
+    ));
     let w = world();
     register_carrier(&w.project.join(".pi"));
     declare_hook(&w, "PreToolUse");
@@ -1026,6 +1086,10 @@ fn nothing_lands_in_the_directory_names_pi_reserved() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_older_layout_beside_the_root_is_left_exactly_where_it_is() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_older_layout_beside_the_root_is_left_exactly_where_it_is"
+    ));
     let w = world();
     register_carrier(&w.project.join(".pi"));
     declare_hook(&w, "PreToolUse");
@@ -1129,6 +1193,10 @@ fn carrier_runner() -> Option<std::path::PathBuf> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_custom_hook_fires_through_the_carrier() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_declared_custom_hook_fires_through_the_carrier"
+    ));
     let Some(bun) = carrier_runner() else { return };
     let w = world();
     register_carrier(&w.project.join(".pi"));
@@ -1202,6 +1270,10 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_declared_hook_on_the_other_listeners_fires_through_the_carrier"
+    ));
     let Some(bun) = carrier_runner() else { return };
     let w = world();
     register_carrier(&w.project.join(".pi"));

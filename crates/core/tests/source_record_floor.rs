@@ -138,6 +138,10 @@ fn recorded_commits(lock: &Lock) -> Vec<Option<String>> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_release_refresh_keeps_the_newer_record_a_main_build_wrote() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_release_refresh_keeps_the_newer_record_a_main_build_wrote"
+    ));
     let world = world();
     let release_env = world.env.clone().with_var("KENDEX_CATALOG_REV", "v9");
     assert_eq!(
@@ -162,6 +166,10 @@ fn a_release_refresh_keeps_the_newer_record_a_main_build_wrote() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn without_the_newer_record_the_release_write_is_refused_by_the_base_check() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::without_the_newer_record_the_release_write_is_refused_by_the_base_check"
+    ));
     let world = world();
     let release_env = world.env.clone().with_var("KENDEX_CATALOG_REV", "v9");
     fs::remove_file(lock_path(&world.env, &world.scope)).unwrap();

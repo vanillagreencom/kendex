@@ -47,6 +47,10 @@ fn untouched(catalog: &Path) -> ops::AddRequest {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn no_tool_on_the_machine_refuses_before_the_manifest_gains_a_declaration() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::no_tool_on_the_machine_refuses_before_the_manifest_gains_a_declaration"
+    ));
     let (_tmp, env, catalog) = fixture();
 
     let error = ops::add(&env, &Scope::Global, &untouched(&catalog)).unwrap_err();
@@ -64,6 +68,10 @@ fn no_tool_on_the_machine_refuses_before_the_manifest_gains_a_declaration() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_detected_tool_takes_the_same_request() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::one_detected_tool_takes_the_same_request"
+    ));
     let (_tmp, env, catalog) = fixture();
     fs::create_dir_all(env.home.join(".claude")).unwrap();
 

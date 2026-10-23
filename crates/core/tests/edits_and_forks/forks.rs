@@ -9,6 +9,10 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_keeps_the_name_pauses_updates_and_survives_refresh() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::fork_keeps_the_name_pauses_updates_and_survives_refresh"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -73,6 +77,10 @@ fn fork_keeps_the_name_pauses_updates_and_survives_refresh() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_install_deleted_after_planning_fails_the_fork() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edited_install_deleted_after_planning_fails_the_fork"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -102,6 +110,10 @@ fn an_edited_install_deleted_after_planning_fails_the_fork() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn rename_fork_moves_the_declaration_and_refuses_depended_on_names() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::rename_fork_moves_the_declaration_and_refuses_depended_on_names"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -158,6 +170,10 @@ fn rename_fork_moves_the_declaration_and_refuses_depended_on_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_an_agent_fork_leaves_it_answering_to_its_new_name() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::renaming_an_agent_fork_leaves_it_answering_to_its_new_name"
+    ));
     let w = world();
     write_agent(&w.upstream, "rev", "Review.");
     commit(&w.upstream, "one");
@@ -201,6 +217,10 @@ fn renaming_an_agent_fork_leaves_it_answering_to_its_new_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_whose_file_cannot_carry_the_name_refuses_the_rename() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_whose_file_cannot_carry_the_name_refuses_the_rename"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -243,6 +263,10 @@ fn a_fork_whose_file_cannot_carry_the_name_refuses_the_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_reached_through_a_link_refuses_the_rename() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_reached_through_a_link_refuses_the_rename"
+    ));
     let w = world_via_link();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -295,6 +319,10 @@ fn a_fork_reached_through_a_link_refuses_the_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_edited_after_the_rename_was_planned_refuses_the_move() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_edited_after_the_rename_was_planned_refuses_the_move"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -334,6 +362,10 @@ fn a_fork_edited_after_the_rename_was_planned_refuses_the_move() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_holding_a_dangling_link_still_renames() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_holding_a_dangling_link_still_renames"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -362,6 +394,10 @@ fn a_fork_holding_a_dangling_link_still_renames() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_a_codex_agent_is_refused_with_the_fix_named() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_a_codex_agent_is_refused_with_the_fix_named"
+    ));
     let w = world();
     let dir = w.upstream.join("agents");
     fs::create_dir_all(&dir).unwrap();
@@ -399,6 +435,10 @@ fn forking_a_codex_agent_is_refused_with_the_fix_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_a_skill_with_a_symlink_inside_refuses_rather_than_dropping_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_a_skill_with_a_symlink_inside_refuses_rather_than_dropping_it"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -425,6 +465,10 @@ fn forking_a_skill_with_a_symlink_inside_refuses_rather_than_dropping_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Real content.");
     commit(&w.upstream, "one");
@@ -470,6 +514,10 @@ fn forking_a_skill_whose_native_link_was_repointed_reads_the_managed_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_the_users_own_content_is_refused() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::forking_the_users_own_content_is_refused"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -521,6 +569,10 @@ fn forking_the_users_own_content_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_local_source_reached_through_a_link_refuses_the_fork() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_local_source_reached_through_a_link_refuses_the_fork"
+    ));
     let w = world_via_link();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -603,6 +655,10 @@ fn fork_source(w: &World) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_to_a_fork_becomes_its_content_and_leaves_apply_and_check_agreeing() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_to_a_fork_becomes_its_content_and_leaves_apply_and_check_agreeing"
+    ));
     let (w, edited) = edited_fork();
 
     let report = audit(&w.env, &w.scope).unwrap();
@@ -669,6 +725,10 @@ fn fork_row(w: &World) -> kendex_core::package::updates::UpdateRow {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_absorbed_fork_edit_is_what_every_later_render_writes() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_absorbed_fork_edit_is_what_every_later_render_writes"
+    ));
     let (w, edited) = edited_fork();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -701,6 +761,10 @@ fn an_absorbed_fork_edit_is_what_every_later_render_writes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_edited_on_both_sides_still_conflicts() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_edited_on_both_sides_still_conflicts"
+    ));
     let (w, _) = edited_fork();
     let both_ways = |w: &World, install: &str, source: &str| {
         fs::write(skill_file(w), install).unwrap();
@@ -745,6 +809,10 @@ fn a_fork_edited_on_both_sides_still_conflicts() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_sweep_of_an_absorbed_fork_leaves_its_content_in_the_source() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_sweep_of_an_absorbed_fork_leaves_its_content_in_the_source"
+    ));
     let (w, edited) = edited_fork();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -776,6 +844,10 @@ fn a_sweep_of_an_absorbed_fork_leaves_its_content_in_the_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_edited_differently_in_two_tools_keeps_both_renderings() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_edited_differently_in_two_tools_keeps_both_renderings"
+    ));
     let w = agent_world(
         "\"claude\", \"gemini\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -820,6 +892,10 @@ fn a_fork_edited_differently_in_two_tools_keeps_both_renderings() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_to_a_fork_rendering_the_source_cannot_hold_is_not_absorbed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_to_a_fork_rendering_the_source_cannot_hold_is_not_absorbed"
+    ));
     let w = agent_world(
         "\"claude\", \"codex\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -874,6 +950,10 @@ fn an_edit_to_a_fork_rendering_the_source_cannot_hold_is_not_absorbed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_forked_agent_whose_skills_are_already_recorded_absorbs() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_forked_agent_whose_skills_are_already_recorded_absorbs"
+    ));
     let w = world();
     write_skill(&w.upstream, "recon", "Recon.");
     write_agent(&w.upstream, "rev", "Upstream body.");
@@ -920,6 +1000,10 @@ fn a_forked_agent_whose_skills_are_already_recorded_absorbs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_the_source_form_cannot_hold_is_not_absorbed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_the_source_form_cannot_hold_is_not_absorbed"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -968,6 +1052,10 @@ fn an_edit_the_source_form_cannot_hold_is_not_absorbed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_to_a_disabled_fork_is_absorbed_from_the_toggled_name() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_to_a_disabled_fork_is_absorbed_from_the_toggled_name"
+    ));
     let w = agent_world(
         "\"claude\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -1028,6 +1116,10 @@ fn an_edit_to_a_disabled_fork_is_absorbed_from_the_toggled_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_inside_a_skills_generated_block_is_not_absorbed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_inside_a_skills_generated_block_is_not_absorbed"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -1076,6 +1168,10 @@ fn an_edit_inside_a_skills_generated_block_is_not_absorbed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_sibling_rendering_of_an_absorbed_fork_follows_on_the_next_pass() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_sibling_rendering_of_an_absorbed_fork_follows_on_the_next_pass"
+    ));
     let w = agent_world(
         "\"claude\", \"gemini\"",
         "---\nname: rev\ndescription: agent rev\n---\nUpstream body.\n",
@@ -1124,6 +1220,10 @@ fn a_sibling_rendering_of_an_absorbed_fork_follows_on_the_next_pass() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_tree_holding_both_skill_files_is_not_absorbed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_tree_holding_both_skill_files_is_not_absorbed"
+    ));
     let (w, _) = edited_fork();
     // Absorb the pending edit, then let the record catch up with the
     // source it wrote, so what follows is a plain edit and not a source
@@ -1161,6 +1261,10 @@ fn a_fork_tree_holding_both_skill_files_is_not_absorbed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_tree_with_no_skill_file_is_not_absorbed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fork_tree_with_no_skill_file_is_not_absorbed"
+    ));
     let (w, _) = edited_fork();
     resettle(&w);
     resettle(&w);

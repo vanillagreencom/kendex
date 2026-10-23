@@ -185,6 +185,10 @@ fn spawn_logout(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_older_logout_during_revoke_stays_signed_out() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_older_logout_during_revoke_stays_signed_out"
+    ));
     let (store, fetch, revoke_started, allow_revoke) = logout_fixture();
     let logout = spawn_logout(&fetch, &store);
     revoke_started.recv().unwrap();
@@ -247,6 +251,10 @@ impl Fetch for RejectingNewerTokens {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_rejected_concurrent_tokens_end_the_bounded_retry() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::two_rejected_concurrent_tokens_end_the_bounded_retry"
+    ));
     let store = Arc::new(Store::signed_in());
     let fetch = RejectingNewerTokens {
         store: Arc::clone(&store),
@@ -319,6 +327,10 @@ impl Fetch for RejectingRotation {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rotation_the_server_still_rejects_clears_the_sign_in() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_rotation_the_server_still_rejects_clears_the_sign_in"
+    ));
     let store = Arc::new(Store::signed_in());
     let fetch = RejectingRotation {
         store: Arc::clone(&store),
@@ -343,6 +355,10 @@ fn a_rotation_the_server_still_rejects_clears_the_sign_in() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_logout_landing_after_rotation_still_answers_expired() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_logout_landing_after_rotation_still_answers_expired"
+    ));
     let store = Arc::new(Store::signed_in());
     let fetch = RejectingRotation {
         store: Arc::clone(&store),
@@ -364,6 +380,10 @@ fn a_logout_landing_after_rotation_still_answers_expired() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_store_that_will_not_open_still_answers_expired() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_store_that_will_not_open_still_answers_expired"
+    ));
     // Rotation takes the guard once; the take that removes the rejected
     // family is the second, and that is the one another process holds.
     let store = Arc::new(Store::guard_refused_from(2));
@@ -387,6 +407,10 @@ fn a_store_that_will_not_open_still_answers_expired() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_store_that_will_not_delete_still_answers_expired() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_store_that_will_not_delete_still_answers_expired"
+    ));
     let store = Arc::new(Store::delete_refused());
     let fetch = RejectingRotation {
         store: Arc::clone(&store),

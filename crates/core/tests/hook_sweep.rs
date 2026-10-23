@@ -155,6 +155,10 @@ fn sweep(f: &Fixture) -> kendex_core::engine::EngineReport {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_sweep_proves_an_anchored_hook_before_taking_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_sweep_proves_an_anchored_hook_before_taking_it"
+    ));
     for edited in [true, false] {
         let f = fixture();
         apply_now(&f);
@@ -192,6 +196,10 @@ fn the_sweep_proves_an_anchored_hook_before_taking_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_sweep_holds_a_hook_whose_current_record_has_no_anchor() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_sweep_holds_a_hook_whose_current_record_has_no_anchor"
+    ));
     for harness in [Harness::Claude, Harness::Pi] {
         let f = fixture_for(harness);
         apply_now(&f);

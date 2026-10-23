@@ -16,6 +16,10 @@ use kendex_core::model::Scope;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_symlinked_catalog_cannot_leak_host_files_into_artifacts() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_symlinked_catalog_cannot_leak_host_files_into_artifacts"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
     let env = Env::fake(&home, FakeOs::Linux);

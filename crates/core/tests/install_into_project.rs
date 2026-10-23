@@ -74,6 +74,10 @@ fn fixture() -> (tempfile::TempDir, Env, PathBuf) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn installing_into_a_project_is_atomic_with_its_subscription() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::installing_into_a_project_is_atomic_with_its_subscription"
+    ));
     let (_tmp, env, project) = fixture();
     upstream(env.home.as_path(), "team/tools");
     let report = source_ops::subscribe(&env, &Scope::Global, "team/tools", Some("mkt"))
@@ -146,6 +150,10 @@ fn both_scopes_hold_kit(env: &Env, project: &Path, project_repo: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_taken_alias_for_another_repo_refuses_the_redirected_install() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_taken_alias_for_another_repo_refuses_the_redirected_install"
+    ));
     let (_tmp, env, project) = fixture();
     both_scopes_hold_kit(&env, &project, "other/kit");
     let project_path = project.join("kendex.toml");
@@ -179,6 +187,10 @@ fn a_taken_alias_for_another_repo_refuses_the_redirected_install() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_same_repo_under_the_same_alias_still_installs() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_same_repo_under_the_same_alias_still_installs"
+    ));
     let (_tmp, env, project) = fixture();
     both_scopes_hold_kit(&env, &project, "acme/kit");
     let project_path = project.join("kendex.toml");
@@ -207,6 +219,10 @@ fn the_same_repo_under_the_same_alias_still_installs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_personal_relative_folder_is_carried_into_a_project_as_its_home_directory() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_personal_relative_folder_is_carried_into_a_project_as_its_home_directory"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);

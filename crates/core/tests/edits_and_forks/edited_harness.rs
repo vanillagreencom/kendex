@@ -10,6 +10,10 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_agent_names_the_rendering_that_was_edited() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edited_agent_names_the_rendering_that_was_edited"
+    ));
     let w = world();
     let dir = w.upstream.join("agents");
     fs::create_dir_all(&dir).unwrap();
@@ -89,6 +93,10 @@ fn an_edited_agent_names_the_rendering_that_was_edited() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn discarding_edits_can_move_a_hold_in_the_same_apply() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::discarding_edits_can_move_a_hold_in_the_same_apply"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -128,6 +136,10 @@ fn discarding_edits_can_move_a_hold_in_the_same_apply() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_bundle_member_is_not_offered_a_fork() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edited_bundle_member_is_not_offered_a_fork"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     fs::write(
@@ -160,6 +172,10 @@ fn an_edited_bundle_member_is_not_offered_a_fork() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_held_bundle_member_with_newer_upstream_can_discard_but_not_move() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_held_bundle_member_with_newer_upstream_can_discard_but_not_move"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     fs::write(
@@ -200,6 +216,10 @@ fn a_held_bundle_member_with_newer_upstream_can_discard_but_not_move() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_skill_shared_by_symlink_counts_as_one_edited_rendering"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -237,6 +257,10 @@ fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::discard_survives_an_unreadable_history_but_not_a_vanished_package"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -306,6 +330,10 @@ fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_source_level_hold_names_the_source_as_owner() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_source_level_hold_names_the_source_as_owner"
+    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -354,6 +382,10 @@ fn a_source_level_hold_names_the_source_as_owner() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updates_still_read_history_under_a_symlinked_home() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::updates_still_read_history_under_a_symlinked_home"
+    ));
     let w = world_via_link();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -386,6 +418,10 @@ fn updates_still_read_history_under_a_symlinked_home() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pinned_package_gone_at_tip_keeps_its_timeline_under_a_symlinked_home() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_pinned_package_gone_at_tip_keeps_its_timeline_under_a_symlinked_home"
+    ));
     let w = world_via_link();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -426,6 +462,10 @@ fn a_pinned_package_gone_at_tip_keeps_its_timeline_under_a_symlinked_home() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hold_through_a_derived_requirer_names_nobody() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hold_through_a_derived_requirer_names_nobody"
+    ));
     let w = world();
     let dev = w.upstream.join("skills/dev");
     fs::create_dir_all(&dev).unwrap();
@@ -473,6 +513,10 @@ fn a_hold_through_a_derived_requirer_names_nobody() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hold_through_a_declared_requirer_names_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hold_through_a_declared_requirer_names_it"
+    ));
     let w = world();
     let dev = w.upstream.join("skills/dev");
     fs::create_dir_all(&dev).unwrap();

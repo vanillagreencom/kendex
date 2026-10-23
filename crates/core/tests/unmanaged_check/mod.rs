@@ -122,6 +122,10 @@ fn report(w: &World) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_that_differs_is_stale_and_the_take_over_is_its_fix() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_copy_that_differs_is_stale_and_the_take_over_is_its_fix"
+    ));
     let w = world();
     write_at(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),
@@ -176,6 +180,10 @@ fn a_copy_that_differs_is_stale_and_the_take_over_is_its_fix() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_over_existing_files_is_reported_like_any_other_kind() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_command_over_existing_files_is_reported_like_any_other_kind"
+    ));
     let w = world();
     write_at(
         w.home.join("app/.claude/commands/ship.md"),
@@ -196,6 +204,10 @@ fn a_command_over_existing_files_is_reported_like_any_other_kind() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_at_the_position_is_never_answered_with_a_take_over() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_at_the_position_is_never_answered_with_a_take_over"
+    ));
     let w = world();
     let elsewhere = w.home.join("somewhere/deploy");
     fs::create_dir_all(&elsewhere).unwrap();
@@ -227,6 +239,10 @@ fn a_link_at_the_position_is_never_answered_with_a_take_over() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_the_render_matches_is_recorded_without_a_word() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_copy_the_render_matches_is_recorded_without_a_word"
+    ));
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();
@@ -279,6 +295,10 @@ fn a_copy_the_render_matches_is_recorded_without_a_word() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_matching_copy_joins_a_record_that_already_holds_others() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_matching_copy_joins_a_record_that_already_holds_others"
+    ));
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();
@@ -314,6 +334,10 @@ fn a_matching_copy_joins_a_record_that_already_holds_others() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_copy_is_settled_on_its_own() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::each_copy_is_settled_on_its_own"
+    ));
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();
@@ -348,6 +372,10 @@ fn each_copy_is_settled_on_its_own() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_tool_without_its_copy_is_read_on_its_own() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_tool_without_its_copy_is_read_on_its_own"
+    ));
     let w = world();
     declare(
         &w,
@@ -384,6 +412,10 @@ fn a_tool_without_its_copy_is_read_on_its_own() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_shared_tree_is_not_in_a_copied_installs_way() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_shared_tree_is_not_in_a_copied_installs_way"
+    ));
     let w = world();
     write_at(
         w.home.join("app/.agents/skills/deploy/SKILL.md"),
@@ -404,6 +436,10 @@ fn the_shared_tree_is_not_in_a_copied_installs_way() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_is_left_to_the_plan_that_can_read_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_hook_is_left_to_the_plan_that_can_read_it"
+    ));
     let w = world();
     write_at(
         w.home.join("app/.claude/hooks/guard.sh"),
@@ -432,6 +468,10 @@ fn a_hook_is_left_to_the_plan_that_can_read_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_position_that_will_not_read_is_could_not_check() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_position_that_will_not_read_is_could_not_check"
+    ));
     use std::os::unix::fs::PermissionsExt;
     let w = world();
     let position = w.home.join("app/.claude/skills/deploy");
@@ -474,6 +514,10 @@ fn a_position_that_will_not_read_is_could_not_check() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn nothing_is_recorded_while_the_pass_would_also_rewrite_the_manifest() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::nothing_is_recorded_while_the_pass_would_also_rewrite_the_manifest"
+    ));
     let w = world();
     declare(
         &w,
@@ -528,6 +572,10 @@ fn nothing_is_recorded_while_the_pass_would_also_rewrite_the_manifest() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_entry_whose_positions_the_pass_would_touch_is_not_recorded() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_entry_whose_positions_the_pass_would_touch_is_not_recorded"
+    ));
     let w = world();
     let planned = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &planned.plan).unwrap();

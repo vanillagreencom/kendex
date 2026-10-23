@@ -137,6 +137,10 @@ fn rendered(w: &World, scope: &Scope) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_scopes_pin_different_revisions_of_one_repo() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::two_scopes_pin_different_revisions_of_one_repo"
+    ));
     let w = world();
     let first = {
         let output = Hardened::git(&["rev-parse", "HEAD"], Some(&w.upstream))
@@ -182,6 +186,10 @@ fn two_scopes_pin_different_revisions_of_one_repo() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn repointing_a_source_never_serves_the_old_repository() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::repointing_a_source_never_serves_the_old_repository"
+    ));
     let w = world();
     let scope = Scope::Project {
         root: w.home.join("app"),
@@ -230,6 +238,10 @@ fn repointing_a_source_never_serves_the_old_repository() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_busy_cache_costs_only_its_own_source() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_busy_cache_costs_only_its_own_source"
+    ));
     let w = world();
     let scope = Scope::Project {
         root: w.home.join("app"),
@@ -294,6 +306,10 @@ fn a_busy_cache_costs_only_its_own_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_moved_tag_is_previewed_before_it_is_followed() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_moved_tag_is_previewed_before_it_is_followed"
+    ));
     let w = world();
     let scope = Scope::Project {
         root: w.home.join("app"),

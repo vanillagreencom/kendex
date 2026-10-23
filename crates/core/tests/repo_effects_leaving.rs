@@ -80,6 +80,10 @@ fn fixture() -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_removal_carries_the_effects_of_what_it_takes_away() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_removal_carries_the_effects_of_what_it_takes_away"
+    ));
     let f = fixture();
     let install = audit(&f.env, &f.scope).unwrap();
     assert_eq!(install.repo_effects.len(), 1, "{:?}", install.repo_effects);
@@ -142,6 +146,10 @@ fn a_removal_carries_the_effects_of_what_it_takes_away() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declaration_that_will_not_read_stops_the_removal() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_declaration_that_will_not_read_stops_the_removal"
+    ));
     let f = fixture();
     let install = audit(&f.env, &f.scope).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();

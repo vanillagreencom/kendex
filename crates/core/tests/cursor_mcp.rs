@@ -122,6 +122,10 @@ fn scanned(f: &Fixture, scope: &Scope) -> Vec<String> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_server_is_declared_in_the_projects_mcp_json_and_toggles_by_presence() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_server_is_declared_in_the_projects_mcp_json_and_toggles_by_presence"
+    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.docs]\nsource = \"cat\"\n");
     let config = f.project.join(".cursor/mcp.json");
     fs::write(&config, THEIRS).unwrap();
@@ -167,6 +171,10 @@ fn a_server_is_declared_in_the_projects_mcp_json_and_toggles_by_presence() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_server_lands_in_the_users_mcp_json() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_global_server_lands_in_the_users_mcp_json"
+    ));
     let f = fixture("");
     let manifest = f.env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();

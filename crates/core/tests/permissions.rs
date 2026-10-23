@@ -64,6 +64,10 @@ fn fixture() -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refused_rendering_is_a_conflict_and_removes_the_wide_artifact() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_refused_rendering_is_a_conflict_and_removes_the_wide_artifact"
+    ));
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();

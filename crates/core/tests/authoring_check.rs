@@ -39,6 +39,10 @@ fn skill_at(root: &Path, dir: &str, name: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_discovered_repo_is_checked_the_way_it_installs() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_discovered_repo_is_checked_the_way_it_installs"
+    ));
     let (_tmp, root) = repo();
     skill_at(&root, ".claude/skills", "review");
     let sealed = SealedSource::open(&root).unwrap();
@@ -53,6 +57,10 @@ fn a_discovered_repo_is_checked_the_way_it_installs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_one_skill_repo_is_one_checked_item() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_one_skill_repo_is_one_checked_item"
+    ));
     let (_tmp, root) = repo();
     fs::write(
         root.join("SKILL.md"),
@@ -70,6 +78,10 @@ fn a_one_skill_repo_is_one_checked_item() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_broken_control_file_is_breakage_not_an_empty_pass() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_broken_control_file_is_breakage_not_an_empty_pass"
+    ));
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "review");
     fs::write(root.join("kendex.toml"), "not [valid toml").unwrap();
@@ -88,6 +100,10 @@ fn a_broken_control_file_is_breakage_not_an_empty_pass() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_undeclared_hooks_dir_is_not_checked() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_undeclared_hooks_dir_is_not_checked"
+    ));
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "review");
     fs::create_dir_all(root.join("hooks")).unwrap();
@@ -106,6 +122,10 @@ fn an_undeclared_hooks_dir_is_not_checked() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_and_index_agree_on_the_offered_set() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::check_and_index_agree_on_the_offered_set"
+    ));
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "review");
     skill_at(&root, ".claude/skills", "deploy");
@@ -170,6 +190,10 @@ fn copy_tree(from: &Path, to: &Path) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_index_and_mine_agree_on_the_checkout() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::check_index_and_mine_agree_on_the_checkout"
+    ));
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/review-gate");
     let init: &[&str] = &["init", "--quiet", "-b", "main"];
     let at_writer = |findings: &[kendex_core::quality::Finding]| -> Vec<String> {
@@ -264,6 +288,10 @@ fn check_index_and_mine_agree_on_the_checkout() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hook_test_suites_are_not_catalog_items() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::hook_test_suites_are_not_catalog_items"
+    ));
     let (_tmp, root) = repo();
     fs::create_dir_all(root.join("hooks/tests")).unwrap();
     fs::write(root.join("hooks/guard.sh"), "#!/bin/sh\n").unwrap();
@@ -287,6 +315,10 @@ fn hook_test_suites_are_not_catalog_items() {
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn repo_root_exclusions_hold_under_the_given_spelling() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::repo_root_exclusions_hold_under_the_given_spelling"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let real = tmp.path().canonicalize().unwrap().join("repo");
     fs::create_dir_all(real.join(".git")).unwrap();
@@ -313,6 +345,10 @@ fn repo_root_exclusions_hold_under_the_given_spelling() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_safety_finding_is_reported_and_fails_nothing() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_safety_finding_is_reported_and_fails_nothing"
+    ));
     let (_tmp, root) = repo();
     let dir = root.join("skills").join("risky");
     fs::create_dir_all(&dir).unwrap();
@@ -339,6 +375,10 @@ fn a_safety_finding_is_reported_and_fails_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_finding_in_a_file_no_install_holds_is_not_reported() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_finding_in_a_file_no_install_holds_is_not_reported"
+    ));
     for (rel, reported) in [
         ("tests/fixture.sh", false),
         ("evals/fixture.sh", false),
@@ -369,6 +409,10 @@ fn a_finding_in_a_file_no_install_holds_is_not_reported() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::every_unreadable_set_body_is_reported_and_costs_the_catalog_nothing"
+    ));
     // Each row is the broken `starter` body, the substring the finding has to
     // name so the author is sent to the part that will not read, and what
     // the fix has to spell out to be actionable.
@@ -511,6 +555,10 @@ fn a_broken_bundles_table_is_the_catalogs_breakage(body: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_bundle_written_in_the_shape_the_reader_reads_is_clean"
+    ));
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "gh");
     skill_at(&root, "skills", "linear");
@@ -541,6 +589,10 @@ fn a_bundle_written_in_the_shape_the_reader_reads_is_clean() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_unoffered_bundle_member_is_breakage() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::every_unoffered_bundle_member_is_breakage"
+    ));
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
     skill_at(&root, "skills", "gh");
@@ -590,6 +642,10 @@ fn every_unoffered_bundle_member_is_breakage() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_projects_own_install_record_is_not_its_catalogs_breakage() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_projects_own_install_record_is_not_its_catalogs_breakage"
+    ));
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "gh");
     fs::write(
@@ -622,6 +678,10 @@ fn a_projects_own_install_record_is_not_its_catalogs_breakage() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_source_beside_a_member_list_is_still_that_sets_breakage() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_source_beside_a_member_list_is_still_that_sets_breakage"
+    ));
     let (_tmp, root) = repo();
     skill_at(&root, "skills", "gh");
     fs::write(
@@ -643,6 +703,10 @@ fn a_source_beside_a_member_list_is_still_that_sets_breakage() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_ignored_tracked_output_is_an_agents_advisory() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_ignored_tracked_output_is_an_agents_advisory"
+    ));
     for (ignore, expected) in [
         (
             "docs/plans/\n",

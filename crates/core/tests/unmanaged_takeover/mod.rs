@@ -111,6 +111,10 @@ fn take_over() -> PlanOptions {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_refusal_says_which_files_are_in_the_way() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_refusal_says_which_files_are_in_the_way"
+    ));
     let w = world();
     let dir = foreign_install(&w);
 
@@ -141,6 +145,10 @@ fn the_refusal_says_which_files_are_in_the_way() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn taking_over_installs_what_was_declared_and_keeps_the_old_files() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::taking_over_installs_what_was_declared_and_keeps_the_old_files"
+    ));
     let w = world();
     let dir = foreign_install(&w);
 
@@ -201,6 +209,10 @@ fn trashed(trash: &Path) -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_kendex_did_not_create_is_never_taken_over() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_kendex_did_not_create_is_never_taken_over"
+    ));
     let w = world();
     let elsewhere = w.home.join("somewhere/deploy");
     fs::create_dir_all(&elsewhere).unwrap();
@@ -238,6 +250,10 @@ fn a_link_kendex_did_not_create_is_never_taken_over() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_at_a_folder_adoption_would_refuse_is_still_a_dead_stop() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_at_a_folder_adoption_would_refuse_is_still_a_dead_stop"
+    ));
     let w = world();
     let elsewhere = w.home.join("documents");
     fs::create_dir_all(&elsewhere).unwrap();
@@ -266,6 +282,10 @@ fn a_link_at_a_folder_adoption_would_refuse_is_still_a_dead_stop() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_installation_kendex_wrote_is_never_called_a_stranger() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_installation_kendex_wrote_is_never_called_a_stranger"
+    ));
     let w = world();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -298,6 +318,10 @@ fn an_installation_kendex_wrote_is_never_called_a_stranger() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refusal_at_the_link_leaves_the_tree_untouched() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_refusal_at_the_link_leaves_the_tree_untouched"
+    ));
     let w = linking_world();
     let canonical = w.home.join("app/.agents/skills/deploy");
     fs::create_dir_all(&canonical).unwrap();
@@ -330,6 +354,10 @@ fn a_refusal_at_the_link_leaves_the_tree_untouched() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_blocked_declaration_leaves_no_tree_nothing_recorded() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_blocked_declaration_leaves_no_tree_nothing_recorded"
+    ));
     let w = linking_world();
     let position = w.home.join("app/.claude/skills/deploy");
     fs::create_dir_all(&position).unwrap();
@@ -351,6 +379,10 @@ fn a_blocked_declaration_leaves_no_tree_nothing_recorded() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it"
+    ));
     let w = linking_world();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
@@ -387,6 +419,10 @@ fn an_edit_under_one_tool_holds_when_another_tool_is_declared_over_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_refusal_names_every_position_a_take_over_empties() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_refusal_names_every_position_a_take_over_empties"
+    ));
     let w = linking_world();
     let canonical = w.home.join("app/.agents/skills/deploy");
     let link = w.home.join("app/.claude/skills/deploy");
@@ -434,6 +470,10 @@ fn the_refusal_names_every_position_a_take_over_empties() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_empty_harness_position_is_not_named_as_in_the_way() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_empty_harness_position_is_not_named_as_in_the_way"
+    ));
     let w = linking_world();
     let canonical = w.home.join("app/.agents/skills/deploy");
     fs::create_dir_all(&canonical).unwrap();
@@ -455,6 +495,10 @@ fn an_empty_harness_position_is_not_named_as_in_the_way() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_link_at_the_harness_position_is_not_named_as_in_the_way() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_link_at_the_harness_position_is_not_named_as_in_the_way"
+    ));
     let w = linking_world();
     let canonical = w.home.join("app/.agents/skills/deploy");
     fs::create_dir_all(&canonical).unwrap();
@@ -501,6 +545,10 @@ fn trash_text(trash: &Path) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_keep_is_not_offered_where_the_tools_copies_disagree() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_keep_is_not_offered_where_the_tools_copies_disagree"
+    ));
     let w = world();
     declare_copy_for(&w, "[\"claude\", \"codex\"]");
     let claude = w.home.join("app/.claude/skills/deploy");

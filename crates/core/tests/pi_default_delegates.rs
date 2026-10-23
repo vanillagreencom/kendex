@@ -11,6 +11,10 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn pi_engineer_defaults_only_delegate_to_installed_agents() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::pi_engineer_defaults_only_delegate_to_installed_agents"
+    ));
     for (declaration, catalog_policy, override_value, expected) in [
         ("", "", "", None),
         ("[agents.scout]\nsource = 'cat'\n", "", "", Some("scout")),

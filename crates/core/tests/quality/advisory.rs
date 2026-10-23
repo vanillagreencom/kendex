@@ -10,6 +10,10 @@ use super::fixture::{fixture, installed, plan};
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_critical_finding_is_reported_and_installs_anyway() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_critical_finding_is_reported_and_installs_anyway"
+    ));
     let f = fixture();
     let report = plan(&f);
 
@@ -50,6 +54,10 @@ fn a_critical_finding_is_reported_and_installs_anyway() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_audit_reports_every_installed_row() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::the_audit_reports_every_installed_row"
+    ));
     let f = fixture();
     let report = plan(&f);
     apply::execute(&f.env, &report.plan).unwrap();

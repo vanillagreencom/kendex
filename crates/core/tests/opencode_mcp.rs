@@ -126,6 +126,10 @@ fn scanned(f: &Fixture, scope: &Scope) -> Vec<(String, Option<bool>)> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_server_is_declared_under_mcp_in_opencodes_shape_and_toggles_on_the_entry() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_server_is_declared_under_mcp_in_opencodes_shape_and_toggles_on_the_entry"
+    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.docs]\nsource = \"cat\"\n");
     let config = f.project.join("opencode.json");
     fs::write(&config, THEIRS).unwrap();
@@ -179,6 +183,10 @@ fn a_server_is_declared_under_mcp_in_opencodes_shape_and_toggles_on_the_entry() 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_server_lands_in_the_global_config_with_the_schema_line() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_global_server_lands_in_the_global_config_with_the_schema_line"
+    ));
     let f = fixture("");
     let manifest = f.env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
@@ -208,6 +216,10 @@ fn a_global_server_lands_in_the_global_config_with_the_schema_line() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_sse_server_is_refused_for_opencode_with_the_reason() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::an_sse_server_is_refused_for_opencode_with_the_reason"
+    ));
     let f = fixture("[mcp-servers.legacy]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(

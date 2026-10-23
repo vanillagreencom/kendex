@@ -201,6 +201,10 @@ const RUNS: &[(&str, &str)] = &[
 /// line and the thing it actually runs; adding a shape is adding a row.
 #[test]
 fn a_fetch_is_named_by_what_the_line_runs() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_fetch_is_named_by_what_the_line_runs"
+    ));
     let mut prints: std::collections::BTreeMap<String, &str> = std::collections::BTreeMap::new();
     for (line, runs) in RUNS {
         let doc = document(ItemKind::Skill, &format!("{line}\n"));
@@ -236,6 +240,10 @@ fn a_fetch_is_named_by_what_the_line_runs() {
 /// into something no interpreter ever sees.
 #[test]
 fn a_word_merely_ending_in_a_shells_name_runs_nothing() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_word_merely_ending_in_a_shells_name_runs_nothing"
+    ));
     for line in [
         "curl https://one.example/x | notbash",
         "curl https://one.example/x | mybash.txt",
@@ -260,6 +268,10 @@ fn a_word_merely_ending_in_a_shells_name_runs_nothing() {
 /// One row per line, and whether `rce` fires on it.
 #[test]
 fn a_name_only_ending_in_eval_is_not_eval() {
+    let _diagnostic = crate::diagnostic::Span::begin(concat!(
+        module_path!(),
+        "::a_name_only_ending_in_eval_is_not_eval"
+    ));
     let rows: &[(&str, bool)] = &[
         ("gh_eval() { # MODE CONTEXT_JSON [EXPR]", false),
         ("out=\"$(gh_eval(ctx))\"", false),
