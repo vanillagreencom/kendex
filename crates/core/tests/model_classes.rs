@@ -10,10 +10,6 @@ use std::fs;
 
 #[test]
 fn native_bindings_select_only_the_requested_harness_and_class() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::native_bindings_select_only_the_requested_harness_and_class"
-    ));
     use kendex_core::harness::models::{ResolutionContext, resolve_model};
     use kendex_core::render::agent::{EffectiveAgent, generate, parse_source_agent};
     let scope = Scope::Global;
@@ -100,10 +96,6 @@ fn native_bindings_select_only_the_requested_harness_and_class() {
 
 #[test]
 fn binding_validation_names_each_rejected_location() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::binding_validation_names_each_rejected_location"
-    ));
     for (text, location) in [
         ("model-bindings = 1", "model-bindings"),
         ("model-bindings.codex = 1", "model-bindings.codex"),
@@ -173,10 +165,6 @@ fn binding_validation_names_each_rejected_location() {
 
 #[test]
 fn bindings_merge_round_trip_and_hash_only_their_harness() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::bindings_merge_round_trip_and_hash_only_their_harness"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -327,10 +315,6 @@ fn installed_binding_records(
 
 #[test]
 fn plan_readback_refuses_provider_qualified_codex_binding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::plan_readback_refuses_provider_qualified_codex_binding"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -366,10 +350,6 @@ fn plan_readback_refuses_provider_qualified_codex_binding() {
 
 #[test]
 fn manifest_round_trip_validation_and_policy_hash() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::manifest_round_trip_validation_and_policy_hash"
-    ));
     let text = "schema = 7\nmodel-classes.fast = \"custom/fast-v2\"\n";
     let parsed = manifest::parse_text(std::path::Path::new("kendex.toml"), text).unwrap();
     let manifest::ManifestFile::Current(parsed) = parsed else {
@@ -405,10 +385,6 @@ fn manifest_round_trip_validation_and_policy_hash() {
 }
 #[test]
 fn project_policy_replaces_personal_per_key_without_catalog_input() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::project_policy_replaces_personal_per_key_without_catalog_input"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -443,10 +419,6 @@ fn project_policy_replaces_personal_per_key_without_catalog_input() {
 }
 #[test]
 fn every_native_renderer_keeps_valid_class_representation() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_native_renderer_keeps_valid_class_representation"
-    ));
     use kendex_core::render::agent::{EffectiveAgent, generate, parse_source_agent};
     let scope = Scope::Global;
     for harness in HarnessId::ALL {
@@ -536,10 +508,6 @@ fn every_native_renderer_keeps_valid_class_representation() {
 
 #[test]
 fn native_model_readback_rejects_malformed_selectors_after_shape_checks() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::native_model_readback_rejects_malformed_selectors_after_shape_checks"
-    ));
     // Catalog authors can supply model text with a valid native shape but invalid syntax.
     for (harness, model) in [
         (HarnessId::Claude, "bad value"),
@@ -574,10 +542,6 @@ fn native_model_readback_rejects_malformed_selectors_after_shape_checks() {
 
 #[test]
 fn declared_intent_uses_source_and_overrides_not_projected_alias() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::declared_intent_uses_source_and_overrides_not_projected_alias"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -645,10 +609,6 @@ fn declared_intent_uses_source_and_overrides_not_projected_alias() {
 
 #[test]
 fn declared_intent_keeps_installed_git_source_and_bundle_revision() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::declared_intent_keeps_installed_git_source_and_bundle_revision"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let key = kendex_core::lock::entry_key(ItemKind::Agent, "worker", HarnessId::Claude);
@@ -751,10 +711,6 @@ fn declared_intent_keeps_installed_git_source_and_bundle_revision() {
 
 #[test]
 fn plugin_qualified_declared_names_and_read_failures_stay_distinct() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::plugin_qualified_declared_names_and_read_failures_stay_distinct"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);

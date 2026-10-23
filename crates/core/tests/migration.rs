@@ -64,10 +64,6 @@ fn fixture(schema: &str) -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical"
-    ));
     enum Refusal {
         Legacy,
         TooNew(i64),
@@ -130,10 +126,6 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::supported_project_and_personal_manifests_migrate_in_the_transaction"
-    ));
     for (global, crlf, mixed) in [
         (false, false, false),
         (false, true, false),
@@ -240,10 +232,6 @@ fn supported_project_and_personal_manifests_migrate_in_the_transaction() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_read_accepts_the_older_personal_manifest_without_writing_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_read_accepts_the_older_personal_manifest_without_writing_it"
-    ));
     let f = fixture("7");
     let path = kendex_core::manifest::manifest_path(&f.env, &Scope::Global);
     let personal = "schema = 6   # personal\n\n[model-classes]\nstandard = 'openai/gpt-6.1-sol'\n\n[model-bindings.codex]\nstandard = 'gpt-6.1-sol'\n";
@@ -268,10 +256,6 @@ fn a_project_read_accepts_the_older_personal_manifest_without_writing_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_migration_write_rechecks_original_bytes_and_rolls_back() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_migration_write_rechecks_original_bytes_and_rolls_back"
-    ));
     for stale in [false, true] {
         let f = fixture("6   # pinned");
         let mut report = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
@@ -312,10 +296,6 @@ fn a_migration_write_rechecks_original_bytes_and_rolls_back() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_install_time_is_kept_with_the_machine_half_and_fresh_without_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_install_time_is_kept_with_the_machine_half_and_fresh_without_it"
-    ));
     let planted = "2020-01-01T00:00:00Z";
     for (label, half_present) in [("the half present", true), ("the half gone", false)] {
         let f = fixture(&MANIFEST_SCHEMA.to_string());
@@ -371,10 +351,6 @@ fn the_install_time_is_kept_with_the_machine_half_and_fresh_without_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_interrupted_apply_rolls_the_whole_scope_back() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_interrupted_apply_rolls_the_whole_scope_back"
-    ));
     let f = fixture(&MANIFEST_SCHEMA.to_string());
     // Undeclared, so adding it is a manifest write.
     let undeclared = f
@@ -460,10 +436,6 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn matching_renders_are_recorded_without_being_rewritten() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::matching_renders_are_recorded_without_being_rewritten"
-    ));
     let as_installed: fn(&str) -> String = |ignore| ignore.to_owned();
     let earlier_block: fn(&str) -> String = |ignore| {
         ignore.replace(
@@ -528,10 +500,6 @@ fn matching_renders_are_recorded_without_being_rewritten() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn recording_existing_refuses_a_render_that_does_not_match() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::recording_existing_refuses_a_render_that_does_not_match"
-    ));
     let f = fixture(&MANIFEST_SCHEMA.to_string());
     let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();
@@ -556,10 +524,6 @@ fn recording_existing_refuses_a_render_that_does_not_match() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn recovery_accepts_clean_crlf_but_rechecks_exact_bytes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::recovery_accepts_clean_crlf_but_rechecks_exact_bytes"
-    ));
     for change_after_plan in [false, true] {
         let f = fixture(&MANIFEST_SCHEMA.to_string());
         git(f.project(), &["init", "-q"]);
@@ -601,10 +565,6 @@ fn recovery_accepts_clean_crlf_but_rechecks_exact_bytes() {
 
 #[test]
 fn recovery_requires_the_whole_declared_set() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::recovery_requires_the_whole_declared_set"
-    ));
     for extra in [
         "\n[bundles.missing]\nsource = \"cat\"\n",
         "\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"claude\"\n",
@@ -625,10 +585,6 @@ fn recovery_requires_the_whole_declared_set() {
 
 #[test]
 fn recovery_rechecks_render_bytes_before_recording() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::recovery_rechecks_render_bytes_before_recording"
-    ));
     let f = fixture(&MANIFEST_SCHEMA.to_string());
     let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();
@@ -647,10 +603,6 @@ fn recovery_rechecks_render_bytes_before_recording() {
 
 #[test]
 fn recovery_accepts_informational_dependency_notes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::recovery_accepts_informational_dependency_notes"
-    ));
     let f = fixture(&MANIFEST_SCHEMA.to_string());
     let skills = f._tmp.path().join("catalog/skills");
     fs::write(
@@ -683,10 +635,6 @@ fn recovery_accepts_informational_dependency_notes() {
 
 #[test]
 fn recovery_refuses_an_unresolved_required_dependency() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::recovery_refuses_an_unresolved_required_dependency"
-    ));
     let f = fixture(&MANIFEST_SCHEMA.to_string());
     fs::write(
         f._tmp.path().join("catalog/skills/gh/SKILL.md"),

@@ -105,10 +105,6 @@ pub fn settings(f: &Fixture) -> PathBuf {
 
 #[test]
 fn hook_registration_round_trips_and_spares_unrelated_settings() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::hook_registration_round_trips_and_spares_unrelated_settings"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     fs::write(settings(&f), "{\n  \"model\": \"opus\"\n}\n").unwrap();
     apply_now(&f);
@@ -142,10 +138,6 @@ fn hook_registration_round_trips_and_spares_unrelated_settings() {
 
 #[test]
 fn one_hook_reaches_each_harness_in_its_own_native_form() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_hook_reaches_each_harness_in_its_own_native_form"
-    ));
     let f = fixture(
         "[hooks.audit]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\"]\n",
     );
@@ -200,10 +192,6 @@ fn one_hook_reaches_each_harness_in_its_own_native_form() {
 
 #[test]
 fn a_hook_declared_disabled_writes_no_config_file_at_all() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_declared_disabled_writes_no_config_file_at_all"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\nenabled = false\n");
     apply_now(&f);
     assert!(
@@ -219,10 +207,6 @@ fn a_hook_declared_disabled_writes_no_config_file_at_all() {
 
 #[test]
 fn an_event_codex_cannot_run_is_reported_never_faked() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_event_codex_cannot_run_is_reported_never_faked"
-    ));
     let f = fixture("[hooks.done]\nsource = \"cat\"\nharnesses = [\"codex\"]\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
@@ -247,10 +231,6 @@ fn an_event_codex_cannot_run_is_reported_never_faked() {
 
 #[test]
 fn mcp_declare_apply_remove_keeps_the_servers_we_never_declared() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::mcp_declare_apply_remove_keeps_the_servers_we_never_declared"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n");
     let file = f.project.join(".mcp.json");
     fs::write(
@@ -284,10 +264,6 @@ fn mcp_declare_apply_remove_keeps_the_servers_we_never_declared() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_mcp_servers_install_into_one_settings_file_in_one_apply() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_mcp_servers_install_into_one_settings_file_in_one_apply"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.lin]\nsource = \"cat\"\n");
     let source_mcp = f._tmp.path().join("catalog/mcp");
     fs::write(
@@ -321,10 +297,6 @@ fn two_mcp_servers_install_into_one_settings_file_in_one_apply() {
 
 #[test]
 fn a_secret_in_an_mcp_env_value_is_refused_not_installed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_secret_in_an_mcp_env_value_is_refused_not_installed"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n");
     let source = f
         .project
@@ -352,10 +324,6 @@ fn a_secret_in_an_mcp_env_value_is_refused_not_installed() {
 
 #[test]
 fn a_command_is_a_plain_file_that_toggles_by_rename() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_is_a_plain_file_that_toggles_by_rename"
-    ));
     let f = fixture("[commands.ship]\nsource = \"cat\"\n");
     apply_now(&f);
     let file = f.project.join(".claude/commands/ship.md");
@@ -375,10 +343,6 @@ fn a_command_is_a_plain_file_that_toggles_by_rename() {
 
 #[test]
 fn a_plugin_toggle_writes_only_its_own_settings_key() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_plugin_toggle_writes_only_its_own_settings_key"
-    ));
     let f = fixture("[plugins.\"fmt@main\"]\nenabled = true\n");
     fs::write(settings(&f), "{\n  \"model\": \"opus\"\n}\n").unwrap();
     apply_now(&f);

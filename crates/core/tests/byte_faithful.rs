@@ -23,10 +23,6 @@ use serde_json::json;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_config_edit_is_byte_stable_on_reapply() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_config_edit_is_byte_stable_on_reapply"
-    ));
     let edits = [
         ConfigEdit::UpsertHook {
             event: "PreToolUse".into(),
@@ -112,10 +108,6 @@ fn fixture() -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refused_apply_leaves_every_surface_byte_identical() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_refused_apply_leaves_every_surface_byte_identical"
-    ));
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
     let manifest_before = fs::read(f.project.join("kendex.toml")).unwrap();
@@ -146,10 +138,6 @@ fn a_refused_apply_leaves_every_surface_byte_identical() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_artifact_reports_uncompared_not_ok() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unreadable_artifact_reports_uncompared_not_ok"
-    ));
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
@@ -179,10 +167,6 @@ fn an_unreadable_artifact_reports_uncompared_not_ok() {
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn a_written_tree_keeps_shebang_files_executable() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_written_tree_keeps_shebang_files_executable"
-    ));
     use std::os::unix::fs::PermissionsExt as _;
     let tmp = tempfile::tempdir().unwrap();
     let env = kendex_core::env::Env::fake(tmp.path(), kendex_core::env::FakeOs::Linux);
@@ -301,10 +285,6 @@ fn kept() -> Kept {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn adding_a_skill_edits_kendex_toml_in_place() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::adding_a_skill_edits_kendex_toml_in_place"
-    ));
     let k = kept();
     let report = kendex_core::engine::ops::add(
         &k.env,
@@ -327,10 +307,6 @@ fn adding_a_skill_edits_kendex_toml_in_place() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes"
-    ));
     let k = kept();
     let older = k
         .original
@@ -359,10 +335,6 @@ fn a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn forking_a_skill_edits_kendex_toml_in_place() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::forking_a_skill_edits_kendex_toml_in_place"
-    ));
     let k = kept();
     fs::write(
         k.project.join(".agents/skills/gh/SKILL.md"),
@@ -392,10 +364,6 @@ fn forking_a_skill_edits_kendex_toml_in_place() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn adopting_a_skill_edits_kendex_toml_in_place() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::adopting_a_skill_edits_kendex_toml_in_place"
-    ));
     let k = kept();
     let mine = k.project.join(".claude/skills/mine");
     fs::create_dir_all(&mine).unwrap();
@@ -426,10 +394,6 @@ fn adopting_a_skill_edits_kendex_toml_in_place() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn detaching_a_source_edits_kendex_toml_in_place() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::detaching_a_source_edits_kendex_toml_in_place"
-    ));
     let k = kept();
     let plan = kendex_core::engine::detach::source(&k.env, &k.scope, "cat").unwrap();
     apply::execute(&k.env, &plan).unwrap();
@@ -512,10 +476,6 @@ fn forks_table(written: &str) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_write_that_changes_nothing_leaves_the_file_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_write_that_changes_nothing_leaves_the_file_alone"
-    ));
     let k = kept();
     let before = fs::metadata(&k.manifest).unwrap();
     let report = kendex_core::engine::ops::add(

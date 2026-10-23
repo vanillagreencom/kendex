@@ -43,10 +43,6 @@ fn occupied(w: &super::World) -> (kendex_core::manifest::Manifest, BTreeMap<Stri
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_pass_gives_up_at_the_instant_it_is_handed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_pass_gives_up_at_the_instant_it_is_handed"
-    ));
     let w = world();
     write_at(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),
@@ -98,10 +94,6 @@ fn the_pass_gives_up_at_the_instant_it_is_handed() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn nothing_is_read_past_the_deadline_the_memo_included() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::nothing_is_read_past_the_deadline_the_memo_included"
-    ));
     let w = world();
     let planned = kendex_core::engine::audit(&w.env, &w.scope).unwrap();
     kendex_core::apply::execute(&w.env, &planned.plan).unwrap();
@@ -147,10 +139,6 @@ fn nothing_is_read_past_the_deadline_the_memo_included() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_check_over_two_scopes_reports_the_pass_owed_once() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_check_over_two_scopes_reports_the_pass_owed_once"
-    ));
     let w = world();
     write_at(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),

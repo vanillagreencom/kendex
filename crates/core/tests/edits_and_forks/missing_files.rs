@@ -35,10 +35,6 @@ fn declare_guard(w: &World) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registered_hook_whose_script_is_gone_reads_as_missing_until_the_apply_puts_it_back() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_registered_hook_whose_script_is_gone_reads_as_missing_until_the_apply_puts_it_back"
-    ));
     let w = world();
     declare_guard(&w);
     sync_and_apply(&w);
@@ -78,10 +74,6 @@ fn a_registered_hook_whose_script_is_gone_reads_as_missing_until_the_apply_puts_
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_repair_at_a_held_revision_restores_that_revision_and_keeps_the_hold() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_repair_at_a_held_revision_restores_that_revision_and_keeps_the_hold"
-    ));
     let w = world();
     write_agent(&w.upstream, "rev", "Held body.");
     commit(&w.upstream, "one");
@@ -123,10 +115,6 @@ fn a_repair_at_a_held_revision_restores_that_revision_and_keeps_the_hold() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_never_installed_is_not_missing_a_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_never_installed_is_not_missing_a_file"
-    ));
     let w = world();
     declare_guard(&w);
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
@@ -145,10 +133,6 @@ fn a_hook_never_installed_is_not_missing_a_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rendering_the_layout_moved_is_not_missing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_rendering_the_layout_moved_is_not_missing"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Body.");
     commit(&w.upstream, "one");

@@ -177,10 +177,6 @@ fn add_registration(settings: &Path, command: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_catalog_reads_a_hooks_own_words_and_invents_none() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_catalog_reads_a_hooks_own_words_and_invents_none"
-    ));
     let f = fixture("");
     let rows = browse::packages(
         &f.env,
@@ -237,10 +233,6 @@ fn a_catalog_reads_a_hooks_own_words_and_invents_none() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_installed_hooks_words_come_from_its_script() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_installed_hooks_words_come_from_its_script"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -267,10 +259,6 @@ fn an_installed_hooks_words_come_from_its_script() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_installed_hook_with_a_declared_environment_keeps_its_words() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_installed_hook_with_a_declared_environment_keeps_its_words"
-    ));
     let f = fixture(
         "[hooks.guard]\nsource = \"cat\"\nenv = { GUARD_RULES = \"crates/ui/**/*.rs=iced-rs\" }\n",
     );
@@ -292,10 +280,6 @@ fn an_installed_hook_with_a_declared_environment_keeps_its_words() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_claude_registration_without_the_copilot_skip_keeps_its_words() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_claude_registration_without_the_copilot_skip_keeps_its_words"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     apply_now(&f);
     // The entry as it stood before the skip, spelled out rather than cut
@@ -327,10 +311,6 @@ fn a_claude_registration_without_the_copilot_skip_keeps_its_words() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registration_kendex_did_not_write_says_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_registration_kendex_did_not_write_says_nothing"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     apply_now(&f);
     let ours = scanned(&f, ItemKind::Hook)
@@ -373,10 +353,6 @@ fn a_registration_kendex_did_not_write_says_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_mcp_servers_words_come_from_its_declaration() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_mcp_servers_words_come_from_its_declaration"
-    ));
     let f = fixture("[mcp-servers.db]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -410,10 +386,6 @@ fn an_mcp_servers_words_come_from_its_declaration() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_package_reads_the_same_in_every_tool_holding_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_package_reads_the_same_in_every_tool_holding_it"
-    ));
     let f = fixture_for(
         &["claude", "codex", "cursor"],
         "[agents.rust]\nsource = \"cat\"\n\n[commands.scrub]\nsource = \"cat\"\n\n[hooks.guard]\nsource = \"cat\"\n",
@@ -488,10 +460,6 @@ fn one_package_reads_the_same_in_every_tool_holding_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_reserved_local_source_reads_each_scopes_own_capture() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_reserved_local_source_reads_each_scopes_own_capture"
-    ));
     let f = fixture("[agents.notes]\nsource = \"local\"\n");
     // What an adopt leaves behind in each scope: the package at the slot
     // the reserved source reads it from.
@@ -548,10 +516,6 @@ fn the_reserved_local_source_reads_each_scopes_own_capture() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_row_reads_the_version_installed_not_the_one_upstream_moved_to() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_row_reads_the_version_installed_not_the_one_upstream_moved_to"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let base = format!("file://{}", home.join("base").display());
@@ -644,10 +608,6 @@ fn git(dir: &Path, args: &[&str]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_rebound_declaration_does_not_relabel_what_is_installed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_rebound_declaration_does_not_relabel_what_is_installed"
-    ));
     // Both rebinds, as a person writes them: the item pointed at another
     // declared source, and the source itself pointed at another folder.
     let rebinds = [
@@ -733,10 +693,6 @@ fn write_gh(catalog: &Path, summary: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_row_escapes_author_text_the_way_a_catalog_row_does() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_row_escapes_author_text_the_way_a_catalog_row_does"
-    ));
     let f = fixture("[mcp-servers.db]\nsource = \"cat\"\n");
     // A right-to-left override inside the author's own sentence.
     fs::write(

@@ -72,10 +72,6 @@ const BOTH_SKILLS: &str = "[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\ns
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_unsettleable_item_refuses_the_sweep_and_names_what_holds_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_unsettleable_item_refuses_the_sweep_and_names_what_holds_it"
-    ));
     let w = world();
     lint_in_catalog(&w);
     for name in ["deploy", "lint"] {
@@ -139,10 +135,6 @@ fn one_unsettleable_item_refuses_the_sweep_and_names_what_holds_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_named_take_over_with_an_unsettleable_place_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_named_take_over_with_an_unsettleable_place_refuses"
-    ));
     let w = world();
     declare_tools(
         &w,
@@ -174,10 +166,6 @@ fn a_named_take_over_with_an_unsettleable_place_refuses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_that_reaches_nothing_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_name_that_reaches_nothing_refuses"
-    ));
     let w = world();
 
     let refused = plan_apply(&w.env, &w.scope, &named(ItemKind::Skill, "deploy"));
@@ -197,10 +185,6 @@ fn a_name_that_reaches_nothing_refuses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_sweep_that_can_replace_nothing_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_sweep_that_can_replace_nothing_refuses"
-    ));
     let w = world();
     declare_tools(
         &w,
@@ -240,10 +224,6 @@ fn a_sweep_that_can_replace_nothing_refuses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_item_rolled_back_after_its_take_over_still_refuses_the_sweep() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_item_rolled_back_after_its_take_over_still_refuses_the_sweep"
-    ));
     let w = world();
     lint_in_catalog(&w);
     // Symlink delivery, so the canonical tree and the harness position are

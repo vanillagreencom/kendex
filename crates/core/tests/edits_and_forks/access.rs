@@ -76,10 +76,6 @@ const PLANNER: &str =
 #[test]
 #[allow(clippy::unwrap_used)]
 fn renaming_a_fork_onto_planner_and_off_it_keeps_every_harnesss_deny() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::renaming_a_fork_onto_planner_and_off_it_keeps_every_harnesss_deny"
-    ));
     let w = forked_world(ROLELESS);
     for (harness, tool, _) in ROLE_KEYED {
         assert!(
@@ -120,10 +116,6 @@ fn renaming_a_fork_onto_planner_and_off_it_keeps_every_harnesss_deny() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_forked_planner_keeps_its_questions_under_a_new_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_forked_planner_keeps_its_questions_under_a_new_name"
-    ));
     let w = agent_world(ALL_THREE, PLANNER, "", "");
     for (harness, tool, baseline) in ROLE_KEYED {
         let denies = denied(&w, harness, "rev");
@@ -183,10 +175,6 @@ fn a_forked_planner_keeps_its_questions_under_a_new_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_catalog_default_that_retires_a_generated_deny_reaches_the_copy() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_catalog_default_that_retires_a_generated_deny_reaches_the_copy"
-    ));
     let w = agent_world(
         "\"claude\", \"pi\"",
         ROLELESS,

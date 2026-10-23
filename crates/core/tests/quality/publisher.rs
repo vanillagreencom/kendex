@@ -158,10 +158,6 @@ fn standing(advisory: &kendex_core::quality::AuditResult) -> Standing<'_> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_path_honours_the_table_for_kendex_and_for_nobody_else() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_path_honours_the_table_for_kendex_and_for_nobody_else"
-    ));
     let w = world();
     let rows: [(&str, &str, Standing<'_>); 2] = [
         ("kendex", KENDEX, (vec![], vec!["rce"])),
@@ -202,10 +198,6 @@ fn every_path_honours_the_table_for_kendex_and_for_nobody_else() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hand_placed_copy_of_kendexs_own_install_keeps_its_finding() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hand_placed_copy_of_kendexs_own_install_keeps_its_finding"
-    ));
     let w = world();
     let scope = project(&w, "app", KENDEX);
     let report = audit(&w.env, &scope).unwrap();
@@ -249,10 +241,6 @@ fn a_hand_placed_copy_of_kendexs_own_install_keeps_its_finding() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_observation_of_a_shared_tree_reads_as_its_recorded_source() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_observation_of_a_shared_tree_reads_as_its_recorded_source"
-    ));
     let w = world();
     let rows: [(&str, &str, Standing<'_>); 2] = [
         ("kendex", KENDEX, (vec![], vec!["rce"])),
@@ -294,10 +282,6 @@ fn every_observation_of_a_shared_tree_reads_as_its_recorded_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_copy_at_a_surface_no_row_wrote_is_nobodys_on_every_row() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_copy_at_a_surface_no_row_wrote_is_nobodys_on_every_row"
-    ));
     let w = world();
     let scope = project_for(&w, "app", KENDEX, "cursor");
     let report = audit(&w.env, &scope).unwrap();

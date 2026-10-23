@@ -22,10 +22,6 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_tool_the_item_sits_at_is_kept_in_one_pass"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
@@ -84,10 +80,6 @@ fn every_tool_the_item_sits_at_is_kept_in_one_pass() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_folder_read_through_a_link_is_not_two_different_copies() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_folder_read_through_a_link_is_not_two_different_copies"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
@@ -151,10 +143,6 @@ fn one_folder_read_through_a_link_is_not_two_different_copies() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_harness_list_already_there_is_extended_not_replaced() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_harness_list_already_there_is_extended_not_replaced"
-    ));
     for (installed, before, listed) in [
         (
             "[\"claude\", \"opencode\", \"codex\"]",
@@ -217,10 +205,6 @@ fn a_harness_list_already_there_is_extended_not_replaced() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn tools_holding_different_files_are_a_choice_not_a_merge() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::tools_holding_different_files_are_a_choice_not_a_merge"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
@@ -278,10 +262,6 @@ fn tools_holding_different_files_are_a_choice_not_a_merge() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_tool_holding_a_shared_folder_stays_declared() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_tool_holding_a_shared_folder_stays_declared"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");
@@ -329,10 +309,6 @@ fn the_tool_holding_a_shared_folder_stays_declared() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn both_spellings_are_refused_by_the_verb_too() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::both_spellings_are_refused_by_the_verb_too"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let env = Env::fake(tmp.path(), FakeOs::Linux);
     let project = tmp.path().join("app");

@@ -103,10 +103,6 @@ fn canonical_skill(f: &Fixture) -> PathBuf {
 
 #[test]
 fn declare_apply_drift_clean_round_trips() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::declare_apply_drift_clean_round_trips"
-    ));
     let f = fixture();
     apply_now(&f);
     assert!(agent_file(&f).is_file());
@@ -126,10 +122,6 @@ fn declare_apply_drift_clean_round_trips() {
 }
 #[test]
 fn invariant_1_generated_artifacts_regenerate_but_never_over_an_edit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_1_generated_artifacts_regenerate_but_never_over_an_edit"
-    ));
     let f = fixture();
     apply_now(&f);
     fs::write(agent_file(&f), "hand edit").unwrap();
@@ -190,10 +182,6 @@ fn invariant_1_generated_artifacts_regenerate_but_never_over_an_edit() {
 
 #[test]
 fn invariant_2_never_readd_a_user_removal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_2_never_readd_a_user_removal"
-    ));
     let f = fixture();
     // The default source seeds exactly once: a fresh manifest carries it,
     // an existing manifest without it stays without it.
@@ -232,10 +220,6 @@ fn invariant_2_never_readd_a_user_removal() {
 
 #[test]
 fn invariant_3_shared_key_edits_invalidate_dependents() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_3_shared_key_edits_invalidate_dependents"
-    ));
     let f = fixture();
     apply_now(&f);
     assert_eq!(drift_states(&f), vec![]);
@@ -258,10 +242,6 @@ fn invariant_3_shared_key_edits_invalidate_dependents() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn invariant_4_holds_across_the_path_and_remote_namespaces() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_4_holds_across_the_path_and_remote_namespaces"
-    ));
     for (label, recorded, declared, expected) in [
         (
             "a remote re-declared as a path of the same spelling",
@@ -329,10 +309,6 @@ fn invariant_4_holds_across_the_path_and_remote_namespaces() {
 
 #[test]
 fn invariant_4_provenance_is_durable() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_4_provenance_is_durable"
-    ));
     let f = fixture();
     apply_now(&f);
 
@@ -384,10 +360,6 @@ fn invariant_4_provenance_is_durable() {
 
 #[test]
 fn invariant_5_toggle_is_lossless_rename() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_5_toggle_is_lossless_rename"
-    ));
     let f = fixture();
     apply_now(&f);
     let enabled_agent = fs::read_to_string(agent_file(&f)).unwrap();
@@ -425,10 +397,6 @@ fn invariant_5_toggle_is_lossless_rename() {
 
 #[test]
 fn invariant_6_never_touch_the_unowned() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_6_never_touch_the_unowned"
-    ));
     let f = fixture();
     apply_now(&f);
 
@@ -474,10 +442,6 @@ fn invariant_6_never_touch_the_unowned() {
 /// rollback the product runs, at every boundary it can stop at.
 #[test]
 fn invariant_7_applies_are_transactional() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_7_applies_are_transactional"
-    ));
     let f = fixture();
     let before = hash::hash_tree(&f.project).unwrap();
     let op_count = audit(&f.env, &f.scope).unwrap().plan.ops.len();
@@ -516,10 +480,6 @@ fn refuses(f: &Fixture) -> apply::PlannedOp {
 
 #[test]
 fn invariant_8_one_writer_per_scope() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::invariant_8_one_writer_per_scope"
-    ));
     let f = fixture();
     let lock_path = f
         .env
@@ -539,10 +499,6 @@ fn invariant_8_one_writer_per_scope() {
 /// nothing rewrites it on the way out.
 #[test]
 fn legacy_v1_manifests_stay_byte_identical() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::legacy_v1_manifests_stay_byte_identical"
-    ));
     let f = fixture();
     let v1 = "[agent-skills]\nrust = [\"clippy\"]\n";
     fs::write(f.project.join("kendex.toml"), v1).unwrap();
@@ -559,10 +515,6 @@ fn legacy_v1_manifests_stay_byte_identical() {
 
 #[test]
 fn plan_revalidates_before_each_mutation() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::plan_revalidates_before_each_mutation"
-    ));
     let f = fixture();
     let report = audit(&f.env, &f.scope).unwrap();
     // The world changes between plan and apply.

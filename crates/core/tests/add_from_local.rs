@@ -24,10 +24,6 @@ const MCP: &str = "command = \"gh-mcp\"\nargs = [\"--stdio\"]\n";
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_executable_kind_in_the_local_source_installs_by_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_executable_kind_in_the_local_source_installs_by_name"
-    ));
     for (kind, file, body, request) in [
         (
             ItemKind::Hook,

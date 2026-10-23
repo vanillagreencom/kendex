@@ -65,10 +65,6 @@ const V1_LOCK: &str = r#"{
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_v1_lock_refuses_the_audit_and_names_a_fresh_install() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_v1_lock_refuses_the_audit_and_names_a_fresh_install"
-    ));
     let f = fixture();
     fs::write(&f.lock_path, V1_LOCK).unwrap();
 
@@ -81,10 +77,6 @@ fn a_v1_lock_refuses_the_audit_and_names_a_fresh_install() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_future_version_lock_refuses_to_load_with_its_own_error() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_future_version_lock_refuses_to_load_with_its_own_error"
-    ));
     let f = fixture();
     fs::write(&f.lock_path, r#"{"version":99,"entries":{}}"#).unwrap();
 

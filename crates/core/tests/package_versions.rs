@@ -28,16 +28,12 @@ struct World {
 
 #[allow(clippy::unwrap_used)]
 fn git(dir: &Path, args: &[&str]) {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::git"));
     let output = Hardened::git(args, Some(dir)).run().unwrap();
     assert!(output.status.success(), "git {args:?}");
 }
 
 #[allow(clippy::unwrap_used)]
 fn commit(dir: &Path, message: &str) -> String {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::commit"));
     git(dir, &["add", "-A"]);
     git(
         dir,
@@ -48,6 +44,28 @@ fn commit(dir: &Path, message: &str) -> String {
             "user.name=t",
             "commit",
             "--quiet",
+            "-m",
+            message,
+        ],
+    );
+    let output = Hardened::git(&["rev-parse", "HEAD"], Some(dir))
+        .run()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[allow(clippy::unwrap_used)]
+fn commit_tracked(dir: &Path, message: &str) -> String {
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "--all",
             "-m",
             message,
         ],
@@ -71,8 +89,6 @@ fn write_skill(dir: &Path, name: &str, body: &str) {
 
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::world"));
     let tmp = tempfile::tempdir().unwrap();
     // Canonical up front: macOS reaches its temp dirs through a symlink,
     // and the engine hands back canonical paths.
@@ -109,37 +125,17 @@ fn declare(w: &World, source_extra: &str, body: &str) {
 
 #[allow(clippy::unwrap_used)]
 fn sync_and_apply(w: &World) {
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn versions_list_the_subtree_timeline_with_tags_and_markers() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::versions_list_the_subtree_timeline_with_tags_and_markers"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "gh one");
@@ -159,12 +155,7 @@ fn versions_list_the_subtree_timeline_with_tags_and_markers() {
     );
     sync_and_apply(&w);
 
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::package_versions"));
-        package::versions(&w.env, &w.scope, ItemKind::Skill, "gh")
-    }
-    .unwrap();
+    let rows = package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -185,10 +176,6 @@ fn versions_list_the_subtree_timeline_with_tags_and_markers() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_installed_commit_off_the_timeline_maps_to_its_content_commit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_installed_commit_off_the_timeline_maps_to_its_content_commit"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "gh one");
@@ -199,12 +186,7 @@ fn an_installed_commit_off_the_timeline_maps_to_its_content_commit() {
     sync_and_apply(&w);
 
     // Installed at the readme commit, which never touched the package.
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::package_versions"));
-        package::versions(&w.env, &w.scope, ItemKind::Skill, "gh")
-    }
-    .unwrap();
+    let rows = package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].id, first);
     assert!(
@@ -216,10 +198,6 @@ fn an_installed_commit_off_the_timeline_maps_to_its_content_commit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updates_report_only_packages_whose_files_moved() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updates_report_only_packages_whose_files_moved"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     write_skill(&w.upstream, "other", "One.");
@@ -233,26 +211,12 @@ fn updates_report_only_packages_whose_files_moved() {
 
     write_skill(&w.upstream, "other", "Two.");
     commit(&w.upstream, "two");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap()
-    .rows;
+    let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     let gh = rows.iter().find(|row| row.name == "gh").unwrap();
     let other = rows.iter().find(|row| row.name == "other").unwrap();
     assert!(
@@ -266,10 +230,6 @@ fn updates_report_only_packages_whose_files_moved() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn ignoring_updates_is_a_settings_write_and_rows_stay_visible() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::ignoring_updates_is_a_settings_write_and_rows_stay_visible"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -277,18 +237,10 @@ fn ignoring_updates_is_a_settings_write_and_rows_stay_visible() {
     sync_and_apply(&w);
     write_skill(&w.upstream, "gh", "Two.");
     commit(&w.upstream, "two");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let manifest_before = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
     updates::set_ignored(&w.env, &w.scope, ItemKind::Skill, "gh", REPO, true).unwrap();
@@ -298,35 +250,19 @@ fn ignoring_updates_is_a_settings_write_and_rows_stay_visible() {
         "a notification preference never touches shared intent"
     );
 
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap()
-    .rows;
+    let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     let gh = rows.iter().find(|row| row.name == "gh").unwrap();
     assert!(gh.ignored, "ignored rows come back flagged, never filtered");
     assert!(gh.update_available);
 
     updates::set_ignored(&w.env, &w.scope, ItemKind::Skill, "gh", REPO, false).unwrap();
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap()
-    .rows;
+    let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     assert!(!rows.iter().find(|row| row.name == "gh").unwrap().ignored);
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hostile_source_commit_never_reaches_git_as_an_option() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hostile_source_commit_never_reaches_git_as_an_option"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -346,26 +282,14 @@ fn a_hostile_source_commit_never_reaches_git_as_an_option() {
     }
     kendex_core::lock::save(&lock_path, &lock).unwrap();
 
-    let _ = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::package_versions"));
-        package::versions(&w.env, &w.scope, ItemKind::Skill, "gh")
-    };
-    let _ = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    };
+    let _ = package::versions(&w.env, &w.scope, ItemKind::Skill, "gh");
+    let _ = updates::updates(&w.env, &w.scope);
     assert!(!marker.exists(), "a lock value reached git as an option");
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pinned_source_discovers_new_versions_after_fetch_all() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_pinned_source_discovers_new_versions_after_fetch_all"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "one");
@@ -378,38 +302,18 @@ fn a_pinned_source_discovers_new_versions_after_fetch_all() {
 
     write_skill(&w.upstream, "gh", "Two.");
     let second = commit(&w.upstream, "two");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
     // A pinned source's sync skips the network on purpose; the updates
     // check must not inherit that blindness.
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap()
-    .rows;
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     assert!(!rows[0].update_available, "nothing fetched yet");
 
     let warnings = remote::fetch_all(&w.env, &loaded);
     assert_eq!(warnings, Vec::<String>::new());
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap()
-    .rows;
+    let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     let gh = rows.iter().find(|row| row.name == "gh").unwrap();
     assert!(gh.update_available);
     assert_eq!(gh.latest.as_ref().unwrap().commit, second);
@@ -435,10 +339,6 @@ fn write_pi_extension(dir: &Path, name: &str, version: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pi_extension_gone_from_its_source_still_carries_the_refusal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_pi_extension_gone_from_its_source_still_carries_the_refusal"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     write_pi_extension(&w.upstream, "pi-hooks", "1.0.0");
@@ -452,26 +352,13 @@ fn a_pi_extension_gone_from_its_source_still_carries_the_refusal() {
 
     fs::remove_dir_all(w.upstream.join("pi-extensions/pi-hooks")).unwrap();
     commit(&w.upstream, "the extension is gone");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     remote::fetch_all(&w.env, &loaded);
 
-    let report = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap();
+    let report = updates::updates(&w.env, &w.scope).unwrap();
     let row = report
         .rows
         .iter()
@@ -494,10 +381,6 @@ fn a_pi_extension_gone_from_its_source_still_carries_the_refusal() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_forked_row_of_a_refused_kind_still_carries_the_refusal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_forked_row_of_a_refused_kind_still_carries_the_refusal"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -513,18 +396,9 @@ fn a_forked_row_of_a_refused_kind_still_carries_the_refusal() {
     )
     .unwrap();
     let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
-    let report = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap();
+    let report = updates::updates(&w.env, &w.scope).unwrap();
     let row = report
         .rows
         .iter()
@@ -555,10 +429,6 @@ fn a_forked_row_of_a_refused_kind_still_carries_the_refusal() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_derived_place_has_an_updates_row_and_no_version_timeline() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_derived_place_has_an_updates_row_and_no_version_timeline"
-    ));
     let w = world();
     let dir = w.upstream.join("skills/gh");
     fs::create_dir_all(&dir).unwrap();
@@ -576,13 +446,7 @@ fn a_derived_place_has_an_updates_row_and_no_version_timeline() {
     );
     sync_and_apply(&w);
 
-    let rows = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap()
-    .rows;
+    let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     let helper = rows
         .iter()
         .find(|row| row.name == "helper")
@@ -593,27 +457,16 @@ fn a_derived_place_has_an_updates_row_and_no_version_timeline() {
     // The page reads its versions from here, and takes an error as an
     // empty timeline — so it has no newer version to offer and nothing
     // withheld to explain.
-    let refused = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::package_versions"));
-        package::versions(&w.env, &w.scope, ItemKind::Skill, "helper")
-    }
-    .unwrap_err();
+    let refused = package::versions(&w.env, &w.scope, ItemKind::Skill, "helper").unwrap_err();
     assert!(
         matches!(refused, kendex_core::error::CoreError::NotDeclared { .. }),
         "{refused:?}"
     );
     // The control: the declaration the dependency came in under does read.
     assert!(
-        !{
-            let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                module_path!(),
-                "::phase::package_versions"
-            ));
-            package::versions(&w.env, &w.scope, ItemKind::Skill, "gh")
-        }
-        .unwrap()
-        .is_empty()
+        !package::versions(&w.env, &w.scope, ItemKind::Skill, "gh")
+            .unwrap()
+            .is_empty()
     );
 }
 
@@ -624,10 +477,6 @@ fn a_derived_place_has_an_updates_row_and_no_version_timeline() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_pi_extension_reaches_the_updates_report() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_pi_extension_reaches_the_updates_report"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     write_pi_extension(&w.upstream, "pi-hooks", "1.0.0");
@@ -641,25 +490,12 @@ fn a_pi_extension_reaches_the_updates_report() {
 
     write_pi_extension(&w.upstream, "pi-hooks", "2.0.0");
     commit(&w.upstream, "two");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
-    let report = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap();
+    let report = updates::updates(&w.env, &w.scope).unwrap();
     let row = report
         .rows
         .iter()
@@ -696,12 +532,7 @@ fn a_pi_extension_reaches_the_updates_report() {
     );
     // The same absence on the package page: no version reads as installed,
     // so the page has nothing to offer an update from.
-    let versions = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::package_versions"));
-        package::versions(&w.env, &w.scope, ItemKind::PiExtension, "pi-hooks")
-    }
-    .unwrap();
+    let versions = package::versions(&w.env, &w.scope, ItemKind::PiExtension, "pi-hooks").unwrap();
     assert!(!versions.is_empty(), "the timeline still reads");
     assert!(versions.iter().all(|row| !row.installed), "{versions:?}");
 }
@@ -717,8 +548,6 @@ struct HistoryWorld {
 
 #[allow(clippy::unwrap_used)]
 fn history_world() -> HistoryWorld {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::history_world"));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     let first = commit(&w.upstream, "first");
@@ -730,26 +559,13 @@ fn history_world() -> HistoryWorld {
     write_skill(&w.upstream, "gh", "Two.");
     let tip = commit(&w.upstream, "second");
     git(&w.upstream, &["tag", "v2"]);
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let mirror = remote::store::mirror_dir(&w.env, &remote::cache_key(&w.env, REPO));
     let subtree = Path::new("skills/gh");
-    let complete = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::history_subtree_log"));
-        history::subtree_log(&mirror, &tip, subtree)
-    }
-    .unwrap();
+    let complete = history::subtree_log(&mirror, &tip, subtree).unwrap();
     assert_eq!(complete.len(), 2);
     HistoryWorld {
         world: w,
@@ -763,18 +579,9 @@ fn history_world() -> HistoryWorld {
 
 #[allow(clippy::unwrap_used)]
 fn assert_complete_versions(fixture: &HistoryWorld, trace: &Path) {
-    let _diagnostic_fixture = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::fixture::assert_complete_versions"
-    ));
     let w = &fixture.world;
     fs::write(trace, "").unwrap();
-    let versions = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::package_versions"));
-        package::versions(&w.env, &w.scope, ItemKind::Skill, "gh")
-    }
-    .unwrap();
+    let versions = package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
     assert_eq!(
         versions
             .iter()
@@ -810,10 +617,6 @@ fn assert_complete_versions(fixture: &HistoryWorld, trace: &Path) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updates_read_bounded_history_and_versions_read_complete_history() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updates_read_bounded_history_and_versions_read_complete_history"
-    ));
     let Some(trace) = crate::test_util::git_recorded_test(
         module_path!(),
         "updates_read_bounded_history_and_versions_read_complete_history",
@@ -856,15 +659,9 @@ fn updates_read_bounded_history_and_versions_read_complete_history() {
         kendex_core::lock::save(&lock_path, &lock).unwrap();
         let expected_current = installed
             .and_then(|commit| {
-                {
-                    let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                        module_path!(),
-                        "::phase::history_last_content_commit"
-                    ));
-                    history::last_content_commit(&mirror, commit, subtree)
-                }
-                .ok()
-                .flatten()
+                history::last_content_commit(&mirror, commit, subtree)
+                    .ok()
+                    .flatten()
             })
             .map(|commit| {
                 let metadata = complete.iter().find(|row| row.commit == commit);
@@ -880,12 +677,7 @@ fn updates_read_bounded_history_and_versions_read_complete_history() {
             label: complete[0].tags.first().cloned(),
         };
         fs::write(&trace, "").unwrap();
-        let report = {
-            let _diagnostic_call =
-                crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-            updates::updates(&w.env, &w.scope)
-        }
-        .unwrap();
+        let report = updates::updates(&w.env, &w.scope).unwrap();
         let row = report.rows.iter().find(|row| row.name == "gh").unwrap();
         assert_eq!(
             (&row.current, &row.latest, row.pinned, row.update_available),
@@ -925,10 +717,6 @@ fn updates_read_bounded_history_and_versions_read_complete_history() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn unreadable_history_preserves_update_controls_and_refuses_versions() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::unreadable_history_preserves_update_controls_and_refuses_versions"
-    ));
     if crate::test_util::git_recorded_test(
         module_path!(),
         "unreadable_history_preserves_update_controls_and_refuses_versions",
@@ -950,45 +738,18 @@ fn unreadable_history_preserves_update_controls_and_refuses_versions() {
         format!("{config}[log]\n\tdiffMerges = bogus\n"),
     )
     .unwrap();
-    assert!(
-        {
-            let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                module_path!(),
-                "::phase::history_subtree_log"
-            ));
-            history::subtree_log(mirror, tip, subtree)
-        }
-        .is_err()
-    );
-    let report = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::updates_updates"));
-        updates::updates(&w.env, &w.scope)
-    }
-    .unwrap();
+    assert!(history::subtree_log(mirror, tip, subtree).is_err());
+    let report = updates::updates(&w.env, &w.scope).unwrap();
     let row = report.rows.iter().find(|row| row.name == "gh").unwrap();
     assert!(row.current.is_none() && row.latest.is_none() && !row.update_available);
     assert!(row.can_discard && !row.can_take_latest);
     assert!(!report.warnings.is_empty());
-    assert!(
-        {
-            let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                module_path!(),
-                "::phase::package_versions"
-            ));
-            package::versions(&w.env, &w.scope, ItemKind::Skill, "gh")
-        }
-        .is_err()
-    );
+    assert!(package::versions(&w.env, &w.scope, ItemKind::Skill, "gh").is_err());
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::history_projection_matches_first_parent_literal_and_bounded_timeline"
-    ));
     let w = world();
     let rel = Path::new("skills/[literal]");
     write_skill(&w.upstream, "[literal]", "One.");
@@ -1020,12 +781,7 @@ fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
     let merge_tip = String::from_utf8(head.stdout).unwrap().trim().to_owned();
     let mut tip = merge_tip.clone();
     let mirror = w.upstream.join(".git");
-    let merged = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::history_subtree_log"));
-        history::subtree_log(&mirror, &tip, rel)
-    }
-    .unwrap();
+    let merged = history::subtree_log(&mirror, &tip, rel).unwrap();
     assert_eq!(
         merged.len(),
         2,
@@ -1037,52 +793,29 @@ fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
     );
     assert!(!merged.iter().any(|row| row.commit == side));
     assert_eq!(
-        {
-            let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                module_path!(),
-                "::phase::history_latest_subtree_commit"
-            ));
-            history::latest_subtree_commit(&mirror, &tip, rel)
-        }
-        .unwrap()
-        .as_ref(),
+        history::latest_subtree_commit(&mirror, &tip, rel)
+            .unwrap()
+            .as_ref(),
         merged.first()
     );
     for commit in [&first, &side] {
         assert_eq!(
-            {
-                let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                    module_path!(),
-                    "::phase::history_subtree_commit"
-                ));
-                history::subtree_commit(&mirror, &tip, rel, commit)
-            }
-            .unwrap()
-            .as_ref(),
+            history::subtree_commit(&mirror, &tip, rel, commit)
+                .unwrap()
+                .as_ref(),
             merged.iter().find(|row| &row.commit == commit)
         );
     }
     for index in 0..200 {
         write_skill(&w.upstream, "[literal]", &format!("Change {index}."));
-        tip = commit(&w.upstream, "change");
+        tip = commit_tracked(&w.upstream, "change");
     }
-    let complete = {
-        let _diagnostic_call =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::history_subtree_log"));
-        history::subtree_log(&mirror, &tip, rel)
-    }
-    .unwrap();
+    let complete = history::subtree_log(&mirror, &tip, rel).unwrap();
     assert_eq!(complete.len(), 200);
     assert_eq!(
-        {
-            let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                module_path!(),
-                "::phase::history_latest_subtree_commit"
-            ));
-            history::latest_subtree_commit(&mirror, &tip, rel)
-        }
-        .unwrap()
-        .as_ref(),
+        history::latest_subtree_commit(&mirror, &tip, rel)
+            .unwrap()
+            .as_ref(),
         complete.first()
     );
     for commit in [
@@ -1093,38 +826,17 @@ fn history_projection_matches_first_parent_literal_and_bounded_timeline() {
         &side,
     ] {
         assert_eq!(
-            {
-                let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                    module_path!(),
-                    "::phase::history_subtree_commit"
-                ));
-                history::subtree_commit(&mirror, &tip, rel, commit)
-            }
-            .unwrap()
-            .as_ref(),
+            history::subtree_commit(&mirror, &tip, rel, commit)
+                .unwrap()
+                .as_ref(),
             complete.iter().find(|row| &row.commit == commit),
             "{commit}"
         );
     }
     assert!(
-        {
-            let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                module_path!(),
-                "::phase::history_latest_subtree_commit"
-            ));
-            history::latest_subtree_commit(&mirror, &tip, Path::new("absent"))
-        }
-        .unwrap()
-        .is_none()
+        history::latest_subtree_commit(&mirror, &tip, Path::new("absent"))
+            .unwrap()
+            .is_none()
     );
-    assert!(
-        {
-            let _diagnostic_call = crate::diagnostic::Span::begin(concat!(
-                module_path!(),
-                "::phase::history_latest_subtree_commit"
-            ));
-            history::latest_subtree_commit(&mirror, &"f".repeat(40), rel)
-        }
-        .is_err()
-    );
+    assert!(history::latest_subtree_commit(&mirror, &"f".repeat(40), rel).is_err());
 }

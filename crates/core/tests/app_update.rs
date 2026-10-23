@@ -93,10 +93,6 @@ fn check_at_url(
 
 #[test]
 fn one_attempt_is_reused_for_six_hours() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::one_attempt_is_reused_for_six_hours"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);
@@ -124,10 +120,6 @@ fn one_attempt_is_reused_for_six_hours() {
 /// those three is the same answer here: keep what was known.
 #[test]
 fn a_reply_that_is_not_a_feed_leaves_the_last_valid_notice_standing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_reply_that_is_not_a_feed_leaves_the_last_valid_notice_standing"
-    ));
     let good = || {
         response(
             "5.1.0",
@@ -169,10 +161,6 @@ fn a_reply_that_is_not_a_feed_leaves_the_last_valid_notice_standing() {
 /// and inventing one off an empty body would put a version on the card.
 #[test]
 fn a_cold_cache_304_names_no_release() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_cold_cache_304_names_no_release"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);
@@ -192,10 +180,6 @@ fn a_cold_cache_304_names_no_release() {
 /// put the app back on the network every time a page asks.
 #[test]
 fn a_failed_attempt_still_holds_the_interval() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_failed_attempt_still_holds_the_interval"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);
@@ -213,10 +197,6 @@ fn a_failed_attempt_still_holds_the_interval() {
 
 #[test]
 fn a_forced_revalidation_sends_the_cached_etag() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_forced_revalidation_sends_the_cached_etag"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);
@@ -243,10 +223,6 @@ fn a_forced_revalidation_sends_the_cached_etag() {
 
 #[test]
 fn changing_feed_url_drops_the_other_servers_generation_and_etag() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::changing_feed_url_drops_the_other_servers_generation_and_etag"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);
@@ -272,10 +248,6 @@ fn changing_feed_url_drops_the_other_servers_generation_and_etag() {
 
 #[test]
 fn rollback_clears_the_notice_and_missing_asset_is_not_an_error() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::rollback_clears_the_notice_and_missing_asset_is_not_an_error"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);
@@ -311,10 +283,6 @@ fn rollback_clears_the_notice_and_missing_asset_is_not_an_error() {
 #[cfg(unix)]
 #[test]
 fn a_symlinked_cache_entry_is_replaced_without_touching_its_target() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_symlinked_cache_entry_is_replaced_without_touching_its_target"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(home, FakeOs::Linux);

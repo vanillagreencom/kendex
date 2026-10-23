@@ -16,10 +16,6 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_refuses_a_name_the_scope_already_uses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::fork_beside_refuses_a_name_the_scope_already_uses"
-    ));
     let w = world();
     let gh = w.upstream.join("skills/gh/SKILL.md");
     fs::create_dir_all(gh.parent().unwrap()).unwrap();
@@ -102,10 +98,6 @@ fn fork_beside_refuses_a_name_the_scope_already_uses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_beside_and_rename_refuse_names_that_fold_onto_a_neighbour() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::fork_beside_and_rename_refuse_names_that_fold_onto_a_neighbour"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");

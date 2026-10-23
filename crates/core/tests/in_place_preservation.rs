@@ -135,10 +135,6 @@ fn assert_unreadable_parent_is_unknown(world: &World, parent: &Path) {
 /// unmanaged-copy result per harness.
 #[test]
 fn check_reports_one_missing_render_for_an_unrecorded_in_place_skill() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::check_reports_one_missing_render_for_an_unrecorded_in_place_skill"
-    ));
     let world = world();
 
     let text = check_text(&world);
@@ -160,10 +156,6 @@ fn check_reports_one_missing_render_for_an_unrecorded_in_place_skill() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn replace_unmanaged_preserves_an_in_place_source_tree() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::replace_unmanaged_preserves_an_in_place_source_tree"
-    ));
     let world = world();
     let source = world.project.join(".agents/skills/deploy");
     let before = tree_bytes(&source);
@@ -186,10 +178,6 @@ fn replace_unmanaged_preserves_an_in_place_source_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_an_applied_in_place_skill_preserves_its_source_tree() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_an_applied_in_place_skill_preserves_its_source_tree"
-    ));
     let world = world();
     let source = world.project.join(".agents/skills/deploy");
     let before = tree_bytes(&source);
@@ -224,10 +212,6 @@ fn removing_an_applied_in_place_skill_preserves_its_source_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_legacy_in_place_record_preserves_its_source_tree() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_a_legacy_in_place_record_preserves_its_source_tree"
-    ));
     let world = world();
     let source = world.project.join(".agents/skills/deploy");
     let before = tree_bytes(&source);
@@ -263,10 +247,6 @@ fn removing_a_legacy_in_place_record_preserves_its_source_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_reports_a_missing_link_for_a_new_target_harness() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::check_reports_a_missing_link_for_a_new_target_harness"
-    ));
     let world = world();
     fs::write(
         world.project.join("kendex.toml"),
@@ -297,10 +277,6 @@ fn check_reports_a_missing_link_for_a_new_target_harness() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn disabling_an_applied_in_place_skill_preserves_its_source() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::disabling_an_applied_in_place_skill_preserves_its_source"
-    ));
     let world = world();
     let source = world.project.join(".agents/skills/deploy");
     let before = tree_bytes(&source);
@@ -329,10 +305,6 @@ fn disabling_an_applied_in_place_skill_preserves_its_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_reports_a_missing_pathless_in_place_source() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::check_reports_a_missing_pathless_in_place_source"
-    ));
     let world = world();
     set_manifest(&world, "\"codex\"", true);
     let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
@@ -352,10 +324,6 @@ fn check_reports_a_missing_pathless_in_place_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_reads_command_requirements_from_in_place_sources_without_owning_them() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::check_reads_command_requirements_from_in_place_sources_without_owning_them"
-    ));
     for harnesses in ["\"codex\"", "\"claude\", \"codex\""] {
         let world = world();
         set_manifest(&world, harnesses, true);
@@ -437,10 +405,6 @@ fn check_reads_command_requirements_from_in_place_sources_without_owning_them() 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_in_place_command_still_renders_its_codex_skill_tree() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_in_place_command_still_renders_its_codex_skill_tree"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let project = home.join("app");
@@ -475,10 +439,6 @@ fn an_in_place_command_still_renders_its_codex_skill_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_inaccessible_in_place_source_is_could_not_check() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_inaccessible_in_place_source_is_could_not_check"
-    ));
     let world = world();
     set_manifest(&world, "\"codex\"", true);
     let report = plan_apply(&world.env, &world.scope, &PlanOptions::current()).unwrap();
@@ -491,10 +451,6 @@ fn an_inaccessible_in_place_source_is_could_not_check() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_inaccessible_harness_parent_is_could_not_check() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_inaccessible_harness_parent_is_could_not_check"
-    ));
     let world = world();
     let parent = world.project.join(".claude");
     fs::create_dir_all(&parent).unwrap();
@@ -572,7 +528,7 @@ fn native_command_case(record: &str) {
 macro_rules! native_command_cells {
     ($($name:ident => $record:literal),+ $(,)?) => { $(
         #[test]
-        fn $name() { let _diagnostic = crate::diagnostic::Span::begin(concat!(module_path!(), "::", stringify!($name))); native_command_case($record); }
+        fn $name() { native_command_case($record); }
     )+ };
 }
 native_command_cells! {

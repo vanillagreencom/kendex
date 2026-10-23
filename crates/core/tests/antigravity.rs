@@ -156,10 +156,6 @@ fn drift(f: &Fixture) -> Vec<(String, kendex_core::engine::DriftState)> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_installs_under_the_global_root_and_toggles_by_rename() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agent_installs_under_the_global_root_and_toggles_by_rename"
-    ));
     let f = fixture("");
     declare_globally(&f, "[agents.rust]\nsource = \"cat\"\n");
     apply_globally(&f);
@@ -196,10 +192,6 @@ fn an_agent_installs_under_the_global_root_and_toggles_by_rename() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_agent_installs_nothing_and_the_report_says_why() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_agent_installs_nothing_and_the_report_says_why"
-    ));
     let f = fixture("[agents.rust]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(
@@ -216,10 +208,6 @@ fn a_project_agent_installs_nothing_and_the_report_says_why() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_installs_into_the_shared_tree() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_installs_into_the_shared_tree"
-    ));
     let f = fixture("[skills.deploy]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -247,10 +235,6 @@ fn a_skill_installs_into_the_shared_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_registers_under_its_name_in_the_roots_hooks_json"
-    ));
     let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
     let registry = f.project.join(".agents/hooks.json");
     fs::write(
@@ -310,10 +294,6 @@ fn a_hook_registers_under_its_name_in_the_roots_hooks_json() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_the_harness_cannot_run_stays_out_of_antigravity() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_the_harness_cannot_run_stays_out_of_antigravity"
-    ));
     for (hook, record, failed_delivery) in [
         (
             UNNAMED_HOOK.to_owned(),
@@ -367,10 +347,6 @@ fn a_hook_the_harness_cannot_run_stays_out_of_antigravity() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registered_hook_is_read_back_from_the_registry() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_registered_hook_is_read_back_from_the_registry"
-    ));
     let f = fixture("[hooks.audit]\nsource = \"cat\"\n");
     apply_now(&f);
 
@@ -397,10 +373,6 @@ fn a_registered_hook_is_read_back_from_the_registry() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_declared_for_antigravity_writes_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_declared_for_antigravity_writes_nothing"
-    ));
     let f = fixture("[commands.ship]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(!f.project.join(".agents/commands").exists());
@@ -414,10 +386,6 @@ fn a_command_declared_for_antigravity_writes_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_server_is_declared_in_mcp_config_json_and_toggles_on_the_entry() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_server_is_declared_in_mcp_config_json_and_toggles_on_the_entry"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.docs]\nsource = \"cat\"\n");
     let config = f.project.join(".agents/mcp_config.json");
     fs::write(
@@ -506,10 +474,6 @@ fn a_server_is_declared_in_mcp_config_json_and_toggles_on_the_entry() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_server_lands_under_the_customization_root() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_global_server_lands_under_the_customization_root"
-    ));
     let f = fixture("");
     declare_globally(&f, "[mcp-servers.gh]\nsource = \"cat\"\n");
     apply_globally(&f);
@@ -525,10 +489,6 @@ fn a_global_server_lands_under_the_customization_root() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_server_with_env_references_is_refused_with_the_reason() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_server_with_env_references_is_refused_with_the_reason"
-    ));
     let f = fixture("[mcp-servers.tokened]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(

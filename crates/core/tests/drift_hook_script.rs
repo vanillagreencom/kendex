@@ -196,10 +196,6 @@ const CASES: &[HookCase] = &[
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_hook_script_honors_its_contract() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_hook_script_honors_its_contract"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let dir = rooted(&tmp);
 

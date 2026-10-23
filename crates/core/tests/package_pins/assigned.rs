@@ -171,28 +171,16 @@ fn assert_overlap(case: Overlap) {
 
 #[test]
 fn a_requirement_below_another_assignment_keeps_the_source_revision() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_requirement_below_another_assignment_keeps_the_source_revision"
-    ));
     assert_overlap(Overlap::BelowAssigned);
 }
 
 #[test]
 fn cross_agent_assignments_do_not_contest_a_hard_requirement() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::cross_agent_assignments_do_not_contest_a_hard_requirement"
-    ));
     assert_overlap(Overlap::CrossAgent);
 }
 
 #[test]
 fn fresh_copilot_installs_shared_skills_from_agents_at_different_commits() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::fresh_copilot_installs_shared_skills_from_agents_at_different_commits"
-    ));
     assert_overlap(Overlap::Copilot);
 }
 
@@ -299,28 +287,16 @@ fn assert_regression(case: Regression) {
 
 #[test]
 fn nested_agent_cycles_reach_all_assignments() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::nested_agent_cycles_reach_all_assignments"
-    ));
     assert_regression(Regression::NestedCycle);
 }
 
 #[test]
 fn removed_skills_do_not_displace_another_agents_requirement() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removed_skills_do_not_displace_another_agents_requirement"
-    ));
     assert_regression(Regression::RemovedRequirement);
 }
 
 #[test]
 fn a_declared_no_auto_skills_agent_is_reached_through_an_assignment() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_declared_no_auto_skills_agent_is_reached_through_an_assignment"
-    ));
     assert_regression(Regression::NoAutoSkills);
 }
 
@@ -330,10 +306,6 @@ fn a_declared_no_auto_skills_agent_is_reached_through_an_assignment() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hook_pin_counterfactual_replays_requirements_before_assignments() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::hook_pin_counterfactual_replays_requirements_before_assignments"
-    ));
     use kendex_core::engine::{Pin, PlanOptions, plan_apply};
 
     let w = world();
@@ -407,10 +379,6 @@ fn hook_pin_counterfactual_replays_requirements_before_assignments() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn assignment_lineage_keeps_an_independent_hard_revision_at_any_depth() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::assignment_lineage_keeps_an_independent_hard_revision_at_any_depth"
-    ));
     for intermediate in [false, true] {
         let w = world();
         write_skill(
@@ -630,28 +598,16 @@ fn assert_assignment_retention(mode: Retention) {
 
 #[test]
 fn locked_writes_keep_each_assignment_items_own_record() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::locked_writes_keep_each_assignment_items_own_record"
-    ));
     assert_assignment_retention(Retention::Locked);
 }
 
 #[test]
 fn at_record_keeps_each_assignment_items_own_record() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::at_record_keeps_each_assignment_items_own_record"
-    ));
     assert_assignment_retention(Retention::Recorded);
 }
 
 #[test]
 fn installed_native_lookup_keeps_the_assignment_skill_read_after_an_unrelated_update() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::installed_native_lookup_keeps_the_assignment_skill_read_after_an_unrelated_update"
-    ));
     assert_assignment_retention(Retention::NativeAfterUpdate);
 }
 
@@ -673,10 +629,6 @@ enum CarrierUpdate {
     reason = "one targeted ownership table with direct, descendant, agent and mixed paths"
 )]
 fn targeted_updates_stop_at_assignment_boundaries_and_keep_independent_owners() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::targeted_updates_stop_at_assignment_boundaries_and_keep_independent_owners"
-    ));
     for case in [
         CarrierUpdate::Assigned,
         CarrierUpdate::Descendant,
@@ -787,10 +739,6 @@ fn targeted_updates_stop_at_assignment_boundaries_and_keep_independent_owners() 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_cannot_replace_a_retained_neutral_dependency_with_a_hard_pin() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_add_cannot_replace_a_retained_neutral_dependency_with_a_hard_pin"
-    ));
     use kendex_core::engine::Held;
     let w = world();
     write_skill(
@@ -844,10 +792,6 @@ fn an_add_cannot_replace_a_retained_neutral_dependency_with_a_hard_pin() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn repeated_hook_replays_keep_both_pin_notices() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::repeated_hook_replays_keep_both_pin_notices"
-    ));
     use kendex_core::engine::Pin;
     let w = world();
     fs::create_dir_all(w.upstream.join("hooks")).unwrap();
@@ -969,10 +913,6 @@ fn at_record_problems(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn reservation_reads_enforce_the_base_record_floor() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::reservation_reads_enforce_the_base_record_floor"
-    ));
     use kendex_core::attest::Floor;
     let Reserved { w, b, .. } = reserved(true, "");
     let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
@@ -999,10 +939,6 @@ fn reservation_reads_enforce_the_base_record_floor() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn reservation_reads_stay_on_their_sources_history() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::reservation_reads_stay_on_their_sources_history"
-    ));
     use kendex_core::attest::Floor;
     let Reserved { w, a, b } = reserved(true, "[skills.solo]\nsource = \"cat\"\n");
     git(&w.upstream, &["branch", "keep", &b]);
@@ -1034,10 +970,6 @@ fn reservation_reads_stay_on_their_sources_history() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn only_reservations_a_plan_reads_through_enter_the_proof() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::only_reservations_a_plan_reads_through_enter_the_proof"
-    ));
     use kendex_core::engine::Held;
     for reached in [true, false] {
         let Reserved { w, b, .. } = reserved(false, "");
@@ -1076,10 +1008,6 @@ fn only_reservations_a_plan_reads_through_enter_the_proof() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_consumed_reservation_keeps_its_redeclared_sources_record() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_consumed_reservation_keeps_its_redeclared_sources_record"
-    ));
     let Reserved { w, b, .. } = reserved(false, "");
     let installed = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
     write_skill(&w.upstream, "y", "", "Y at C.");
@@ -1115,10 +1043,6 @@ fn a_consumed_reservation_keeps_its_redeclared_sources_record() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn targeted_updates_read_every_harness_copys_owners() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::targeted_updates_read_every_harness_copys_owners"
-    ));
     for (q_on, t_on) in [
         (HarnessId::Claude, HarnessId::Copilot),
         (HarnessId::Copilot, HarnessId::Claude),
@@ -1209,10 +1133,6 @@ fn targeted_updates_read_every_harness_copys_owners() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hand_removed_declaration_of_an_assigned_skill_keeps_its_record() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hand_removed_declaration_of_an_assigned_skill_keeps_its_record"
-    ));
     let w = world();
     write_skill(
         &w.upstream,
@@ -1360,10 +1280,6 @@ fn assigned_skill() -> OfflineRemoval {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_offline_removal_of_the_last_package_fetches_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_offline_removal_of_the_last_package_fetches_nothing"
-    ));
     for case in [Offline::Leaf, Offline::Subtree, Offline::Assigned] {
         let OfflineRemoval {
             w,
@@ -1403,10 +1319,6 @@ fn an_offline_removal_of_the_last_package_fetches_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_read_reservation_the_mirror_lacks_is_fetched() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_read_reservation_the_mirror_lacks_is_fetched"
-    ));
     for reachable in [true, false] {
         let Reserved { w, a, b } = reserved(true, "");
         mirror_serves(&w, &a, &b);
@@ -1445,10 +1357,6 @@ fn a_read_reservation_the_mirror_lacks_is_fetched() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_added_set_agrees_with_its_reserved_agent_at_the_same_commit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_added_set_agrees_with_its_reserved_agent_at_the_same_commit"
-    ));
     use kendex_core::engine::Held;
     let w = world();
     write_agent(&w.upstream, "writer", "Writer.");

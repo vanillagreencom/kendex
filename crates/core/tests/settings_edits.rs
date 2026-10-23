@@ -183,10 +183,6 @@ fn rows_of(read: &ScopeSettings, skill: &str) -> Vec<(String, String, Current)> 
 
 #[test]
 fn a_corrupt_lock_without_a_manifest_fails_the_settings_view() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_corrupt_lock_without_a_manifest_fails_the_settings_view"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
@@ -212,10 +208,6 @@ fn a_corrupt_lock_without_a_manifest_fails_the_settings_view() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_read_model_carries_the_explainer_the_default_and_the_current_value() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_read_model_carries_the_explainer_the_default_and_the_current_value"
-    ));
     let f = fixture(TEMPLATE);
     install(&f);
     let text = fs::read_to_string(settings_path(&f)).unwrap();
@@ -253,10 +245,6 @@ fn the_read_model_carries_the_explainer_the_default_and_the_current_value() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_rewrites_only_its_value_span_leaving_comments_and_crlf_intact() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_edit_rewrites_only_its_value_span_leaving_comments_and_crlf_intact"
-    ));
     let f = fixture(TEMPLATE);
     let before = "# Mine.\r\n\r\n[env]\r\n# Which reviewers run by default.\r\nREVIEWERS = \"arch,security\" # keep this note\r\n\r\n# How deep.\r\nDEPTH = \"2\"\r\n";
     fs::write(settings_path(&f), before).unwrap();
@@ -274,10 +262,6 @@ fn an_edit_rewrites_only_its_value_span_leaving_comments_and_crlf_intact() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_save_that_seeds_a_missing_key_and_sets_it_is_one_write"
-    ));
     let f = fixture(TEMPLATE);
     let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
         &f.env, &f.scope,
@@ -334,10 +318,6 @@ fn a_save_that_seeds_a_missing_key_and_sets_it_is_one_write() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_manifest_and_a_settings_edit_land_as_one_transaction() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_manifest_and_a_settings_edit_land_as_one_transaction"
-    ));
     let f = fixture(TEMPLATE);
     install(&f);
     let manifest_path = kendex_core::manifest::manifest_path(&f.env, &f.scope);
@@ -383,10 +363,6 @@ fn a_manifest_and_a_settings_edit_land_as_one_transaction() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_settings_copy_that_went_stale_refuses_and_the_newer_file_stands() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_settings_copy_that_went_stale_refuses_and_the_newer_file_stands"
-    ));
     let f = fixture(TEMPLATE);
     install(&f);
     let held = base_now(&f);
@@ -407,10 +383,6 @@ fn a_settings_copy_that_went_stale_refuses_and_the_newer_file_stands() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_on_a_duplicate_or_out_of_env_assignment_refuses_naming_the_lines() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_edit_on_a_duplicate_or_out_of_env_assignment_refuses_naming_the_lines"
-    ));
     for (file, expect) in [
         (
             "[env]\n# Which reviewers run by default.\nREVIEWERS = \"a\"\nREVIEWERS = \"b\"\n\n# How deep.\nDEPTH = \"2\"\n",
@@ -439,10 +411,6 @@ fn an_edit_on_a_duplicate_or_out_of_env_assignment_refuses_naming_the_lines() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_settings_file_that_is_not_a_regular_file_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_settings_file_that_is_not_a_regular_file_refuses"
-    ));
     let f = fixture(TEMPLATE);
     let elsewhere = f.project.join("real-settings.toml");
     fs::write(
@@ -473,10 +441,6 @@ fn a_settings_file_that_is_not_a_regular_file_refuses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edit_for_a_key_no_installed_skill_declares_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_edit_for_a_key_no_installed_skill_declares_refuses"
-    ));
     let f = fixture(TEMPLATE);
     install(&f);
     let refused = save(&f, vec![set("NOT_MINE", "x")], base_now(&f)).unwrap_err();
@@ -494,10 +458,6 @@ fn an_edit_for_a_key_no_installed_skill_declares_refuses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_reset_writes_the_template_default_back() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_reset_writes_the_template_default_back"
-    ));
     let f = fixture(TEMPLATE);
     install(&f);
     save(&f, vec![set("DEPTH", "9")], base_now(&f)).unwrap();
@@ -523,10 +483,6 @@ fn a_reset_writes_the_template_default_back() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_invalid_template_still_reports_what_seeding_wrote() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_invalid_template_still_reports_what_seeding_wrote"
-    ));
     let f = fixture("[env]\nREVIEWERS = \"arch\" # required\n");
     install(&f);
     let read = scope_settings(&f.env, &f.scope, None).unwrap();
@@ -548,10 +504,6 @@ fn an_invalid_template_still_reports_what_seeding_wrote() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_shipping_nothing_a_switched_off_one_and_an_unreachable_one_each_say_so() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_shipping_nothing_a_switched_off_one_and_an_unreachable_one_each_say_so"
-    ));
     let f = fixture(TEMPLATE);
     fs::remove_file(
         f.project
@@ -613,10 +565,6 @@ fn a_skill_shipping_nothing_a_switched_off_one_and_an_unreachable_one_each_say_s
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refusal_names_the_file_the_same_way_through_a_link() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_refusal_names_the_file_the_same_way_through_a_link"
-    ));
     let f = fixture_via_link(TEMPLATE);
     install(&f);
     let held = base_now(&f);
@@ -643,10 +591,6 @@ fn a_refusal_names_the_file_the_same_way_through_a_link() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why"
-    ));
     let f = fixture(TEMPLATE);
     let file = "[[env]]\nMODE = \"a\"\n";
     fs::write(settings_path(&f), file).unwrap();
@@ -705,10 +649,6 @@ fn an_env_declared_as_an_array_of_tables_stops_the_write_and_says_why() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_arrival_over_an_assignment_no_script_reads_still_names_the_key() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_arrival_over_an_assignment_no_script_reads_still_names_the_key"
-    ));
     for (file, expect) in [
         (
             "[other]\nREVIEWERS = \"a\"\n",

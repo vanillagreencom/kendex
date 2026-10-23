@@ -100,10 +100,6 @@ fn settings(f: &Fixture) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_event_gemini_does_not_have_is_reported_never_faked() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_event_gemini_does_not_have_is_reported_never_faked"
-    ));
     let f = fixture("[hooks.done]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(
@@ -131,10 +127,6 @@ fn an_event_gemini_does_not_have_is_reported_never_faked() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_agent_installed_while_the_feature_is_off_is_reported_inert() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_agent_installed_while_the_feature_is_off_is_reported_inert"
-    ));
     let f = fixture("[agents.rust]\nsource = \"cat\"\n");
     apply_now(&f);
     for (enabled, expected) in [(false, true), (true, false)] {
@@ -155,10 +147,6 @@ fn an_agent_installed_while_the_feature_is_off_is_reported_inert() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_un_upgraded_settings_file_blocks_the_kinds_that_live_in_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_un_upgraded_settings_file_blocks_the_kinds_that_live_in_it"
-    ));
     let f = fixture(
         "[hooks.audit]\nsource = \"cat\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n\n[agents.rust]\nsource = \"cat\"\n",
     );
@@ -191,10 +179,6 @@ fn an_un_upgraded_settings_file_blocks_the_kinds_that_live_in_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_system_wide_override_is_named_rather_than_argued_with() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_system_wide_override_is_named_rather_than_argued_with"
-    ));
     let mut f = fixture("[hooks.audit]\nsource = \"cat\"\n");
     let system = f._tmp.path().join("etc/gemini-cli/settings.json");
     fs::create_dir_all(system.parent().unwrap()).unwrap();
@@ -221,10 +205,6 @@ fn a_system_wide_override_is_named_rather_than_argued_with() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_declaration_leaves_the_machine_wide_record_exactly_as_it_was() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_declaration_leaves_the_machine_wide_record_exactly_as_it_was"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n");
     let record = f.env.home.join(".gemini/mcp-server-enablement.json");
     let held_off = "{\n  \"gh\": {\"enabled\": false}\n}\n";
@@ -257,10 +237,6 @@ fn a_project_declaration_leaves_the_machine_wide_record_exactly_as_it_was() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_server_gemini_gates_out_of_its_list_is_reported_inert() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_server_gemini_gates_out_of_its_list_is_reported_inert"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n");
     fs::write(settings(&f), "{\"mcp\": {\"excluded\": [\"gh\"]}}").unwrap();
 
@@ -283,10 +259,6 @@ fn a_server_gemini_gates_out_of_its_list_is_reported_inert() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_installed_for_another_tool_is_noted_as_visible_to_gemini() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_installed_for_another_tool_is_noted_as_visible_to_gemini"
-    ));
     let f = fixture("[skills.deploy]\nsource = \"cat\"\nharnesses = [\"claude\"]\n");
     let report = apply_now(&f);
     assert!(

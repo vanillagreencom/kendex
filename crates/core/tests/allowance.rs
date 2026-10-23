@@ -46,10 +46,6 @@ fn regenerated() -> String {
 /// `cargo test -p kendex-core -- --ignored regenerate_allowance`
 #[test]
 fn the_committed_table_is_current_for_every_row_it_holds() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_committed_table_is_current_for_every_row_it_holds"
-    ));
     let committed = std::fs::read_to_string(committed_path()).unwrap_or_default();
     assert_eq!(
         committed,
@@ -65,7 +61,5 @@ fn the_committed_table_is_current_for_every_row_it_holds() {
     reason = "the write is the test's one effect, and the panic names it"
 )]
 fn regenerate_allowance() {
-    let _diagnostic =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::regenerate_allowance"));
     std::fs::write(committed_path(), regenerated()).expect("the table writes");
 }

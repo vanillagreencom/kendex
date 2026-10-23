@@ -13,10 +13,6 @@ use super::{apply_now, fixture, is_clean, json, settings};
 /// lands through the link — link kept, target updated — never a stale plan.
 #[test]
 fn a_symlinked_settings_file_is_edited_through_the_link() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_symlinked_settings_file_is_edited_through_the_link"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     let real = f.project.join("../dotfiles/settings.json");
     fs::create_dir_all(real.parent().unwrap()).unwrap();
@@ -35,10 +31,6 @@ fn a_symlinked_settings_file_is_edited_through_the_link() {
 /// keys of its own. Neither is drift, and an apply never reshuffles them.
 #[test]
 fn another_writers_key_order_is_kept_and_is_not_drift() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::another_writers_key_order_is_kept_and_is_not_drift"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     fs::write(
         settings(&f),
@@ -71,10 +63,6 @@ fn another_writers_key_order_is_kept_and_is_not_drift() {
 /// pointing anywhere else.
 #[test]
 fn stale_instruction_rows_leave_with_the_files_nothing_renders() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::stale_instruction_rows_leave_with_the_files_nothing_renders"
-    ));
     let f = fixture("[hooks.audit]\nsource = \"cat\"\nharnesses = [\"opencode\"]\n");
     apply_now(&f);
 
@@ -106,10 +94,6 @@ fn stale_instruction_rows_leave_with_the_files_nothing_renders() {
 /// to take, because no record says kendex wrote it.
 #[test]
 fn a_scope_with_no_opencode_hooks_never_edits_the_instructions_rows() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_scope_with_no_opencode_hooks_never_edits_the_instructions_rows"
-    ));
     let f = fixture("[hooks.guard]\nsource = \"cat\"\n");
     let config = f.project.join("opencode.json");
     let doc = serde_json::json!({
@@ -132,10 +116,6 @@ fn a_scope_with_no_opencode_hooks_never_edits_the_instructions_rows() {
 /// named with the file, while the rest of the scope still plans.
 #[test]
 fn an_unreadable_opencode_config_is_the_registrations_conflict_not_a_sweep_error() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unreadable_opencode_config_is_the_registrations_conflict_not_a_sweep_error"
-    ));
     let f = fixture("[hooks.audit]\nsource = \"cat\"\nharnesses = [\"opencode\"]\n");
     apply_now(&f);
     let config = f.project.join("opencode.json");
@@ -159,10 +139,6 @@ fn an_unreadable_opencode_config_is_the_registrations_conflict_not_a_sweep_error
 /// — named, with the file — while the rest of the scope still plans.
 #[test]
 fn an_unreadable_settings_file_is_one_conflict_not_a_scope_error() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unreadable_settings_file_is_one_conflict_not_a_scope_error"
-    ));
     for current in [
         "{ // my note\n  \"model\": \"opus\"\n}\n",
         "[]\n",

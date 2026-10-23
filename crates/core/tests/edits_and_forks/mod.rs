@@ -46,8 +46,6 @@ struct World {
 
 #[allow(clippy::unwrap_used)]
 fn git(dir: &Path, args: &[&str]) {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::git"));
     let output = Hardened::git(args, Some(dir)).run().unwrap();
     assert!(output.status.success(), "git {args:?}");
 }
@@ -57,8 +55,6 @@ fn git(dir: &Path, args: &[&str]) {
 /// the repository being committed to; scrubbed, HEAD is the fixture's.
 #[allow(clippy::unwrap_used)]
 fn head_commit(dir: &Path) -> String {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::head_commit"));
     let output = Hardened::git(&["rev-parse", "HEAD"], Some(dir))
         .run()
         .unwrap();
@@ -118,19 +114,13 @@ fn manifest_text(w: &World) -> String {
 /// holding three.
 #[allow(clippy::unwrap_used)]
 fn manifest_of(w: &World) -> manifest::Manifest {
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    }
+    manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap()
 }
 
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::world"));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
     let w = world_at(tmp, home);
@@ -144,8 +134,6 @@ fn world() -> World {
 /// covered on every platform.
 #[allow(clippy::unwrap_used)]
 fn world_via_link() -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::world_via_link"));
     let tmp = tempfile::tempdir().unwrap();
     let real = tmp.path().join("real");
     fs::create_dir_all(&real).unwrap();
@@ -160,8 +148,6 @@ fn world_via_link() -> World {
 /// in the World speaks.
 #[allow(clippy::unwrap_used)]
 fn world_at(tmp: tempfile::TempDir, home: PathBuf) -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::world_at"));
     let upstream = home.join("git").join(REPO);
     fs::create_dir_all(&upstream).unwrap();
     fs::create_dir_all(home.join(".claude")).unwrap();
@@ -193,28 +179,12 @@ fn declare(w: &World, body: &str) {
 
 #[allow(clippy::unwrap_used)]
 fn sync_and_apply(w: &World) {
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 fn skill_file(w: &World) -> PathBuf {
@@ -249,10 +219,6 @@ fn edited_world() -> (World, String, String) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_local_edit_survives_refresh_and_reads_as_local_edit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_local_edit_survives_refresh_and_reads_as_local_edit"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -260,19 +226,11 @@ fn a_local_edit_survives_refresh_and_reads_as_local_edit() {
     sync_and_apply(&w);
 
     fs::write(skill_file(&w), "my edited version").unwrap();
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
+    let report = audit(&w.env, &w.scope).unwrap();
     let row = report.drift.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(row.state, DriftState::Conflict);
     assert_eq!(row.cause, Some(DriftCause::LocalEdit));
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(skill_file(&w)).unwrap(),
         "my edited version",
@@ -283,10 +241,6 @@ fn a_local_edit_survives_refresh_and_reads_as_local_edit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn edited_and_moved_upstream_reads_as_both_and_discard_is_explicit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::edited_and_moved_upstream_reads_as_both_and_discard_is_explicit"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -296,44 +250,24 @@ fn edited_and_moved_upstream_reads_as_both_and_discard_is_explicit() {
     fs::write(skill_file(&w), "my edited version").unwrap();
     write_skill(&w.upstream, "gh", "Two.");
     commit(&w.upstream, "two");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
+    let report = audit(&w.env, &w.scope).unwrap();
     let row = report.drift.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(row.cause, Some(DriftCause::Both), "{row:?}");
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(skill_file(&w)).unwrap(),
         "my edited version"
     );
 
     // Discarding is the explicit act.
-    let manifest = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
+    let manifest = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
     let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
     let report = plan_scope(
         &w.env,
@@ -346,30 +280,14 @@ fn edited_and_moved_upstream_reads_as_both_and_discard_is_explicit() {
         },
     )
     .unwrap();
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(fs::read_to_string(skill_file(&w)).unwrap().contains("Two."));
-    assert!(
-        {
-            let _diagnostic_phase =
-                crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-            audit(&w.env, &w.scope).unwrap()
-        }
-        .drift
-        .is_empty()
-    );
+    assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn discarding_one_packages_edits_leaves_another_packages_edits_held() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::discarding_one_packages_edits_leaves_another_packages_edits_held"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream gh.");
     write_skill(&w.upstream, "lint", "Upstream lint.");
@@ -386,13 +304,9 @@ fn discarding_one_packages_edits_leaves_another_packages_edits_held() {
     fs::write(&lint, "my lint edit").unwrap();
 
     // Discard gh only. lint's edit must survive untouched.
-    let manifest = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
+    let manifest = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
     let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
     let report = plan_scope(
         &w.env,
@@ -405,11 +319,7 @@ fn discarding_one_packages_edits_leaves_another_packages_edits_held() {
         },
     )
     .unwrap();
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(fs::read_to_string(&gh).unwrap().contains("Upstream gh."));
     assert_eq!(
@@ -422,10 +332,6 @@ fn discarding_one_packages_edits_leaves_another_packages_edits_held() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hand_made_copy_of_the_desired_bytes_is_clean() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hand_made_copy_of_the_desired_bytes_is_clean"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -435,24 +341,12 @@ fn a_hand_made_copy_of_the_desired_bytes_is_clean() {
     // Rewrite the file with its own exact bytes: no edit, nothing to hold.
     let bytes = fs::read(skill_file(&w)).unwrap();
     fs::write(skill_file(&w), &bytes).unwrap();
-    assert!(
-        {
-            let _diagnostic_phase =
-                crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-            audit(&w.env, &w.scope).unwrap()
-        }
-        .drift
-        .is_empty()
-    );
+    assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn discarding_a_skills_edits_leaves_a_same_named_agents_edits_held() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::discarding_a_skills_edits_leaves_a_same_named_agents_edits_held"
-    ));
     let w = world();
     write_skill(&w.upstream, "rev", "Skill rev.");
     let dir = w.upstream.join("agents");
@@ -474,13 +368,9 @@ fn discarding_a_skills_edits_leaves_a_same_named_agents_edits_held() {
     fs::write(&skill, "my skill edit").unwrap();
     fs::write(&agent, "my agent edit").unwrap();
 
-    let manifest = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
+    let manifest = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
     let lock = load_lock(&lock_path(&w.env, &w.scope)).unwrap();
     let report = plan_scope(
         &w.env,
@@ -493,11 +383,7 @@ fn discarding_a_skills_edits_leaves_a_same_named_agents_edits_held() {
         },
     )
     .unwrap();
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    apply::execute(&w.env, &report.plan).unwrap();
 
     assert!(fs::read_to_string(&skill).unwrap().contains("Skill rev."));
     assert_eq!(
@@ -510,10 +396,6 @@ fn discarding_a_skills_edits_leaves_a_same_named_agents_edits_held() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn updates_survives_a_source_that_cannot_resolve() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::updates_survives_a_source_that_cannot_resolve"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "Upstream.");
     commit(&w.upstream, "one");
@@ -540,10 +422,6 @@ fn updates_survives_a_source_that_cannot_resolve() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_deleted_install_is_missing_not_an_edit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_deleted_install_is_missing_not_an_edit"
-    ));
     let w = world();
     write_skill(&w.upstream, "gh", "One.");
     commit(&w.upstream, "one");
@@ -551,28 +429,16 @@ fn a_deleted_install_is_missing_not_an_edit() {
     sync_and_apply(&w);
 
     fs::remove_dir_all(w.home.join("app/.agents/skills/gh")).unwrap();
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
+    let report = audit(&w.env, &w.scope).unwrap();
     let row = report.drift.iter().find(|row| row.name == "gh").unwrap();
     assert_eq!(row.state, DriftState::Missing, "{row:?}");
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    apply::execute(&w.env, &report.plan).unwrap();
     assert!(skill_file(&w).is_file(), "a missing install is restored");
 }
 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_automatic_sweep_never_takes_edited_bytes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_automatic_sweep_never_takes_edited_bytes"
-    ));
     let w = world();
     let gh = w.upstream.join("skills/gh/SKILL.md");
     fs::create_dir_all(gh.parent().unwrap()).unwrap();
@@ -603,18 +469,10 @@ fn an_automatic_sweep_never_takes_edited_bytes() {
     )
     .unwrap();
     commit(&w.upstream, "two");
-    let loaded = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::manifest"));
-        manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-            .unwrap()
-            .unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::sync_sources"));
-        remote::sync_sources(&w.env, &loaded).unwrap()
-    };
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let report = plan_apply(
         &w.env,
         &w.scope,
@@ -624,11 +482,7 @@ fn an_automatic_sweep_never_takes_edited_bytes() {
         },
     )
     .unwrap();
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(
         fs::read_to_string(w.home.join("app/.agents/skills/helper/SKILL.md")).unwrap(),
         "my notes live here now",
@@ -654,8 +508,6 @@ enum AgentCatalog {
 /// whatever the scope's own manifest adds beneath the declaration.
 #[allow(clippy::unwrap_used)]
 fn agent_world(harnesses: &str, agent: &str, catalog: &str, project: &str) -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::agent_world"));
     agent_world_from(
         world(),
         harnesses,
@@ -670,8 +522,6 @@ fn agent_world(harnesses: &str, agent: &str, catalog: &str, project: &str) -> Wo
 /// Each row keeps its own source and installation without cloning Git.
 #[allow(clippy::unwrap_used)]
 fn local_agent_world(harnesses: &str, agent: &str, catalog: &str, project: &str) -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::local_agent_world"));
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     agent_world_from(
@@ -693,8 +543,6 @@ fn agent_world_from(
     project: &str,
     origin: AgentCatalog,
 ) -> World {
-    let _diagnostic_fixture =
-        crate::diagnostic::Span::begin(concat!(module_path!(), "::fixture::agent_world_from"));
     let agents = w.upstream.join("agents");
     fs::create_dir_all(&agents).unwrap();
     fs::write(agents.join("rev.md"), agent).unwrap();
@@ -754,16 +602,8 @@ fn edit_line(path: &std::path::Path, from: &str, to: &str) {
 
 #[allow(clippy::unwrap_used)]
 fn resettle(w: &World) {
-    let report = {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::audit"));
-        audit(&w.env, &w.scope).unwrap()
-    };
-    {
-        let _diagnostic_phase =
-            crate::diagnostic::Span::begin(concat!(module_path!(), "::phase::apply"));
-        apply::execute(&w.env, &report.plan).unwrap()
-    };
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
 }
 
 fn deny_line(text: &str, key: &str) -> String {

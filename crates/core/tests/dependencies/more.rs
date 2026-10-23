@@ -8,10 +8,6 @@ use super::*;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_optional_dependency_installs_only_once_it_is_chosen() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_optional_dependency_installs_only_once_it_is_chosen"
-    ));
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     skill(
         &f.source,
@@ -108,10 +104,6 @@ fn an_optional_dependency_installs_only_once_it_is_chosen() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_dependency_held_back_from_a_tool_warns_the_item_that_needs_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_dependency_held_back_from_a_tool_warns_the_item_that_needs_it"
-    ));
     let f = fixture(
         "[skills.dev]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.github]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
     );
@@ -135,10 +127,6 @@ fn a_dependency_held_back_from_a_tool_warns_the_item_that_needs_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_file_changed_after_the_preview_aborts_its_removal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_file_changed_after_the_preview_aborts_its_removal"
-    ));
     let f = fixture("[skills.dev]\nsource = \"cat\"\nmethod = \"copy\"\n");
     apply_now(&f);
     let skill_md = f.project.join(".claude/skills/dev/SKILL.md");
@@ -162,10 +150,6 @@ fn a_file_changed_after_the_preview_aborts_its_removal() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn refresh_previews_what_upstream_added_and_took_away() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::refresh_previews_what_upstream_added_and_took_away"
-    ));
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(
@@ -228,10 +212,6 @@ fn refresh_previews_what_upstream_added_and_took_away() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_removal_made_while_the_catalog_is_offline_is_not_undone_by_its_return() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_removal_made_while_the_catalog_is_offline_is_not_undone_by_its_return"
-    ));
     let f = fixture("[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(installed(&f, "github"));
@@ -283,10 +263,6 @@ fn a_removal_made_while_the_catalog_is_offline_is_not_undone_by_its_return() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_removal_is_written_down_with_the_record_deleted() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_removal_is_written_down_with_the_record_deleted"
-    ));
     let f = fixture("[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"cat\"\n");
     apply_now(&f);
     fs::remove_file(lock_path(&f.env, &f.scope)).unwrap();
@@ -318,10 +294,6 @@ fn a_removal_is_written_down_with_the_record_deleted() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declared_skill_installs_and_reports_nothing_missing_when_it_is_also_kept_removed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_declared_skill_installs_and_reports_nothing_missing_when_it_is_also_kept_removed"
-    ));
     let f = fixture(
         "[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"cat\"\n\n[suppressed]\nskill = [\"github\"]\n",
     );
@@ -353,10 +325,6 @@ fn a_declared_skill_installs_and_reports_nothing_missing_when_it_is_also_kept_re
 #[test]
 #[allow(clippy::unwrap_used)]
 fn skills_that_require_each_other_report_each_finding_once() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::skills_that_require_each_other_report_each_finding_once"
-    ));
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     skill(
         &f.source,
@@ -404,10 +372,6 @@ fn skills_that_require_each_other_report_each_finding_once() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_catalog_never_sweeps_a_dependency() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unreadable_catalog_never_sweeps_a_dependency"
-    ));
     let f = fixture("[skills.dev]\nsource = \"cat\"\n");
     apply_now(&f);
     assert!(installed(&f, "github"));

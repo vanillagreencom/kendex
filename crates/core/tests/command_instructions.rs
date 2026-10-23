@@ -115,10 +115,6 @@ const INSTRUCTED: &str = "[command-instructions]\ncode-scrub = \"\"\"\nMerge rev
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_consumer_paragraphs_ride_every_copy_through_a_publisher_update() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_consumer_paragraphs_ride_every_copy_through_a_publisher_update"
-    ));
     let f = fixture(INSTRUCTED);
     assert!(command_tools(&f.scope).contains(&HarnessId::Codex));
     assert!(command_tools(&f.scope).contains(&HarnessId::Gemini));
@@ -152,10 +148,6 @@ fn the_consumer_paragraphs_ride_every_copy_through_a_publisher_update() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn changed_instructions_replace_the_block_in_every_copy() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::changed_instructions_replace_the_block_in_every_copy"
-    ));
     let f = fixture(INSTRUCTED);
     apply_now(&f);
     let manifest = f.project.join("kendex.toml");
@@ -179,10 +171,6 @@ fn changed_instructions_replace_the_block_in_every_copy() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn unset_instructions_leave_every_copy_as_it_was() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::unset_instructions_leave_every_copy_as_it_was"
-    ));
     let bare = fixture("");
     apply_now(&bare);
     let before = outputs(&bare);
@@ -201,10 +189,6 @@ fn unset_instructions_leave_every_copy_as_it_was() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_legacy_agent_label_renders_under_the_current_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_legacy_agent_label_renders_under_the_current_name"
-    ));
     let f = fixture(
         "[command-instructions]\ncode-scrub = \"Hand the risky part to agent:engineer.\"\n",
     );
@@ -257,10 +241,6 @@ fn source_hashes(f: &Fixture) -> Vec<(String, String)> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn changed_instructions_move_every_record_s_source_hash() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::changed_instructions_move_every_record_s_source_hash"
-    ));
     let f = fixture(INSTRUCTED);
     apply_now(&f);
     let before = source_hashes(&f);

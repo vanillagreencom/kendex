@@ -225,10 +225,6 @@ fn enabled_fixture_at(armed: bool, harness: HarnessId, package_rel: &str) -> Fix
 #[test]
 #[allow(clippy::unwrap_used)]
 fn trusted_verification_compares_whole_bot_files_without_running_installed_code() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::trusted_verification_compares_whole_bot_files_without_running_installed_code"
-    ));
     enum Change {
         None,
         Output,
@@ -328,10 +324,6 @@ fn trusted_verification_excludes_caller_settings_and_interpreter_imports() {
         return;
     }
 
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::trusted_verification_excludes_caller_settings_and_interpreter_imports"
-    ));
     let fixture = enabled_fixture_with_arming(false);
     let base = fixture.root.parent().unwrap();
     let tools = base.join("tools");
@@ -411,10 +403,6 @@ fn trusted_verification_excludes_caller_settings_and_interpreter_imports() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn trusted_verification_refuses_code_in_the_checked_project() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::trusted_verification_refuses_code_in_the_checked_project"
-    ));
     let fixture = enabled_fixture_with_arming(false);
     for trusted in [
         fixture.root.join(CODEX_PACKAGE),
@@ -431,10 +419,6 @@ fn trusted_verification_refuses_code_in_the_checked_project() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn trusted_verification_without_configuration_grants_no_positions() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::trusted_verification_without_configuration_grants_no_positions"
-    ));
     let fixture = fixture_with_arming("schema = 7\n[install]\nharnesses = [\"codex\"]\n", false);
     let verified = bot_instructions::verify(
         &fixture.env,
@@ -450,10 +434,6 @@ fn trusted_verification_without_configuration_grants_no_positions() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn trusted_verification_rejects_unusable_reports() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::trusted_verification_rejects_unusable_reports"
-    ));
     use std::os::unix::fs::PermissionsExt;
 
     let fixture = fixture_with_arming("schema = 7\n", false);
@@ -479,10 +459,6 @@ fn trusted_verification_rejects_unusable_reports() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn trusted_verification_refuses_a_launcher_link_into_the_checked_project() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::trusted_verification_refuses_a_launcher_link_into_the_checked_project"
-    ));
     let fixture = enabled_fixture_with_arming(false);
     let trusted = fixture.root.parent().unwrap().join("trusted");
     let launcher = trusted.join("scripts/bot-instructions");
@@ -628,10 +604,6 @@ fn staged_check_passes(root: &Path, owned: &[commit_offer::Owned]) -> bool {
 
 #[test]
 fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set"
-    ));
     let fixture = enabled_fixture();
     let copilot = fixture.root.join(".github/copilot-instructions.md");
     let doctrine_file = fixture.root.join(".github/instructions/code-review.md");
@@ -716,10 +688,6 @@ fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set(
 /// beside the writes, so the commit passes the staged check.
 #[test]
 fn a_surface_the_render_no_longer_produces_is_removed_and_offered() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_surface_the_render_no_longer_produces_is_removed_and_offered"
-    ));
     let fixture = enabled_fixture();
     let retired = fixture
         .root
@@ -769,10 +737,6 @@ fn a_surface_the_render_no_longer_produces_is_removed_and_offered() {
 /// found where a copy delivery put it, and leaves no record behind.
 #[test]
 fn a_render_once_runs_an_unarmed_copy_and_records_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_once_runs_an_unarmed_copy_and_records_nothing"
-    ));
     let fixture = enabled_fixture_at(false, HarnessId::Claude, CLAUDE_PACKAGE);
     let copilot = fixture.root.join(".github/copilot-instructions.md");
     fs::remove_file(&copilot).expect("the rendered surface is removed");
@@ -798,10 +762,6 @@ fn a_render_once_runs_an_unarmed_copy_and_records_nothing() {
 
 #[test]
 fn a_render_once_where_the_package_is_not_installed_runs_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_once_where_the_package_is_not_installed_runs_nothing"
-    ));
     let fixture = enabled_fixture();
     fs::remove_dir_all(fixture.root.join(CODEX_PACKAGE)).expect("the package is removed");
     assert!(
@@ -813,10 +773,6 @@ fn a_render_once_where_the_package_is_not_installed_runs_nothing() {
 
 #[test]
 fn a_project_with_every_bot_surface_disabled_is_untouched() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_with_every_bot_surface_disabled_is_untouched"
-    ));
     let fixture = fixture(
         "schema = 7\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.repo]\nname = \"fixture\"\nsummary = \"A fixture with no review bot enabled.\"\n",
     );
@@ -836,10 +792,6 @@ fn a_project_with_every_bot_surface_disabled_is_untouched() {
 
 #[test]
 fn an_invalid_manifest_names_the_input_and_the_render_repair() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_invalid_manifest_names_the_input_and_the_render_repair"
-    ));
     let fixture = fixture(
         "schema = 7\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.bots]\ncopilot = true\n",
     );
@@ -862,10 +814,6 @@ fn an_invalid_manifest_names_the_input_and_the_render_repair() {
 
 #[test]
 fn a_claude_only_copy_runs_and_names_its_installed_repair_command() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_claude_only_copy_runs_and_names_its_installed_repair_command"
-    ));
     let fixture = fixture_at(
         "schema = 7\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.bots]\ncopilot = true\n",
         true,
@@ -889,10 +837,6 @@ fn a_claude_only_copy_runs_and_names_its_installed_repair_command() {
 
 #[test]
 fn a_claude_only_copy_names_its_running_launcher_in_drift_repairs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_claude_only_copy_names_its_running_launcher_in_drift_repairs"
-    ));
     let fixture = enabled_fixture_at(true, HarnessId::Claude, CLAUDE_PACKAGE);
     let doctrine = fixture.root.join(CLAUDE_PACKAGE).join("SKILL.md");
     let current = fs::read_to_string(&doctrine).expect("the installed doctrine reads");
@@ -922,10 +866,6 @@ fn a_claude_only_copy_names_its_running_launcher_in_drift_repairs() {
 
 #[test]
 fn an_unarmed_install_runs_no_package_code_and_names_the_setup_step() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unarmed_install_runs_no_package_code_and_names_the_setup_step"
-    ));
     let fixture = enabled_fixture_with_arming(false);
     let copilot = fixture.root.join(".github/copilot-instructions.md");
     let before = fs::read_to_string(&copilot).expect("the adopted fixture was rendered");
@@ -964,10 +904,6 @@ fn an_unarmed_install_runs_no_package_code_and_names_the_setup_step() {
 
 #[test]
 fn removal_revokes_automatic_rendering_before_a_declined_reinstall() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removal_revokes_automatic_rendering_before_a_declined_reinstall"
-    ));
     let fixture = enabled_fixture();
     let lock_path = kendex_core::lock::lock_path(&fixture.env, &fixture.scope);
     let installed = kendex_core::lock::load(&lock_path).expect("the installed lock reads");
@@ -1450,10 +1386,6 @@ const STALE_ROWS: &[StaleRow] = &[
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_package_whose_files_the_offer_would_carry_stale_holds_the_commit"
-    ));
     for row in STALE_ROWS {
         let what = row.what;
         let fixture = row.fixture();
@@ -1562,10 +1494,6 @@ fn a_package_whose_files_the_offer_would_carry_stale_holds_the_commit() {
 /// not set up here restores the old offer, and the first assertion fails.
 #[test]
 fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses"
-    ));
     let fixture = enabled_fixture_with_arming(false);
     commit_fixture(&fixture.root);
     let mut generated = GeneratedPaths::default();
@@ -1620,10 +1548,6 @@ fn an_unarmed_doctrine_change_never_offers_the_commit_the_staged_check_refuses()
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_linked_work_tree_names_the_main_checkout_in_its_skip_line() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_linked_work_tree_names_the_main_checkout_in_its_skip_line"
-    ));
     let fixture = enabled_fixture();
     commit_fixture(&fixture.root);
     let linked = fixture.root.parent().unwrap().join("linked");
@@ -1778,10 +1702,6 @@ fn edited_offer(
     reason = "one table: each row an edit, what was read before it and what the commit carries"
 )]
 fn a_commit_is_held_only_where_the_check_over_it_fails() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_commit_is_held_only_where_the_check_over_it_fails"
-    ));
     /// Which changed paths the commit carries.
     enum Carries<'a> {
         /// Every changed path kendex owns whole.

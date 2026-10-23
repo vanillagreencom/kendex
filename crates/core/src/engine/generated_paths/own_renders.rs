@@ -255,8 +255,6 @@ fn record(env: &Env, root: &Path) -> Result<Lock, String> {
 /// plan keeps only those the inventory at `HEAD` lists, and that drops the
 /// render of a package the branch adds.
 fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
-    let _diagnostic_fixture =
-        diagnostic::Span::begin(concat!(module_path!(), "::fixture::committed_copy"));
     let tmp = tempfile::tempdir().map_err(|error| format!("scratch directory: {error}"))?;
     let repository = crate::test_util::rooted(&tmp);
     let copy = repository.join("checkout");
@@ -264,8 +262,6 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
     // every planted defect still has a separate scratch tree.
     static LISTED: OnceLock<String> = OnceLock::new();
     let listed = LISTED.get_or_init(|| {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::checkout_list"));
         crate::test_util::git(
             root,
             &[
@@ -283,7 +279,6 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
     let carried = listed
         .split('\0')
         .filter(|carried| !carried.is_empty() && !carried.ends_with('/'));
-    let diagnostic_copy = diagnostic::Span::begin(concat!(module_path!(), "::phase::file_copy"));
     let mut directories = BTreeSet::new();
     for carried in carried {
         let from = root.join(carried);
@@ -305,8 +300,6 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
             });
         copied.map_err(|error| format!("copy {carried}: {error}"))?;
     }
-    drop(diagnostic_copy);
-    let _diagnostic_git = diagnostic::Span::begin(concat!(module_path!(), "::phase::fixture_git"));
     crate::test_util::git(&repository, &["init", "-q"]);
     crate::test_util::git(&repository, &["add", "-A", "-f"]);
     Ok((tmp, copy))
@@ -333,10 +326,6 @@ fn check(root: &Path) -> Standing {
 /// this repository renders. The passing direction, through the whole path.
 #[test]
 fn the_committed_renders_are_the_bytes_this_checkout_renders() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_committed_renders_are_the_bytes_this_checkout_renders"
-    ));
     let root = crate::test_util::checkout_root();
     if let Standing::Refused(finding) = check(&root) {
         panic!("{}", refusal(&finding));
@@ -346,50 +335,34 @@ fn the_committed_renders_are_the_bytes_this_checkout_renders() {
 /// A refresh may hold an edited copy that its source no longer installs,
 /// so comparing desired render bytes alone cannot prove record agreement.
 fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
-    let _diagnostic_fixture =
-        diagnostic::Span::begin(concat!(module_path!(), "::fixture::refresh_and_verify"));
     let scope = Scope::Project {
         root: root.to_path_buf(),
     };
-    let refresh = {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::refresh_plan"));
-        plan_apply(
-            env,
-            &scope,
-            &PlanOptions {
-                sweep_unneeded: true,
-                ..PlanOptions::current()
-            },
-        )
-        .map_err(|error| error.to_string())?
-    };
+    let refresh = plan_apply(
+        env,
+        &scope,
+        &PlanOptions {
+            sweep_unneeded: true,
+            ..PlanOptions::current()
+        },
+    )
+    .map_err(|error| error.to_string())?;
     if !complete_declarations(&refresh) {
         return Ok(Standing::Refused(Finding::Incomplete));
     }
-    {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::refresh_apply"));
-        crate::apply::execute(env, &refresh.plan).map_err(|error| error.to_string())?
-    };
+    crate::apply::execute(env, &refresh.plan).map_err(|error| error.to_string())?;
     verify_records(env, root)
 }
 
 /// Read the completed refresh's record and compare it with ordinary
 /// verification. Both the repository proof and its controls use this phase.
 fn verify_records(env: &Env, root: &Path) -> Result<Standing, String> {
-    let _diagnostic_fixture =
-        diagnostic::Span::begin(concat!(module_path!(), "::fixture::verify_records"));
     let scope = Scope::Project {
         root: root.to_path_buf(),
     };
     let lock = record(env, root)?;
-    let verified = {
-        let _diagnostic_phase =
-            diagnostic::Span::begin(concat!(module_path!(), "::phase::verify_plan"));
-        plan_apply(env, &scope, &crate::attest::Reading::Current.plan_options())
-            .map_err(|error| error.to_string())?
-    };
+    let verified = plan_apply(env, &scope, &crate::attest::Reading::Current.plan_options())
+        .map_err(|error| error.to_string())?;
     if !complete_declarations(&verified) {
         return Ok(Standing::Refused(Finding::Incomplete));
     }
@@ -424,10 +397,6 @@ fn complete_declarations(report: &EngineReport) -> bool {
 
 #[test]
 fn refresh_then_verify_agrees_on_every_committed_install_record() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::refresh_then_verify_agrees_on_every_committed_install_record"
-    ));
     let (tmp, copy) =
         committed_copy(&crate::test_util::checkout_root()).expect("the committed checkout copies");
     let env = Env::fake(crate::test_util::rooted(&tmp).join("home"), FakeOs::Linux);
@@ -496,10 +465,6 @@ impl RefreshFixture {
 /// leave every installed byte current, so drift alone cannot prove agreement.
 #[test]
 fn changed_record_metadata_is_unsettled_without_disk_drift() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::changed_record_metadata_is_unsettled_without_disk_drift"
-    ));
     let f = RefreshFixture::new();
     assert_eq!(
         refresh_and_verify(&f.env, &f.project),
@@ -540,10 +505,6 @@ fn changed_record_metadata_is_unsettled_without_disk_drift() {
 /// edit; the repository check must reject them before the merge.
 #[test]
 fn an_edited_copy_on_an_excluded_tool_is_unsettled() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_edited_copy_on_an_excluded_tool_is_unsettled"
-    ));
     let f = RefreshFixture::new();
     assert_eq!(
         refresh_and_verify(&f.env, &f.project),
@@ -575,10 +536,6 @@ fn an_edited_copy_on_an_excluded_tool_is_unsettled() {
 /// declaration set even when an inactive source is legitimate CLI state.
 #[test]
 fn an_incomplete_declaration_set_cannot_prove_record_agreement() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_incomplete_declaration_set_cannot_prove_record_agreement"
-    ));
     #[derive(Debug)]
     enum SourceChange {
         Deleted,
@@ -750,10 +707,6 @@ impl Planted {
 /// spelled independently of the renderer.
 #[test]
 fn a_render_its_source_no_longer_renders_is_refused() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_its_source_no_longer_renders_is_refused"
-    ));
     let mut planted = Planted::new();
     let skill = instructed_skill(&planted.declared);
     planted.grow(&skill);
@@ -771,10 +724,6 @@ fn a_render_its_source_no_longer_renders_is_refused() {
 #[test]
 #[allow(clippy::expect_used)]
 fn a_render_of_a_package_the_record_does_not_hold_is_refused() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_of_a_package_the_record_does_not_hold_is_refused"
-    ));
     let mut planted = Planted::new();
     let skill = "planted-package";
     let render = format!(".agents/skills/{skill}/SKILL.md");
@@ -812,10 +761,6 @@ fn a_render_of_a_package_the_record_does_not_hold_is_refused() {
 /// bytes it renders.
 #[test]
 fn a_render_tree_holding_a_file_it_does_not_render_is_refused() {
-    let _diagnostic = diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_render_tree_holding_a_file_it_does_not_render_is_refused"
-    ));
     let planted = Planted::new();
     let skill = instructed_skill(&planted.declared);
     let tree = format!(".agents/skills/{skill}");
@@ -826,154 +771,4 @@ fn a_render_tree_holding_a_file_it_does_not_render_is_refused() {
     let (written, _) = planted.named();
     let render = format!("{tree}/SKILL.md");
     assert!(written.contains(&render), "{render} not in {written:?}");
-}
-
-// The lane reads these transient wall spans from the existing REST job log.
-// This stays local to each test binary; elapsed time does not identify CPU use.
-mod diagnostic {
-    use std::io::{self, Write};
-    use std::thread::ThreadId;
-    use std::time::Instant;
-
-    pub(crate) struct Span {
-        label: &'static str,
-        started: Instant,
-    }
-
-    #[derive(Clone, Copy)]
-    enum Phase {
-        Begin,
-        End(u128),
-        Unwind(u128),
-    }
-
-    // Holding stderr for one record prevents our concurrent writers from
-    // interleaving fields. Print macros would hide passing tests in capture.
-    fn emit(
-        writer: &mut impl Write,
-        label: &'static str,
-        phase: Phase,
-        pid: u32,
-        thread: ThreadId,
-    ) -> io::Result<()> {
-        match phase {
-            Phase::Begin => writeln!(
-                writer,
-                "KEN4527 begin label={label} pid={pid} thread={thread:?}"
-            ),
-            Phase::End(ns) => writeln!(
-                writer,
-                "KEN4527 end label={label} pid={pid} thread={thread:?} elapsed_ns={ns}"
-            ),
-            Phase::Unwind(ns) => writeln!(
-                writer,
-                "KEN4527 unwind label={label} pid={pid} thread={thread:?} elapsed_ns={ns}"
-            ),
-        }
-    }
-
-    impl Span {
-        fn write(&self, phase: Phase) -> io::Result<()> {
-            emit(
-                &mut io::stderr().lock(),
-                self.label,
-                phase,
-                std::process::id(),
-                std::thread::current().id(),
-            )
-        }
-
-        fn try_begin(label: &'static str) -> io::Result<Self> {
-            let started = Instant::now();
-            emit(
-                &mut io::stderr().lock(),
-                label,
-                Phase::Begin,
-                std::process::id(),
-                std::thread::current().id(),
-            )?;
-            Ok(Self { label, started })
-        }
-
-        pub(crate) fn begin(label: &'static str) -> Self {
-            match Self::try_begin(label) {
-                Ok(span) => span,
-                Err(_) => panic!("KEN4527 write_failed phase=begin"),
-            }
-        }
-    }
-
-    impl Drop for Span {
-        fn drop(&mut self) {
-            let elapsed = self.started.elapsed().as_nanos();
-            if std::thread::panicking() {
-                // Preserve the original failure. An unwind or absent end is
-                // incomplete evidence, even when the best-effort write works.
-                let _ = self.write(Phase::Unwind(elapsed));
-            } else if self.write(Phase::End(elapsed)).is_err() {
-                panic!("KEN4527 write_failed phase=end");
-            }
-        }
-    }
-
-    #[test]
-    fn diagnostic_contract() {
-        // The compiled-head control log must expose this pair with libtest
-        // capture enabled, before the lane reads native timings.
-        let _diagnostic = Span::begin(concat!(module_path!(), "::diagnostic_contract"));
-        // The lane's REST-log reader consumes this exact machine protocol.
-        // These fake ids and durations are neither measurements nor children.
-        let thread = std::thread::current().id();
-        let mut output = Vec::new();
-        for phase in [Phase::Begin, Phase::End(23), Phase::Unwind(29)] {
-            assert!(emit(&mut output, "control", phase, 17, thread).is_ok());
-        }
-        let text = String::from_utf8(output).unwrap_or_else(|_| panic!("record is not UTF-8"));
-        let expected = format!(
-            "KEN4527 begin label=control pid=17 thread={thread:?}\nKEN4527 end label=control pid=17 thread={thread:?} elapsed_ns=23\nKEN4527 unwind label=control pid=17 thread={thread:?} elapsed_ns=29\n"
-        );
-        assert_eq!(text, expected);
-        let mut other = Vec::new();
-        assert!(emit(&mut other, "control", Phase::Begin, 19, thread).is_ok());
-        assert_ne!(
-            other,
-            format!("{}\n", text.lines().next().unwrap_or_default()).as_bytes()
-        );
-        assert!(String::from_utf8_lossy(&other).contains(" pid=19 "));
-
-        struct FailedWriter {
-            remaining: usize,
-            written: Vec<u8>,
-        }
-        impl Write for FailedWriter {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                if self.remaining == 0 {
-                    return Err(io::ErrorKind::BrokenPipe.into());
-                }
-                let count = bytes.len().min(self.remaining);
-                self.written.extend_from_slice(&bytes[..count]);
-                self.remaining -= count;
-                Ok(count)
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-        // A real stderr sink can fail before or during any record. A partial
-        // record never reaches a successful emitter result or a complete line.
-        for phase in [Phase::Begin, Phase::End(23), Phase::Unwind(29)] {
-            for remaining in [0, 7] {
-                let mut writer = FailedWriter {
-                    remaining,
-                    written: Vec::new(),
-                };
-                let result = emit(&mut writer, "control", phase, 17, thread);
-                assert_eq!(
-                    result.err().map(|error| error.kind()),
-                    Some(io::ErrorKind::BrokenPipe)
-                );
-                assert!(!writer.written.ends_with(b"\n"));
-            }
-        }
-    }
 }

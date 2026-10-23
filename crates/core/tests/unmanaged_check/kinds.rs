@@ -11,10 +11,6 @@ use super::{declare, report, world, write_at};
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_is_read_at_the_position_its_tool_installs_it_to() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_is_read_at_the_position_its_tool_installs_it_to"
-    ));
     let w = world();
     declare(
         &w,
@@ -41,10 +37,6 @@ fn a_command_is_read_at_the_position_its_tool_installs_it_to() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_line_names_the_tool_it_is_about() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_line_names_the_tool_it_is_about"
-    ));
     let w = world();
     declare(
         &w,
@@ -86,10 +78,6 @@ fn the_line_names_the_tool_it_is_about() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_that_changed_how_it_installs_is_reported_by_the_check_too"
-    ));
     let w = world();
     let first = plan_apply(&w.env, &w.scope, &PlanOptions::current()).unwrap();
     apply::execute(&w.env, &first.plan).unwrap();

@@ -59,10 +59,6 @@ fn manifest_of(env: &Env, scope: &Scope) -> manifest::Manifest {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_source_takes_its_closure_including_derived_deps() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_a_source_takes_its_closure_including_derived_deps"
-    ));
     let (_tmp, env, scope, catalog) = world("[skills.gh]\nsource = \"cat\"\n", "");
     // gh declares a required dependency on `common`.
     skill(
@@ -115,10 +111,6 @@ fn scope_skill(scope: &Scope, name: &str) -> std::path::PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_an_unreachable_source_refuses() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_an_unreachable_source_refuses"
-    ));
     let (_tmp, env, scope, catalog) = world("[skills.gh]\nsource = \"cat\"\n", "");
     skill(&catalog, "gh", "body");
     apply_now(&env, &scope);
@@ -140,10 +132,6 @@ fn removing_an_unreachable_source_refuses() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_a_sources_packages_detaches_them_to_local() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::keeping_a_sources_packages_detaches_them_to_local"
-    ));
     let (_tmp, env, scope, catalog) = world("[skills.gh]\nsource = \"cat\"\n", "");
     skill(&catalog, "gh", "the gh skill");
     apply_now(&env, &scope);
@@ -179,10 +167,6 @@ fn keeping_a_sources_packages_detaches_them_to_local() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_an_edited_package_refuses_naming_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::keeping_an_edited_package_refuses_naming_it"
-    ));
     type Plant = fn(&Path);
     type Installed = fn(&Path) -> PathBuf;
     let rows: [(&str, &str, Plant, Installed, &str); 2] = [
@@ -240,10 +224,6 @@ fn keeping_an_edited_package_refuses_naming_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_another_bundle_carries_survives_removal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_member_another_bundle_carries_survives_removal"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let env = Env::fake(home, FakeOs::Linux);
@@ -325,10 +305,6 @@ enum Shared {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_member_another_bundle_gains_leaves_as_the_plan_reads_that_bundle() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_member_another_bundle_gains_leaves_as_the_plan_reads_that_bundle"
-    ));
     struct Row {
         leave: Leave,
         gained: Gained,
@@ -420,10 +396,6 @@ fn a_member_another_bundle_gains_leaves_as_the_plan_reads_that_bundle() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn discarding_a_leaving_edit_preserves_an_edited_transferred_survivor() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::discarding_a_leaving_edit_preserves_an_edited_transferred_survivor"
-    ));
     let (_tmp, env, scope) = installed_then_gained(Gained::RewrittenHistory);
     let cat = env.home.join("cat");
     skill(&cat, "gh", "from cat");
@@ -478,10 +450,6 @@ fn discarding_a_leaving_edit_preserves_an_edited_transferred_survivor() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn folder_survivors_save_their_transfer_without_other_lock_changes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::folder_survivors_save_their_transfer_without_other_lock_changes"
-    ));
     use kendex_core::engine::{DriftCause, DriftState};
 
     for edited in [true, false] {
@@ -571,10 +539,6 @@ fn folder_survivors_save_their_transfer_without_other_lock_changes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_nested_name_round_trips_through_detach() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_nested_name_round_trips_through_detach"
-    ));
     let (_tmp, env, scope, catalog) = world("[skills.\"plugin/item\"]\nsource = \"cat\"\n", "");
     // An explicit-layout catalog with a nested skill at skills/plugin/item.
     let dir = catalog.join("skills/plugin/item");
@@ -613,10 +577,6 @@ fn a_nested_name_round_trips_through_detach() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn keeping_a_parent_and_a_nested_skill_does_not_clash() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::keeping_a_parent_and_a_nested_skill_does_not_clash"
-    ));
     let (_tmp, env, scope, catalog) = world(
         "[skills.plugin]\nsource = \"cat\"\n[skills.\"plugin/item\"]\nsource = \"cat\"\n",
         "",
@@ -654,10 +614,6 @@ fn keeping_a_parent_and_a_nested_skill_does_not_clash() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_an_empty_subscription_drops_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_an_empty_subscription_drops_it"
-    ));
     let (_tmp, env, scope, catalog) = world("", "");
     skill(&catalog, "gh", "body");
     let report = source_ops::remove_source(&env, &scope, "cat").unwrap();

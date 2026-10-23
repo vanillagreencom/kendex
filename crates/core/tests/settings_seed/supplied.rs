@@ -151,10 +151,6 @@ fn rows() -> [Row; 6] {
 #[test]
 #[allow(clippy::unwrap_used, clippy::panic)]
 fn a_supplied_setting_lands_only_where_the_file_assigns_none() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_supplied_setting_lands_only_where_the_file_assigns_none"
-    ));
     for (name, before, pairs, want) in rows() {
         let f = undeclared();
         let path = f.project.join("kendex.settings.toml");
@@ -202,10 +198,6 @@ fn a_supplied_setting_lands_only_where_the_file_assigns_none() {
 #[test]
 #[allow(clippy::unwrap_used, clippy::panic)]
 fn a_supplied_setting_at_the_personal_scope_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_supplied_setting_at_the_personal_scope_is_refused"
-    ));
     let f = fixture(true);
     let options = PlanOptions {
         supplied_settings: supplied(&[("DEPTH", "5")]),

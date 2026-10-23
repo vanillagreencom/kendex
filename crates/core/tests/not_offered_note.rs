@@ -51,10 +51,6 @@ fn notes_for_catalog(declared: &str, offered: &[&str]) -> Vec<String> {
 
 #[test]
 fn a_name_the_catalog_does_not_carry_is_refused_naming_what_it_offers() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_name_the_catalog_does_not_carry_is_refused_naming_what_it_offers"
-    ));
     let notes = notes_for("retired");
     let note = notes
         .iter()
@@ -68,10 +64,6 @@ fn a_name_the_catalog_does_not_carry_is_refused_naming_what_it_offers() {
 
 #[test]
 fn a_catalog_offering_nothing_of_that_kind_says_so() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_catalog_offering_nothing_of_that_kind_says_so"
-    ));
     let notes = notes_for_catalog("retired", &[]);
     assert!(
         notes
@@ -83,10 +75,6 @@ fn a_catalog_offering_nothing_of_that_kind_says_so() {
 
 #[test]
 fn a_name_the_catalog_carries_gets_no_refusal_note() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_name_the_catalog_carries_gets_no_refusal_note"
-    ));
     let notes = notes_for("deploy");
     assert!(
         notes

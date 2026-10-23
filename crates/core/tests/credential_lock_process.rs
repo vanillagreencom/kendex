@@ -93,10 +93,6 @@ fn production_keyring_guard_blocks_across_divergent_data_roots() {
         return;
     }
 
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::production_keyring_guard_blocks_across_divergent_data_roots"
-    ));
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path();
     let executable = std::env::current_exe().unwrap();

@@ -17,10 +17,6 @@ use super::scope::{arrive, fixture, many_owners, names_unanswered, refresh_now, 
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unanswered_required_key_is_reported_on_every_pass() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unanswered_required_key_is_reported_on_every_pass"
-    ));
     let f = fixture(true);
     let says_it = |report: &kendex_core::engine::EngineReport| {
         report
@@ -61,10 +57,6 @@ fn an_unanswered_required_key_is_reported_on_every_pass() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn occupied_settings_path_is_a_conflict_not_a_clobber() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::occupied_settings_path_is_a_conflict_not_a_clobber"
-    ));
     let f = fixture(true);
     fs::create_dir_all(f.project.join("kendex.settings.toml")).unwrap();
     let report = audit(&f.env, &f.scope).unwrap();
@@ -97,10 +89,6 @@ fn occupied_settings_path_is_a_conflict_not_a_clobber() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_arrival_that_cannot_write_the_file_names_the_key_it_could_not_write() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_arrival_that_cannot_write_the_file_names_the_key_it_could_not_write"
-    ));
     let f = fixture(true);
     fs::create_dir_all(f.project.join("kendex.settings.toml")).unwrap();
     let report = arrive(&f, &["review"]);
@@ -126,10 +114,6 @@ fn an_arrival_that_cannot_write_the_file_names_the_key_it_could_not_write() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_key_shipped_with_differing_defaults_gets_one_grouped_note"
-    ));
     let f = many_owners(&[
         (
             "alpha",
@@ -169,10 +153,6 @@ fn a_key_shipped_with_differing_defaults_gets_one_grouped_note() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_key_shipped_with_one_default_everywhere_is_silent() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_key_shipped_with_one_default_everywhere_is_silent"
-    ));
     let f = many_owners(&[
         ("alpha", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
         ("beta", "[env]\n# The gate.\nMODE = \"enforce\"\n"),
@@ -190,10 +170,6 @@ fn a_key_shipped_with_one_default_everywhere_is_silent() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_note_names_the_line_the_file_has_rather_than_a_default_nothing_reads() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_note_names_the_line_the_file_has_rather_than_a_default_nothing_reads"
-    ));
     let f = many_owners(&[
         (
             "alpha",

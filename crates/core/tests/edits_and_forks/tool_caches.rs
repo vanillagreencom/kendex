@@ -35,10 +35,6 @@ fn plant_caches(render: &Path) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_tool_cache_in_a_skill_render_plans_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_tool_cache_in_a_skill_render_plans_nothing"
-    ));
     let w = world();
     let render = installed(&w);
     plant_caches(&render);
@@ -62,10 +58,6 @@ fn a_tool_cache_in_a_skill_render_plans_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_cached_skill_render_takes_a_newer_upstream_and_can_be_removed() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_cached_skill_render_takes_a_newer_upstream_and_can_be_removed"
-    ));
     let w = world();
     let render = installed(&w);
     plant_caches(&render);
@@ -109,10 +101,6 @@ fn orphan_cleanup(w: &World) -> kendex_core::error::Result<kendex_core::engine::
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_render_holding_a_repository_is_held_from_a_newer_upstream() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_render_holding_a_repository_is_held_from_a_newer_upstream"
-    ));
     let w = world();
     let render = installed(&w);
     fs::create_dir_all(render.join(".git")).unwrap();
@@ -132,10 +120,6 @@ fn a_skill_render_holding_a_repository_is_held_from_a_newer_upstream() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_orphan_cleanup_holds_a_skill_render_holding_an_environment() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_orphan_cleanup_holds_a_skill_render_holding_an_environment"
-    ));
     let w = world();
     let render = installed(&w);
     fs::create_dir_all(render.join(".venv/bin")).unwrap();

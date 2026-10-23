@@ -123,10 +123,6 @@ const UNSUPPORTED_DELIVERIES: [(&str, &str, &[HarnessId], &[HarnessId]); 8] = {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_records_supported_copies_but_fails_each_unsupported_delivery() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_records_supported_copies_but_fails_each_unsupported_delivery"
-    ));
     for (harnesses, event, unavailable, delivered) in UNSUPPORTED_DELIVERIES {
         let f = fixture_with_newer_hook(harnesses, event);
         let report = plan(&f);
@@ -212,10 +208,6 @@ fn a_hook_records_supported_copies_but_fails_each_unsupported_delivery() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_says_which_tools_run_it_and_which_only_read_it"
-    ));
     let f = fixture(
         "\"claude\", \"codex\", \"opencode\", \"cursor\", \"pi\", \"gemini\", \"copilot\"",
         "[hooks.guard]\nsource = \"cat\"\n",
@@ -279,10 +271,6 @@ fn a_hook_says_which_tools_run_it_and_which_only_read_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_matcher_that_cannot_be_translated_installs_as_written_and_is_named"
-    ));
     let f = fixture(
         "\"gemini\", \"copilot\", \"antigravity\"",
         "[hooks.loose]\nsource = \"cat\"\n",
@@ -346,10 +334,6 @@ fn a_matcher_that_cannot_be_translated_installs_as_written_and_is_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_catalog_hook_refusal_names_its_own_reason() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_catalog_hook_refusal_names_its_own_reason"
-    ));
     let excluding = GUARD
         .replace("# event:", "# harnesses: [claude]\n# event:")
         .replace("PreToolUse", "PermissionRequest");

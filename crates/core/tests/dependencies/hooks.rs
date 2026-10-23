@@ -145,10 +145,6 @@ pub(super) fn findings_on<'a>(
 #[test]
 #[allow(clippy::unwrap_used)]
 fn declaring_one_hook_of_a_set_installs_its_companions() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::declaring_one_hook_of_a_set_installs_its_companions"
-    ));
     let f = hook_fixture("[hooks.deliver]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(report.warnings.is_empty(), "{:?}", messages(&report));
@@ -193,10 +189,6 @@ fn declaring_one_hook_of_a_set_installs_its_companions() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fully_declared_set_proceeds_with_nothing_missing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_fully_declared_set_proceeds_with_nothing_missing"
-    ));
     let f = hook_fixture(
         "[hooks.judge]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n",
     );
@@ -400,10 +392,6 @@ fn header_rows() -> [Row; 6] {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_that_will_not_land_withholds_the_hook_that_needs_it"
-    ));
     for Row {
         declarations,
         judge,
@@ -492,10 +480,6 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_does_not_carry_a_hook_past_its_own_declaration() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_set_does_not_carry_a_hook_past_its_own_declaration"
-    ));
     let f = hook_fixture(
         "[bundles.kit]\nsource = \"cat\"\n\n[hooks.plain]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
     );
@@ -531,10 +515,6 @@ fn a_set_does_not_carry_a_hook_past_its_own_declaration() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_follows_its_parent_only_where_the_parent_runs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_follows_its_parent_only_where_the_parent_runs"
-    ));
     for companion in [
         "",
         "\n[hooks.plain]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
@@ -582,10 +562,6 @@ fn a_companion_follows_its_parent_only_where_the_parent_runs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_whose_dependency_is_kept_removed_still_installs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_whose_dependency_is_kept_removed_still_installs"
-    ));
     let f = hook_fixture("[skills.dev]\nsource = \"cat\"\n\n[suppressed]\nskill = [\"github\"]\n");
     let report = audit(&f.env, &f.scope).unwrap();
     let found: Vec<(&str, Option<&str>)> = findings_on(&report, "dev")
@@ -610,10 +586,6 @@ fn a_skill_whose_dependency_is_kept_removed_still_installs() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn switching_a_hook_off_switches_off_the_companions_it_brought_in() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::switching_a_hook_off_switches_off_the_companions_it_brought_in"
-    ));
     let f = hook_fixture("[hooks.judge]\nsource = \"cat\"\nenabled = false\n");
     let report = audit(&f.env, &f.scope).unwrap();
     assert!(report.warnings.is_empty(), "{:?}", messages(&report));
@@ -644,10 +616,6 @@ fn switching_a_hook_off_switches_off_the_companions_it_brought_in() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_derived_companion_is_on_while_any_requirer_is_on() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_derived_companion_is_on_while_any_requirer_is_on"
-    ));
     for (off, on) in [("deliver", "halt"), ("halt", "deliver")] {
         let f = hook_fixture(&format!(
             "[hooks.{off}]\nsource = \"cat\"\nenabled = false\n\n[hooks.{on}]\nsource = \"cat\"\n"
@@ -800,10 +768,6 @@ fn judge_switches() -> [(&'static str, Switch); 6] {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_wrappers_come_out_once_the_judge_is_switched_off() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_wrappers_come_out_once_the_judge_is_switched_off"
-    ));
     for (label, switch) in judge_switches() {
         let f = hook_fixture(FULL);
         apply_now(&f);
@@ -866,10 +830,6 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_companion_is_withheld_where_every_hook_that_requires_it_is() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_companion_is_withheld_where_every_hook_that_requires_it_is"
-    ));
     use kendex_core::engine::DriftState::{Conflict, Orphaned};
 
     /// Whether the companion's Codex copy was edited by hand; whether the
@@ -1095,10 +1055,6 @@ fn orphan_before_the_edge() -> Fixture {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_orphans_remedy_takes_only_what_its_row_names() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_edited_orphans_remedy_takes_only_what_its_row_names"
-    ));
     type Placed = (&'static str, HarnessId, (bool, bool));
     type Row = (
         &'static str,
@@ -1196,10 +1152,6 @@ fn an_edited_orphans_remedy_takes_only_what_its_row_names() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_missing_companion_outranks_being_orphaned_whenever_it_is_found() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_missing_companion_outranks_being_orphaned_whenever_it_is_found"
-    ));
     let f = boss_fixture(&[
         ("extra.sh", EXTRA_CHAIN),
         ("mid.sh", MID),
@@ -1342,10 +1294,6 @@ fn kept_chain_rows() -> [KeptChainRow; 4] {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn what_a_kept_orphan_requires_is_kept_with_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::what_a_kept_orphan_requires_is_kept_with_it"
-    ));
     let rows = kept_chain_rows();
     for (label, declarations, offered, options, edited, on, expected, claude, codex) in rows {
         let f = boss_fixture(&[

@@ -126,10 +126,6 @@ fn scanned(f: &Fixture, scope: &Scope) -> Vec<(String, Option<bool>)> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_server_is_its_own_table_beside_the_users_and_toggles_on_the_table() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_server_is_its_own_table_beside_the_users_and_toggles_on_the_table"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\n\n[mcp-servers.docs]\nsource = \"cat\"\n");
     let config = f.project.join(".codex/config.toml");
     fs::write(&config, THEIRS).unwrap();
@@ -187,10 +183,6 @@ fn a_server_is_its_own_table_beside_the_users_and_toggles_on_the_table() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_global_server_lands_in_the_users_config_toml() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_global_server_lands_in_the_users_config_toml"
-    ));
     let f = fixture("");
     let manifest = f.env.global_manifest_file();
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
@@ -221,10 +213,6 @@ fn a_global_server_lands_in_the_users_config_toml() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_sse_server_is_refused_for_codex_with_the_reason() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_sse_server_is_refused_for_codex_with_the_reason"
-    ));
     let f = fixture("[mcp-servers.legacy]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(
@@ -244,10 +232,6 @@ fn an_sse_server_is_refused_for_codex_with_the_reason() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_renamed_env_reference_is_refused_for_codex_with_the_fix() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_renamed_env_reference_is_refused_for_codex_with_the_fix"
-    ));
     let f = fixture("[mcp-servers.renamed]\nsource = \"cat\"\n");
     let report = apply_now(&f);
     assert!(
@@ -265,10 +249,6 @@ fn a_renamed_env_reference_is_refused_for_codex_with_the_fix() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_server_declared_off_writes_its_table_into_a_fresh_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_server_declared_off_writes_its_table_into_a_fresh_file"
-    ));
     let f = fixture("[mcp-servers.gh]\nsource = \"cat\"\nenabled = false\n");
     apply_now(&f);
     let config = f.project.join(".codex/config.toml");

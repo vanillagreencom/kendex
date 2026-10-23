@@ -272,10 +272,6 @@ fn state_of(f: &Fixture, key: &str) -> SecretState {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_first_save_makes_the_private_file_git_ignores_and_stores_the_value() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_first_save_makes_the_private_file_git_ignores_and_stores_the_value"
-    ));
     let f = fixture(TEMPLATE);
     assert_eq!(state_of(&f, "LINEAR_API_KEY"), SecretState::NotSet);
 
@@ -299,10 +295,6 @@ fn a_first_save_makes_the_private_file_git_ignores_and_stores_the_value() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_ignore_entry_is_planned_before_the_credential_it_protects() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_ignore_entry_is_planned_before_the_credential_it_protects"
-    ));
     let f = fixture(TEMPLATE);
     let written = planned(
         &f,
@@ -335,10 +327,6 @@ fn the_ignore_entry_is_planned_before_the_credential_it_protects() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_project_nested_in_a_repository_still_gets_its_ignore_entry() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_project_nested_in_a_repository_still_gets_its_ignore_entry"
-    ));
     let f = nested_fixture(TEMPLATE);
     assert!(
         !f.project.join(".git").exists(),
@@ -363,10 +351,6 @@ fn a_project_nested_in_a_repository_still_gets_its_ignore_entry() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plan_says_which_keys_it_stores_and_which_it_clears() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_plan_says_which_keys_it_stores_and_which_it_clears"
-    ));
     let f = fixture(SHARED_TEMPLATE);
     fs::write(f.project.join(".gitignore"), "/.env.local\n").unwrap();
     store(
@@ -393,10 +377,6 @@ fn a_plan_says_which_keys_it_stores_and_which_it_clears() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_created_private_file_is_readable_by_its_owner_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_created_private_file_is_readable_by_its_owner_alone"
-    ));
     let f = fixture(TEMPLATE);
     store(&f, vec![set("LINEAR_API_KEY", DUMMY)]).unwrap();
     let mode = fs::metadata(f.private(".env.local"))
@@ -411,10 +391,6 @@ fn a_created_private_file_is_readable_by_its_owner_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_existing_private_file_keeps_its_own_mode() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_existing_private_file_keeps_its_own_mode"
-    ));
     let f = fixture(TEMPLATE);
     let path = f.private(".env.local");
     fs::write(&path, "OTHER='kept'\n").unwrap();
@@ -436,10 +412,6 @@ fn an_existing_private_file_keeps_its_own_mode() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn replacing_and_clearing_leave_every_other_assignment_alone() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::replacing_and_clearing_leave_every_other_assignment_alone"
-    ));
     let f = fixture(TEMPLATE);
     let path = f.private(".env.local");
     fs::write(&path, "OTHER='kept'\n").unwrap();
@@ -462,10 +434,6 @@ fn replacing_and_clearing_leave_every_other_assignment_alone() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_stored_credential_reaches_no_public_file_no_plan_and_no_render() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_stored_credential_reaches_no_public_file_no_plan_and_no_render"
-    ));
     let f = fixture(TEMPLATE);
     let said = store(&f, vec![set("LINEAR_API_KEY", DUMMY)]).unwrap();
 
@@ -496,10 +464,6 @@ fn a_stored_credential_reaches_no_public_file_no_plan_and_no_render() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_private_file_that_moved_under_the_draft_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_private_file_that_moved_under_the_draft_is_refused"
-    ));
     let f = fixture(TEMPLATE);
     let path = f.private(".env.local");
     fs::write(&path, "OTHER='kept'\n").unwrap();
@@ -533,10 +497,6 @@ fn a_private_file_that_moved_under_the_draft_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_key_assigned_twice_is_refused_with_its_lines() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_key_assigned_twice_is_refused_with_its_lines"
-    ));
     let f = fixture(TEMPLATE);
     let path = f.private(".env.local");
     fs::write(&path, "LINEAR_API_KEY='one'\nLINEAR_API_KEY='two'\n").unwrap();
@@ -565,10 +525,6 @@ fn a_key_assigned_twice_is_refused_with_its_lines() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_credential_named_at_global_scope_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_credential_named_at_global_scope_is_refused"
-    ));
     let f = fixture(TEMPLATE);
     let manifest = kendex_core::manifest::Manifest::default();
     let lock = kendex_core::lock::Lock::default();
@@ -601,10 +557,6 @@ fn a_credential_named_at_global_scope_is_refused() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_secret_only_package_declares_a_required_field() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_secret_only_package_declares_a_required_field"
-    ));
     let f = fixture("[secrets]\n# The API key.\nLINEAR_API_KEY = \"\" # required\n");
     let read = scope_settings(&f.env, &f.scope, None).unwrap();
     let SkillTemplate::Rows { rows, secrets } = read.skills[0].template.clone() else {
@@ -628,10 +580,6 @@ fn a_secret_only_package_declares_a_required_field() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_malformed_declaration_is_reported_rather_than_hidden() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_malformed_declaration_is_reported_rather_than_hidden"
-    ));
     let f = fixture("[secrets]\n# The API key.\nLINEAR_API_KEY = \"sk-live-1\"\n");
     let read = scope_settings(&f.env, &f.scope, None).unwrap();
     let SkillTemplate::Invalid { findings } = read.skills[0].template.clone() else {
@@ -653,10 +601,6 @@ fn a_malformed_declaration_is_reported_rather_than_hidden() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_private_file_nothing_can_read_answers_unknown() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_private_file_nothing_can_read_answers_unknown"
-    ));
     let f = fixture(TEMPLATE);
     // A directory where the file should be: nothing here can read a key
     // out of it, and nothing may write one into it either.
@@ -678,10 +622,6 @@ fn a_private_file_nothing_can_read_answers_unknown() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_read_says_where_a_value_would_go() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_read_says_where_a_value_would_go"
-    ));
     for (settings, chosen) in [
         (None, false),
         (
@@ -736,10 +676,6 @@ fn walk(root: &Path) -> Vec<PathBuf> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_template_this_repository_ships_holds_to_the_contract() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_template_this_repository_ships_holds_to_the_contract"
-    ));
     let skills = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
     let mut read = 0usize;
     for entry in fs::read_dir(&skills).unwrap().flatten() {
@@ -767,10 +703,6 @@ fn every_template_this_repository_ships_holds_to_the_contract() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plan_carrying_a_credential_never_renders_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_plan_carrying_a_credential_never_renders_it"
-    ));
     let f = fixture(TEMPLATE);
     let manifest = kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
         &f.env, &f.scope,

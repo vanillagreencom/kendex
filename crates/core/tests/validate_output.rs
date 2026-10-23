@@ -16,10 +16,6 @@ use kendex_core::model::{HarnessId, Scope};
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_name_opencode_cannot_load_blocks_there_while_claude_still_installs() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_name_opencode_cannot_load_blocks_there_while_claude_still_installs"
-    ));
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().to_path_buf();
     let env = Env::fake(&home, FakeOs::Linux);

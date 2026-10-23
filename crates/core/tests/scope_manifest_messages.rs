@@ -108,10 +108,6 @@ fn manifest_description(plan: &Plan) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn drift_hook_plan_names_the_file_it_writes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::drift_hook_plan_names_the_file_it_writes"
-    ));
     let states = [
         ("", "declare the drift hook in"),
         (
@@ -155,10 +151,6 @@ fn drift_hook_plan_names_the_file_it_writes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn drift_report_names_the_declaring_file_for_an_occupied_position() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::drift_report_names_the_declaring_file_for_an_occupied_position"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(catalog, file, "[skills.deploy]\nsource = \"cat\"\n");
         write(
@@ -193,10 +185,6 @@ fn drift_report_names_the_declaring_file_for_an_occupied_position() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn disabled_source_remedy_names_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::disabled_source_remedy_names_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(catalog, file, "[skills.dev]\nsource = \"cat\"\n");
         let installed = audit(&w.env, &w.scope).unwrap();
@@ -222,10 +210,6 @@ fn disabled_source_remedy_names_the_declaring_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn dependency_remedies_name_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::dependency_remedies_name_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(
             catalog,
@@ -257,10 +241,6 @@ fn dependency_remedies_name_the_declaring_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn fork_and_rename_plans_name_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::fork_and_rename_plans_name_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(catalog, file, "[skills.deploy]\nsource = \"cat\"\n");
         let report = audit(&w.env, &w.scope).unwrap();
@@ -311,10 +291,6 @@ fn fork_and_rename_plans_name_the_declaring_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn other_edit_remedies_name_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::other_edit_remedies_name_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(
             catalog,
@@ -368,10 +344,6 @@ fn other_edit_remedies_name_the_declaring_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn adopt_and_detach_plans_name_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::adopt_and_detach_plans_name_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(catalog, file, "");
         write(
@@ -405,10 +377,6 @@ fn adopt_and_detach_plans_name_the_declaring_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn custom_hook_refresh_preserves_shipped_ownership() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::custom_hook_refresh_preserves_shipped_ownership"
-    ));
     for (catalog, file) in SCOPES {
         for action in ["unchanged", "command", "disabled", "harness removed"] {
             let w = world(
@@ -495,10 +463,6 @@ fn custom_hook_refresh_preserves_shipped_ownership() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn custom_hook_source_conflict_names_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::custom_hook_source_conflict_names_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         for withheld in [false, true] {
             let w = world(
@@ -569,10 +533,6 @@ fn custom_hook_source_conflict_names_the_declaring_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn bundle_remedy_names_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::bundle_remedy_names_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(
             catalog,
@@ -602,10 +562,6 @@ fn bundle_remedy_names_the_declaring_file() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn install_default_notice_names_the_declaring_file() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::install_default_notice_names_the_declaring_file"
-    ));
     for (catalog, file) in SCOPES {
         let w = world(catalog, file, "");
         let home = w.project.parent().unwrap();

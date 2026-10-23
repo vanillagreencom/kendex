@@ -116,10 +116,6 @@ fn is_clean(f: &Fixture) -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_windows_written_catalog_installs_under_its_plugin() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_windows_written_catalog_installs_under_its_plugin"
-    ));
     let f = fixture(
         "\"claude\"",
         "[skills.\"data-science/eda\"]\nsource = \"market\"\n",
@@ -146,10 +142,6 @@ fn a_windows_written_catalog_installs_under_its_plugin() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn every_tool_lists_a_plugin_registry_item_under_its_plugin() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::every_tool_lists_a_plugin_registry_item_under_its_plugin"
-    ));
     let f = fixture(
         "\"claude\", \"codex\", \"opencode\"",
         "[skills.\"data-science/eda\"]\nsource = \"market\"\n\n[agents.\"code-review/reviewer\"]\nsource = \"market\"\n\n[commands.\"data-science/report\"]\nsource = \"market\"\n",
@@ -211,10 +203,6 @@ fn every_tool_lists_a_plugin_registry_item_under_its_plugin() {
 
 #[test]
 fn the_separator_each_tool_gets_is_one_its_own_loader_accepts() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_separator_each_tool_gets_is_one_its_own_loader_accepts"
-    ));
     let expected = [
         (HarnessId::Claude, "data-science__eda"),
         (HarnessId::Codex, "data-science__eda"),
@@ -254,10 +242,6 @@ fn the_separator_each_tool_gets_is_one_its_own_loader_accepts() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_names_that_would_share_one_file_install_neither() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_names_that_would_share_one_file_install_neither"
-    ));
     let f = fixture(
         "\"claude\"",
         "[skills.\"data-science/eda\"]\nsource = \"market\"\n\n[skills.\"data-science__eda\"]\nsource = \"plain\"\n",
@@ -286,10 +270,6 @@ fn two_names_that_would_share_one_file_install_neither() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_catalog_that_lies_about_itself_installs_nothing_and_says_why() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_catalog_that_lies_about_itself_installs_nothing_and_says_why"
-    ));
     let f = fixture(
         "\"claude\"",
         "[skills.\"escape/eda\"]\nsource = \"market\"\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\n",
@@ -321,10 +301,6 @@ fn a_catalog_that_lies_about_itself_installs_nothing_and_says_why() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plain_catalog_installs_exactly_where_it_always_did() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_plain_catalog_installs_exactly_where_it_always_did"
-    ));
     let f = fixture(
         "\"claude\", \"codex\", \"opencode\"",
         "[skills.gh]\nsource = \"plain\"\n",
@@ -352,10 +328,6 @@ fn a_plain_catalog_installs_exactly_where_it_always_did() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn adding_everything_a_catalog_offers_writes_names_that_load_again() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::adding_everything_a_catalog_offers_writes_names_that_load_again"
-    ));
     let f = fixture("\"claude\"", "");
     let request = ops::AddRequest {
         source: Some("market".to_owned()),
@@ -382,10 +354,6 @@ fn adding_everything_a_catalog_offers_writes_names_that_load_again() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registry_that_reaches_outside_costs_only_its_own_source() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_registry_that_reaches_outside_costs_only_its_own_source"
-    ));
     let f = fixture(
         "\"claude\"",
         "[skills.\"data-science/eda\"]\nsource = \"market\"\n\n[skills.gh]\nsource = \"plain\"\n",
@@ -411,10 +379,6 @@ fn a_registry_that_reaches_outside_costs_only_its_own_source() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_changed_plugin_refreshes_in_place() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_changed_plugin_refreshes_in_place"
-    ));
     let f = fixture(
         "\"claude\"",
         "[skills.\"data-science/eda\"]\nsource = \"market\"\n",

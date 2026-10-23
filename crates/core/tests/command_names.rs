@@ -104,10 +104,6 @@ fn body_of(dir: &Path) -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_commands_never_fight_over_one_emitted_name() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_commands_never_fight_over_one_emitted_name"
-    ));
     let f = fixture();
     add_skill(&f, "ship", "The real skill.");
     add_command(&f, "ship", "Ship the branch.");
@@ -133,10 +129,6 @@ fn two_commands_never_fight_over_one_emitted_name() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_claiming_a_command_s_name_takes_the_tree_over() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_skill_claiming_a_command_s_name_takes_the_tree_over"
-    ));
     let f = fixture();
     add_command(&f, "ship", "Ship the branch.");
     declare(&f, "[commands.ship]\nsource = \"cat\"\n");
@@ -160,10 +152,6 @@ fn a_skill_claiming_a_command_s_name_takes_the_tree_over() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_command_getting_its_name_back_leaves_no_old_tree() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_command_getting_its_name_back_leaves_no_old_tree"
-    ));
     let f = fixture();
     add_command(&f, "ship", "Ship the branch.");
     add_skill(&f, "ship", "The real skill.");
@@ -193,10 +181,6 @@ fn a_command_getting_its_name_back_leaves_no_old_tree() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_catalog_holds_back_the_names_its_skills_would_install_as() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_catalog_holds_back_the_names_its_skills_would_install_as"
-    ));
     let f = fixture();
     put(
         &f.source.join(".claude-plugin/marketplace.json"),

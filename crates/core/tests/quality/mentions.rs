@@ -126,10 +126,6 @@ const SHELL_ROWS: &[(&str, &[&str], &[&str])] = &[
 
 #[test]
 fn a_shell_line_names_a_switch_or_uses_it() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_shell_line_names_a_switch_or_uses_it"
-    ));
     for (body, flagged, named) in SHELL_ROWS {
         let result = hook(&format!("#!/usr/bin/env bash\n{body}"));
         assert_eq!(
@@ -149,10 +145,6 @@ fn a_shell_line_names_a_switch_or_uses_it() {
 
 #[test]
 fn non_shell_calls_keep_bypass_switches_as_code() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::non_shell_calls_keep_bypass_switches_as_code"
-    ));
     let rows = [
         ("scripts/run.js", "run(\"--no-verify\")\n"),
         (
@@ -176,10 +168,6 @@ fn non_shell_calls_keep_bypass_switches_as_code() {
 /// files are read with the script that calls them.
 #[test]
 fn a_string_handed_to_a_tree_function_is_named_only_when_that_function_only_prints() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_string_handed_to_a_tree_function_is_named_only_when_that_function_only_prints"
-    ));
     let says = "say() {\n  printf '%s\\n' \"$*\" >&2\n}\n";
     let runs = "say() {\n  eval \"$*\"\n}\n";
     let script = "#!/usr/bin/env bash\n. \"$(dirname \"$0\")/lib.sh\"\nsay \"refused: rm -rf /\"\n";
@@ -337,10 +325,6 @@ const LAUNCH_ROWS: &[(&str, bool)] = &[
 /// `tests/lib.sh`, which defines `check` and `run_case`.
 #[test]
 fn a_test_hands_a_switch_to_its_stubs_as_data_and_runs_it_as_code() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_test_hands_a_switch_to_its_stubs_as_data_and_runs_it_as_code"
-    ));
     let helpers = "#!/usr/bin/env bash\ncheck() { [ \"$2\" = \"$3\" ] || exit 1; }\nrun_case() { \"$LAUNCH\" \"$@\"; }\n";
     for (body, runs) in LAUNCH_ROWS {
         let result = skill(&[
@@ -394,10 +378,6 @@ fn a_test_hands_a_switch_to_its_stubs_as_data_and_runs_it_as_code() {
 /// backticks is what a reader will paste.
 #[test]
 fn a_markdown_code_span_names_a_switch_but_not_a_destructive_command() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_markdown_code_span_names_a_switch_but_not_a_destructive_command"
-    ));
     let result = document(
         ItemKind::Agent,
         "Never pass `--no-verify`. Clean up with `rm -rf /` first.\n",
@@ -422,10 +402,6 @@ fn a_markdown_code_span_names_a_switch_but_not_a_destructive_command() {
 /// named.
 #[test]
 fn nesting_past_the_bound_is_judged_not_walked() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::nesting_past_the_bound_is_judged_not_walked"
-    ));
     let deep = format!(
         "#!/usr/bin/env bash\necho {}\"rm -rf /\"{}\n",
         "$(".repeat(100_000),
@@ -456,10 +432,6 @@ fn nesting_past_the_bound_is_judged_not_walked() {
 /// that explains it into a line that runs it is flagged again.
 #[test]
 fn a_guard_whose_operand_moves_out_of_its_comment_is_flagged() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_guard_whose_operand_moves_out_of_its_comment_is_flagged"
-    ));
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../hooks/block-unsafe-rm.sh");
     let shipped =

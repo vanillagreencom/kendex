@@ -295,10 +295,6 @@ const COMPANION: &str = "companion-check";
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_retired_item_is_kept_with_one_notice_until_a_prune"
-    ));
     use Wanted::{Declared, InBundle};
     for (row, kind, name, wanted, carried, requires_companion, migration) in [
         (
@@ -545,10 +541,6 @@ fn a_retired_item_is_kept_with_one_notice_until_a_prune() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_prune_holds_an_edited_retired_copy() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_prune_holds_an_edited_retired_copy"
-    ));
     for (kind, name, edited, migration) in [
         (ItemKind::Skill, "deploy", "SKILL.md", "declare deploy-next"),
         (ItemKind::Hook, "doc-drift-check", "", ""),
@@ -619,10 +611,6 @@ fn recorded_of(f: &Fixture, name: &str) -> Vec<lock::LockEntry> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unknown_hook_name_keeps_the_refusal() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_unknown_hook_name_keeps_the_refusal"
-    ));
     let f = installed(ItemKind::Hook, "other-check");
     fs::remove_file(f.catalog_copy(ItemKind::Hook, "other-check")).unwrap();
 
@@ -727,10 +715,6 @@ fn require(f: &Fixture, name: &str, deps: &str) {
 #[test]
 #[allow(clippy::unwrap_used, clippy::too_many_lines)]
 fn a_hook_requiring_a_retired_hook_is_withheld() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_hook_requiring_a_retired_hook_is_withheld"
-    ));
     type Row<'a> = (
         &'a str,
         Over,
@@ -1021,10 +1005,6 @@ fn a_hook_requiring_a_retired_hook_is_withheld() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_retired_item_never_installed_is_owed_nothing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_retired_item_never_installed_is_owed_nothing"
-    ));
     for kind in [ItemKind::Hook, ItemKind::PiExtension] {
         let f = installed(ItemKind::Hook, "base");
         write_item(&f, kind, "fresh");
@@ -1060,10 +1040,6 @@ fn a_retired_item_never_installed_is_owed_nothing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_declaration_rebound_to_a_catalog_that_retires_it_keeps_the_conflict() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_declaration_rebound_to_a_catalog_that_retires_it_keeps_the_conflict"
-    ));
     for (kind, name) in [
         (ItemKind::Hook, "other-check"),
         (ItemKind::PiExtension, "other-ext"),
@@ -1129,10 +1105,6 @@ fn a_declaration_rebound_to_a_catalog_that_retires_it_keeps_the_conflict() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn refresh_takes_what_a_deleted_declaration_left_except_an_edited_copy() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::refresh_takes_what_a_deleted_declaration_left_except_an_edited_copy"
-    ));
     for (kind, name, edited) in [
         (ItemKind::Hook, "other-check", false),
         (ItemKind::Hook, "other-check", true),
@@ -1274,10 +1246,6 @@ enum ByHand {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_kept_retired_copy_gone_or_edited_is_a_conflict"
-    ));
     for (kind, name, harness) in [
         (ItemKind::Hook, "doc-drift-check", HarnessId::Claude),
         (ItemKind::Skill, "deploy", HarnessId::Claude),
@@ -1342,10 +1310,6 @@ fn a_kept_retired_copy_gone_or_edited_is_a_conflict() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kept_retired_copy_partly_gone_names_the_remedy_a_prune_honours() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_kept_retired_copy_partly_gone_names_the_remedy_a_prune_honours"
-    ));
     let (kind, name, harness) = (ItemKind::Skill, "deploy", HarnessId::Claude);
     for (edited, remedy) in [
         (false, RowRemedy::PruneOrRemove),
@@ -1404,10 +1368,6 @@ fn a_kept_retired_copy_partly_gone_names_the_remedy_a_prune_honours() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_kept_retired_hook_goes_with_a_requirement_withheld_refreshes_later() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_kept_retired_hook_goes_with_a_requirement_withheld_refreshes_later"
-    ));
     let f = installed(ItemKind::Hook, "boss");
     for name in ["judge", "steward"] {
         write_item(&f, ItemKind::Hook, name);
@@ -1460,10 +1420,6 @@ fn a_kept_retired_hook_goes_with_a_requirement_withheld_refreshes_later() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_withholding_is_said_only_where_the_plan_writes_the_hook_nowhere() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_withholding_is_said_only_where_the_plan_writes_the_hook_nowhere"
-    ));
     for (row, line, said) in [
         ("withheld on every tool", "", Withholding::Retired.said()),
         (
@@ -1502,10 +1458,6 @@ fn a_withholding_is_said_only_where_the_plan_writes_the_hook_nowhere() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_either_member_of_a_knot_by_name_takes_both() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::removing_either_member_of_a_knot_by_name_takes_both"
-    ));
     for named in ["judge", "boss"] {
         let f = installed(ItemKind::Hook, "boss");
         write_item(&f, ItemKind::Hook, "judge");

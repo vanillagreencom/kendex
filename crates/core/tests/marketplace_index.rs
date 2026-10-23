@@ -39,10 +39,6 @@ fn summary(root: &Path) -> kendex_core::source::MarketplaceIndex {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_summary_keeps_its_published_field_order() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_summary_keeps_its_published_field_order"
-    ));
     let (_tmp, root) = repo();
     skill(&root, "gh");
     let json = serde_json::to_value(summary(&root)).unwrap();
@@ -79,10 +75,6 @@ fn the_summary_keeps_its_published_field_order() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn marketplace_metadata_is_read_capped_and_control_char_safe() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::marketplace_metadata_is_read_capped_and_control_char_safe"
-    ));
     let (_tmp, root) = repo();
     skill(&root, "gh");
     let long = "d".repeat(600);
@@ -111,10 +103,6 @@ fn marketplace_metadata_is_read_capped_and_control_char_safe() {
 /// repository, metadata absent rather than invented.
 #[test]
 fn a_repo_without_metadata_is_named_by_its_leaf() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_repo_without_metadata_is_named_by_its_leaf"
-    ));
     let (_tmp, root) = repo();
     skill(&root, "gh");
     let summary = summary(&root);
@@ -131,10 +119,6 @@ fn a_repo_without_metadata_is_named_by_its_leaf() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn unreadable_metadata_is_a_finding_not_a_dead_catalog() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::unreadable_metadata_is_a_finding_not_a_dead_catalog"
-    ));
     let (_tmp, root) = repo();
     skill(&root, "gh");
     fs::write(root.join("kendex.toml"), "[marketplace]\nname = 3\n").unwrap();

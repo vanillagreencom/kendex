@@ -126,10 +126,6 @@ pub fn full_catalog(f: &Fixture, name: &str) -> PathBuf {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hook_command_and_mcp_server_round_trip_through_add_and_remove() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::hook_command_and_mcp_server_round_trip_through_add_and_remove"
-    ));
     let f = world();
     let catalog = full_catalog(&f, "catalog");
     manifest_with(&f, &[("cat", &catalog)], "");
@@ -178,10 +174,6 @@ fn hook_command_and_mcp_server_round_trip_through_add_and_remove() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_direct_pi_extension_add_refuses_naming_the_carrier() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_direct_pi_extension_add_refuses_naming_the_carrier"
-    ));
     let f = world();
     let catalog = full_catalog(&f, "catalog");
     manifest_with(&f, &[("cat", &catalog)], "");

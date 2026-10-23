@@ -80,10 +80,6 @@ fn install(f: &Fixture) {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn project_append_keeps_global_instructions_under_merged_settings() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::project_append_keeps_global_instructions_under_merged_settings"
-    ));
     use kendex_core::configedit::{marker_block, upsert_marker_block};
     use kendex_core::pi_ext;
     use serde_json::json;
@@ -180,10 +176,6 @@ fn project_append_keeps_global_instructions_under_merged_settings() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn a_new_project_output_style_keeps_global_instructions() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_new_project_output_style_keeps_global_instructions"
-    ));
     let f = fixture(false, &[HarnessId::Pi]);
     let global = kendex_core::pi_ext::scope_root(&f.env, &Scope::Global).unwrap();
     let source = f.source.join("pi-extensions/global");
@@ -206,10 +198,6 @@ fn a_new_project_output_style_keeps_global_instructions() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn routes_reapply_and_record_only_owned_content() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::routes_reapply_and_record_only_owned_content"
-    ));
     for global in [false, true] {
         let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);
         let (style, settings, append) = paths(&f);
@@ -266,10 +254,6 @@ fn routes_reapply_and_record_only_owned_content() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn existing_selections_and_local_settings_remain_user_owned() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::existing_selections_and_local_settings_remain_user_owned"
-    ));
     for global in [false, true] {
         for owner in ["kendex", "settings", "local"] {
             let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);
@@ -338,10 +322,6 @@ fn existing_selections_and_local_settings_remain_user_owned() {
     reason = "keeps lifecycle and ownership rows in one table"
 )]
 fn selection_acquisition_follows_enable_and_composed_replacement() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::selection_acquisition_follows_enable_and_composed_replacement"
-    ));
     for global in [false, true] {
         for transition in [
             "first-disabled",
@@ -498,10 +478,6 @@ fn selection_acquisition_follows_enable_and_composed_replacement() {
     reason = "keeps edit protection and discard rows in one table"
 )]
 fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::content_and_selection_edits_are_drift_and_are_not_overwritten"
-    ));
     for global in [false, true] {
         for route in [
             "claude-file",
@@ -604,10 +580,6 @@ fn content_and_selection_edits_are_drift_and_are_not_overwritten() {
     reason = "keeps live-ownership transitions in one table"
 )]
 fn explicit_discard_does_not_authorize_unrecorded_blocks_or_non_files() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::explicit_discard_does_not_authorize_unrecorded_blocks_or_non_files"
-    ));
     for global in [false, true] {
         for transition in [
             "first-enabled",
@@ -749,10 +721,6 @@ fn explicit_discard_does_not_authorize_unrecorded_blocks_or_non_files() {
     reason = "keeps cleanup and edit-hold rows in one table"
 )]
 fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::orphan_cleanup_removes_owned_content_and_holds_each_edited_route"
-    ));
     for global in [false, true] {
         for edit in [
             "clean",
@@ -865,10 +833,6 @@ fn orphan_cleanup_removes_owned_content_and_holds_each_edited_route() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn missing_content_refreshes_and_upstream_changes_update_each_route() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::missing_content_refreshes_and_upstream_changes_update_each_route"
-    ));
     for global in [false, true] {
         let f = fixture(global, &[HarnessId::Claude, HarnessId::Pi]);
         install(&f);
@@ -901,10 +865,6 @@ fn missing_content_refreshes_and_upstream_changes_update_each_route() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn two_styles_refuse_before_any_scope_write() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::two_styles_refuse_before_any_scope_write"
-    ));
     let f = fixture(false, &[HarnessId::Claude]);
     let path = manifest::manifest_path(&f.env, &f.scope);
     let original = fs::read_to_string(&path).unwrap();
@@ -933,10 +893,6 @@ fn two_styles_refuse_before_any_scope_write() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture inspection")]
 fn unsupported_targets_are_reported_without_instruction_files() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::unsupported_targets_are_reported_without_instruction_files"
-    ));
     let f = fixture(false, &HarnessId::ALL);
     install(&f);
     let report = engine::audit(&f.env, &f.scope).unwrap();
@@ -964,10 +920,6 @@ fn unsupported_targets_are_reported_without_instruction_files() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn linked_directories_land_once_and_linked_settings_refuse() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::linked_directories_land_once_and_linked_settings_refuse"
-    ));
     use std::os::unix::fs::symlink;
     let f = fixture(false, &[HarnessId::Claude, HarnessId::Pi]);
     let (_, settings, _) = paths(&f);
@@ -1045,10 +997,6 @@ fn linked_directories_land_once_and_linked_settings_refuse() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup")]
 fn a_link_leaving_the_project_refuses_the_style_write() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_link_leaving_the_project_refuses_the_style_write"
-    ));
     let f = fixture(false, &[HarnessId::Pi]);
     let outside = f.env.home.join("outside-pi");
     fs::create_dir_all(&outside).unwrap();
@@ -1065,10 +1013,6 @@ fn a_link_leaving_the_project_refuses_the_style_write() {
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn a_same_byte_settings_link_arriving_after_preview_is_refused() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_same_byte_settings_link_arriving_after_preview_is_refused"
-    ));
     let f = fixture(false, &[HarnessId::Claude]);
     let (_, settings, _) = paths(&f);
     fs::write(&settings, "{\"model\":\"opus\"}\n").unwrap();

@@ -20,10 +20,6 @@ use super::{REPO, World, commit, messages, notes, world, write_manifest};
     reason = "one revision planning table: declaration and bundle owners, repeated release, written pins, and unchanged followers"
 )]
 fn locked_apply_releases_disagreeing_recorded_revisions_but_keeps_written_pins() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::locked_apply_releases_disagreeing_recorded_revisions_but_keeps_written_pins"
-    ));
     use kendex_core::engine::{PlanOptions, plan_apply};
     use kendex_core::lock::{entry_key, load, lock_path, save};
     use kendex_core::model::{HarnessId, ItemKind};
@@ -188,10 +184,6 @@ fn armed(w: &World, name: &str) -> bool {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn wrappers_pinning_two_revisions_of_their_judge_are_withheld() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::wrappers_pinning_two_revisions_of_their_judge_are_withheld"
-    ));
     let w = world();
     // Executable kinds resolve only in a catalog that declares kendex's
     // layout.
@@ -325,10 +317,6 @@ fn conflict_judge_revision(w: &World, hooks: &[&str], first: &str, judge_require
 #[test]
 #[allow(clippy::unwrap_used)]
 fn recorded_wrappers_stay_armed_with_their_revision_conflicted_judge() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::recorded_wrappers_stay_armed_with_their_revision_conflicted_judge"
-    ));
     let all = ["judge", "deliver", "halt", "outer"];
     for (initial, removed, held, absent) in [
         (all.as_slice(), None, all.as_slice(), &[][..]),

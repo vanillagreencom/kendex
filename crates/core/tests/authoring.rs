@@ -52,10 +52,6 @@ fn tree(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn use_existing_registers_with_zero_writes() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::use_existing_registers_with_zero_writes"
-    ));
     let (tmp, env) = fake();
     let repo = tmp.path().join("their-repo");
     skills_repo(&repo);
@@ -75,10 +71,6 @@ fn use_existing_registers_with_zero_writes() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_empty_folder_is_refused_with_the_next_step_named() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::an_empty_folder_is_refused_with_the_next_step_named"
-    ));
     let (tmp, env) = fake();
     let empty = tmp.path().join("empty");
     fs::create_dir_all(&empty).unwrap();
@@ -90,10 +82,6 @@ fn an_empty_folder_is_refused_with_the_next_step_named() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn registering_twice_names_the_existing_row() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::registering_twice_names_the_existing_row"
-    ));
     let (tmp, env) = fake();
     let repo = tmp.path().join("repo");
     skills_repo(&repo);
@@ -120,10 +108,6 @@ fn request(dir: &Path, license: License) -> CreateRequest {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_scaffold_is_byte_stable_for_every_licence() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_scaffold_is_byte_stable_for_every_licence"
-    ));
     for license in [License::Mit, License::Apache2, License::NoneYet] {
         let first = author::plan(&request(Path::new("/a"), license)).unwrap();
         let second = author::plan(&request(Path::new("/b"), license)).unwrap();
@@ -149,10 +133,6 @@ fn the_scaffold_is_byte_stable_for_every_licence() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_scaffold_writes_the_licence_evidence() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_scaffold_writes_the_licence_evidence"
-    ));
     let files = author::plan(&request(Path::new("/x"), License::Mit)).unwrap();
     let license = &files.iter().find(|(rel, _)| rel == "LICENSE").unwrap().1;
     assert!(license.contains("Copyright (c) Jane Doe"));
@@ -173,10 +153,6 @@ fn the_scaffold_writes_the_licence_evidence() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_scaffolded_bundle_example_is_a_set_the_reader_accepts"
-    ));
     let files = author::plan(&request(Path::new("/x"), License::Mit)).unwrap();
     let manifest = &files
         .iter()
@@ -246,10 +222,6 @@ fn the_scaffolded_bundle_example_is_a_set_the_reader_accepts() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn create_writes_the_plan_registers_and_checks_clean() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::create_writes_the_plan_registers_and_checks_clean"
-    ));
     let (tmp, env) = fake();
     let dir = tmp.path().join("made");
     let row = author::create(&env, &request(&dir, License::Mit)).unwrap();
@@ -287,10 +259,6 @@ fn create_writes_the_plan_registers_and_checks_clean() {
     reason = "one table: six destinations refused by one create call, each row a layout of its own"
 )]
 fn a_request_create_refuses_writes_nothing_and_names_why() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_request_create_refuses_writes_nothing_and_names_why"
-    ));
     type Plant = fn(&Path) -> (CreateRequest, Vec<String>);
     type Left = fn(&Path);
     #[cfg_attr(not(unix), allow(unused_mut))]
@@ -437,10 +405,6 @@ fn dangling(root: &Path, spelling: &str) -> (CreateRequest, Vec<String>) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_parent_that_cannot_be_reached_is_not_reported_as_missing() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_parent_that_cannot_be_reached_is_not_reported_as_missing"
-    ));
     use std::os::unix::fs::PermissionsExt as _;
     let (tmp, env) = fake();
     let locked = tmp.path().join("locked");
@@ -479,10 +443,6 @@ fn a_parent_that_cannot_be_reached_is_not_reported_as_missing() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_registry_refusal_after_the_build_removes_only_the_folder_it_made() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_registry_refusal_after_the_build_removes_only_the_folder_it_made"
-    ));
     use std::os::unix::fs::PermissionsExt as _;
     let (tmp, env) = fake();
     let work = tmp.path().join("work");
@@ -566,10 +526,6 @@ impl kendex_core::registry::Fetch for NoNetwork {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_preflight_stays_local_until_a_remote_exists() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_preflight_stays_local_until_a_remote_exists"
-    ));
     let (tmp, env) = fake();
     let dir = tmp.path().join("made");
     author::create(&env, &request(&dir, License::Mit)).unwrap();
@@ -630,10 +586,6 @@ fn git(dir: &Path, args: &[&str]) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn only_a_github_url_is_a_candidate_to_submit() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::only_a_github_url_is_a_candidate_to_submit"
-    ));
     let (tmp, _env) = fake();
     let absolute = tmp.path().join("bare.git").display().to_string();
     for (remote, candidate) in [
@@ -678,10 +630,6 @@ fn only_a_github_url_is_a_candidate_to_submit() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_scaffold_matches_its_checked_in_golden_digest() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::the_scaffold_matches_its_checked_in_golden_digest"
-    ));
     assert_eq!(kendex_core::author::scaffold::SCAFFOLD_VERSION, 2);
     for (license, expected) in [
         (

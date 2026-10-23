@@ -244,11 +244,9 @@ macro_rules! rows {
         $(mod $id {
             use super::*;
             #[test]
-            fn records_whole_files() {
-                let _diagnostic = crate::diagnostic::Span::begin(concat!(module_path!(), "::records_whole_files")); records(ItemKind::$kind, HarnessId::$harness, $path); }
+            fn records_whole_files() { records(ItemKind::$kind, HarnessId::$harness, $path); }
             #[test]
-            fn loads_and_plans_without_emitted() {
-                let _diagnostic = crate::diagnostic::Span::begin(concat!(module_path!(), "::loads_and_plans_without_emitted")); legacy(ItemKind::$kind, HarnessId::$harness); }
+            fn loads_and_plans_without_emitted() { legacy(ItemKind::$kind, HarnessId::$harness); }
         })+
     };
 }
@@ -350,7 +348,7 @@ fn registration_only(kind: ItemKind, harness: HarnessId) {
 macro_rules! registrations {
     ($(($id:ident, $kind:ident, $harness:ident)),+ $(,)?) => {
         $(#[test]
-        fn $id() { let _diagnostic = crate::diagnostic::Span::begin(concat!(module_path!(), "::", stringify!($id))); registration_only(ItemKind::$kind, HarnessId::$harness); })+
+        fn $id() { registration_only(ItemKind::$kind, HarnessId::$harness); })+
     };
 }
 

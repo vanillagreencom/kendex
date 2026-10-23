@@ -132,10 +132,6 @@ fn assert_assignment_report(f: &Fixture, unresolved: bool, case: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply"
-    ));
     let cases = [
         ("", "[agent-skills]\nscout = [\"recon\"]\n", vec!["recon"]),
         (
@@ -189,10 +185,6 @@ fn agent_assignments_warn_once_per_missing_skill_on_add_and_each_apply() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::explicit_bundle_and_dependency_skill_declarations_satisfy_agent_assignments"
-    ));
     let cases = [
         ("[skills.recon]\nsource = \"cat\"\n", "", true, false),
         (
@@ -304,10 +296,6 @@ fn prepare_assignment_record_case(f: &Fixture, case: &str) -> (PathBuf, PathBuf)
 #[test]
 #[allow(clippy::unwrap_used)]
 fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::inherited_assignments_require_skills_on_every_consuming_agent_harness"
-    ));
     let scout = "[agents.scout]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
     let reviewer = "[agents.reviewer-scout]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
     let claude_reviewer = "[agents.reviewer-scout]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
@@ -404,10 +392,6 @@ fn inherited_assignments_require_skills_on_every_consuming_agent_harness() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_assignments_require_selected_records_on_each_agent_harness() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::check_assignments_require_selected_records_on_each_agent_harness"
-    ));
     for (case, unresolved, unknown) in [
         ("cross-catalog", false, false),
         ("disabled skill", true, false),
@@ -455,10 +439,6 @@ fn check_assignments_require_selected_records_on_each_agent_harness() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_recorded_agent_fork_still_refuses_an_unresolved_assignment() {
-    let _diagnostic = crate::diagnostic::Span::begin(concat!(
-        module_path!(),
-        "::a_recorded_agent_fork_still_refuses_an_unresolved_assignment"
-    ));
     let f = fixture(
         "[agents.scout]\nsource = \"local\"\n[agent-skills]\nscout = [\"ghost\"]\n[forks.agent.scout]\nsource = \"cat\"\nforked-at = \"2026-10-11T00:00:00Z\"\n",
         "",
