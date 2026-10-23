@@ -221,9 +221,11 @@ fi
 # Named-method rows use the Jarvis config command and lane-host-ssh settings
 # lookups. Mapping methods, line-end aliases and executable xargs input cover
 # the corresponding whole-object and downstream-receiver restrictions.
+# The reported-public-selection-log row is attributed KEN-4584 command text;
+# the hook classifies it without executing the command or opening its log.
 environment_rows() {
   local rows expected command_json label world payload payload_cwd status output
-  local want first_key invalid shape_kind diagnostics_safe before=$((passed + failed))
+  local want first_key invalid shape_kind diagnostics_safe refusal before=$((passed + failed))
   local selected_rows=("$@") selected_seen=()
   mkdir -p "$scratch/policy-tools"
   for tool in jq cat; do ln -sf "$(command -v "$tool")" "$scratch/policy-tools/$tool"; done
@@ -231,9 +233,10 @@ environment_rows() {
     .[] | select(($ARGS.positional | length) == 0 or
       (.[2] as $label | $ARGS.positional | index($label))) |
     .[1] |= (if type == "array" then map(gsub("@PRIVATE_HOME@"; $fixture_home)) else gsub("@PRIVATE_HOME@"; $fixture_home) end) |
-    [.[0], (.[1] | tojson), .[2], (.[3] // "project")] | @tsv
+    [.[0], (.[1] | tojson), .[2], (.[3] // "project"), (.[4] // "environment-dump")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
+[2,"vgs_selected_rows=\"$(sed -n 's|^scripts/qml-smoke.sh --rows ||p' tmp/evidence-VGS-1998/final/selection.log)\"; [[ -n $vgs_selected_rows && $vgs_selected_rows != *$'\\n'* ]] || exit 2; bash /home/method/dev/vgshell/tmp/nested-slot.sh scripts/qml-smoke.sh --keep --rows \"$vgs_selected_rows\" > tmp/evidence-VGS-1998/final/qml.log 2>&1; vgs_check_status=$?; printf '%s\\n' \"$vgs_check_status\" > tmp/evidence-VGS-1998/final/qml.exit; exit \"$vgs_check_status\"","reported-public-selection-log","project","unsupported-ansi-escape"]
 [2,"FABRICATED_VALUE=fixture-private-value-4519 cat ~/.fleet/env","private-tilde"]
 [2,"cat @PRIVATE_HOME@/.fleet/env","private-inherited-home"]
 [2,"cat $HOME/.fleet/env","private-textual-home"]
@@ -957,11 +960,11 @@ environment_rows() {
 [2,"time $'\\x65nv'","ansi-timed-escaped-head"]
 [2,"if true; then $'\\x65nv'; fi","ansi-conditional-escaped-head"]
 [2,"while true; do $'\\x65nv'; done","ansi-loop-escaped-head"]
-[2,"exec $'\\x65nv'","ansi-exec-escaped-head"]
-[2,"builtin $'\\x65nv'","ansi-builtin-escaped-head"]
-[2,"$'exec' $'\\x65nv'","ansi-dollar-exec-escaped-head"]
-[2,"command exec $'\\x65nv'","ansi-command-exec-escaped-head"]
-[2,"{ printf '%s' $'\\x65nv'; }","ansi-escaped-data-in-opaque-suffix"]
+[2,"exec $'\\x65nv'","ansi-exec-escaped-head","project","unsupported-ansi-escape"]
+[2,"builtin $'\\x65nv'","ansi-builtin-escaped-head","project","unsupported-ansi-escape"]
+[2,"$'exec' $'\\x65nv'","ansi-dollar-exec-escaped-head","project","unsupported-ansi-escape"]
+[2,"command exec $'\\x65nv'","ansi-command-exec-escaped-head","project","unsupported-ansi-escape"]
+[2,"{ printf '%s' $'\\x65nv'; }","ansi-escaped-data-in-opaque-suffix","project","unsupported-ansi-escape"]
 [0,"$'printenv' NAME","ansi-named-read"]
 [0,"$\"printenv\" NAME","locale-named-read"]
 [2,"printenv $'NAME'","ansi-named-argument-stays-unproved"]
@@ -1329,7 +1332,7 @@ environment_rows() {
 [0,"node <<'JS'; unknown <<'DATA'\nconst env = new Set();\nJS\nordinary\nDATA","receiver-independent-unknown-body"]
 ENVIRONMENT_ROWS
   ) || exit 1
-  while IFS=$'\t' read -r expected command_json label world; do
+  while IFS=$'\t' read -r expected command_json label world refusal; do
     [ -n "$expected" ] || continue
     printf -v command_json '%b' "$command_json"
     row_selected "$label" || continue
@@ -1365,14 +1368,14 @@ ENVIRONMENT_ROWS
     first_key=$(first_line "$scratch/stderr")
     diagnostics_safe=1
     if grep -F -- fixture-private-value-4519 "$scratch/stderr" >/dev/null; then diagnostics_safe=""; fi
-    want=-; [ "$expected" -ne 2 ] || want='command-safety: refused=environment-dump'
+    want=-; [ "$expected" -ne 2 ] || want="command-safety: refused=$refusal"
     if [ "$status" -eq "$expected" ] && [ "$first_key" = "$want" ] && [ -z "$output" ] && [ -n "$diagnostics_safe" ]; then
       printf 'PASS %s\n' "$label"; passed=$((passed + 1))
     else
       printf 'FAIL %s: exit=%s expected=%s first=%s expected-first=%s stdout=[%s]\n' "$label" "$status" "$expected" "$first_key" "$want" "$output"
       failed=$((failed + 1))
     fi
-    if [ "$expected" -eq 2 ]; then
+    if [ "$expected" -eq 2 ] && [ "$refusal" = environment-dump ]; then
       if grep -F -- "systemctl --user show-environment | grep '^NAME='" "$scratch/stderr" >/dev/null; then
         passed=$((passed + 1))
       else
@@ -1500,7 +1503,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "no-dollar-opener" { swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)") }
       defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
       defect == "env-literal-operands" { swap("case \"${arg_kinds[$pos]}\" in dollar-literal | ansi-escaped) break ;; esac", "[ \"${arg_kinds[$pos]}\" = literal ] || break") }
-      defect == "opaque-escaped-pass" { swap("[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || return 0", "[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || :") }
+      defect == "opaque-escaped-pass" { swap("[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || { environment_refusal=unsupported-ansi-escape; return 0; }", "[ \"${stage_kinds[$candidate]}\" != ansi-escaped ] || :") }
+      defect == "ansi-refusal-key" { swap("environment_refusal=unsupported-ansi-escape", "environment_refusal=environment-dump") }
       defect == "systemctl-literal-argument" { swap("[ \"${args[$j]}\" != show-environment ] || mode=dump-lines", "[ \"${arg_kinds[$j]}\" != literal ] || [ \"${args[$j]}\" != show-environment ] || mode=dump-lines") }
       defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
       defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || { mode=dump-unknown; return; }", "[ -z \"$input_escaped\" ] || :") }
@@ -1534,6 +1538,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
     fi
   done <<'ENVIRONMENT_CONTROLS'
+ansi-refusal-key|FAIL environment: reported-public-selection-log: exit=2 expected=2 first=command-safety: refused=environment-dump expected-first=command-safety: refused=unsupported-ansi-escape
 private-path|FAIL environment: private-tilde: exit=0 expected=2
 receiver-named-method|FAIL environment: receiver-jarvis-config-named-method: exit=2 expected=0
 receiver-named-method|FAIL environment: receiver-jarvis-heredoc-named-method: exit=2 expected=0

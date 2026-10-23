@@ -1154,7 +1154,9 @@ environment_dump() { # command kind; arguments are already decoded data
          [ "${stage_kinds[$pos]:-}" = literal ] && [[ ${stage_args[$pos]:-} != [-+]* ]] &&
          [ "${stage_roles[$pos]:-}" = argument ]; then script_pos=$pos; fi
       for ((candidate=0; candidate<${#stage_args[@]}; candidate++)); do
-        [ "${stage_kinds[$candidate]}" != ansi-escaped ] || return 0
+        # ANSI-C escapes have no decoder here. This refusal establishes
+        # unsupported syntax, not a recognized environment producer.
+        [ "${stage_kinds[$candidate]}" != ansi-escaped ] || { environment_refusal=unsupported-ansi-escape; return 0; }
         [ "$candidate" -ge "$main_start" ] || continue
         value=${stage_args[$candidate]}
         case "${stage_roles[$candidate]}" in
@@ -1302,6 +1304,10 @@ refuse() { # KEY VALUE [CAUSE]
         echo "for named non-secret settings, use orch-env NAME DEFAULT; do not read or filter the private file"
         echo "for actual environment producers, read named variables, for example: systemctl --user show-environment | grep '^NAME='"
         echo "nested or unsupported environment routing can refuse conservatively; use the direct filtered form for environment producers" ;;
+      refused=unsupported-ansi-escape)
+        echo "the command contains an ANSI-C escape in shell syntax this hook cannot classify"
+        echo "submit the escaped value as a literal argument or split the command so the escaped expression is outside the unsupported compound syntax"
+        echo "this refusal does not establish a private-file or whole-environment read" ;;
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
         echo "run it with no memory cap, or with a cap in gigabytes; text that only mentions such a cap goes in a file, because matching reads the command text"
@@ -1391,8 +1397,9 @@ fields="$(jq -er '
     command_argv[argument_index]=$argument
   done
 } <<<"$fields"$'\t'
+environment_refusal=environment-dump
 if environment_dump "$command_kind"; then
-  refuse refused environment-dump
+  refuse refused "$environment_refusal"
 fi
 [ "$cwd_state" != invalid-cwd ] || refuse payload invalid-cwd
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
