@@ -107,7 +107,7 @@ export function endToolUseTurn(c: QueryContext): void {
 	// must never be dispatched again: a lagging stream replays the same tool_use
 	// into the NEXT turn, whose per-message dedup cannot see it.
 	for (const block of c.turnOutput.content as Array<{ type?: string; id?: unknown }>) {
-		if (block?.type === "toolCall" && typeof block.id === "string") c.forwardedToolCallIds.add(block.id);
+		if (block?.type === "toolCall" && typeof block.id === "string") c.markToolCallForwarded(block.id);
 	}
 	c.turnOutput.stopReason = "toolUse";
 	c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });

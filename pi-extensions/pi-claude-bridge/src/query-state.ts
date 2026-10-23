@@ -113,6 +113,7 @@ export function toolCallDrainCause(flags: { wasAborted?: boolean; signalAborted?
  *  `cause`, clears the map, and returns how many were drained. Scoped to the one
  *  context it is given — never touches a sibling or parent query's handlers. */
 export function drainPendingToolCalls(queryCtx: QueryContext, cause: ToolCallDrainCause): number {
+	queryCtx.clearPiToolResultObligations();
 	const drained = queryCtx.pendingToolCalls.size;
 	if (drained === 0) return 0;
 	const result = interruptedToolCallResult(cause);
@@ -324,6 +325,11 @@ export class QueryContext {
 	 *  waiting at the stranded-handler drains. Query-scoped, never reset per
 	 *  message. */
 	forwardedToolCallIds = new Set<string>();
+	/** Pi owes a result from forwarding until delivery, even before the SDK's
+	 *  MCP handler registers (for example while a PreToolUse hook waits).
+	 *  Query-scoped across child message boundaries, bounded by forwarded calls,
+	 *  and released by result delivery or terminal drain. */
+	private pendingPiToolResultIds = new Set<string>();
 	/** Ids whose waiting handler was resolved with strandedToolCallResult. The
 	 *  model has been told these calls failed; forwarding one later would execute
 	 *  it behind the model's back, so every forward path skips them. */
@@ -671,8 +677,24 @@ export class QueryContext {
 		return stale;
 	}
 
+	markToolCallForwarded(id: string): void {
+		if (this.forwardedToolCallIds.has(id)) return;
+		this.forwardedToolCallIds.add(id);
+		this.pendingPiToolResultIds.add(id);
+	}
+
+	get awaitingPiToolResults(): boolean {
+		return this.pendingPiToolResultIds.size > 0;
+	}
+
+	clearPiToolResultObligations(): void {
+		this.pendingPiToolResultIds.clear();
+	}
+
 	markToolResultDelivered(id: string | undefined): void {
-		if (id) this.deliveredToolResultIds.add(id);
+		if (!id) return;
+		this.deliveredToolResultIds.add(id);
+		this.pendingPiToolResultIds.delete(id);
 	}
 
 	markToolResultResolved(id: string | undefined): void {

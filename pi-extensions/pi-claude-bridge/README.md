@@ -37,6 +37,7 @@ Fable 5.1 requires [Claude Code 2.1.255 or later](https://code.claude.com/docs/e
 ## Memory use
 
 - The tool names, full tool arguments and parked tool results of one Claude Code query are released when that query ends, so an idle session holds none of them.
+- The bridge tracks at most one unanswered result per forwarded tool call. It releases that tracking when the result arrives or the query ends.
 
 ## Prompt context
 

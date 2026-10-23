@@ -713,7 +713,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		// including steer-only callbacks and split result batches.
 		const carriesForwardedCall = context.messages.some((message) => message.role === "assistant"
 			&& message.content.some((block) => block.type === "toolCall" && queryCtx.forwardedToolCallIds.has(block.id)));
-		if (!queryCtx.piHistoryReplaced && queryCtx.pendingToolCalls.size > 0 && allResults.length === 0 && !carriesForwardedCall) {
+		if (!queryCtx.piHistoryReplaced && queryCtx.awaitingPiToolResults && allResults.length === 0 && !carriesForwardedCall) {
 			const error = failedTurnOutput(model, "error", "Claude bridge is waiting for a tool in this conversation. A nested model request cannot run in the same conversation until that tool returns. Retry after the tool finishes, or use another provider or a separate sessionId for the nested request.");
 			queueMicrotask(() => {
 				stream.push({ type: "error", reason: "error", error });
@@ -968,6 +968,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// would make it look like it ran child-side calls it never ran.
 	ctx().childSideCalls.clear();
 	ctx().forwardedToolCallIds.clear();
+	ctx().clearPiToolResultObligations();
 	ctx().deadToolCallIds.clear();
 	ctx().callbackGeneration = 0;
 	ctx().deferredUserMessages = [];

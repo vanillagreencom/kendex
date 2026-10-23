@@ -32728,6 +32728,7 @@ function toolCallDrainCause(flags) {
   return "query-end";
 }
 function drainPendingToolCalls(queryCtx, cause) {
+  queryCtx.clearPiToolResultObligations();
   const drained = queryCtx.pendingToolCalls.size;
   if (drained === 0) return 0;
   const result = interruptedToolCallResult(cause);
@@ -32853,6 +32854,11 @@ var QueryContext = class {
    *  waiting at the stranded-handler drains. Query-scoped, never reset per
    *  message. */
   forwardedToolCallIds = /* @__PURE__ */ new Set();
+  /** Pi owes a result from forwarding until delivery, even before the SDK's
+   *  MCP handler registers (for example while a PreToolUse hook waits).
+   *  Query-scoped across child message boundaries, bounded by forwarded calls,
+   *  and released by result delivery or terminal drain. */
+  pendingPiToolResultIds = /* @__PURE__ */ new Set();
   /** Ids whose waiting handler was resolved with strandedToolCallResult. The
    *  model has been told these calls failed; forwarding one later would execute
    *  it behind the model's back, so every forward path skips them. */
@@ -33139,8 +33145,21 @@ var QueryContext = class {
     this.pendingResults.clear();
     return stale;
   }
+  markToolCallForwarded(id2) {
+    if (this.forwardedToolCallIds.has(id2)) return;
+    this.forwardedToolCallIds.add(id2);
+    this.pendingPiToolResultIds.add(id2);
+  }
+  get awaitingPiToolResults() {
+    return this.pendingPiToolResultIds.size > 0;
+  }
+  clearPiToolResultObligations() {
+    this.pendingPiToolResultIds.clear();
+  }
   markToolResultDelivered(id2) {
-    if (id2) this.deliveredToolResultIds.add(id2);
+    if (!id2) return;
+    this.deliveredToolResultIds.add(id2);
+    this.pendingPiToolResultIds.delete(id2);
   }
   markToolResultResolved(id2) {
     if (id2) this.resolvedToolResultIds.add(id2);
@@ -68917,7 +68936,7 @@ function endToolUseTurn(c) {
     c.turnOutput.content = c.turnOutput.content.filter((b2) => !(b2?.type === "toolCall" && "partialJson" in b2));
   }
   for (const block of c.turnOutput.content) {
-    if (block?.type === "toolCall" && typeof block.id === "string") c.forwardedToolCallIds.add(block.id);
+    if (block?.type === "toolCall" && typeof block.id === "string") c.markToolCallForwarded(block.id);
   }
   c.turnOutput.stopReason = "toolUse";
   c.currentPiStream.push({ type: "done", reason: "toolUse", message: c.turnOutput });
@@ -70285,7 +70304,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     const queryCtx = ctx();
     const allResults = extractAllToolResults2(context);
     const carriesForwardedCall = context.messages.some((message) => message.role === "assistant" && message.content.some((block) => block.type === "toolCall" && queryCtx.forwardedToolCallIds.has(block.id)));
-    if (!queryCtx.piHistoryReplaced && queryCtx.pendingToolCalls.size > 0 && allResults.length === 0 && !carriesForwardedCall) {
+    if (!queryCtx.piHistoryReplaced && queryCtx.awaitingPiToolResults && allResults.length === 0 && !carriesForwardedCall) {
       const error51 = failedTurnOutput(model, "error", "Claude bridge is waiting for a tool in this conversation. A nested model request cannot run in the same conversation until that tool returns. Retry after the tool finishes, or use another provider or a separate sessionId for the nested request.");
       queueMicrotask(() => {
         stream.push({ type: "error", reason: "error", error: error51 });
@@ -70441,6 +70460,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   ctx().reapedResults.clear();
   ctx().childSideCalls.clear();
   ctx().forwardedToolCallIds.clear();
+  ctx().clearPiToolResultObligations();
   ctx().deadToolCallIds.clear();
   ctx().callbackGeneration = 0;
   ctx().deferredUserMessages = [];
