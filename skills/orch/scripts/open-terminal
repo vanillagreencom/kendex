@@ -44,6 +44,7 @@ parse_argv() {
   HARNESS=""
   CMD_TEMPLATE=""
   BRIEF_FILE=""
+  OBLIGATION_FILE=""
   HOST=""
   LANE=""
   LANE_MAX_PCT=""
@@ -73,6 +74,8 @@ parse_argv() {
       --cmd=*) CMD_TEMPLATE="${1#--cmd=}"; need_val --cmd "$CMD_TEMPLATE"; shift ;;
       --brief-file) need_val "$@"; BRIEF_FILE="$2"; shift 2 ;;
       --brief-file=*) BRIEF_FILE="${1#--brief-file=}"; need_val --brief-file "$BRIEF_FILE"; shift ;;
+      --obligation-file) need_val "$@"; OBLIGATION_FILE="$2"; shift 2 ;;
+      --obligation-file=*) OBLIGATION_FILE="${1#--obligation-file=}"; need_val --obligation-file "$OBLIGATION_FILE"; shift ;;
       --host) need_val "$@"; HOST="$2"; shift 2 ;;
       --host=*) HOST="${1#--host=}"; need_val --host "$HOST"; shift ;;
       --lane) need_val "$@"; LANE="$2"; shift 2 ;;
@@ -220,6 +223,20 @@ FLEET=false
 WORKFLOW_STATE_ARGS=()
 [[ -z "$STATE_DIR" ]] || { FLEET=true; WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR"); }
 [[ ${#ITEMS[@]} -gt 0 ]] || { ot_message items-missing "count=0" >&2; exit 1; }
+OBLIGATION=null
+if [[ -n "$OBLIGATION_FILE" ]]; then
+  [[ "$FLEET" == true ]] || { ot_message obligation-unanchored "option=--obligation-file" >&2; exit 1; }
+  [[ -f "$OBLIGATION_FILE" && -r "$OBLIGATION_FILE" ]] || { ot_message obligation-file-unreadable "path=$OBLIGATION_FILE" >&2; exit 1; }
+  # The overseer's accepted launch/transfer mapping is the only producer.
+  # Current tracker parents cannot reconstruct an original mapping.
+  OBLIGATION="$(jq -cs 'if length == 1 and (.[0] | . == null or
+      (type == "object" and keys == ["item", "parent_item", "parent_repo", "repo"]
+       and (.repo | type == "string") and (.item | type == "string")
+       and ((.parent_repo == null and .parent_item == null)
+         or ((.parent_repo | type == "string") and (.parent_item | type == "string")))))
+    then .[0] else error("obligation shape") end' -- "$OBLIGATION_FILE" 2>&1)" \
+    || { ot_message obligation-file-invalid "path=$OBLIGATION_FILE" >&2; printf '%s\n' "$OBLIGATION" >&2; exit 1; }
+fi
 if [[ "$FLEET" != true ]]; then
   [[ "$WAIT_SLOT" != true ]] || { ot_message cap-option-unanchored "option=--wait-slot" >&2; exit 1; }
   [[ "$OVER_CAP" != true ]] || { ot_message cap-option-unanchored "option=--over-cap" >&2; exit 1; }
@@ -1579,10 +1596,10 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     --argjson pick "${LANE_PICK_RECORD:-null}" --argjson cloud_repo_access "${LAUNCH_REPO_ACCESS:-null}" \
-    --argjson touched "${LAUNCH_TOUCHED:-null}" --argjson in_scope "${IN_SCOPE:-[]}" \
+    --argjson touched "${LAUNCH_TOUCHED:-null}" --argjson in_scope "${IN_SCOPE:-[]}" --argjson obligation "${OBLIGATION:-null}" \
     --arg recovery_cwd "$CLAIM_ROOT" --arg recovery_flags "$LAUNCH_FLAGS" --arg recovery_session "$LAUNCH_SESSION" --argjson recovery_refresh "$LANE_REFRESH" --arg custom "$CMD_TEMPLATE" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
-     | map_values(if . == "" then null else . end) + {allow_all: $allow_all, touched: $touched, in_scope: $in_scope} + $tier_record
+     | map_values(if . == "" then null else . end) + {allow_all: $allow_all, touched: $touched, in_scope: $in_scope, obligation: $obligation} + $tier_record
        + {recovery: (if $custom != "" then null else {cwd: $recovery_cwd, flags: $recovery_flags, session: $recovery_session, refresh: $recovery_refresh} end)}
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $live_display then {live_display: true} else {} end)
@@ -1620,14 +1637,19 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
     "$UNPARK_JQ"'(.lanes // []) as $l
-     | ($rec | if $mode == "wake" then {session_id, status, wake} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope)
+     | ([$l[] | select(.item == $rec.item) | .obligation] | first) as $known
+     | if $known != null and $rec.obligation != null and $known != $rec.obligation
+       then {state: ., report: "obligation-conflict"}
+       else ($rec + {obligation: ($known // $rec.obligation)}) as $rec
+     | ($rec | if $mode == "wake" then {session_id, status, wake, obligation} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope)
        | if $rec.over_cap == null then . else . + {over_cap: $rec.over_cap} end
        | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id, .recovery) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
        then {state: (.lanes = ($l | map(if .item == $rec.item then (if $mode == "wake" then . else del(.prepare, .live_display) | unpark($rec.launched_at)
          | if $rec.status == "running" or $rec.prepare.step == "selection" then del(.preference_entry, .pick) | del(.cloud_repo_access) else . end end) + $patch else . end))), report: "rewritten"}
        elif $mode == "wake" then {state: ., report: "unrecorded"}
-       else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
+       else {state: (.lanes = $l + [$rec]), report: "appended"} end end' --argjson rec "$rec" --arg mode "$mode")" || return 1
+  [[ "$report" != '"obligation-conflict"' ]] || { ot_message obligation-conflict "item=$item" >&2; return 1; }
   [[ "$report" != '"unrecorded"' ]] || return 2
 }
 

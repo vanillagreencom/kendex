@@ -206,6 +206,8 @@ Build the terminal command under step 4 and [lane-directive.md § Lane preferenc
 
 Deliver its brief under [§ Brief file](../references/lane-directive.md#brief-file).
 
+Carry the accepted original mapping under [Obligation lineage](../references/lane-directive.md#obligation-lineage) on every launch surface.
+
 #### Source-only phase brief
 
 For a source-only design, investigation or opinion, replace the implementation-start instruction with a brief for that phase. Name the source-only outcome, admitted source and scratch paths, required artifacts, acceptance owner and permitted effects. Do not send an unstarted source phase through `start`'s implementation preparation. Keep helper-owned status, mailbox, context, admission and reviewer completion outputs at their required paths.
@@ -241,11 +243,13 @@ Before that first write, when `exists` reports false, run `init` (init overwrite
 
 A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflow: the Linear id for a Linear item and `issue-N` for a GitHub item, as `open-terminal` records it and `oversee-watch` names it, never the `[OWNER/REPO]#[N]` the brief spells.
 
-On surface 2, whose launcher is the harness's own, append the same record after the launch, with `window` null:
+On surface 2, whose launcher is the harness's own, append the same record after the first launch of an item, with `window` null. Set `[OBLIGATION_OR_NULL]` to the accepted object from [Obligation lineage](../references/lane-directive.md#obligation-lineage), or JSON `null` when unknown:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append oversee lanes '{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running"}'
+.agents/skills/orch/scripts/workflow-state append oversee lanes '{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running","obligation":[OBLIGATION_OR_NULL]}'
 ```
+
+For an existing surface-2 item, use `workflow-state update-report` to merge into its record under the existing lock. Judge the supplied mapping against the retained binding in that same update: refuse a conflict without changing state, preserve a known binding for absent/null input, and bind a previously unknown value only from the accepted directive. Never append a duplicate item or replace its record wholesale. Relaunch, wake and handoff keep `launched_at`; a fresh ordinary launch can renew it while retaining the obligation and previous cycle.
 
 `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`, read before the launch it timestamps and never after, because the first record's `launched_at` is the fleet start that § 4 passes as `--since`:
 

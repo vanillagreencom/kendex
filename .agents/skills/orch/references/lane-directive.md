@@ -198,6 +198,14 @@ Each refusal below comes before any worktree or window:
 - `brief-file-unreadable` (naming `path`): the path is not a readable file. Write the brief and pass that path.
 - `brief-file-empty` (naming `path`): the file holds only whitespace, so the harness would start with nothing to do. Write the brief into it.
 
+## Obligation lineage
+
+The root launch or continuity directive supplies the evidenced original obligation and accepted parent mapping. Its nullable four-field object is [workflow-state.md `lanes[].obligation`](../schemas/workflow-state.md#oversee-state). For `open-terminal`, write that object or JSON `null` to a file under `tmp/` and pass `--obligation-file [PATH]` beside `--state-dir`. The existing locked lane-record writer binds it once and refuses a conflicting supplied object. Missing or null input preserves a known binding. A legacy record without an accepted mapping remains unknown; never reconstruct it from a title, current parent or checkout repository.
+
+Keep the binding through same-item launches, retries, relaunches, wakes, park/resume, account/model recovery and context handoff. Reparenting does not rewrite the original parent. A replacement item needs the predecessor's complete object supplied explicitly in its launch file; its current item key stays separate. A cross-fleet transfer needs its accepted preserved mapping when no retained record reaches the successor. Report a contradiction to root rather than enriching or rewriting a known binding. A genuinely separate obligation needs a new tracker item or an explicit root disposition.
+
+`oversee-cycle record` copies the exact lane binding to `cycle.obligation`, with null for unknown lineage. A retained previous cycle stays that delivery's snapshot. The retained record namespace/key plus `launched_at` remains the supported launch identity; changing a native session or account adds no obligation attempt. Fleet derives ready from the original item's first launchable Linear-state event through its existing history reader. Kendex adds no ready timestamp or backfill. Existing `cycle.stages` remains partial observed evidence independently of full-validation counts; missing coverage stays unknown, and replayed snapshots add no work.
+
 ## Caps
 
 The launch cap refuses a launch before its worktree; a `--relaunch` meets it only where it adds a lane to that cap.

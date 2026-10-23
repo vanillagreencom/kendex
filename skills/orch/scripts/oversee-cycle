@@ -710,7 +710,7 @@ cycle="$(jq -c -n --argjson lane "$lane" --argjson t "$timeline" --argjson round
                    elif $group > 0 and $group >= $rest then "merge_group"
                    else $t.merge_decision.route end
              else null end),
-     missing: $missing, rounds: $rounds, stages: $stages,
+     missing: $missing, rounds: $rounds, stages: $stages, obligation: $lane.obligation,
      pr_rounds: ($t.rounds | if . == null then null else map(.secs |= interval) end),
      escaped: (if $class == null or $tier == null then null
                else ($tier == "micro" and ($class | IN("small", "standard")))

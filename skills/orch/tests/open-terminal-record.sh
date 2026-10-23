@@ -228,7 +228,7 @@ run_ot() {
 # below. launch is left out too: launch_of ITEM reads it on its own rows. So
 # is wake, whose start a wake reads while a turn that exits at once may be gone.
 record() {
-  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs" and .key != "touched" and .key != "in_scope" and .key != "launch" and .key != "wake" and .key != "recovery")) | map("\(.key)=\(.value // "null")") | join(" ")'
+  "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | to_entries | map(select(.key != "obligation" and .key != "running_at" and .key != "session_since" and .key != "tier" and .key != "tier_inputs" and .key != "touched" and .key != "in_scope" and .key != "launch" and .key != "wake" and .key != "recovery")) | map("\(.key)=\(.value // "null")") | join(" ")'
 }
 launch_of() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .launch | if . == null then null else [.pane, (.server | type), .pid, .start] end' | jq -c .; }
 running_at() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .running_at // "null"' | tr -d '"'; }
@@ -239,6 +239,9 @@ field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
 # pick_claims ITEM — the claims the record's pick reading charged, none without one.
 pick_claims() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .pick.claims // "none"' | tr -d '"'; }
 cloud_access() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .cloud_repo_access // null' | jq -c .; }
+obligation() { "$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "'"$1"'") | .obligation' | jq -cS .; }
+OBLIGATION='{"item":"CC-1","parent_item":"CC-0","parent_repo":"owner/repo","repo":"owner/repo"}'
+printf '%s\n' "$OBLIGATION" > "$TMP_ROOT/obligation.json"
 CLOUD_ACCESS='{"step":"cloud-repo-access-manual","repositories":["owner/repo"],"url":"https://claude.ai/code/session_previous"}'
 
 # A fleet launch names its harness and carries the words the fleet gate asks
@@ -248,7 +251,8 @@ FLEET_CMD=(--harness claude --cmd "true --model opus --effort high $QUESTION_OFF
 echo "=== a launch appends one record under the item's workflow-state id ==="
 printf '%s\n' '/orch small CC-1' \
   'tier=small brief=small cause=estimate-within-small production=40 estimate=12 delta=40 paths=3' > "$TMP_ROOT/brief"
-run_ot --ghostty --harness claude --cmd "true --model opus --verbose --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$TMP_ROOT/brief" CC-1
+run_ot --ghostty --harness claude --cmd "true --model opus --verbose --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL {brief}" --brief-file "$TMP_ROOT/brief" --obligation-file "$TMP_ROOT/obligation.json" CC-1
+assert_eq "$(obligation CC-1)" "$OBLIGATION" 'first launch binds the accepted original mapping'
 REC="$(record CC-1)"
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=1" "a GUI launch writes one record and the state is created for it"
 assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
@@ -546,6 +550,7 @@ assert_eq "$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item
   "0 $(jq -cn --arg cwd "$REPO" '{cwd:$cwd,flags:"--model opus --effort low",session:"",refresh:false}')" \
   "a native relaunch records its original flags and launch checkout for automatic recovery"
 RELAUNCH_RUNNING_AT="$(running_at CC-1)"
+assert_eq "$(obligation CC-1)" "$OBLIGATION" 'native relaunch keeps the original obligation and parent'
 assert_eq "$(stamped "$RELAUNCH_RUNNING_AT") renewed=$([[ "$RELAUNCH_RUNNING_AT" != "$LAUNCHED_AT" ]] && echo yes || echo no)" "iso renewed=yes" \
   "a relaunch renews running_at, so the watch counts a fresh start-stall window from it"
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
@@ -606,6 +611,7 @@ retired_under() {
 }
 assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=launched since=iso launched_at=$LAUNCHED_AT" \
   "a record only the lane's worktree state holds retires its session though --state-dir names another directory, and the fresh start renews session_since while launched_at stands"
+assert_eq "$(obligation CC-1)" "$OBLIGATION" 'a fresh context handoff session keeps the accepted original binding'
 SINCE_MUTANT="$(mutant_scripts since-mutant open-terminal)" || exit 1
 mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs, .touched, .in_scope)'
 assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=launched since=kept launched_at=$LAUNCHED_AT" \
@@ -634,6 +640,7 @@ RELAUNCH_RUNNING_AT="$(running_at CC-1)"
 echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee --argjson access "$CLOUD_ACCESS" '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done" | .session_since = "'"$LAUNCHED_AT"'" | .cloud_repo_access=$access)' >/dev/null
 run_ot --wake --harness claude CC-1
+assert_eq "$(obligation CC-1)" "$OBLIGATION" 'wake keeps the original obligation and parent'
 assert_eq "$(cloud_access CC-1)" "$CLOUD_ACCESS" 'a wake retains the session access step'
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= del(.cloud_repo_access)' >/dev/null
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
@@ -756,7 +763,7 @@ assert_eq "rc=$RC marker=$(marker_at cc-64) records=$(records CC-64) refused=$(g
 # and marked, so a sandbox made before its provider wrote records is not deaf
 # for the rest of its life.
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" RUN_TMUX=stub,1,0 \
-  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --obligation-file "$TMP_ROOT/obligation.json" --repo o/r --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-65
 assert_eq "rc=$RC marker=$(marker_at cc-65) relaunch=$(grep -c '^create --item CC-65 .*--relaunch $' "$TMP_ROOT/host.log" || true)" \
   "rc=0 marker=root relaunch=1" \
   "a hosted relaunch writes the marker its host never carried"
@@ -777,6 +784,7 @@ STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/hos
 assert_eq "rc=$RC started=$(grep -c '^open-terminal: host-started item=CC-65 ' <<<"$OUT" || true) order=$(awk '$1 == "start" || $1 == "create" { print $1 }' "$TMP_ROOT/host.log" | paste -sd, -) start=$(grep -c '^start --item CC-65 $' "$TMP_ROOT/host.log" || true) status=$(field "$(record CC-65)" status) parked=$("$WS" --state-dir "$STATE" get oversee '[.lanes[] | select(.item == "CC-65") | has("parked")] | first') pause=$("$WS" --state-dir "$STATE" get oversee "$PAUSE_READ" | jq -c .)" \
   "rc=0 started=1 order=start,create start=1 status=running parked=false pause=[\"$PARKED_AT\",\"parked\",true]" \
   "a parked record's relaunch starts the sandbox, then creates with --relaunch, and the running record drops parked and keeps it as a pause"
+assert_eq "$(obligation CC-65)" "$OBLIGATION" 'park/resume keeps the explicitly transferred original binding'
 for row in 'LANE_HOST_STUB_START_STATUS=1|host-start-failed item=CC-65 exit=1' 'LANE_HOST_STUB_START_OUT=|host-start-failed item=CC-65 cause=answer-unparsed'; do
   IFS='|' read -r plant expect <<<"$row"
   "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-65")) |= (.status = "parked" | .parked = {pr: 65, head: "abc", repo: "o/r", at: "t"})' >/dev/null
@@ -1446,6 +1454,70 @@ mutate_file "$RECOVERY_OT" 'flags: $recovery_flags' 'flags: ""'
 run_ot SCRIPT="$RECOVERY_OT" --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "$RECOVERY_FLAGS" --lane-refresh CC-192
 assert_eq "$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-192") | .recovery.flags')" \
   '0 ' "control: without the original flag record automatic recovery loses its permission choice"
+
+echo '=== original obligation binds once across retained launch states ==='
+# The launch directive is the producer of these data files. Current tracker
+# parent changes are deliberately absent from the retained binding.
+ROOTLESS='{"item":"CC-1","parent_item":null,"parent_repo":null,"repo":"owner/repo"}'
+CONFLICT='{"item":"CC-1","parent_item":"CC-99","parent_repo":"owner/repo","repo":"owner/repo"}'
+lineage_row() { # SCRIPT OLD INPUT EXPECTED_RC EXPECTED_BINDING
+  local script="$1" old="$2" input="$3" want_rc="$4" expected="$5" before after args=()
+  "$WS" --state-dir "$STATE" update oversee --argjson old "$old" \
+    '(.lanes[] | select(.item == "CC-201")) |= (if $old == "missing" then del(.obligation) else .obligation = $old end)' >/dev/null
+  before="$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-201")' | jq -cS .)"
+  if [[ "$input" != absent ]]; then
+    printf '%s\n' "$input" > "$TMP_ROOT/lineage-input.json"
+    args=(--obligation-file "$TMP_ROOT/lineage-input.json")
+  fi
+  run_ot SCRIPT="$script" --ghostty "${FLEET_CMD[@]}" ${args[@]+"${args[@]}"} CC-201
+  after="$("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-201")' | jq -cS .)"
+  assert_eq "rc=$RC binding=$(obligation CC-201)" "rc=$want_rc binding=$expected" 'retained obligation binding'
+  if [[ "$want_rc" == 1 ]]; then
+    assert_contains "$ERR" 'open-terminal: obligation-conflict item=CC-201' 'conflict has its machine key'
+    assert_eq "$after" "$before" 'a conflicting parent or original identity changes no lane field'
+  fi
+}
+run_ot --ghostty "${FLEET_CMD[@]}" CC-201
+while IFS='|' read -r name old input want expected; do
+  lineage_row "$OT" "$old" "$input" "$want" "$expected"
+done <<EOF
+legacy|"missing"|absent|0|null
+unknown|null|null|0|null
+late-binding|null|$OBLIGATION|0|$OBLIGATION
+missing-field|"missing"|$OBLIGATION|0|$OBLIGATION
+absent|$OBLIGATION|absent|0|$OBLIGATION
+null|$OBLIGATION|null|0|$OBLIGATION
+equal|$OBLIGATION|$OBLIGATION|0|$OBLIGATION
+reparent|$OBLIGATION|$CONFLICT|1|$OBLIGATION
+other-original|$OBLIGATION|{"item":"CC-99","parent_item":"CC-0","parent_repo":"owner/repo","repo":"owner/repo"}|1|$OBLIGATION
+no-enrichment|$ROOTLESS|$OBLIGATION|1|$ROOTLESS
+EOF
+LINEAGE_OT="$(mutant_scripts lineage-forget open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/lineage-forget"
+mutate_file "$LINEAGE_OT" 'obligation: ($known // $rec.obligation)' 'obligation: $rec.obligation'
+red="$(FAIL=0; lineage_row "$LINEAGE_OT" "$OBLIGATION" null 0 "$OBLIGATION" > "$TMP_ROOT/lineage-control"; printf '%s' "$FAIL")"
+assert_eq "$red" 1 'control: losing the retained binding reddens the same lineage assertion'
+
+# A different current item (including a cross-fleet successor) receives the
+# accepted predecessor object explicitly. It never guesses from its own key.
+run_ot --ghostty "${FLEET_CMD[@]}" --obligation-file="$TMP_ROOT/obligation.json" CC-202
+assert_eq "rc=$RC binding=$(obligation CC-202)" "rc=0 binding=$OBLIGATION" 'explicit replacement/transfer keeps original identity'
+run_ot --ghostty "${FLEET_CMD[@]}" CC-203
+assert_eq "rc=$RC binding=$(obligation CC-203)" 'rc=0 binding=null' 'an unrecorded successor stays unknown'
+while IFS='|' read -r name data; do
+  printf '%s\n' "$data" > "$TMP_ROOT/invalid-obligation.json"
+  run_ot --ghostty "${FLEET_CMD[@]}" --obligation-file "$TMP_ROOT/invalid-obligation.json" CC-204
+  assert_eq "rc=$RC records=$(records CC-204)" 'rc=1 records=0' "$name: malformed directive refuses before recording"
+  assert_eq "$(sed -n '1p' <<<"$ERR")" "open-terminal: obligation-file-invalid path=$TMP_ROOT/invalid-obligation.json" 'malformed mapping starts with its machine key and path'
+done <<EOF
+empty|
+multi|null null
+scalar|42
+missing|{"repo":"owner/repo","item":"CC-1"}
+extra|{"repo":"owner/repo","item":"CC-1","parent_repo":null,"parent_item":null,"ready":0}
+half-parent|{"repo":"owner/repo","item":"CC-1","parent_repo":null,"parent_item":"CC-0"}
+wrong-type|{"repo":"owner/repo","item":7,"parent_repo":null,"parent_item":null}
+EOF
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

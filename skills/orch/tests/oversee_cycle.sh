@@ -1649,5 +1649,37 @@ rm -- "$SF"
 cloud_case stages-cloud null
 rc=0; stage_command KEN-1 > "$CASE/out" 2> "$CASE/err" || rc=$?
 assert_eq "$rc|$(cat "$CASE/err")" '1|oversee-cycle: stages-unread item=KEN-1 cause=no-state' 'files=none has no readable stages'
+echo '=== cycle lineage is the exact retained binding, including legacy unknown ==='
+LINEAGE='{"repo":"original/repo","item":"KEN-0","parent_repo":"parent/repo","parent_item":"KEN-99"}'
+ROOTLESS='{"repo":"original/repo","item":"KEN-0","parent_repo":null,"parent_item":null}'
+cycle_lineage() { # SCRIPT VALUE EXPECTED
+  local script="$1" value="$2" expected="$3" prior got
+  new_case lineage
+  printf micro > "$CASE/class"; timeline 900
+  edit_json "$CASE/state/workflow-state-oversee.json" ".lanes[0] += {tier:\"micro\", obligation:$value}"
+  got="$(RUN_BIN="$script" record KEN-1 micro)"
+  assert_contains "$got" 'rc=0 cycle item=KEN-1 ' 'lineage row reaches the production cycle recorder'
+  assert_eq "$(state '.lanes[0].cycle.obligation')" "$expected" 'cycle copies the original binding exactly'
+  prior="$(state '.lanes[0].cycle')"
+  got="$(RUN_BIN="$script" record KEN-1 micro)"
+  assert_contains "$got" 'rc=0 cycle item=KEN-1 ' 'lineage replay reaches the production cycle recorder'
+  assert_eq "$(state '.lanes[0].cycle')" "$prior" 'cycle replay adds no work or lineage'
+}
+while IFS='|' read -r name value; do
+  cycle_lineage "$BIN" "$value" "$value"
+done <<EOF
+known|$LINEAGE
+unknown-parent|$ROOTLESS
+null|null
+EOF
+edit_json "$CASE/state/workflow-state-oversee.json" 'del(.lanes[0].obligation)'
+RUN_BIN="$BIN" record KEN-1 micro >/dev/null
+assert_eq "$(state '.lanes[0].cycle | [has("obligation"), .obligation]')" '[true,null]' 'legacy missing lineage becomes explicit unknown in the cycle'
+control cycle-lineage oversee-cycle 'obligation: $lane.obligation' 'obligation: null'
+LINEAGE_BIN="$RUN_BIN"
+unset RUN_BIN
+red="$(FAIL=0; cycle_lineage "$LINEAGE_BIN" "$LINEAGE" "$LINEAGE" > "$TMP_ROOT/lineage-control"; printf '%s' "$FAIL")"
+assert_eq "$red" 1 'control: discarding the original binding reddens the cycle assertion'
+
 echo "pass: $PASS  fail: $FAIL"
 [[ "$FAIL" -eq 0 ]]
