@@ -139,14 +139,11 @@ control_replace tests/must-fail-controls.sh 1 \
 	"			[[ \"\$(cat \"\$WORK/\$stem/mutation\$n.rc\")\" -ne 0 ]] || sed -n '/^BASELINE /p' \"\$WORK/\$stem.log\""
 
 control_expect "the mutation cap kills a suite that ignores TERM: KILL completes at cap plus grace"
-control_replace tests/must-fail-controls.sh 1 \
-	'		exec 4< <(exec timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)' \
-	'		exec 4< <(exec timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)'
-
 control_expect "the baseline cap kills a suite that ignores TERM"
+control_expect "the baseline cap kills a suite that ignores TERM: KILL completes at cap plus grace"
 control_replace tests/must-fail-controls.sh 1 \
-	'		timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &' \
-	'		timeout "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &'
+	'			stop_tree "$tree"' \
+	'			:'
 
 control_expect "the mutation cap kills a suite that ignores TERM: cap diagnostic bypasses ordered output"
 control_replace tests/must-fail-controls.sh 1 \

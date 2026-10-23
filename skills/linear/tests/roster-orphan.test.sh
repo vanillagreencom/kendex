@@ -23,7 +23,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
-RUNNER="$SCRIPT_DIR/must-fail-controls.sh"
+source "$SCRIPT_DIR/lib/control-runner.sh"
 assert_tmpdir TMP
 
 # A one-suite skill whose suite reads a value its control flips: enough for the
@@ -52,7 +52,7 @@ SUITE
 control_expect "the value is green"
 control_replace scripts/value.sh 1 'VALUE=green' 'VALUE=red'
 CONTROL
-    cp "$RUNNER" "$root/tests/must-fail-controls.sh"
+    control_runner_install "$root"
 }
 
 # run_roster LOGFILE ROOT [STEM...] — run the fixture's copy of the runner,

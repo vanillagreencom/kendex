@@ -12,6 +12,7 @@ mkdir -p "$TMP/host-bin" "$TMP/checkout" "$R/skills/orch/tests/lib" \
   "$R/refresh/tests" "$R/skills/harness-ci/tests"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/"
+cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/"
 cp "$REPO/tools/ci-job-set" "$REPO/tools/macos-test-contracts" "$REPO/tools/macos-test-contracts.json" "$R/tools/"

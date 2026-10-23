@@ -15,7 +15,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
-RUNNER="$SCRIPT_DIR/must-fail-controls.sh"
+source "$SCRIPT_DIR/lib/control-runner.sh"
 assert_tmpdir TMP
 
 # A suite that says it has started, then runs until a TERM stops it and says
@@ -31,7 +31,7 @@ trap ': >"$marks/stopped"; exit 143' TERM
 while :; do sleep 0.05; done
 SUITE
 printf '%s\n' 'control_expect "unused"' >"$root/tests/controls/alpha.control.sh"
-cp "$RUNNER" "$root/tests/must-fail-controls.sh"
+control_runner_install "$root"
 
 # wait_for FILE — whether FILE appears within ten seconds.
 wait_for() {

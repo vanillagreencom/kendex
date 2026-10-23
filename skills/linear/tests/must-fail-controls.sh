@@ -38,6 +38,8 @@ SKILL_DIR="$(cd "$TESTS_DIR/.." && pwd)"
 CONTROLS_DIR="$TESTS_DIR/controls"
 SUITE_TIMEOUT="${CONTROL_TIMEOUT:-60}"
 SUITE_KILL_GRACE=1
+source "$TESTS_DIR/lib/control-runner.sh" || exit 2
+source "$TESTS_DIR/../../orch/tests/lib/suite-process.sh" || exit 2
 # Cap diagnostics must reach CI even while an earlier roster entry is pending.
 exec 5>&2
 
@@ -53,8 +55,8 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # same suites out of its own worktree, so an argv match would reach theirs
 # too. Bash ignores INT in the async children of a shell without job control,
 # so Ctrl-C never reaches them on its own; TERM does, and each level passes it
-# down: the job to its body (run_job), the body to the `timeout` it is waiting
-# on (timed_suite), and `timeout` to the suite. A body stopped between suite
+# down: the job to its body (run_job), then timed_suite to its owned tree.
+# A body stopped between suite
 # runs dies at once, leaving a copy or diff already started to finish on its
 # own.
 # One trap each, so the code a wrapper reads says which signal arrived: an
@@ -278,25 +280,32 @@ flush() {
 # output in OUT and unmatched names returned in WANTED. Mutations stop once
 # every name in WANTED has reddened:
 # later suite work cannot change that evidence and can exhaust the CI bound.
-# In the background for the same
-# reason as run_job's body: a job stopped mid-run passes the TERM to
-# `timeout`, which passes it to the suite, and the job ends there rather than
+# A job stopped mid-run tears down its tree and ends there rather than
 # going on to stage a copy under a scratch the runner has removed.
 timed_suite() {
-	local pid="" rc line i remaining=0 stopped=0 started=$SECONDS
+	local pid="" rc line i remaining=0 stopped=0 capped=0 started=$SECONDS tree fragment="" consumed
+	local STOP_GRACE=$SUITE_KILL_GRACE
 	local -a wanted=()
-	trap '[[ -z $pid ]] || kill -TERM "$pid" 2>/dev/null; exit 143' TERM
+	trap 'if [[ -n $pid ]]; then tree="$(tree_of "$pid")"; stop_tree "$tree"; fi; exit 143' TERM
 	if [[ "$#" -eq 4 ]]; then
 		while IFS= read -r line; do
 			wanted+=("$line")
 			remaining=$((remaining + 1))
 		done <"$4"
 		[[ "$remaining" -gt 0 ]] || die "no wanted assertions for $2"
-		: >"$3"
-		exec 4< <(exec timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" 2>&1)
-		pid=$!
-		while IFS= read -r -u 4 line || [[ -n "$line" ]]; do
-			printf '%s\n' "$line" >>"$3"
+	fi
+	: >"$3"
+	# uutils 0.10.0 kills the suite root but fails its group KILL, leaving
+	# descendants holding a streaming pipe. The shared tree owner bounds both
+	# their lifetime and this reader; regular-file EOF never waits on a child.
+	bash "$1/tests/$2" >"$3" 2>&1 &
+	pid=$!
+	exec 4<"$3"
+	while :; do
+		consumed=0
+		if [[ "$#" -eq 4 ]] && IFS= read -r -u 4 line; then
+			line="$fragment$line"
+			fragment=""
 			for i in "${!wanted[@]}"; do
 				if [[ "$line" == "FAIL: ${wanted[i]}" ]]; then
 					unset 'wanted[i]'
@@ -305,19 +314,33 @@ timed_suite() {
 			done
 			if [[ "$remaining" -eq 0 ]]; then
 				stopped=1
-				kill -TERM "$pid" 2>/dev/null
+				tree="$(tree_of "$pid")"
+				stop_tree "$tree"
 				break
 			fi
-		done
-		exec 4<&-
-	else
-		timeout -k "$SUITE_KILL_GRACE" "$SUITE_TIMEOUT" bash "$1/tests/$2" >"$3" 2>&1 &
-		pid=$!
-	fi
+			consumed=1
+		else
+			fragment+="${line:-}"
+		fi
+		line=""
+		if [[ "$(jobs -pr)" != "$pid" ]]; then
+			[[ "$consumed" -eq 1 ]] && continue
+			break
+		fi
+		if [[ "$SECONDS" -ge "$((started + SUITE_TIMEOUT))" ]]; then
+			capped=1
+			tree="$(tree_of "$pid")"
+			stop_tree "$tree"
+			break
+		fi
+		[[ "$consumed" -eq 1 ]] || sleep 0.05
+	done
+	exec 4<&-
 	wait "$pid"
 	rc=$?
 	trap - TERM
-	if [[ "$stopped" -eq 0 && ( "$rc" -eq 124 || "$rc" -eq 137 ) ]]; then
+	if [[ "$capped" -eq 1 ]]; then
+		[[ "$rc" -eq 137 ]] || rc=124
 		printf 'SUITE_CAP suite=%s elapsed=%ss cap=%ss grace=%ss exit=%s\n' \
 			"$2" "$((SECONDS - started))" "$SUITE_TIMEOUT" "$SUITE_KILL_GRACE" "$rc" >&5
 	fi
@@ -336,6 +359,7 @@ timed_suite() {
 stage_copy() {
 	mkdir -p "$(dirname "$1")"
 	cp -R "$SKILL_DIR" "$1"
+	control_runner_install "$1"
 }
 
 # apply_control ROOT ONLY — source the control against ROOT, applying only

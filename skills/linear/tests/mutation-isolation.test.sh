@@ -45,7 +45,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
-RUNNER="$SCRIPT_DIR/must-fail-controls.sh"
+source "$SCRIPT_DIR/lib/control-runner.sh"
 assert_tmpdir TMP
 # Two slots on any machine: the `late` row's first mutation waits on its
 # second, which a single slot would never start, and the `refill` row's first
@@ -102,7 +102,7 @@ if [ "$C" != 1 ]; then echo "FAIL: c is one" >&2; rc=1; fi
 if [ "$E" != 1 ]; then echo "FAIL: a is one with fallback" >&2; rc=1; fi
 exit "$rc"
 SUITE
-    cp "$RUNNER" "$root/tests/must-fail-controls.sh"
+    control_runner_install "$root"
 }
 
 # control NAME ROOT — the control each case writes for the fixture's suite,

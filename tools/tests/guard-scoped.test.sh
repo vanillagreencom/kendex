@@ -64,6 +64,7 @@ printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "later\\n" >> "$SUIT
 mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/github/scripts/lib" "$TMP/serial-bin"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
+cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/lane-state.sh"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
 printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then printf ready > "$ACK"; read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"

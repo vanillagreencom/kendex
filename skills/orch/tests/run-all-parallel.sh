@@ -71,6 +71,7 @@ source "$TEST_DIR/../scripts/lib/lane-state.sh"
 battery() { # DIR
   mkdir -p "$1/lib" "$1.tmp" "${1%/*}/scripts/lib"
   cp "$TEST_DIR/run-all.sh" "$1/run-all.sh"
+  cp "$TEST_DIR/lib/suite-process.sh" "$1/lib/suite-process.sh"
   printf '#!/usr/bin/env bash\n:\n' >"$1/lib/git-env.sh"
   cp "$TEST_DIR/../scripts/lib/lane-state.sh" "${1%/*}/scripts/lib/lane-state.sh"
   mkdir -p "$1/../../github/scripts/lib"
@@ -339,7 +340,7 @@ while IFS='|' read -r sig target want; do
   if [[ "$variant" == hup-unhandled ]]; then
     mutate_file "$B/run-all.sh" "trap 'stop_suites; exit 129' HUP" "trap 'exit 129' HUP"
   elif [[ "$variant" == kill-skipped ]]; then
-    mutate_file "$B/run-all.sh" '  signal_tree KILL "$1"' '  :'
+    mutate_file "$B/lib/suite-process.sh" '  signal_tree KILL "$1"' '  :'
   fi
   cat >"$B/block.sh" <<'SH'
 #!/usr/bin/env bash
@@ -679,7 +680,11 @@ while IFS='|' read -r rule kind settings want edit control_want; do
         edit_of "$edit"
         e=0
         while [ "$e" -lt "${#EDIT[@]}" ]; do
-          mutate_file "$B/run-all.sh" "${EDIT[e]}" "${EDIT[e + 1]}"
+          case "$edit" in
+            term-skipped | kill-skipped | tree-root-only) owner="$B/lib/suite-process.sh" ;;
+            *) owner="$B/run-all.sh" ;;
+          esac
+          mutate_file "$owner" "${EDIT[e]}" "${EDIT[e + 1]}"
           e=$((e + 2))
         done
       fi

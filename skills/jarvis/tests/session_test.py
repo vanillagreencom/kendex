@@ -1033,6 +1033,8 @@ class SessionContract(unittest.TestCase):
     def test_native_fixture_uses_installed_toolchain(self):
         rustup = shutil.which("rustup")
         self.assertIsNotNone(rustup, "native-fixture: dependency=rustup")
+        compiler = shutil.which("rustc")
+        self.assertIsNotNone(compiler, "native-fixture: dependency=rustc")
         with tempfile.TemporaryDirectory() as allocation:
             scratch = Path(allocation).resolve()
             environment = dict(os.environ)
@@ -1041,12 +1043,23 @@ class SessionContract(unittest.TestCase):
             installed = subprocess.run([rustup, "which", "rustc"], cwd=scratch,
                                        env=environment, capture_output=True, text=True, timeout=60)
             self.assertEqual(installed.returncode, 0, installed.stderr)
+            packaged = scratch / "packaged"
+            packaged.mkdir()
+            for name, executable in (("rustup", rustup), ("rustc", compiler)):
+                wrapper = packaged / name
+                wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(executable) + ' "$@"\n')
+                wrapper.chmod(0o755)
+            rustup, compiler = str(packaged / "rustup"), str(packaged / "rustc")
             environment.update(HOME=str(scratch / "home"), RUSTUP_HOME=str(scratch / "rustup"),
                                CARGO_HOME=str(scratch / "cargo"), RUSTUP_AUTO_INSTALL="0")
             Path(environment["HOME"]).mkdir()
             binary = scratch / "bin"
             binary.mkdir()
-            (binary / "rustc").symlink_to(rustup)
+            # A packaged rustup can be a wrapper whose exec fixes argv[0] to
+            # rustup. Forward through the supplied rustc entry point instead.
+            proxy = binary / "rustc"
+            proxy.write_text("#!/bin/sh\nexec " + shlex.quote(compiler) + ' "$@"\n')
+            proxy.chmod(0o755)
             environment["PATH"] = str(binary) + os.pathsep + environment["PATH"]
             for arguments in (("toolchain", "link", "fixture-installed", str(Path(installed.stdout.strip()).parent.parent)),
                               ("default", "fixture-installed")):
@@ -1070,6 +1083,24 @@ class SessionContract(unittest.TestCase):
                         self.fail(str(failure))
             finally:
                 os.chdir(previous_cwd)
+
+    def test_native_fixture_reports_compiler_failure(self):
+        # This row consumes the structured CI failure record, including the
+        # empty-stderr wrapper failure and a compiler ended by a signal.
+        environment = dict(os.environ)
+        environment.pop("JARVIS_TEST_NATIVE", None)
+        for status, stdout, stderr in ((1, "wrapper rejected compiler arguments", ""),
+                                       (-signal.SIGKILL, "", ""), (7, "", "compiler failed")):
+            with self.subTest(returncode=status):
+                result = subprocess.CompletedProcess([], status, stdout, stderr)
+                with patch.dict(os.environ, environment, clear=True), \
+                     patch("fixtures.harness.subprocess.run", return_value=result):
+                    with self.assertRaises(RuntimeError) as caught:
+                        with native_launcher():
+                            self.fail("compiler failure accepted")
+                record = json.loads(str(caught.exception).split(" ", 2)[2])
+                self.assertEqual(record, {"returncode": status, "signal": -status if status < 0 else None,
+                                          "stdout": stdout, "stderr": stderr})
 
     def test_cancelled_replacement_keeps_the_live_owner(self):
         for phase in ("pending", "running"):

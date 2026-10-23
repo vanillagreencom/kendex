@@ -195,6 +195,7 @@ mkdir -p "$R/skills/orch/tests/lib" "$TMP/native/tools" "$TMP/native/skills/orch
 cp "$GUARD" "$TMP/native/tools/guard"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
+cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
 ln -s "$R/skills/orch/tests" "$TMP/native/skills/orch/tests"
 ln -s "$REPO/skills/orch/scripts" "$TMP/native/skills/orch/scripts"
 ln -s "$REPO/skills/orch/scripts" "$R/skills/orch/scripts"

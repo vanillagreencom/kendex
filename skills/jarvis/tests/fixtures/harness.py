@@ -100,7 +100,13 @@ def native_launcher():
                                 # repository toolchain installation belongs to CI setup.
                                 cwd=path.parent, capture_output=True, text=True, timeout=60)
         if result.returncode:
-            raise RuntimeError("native-fixture: compile-failed\n" + result.stderr)
+            # The CI failure record must retain rustup wrapper errors, which
+            # can arrive on stdout with an empty stderr.
+            raise RuntimeError("native-fixture: compile-failed " + json.dumps({
+                "returncode": result.returncode,
+                "signal": -result.returncode if result.returncode < 0 else None,
+                "stdout": result.stdout, "stderr": result.stderr,
+            }))
         yield path
 
 def native_header(harness, identity, cwd):

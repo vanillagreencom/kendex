@@ -32,6 +32,7 @@ for phase, marker in (
     github = battery.parent.parent / "github" / "scripts" / "lib"
     github.mkdir(parents=True)
     shutil.copy(source / "lib" / "git-env.sh", battery / "lib")
+    shutil.copy(source / "lib" / "suite-process.sh", battery / "lib")
     shutil.copy(source.parent / "scripts" / "lib" / "lane-state.sh", battery.parent / "scripts" / "lib")
     shutil.copy(source.parent.parent / "github" / "scripts" / "lib" / "group-leader.sh", github)
     text = (source / "run-all.sh").read_text()
