@@ -108,6 +108,7 @@ git -C "$WT" config gc.auto 0
 git -C "$WT" config maintenance.auto false
 git -C "$WT" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$WT" issue-826 seed 1000000 >/dev/null
+printf '{"prior":"unknown","classes":[]}\n' > "$WT/tmp/finding-context-issue-826.json"
 mkdir -p "$WT/.cache/tracker-fixture"
 printf '[{"identifier":"issue-826","description":"**Expected delta**: 1000000 lines, 1000000 test lines"}]\n' \
   > "$WT/.cache/tracker-fixture/issues.json"

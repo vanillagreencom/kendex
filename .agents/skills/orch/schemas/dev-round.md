@@ -6,6 +6,8 @@ For a chosen cut, see [§ Declared cuts](#declared-cuts).
 
 ## Identity: the round id
 
+Optional `finding_occurrences` stores the pre-stamp `workflow-state findings query` result unchanged, supplied by `--finding-occurrences-file`. It is part of this record's immutable input, not a permission or another counter. Missing on legacy records remains supported. The source/count contract is [workflow-state.md § Finding occurrences](workflow-state.md#finding-occurrences).
+
 The record is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` and carries `"round_id": ROUND_ID`; readers require a regular file — never a symlink — whose internal token, issue, and schema match what they were called with.
 
 The record sits inside the delegated worktree, so it is trusted the way every other instruction to that agent is: the orchestrator writes it before delegating, and the delegated agent is trusted not to edit it. Immutability is enforced against a second `dev-round-write` invocation, not against the agent holding the worktree.

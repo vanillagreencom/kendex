@@ -352,6 +352,13 @@ for row in "${record_rows[@]}"; do
   assert_eq "$rc" "2" "$label fails acceptance closed"
 done
 
+printf '{"prior":"unknown","classes":[{"class":{"kind":"validation","check":"lint"},"observed_count":2,"prior":"unknown","sources":[{"round_id":"A","receipt":"a.json"},{"round_id":"B","receipt":"b.json"}]}]}\n' > "$TMP_ROOT/finding-context.json"
+run_write --worktree "$WT" --issue issue-1230 --round-id finding-context --item 1 fix "$OK_REACH" --finding-occurrences-file "$TMP_ROOT/finding-context.json"
+assert_eq "$RC|$(jq -c . "$TMP_ROOT/finding-context.json")" "0|$(rec '.finding_occurrences | tojson')" 'the round carries the exact count/source query snapshot'
+jq '.classes[0].observed_count=3' "$TMP_ROOT/finding-context.json" > "$TMP_ROOT/changed-context.json"
+run_write --worktree "$WT" --issue issue-1230 --round-id finding-context --item 1 fix "$OK_REACH" --finding-occurrences-file "$TMP_ROOT/changed-context.json"
+assert_eq "$RC" 2 'a changed occurrence snapshot cannot rewrite a delegated round'
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

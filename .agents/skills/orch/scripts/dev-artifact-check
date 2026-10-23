@@ -1049,7 +1049,9 @@ record_stage() {
   now="$(date +%s)" || return 1
   "$SCRIPT_DIR/workflow-state" update "$issue" --arg round "$round_id" --arg receipt "${file##*/}" --arg original "dev-return-$issue-$round_id.json" --argjson end "$now" \
     --slurpfile artifact "$file" --argjson result "$result" '
-      $artifact[0].kind as $kind
+      include "cause-keys";
+      record_occurrences(validation_occurrences($artifact[0]; $receipt))
+      | $artifact[0].kind as $kind
       | .stages = ((.stages // []) | map(if .round_id == $round and .kind != "validate"
           then .kind = $kind | .end //= $end else . end))
       | if $result.validate_time == null then . else

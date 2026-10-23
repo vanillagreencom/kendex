@@ -243,6 +243,8 @@ worktree with no resolvable HEAD is rejected.
 --cut records a reviewer or orchestrator choice to cut work back to the
 Done-when. The item set, reach and protected additions still apply.
 --source records the delegation's Source: value.
+--finding-occurrences-file takes the pre-stamp findings query's JSON result.
+It stores that optional context unchanged; it grants no admission or retry.
 --pr-open records whether the pull request is open at delegation, default false.
 dev-artifact-check uses it to accept receipts that leave validation to CI.
 --issue / --round-id must match
@@ -255,7 +257,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--source|--pr-open|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--finding-occurrences-file|--adds|--cut|--source|--pr-open|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -327,12 +329,15 @@ source_name=""
 pr_open=false
 pr_open_given=false
 
+finding_occurrences_file=/dev/null
+finding_occurrences_given=false
 while (( $# > 0 )); do
   case "$1" in
     --worktree) need "$1" $# "${2:-}"; no_dup "$1" "$worktree_given"; worktree_given=true; worktree="$2"; shift 2 ;;
     --issue)    need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";    issue_given=true;    issue="$2"; shift 2 ;;
     --round-id) need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given"; round_id_given=true; round_id="$2"; shift 2 ;;
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
+    --finding-occurrences-file) need "$1" $# "${2:-}"; no_dup "$1" "$finding_occurrences_given"; finding_occurrences_given=true; finding_occurrences_file="$2"; shift 2 ;;
     --adds) need "$1" $# "${2:-}"; no_dup "$1" "$adds_given"; adds_given=true; adds="$2"; shift 2 ;;
     --cut) cut=true; shift ;;
     --source) need "$1" $# "${2:-}"; no_dup "$1" "$source_given"; source_given=true; source_name="$2"; shift 2 ;;
@@ -467,6 +472,13 @@ out_exists=false
 [[ ! -L "$out" ]] \
   || die record-symlink "$@"
 
+if [[ "$finding_occurrences_given" == true ]] && ! jq -se '
+  length == 1 and (.[0] | (.prior == "none" or .prior == "unknown") and (.classes | type == "array"))
+  ' "$finding_occurrences_file" >/dev/null 2>&1; then
+  printf 'dev-round-write: findings-input path=%s\n' "$finding_occurrences_file" >&2
+  exit 2
+fi
+
 # --- Write atomically: build a same-directory temporary file, then link it. ---
 tmp="$(mktemp "$out_dir/.dev-round-$issue.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
@@ -482,6 +494,7 @@ jq -n \
   --argjson source "$source_json" \
   --argjson pr_open "$pr_open" \
   --argjson items "$items_json" \
+  --slurpfile findings "$finding_occurrences_file" \
   '{
      schema_version: $schema_version,
      round_id: $round_id,
@@ -493,7 +506,7 @@ jq -n \
      source: $source,
      pr_open: $pr_open,
      items: $items
-   }' > "$tmp"
+   } + (if ($findings | length) == 0 then {} else {finding_occurrences: $findings[0]} end)' > "$tmp"
 
 # --- Same-round records are immutable ---
 # The record is the authoritative delegated set for exactly one delegation.

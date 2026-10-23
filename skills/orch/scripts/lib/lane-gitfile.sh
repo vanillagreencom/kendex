@@ -269,12 +269,14 @@ lane_archived_state() {
 # No class history can establish rounds that raised a cause but patched none.
 lane_state_rounds() { # STATE_JSON [ERRF] [VALIDATION_RUNS]
   local counts
+  LANE_FINDING_OCCURRENCES='{"prior":"unknown","classes":[]}'
   LANE_REVIEW_ROUNDS=unread
   LANE_FIX_RECEIPTS=unread
   LANE_VALIDATION_RUNS=unread
   LANE_RESTACKS=unread
   LANE_REPEATED_CLASS_ROUNDS=unread
   [[ -n "$1" ]] || return 0
+  LANE_FINDING_OCCURRENCES="$(jq -c -L "$LANE_GITFILE_LIB" 'include "cause-keys"; finding_summary(null)' <<<"$1" 2>"${2:-/dev/stderr}")" || return 2
   if ! counts="$(jq -L "$LANE_GITFILE_LIB" --arg validations "${3:-unread}" -r '
     include "cause-keys";
     ((if .first_panel then 1 else 0 end) + (.rereview_cycles // 0) + (.pr_comment_review.iterations // 0)) as $rounds

@@ -273,3 +273,31 @@ To target a state directory from a worktree, pass the global `--state-dir <path>
 .agents/skills/orch/scripts/workflow-state set PROJ-123 pr_review_baseline '{"last_threads":["PRRT_kwDOABC123","PRRT_kwDODEF456"]}'
 .agents/skills/orch/scripts/workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
 ```
+
+## Finding occurrences
+
+`finding_occurrences` is optional item state, `{prior: "none"|"unknown", records: [...]}`. `init` starts it with `prior: "none"`. Legacy absence, unavailable provenance or an unusable failed-check list keeps `prior: "unknown"`, including after later successful reads. It follows this file's existing archive/remove lifetime. No total is stored. `lib/cause-keys.jq` derives counts; patched/frozen records and `repeated_class_rounds` keep their existing disposition meaning and patched-commit units.
+
+### Record verified findings
+
+After accepted review evidence and the existing disposition pass, write a batch file with the harness file tool. `records` contains only verified true findings that passed Step 0, including tracked findings; false claims, questions and Step 0 exclusions add no record. Record before routing away from the disposition pass, including an empty fix set. Use `review-artifact-check` on the assigned artifact before recording; a failed check supplies no observation. Keep the original artifact path and its original review-round token, array and index. Native triage findings keep their original comment/thread identity. A body finding requires the original review/comment identity AND entry token; bare `file:line` supplies no native identity. Missing binding uses `unknown: true`, not an artifact fallback for copied native findings.
+
+```json
+{"records":[{"kind":"review","location":"src/x.rs (`f`)","owner":"src/shared.rs (`rule`)","source":{"round_id":"R","artifact":"tmp/review-reviewer-correctness-T.json","array":"blockers","index":0,"identity":["artifact","tmp/review-reviewer-correctness-T.json","blockers",0]}}]}
+```
+
+Omit absent `owner`. For original local reviews identity is `["artifact", original_path, array, index]`; for inline/PR-level copies it is `["native", source_type, original_id]`; for body entries it is `["native", "review-body", original_review_or_comment_id, entry_token]`. An unavailable binding records `{"unknown":true,"records":[]}`. Record the batch through the existing state writer:
+
+```bash
+.agents/skills/orch/scripts/workflow-state findings record [ISSUE_ID] [BATCH_FILE]
+```
+
+The recorder retains the first source provenance. Same-identity/class reads add nothing, even after a new round stamp or native retriage. A changed class under that identity refuses without rewriting it. A nonzero record result is unread coverage: preserve it through the existing design route and record an unknown batch before any later query can claim complete coverage. A failed unknown write remains unread; it supplies no zero/one count.
+
+`dev-artifact-check` records validation refusals in its existing schema-valid recording step, including a failed original and its recovery separately. It splits the receipt's `FAILING: check1,check2` list, trims outer whitespace, and deduplicates exact names within one receipt. Each row is `{kind:"validation", check, source:{round_id, receipt, identity:["receipt", round_id, receipt, check]}}`. Empty names retain unknown coverage. Pass, pending CI, no-verdict, missing/invalid receipts and run-live supply no refusal. Runner logs remain evidence; this interface claims no unpublished check identities. A stage-recording failure's existing advisory diagnostic leaves occurrence coverage unread too; it never proves complete recording.
+
+### Query and admission
+
+Write requests as an array of `{kind:"review", location, owner?}` copied from the proposed fix's source finding, or `{kind:"validation", check}` copied EXACTLY from the failed source receipt. Never derive a validation name from review-item prose. `findings query [ISSUE_ID] [REQUEST_FILE]` returns `{prior, classes:[{class, observed_count, prior, sources}]}`. Without the request file it reports all known classes. Review matching calls `shared_cause_key`, with no transitive aliases; validation matches exact check names. A request with no usable key reports `observed_count: null` and `prior: "unknown"`. Unknown prior coverage makes a numeric count a known lower bound; two attributable sources still establish recurrence. Query failure remains unread.
+
+Both direct fix owners read that result before stamping, pruning or changing delegation time, under [design-review.md](../references/design-review.md). Carry the unchanged query JSON in the existing ask/status and next delegation, and give its saved result file to `dev-round-write --finding-occurrences-file`. `lanes facts` and `oversee-report` consume the shared lane reader's same query over known classes. No observation interrupts active work, changes a disposition, or grants another round or validation start.

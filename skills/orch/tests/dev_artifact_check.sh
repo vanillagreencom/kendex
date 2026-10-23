@@ -839,6 +839,12 @@ for row in "${stage_rows[@]}"; do
     SHIM_PATH="$TMP_ROOT/clock-bin" ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
     assert_eq "$(stage_observed)" "$first" "$label recheck keeps first end and one run"
     assert_eq "$(stage_closed "$kind")" true "$label recheck keeps the first injected end"
+    if [[ "$label" == 'failing without run' ]]; then
+      assert_eq "$("$STATE" --state-dir "$STAGE_SD" findings query "$ISSUE" | jq -c '.classes | map({check:.class.check, observed_count, receipts:(.sources | map(.receipt))})')" \
+        "[{\"check\":\"lint\",\"observed_count\":1,\"receipts\":[\"${ARTIFACT##*/}\"]}]" 'a schema-valid failed receipt records its exact check once before retry routing'
+    else
+      assert_eq "$(jq '.finding_occurrences.records | length' "$STAGE_FILE")" 0 "$label supplies no failed check"
+    fi
     if [[ "$timed" == true ]]; then
       assert_eq "$(jq -c '[.stages[1] | {kind,round_id,start,end}]' "$STAGE_FILE")" \
         "[{\"kind\":\"validate\",\"round_id\":\"$R\",\"start\":1767225600,\"end\":1767228900}]" "$label validation uses run times"

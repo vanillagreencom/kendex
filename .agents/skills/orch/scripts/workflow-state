@@ -323,7 +323,7 @@ atomic_update() {
     (
         orch_take_lock 200 "$lock_file" 10 || { state_message lock-failed "$@" >&2; exit 1; }
 
-        if ! jq ${jq_args[@]+"${jq_args[@]}"} "$jq_expr" "$state_file" > "$tmp_file" 2>&1; then
+        if ! jq -L "$SCRIPT_DIR/lib" ${jq_args[@]+"${jq_args[@]}"} "$jq_expr" "$state_file" > "$tmp_file" 2>&1; then
             state_message jq-failed "$@" >&2
             rm -f "$tmp_file"
             exit 1
@@ -383,6 +383,7 @@ cmd_init() {
         branch: $branch,
         qa_labels: $qa_labels,
         near_ceiling: [],
+        finding_occurrences: {prior: "none", records: []},
         child_sessions: {},
         review_agents: [],
         review_agent_ids: {},
@@ -420,6 +421,38 @@ cmd_get() {
     ensure_state_exists "$state_file"
 
     jq -r "$jq_path" "$state_file"
+}
+
+cmd_findings() {
+    local action="${1:-}" issue_id="${2:-}" file="${3:-}" state_file
+    state_file=$(get_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+    case "$action" in
+        record)
+            [[ $# -eq 3 ]] || { printf 'workflow-state: findings-input action=%s file=%s\n' "$action" "$file" >&2; return 2; }
+            if ! atomic_update "$state_file" 'include "cause-keys";
+              if ($batch | length) != 1 or ($batch[0].records | type) != "array"
+                then error("finding-batch") else record_occurrences($batch[0]) end' \
+                --slurpfile batch "$file"; then
+                # Failed observation must not leave a new item's earlier zero
+                # looking complete. A failed state write remains unread.
+                atomic_update "$state_file" 'include "cause-keys"; record_occurrences({unknown:true, records:[]})' || return 1
+                return 1
+            fi
+            ;;
+        query)
+            [[ $# -eq 2 || ( $# -eq 3 && -f "$file" ) ]] || { printf 'workflow-state: findings-input action=%s file=%s\n' "$action" "$file" >&2; return 2; }
+            local request=null
+            local -a bindings=()
+            if [[ -n "$file" ]]; then
+                bindings=(--slurpfile requests "$file")
+                request='(if ($requests | length) == 1 and ($requests[0] | type) == "array" then $requests[0] else error("finding-requests") end)'
+            fi
+            jq -c -L "$SCRIPT_DIR/lib" ${bindings[@]+"${bindings[@]}"} \
+                "include \"cause-keys\"; finding_summary($request)" "$state_file"
+            ;;
+        *) printf 'workflow-state: findings-action action=%s\n' "$action" >&2; return 2 ;;
+    esac
 }
 
 # `update <id> [--arg NAME VALUE]... [--argjson NAME JSON]...
@@ -1606,6 +1639,18 @@ Commands:
                                 unreadable time. Text longer than
                                 ORCH_FLEET_LOG_ROW_BYTES bytes (default 600) is
                                 refused as fleet-log-row-bytes
+  findings record <issue_id> <file>
+                                Record {records: [...], unknown?: true} after
+                                verified disposition. Sources deduplicate;
+                                conflicting classes refuse without replacing.
+                                Missing bindings retain unknown coverage.
+  findings query <issue_id> [file]
+                                Print {prior, classes}; optional file holds
+                                requested review {kind, location, owner?} or
+                                validation {kind, check} classes. Without it,
+                                report all known classes. observed_count is a
+                                lower bound when prior=unknown. Source/schema:
+                                schemas/workflow-state.md, Finding occurrences.
   cap <setting> [--issue <id> | --count <n>]
                                 Round caps. Bare: print the resolved cap.
                                 With --issue: read the state field the setting
@@ -1964,6 +2009,7 @@ resolve_state_dir
 case "$1" in
     init)      shift; cmd_init "$@" ;;
     get)       shift; cmd_get "$@" ;;
+    findings)  shift; cmd_findings "$@" ;;
     update)    shift; cmd_update "$@" ;;
     update-report) shift; cmd_update_report "$@" ;;
     post-pr-stop) shift; cmd_post_pr_stop "$@" ;;

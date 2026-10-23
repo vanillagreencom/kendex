@@ -40,7 +40,9 @@ seed_fleet() {
       {"round_id": "r3", "kind": "restack", "mode": "range", "seconds": 60},
       {"round_id": "r4", "kind": "restack", "mode": "range", "seconds": 60}],
     "restack_skips": [{}, {}], "restacks": 4}'
-  item_state KEN-2 '{"post_pr_stop": null}'
+  item_state KEN-2 '{"post_pr_stop": null,"finding_occurrences":{"prior":"unknown","records":[
+    {"kind":"validation","check":"lint","source":{"round_id":"A","receipt":"a.json","identity":["receipt","A","a.json","lint"]}},
+    {"kind":"validation","check":"lint","source":{"round_id":"B","receipt":"b.json","identity":["receipt","B","b.json","lint"]}}]}}'
   printf '%s\n' "$(merged_pr 11 ken-1 -60 abcdef1234)" "$(merged_pr 13 ken-3 -7200 1234567abc)" \
     "$(merged_pr 19 ken-9 -60 9999999aaa)" "$(merged_pr 21 ken-1 -30 2121212aaa someone-else)" \
     "$(merged_pr 23 ken-1 -30 2323232aaa -)" | jq -s . > "$CASE/merged.json"
@@ -169,6 +171,9 @@ Validation:
 Rounds:
 - KEN-2: review_rounds=0 fix_receipts=unread validation_runs=unread restacks=0 repeated_class_rounds=unread
 - KEN-3: review_rounds=5 fix_receipts=3 validation_runs=unread restacks=4 repeated_class_rounds=1
+Finding occurrences:
+- KEN-2: {\"prior\":\"unknown\",\"classes\":[{\"class\":{\"kind\":\"validation\",\"check\":\"lint\"},\"observed_count\":2,\"prior\":\"unknown\",\"sources\":[{\"round_id\":\"A\",\"receipt\":\"a.json\",\"identity\":[\"receipt\",\"A\",\"a.json\",\"lint\"]},{\"round_id\":\"B\",\"receipt\":\"b.json\",\"identity\":[\"receipt\",\"B\",\"b.json\",\"lint\"]}]}]}
+- KEN-3: {\"prior\":\"unknown\",\"classes\":[]}
 
 Use 1: none
 

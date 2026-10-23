@@ -51,6 +51,8 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Launch Reviewers
 
+With no `ISSUE_ID`, mint `LOCAL_KEY` through `workflow-state new-local-key`, initialize it through `workflow-state init [LOCAL_KEY] --worktree [WT_PATH] --branch [BRANCH]`, and use it as `ISSUE_ID` from here. This workflow removes that local state in § 5. For an issue key with no state, initialize that key first. Mint `review_round_id` with `workflow-state new-round-id [ISSUE_ID] review_round_id` before each batch; retain the original token with each accepted artifact path for source recording.
+
 Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before selecting any stored reviewer session.
 
 `[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
@@ -78,7 +80,7 @@ Decisions:
 
 Wait for every reviewer. Under an unlimited budget do NOT shut them down before § 4; in wave mode they are already retired.
 
-Extract the report path and verdict from each return; halt and report if any return does not carry them. Overall verdict is `action_required` when any reviewer has blockers, else `pass`. With an `ISSUE_ID`, append each path:
+Extract the report path and verdict from each return; halt and report if any return does not carry them. Validate each assigned file with `review-artifact-check --file [PATH] [WT_PATH] --issue [ISSUE_ID]`; only an accepted artifact supplies findings. Overall verdict is `action_required` when any reviewer has blockers, else `pass`. With an `ISSUE_ID`, append each path:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
@@ -136,17 +138,7 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 
 **Never fix as the main agent.**
 
-With no `ISSUE_ID`, the fix round still needs a workflow-state key. Mint one as `LOCAL_KEY`, init its state, and set `ISSUE_ID` to `LOCAL_KEY` for the rest of § 4. This workflow owns that state and removes it in § 5:
-
-```bash
-.agents/skills/orch/scripts/workflow-state new-local-key
-```
-
-```bash
-.agents/skills/orch/scripts/workflow-state init [LOCAL_KEY] --worktree [WT_PATH] --branch [BRANCH]
-```
-
-Then, with either key:
+After disposition, [record verified findings](../schemas/workflow-state.md#record-verified-findings) before routing away, including true tracked findings when the fix set is empty. Use the original accepted artifact/round binding; false claims and Step 0 exclusions do not count. Then, with either key:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WT_PATH]

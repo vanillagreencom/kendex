@@ -4473,7 +4473,8 @@ facts_result() { # STATUS REASON
 	jq -cn --arg item "$LANE_ARG" --arg status "$1" --arg reason "$2" '
 		{item: $item, status: $status, reason: $reason, stage: null,
 		 review_rounds: null, fix_receipts: null, validation_runs: null,
-		 restacks: null, repeated_class_rounds: null, post_pr_stop: null}'
+		 restacks: null, repeated_class_rounds: null, post_pr_stop: null,
+		 finding_occurrences: {prior: "unknown", classes: []}}'
 }
 
 cmd_facts() (
@@ -4525,11 +4526,12 @@ cmd_facts() (
 	result="$(jq -c --arg item "$LANE_ARG" \
 		--argjson review "$LANE_REVIEW_ROUNDS" --arg fix "$LANE_FIX_RECEIPTS" \
 		--arg validation "$LANE_VALIDATION_RUNS" --argjson restacks "$LANE_RESTACKS" \
-		--arg repeated "$LANE_REPEATED_CLASS_ROUNDS" '
+		--arg repeated "$LANE_REPEATED_CLASS_ROUNDS" --argjson findings "$LANE_FINDING_OCCURRENCES" '
 		{item: $item, status: "read", reason: null, stage: (.stages[-1].kind // null),
 		 review_rounds: $review, fix_receipts: ($fix | fromjson? // $fix),
 		 validation_runs: ($validation | fromjson? // $validation), restacks: $restacks,
 		 repeated_class_rounds: ($repeated | fromjson? // $repeated),
+		 finding_occurrences: $findings,
 		 post_pr_stop: (if .post_pr_stop == null then null else .post_pr_stop | {gate, name} end)}
 	' <<<"$state")" || { facts_result failed state-invalid; exit 2; }
 	printf '%s\n' "$result"

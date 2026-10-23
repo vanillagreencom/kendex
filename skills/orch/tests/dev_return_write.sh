@@ -1056,6 +1056,13 @@ for recovery_case in implement-pass implement-failed implement-foreground implem
   assert_eq "$("$CHECK" --file "$companion" | jq -r '.validate')" "$verdict" "$recovery_case submit reads the selected result"
   assert_eq "$("$CHECK" --file "$original" | jq -r '.validate')" 'FAILING: scoped' "$recovery_case failed original stays readable"
   state_file="$RW/tmp/workflow-state-issue-4503.json"
+  scoped_count=1
+  scoped_receipts="[\"${original##*/}\"]"
+  if [[ "$recovery_result" == failed ]]; then
+    scoped_count=2; scoped_receipts="[\"${original##*/}\",\"${companion##*/}\"]"
+  fi
+  assert_eq "$("$STATE" --state-dir "$RW/tmp" findings query issue-4503 | jq -c '.classes[] | select(.class.check == "scoped") | [.observed_count, (.sources | map(.receipt))]')" \
+    "[$scoped_count,$scoped_receipts]" "$recovery_case counts failed original and recovery by their distinct receipt sources"
   expected_stages="[[\"${original##*/}\",$started,$((started + 1))],[\"${companion##*/}\",$((started + 2)),$((started + 3))]]"
   expected_durations="[[\"recovery\",\"${original##*/}\",1],[\"recovery\",\"${companion##*/}\",1]]"
   if [[ "$recovery_result" == no-run ]]; then
@@ -1074,9 +1081,9 @@ for recovery_case in implement-pass implement-failed implement-foreground implem
     "$expected_stages" "$recovery_case retains each receipt validation stage"
   assert_eq "$(jq -c '[.validate_rounds[] | [.round_id,.receipt,.seconds]]' "$state_file")" \
     "$expected_durations" "$recovery_case retains each receipt duration"
-  first_timing="$(jq -c '{stages,validate_rounds}' "$state_file")"
+  first_timing="$(jq -c '{stages,validate_rounds,finding_occurrences}' "$state_file")"
   env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery ${check_extra[@]+"${check_extra[@]}"} >/dev/null
-  assert_eq "$(jq -c '{stages,validate_rounds}' "$state_file")" "$first_timing" "$recovery_case reread is idempotent"
+  assert_eq "$(jq -c '{stages,validate_rounds,finding_occurrences}' "$state_file")" "$first_timing" "$recovery_case reread is idempotent"
   run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery ${result_source[@]+"${result_source[@]}"} ${extra[@]+"${extra[@]}"}
   assert_eq "$RC" 2 "$recovery_case refuses another terminal companion" "$ERR"
   if [[ "$recovery_case" == implement-interrupted ]]; then

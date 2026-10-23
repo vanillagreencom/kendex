@@ -3605,8 +3605,8 @@ git -C "$FACTS_ROOT/local" config maintenance.auto false
 printf '[env]\nORCH_STATE_DIR = "records"\n' > "$FACTS_ROOT/host/kendex.settings.toml"
 printf 'ref: refs/heads/main\n' > "$FACTS_ROOT/host/.git/HEAD"
 FACTS_STATE='{"first_panel":{},"rereview_cycles":1,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa"},{"cause":"a","commit":"bbb"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"}],"restacks":4,"post_pr_stop":{"gate":"review","name":"review-round-cap","remaining":["private detail"]}}'
-FACTS_READ='{"item":"KEN-FACTS","status":"read","reason":null,"stage":"review","review_rounds":5,"fix_receipts":1,"validation_runs":3,"restacks":4,"repeated_class_rounds":1,"post_pr_stop":{"gate":"review","name":"review-round-cap"}}'
-FACTS_EMPTY='{"item":"KEN-FACTS","status":"read","reason":null,"stage":null,"review_rounds":0,"fix_receipts":"unread","validation_runs":3,"restacks":0,"repeated_class_rounds":"unread","post_pr_stop":null}'
+FACTS_READ='{"item":"KEN-FACTS","status":"read","reason":null,"stage":"review","review_rounds":5,"fix_receipts":1,"validation_runs":3,"restacks":4,"repeated_class_rounds":1,"finding_occurrences":{"prior":"unknown","classes":[]},"post_pr_stop":{"gate":"review","name":"review-round-cap"}}'
+FACTS_EMPTY='{"item":"KEN-FACTS","status":"read","reason":null,"stage":null,"review_rounds":0,"fix_receipts":"unread","validation_runs":3,"restacks":0,"repeated_class_rounds":"unread","finding_occurrences":{"prior":"unknown","classes":[]},"post_pr_stop":null}'
 mkdir -p "$FACTS_ROOT/host/tmp"
 printf 'dev-validate-runs-v1\ndev-validate-finished\ndev-validate-bounded\ndev-validate-running\n' > "$FACTS_ROOT/local/tmp/validation-runs"
 cp "$FACTS_ROOT/local/tmp/validation-runs" "$FACTS_ROOT/host/tmp/validation-runs"
@@ -3686,7 +3686,7 @@ facts_case() { # CASE EXIT STATUS REASON [EXPECTED_READ]
   esac
   run_lanes "$env_list" facts --state-dir "$FACTS_ROOT/fleet" KEN-FACTS
   if [[ -z "$expected" ]]; then
-    expected="$(jq -cn --arg status "$status" --arg reason "$reason" '{item:"KEN-FACTS",status:$status,reason:$reason,stage:null,review_rounds:null,fix_receipts:null,validation_runs:null,restacks:null,repeated_class_rounds:null,post_pr_stop:null}')" || exit 1
+    expected="$(jq -cn --arg status "$status" --arg reason "$reason" '{item:"KEN-FACTS",status:$status,reason:$reason,stage:null,review_rounds:null,fix_receipts:null,validation_runs:null,restacks:null,repeated_class_rounds:null,post_pr_stop:null,finding_occurrences:{prior:"unknown",classes:[]}}')" || exit 1
   fi
   actual="$(jq -cs 'if length == 1 then .[0] else error("not one result") end' <<<"$OUT")" || actual=invalid
   assert_eq "$RC|$actual" "$expected_rc|$(jq -c . <<<"$expected")" "facts $kind: $status with attributable fields" "$ERR"
@@ -3734,6 +3734,12 @@ FACTS_CASES
 facts_case local 0 read '' "$FACTS_READ"
 facts_case hosted 0 read '' "$FACTS_READ"
 facts_case empty 0 read '' "$FACTS_EMPTY"
+
+FACTS_BEFORE="$FACTS_STATE"
+FACTS_STATE="$(jq '.finding_occurrences={prior:"unknown",records:[{kind:"validation",check:"lint",source:{round_id:"R",receipt:"receipt.json",identity:["receipt","R","receipt.json","lint"]}}]}' <<<"$FACTS_STATE")"
+FACTS_WITH_FINDING="$(jq '.finding_occurrences={prior:"unknown",classes:[{class:{kind:"validation",check:"lint"},observed_count:1,prior:"unknown",sources:[{round_id:"R",receipt:"receipt.json",identity:["receipt","R","receipt.json","lint"]}]}]}' <<<"$FACTS_READ")"
+facts_case local 0 read '' "$FACTS_WITH_FINDING"
+FACTS_STATE="$FACTS_BEFORE"
 
 FACTS_MUTANT="$(mutant_scripts facts-caller-fallback lib/lane-gitfile.sh)" || exit 1
 mutate_file "$FACTS_MUTANT/lib/lane-gitfile.sh" 'elif [[ "${10:-false}" == true ]]; then' 'elif [[ "${10:-false}" == true ]] && false; then'

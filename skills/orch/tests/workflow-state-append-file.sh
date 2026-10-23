@@ -373,5 +373,60 @@ for verb in append append-file; do
   done
 done
 
+echo '--- source-bound finding occurrences ---'
+finding_case() { # STATE_BIN MODE TAG
+  local bin="$1" mode="$2" sd="$TMP_ROOT/findings-$3" batch="$TMP_ROOT/findings-batch-$3.json"
+  local requests="$TMP_ROOT/findings-requests-$3.json"
+  "$bin" --state-dir "$sd" init KEN-F >/dev/null
+  jq -n '{records:[{kind:"review",location:"a (`f`)",source:{round_id:"R1",artifact:"tmp/review-a.json",identity:["native","inline","N1"]}},
+    {kind:"review",location:"a (`f`)",source:{round_id:"R2",artifact:"tmp/review-b.json",identity:["native","inline","N2"]}}]}' > "$batch"
+  printf '[{"kind":"review","location":"a (`f`)"}]\n' > "$requests"
+  case "$mode" in
+    distinct) jq '.records[1].location="b (`g`)"' "$batch" > "$batch.new"; mv "$batch.new" "$batch" ;;
+    owner) jq '.records |= map(.owner="shared (`rule`)") | .records[1].location="b (`g`)"' "$batch" > "$batch.new"; mv "$batch.new" "$batch"
+      printf '[{"kind":"review","location":"new (`h`)","owner":"shared (`rule`)"}]\n' > "$requests" ;;
+    replay) jq '.records[1].source.identity=.records[0].source.identity' "$batch" > "$batch.new"; mv "$batch.new" "$batch" ;;
+    unbound) jq 'del(.records[1].source.identity)' "$batch" > "$batch.new"; mv "$batch.new" "$batch" ;;
+    request-unbound) printf '[{"kind":"review","location":"TBD"}]\n' > "$requests" ;;
+    legacy) "$bin" --state-dir "$sd" update KEN-F 'del(.finding_occurrences)' ;;
+    gap) printf '{"records":[],"unknown":true}\n' > "$batch.gap"
+      "$bin" --state-dir "$sd" findings record KEN-F "$batch.gap" ;;
+    validation|other-check)
+      jq -n '{records:[{kind:"validation",check:"cargo test",source:{round_id:"D1",receipt:"one.json",identity:["receipt","D1","one.json","cargo test"]}},
+        {kind:"validation",check:"cargo test",source:{round_id:"D2",receipt:"two.json",identity:["receipt","D2","two.json","cargo test"]}}]}' > "$batch"
+      printf '[{"kind":"validation","check":"cargo test"}]\n' > "$requests"
+      if [[ "$mode" == other-check ]]; then
+        jq '.records[1].check="cargo clippy" | .records[1].source.identity[-1]="cargo clippy"' "$batch" > "$batch.new"; mv "$batch.new" "$batch"
+      fi ;;
+  esac
+  "$bin" --state-dir "$sd" findings record KEN-F "$batch"
+  "$bin" --state-dir "$sd" new-round-id KEN-F review_round_id >/dev/null
+  "$bin" --state-dir "$sd" findings record KEN-F "$batch"
+  "$bin" --state-dir "$sd" findings query KEN-F "$requests" | jq -r '[.classes[0].prior, .classes[0].observed_count, (.classes[0].sources | length)] | @tsv'
+}
+while IFS='|' read -r mode expected; do
+  assert_eq "$(finding_case "$WS" "$mode" "$mode")" "$expected" "findings $mode keeps attributable count, coverage and sources across replay"
+done <<'FINDINGS'
+same|none	2	2
+distinct|none	1	1
+owner|none	2	2
+replay|none	1	1
+unbound|unknown	1	1
+legacy|unknown	2	2
+gap|unknown	2	2
+request-unbound|unknown		0
+validation|none	2	2
+other-check|none	1	1
+FINDINGS
+FINDING_MUTANT="$(mutant_scripts finding-wrong-check lib/cause-keys.jq)/workflow-state"
+mutate_file "${FINDING_MUTANT%/*}/lib/cause-keys.jq" '.check == $request.check' 'true'
+assert_eq "$(finding_case "$FINDING_MUTANT" other-check control)" $'none\t2\t2' 'control: ignoring the exact receipt check reddens the distinct-check row'
+finding_sd="$TMP_ROOT/findings-replay"
+jq '.records[0].location="different (`rule`)" | .records=[.records[0]]' "$TMP_ROOT/findings-batch-replay.json" > "$TMP_ROOT/finding-conflict.json"
+finding_before="$("$WS" --state-dir "$finding_sd" get KEN-F .finding_occurrences.records)"
+rc=0
+"$WS" --state-dir "$finding_sd" findings record KEN-F "$TMP_ROOT/finding-conflict.json" >/dev/null 2>&1 || rc=$?
+assert_eq "$([[ "$rc" -ne 0 ]] && echo refused || echo accepted)|$("$WS" --state-dir "$finding_sd" get KEN-F .finding_occurrences.records)|$("$WS" --state-dir "$finding_sd" get KEN-F .finding_occurrences.prior)" "refused|$finding_before|unknown" 'a conflicting source keeps original records and leaves unknown coverage'
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

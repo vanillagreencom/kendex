@@ -72,6 +72,14 @@ Before stamping or delegating the round, check its base:
 
 - Any other exit, or an incomplete restack, first unarms any open PR through [Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop), then stops delegation and validation. Never validate the stale head first.
 
+Before stamping any group's round, apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this proposed fix set. Write `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from its source review items or exact failed-receipt check tokens, then read:
+
+```bash
+.agents/skills/orch/scripts/workflow-state findings query [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
+```
+
+Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json`. Take the [finding-specific design read](../references/design-review.md#inputs-and-actions) before `new-round-id`, pruning or changing delegation time. Carry this same JSON in the existing ask/status and the delegation's `Finding occurrences:` line; unknown or failed intake remains unknown through that route. This read grants no fix or validation allowance.
+
 1. **Determine the agent.** `dev_agent` wins. Otherwise read state, falling back to the issue's `agent:*` label or the component paths:
 
    ```bash
@@ -133,7 +141,7 @@ Before stamping or delegating the round, check its base:
    When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] [--adds "[REPO_RELATIVE_PATHS]"]
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
    A nonzero exit names a usage or environment failure. Report it and stop.
@@ -141,7 +149,7 @@ Before stamping or delegating the round, check its base:
    When a reviewer or the orchestrator decides a cut, mint a fresh round id, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`:
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --cut
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json --cut
    ```
 
    A cut item's `reach` is the branch this round shrinks — cut items name work, not a finding, so do not improvise a finding-shaped value; `the finding` is on the writer's refusal list and exits 2.
@@ -164,6 +172,7 @@ Before stamping or delegating the round, check its base:
    Artifact Key: [ISSUE_ID]
    Labels: [LABELS]
    QA: [QA_AGENT]
+   Finding occurrences: [UNCHANGED_QUERY_JSON]
    [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
    [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 

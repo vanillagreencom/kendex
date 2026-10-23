@@ -294,11 +294,11 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Blockers or `category == "fix"` suggestions present → § 4. Otherwise → § 5.
+Blockers or suggestions present → § 4. Otherwise → § 5.
 
 ## 4. Handle Review Items
 
-Collect blockers and `category == "fix"` suggestions from the appended JSONs. None → § 5.
+Collect blockers and suggestions from the appended JSONs. None → § 5. Retain each accepted path's original review-round token for its source binding. After the existing disposition pass, [record verified findings](../schemas/workflow-state.md#record-verified-findings) before routing onward, including true tracked findings and an empty fix set. Record the same way in § 7 after QA disposition; false claims, questions and Step 0 exclusions never count. A source binding that cannot be read remains unknown.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -463,6 +463,8 @@ On the way out, and before § 8, disposition every item still outstanding — ev
 ```
 
 Empty `json_paths` → report "No review items" and → § 9. Otherwise read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
+
+After their existing filing-bar disposition, [record verified findings](../schemas/workflow-state.md#record-verified-findings) for true `category == "issue"` findings not already recorded in § 4/7. Keep each actual accepted source before display deduplication; rereading a recorded source adds nothing.
 
 **Declined items are re-derived, then matched to their record.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Carry the reason its `declined_items` entry records, matched on (location, description); where no entry records it, report `reason: not recorded` rather than inventing one.
 
