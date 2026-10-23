@@ -116,6 +116,70 @@ session_rows_overseer_file() { # DIR SERVER PANE
   session_rows_path "$(lane_context_overseer_box "$1")" "$2" "$3"
 }
 
+# A controller may name a hand-launched session whose environment lost
+# TMUX_PANE. Return its pane and controller bindings as JSON, only for a
+# recorded native identity on this live server. tmux's active pane is never
+# evidence of the caller's identity.
+session_rows_controller_pane() ( # DIR HARNESS SESSION
+  local scripts="${BASH_SOURCE[0]%/lib/*}" pane="" fields server start home live_start
+  [ -n "${TMUX:-}" ] && [ -n "$3" ] || return 1
+  . "$scripts/lib/overseer-launch.sh" || return 1
+  home=$(lane_context_caller_home "$2") || home=""
+  fields=$(cd -- "$1" && SESSION_ROWS_NATIVE=$3 SESSION_ROWS_HARNESS=$2 SESSION_ROWS_HOME=$home \
+    "$scripts/workflow-state" get oversee "$OL_JQ_DEFS"'
+    .overseer | select(.session_id == $ENV.SESSION_ROWS_NATIVE
+      and ol_native_match($ENV.SESSION_ROWS_HARNESS; $ENV.SESSION_ROWS_HOME; $ENV.SESSION_ROWS_NATIVE))
+    | [.server, .pane, (.server_start // "")] | @tsv' \
+    2>/dev/null) || fields=""
+  if [ -n "$fields" ]; then
+    IFS=$'\t' read -r server pane start <<<"$fields"
+    if [ -n "$server" ] && [ -n "$pane" ]; then
+      if live_start=$(tmux_server_start "$pane" "$server") &&
+          { [ -z "$start" ] || [ "$live_start" = "$start" ]; }; then
+        jq -nc --arg pane "$pane" '{controller:"overseer",pane:$pane}'
+        return
+      fi
+    fi
+  fi
+  session_rows_jarvis_identity "$1" "$2" "$3" "" default | jq -ec '. + {controller:"jarvis"}'
+)
+
+# The Jarvis runtime owns record format and terminal liveness. Both missing
+# pane recovery and the turn-end role consume this same native binding.
+# DEFAULT permits Session(home)'s canonical-home/XDG record lookup when the
+# launch bindings are absent; the normal role keeps its explicit bindings.
+session_rows_jarvis_identity() { # DIR HARNESS SESSION PANE [DEFAULT]
+  local owner="${BASH_SOURCE[0]%/orch/scripts/lib/*}/jarvis/scripts/lib/session.py" socket="${TMUX:-}"
+  [ -f "$owner" ] || return 1
+  env JARVIS_BASH="$BASH" python3 - "$owner" "$1" "${JARVIS_RECORD:-}" \
+    "${JARVIS_GENERATION:-}" "$2" "$3" "${socket%%,*}" "$4" "${5:-}" <<'PY'
+import json
+from pathlib import Path
+import runpy
+import sys
+
+owner = runpy.run_path(sys.argv[1])
+session = owner["Session"](sys.argv[2])
+default = sys.argv[9] == "default"
+if (not default or sys.argv[3]) and session.path != Path(sys.argv[3]):
+    sys.exit(1)
+record = session.read()
+if not record or record["state"] not in ("starting", "running") or record.get("harness") != sys.argv[5]:
+    sys.exit(1)
+identity = record.get("pending") or {}
+terminal = record.get("terminal") or {}
+if (((not default or sys.argv[4]) and str(identity.get("generation")) != sys.argv[4])
+        or identity.get("native_session_id") != sys.argv[6]
+        or terminal.get("server") != sys.argv[7]
+        or (sys.argv[8] and terminal.get("pane") != sys.argv[8])
+        or not session.terminal(record)):
+    sys.exit(1)
+print(json.dumps({"home": session.home, "account_home": record.get("effective_home") or record.get("account"),
+                  "pane": terminal["pane"], "state": record["state"],
+                  "record": str(session.path), "generation": identity.get("generation")}))
+PY
+}
+
 # session_rows_last FILE [EVENT] — the last row of FILE into SESSION_ROW, or
 # the last whose event is EVENT, looked for over the last SESSION_ROWS_SPAN
 # lines, or over the last that many lines spelling EVENT the way jq -c writes

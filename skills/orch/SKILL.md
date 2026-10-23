@@ -6,7 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [communication, mailbox, github, worktree, dev, project-management, decider, reviewer, review-gate]
-  optional: [harness-ci, linear, second-opinion, commit-guards]
+  optional: [harness-ci, linear, second-opinion, commit-guards, jarvis]
 metadata:
   author: vanillagreen
   source: kendex

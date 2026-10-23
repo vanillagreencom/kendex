@@ -75,9 +75,10 @@ MANAGED_ENV=$(env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT PATH="$TMP_ROOT/man
     lane_session_command claude s1 "" || exit
     line=$(lane_launch_line "$LANE_SESSION_CMD" claude "$LANE_SESSION_ACCOUNT_VAR" "$2" prefix) || exit
     "$BASH" -c "$line"' _ "$REPO_ROOT/skills/orch/scripts/lib/lane-launch.sh" "$ACCOUNT")
-CALL_ENV=("HOME=$OFFLINE_HOME" "XDG_STATE_HOME=$STATE" "CLAUDE_CONFIG_DIR=$ACCOUNT"
+BASE_CALL_ENV=("HOME=$OFFLINE_HOME" "XDG_STATE_HOME=$STATE" "CLAUDE_CONFIG_DIR=$ACCOUNT"
   "DISABLE_AUTO_COMPACT=$(jq -r .auto <<<"$MANAGED_ENV")" "DISABLE_COMPACT=$(jq -r .manual <<<"$MANAGED_ENV")"
-  "JARVIS_RECORD=$RECORD" JARVIS_GENERATION=3 "TMUX=$JARVIS_SOCKET,$JARVIS_SERVER,0" "TMUX_PANE=$JARVIS_PANE")
+  "JARVIS_RECORD=$RECORD" JARVIS_GENERATION=3 "TMUX=$JARVIS_SOCKET,$JARVIS_SERVER,0")
+CALL_ENV=("${BASE_CALL_ENV[@]}" "TMUX_PANE=$JARVIS_PANE")
 CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=90
 TAB=$'\t'
 
@@ -94,11 +95,22 @@ cp "$RECORD" "$RECORD.seed"
 # from session.usage_info. Jarvis Control-host events registers the same
 # native session as overseer, so that overlap must retain the overseer path.
 while IFS='|' read -r shape label tokens active session agent expected key; do
+  if [ "${1:-}" = --missing-pane ]; then
+    case "$shape" in missing-pane*) ;; *) continue ;; esac
+  fi
   cp "$RECORD.seed" "$RECORD"
   CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=90
   TRANSCRIPT="$ACCOUNT/projects/jarvis/s1.jsonl"
   install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+  CALL_ENV=("${BASE_CALL_ENV[@]}" "TMUX_PANE=$JARVIS_PANE")
   case "$shape" in
+    missing-pane-default)
+      CALL_ENV=()
+      for assignment in "${BASE_CALL_ENV[@]}"; do
+        case "$assignment" in JARVIS_RECORD=* | JARVIS_GENERATION=*) ;; *) CALL_ENV+=("$assignment") ;; esac
+      done
+      ;;
+    missing-pane*) CALL_ENV=("${BASE_CALL_ENV[@]}") ;;
     absent) mv "$RECORD" "$RECORD.saved" ;;
     setting-range) CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=101 ;;
     script | setting)
@@ -155,6 +167,19 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
     READING_KEY) key=lane-mail-check:\ reading-unrecorded ;;
   esac
   case "$shape" in
+    missing-pane-foreign)
+      TRANSCRIPT="$ACCOUNT/projects/jarvis/$session.jsonl"
+      jarvis_mark "$tokens" "$active" "$session"
+      assert_eq "RC=$RC visible=$(jq -r 'has("systemMessage")' "$TMP_ROOT/stdout")" \
+        'RC=0 visible=true' "$label: a new native id is visibly unjudged"
+      jarvis_mark "$tokens" "$active" "$session"
+      assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout")" 'RC=0 stdout=' \
+        "$label: the native id gap is told once"
+      jq --arg session "$session" '.pending.native_session_id=$session' "$RECORD" > "$RECORD.next"
+      mv "$RECORD.next" "$RECORD"
+      jarvis_mark "$tokens" "$active" "$session"
+      expect 2 "lane-mail-check: context=$tokens" "$label: controller recovery restores judgement"
+      ;;
     copilot*)
       # Copilot consumes this machine-readable Stop decision at exit zero.
       decision=allow
@@ -195,6 +220,11 @@ plain|at the percentage mark|180000|false|s1||0|-
 plain|past the percentage mark|180001|false|s1||2|lane-mail-check: context=@TOKENS@
 plain|at the absolute context mark|400000|false|s1||2|lane-mail-check: context=@TOKENS@
 plain|a continued turn retains its succession mark|400000|true|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane|a managed Jarvis without TMUX_PANE receives its mark|400000|false|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane|a managed Jarvis without TMUX_PANE is judged again|400000|true|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane-default|the runtime default identifies Jarvis without launch bindings|400000|false|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane-default|the runtime default identifies Jarvis at its next Stop|400000|true|s1||2|lane-mail-check: context=@TOKENS@
+missing-pane-foreign|a missing-pane Jarvis native id must match its controller|400000|false|s2||0|NO_MARK
 plain|another native session gets no Jarvis mark|400000|false|s2||0|-
 plain|a subagent gets no Jarvis mark|400000|false|s1|child|0|-
 absent|the same session with no record gets no mark|400000|false|s1||0|NO_MARK
@@ -212,7 +242,7 @@ ROWS
 
 # Keep the matched implementation text while removing its behavior. The
 # shared helper proves that the disposable source copy changed.
-if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+if [ -z "${HOOK_UNDER_TEST:-}" ] && [ "${1:-}" != --missing-pane ]; then
   assert_eq "$(grep -c '^jarvis_identified() {$' "$HOOK")" 1 'control matches the role-identification owner once'
   mutant jarvis-unidentified -e '/^jarvis_identified() {$/a\
   return 1'
