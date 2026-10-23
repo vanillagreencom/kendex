@@ -675,7 +675,7 @@ tool_notice_told() {
 # The one exit for a refusal, KEY VALUE [CAUSE] as `message` takes them:
 # every arm above the handoff marks, the arm check, the payload readers and
 # every mailbox refusal; the handoff refusals reach it through
-# `refuse_handoff` below, the one site that builds the instruction, so no
+# `refuse_judged_handoff` below, the one site that builds the instruction, so no
 # other path pays for text it would not print. The text is rendered once,
 # written to stderr, and on Copilot handed back as the documented answer for
 # the event on stdout, since there the exit status alone holds nothing: a
