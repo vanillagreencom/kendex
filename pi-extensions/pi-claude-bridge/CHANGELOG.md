@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 5.0.1
+
+- A tool that asks the active Pi Claude provider a separate question in the same conversation gets an error it can retry after the tool finishes. The outer turn can finish instead of hanging on the nested request. Nested requests with their own session remain independent.
+
 ### 5.0.0
 
 - **Breaking:** The model menu offers Pi's Anthropic registry entries at run time. A model absent from that registry no longer appears in the menu. A saved model that Pi’s Anthropic list no longer has falls back to Pi’s starting model, so pick a model again once. Pi shows its fallback message. Claude Code chooses the safety fallback. New registry entries need no bridge release. An unknown model request handed to the bridge keeps its ID and shows one notice per session.

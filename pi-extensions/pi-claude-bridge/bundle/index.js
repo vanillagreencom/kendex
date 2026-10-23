@@ -70283,6 +70283,16 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   debug(`provider: streamClaudeAgentSdk called, activeQuery=${!!ctx().activeQuery}, lastMsgRole=${lastMsgRole}, isReentrant=${ctx().activeQuery !== null}`);
   if (ctx().activeQuery) {
     const queryCtx = ctx();
+    const allResults = extractAllToolResults2(context);
+    const carriesForwardedCall = context.messages.some((message) => message.role === "assistant" && message.content.some((block) => block.type === "toolCall" && queryCtx.forwardedToolCallIds.has(block.id)));
+    if (!queryCtx.piHistoryReplaced && queryCtx.pendingToolCalls.size > 0 && allResults.length === 0 && !carriesForwardedCall) {
+      const error51 = failedTurnOutput(model, "error", "Claude bridge is waiting for a tool in this conversation. A nested model request cannot run in the same conversation until that tool returns. Retry after the tool finishes, or use another provider or a separate sessionId for the nested request.");
+      queueMicrotask(() => {
+        stream.push({ type: "error", reason: "error", error: error51 });
+        stream.end();
+      });
+      return stream;
+    }
     const abortedTeardown = queryCtx.abortedQueryTeardown;
     if (abortedTeardown) {
       debug("provider: call arrived while an aborted query tears down; waiting for teardown");
@@ -70317,7 +70327,6 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     queryCtx.resetTurnState(model);
     queryCtx.callbackGeneration += 1;
     activeStreamIdleWatchdogs.get(queryCtx)?.refresh();
-    const allResults = extractAllToolResults2(context);
     debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
     const unmatchedResultIds = [];
     for (const result of allResults) {

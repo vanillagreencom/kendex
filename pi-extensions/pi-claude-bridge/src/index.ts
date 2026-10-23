@@ -705,6 +705,22 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// handlers. Results that arrive before their handler get queued in pendingResults.
 	if (ctx().activeQuery) {
 		const queryCtx = ctx();
+		const allResults = extractAllToolResults(context);
+		// pi-web-access answer mode awaits a standalone completion before Pi can
+		// deliver its tool result. Treating that prompt as a continuation steals
+		// the parent's stream and waits on the very tool awaiting this stream.
+		// A real continuation carries the forwarded call in its conversation,
+		// including steer-only callbacks and split result batches.
+		const carriesForwardedCall = context.messages.some((message) => message.role === "assistant"
+			&& message.content.some((block) => block.type === "toolCall" && queryCtx.forwardedToolCallIds.has(block.id)));
+		if (!queryCtx.piHistoryReplaced && queryCtx.pendingToolCalls.size > 0 && allResults.length === 0 && !carriesForwardedCall) {
+			const error = failedTurnOutput(model, "error", "Claude bridge is waiting for a tool in this conversation. A nested model request cannot run in the same conversation until that tool returns. Retry after the tool finishes, or use another provider or a separate sessionId for the nested request.");
+			queueMicrotask(() => {
+				stream.push({ type: "error", reason: "error", error });
+				stream.end();
+			});
+			return stream;
+		}
 		const abortedTeardown = queryCtx.abortedQueryTeardown;
 		if (abortedTeardown) {
 			// Pi answered the abort before the dying query's teardown released it.
@@ -768,7 +784,6 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		// ever touches the former.
 		queryCtx.callbackGeneration += 1;
 		activeStreamIdleWatchdogs.get(queryCtx)?.refresh();
-		const allResults = extractAllToolResults(context);
 		debug(`provider: tool results, ${allResults.length} results, ${queryCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
 		const unmatchedResultIds: string[] = [];
 		for (const result of allResults) {
