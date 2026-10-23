@@ -17,7 +17,7 @@ On-demand review of local changes: review, present findings, and offer to fix th
 .agents/skills/orch/scripts/resolve-base-branch .
 ```
 
-Use the outputs as `BRANCH`, `ISSUE_ID` (empty means skip every workflow-state step until § 4 mints a local key), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
+Use the outputs as `BRANCH`, `ISSUE_ID` (empty means § 2 mints and initializes a local key), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the `.` the line above resolves `WT_PATH` from.
 
@@ -166,7 +166,7 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 
 Shut the review agents down (wave runs already did).
 
-**Skip if** § 4 minted no local key. A key from the branch names live state that later workflows read, so only `LOCAL_KEY` is removed. Its state has no later reader, since the next review mints its own key:
+**Skip if** § 2 minted no `LOCAL_KEY`. A key from the branch names live state that later workflows read, so only `LOCAL_KEY` is removed. Its state has no later reader, since the next review mints its own key:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state remove [LOCAL_KEY]

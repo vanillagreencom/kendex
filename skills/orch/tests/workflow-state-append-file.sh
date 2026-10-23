@@ -402,7 +402,9 @@ finding_case() { # STATE_BIN MODE TAG
   "$bin" --state-dir "$sd" findings record KEN-F "$batch"
   "$bin" --state-dir "$sd" new-round-id KEN-F review_round_id >/dev/null
   "$bin" --state-dir "$sd" findings record KEN-F "$batch"
-  "$bin" --state-dir "$sd" findings query KEN-F "$requests" | jq -r '[.classes[0].prior, .classes[0].observed_count, (.classes[0].sources | length)] | @tsv'
+  "$bin" --state-dir "$sd" findings query KEN-F "$requests" | jq -r --arg mode "$mode" \
+    '[.classes[0].prior, .classes[0].observed_count, (.classes[0].sources | length)]
+      + (if $mode == "replay" then [.classes[0].sources | tojson] else [] end) | @tsv'
 }
 while IFS='|' read -r mode expected; do
   assert_eq "$(finding_case "$WS" "$mode" "$mode")" "$expected" "findings $mode keeps attributable count, coverage and sources across replay"
@@ -410,7 +412,7 @@ done <<'FINDINGS'
 same|none	2	2
 distinct|none	1	1
 owner|none	2	2
-replay|none	1	1
+replay|none	1	1	[{"round_id":"R1","artifact":"tmp/review-a.json","identity":["native","inline","N1"]}]
 unbound|unknown	1	1
 legacy|unknown	2	2
 gap|unknown	2	2
