@@ -39,7 +39,9 @@ TMUX_DIR="$TMP_ROOT/tmux"
 mkdir -p "$TMUX_DIR"
 cleanup() {
   local pid
-  TMUX_TMPDIR="$TMUX_DIR" tmux -L default kill-server 2>/dev/null || true
+  if [[ -S $TMUX_DIR/tmux-$(id -u)/default ]]; then
+    tmux -S "$TMUX_DIR/tmux-$(id -u)/default" kill-server 2>/dev/null || true
+  fi
   for pid in $(sed -n 's/^started \([0-9]*\) .*/\1/p' "$TMP_ROOT/watch.log" 2>/dev/null); do
     kill -TERM "$pid" 2>/dev/null || true
   done
@@ -48,10 +50,30 @@ cleanup() {
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
-tm() { TMUX_TMPDIR="$TMUX_DIR" tmux -L default "$@"; }
+tm() { tmux -S "$TMUX_DIR/tmux-$(id -u)/default" "$@"; }
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+
+# A removed TMUX_TMPDIR makes label-based tmux fall back to /tmp. The
+# decoy uses a unique label there so the old cleanup can never hit a caller.
+CLEANUP_RC=0
+(
+  TMP_ROOT="$(mktemp -d)" || exit 1
+  [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || exit 1
+  TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || exit 1
+  TMUX_DIR="$TMP_ROOT/tmux"
+  CLEANUP_LABEL="oversee-cleanup-${TMP_ROOT##*/}"
+  DECOY_SOCKET="/tmp/tmux-$(id -u)/$CLEANUP_LABEL"
+  trap 'tmux -S "$DECOY_SOCKET" kill-server 2>/dev/null || true; cleanup' EXIT
+  mkdir -p "$TMUX_DIR" || exit 1
+  tmux -S "$DECOY_SOCKET" -f /dev/null new-session -d -s decoy 'exec sleep 100000' || exit 1
+  tmux -S "$DECOY_SOCKET" has-session -t decoy || exit 1
+  cleanup
+  cleanup
+  tmux -S "$DECOY_SOCKET" has-session -t decoy
+) || CLEANUP_RC=$?
+assert_eq "$CLEANUP_RC" 0 "cleanup twice leaves the fallback-path decoy server alive"
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work/tmp" "$TMP_ROOT/fixture"
