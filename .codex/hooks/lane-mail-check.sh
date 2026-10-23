@@ -3818,8 +3818,8 @@ overseer_tool_check() {
 
 # The judgement itself, for the session overseer_identified named, in the
 # subshell overseer_tool_check runs it in: the reading, its record, and the
-# mark. A refusal ends the subshell at 0 with its key in tool.key
-# (refuse_handoff). A Pi payload
+# mark. A refusal ends the subshell at 0 with its key in tool.key.
+# A Pi payload
 # naming no window is the lane mail wake's run, which follows a turn end that
 # judged the same reading, or a tool call from a pi-hooks carrier older than
 # the one that puts `context_window` on the tool call's payload
