@@ -377,19 +377,17 @@ if command -v setsid >/dev/null 2>&1; then
   cp "$TMP_ROOT/no-linger/systemd-run" "$TMP_ROOT/linger-unread/systemd-run"
   printf '#!/bin/sh\necho "Failed to connect to bus: No such file or directory" >&2\nexit 1\n' > "$TMP_ROOT/linger-unread/loginctl"
   chmod +x "$TMP_ROOT"/no-linger/* "$TMP_ROOT"/linger-unread/*
-  # stub dir|the runner line, its unit's pid folded|label
-  while IFS='|' read -r stub want label; do
-    run env PATH="$TMP_ROOT/$stub:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" -- true
+  # stub dir|cap arguments|the runner line, its unit's pid folded|label
+  while IFS='|' read -r stub cap want label; do
+    # shellcheck disable=SC2086 # the cap column is words
+    run env PATH="$TMP_ROOT/$stub:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" $cap -- true
     assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "$want" "$label"
   done <<ROWS
-no-linger|0 runner=setsid reason=no-linger|a manager that does not linger is passed over for setsid
-linger-unread|0 runner=setsid reason=linger-unread detail=Failed to connect to bus: No such file or directory|a Linger loginctl cannot read is no linger, named with loginctl's words
+no-linger||0 runner=setsid reason=no-linger|a manager that does not linger is passed over for setsid
+no-linger|--cap 60|0 runner=setsid reason=no-linger|a capped launch passes over a manager that does not linger for setsid
+linger-unread||0 runner=setsid reason=linger-unread detail=Failed to connect to bus: No such file or directory|a Linger loginctl cannot read is no linger, named with loginctl's words
+linger-unread|--cap 60|0 runner=setsid reason=linger-unread detail=Failed to connect to bus: No such file or directory|a capped launch whose Linger loginctl cannot read uses setsid with loginctl's words
 ROWS
-  # A capped job, bounded anyway, keeps its unit where the manager does not
-  # linger.
-  run env PATH="$TMP_ROOT/no-linger:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" --cap 60 -- true
-  assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "0 runner=systemd unit=orch-validate-linger-PID" \
-    "a capped launch keeps its unit where the manager does not linger"
 fi
 
 # With neither systemd-run nor setsid there is no runner, and the launch says

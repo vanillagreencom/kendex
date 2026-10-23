@@ -2141,6 +2141,11 @@ runner_line() { # OUTPUT
   sed -n '1{s/^\(runner=systemd unit=.*\)-[0-9][0-9]*$/\1-PID/;p;}' "$(log_of "$1")"
 }
 
+# PATH farms that model a user manager need its linger precondition too.
+mkdir -p "$TMP_ROOT/linger-bin"
+printf '#!/bin/sh\necho yes\n' > "$TMP_ROOT/linger-bin/loginctl"
+chmod +x "$TMP_ROOT/linger-bin/loginctl"
+
 # Which runner this host gives a run, read off a run's own log: a host where no
 # user manager answers skips the unit rows, saying so, and never passes them.
 proj_probe="$(make_proj proj-probe "exit 0" 20)"
@@ -2163,18 +2168,6 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
     assert_eq "$(grandchild_state "$proj")" "gone" "$label" "$ERR"
   done
 
-  proj_nounit="$(make_proj proj-no-unit 'setsid sleep 300 & echo $! > grand.pid; exit 0' 20)"
-  # A capped run keeps its unit where the manager does not linger: linger is
-  # asked only of a session-long job.
-  mkdir -p "$TMP_ROOT/no-linger-bin"
-  printf '#!/bin/sh\necho no\n' > "$TMP_ROOT/no-linger-bin/loginctl"
-  chmod +x "$TMP_ROOT/no-linger-bin/loginctl"
-  RUN_PATH="$TMP_ROOT/no-linger-bin:$PATH"
-  run_script "$RUN" --worktree "$proj_nounit" --poll 1
-  RUN_PATH=""
-  assert_eq "$(runner_line "$OUT") $(grandchild_state "$proj_nounit")" "runner=systemd unit=orch-validate-proj-no-unit-PID gone" \
-    "a validation run where the manager does not linger is still a unit, and no grandchild outlives it" "$ERR"
-
   # The unit carries what a user unit does not inherit: the caller's exported
   # variables and its open-file soft limit, lowered here so it differs from
   # any manager default.
@@ -2191,7 +2184,7 @@ if [[ "$HOST_RUNNER" == systemd ]]; then
   mkdir -p "$TMP_ROOT/unit-bin"
   ln -sf "$(command -v systemd-run)" "$TMP_ROOT/unit-bin/systemd-run"
   cp "$(type -P true)" "$TMP_ROOT/unit-bin/true"
-  RUN_PATH="$TMP_ROOT/unit-bin:$(farm_path unit-no-setsid setsid)"
+  RUN_PATH="$TMP_ROOT/unit-bin:$TMP_ROOT/linger-bin:$(farm_path unit-no-setsid setsid)"
   proj_nosetsid="$(make_proj proj-no-setsid "exit 0" 20)"
   run_script "$RUN" --worktree "$proj_nosetsid" --poll 1
   assert_eq "$(verdict_of "$OUT") $(runner_line "$OUT")" "state=done guard-exit=0 validate=pass runner=systemd unit=orch-validate-proj-no-setsid-PID" \
@@ -2258,7 +2251,7 @@ FALLBACK_ROWS=(
 )
 for row in "${FALLBACK_ROWS[@]}"; do
   IFS='|' read -r stub want_line <<<"$row"
-  RUN_PATH="$TMP_ROOT/$stub:$FALLBACK_PATH"
+  RUN_PATH="$TMP_ROOT/$stub:$TMP_ROOT/linger-bin:$FALLBACK_PATH"
   run_script "$RUN" --worktree "$proj_refused" --poll 1
   assert_eq "$(verdict_of "$OUT") $(output_of "$OUT")" "state=done guard-exit=0 validate=pass ran" \
     "a systemd-run from $stub still gets a run, under setsid" "$ERR"

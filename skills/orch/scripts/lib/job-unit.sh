@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # job-unit.sh — start a long-lived orch job as a transient systemd user unit
-# where a user manager answers, under setsid elsewhere, and stop it by what
+# where a user manager answers and lingers, under setsid elsewhere, and stop it by what
 # its launch recorded. It bounds a job's lifetime, its memory when asked, and
 # under a unit the tasks and memory its launching process's own cgroup caps; it
 # sets no CPU limit. It holds the manager probe, the unit name, the
@@ -8,8 +8,8 @@
 # the process-group kill for the jobs that use it: dev-validate-run, every job
 # references/waiter-launch.md starts (the repeat watch among them), and
 # oversee-succeed's watch restart.
-# A job with no --cap, one that runs for the session, is a unit only where the
-# user manager lingers, since one that does not is stopped, with its units,
+# A job is a unit only where the user manager lingers, since one that does
+# not is stopped, with its units,
 # when the user's last login session ends.
 # Run it, or source it for the same functions; Bash 3.2.
 #
@@ -28,7 +28,7 @@
 #       Print the unit name orch-NAME-PID.
 #   job-unit.sh launch NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
 #       Start ARGV detached, as the unit orch-NAME-PID where a manager
-#       answers (and, with no --cap, lingers), PID being this launch's own
+#       answers and lingers, PID being this launch's own
 #       process, in this launch's own working directory, environment,
 #       user-manager slice and task and memory caps, and print its runner
 #       line. RECORD
@@ -209,13 +209,13 @@ job_unit_read() { # RECORD
 }
 
 job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
-  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger capped="" memory_max="" load nofile name arg slice cgroup_dir cap
+  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger memory_max="" load nofile name arg slice cgroup_dir cap
   local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -lt 2 ]] || shift 2
   while [[ "${1:-}" == --cap || "${1:-}" == --memory-max ]] && [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; do
     case "$1" in
-      --cap) unit_props+=(-p "RuntimeMaxSec=$2"); capped=yes ;;
+      --cap) unit_props+=(-p "RuntimeMaxSec=$2") ;;
       --memory-max) unit_props+=(-p "MemoryMax=${2}M"); memory_max="$2" ;;
     esac
     shift 2
@@ -228,18 +228,18 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   # A user manager that does not linger is stopped when the user's last
   # login session ends, SSH disconnects included, and every unit in it with
   # it, while tmux and the lanes in the login session run on: a job there
-  # would die with no status written. So a job with no --cap, which runs for
-  # the session, is a unit only where the manager lingers, and a Linger that
-  # cannot be read is no linger. A capped job is bounded anyway and keeps its
-  # unit, so nothing it starts outlives it. The probe
+  # would die with no status written. So every job, capped or not, is a unit
+  # only where the manager lingers, and a Linger that cannot be read is no
+  # linger. Under setsid a descendant that starts its own session can outlive
+  # the job. The probe
   # then starts a unit, since that is the question: `systemctl
   # is-system-running` exits non-zero on a degraded manager that still runs
   # units.
   if ! command -v systemd-run >/dev/null 2>&1; then
     JOB_UNIT_LINE="runner=setsid reason=no-systemd-run"
-  elif [[ -z "$capped" ]] && ! linger="$(loginctl show-user "$UID" -p Linger --value </dev/null 2>&1)"; then
+  elif ! linger="$(loginctl show-user "$UID" -p Linger --value </dev/null 2>&1)"; then
     JOB_UNIT_LINE="runner=setsid reason=linger-unread detail=${linger%%$'\n'*}"
-  elif [[ -z "$capped" && "$linger" != yes ]]; then
+  elif [[ "$linger" != yes ]]; then
     JOB_UNIT_LINE="runner=setsid reason=no-linger"
   elif probe_err="$(systemd-run --user --quiet --collect true </dev/null 2>&1 >/dev/null)"; then
     JOB_UNIT_RUNNER=systemd
