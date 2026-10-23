@@ -97,6 +97,8 @@ case "${1:-}" in
     stub_step window "${STUB_HOLD_WINDOW:-}"
     echo "$STUB_SERVER %1" ;;
   load-buffer) stub_step paste "${STUB_HOLD_PASTE:-}" ;;
+  # Cap rows admit a launched Claude screen; readiness has its own suite.
+  capture-pane) printf '? for shortcuts\n' ;;
   display-message) echo 0 ;;
 esac
 exit 0

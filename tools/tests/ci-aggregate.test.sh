@@ -552,7 +552,7 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
 # A merge group touching the script the orch-terminal shard races.
 open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
 open_terminal_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$open_terminal")")"
-linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls-a","linear-controls-b","orch-state-cost"]' '[]')"
+linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls-a","linear-controls-b"]' '[]')"
 check "the portability row selects orch-rest" true \
   "$(jq -c 'index("orch-rest") != null' <<<"$open_terminal_queue")"
 only_succeed="$(measured linux false true false '["orch-oversee-succeed"]' '["orch-oversee-succeed"]')"
@@ -1301,13 +1301,11 @@ selected-linux|merge_group|$one_skill|true|1
 selected-both|merge_group|$ORCH_CODE_ROW|true|1
 unselected|merge_group|$CODE_ROW|false|0
 ROWS
-cost_only="$(measured linux false true false '["orch-state-cost"]' '[]')"
-value="$(gh_eval value "$(context_json merge_group success "$cost_only" "$TMP/published-map")" "$expr")"
-check "$CI_JOB selects the Linux state cost matrix member" true "$value"
+value="$(gh_eval value "$(context_json merge_group success "$one_skill" "$TMP/published-map")" "$expr")"
 for result in failure cancelled skipped missing; do
   RESULTS="$(jq -cn --arg result "$result" '{changes: {result: "success"}} +
     (if $result == "missing" then {} else {"skill-suites-shard": {result: $result}} end)')"
-  check "$CI_JOB rejects $result evidence for the selected state cost job" 1 \
+  check "$CI_JOB rejects $result evidence for the selected shell job" 1 \
     "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
 done
 # The missing fixture removes the whole matrix job's needs key. A graph

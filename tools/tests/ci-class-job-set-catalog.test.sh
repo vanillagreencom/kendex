@@ -162,8 +162,8 @@ while IFS='|' read -r path expected; do
     "$(SELECT_IN="$SEL_WORLD" selection micro false "$path" | field shards)"
 done <<ROWS
 skills/price-handling/scripts/x|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
-skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest","orch-state-cost"]
-skills/orch/scripts/lib/branch-growth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest","orch-state-cost"]
+skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest"]
+skills/orch/scripts/lib/branch-growth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
 skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]

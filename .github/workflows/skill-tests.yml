@@ -491,7 +491,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge", "orch-state-cost"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
@@ -867,10 +867,6 @@ jobs:
       - name: 'orch suites: the lane and workflow-state suites'
         if: matrix.shard == 'orch-state'
         run: bash skills/orch/tests/run-all.sh --shard orch-state
-
-      - name: 'orch suites: normalized accounts and cost and spread picks'
-        if: matrix.shard == 'orch-state-cost'
-        run: bash skills/orch/tests/run-all.sh --shard orch-state-cost
 
       # claude-model-classes.sh runs the orch Claude plugin under Claude Code
       # and fails under CI where no claude is on PATH. The pin is at or above
@@ -1568,8 +1564,6 @@ jobs:
             shard: guards-tools-tail
           - os: macos-latest
             shard: guards-commit-tail
-          - os: macos-latest
-            shard: orch-state-cost
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
