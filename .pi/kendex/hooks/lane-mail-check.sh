@@ -2412,10 +2412,9 @@ attached_launch_check() {
 # in the same context.
 #
 # DECISION is the context reading the library's decision recorded for this
-# session, which the handoff record the refusal names carries: handoff_decision's
-# at a lane or attached-launch due, oversee-succeed's `context_decision` field at
-# an overseer mark, null where no context judgement ran. At an account mark it is
-# the context reading beside the mark, not the mark's own reading.
+# session, which the handoff record the refusal names carries, or null where no
+# context judgement ran. At an account mark it is the context reading beside the
+# mark, not the mark's own reading.
 refuse_judged_handoff() { # DECISION KEY VALUE [CAUSE]
   local decision=$1
   shift
