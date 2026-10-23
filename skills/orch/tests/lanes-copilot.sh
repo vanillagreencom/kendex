@@ -614,12 +614,13 @@ fix_line() { # the fix= line on stderr, the host path shortened
   line="$(grep '^fix=' <<<"$ERR" | sed -n 1p)"
   printf '%s' "${line//$TEST_DIR\/fixtures\/lane-host/HOST}"
 }
-# pi_verdict — the exit, the key of the last keyed lanes: line, and the read
+# pi_verdict — the exit, the key of the first keyed lanes: line, and the read
 # the fix= line names: local, absent, answered, or row:STATUS:DETAIL for a
 # provider row that read no pool, or none.
 pi_verdict() {
   local key fix
-  key="$(grep '^lanes: ' <<<"$ERR" | tail -n 1 | cut -d' ' -f2)"
+  key="$(pick_key)"
+  key="${key%%,*}"
   fix="$(sed -nE -e 's/^fix=[^:]*: ORCH_LANE_HOST=local asks no lane host,.*/local/p' \
     -e 's/^fix=[^:]*: lane host .* implements no accounts verb,.*/absent/p' \
     -e 's/^fix=[^:]*: the accounts verb of lane host .* carried no harness=pi row .*/answered/p' \
