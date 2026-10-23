@@ -327,6 +327,8 @@ _pc_step() {
   fi
   [[ $active != outside ]] || return 0
   case "$BASH_COMMAND" in
+    'awk -F'*)
+      [[ ${FUNCNAME[1]} != verifying_read ]] || printf '%s\n' "${#state}" >>"$STUB_DIR/state-scans" ;;
     'local row prefix='*)
       case ${FUNCNAME[1]} in
         lane_row_get) printf '%s\n' "${#PW_SEEN[0]}" >>"$STUB_DIR/state-scans" ;;
@@ -390,6 +392,7 @@ PY
     control_rc=0
     ( FAIL=0; stage_work_contract; [[ "$FAIL" == 0 ]] ) >"$STUB_DIR/structural-control.log" || control_rc=$?
     if [[ "$count" == 0 ]]; then
+      assert_eq "$stage_scans" 1 "$name: scan instrument includes the initial full-state pruning pass"
       assert_eq "$control_rc" 0 "$name: empty clean run meets the shared structural bound"
     else
       assert_le "$count" "$stage_scalar" "$name: scalar instrument observes the per-item path"
