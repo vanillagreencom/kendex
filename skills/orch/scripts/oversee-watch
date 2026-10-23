@@ -4779,13 +4779,13 @@ check_lanes() {
     hosted_lane_item "$lane"
     hosted_item=""; hosted_harness=""
     if item_in "$LANE_ITEM" ${STATUS_VERB[@]+"${STATUS_VERB[@]}"}; then
-      hosted_record="$(jq -c --arg item "$LANE_ITEM" "$LANE_RUNNING_JQ"'
-        [.lanes[]? | select(running and .item == $item)][0] // empty' "$STATE_FILE")" \
+      hosted_record="$(jq -r --arg item "$LANE_ITEM" "$LANE_RUNNING_JQ"'
+        [.lanes[]? | select(running and .item == $item)][0] // empty
+        | [.item, (.harness // "")] | join("\u001f")' "$STATE_FILE")" \
         || die state-invalid "" "item=$LANE_ITEM"
       [[ -n "$hosted_record" ]] || { states[$i]=unjudged; continue; }
-      hosted_harness="$(jq -r '.harness // ""' <<<"$hosted_record")" \
-        || die state-invalid "" "item=$LANE_ITEM"
-      [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"
+      IFS=$'\x1f' read -r hosted_item hosted_harness <<<"$hosted_record"
+      [[ -n "$hosted_harness" ]] || hosted_item=""
     fi
     ORCH_LANE_HOST="$HOSTED_HOST" lane_state state "$window" "$cmd" "$pid" "$pane" "" "" "${LANE_ROWS[$i]:-}" "$hosted_item" "$hosted_harness" "${LANE_PANE_SOURCES[$i]:-}" \
       || die limit-scan-failed "" "lane=$lane"

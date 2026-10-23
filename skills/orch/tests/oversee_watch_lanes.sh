@@ -320,8 +320,8 @@ RECORD_WATCH="$(mutant_scripts record-watch/orch oversee-watch)/oversee-watch" |
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/record-watch/github"
 # shellcheck disable=SC2016
 mutate_file "$RECORD_WATCH" \
-  $'[.lanes[]? | select(running and .item == $item)][0] // empty\x27 "$STATE_FILE")' \
-  $'[.lanes[]? | select(running and .item == $item)][0] // empty\x27 <<<"${FLEET_STATE:-null}")'
+  $'| [.item, (.harness // "")] | join("\\u001f")\x27 "$STATE_FILE")' \
+  $'| [.item, (.harness // "")] | join("\\u001f")\x27 <<<"${FLEET_STATE:-null}")'
 for row in 'pi|running|live|false|pi' 'pi|running|control|true|claude' 'pi|stopped|live|false|none' 'claude|running|live|true|claude'; do
   IFS='|' read -r next_harness next_status judge want_exit probed_harness <<<"$row"
   new_case "record_${next_harness}_${next_status}_$judge"
@@ -400,7 +400,7 @@ echo "=== hosted provider reads require a running record naming the harness ==="
 # answers with the absent-verb 2 and so leaves the lane unjudged.
 EXPLICIT_WATCH="$(mutant_scripts explicit-watch/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/explicit-watch/github"
-mutate_file "$EXPLICIT_WATCH" '      [[ -z "$hosted_harness" ]] || hosted_item="$LANE_ITEM"' '      hosted_item="$LANE_ITEM"'
+mutate_file "$EXPLICIT_WATCH" '      [[ -n "$hosted_harness" ]] || hosted_item=""' '      hosted_item="$LANE_ITEM"'
 mutate_file "$EXPLICIT_WATCH" 'select(running and .item == $item)' 'select(.item == $item)'
 # shellcheck disable=SC2016
 mutate_file "$EXPLICIT_WATCH" '    if item_in "$LANE_ITEM" ${STATUS_VERB[@]+"${STATUS_VERB[@]}"}; then' '    if [[ -n "$HOSTED_ROOT" ]]; then'
