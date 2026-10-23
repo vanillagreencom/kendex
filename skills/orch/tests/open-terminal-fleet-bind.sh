@@ -281,7 +281,7 @@ cat > "$TEAM_STUB" <<'EOF'
 #!/bin/sh
 workspace="${LINEAR_APP_TOKEN:-}"
 env_file="$(git rev-parse --show-toplevel)/.env.local"
-[ -n "$workspace" ] || [ ! -f "$env_file" ] || workspace="$(sed -n 's/^LINEAR_APP_TOKEN=//p' "$env_file")"
+[ -n "$workspace" ] || [ ! -f "$env_file" ] || workspace="$(sed -n 's/^export //; s/^LINEAR_APP_TOKEN=//p' "$env_file")"
 if [ -z "$workspace" ]; then
   printf 'linear-auth: credential=unset\n' >&2
   exit 1
