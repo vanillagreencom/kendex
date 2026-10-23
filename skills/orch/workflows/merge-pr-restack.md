@@ -49,7 +49,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack
    ```
 
-   `validate-mode=ci` runs that command with `--validate-mode ci`. Its `--restack` flag keeps the scoped suites a dev round runs off this call, so it runs no command and returns at once. It records its pending CI result through the existing `--record` owner, then goes to step 3 with no local range run or skip check. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`. Both `full` and `range` first ask whether the restacked head can skip its range re-test. `dev-validate-run --help` owns candidate selection under `--last-pass`:
+   `validate-mode=ci` runs that command with `--validate-mode ci`. Its `--restack` flag skips selector preview and scoped suites. Successful CI admission records CI pending without a local command and returns at once. A refusal runs the range command and records its cause on start's `ci-fallback=` line; `dev-validate-run --help` lists those causes. Read the result through the existing `--record` owner before step 3. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`. Both `full` and `range` first ask whether the restacked head can skip its range re-test. `dev-validate-run --help` owns candidate selection under `--last-pass`:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]

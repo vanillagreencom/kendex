@@ -348,7 +348,7 @@ assert_eq "$CI_RESOLVED" validate-mode=ci 'push-first restack resolves to pendin
 CI_OUT="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main -)" || fixture_failed ci-start
 CI_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$CI_OUT")"
 CI_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$CI_WT" main "$CI_DIR")" || fixture_failed ci-record
-assert_contains "$CI_RECORD" 'validate-mode=ci selection=all verdict=pending' 'restack records pending proof, not a local pass'
+assert_contains "$CI_RECORD" 'validate-mode=ci selection=unreported verdict=pending' 'restack records pending proof, not a local pass'
 assert_contains "$CI_RECORD" "head=$(git -C "$CI_WT" rev-parse HEAD)" 'restack CI record binds the restacked head'
 assert_eq "$([[ -e "$TMP_ROOT/ci-restack-range-ran" || -e "$TMP_ROOT/ci-restack-full-ran" || -e "$TMP_ROOT/ci-restack-scoped-ran" ]] && echo ran || echo deferred)" deferred 'restack starts no local command'
 assert_eq "$(grep -c '^class-base=' "$CI_DIR/start" || :)" 0 'restack CI record names no class base'

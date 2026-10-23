@@ -1790,6 +1790,37 @@ run_script "$CI_SCRIPT" --worktree "$proj_ci" --restack --validate-mode range --
 assert_eq "$RC $(sed -n 1p <"$ERR")" '2 dev-validate-run: option-unused option=--restack mode=start validate-mode=range' \
   'a restack flag belongs to a ci request only' "$ERR"
 
+# merge-pr-restack's ci call has no scoped round to preview. A failing
+# selector must not turn required merge-group CI into a local range run.
+restack_row() { # SCRIPT
+  local proj dir status launched=none command=empty
+  proj="$(ci_proj "restack-${1##*/}" CI)"
+  mkdir -p "$proj/tmp"
+  sed -i.bak 's/^DEV_VALIDATE_RANGE_CMD = .*/DEV_VALIDATE_RANGE_CMD = "echo range >> tmp\/launched"/' "$proj/kendex.settings.toml"
+  printf 'DEV_VALIDATE_SELECTION_CMD = "echo selector >> tmp/launched; exit 1"\n' >> "$proj/kendex.settings.toml"
+  ci_world queue-required
+  RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE='queue_only=true cause=queue-lane' STUB_ANSWER=change_class=standard \
+    STUB_DOCS=false STUB_MEASURED=true run_script "$1" --worktree "$proj" --poll 1 --validate-mode ci --base HEAD --restack
+  status="$RC"
+  dir="$(run_dir_of "$OUT")"
+  [[ ! -f "$proj/tmp/launched" ]] || launched="$(paste -sd, "$proj/tmp/launched")"
+  [[ -f "$dir/cmd" && ! -s "$dir/cmd" ]] || command=nonempty
+  run_script "$1" --record --run-dir "$dir"
+  printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$status" "$(record_field validate-mode "$OUT")" \
+    "$(record_field verdict "$OUT")" "$(record_field ci-event "$OUT")" "$(record_field scoped "$OUT")" \
+    "$(record_field ci-fallback "$OUT")" "$command" "$launched"
+  rm -rf -- "${proj:?}"
+}
+assert_eq "$(restack_row "$CI_SCRIPT")" '0|ci|pending|merge_group|||empty|none' \
+  'a restack skips a failing selector and records required CI without launching a command'
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+# shellcheck disable=SC2016 # main's selector-admission guard
+mutate_file "$CI_SCRIPT.mutant" '[[ "$restack" == true || -z "${selection_cmd//[[:space:]]/}" ]]' \
+  '[[ -z "${selection_cmd//[[:space:]]/}" ]]'
+assert_eq "$(restack_row "$CI_SCRIPT.mutant")" '0|range|pass|||selection-unread|nonempty|selector,range' \
+  'control: main selector admission turns the restack pending-CI assertion red'
+rm -f -- "${CI_SCRIPT:?}.mutant"
+
 # The rules read names the base branch: a read of another branch's rules is
 # one the stub fails, so the micro row runs range.
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
@@ -1947,7 +1978,7 @@ ci_extension_control() { # ANCHOR REPLACEMENT ROW EXPECTED
 }
 # shellcheck disable=SC2016 # private production mutations
 {
-ci_extension_control $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then' $'    [[ "$requested_mode" == full ]] || validate_mode=range\n    ci_fallback=class-uncovered\n    if ci_class_covered true && ci_runs_validation; then\n      if true; then'  \
+ci_extension_control 'if [[ "$restack" == true || -z "${selection_cmd//[[:space:]]/}" ]]; then' 'if true; then' \
   'unreported selector' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|no'
 ci_extension_control $'          class_base="$round_class_base"\n          classify "$class_base"' $'          class_base="$round_class_base"\n          classify ""' \
   'widget-test fix' 'ci||crates/positions/src/lib.rs,tests/widget.sh|none|yes'

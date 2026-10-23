@@ -57,7 +57,9 @@
 #       With --validate-mode ci it is refused as reproduce-ci.
 #       --restack marks a ci request as the restack's own, which
 #       ../workflows/merge-pr-restack.md step 2 makes: a restack is no round,
-#       so CI admission runs no scoped suites and records CI pending at once.
+#       so it skips selector preview and scoped suites. Successful CI admission
+#       records CI pending at once; a refusal runs the range command and names
+#       its cause on start's ci-fallback= line, as ci mode lists below.
 #       Any other mode refuses it as option-unused.
 #       A full start ignores --base and prints one stderr notice naming it.
 #       Range and ci starts require --base. Other unused options are refused.
@@ -253,8 +255,9 @@
 # full request takes CI under the coverage checks above. Unset, failed or
 # unreported selection keeps full and range requests local. For an explicit
 # ci request, an unset selector preserves the existing CI route. A configured
-# selector must report all or subset before CI admission, and the admitted
-# round then runs its scoped suites as ci mode states.
+# selector must report all or subset before CI admission, except under
+# --restack, which skips the selector. The admitted round then runs its
+# scoped suites as ci mode states.
 # The selector may also print expected-secs=N on its own line. It owns the
 # estimate and its margin. Before launching a command, start refuses with
 # over-bound expected-secs=N bound=B when N exceeds DEV_VALIDATE_TIMEOUT_SECS.
@@ -1071,7 +1074,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     [[ "$requested_mode" == full ]] || validate_mode=range
     ci_fallback=class-uncovered
     if ci_class_covered true && ci_runs_validation; then
-      if [[ -z "${selection_cmd//[[:space:]]/}" ]]; then
+      # A restack has no scoped execution to preview.
+      if [[ "$restack" == true || -z "${selection_cmd//[[:space:]]/}" ]]; then
         validate_mode=ci
       else
         selection_previewed=true
@@ -1113,7 +1117,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   fi
   scoped=false
   if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then
-    if [[ "$reproduce" == false && -n "${selection_cmd//[[:space:]]/}" ]]; then
+    if [[ "$reproduce" == false && "$restack" == false && -n "${selection_cmd//[[:space:]]/}" ]]; then
       if preview_selection && { [[ "$selection" == selection=all ]] \
           || [[ "$requested_mode" == range && "$selection" == selection=subset ]]; }; then
         if [[ "$ci_admission_attempted" == false ]]; then
