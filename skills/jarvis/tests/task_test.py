@@ -563,6 +563,14 @@ sys.exit(task.main())
                     world = TaskContract()
                     world.setUp()
                     try:
+                        # tmux 3.8 clears pane_pid after EOF. Exercise that
+                        # producer on older hosts as well as in native CI.
+                        real_tmux = shutil.which("tmux")
+                        tmux = world.bin / "tmux"
+                        tmux.write_text("#!" + sys.executable + "\nimport os,sys\n"
+                            + "argv=[arg.replace('#{pane_pid}', '#{?pane_dead,,#{pane_pid}}') for arg in sys.argv[1:]]\n"
+                            + "os.execv(" + repr(real_tmux) + ", ['tmux', *argv])\n")
+                        tmux.chmod(0o755)
                         task = world.launch("codex", mode)
                         world.acknowledgement(task)
                         shutil.copyfile(launcher, world.bin / "claude")
@@ -593,6 +601,8 @@ sys.exit(task.main())
                                         world.tmux("set-hook", "-p", "-t", world.terminal["pane"], "pane-died", "wait-for -S successor-ended")
                                         os.kill(pid, signal.SIGKILL)
                                         world.tmux("wait-for", "successor-ended")
+                                        dead = world.tmux("display-message", "-p", "-t", world.terminal["pane"], "#{pane_dead}:#{pane_pid}").stdout.strip()
+                                        self.assertEqual(dead, "1:")
                                 if verb == "process-ended" and mode == "zombie":
                                     # The reader's Z row is exercised below. At
                                     # this boundary, tmux has already reaped it.
@@ -859,6 +869,10 @@ while True: signal.pause()
             ("main-stale-refusal", "session.py", ((condition, 'if stopped.returncode:'),),
              "test_retry_succession_process_states"),
             ("reused-pid-cleanup", "session.py", ((condition, 'if stopped.returncode != 3:'),),
+             "test_retry_succession_process_states"),
+            ("dead-pane-needs-pid", "session.py", ((
+              'process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(identity["pid"]) + "}}"',
+              'process_binding = "#{==:#{pane_pid}," + str(identity["pid"]) + "}"'),),
              "test_retry_succession_process_states"),
             ("live-process-ended", "session-backend.sh", (('[[ -z "$state" || "$state" == Z ]] ;;',
               '[[ -z "$state" || "$state" == Z ]] || true ;;'),), "test_process_ended_states"),

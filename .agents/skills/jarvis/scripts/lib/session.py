@@ -574,7 +574,10 @@ class Session:
                         raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")
                 if not self.terminal(record):
                     return
-                condition = "#{&&:" + condition + ",#{==:#{pane_pid}," + str(identity["pid"]) + "}}"
+                # tmux clears pane_pid at EOF, while a retained dead pane
+                # still has this server and generation's ownership marks.
+                process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(identity["pid"]) + "}}"
+                condition = "#{&&:" + condition + "," + process_binding + "}"
             action = "kill-window" if window else "kill-session"
             self.tmux("if-shell", "-F", "-t", pane, condition, action + " -t " + pane, socket=record["terminal"]["server"])
             if window and self.terminal(record):
