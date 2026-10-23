@@ -554,6 +554,95 @@ sys.exit(task.main())
                         print("jarvis-task-failure: " + json.dumps(evidence), file=sys.stderr, flush=True)
                         raise
 
+    def test_retry_succession_process_states(self):
+        # Kill at the stop boundary, after end_owned's pane read. The tmux
+        # pane-died acknowledgement proves exit; elapsed time is no proof.
+        with native_launcher() as launcher:
+            for mode in ("live", "exited", "zombie", "changed-start"):
+                with self.subTest(mode=mode):
+                    world = TaskContract()
+                    world.setUp()
+                    try:
+                        task = world.launch("codex", mode)
+                        world.acknowledgement(task)
+                        shutil.copyfile(launcher, world.bin / "claude")
+                        shutil.copyfile(Path(__file__).with_name("fixtures") / "harness.py", world.home / ".fixture-harness.py")
+                        (world.home / ".fixture.json").write_text(json.dumps({"rows": str(world.root / "rows.jsonl"),
+                            "gate": str(world.root / "gate"), "bash": world.env["JARVIS_TEST_BASH"], "skills": str(world.skills)}))
+                        handoff = world.home / "state/handoff.md"
+                        handoff.parent.mkdir(exist_ok=True)
+                        handoff.write_text("# Handoff\n\n## State\n\nwork: TASK-ref\n")
+                        with patch.dict(os.environ, world.env, JARVIS_BASH=world.env["JARVIS_TEST_BASH"]):
+                            runtime = runpy.run_path(str(world.skills / "jarvis/scripts/lib/session.py"))
+                            session = runtime["Session"](world.home)
+                            record = session.read()
+                            pid = int(world.tmux("display-message", "-p", "-t", world.terminal["pane"], "#{pane_pid}").stdout)
+                            identity = json.loads(session.backend("process", pid).stdout)
+                            record.update(process=dict(identity, started_at="stale") if mode == "changed-start" else identity,
+                                          intent="succeed", state="starting", reason="launching", predecessor=None, origin="manual",
+                                          transfer={"phase": "predecessor-ended", "handoff": str(handoff)})
+                            session.write(record)
+                            backend = session.backend
+                            stops = []
+
+                            def at_stop(verb, *args, **kwargs):
+                                if verb == "stop-process":
+                                    stops.append(args[0])
+                                    if mode in ("exited", "zombie"):
+                                        world.tmux("set-option", "-p", "-t", world.terminal["pane"], "remain-on-exit", "on")
+                                        world.tmux("set-hook", "-p", "-t", world.terminal["pane"], "pane-died", "wait-for -S successor-ended")
+                                        os.kill(pid, signal.SIGKILL)
+                                        world.tmux("wait-for", "successor-ended")
+                                if verb == "process-ended" and mode == "zombie":
+                                    # The reader's Z row is exercised below. At
+                                    # this boundary, tmux has already reaped it.
+                                    return subprocess.CompletedProcess((verb, *args), 0, "", "")
+                                return backend(verb, *args, **kwargs)
+
+                            errors = io.StringIO()
+                            with patch.object(session, "backend", side_effect=at_stop), redirect_stderr(errors):
+                                if mode == "changed-start":
+                                    with self.assertRaises(runtime["Refusal"]) as refused:
+                                        session.succeed()
+                                    self.assertEqual(refused.exception.reason, "handover-failed")
+                                else:
+                                    try:
+                                        answer = session.succeed()
+                                    except runtime["Refusal"] as failure:
+                                        self.fail(failure.reason)
+                                    self.assertEqual(answer[1], 0)
+                            self.assertEqual(stops, [pid])
+                            if mode != "live":
+                                fields = dict(word.split("=", 1) for word in shlex.split(errors.getvalue())[1:])
+                                self.assertEqual((fields["cause"], fields["pid"]), ("identity-stale", str(pid)))
+                            if mode == "changed-start":
+                                self.assertEqual(session.read(), record)
+                                self.assertTrue(world.jarvis_live())
+                                self.assertEqual(backend("worker-live", pid, identity["started_at"]).returncode, 0)
+                            else:
+                                world.settle("running")
+                                windows = world.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
+                                self.assertNotIn(task["terminal"]["window"], windows)
+                    finally:
+                        world.tearDown()
+
+    def test_process_ended_states(self):
+        # lane_process_state is the shared reader. Its empty/Z/live/error
+        # outputs are external inputs to this private bridge's decision.
+        backend = self.skills / "jarvis/scripts/lib/session-backend.sh"
+        source = backend.read_text()
+        marker = 'case "$verb" in\n  select)'
+        self.assertFalse(backend.is_symlink())
+        self.assertEqual(source.count(marker), 1)
+        changed = source.replace(marker, 'lane_process_state() { printf "%s" "$FIXTURE_STATE"; return "$FIXTURE_EXIT"; }\n' + marker)
+        self.assertNotEqual(changed, source)
+        backend.write_text(changed)
+        for state, status, expected in (("", 0, 0), ("Z", 0, 0), ("S", 0, 1), ("", 2, 2)):
+            with self.subTest(state=state, status=status):
+                result = subprocess.run([str(backend), "process-ended", "synthetic"],
+                    env=dict(self.env, FIXTURE_STATE=state, FIXTURE_EXIT=str(status)), capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, expected, result.stderr)
+
     def test_failed_succession_prints_evidence_before_cleanup(self):
         # Plant one command failure in the existing row owner. The following
         # row still sees its retained succession, rather than a second defect.
@@ -753,11 +842,20 @@ while True: signal.pause()
 
     def test_stop_process_result_control(self):
         self.regression_controls((("stop-result-collapsed", "session.py", ((
-            '                if stopped.returncode:\n                    sys.stderr.write(stopped.stderr)\n'
-            '                    raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")',
-            '                if stopped.returncode:\n'
-            '                    raise Refusal("handover-failed", "The predecessor identity changed. Check the session record before retrying.", "failed")'),),
+            '                    sys.stderr.write(stopped.stderr)\n',
+            '                    str(stopped.stderr)\n'),),
             "test_stop_process_result_reaches_owned_diagnostic"),))
+
+    def test_retry_succession_process_states_controls(self):
+        condition = 'if stopped.returncode != 3 or self.backend("process-ended", identity["pid"], check=False).returncode != 0:'
+        self.regression_controls((
+            ("main-stale-refusal", "session.py", ((condition, 'if stopped.returncode:'),),
+             "test_retry_succession_process_states"),
+            ("reused-pid-cleanup", "session.py", ((condition, 'if stopped.returncode != 3:'),),
+             "test_retry_succession_process_states"),
+            ("live-process-ended", "session-backend.sh", (('[[ -z "$state" || "$state" == Z ]] ;;',
+              '[[ -z "$state" || "$state" == Z ]] || true ;;'),), "test_process_ended_states"),
+        ))
 
     def regression_controls(self, rows):
         for name, filename, edits, case in rows:

@@ -568,7 +568,10 @@ class Session:
                 stopped = self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"], check=False)
                 if stopped.returncode:
                     sys.stderr.write(stopped.stderr)
-                    raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")
+                    # An abandoned successor can end itself after the pane
+                    # check. A stale identity alone also covers a reused PID.
+                    if stopped.returncode != 3 or self.backend("process-ended", identity["pid"], check=False).returncode != 0:
+                        raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")
                 if not self.terminal(record):
                     return
                 condition = "#{&&:" + condition + ",#{==:#{pane_pid}," + str(identity["pid"]) + "}}"

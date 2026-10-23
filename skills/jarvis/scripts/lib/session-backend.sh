@@ -136,6 +136,9 @@ case "$verb" in
     [[ -n "$state" && "$state" != Z ]] || exit 1
     at="$(lane_process_start "$1")" || exit 2
     [[ "$at" == "$2" ]] || exit 1 ;;
+  process-ended)
+    state="$(lane_process_state "$1")" || exit 2
+    [[ -z "$state" || "$state" == Z ]] ;;
   stop-process)
     rc=0
     lane_stop_identity "$1" "$2" "$3" || rc=$?
