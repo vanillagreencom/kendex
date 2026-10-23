@@ -331,6 +331,8 @@ if section judge; then
 232560|258400|90|rc=0 room
 232561|258400|90|rc=0 due
 232559|258400|90|rc=0 room
+117964|131072|90|rc=0 room
+117965|131072|90|rc=0 due
 399999|1000000|90|rc=0 room
 400000|1000000|90|rc=0 due
 400000||90|rc=0 due
@@ -587,6 +589,8 @@ if section agent-reserve; then
 249999|1000000|90|150000|rc=0 room
 250000|1000000|90|150000|rc=0 due
 250001|1000000|90|150000|rc=0 due
+67964|131072|90|50000|rc=0 room
+67965|131072|90|50000|rc=0 due
 49999|200000|50|50000|rc=0 room
 50000|200000|50|50000|rc=0 due
 90000|200000|90|0|rc=0 room
@@ -826,6 +830,10 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '232560 of 258400 at 90: rc=0 room'
   control agent-reserve lane-context.sh '    cap_mark=$((400000 - $4))' '    cap_mark=400000' \
     'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
+  control plain-mark-floor lane-context.sh 'window_mark=$(($2 * pct / 100))' 'window_mark=$((($2 * pct + 99) / 100))' \
+    '117965 of 131072 at 90: rc=0 due'
+  control reserve-mark-ceiling lane-context.sh 'window_mark=$((($2 * pct + 99) / 100 - $4))' 'window_mark=$(($2 * pct / 100 - $4))' \
+    'agent reserve: 67964 of 131072 at 90 with 50000: rc=0 room'
   control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false SOURCE=' \
     'pre-panel fresh transcript 250001: due'
   control launch-only-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if true; then' \

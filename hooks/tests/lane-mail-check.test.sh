@@ -302,11 +302,14 @@ new_handoff_lane() { # NAME ITEM
 HANDOFF_FIELDS='merged,remaining,branch,worktree,open_pr,traps'
 
 # workflow-state consumes the emitted shell argument, including its escaping.
-template_record() {
+# LITERAL and REPLACEMENT make the lane's own edit first: each LITERAL in the
+# raw word as printed becomes REPLACEMENT, the way the lane fills a placeholder.
+template_record() { # [LITERAL REPLACEMENT]
   local line record=''
   while IFS= read -r line; do
     case "$line" in *' set '*' handoff '*) record=${line#* handoff }; break ;; esac
   done < "$ERR_FILE"
+  [ "$#" -eq 0 ] || record=${record//"$1"/"$2"}
   "$BASH" -c 'eval "set -- $1"; [ "$#" -eq 1 ] && printf "%s\n" "$1"' _ "$record"
 }
 
@@ -346,6 +349,8 @@ assert_eq "$(template_fields)" "$HANDOFF_FIELDS,context" \
 assert_eq "$(template_record | jq -cS .)" \
   "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:"[PR_NUMBER_OR_NULL]",traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:50,cap_mark:400000,window_mark:500000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
   "the parsed record preserves recovery fields and the actual plain decision and source"
+assert_eq "$(template_record '[STEP]' 'run the tests' | jq -c .remaining)" '["run the tests"]' \
+  "a placeholder the lane replaces in the printed word with free text stays one argument"
 assert_eq "$(template_omits_written_at && echo yes || echo no)" "yes" \
   "and asks the lane for no written_at, which the set stamps"
 assert_eq "$(grep -cF -- "lane-mail notice --item KEN-50 --file" "$ERR_FILE")" "1" \
@@ -1835,6 +1840,8 @@ assert_eq "record=$(overseer_record_named) named=$(template_record | jq -c '[.se
 assert_eq "$(template_record | jq -cS .)" \
   "$(jq -ncS --arg pane "$OVERSEER_SERVER $OVERSEER_PANE" --arg transcript "$TRANSCRIPT" '{handoff_file:"[OVERSEER_HANDOFF_PATH]",pane_key:$pane,session_id:"s1",context:{decision:null,source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:$pane,capacity_source:null,compacted:false}}}')" \
   "with the pane key beside it, for a harness that names no session" "$ERR_FILE"
+assert_eq "$(template_record '[OVERSEER_HANDOFF_PATH]' '/fleet/over seer.md' | jq -r .handoff_file)" '/fleet/over seer.md' \
+  "and a path the overseer writes over its placeholder in the printed word stays one argument"
 
 # The account mark is the judge's own, on the judge's own setting: this hook
 # reads neither, so the figure and the mark it names come off that one line.
