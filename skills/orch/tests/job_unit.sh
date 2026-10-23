@@ -377,11 +377,19 @@ if command -v setsid >/dev/null 2>&1; then
   cp "$TMP_ROOT/no-linger/systemd-run" "$TMP_ROOT/linger-unread/systemd-run"
   printf '#!/bin/sh\necho "Failed to connect to bus: No such file or directory" >&2\nexit 1\n' > "$TMP_ROOT/linger-unread/loginctl"
   chmod +x "$TMP_ROOT"/no-linger/* "$TMP_ROOT"/linger-unread/*
+  assert_linger_launch() { # SCRIPT; the current table row supplies the launch and assertion
+    # shellcheck disable=SC2086 # the cap column is words
+    run env PATH="$TMP_ROOT/$stub:$FARM" "$1" launch validate-linger "$TMP_ROOT/linger.record" $cap -- true
+    assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "$want" "$label"
+  }
   # stub dir|cap arguments|the runner line, its unit's pid folded|label
   while IFS='|' read -r stub cap want label; do
-    # shellcheck disable=SC2086 # the cap column is words
-    run env PATH="$TMP_ROOT/$stub:$FARM" "$JOB_UNIT" launch validate-linger "$TMP_ROOT/linger.record" $cap -- true
-    assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "$want" "$label"
+    assert_linger_launch "$JOB_UNIT"
+    if [[ "$stub" == no-linger && -n "$cap" ]]; then
+      mutant no-linger-guard 'elif [[ "$linger" != yes ]]; then' 'elif false && [[ "$linger" != yes ]]; then'
+      control_failures="$(FAIL=0; assert_linger_launch "$MUTANT" > "$TMP_ROOT/linger-control.out"; printf '%s' "$FAIL")"
+      assert_eq "$control_failures" "1" "control: the capped row rejects a bypassed linger guard"
+    fi
   done <<ROWS
 no-linger||0 runner=setsid reason=no-linger|a manager that does not linger is passed over for setsid
 no-linger|--cap 60|0 runner=setsid reason=no-linger|a capped launch passes over a manager that does not linger for setsid
