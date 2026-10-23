@@ -65,9 +65,18 @@ CLEANUP_RC=0
   TMUX_DIR="$TMP_ROOT/tmux"
   CLEANUP_LABEL="oversee-cleanup-${TMP_ROOT##*/}"
   DECOY_SOCKET="/tmp/tmux-$(id -u)/$CLEANUP_LABEL"
+  # Restoring label-based cleanup must hit this decoy, never the caller.
+  tmux() {
+    if [[ ${1:-} == -L && ${2:-} == default ]]; then
+      shift 2
+      command tmux -L "$CLEANUP_LABEL" "$@"
+    else
+      command tmux "$@"
+    fi
+  }
   trap 'tmux -S "$DECOY_SOCKET" kill-server 2>/dev/null || true; cleanup' EXIT
   mkdir -p "$TMUX_DIR" || exit 1
-  tmux -S "$DECOY_SOCKET" -f /dev/null new-session -d -s decoy 'exec sleep 100000' || exit 1
+  TMUX_TMPDIR=/tmp tmux -L "$CLEANUP_LABEL" -f /dev/null new-session -d -s decoy 'exec sleep 100000' || exit 1
   tmux -S "$DECOY_SOCKET" has-session -t decoy || exit 1
   cleanup
   cleanup
