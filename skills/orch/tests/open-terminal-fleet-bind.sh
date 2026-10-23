@@ -311,7 +311,7 @@ overseer_team() {
   printf '[env]\nORCH_CONNECTED_REPOS = "acme/target"\n' > "$OVERSEER_REPO/kendex.settings.toml"
   [[ "$1" == absent ]] || printf 'LINEAR_TEAM = "%s"\n' "$1" >> "$OVERSEER_REPO/kendex.settings.toml"
 }
-# team_launch [SCRIPT=PATH] [BARE] [LOADED=NAME=VALUE] [ENV=NAME=VALUE]... TEAM
+# team_launch [SCRIPT=PATH] [BARE] [LOADED=NAME=VALUE] [CALLER=private|settings] [ENV=NAME=VALUE]... TEAM
 # CWD ITEM — one launch of ITEM from CWD under the launcher's Checkout team,
 # with the overseer checkout's team set to TEAM; sets TEAM_RESULT. The launcher
 # inherits no LINEAR_APP_TOKEN unless ENV= sets one, and the .env.local of the
@@ -319,12 +319,13 @@ overseer_team() {
 # hands to linear.sh must be exported. The overseer checkout's .env.local
 # holds the overseer's credential, or nothing under BARE.
 team_launch() {
-  local script="$OT" bare=false loaded="" env=()
-  while [[ "$1" == SCRIPT=* || "$1" == BARE || "$1" == LOADED=* || "$1" == ENV=* ]]; do
+  local script="$OT" bare=false loaded="" caller="" caller_settings="" env=()
+  while [[ "$1" == SCRIPT=* || "$1" == BARE || "$1" == LOADED=* || "$1" == CALLER=* || "$1" == ENV=* ]]; do
     case "$1" in
       SCRIPT=*) script="${1#SCRIPT=}" ;;
       BARE) bare=true ;;
       LOADED=*) loaded="${1#LOADED=}" ;;
+      CALLER=*) caller="${1#CALLER=}" ;;
       ENV=*) env+=("$1") ;;
     esac
     shift
@@ -334,9 +335,19 @@ team_launch() {
   rm -f -- "${OVERSEER_REPO:?}/.env.local" "${launcher_root:?}/.env.local"
   [[ "$bare" == true ]] || printf 'LINEAR_APP_TOKEN=overseer\n' > "$OVERSEER_REPO/.env.local"
   [[ -z "$loaded" ]] || printf 'export %s\n' "$loaded" > "$launcher_root/.env.local"
+  case "$caller" in
+    private) printf 'export LINEAR_APP_TOKEN=target\n' > "$cwd/.env.local" ;;
+    settings)
+      caller_settings="$(cat -- "$cwd/kendex.settings.toml")"
+      printf '\nLINEAR_APP_TOKEN = "target"\n' >> "$cwd/kendex.settings.toml" ;;
+  esac
   fleet cwd "$OVERSEER_REPO"
   run_ot SCRIPT="$script" CWD="$cwd" "ENV=LINEAR_TEAM=Checkout team" UNSET=LINEAR_APP_TOKEN ${env[@]+"${env[@]}"} "$item"
   rm -f -- "${launcher_root:?}/.env.local"
+  case "$caller" in
+    private) printf 'LINEAR_APP_TOKEN=target\n' > "$cwd/.env.local" ;;
+    settings) printf '%s\n' "$caller_settings" > "$cwd/kendex.settings.toml" ;;
+  esac
   TEAM_RESULT="rc=$RC record=$(record "$item") foreign=$(refused 'item-foreign ') unresolved=$(refused 'item-repo-unresolved tracker=linear ')"
 }
 # The overseer checkout's team, the launch directory (the target clone or a
@@ -356,6 +367,9 @@ Fleet team|target|TGT-1||rc=1 record=none foreign=1 unresolved=0|the launch chec
 absent|target|FLT-1||rc=1 record=none foreign=1 unresolved=0|with no team in the overseer checkout a connected launch admits the launch checkout's team alone
 Fleet team|target|FLT-1|ENV=KENDEX_ENV_FILE=alt.env|rc=0 record=repo=acme/target foreign=0 unresolved=0|the launcher's private-file selector does not pick the overseer's private file for its team
 Fleet team|target|FLT-1|LOADED=LINEAR_APP_TOKEN=target|rc=0 record=repo=acme/target foreign=0 unresolved=0|a credential the launcher's checkout load adds does not pick the workspace the overseer's team is keyed in
+Fleet team|target|FLT-1|CALLER=private|rc=0 record=repo=acme/target foreign=0 unresolved=0|a caller's exported private credential is removed after lifecycle ownership before launcher re-entry
+Fleet team|target|FLT-1|CALLER=settings|rc=0 record=repo=acme/target foreign=0 unresolved=0|a caller's settings credential is removed after lifecycle ownership before launcher re-entry
+Fleet team|target|FLT-1|CALLER=private BARE ENV=LINEAR_APP_TOKEN=overseer|rc=0 record=repo=acme/target foreign=0 unresolved=0|a truly inherited credential survives lifecycle ownership over the caller's exported credential
 Fleet team|target|FLT-1|BARE ENV=LINEAR_APP_TOKEN=overseer|rc=0 record=repo=acme/target foreign=0 unresolved=0|an inherited credential keys the overseer's team when the overseer checkout holds none
 Fleet team|target|FLT-1|ENV=LINEAR_APP_TOKEN=target|rc=1 record=none foreign=1 unresolved=0|an inherited credential keys the overseer's team in the workspace it names, as the overseer's own calls do
 Gone team|target|FLT-1||rc=1 record=none foreign=0 unresolved=1|an overseer team whose key cannot be read refuses as item-repo-unresolved
@@ -396,6 +410,10 @@ MUT="$(team_control item-team-inherited "$CREDENTIAL_DROP" 'unset "$name"')"
 team_launch SCRIPT="$MUT" BARE ENV=LINEAR_APP_TOKEN=overseer "Fleet team" "$TARGET" FLT-1
 assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=0 unresolved=1" \
   "control: dropping the inherited credential leaves the overseer's team unread"
+MUT="$(team_control item-team-reentry 'lifecycle_env+=(-u "$name")' ': # lifecycle_env+=(-u "$name")')"
+team_launch SCRIPT="$MUT" CALLER=private "Fleet team" "$TARGET" FLT-1
+assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=1 unresolved=0" \
+  "control: without the final scrub the lock owner's exported credential changes the overseer workspace"
 MUT="$(team_control item-team-eager "$OVERSEER_TEAM_GATE" "${OVERSEER_TEAM_GATE/\"\$repo_match\" != true/true}")"
 team_launch SCRIPT="$MUT" "Gone team" "$TARGET" CC-1
 assert_eq "$TEAM_RESULT" "rc=1 record=none foreign=0 unresolved=1" \

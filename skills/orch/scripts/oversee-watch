@@ -1515,6 +1515,11 @@ close_finished_hosted_lane() { # LANE ROW KEY; updates check_lanes' asking_state
 check_dependency_parks() {
   [[ -n "$STATE_FILE" ]] || return 0
   local record item kind key prior rows="${PW_SEEN[0]}" entries
+  local waiting=false
+  for key in ${PARKED_KEYS[@]+"${PARKED_KEYS[@]}"}; do
+    [[ "$key" != wait:* ]] || { waiting=true; break; }
+  done
+  [[ "$waiting" == true ]] || return 0
   entries="$(jq -c '.lanes[]? | select(.status == "parked" and .parked.wait != null)' <<<"$FLEET_STATE")" || return 1
   while IFS= read -r record; do
     [[ -n "$record" ]] || continue

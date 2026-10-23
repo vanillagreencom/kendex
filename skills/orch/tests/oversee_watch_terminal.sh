@@ -157,7 +157,10 @@ owner_start = source.index("UNPARK_JQ='")
 owner_end = source.index('\n\n', owner_start)
 start = source.index('  if [[ "$parked_rc" -eq 0 ]]; then')
 end = source.index('  # Re-assert the configured symlinks', start)
-Path(sys.argv[2]).write_text(source[owner_start:owner_end] + '\nfor item in KEN-1; do\n' + source[start:end] + '\ndone\n')
+failure_start = source.index('dependency_resume_failed() {')
+failure_end = source.index('\n}\n', failure_start) + len('\n}\n')
+Path(sys.argv[2]).write_text(source[owner_start:owner_end] + '\n' + source[failure_start:failure_end]
+    + '\nfor item in KEN-1; do\n' + source[start:end] + '\ndone\n')
 PYRECOVERY
   recovery_rc=0
   (

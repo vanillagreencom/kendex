@@ -247,6 +247,192 @@ IN_SCOPE="$(printf '%s\n' ${IN_SCOPE_PATHS[@]+"${IN_SCOPE_PATHS[@]}"} | jq -Rsc 
 [[ "$OVER_CAP" != true || ${#ITEMS[@]} -eq 1 ]] || { ot_message over-cap-items "count=${#ITEMS[@]}" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
+# The repository the launch command renders as `{repo}`. An explicit --repo
+# wins; otherwise the shared resolver, so a run started with GH_REPO naming
+# another repository hands the spawned lane that one. A resolver exit of 1 or 2
+# renders nothing rather than a value no `gh --repo` argument would accept.
+#
+# CLAIM_ROOT, not PROJECT_ROOT: the resolver's first rung, `gh repo view`,
+# answers for the CALLER's checkout, and PROJECT_ROOT is the checkout this
+# script is installed in, which a worktree's `.agents` symlink makes a
+# different one. Two rungs of one ladder reading two roots is the
+# split-across-two-repositories this resolver exists to close.
+resolve_repo() {
+  if [[ -n "$REPO" ]]; then printf '%s\n' "$REPO"; return; fi
+  local resolved="" resolve_status=0
+  resolved="$(orch_resolve_gh_repo "${CLAIM_ROOT:-$PWD}")" || resolve_status=$?
+  [[ "$resolve_status" -eq 0 ]] || return 0
+  printf '%s\n' "$resolved"
+}
+
+# The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the items the
+# fleet has in flight, its running, preparing and parked lanes except those
+# declared claude-cloud, which ORCH_OVERSEER_CLOUD_LANES bounds separately.
+# A cloud session's landing lane consumes a fleet slot. No cap bounds
+# the lanes one account carries: `lanes pick` chooses the account by its
+# headroom. A launch naming no fleet has no records to count, and a wake rouses
+# a lane the fleet already counts, so neither is judged. A relaunch is judged
+# where it adds a lane to its cap: where the item has no running, preparing or
+# parked record held in the same cap. A parked lane keeps its slot in that cap.
+#
+# The count and the reservation write are one step under the fleet's launch
+# lock, taken per item and released once the reservation stands: two launchers
+# that each counted before either wrote would both pass. The reservation is the
+# item's lane in every later count until its claim or record replaces it, so
+# the worktree and host creates, which can run for minutes, hold no lock. The
+# lock sits beside the fleet state, the one address every launch into the
+# fleet names. lib/lane-cap.sh holds the count, the lock, the reservation and
+# the gate.
+CAP_GATED=false
+[[ "$FLEET" != true || "$WAKE" == true ]] || CAP_GATED=true
+
+# linear_team_key TEAM [DIR] — prints the key of the Linear team named TEAM, or
+# refuses as item-repo-unresolved. With DIR the read runs there with this
+# launcher's team and private-file selectors dropped, and every credential its
+# checkout's load added, so DIR's checkout picks the workspace and credential:
+# linear.sh reads them from its working directory's checkout, and a value in
+# its environment can outrank that checkout's. A credential the launcher
+# inherited stays, as the overseer's own linear.sh calls there see it.
+linear_team_key() {
+  local record
+  record="$(
+    if [[ -n "${2:-}" ]]; then
+      cd -- "$2" || exit 1
+      unset KENDEX_ENV_FILE LINEAR_TEAM
+      for name in "${linear_credentials[@]}"; do
+        [[ "$inherited_linear_credentials" == *" $name "* ]] || unset "$name"
+      done
+    fi
+    "$linear_cli" teams get "$1" --format raw
+  )" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
+  jq -er '.team.key | strings | select(length > 0)' <<<"$record" \
+    || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
+}
+
+repo="$(resolve_repo)"
+# The checkout, not GH_REPO or --repo, owns the fleet. GitHub names and
+# configured Linear team names are resolved by their existing tracker owners.
+checkout_repo=""
+if [[ "$TRACKER" == github ]]; then
+  checkout_repo="$(cd -- "${CLAIM_ROOT:-$PWD}" && GH_REPO= orch_resolve_gh_repo "${CLAIM_ROOT:-$PWD}")" \
+    || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; exit 1; }
+elif [[ -n "${LINEAR_TEAM:-}" ]]; then
+  linear_cli="$SKILLS_DIR/linear/scripts/linear.sh"
+  [[ -x "$linear_cli" ]] || { ot_message helper-missing "path=$linear_cli" >&2; exit 1; }
+  checkout_repo="$(linear_team_key "$LINEAR_TEAM")" || exit 1
+fi
+# A fleet launch runs in its overseer's repository, or in one the overseer's
+# checkout lists in ORCH_CONNECTED_REPOS; lib/lane-cap.sh's overseer_bind judges
+# it.
+[[ "$FLEET" != true ]] || overseer_bind || exit 1
+# A connected launch also admits the overseer checkout's own Linear team: the
+# overseer lists the repository because that team's items run there.
+# overseer_team_key reads it once, for the first item the launch checkout's
+# team does not take, so a launch of that team's items never depends on it.
+# The team name and its key are read in the overseer's directory with this
+# launcher's settings dropped, as the caps below are, because they can be this
+# checkout's, whose Linear workspace can differ from the overseer's.
+overseer_repo=""
+overseer_team_read=false
+overseer_team_key() {
+  local team
+  [[ "$overseer_team_read" != true ]] || return 0
+  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; return 1; }
+  team="$(cd -- "$OVERSEER_DIR" && unset LINEAR_TEAM KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" LINEAR_TEAM "")" || return 1
+  [[ -z "$team" ]] || overseer_repo="$(linear_team_key "$team" "$OVERSEER_DIR")" || return 1
+  overseer_team_read=true
+}
+# same_key ITEM KEY — prints whether the item's repository or team is KEY,
+# compared case-insensitively, or refuses as item-repo-unresolved.
+same_key() {
+  jq -n --arg item "$1" --arg key "$2" '$item | ascii_downcase == ($key | ascii_downcase)' \
+    || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; return 1; }
+}
+# The oversee state every record is written into is created once, on the first
+# item that will write one, after that item's id and --repo are validated
+# below and before any window opens: a state that cannot be created refuses the
+# whole batch here, so no operator is left closing one window per item. A wake
+# creates nothing — it only ever patches a record a launch wrote — so a wake
+# against an address holding no state refuses the batch as state-absent before
+# waking anything, naming the file it looked for: the fix is pointing the wake
+# at the fleet's state, never a skeleton this launcher would leave behind and
+# never a relaunch of a lane that is still running.
+state_ready=false
+admitted_items=()
+for raw in "${ITEMS[@]}"; do
+  item="$raw"
+  if [[ "$TRACKER" == "linear" ]]; then
+    # git-context owns the canonical spelling of a tracker item, so this brief,
+    # the mailbox the lane opens under it, its status file and its
+    # workflow-state key cannot name one item two ways on a case-sensitive
+    # disk. A lowercase-convention GH_ISSUE_PATTERN (e.g. "cc-[0-9]+") is still
+    # accepted on input and never emitted. `worktree` lowercases the id for the
+    # path and the branch itself, so the canonical item is also the worktree id.
+    canonical_rc=0
+    item="$("$SCRIPT_DIR/git-context" issue-canonical "$raw" "$GH_ISSUE_PATTERN")" || canonical_rc=$?
+    if [[ "$canonical_rc" -eq 1 ]]; then
+      ot_message issue-invalid "item=$raw" >&2; exit 1
+    elif [[ "$canonical_rc" -ne 0 ]]; then
+      ot_message issue-canonical-failed "item=$raw" "exit=$canonical_rc" >&2; exit 1
+    fi
+    wt_id="$item"
+    title="$item"
+  else
+    [[ "$item" =~ ^[0-9]+$ ]] || { ot_message github-item-invalid "item=$raw" >&2; exit 1; }
+    [[ -n "$repo" ]] || { ot_message repo-missing "option=--repo" >&2; exit 1; }
+    wt_id="issue-$item"
+    title="gh-$item"
+  fi
+  item_repo="$repo"
+  [[ "$TRACKER" != linear ]] || item_repo="${item%-*}"
+  if [[ -n "$checkout_repo" ]]; then
+    repo_match="$(same_key "$item_repo" "$checkout_repo")" || exit 1
+    if [[ "$repo_match" != true && "$TRACKER" == linear && "$OVERSEER_BIND" == connected ]]; then
+      overseer_team_key || exit 1
+      [[ -z "$overseer_repo" ]] || repo_match="$(same_key "$item_repo" "$overseer_repo")" || exit 1
+    fi
+    if [[ "$repo_match" != true ]]; then
+      ot_message item-foreign "repo=$item_repo" route=peer-mail >&2
+      exit 1
+    fi
+  fi
+  [[ "$OVERSEER_BIND" != foreign ]] \
+    || { ot_message overseer-foreign "item=$item" "repo=$LAUNCH_NAME" "overseer=$OVERSEER_NAME" route=connected-repos,peer-mail >&2; exit 1; }
+  if [[ "$FLEET" == true && "$state_ready" != true ]]; then
+    if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
+      if [[ "$WAKE" == true ]]; then
+        ot_message state-absent "item=$item" "state=$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" >&2
+        exit 1
+      fi
+      "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null \
+        || { ot_message state-unwritable "state=oversee" >&2; exit 1; }
+    fi
+    state_ready=true
+  fi
+  admitted_items+=("$item")
+done
+if [[ "$FLEET" == true ]]; then
+  lifecycle_path="$("$WORKFLOW_STATE" "${WORKFLOW_STATE_ARGS[@]}" path oversee)" || exit 1
+  lifecycle_commands=()
+  lifecycle_items="$(printf '%s\n' "${admitted_items[@]}" | LC_ALL=C sort -u)" || exit 1
+  while IFS= read -r lifecycle_item; do
+    [[ "$TRACKER" != github ]] || lifecycle_item="issue-$lifecycle_item"
+    lifecycle_key="${lifecycle_path%/*}/.lane-lifecycle/$lifecycle_item.lock"
+    lane_lifecycle_owned "$lifecycle_key" || lifecycle_commands+=("$WORKFLOW_STATE" "${WORKFLOW_STATE_ARGS[@]}" lane-run "$lifecycle_item" --)
+  done <<<"$lifecycle_items"
+  if [[ ${#lifecycle_commands[@]} -gt 0 ]]; then
+    # Each lock owner loads its caller checkout. Remove added credentials only
+    # after the last owner, so re-entry inherits the launcher's entry values.
+    lifecycle_env=(env)
+    for name in "${linear_credentials[@]}"; do
+      if [[ "$inherited_linear_credentials" != *" $name "* ]]; then
+        lifecycle_env+=(-u "$name")
+      fi
+    done
+    exec "${lifecycle_commands[@]}" "${lifecycle_env[@]}" "$0" "${ORIGINAL_ARGS[@]}"
+  fi
+fi
 # lane-host owns the setting's reading; it runs from this script's checkout,
 # whose project settings this script loaded, or from the caller's directory
 # when the script sits outside any checkout, since `cd ""` fails.
@@ -1446,24 +1632,6 @@ if [[ "$FLEET" == true && "$WAKE" != true && "$LAUNCH_HARNESS" == copilot ]]; th
   copilot_fleet_gate || exit 1
   COPILOT_HOOKS_GATED=true
 fi
-
-# The repository the launch command renders as `{repo}`. An explicit --repo
-# wins; otherwise the shared resolver, so a run started with GH_REPO naming
-# another repository hands the spawned lane that one. A resolver exit of 1 or 2
-# renders nothing rather than a value no `gh --repo` argument would accept.
-#
-# CLAIM_ROOT, not PROJECT_ROOT: the resolver's first rung, `gh repo view`,
-# answers for the CALLER's checkout, and PROJECT_ROOT is the checkout this
-# script is installed in, which a worktree's `.agents` symlink makes a
-# different one. Two rungs of one ladder reading two roots is the
-# split-across-two-repositories this resolver exists to close.
-resolve_repo() {
-  if [[ -n "$REPO" ]]; then printf '%s\n' "$REPO"; return; fi
-  local resolved="" resolve_status=0
-  resolved="$(orch_resolve_gh_repo "${CLAIM_ROOT:-$PWD}")" || resolve_status=$?
-  [[ "$resolve_status" -eq 0 ]] || return 0
-  printf '%s\n' "$resolved"
-}
 
 # The codex account a launch that names no lane will run on: the one the PANE
 # inherits, asked of lib/lane-context.sh's owner of that question.
@@ -3919,27 +4087,6 @@ launch_prepared() { # LOG
   ot_message lane-prepare-failed "item=$item" "reason=$reason" >&2
 }
 
-# The cap a fleet launch is judged on: ORCH_OVERSEER_LANES bounds the items the
-# fleet has in flight, its running, preparing and parked lanes except those
-# declared claude-cloud, which ORCH_OVERSEER_CLOUD_LANES bounds separately.
-# A cloud session's landing lane consumes a fleet slot. No cap bounds
-# the lanes one account carries: `lanes pick` chooses the account by its
-# headroom. A launch naming no fleet has no records to count, and a wake rouses
-# a lane the fleet already counts, so neither is judged. A relaunch is judged
-# where it adds a lane to its cap: where the item has no running, preparing or
-# parked record held in the same cap. A parked lane keeps its slot in that cap.
-#
-# The count and the reservation write are one step under the fleet's launch
-# lock, taken per item and released once the reservation stands: two launchers
-# that each counted before either wrote would both pass. The reservation is the
-# item's lane in every later count until its claim or record replaces it, so
-# the worktree and host creates, which can run for minutes, hold no lock. The
-# lock sits beside the fleet state, the one address every launch into the
-# fleet names. lib/lane-cap.sh holds the count, the lock, the reservation and
-# the gate.
-CAP_GATED=false
-[[ "$FLEET" != true || "$WAKE" == true ]] || CAP_GATED=true
-
 # Judges the launch lane again once a --wait-slot wait has let its usage
 # window move: `--lane auto` picks again, and a named lane goes back to
 # named_lane_judge. Returns 1 with the
@@ -4039,69 +4186,6 @@ launch_overlap_gate() { # ITEM KEY
   esac
 }
 
-# linear_team_key TEAM [DIR] — prints the key of the Linear team named TEAM, or
-# refuses as item-repo-unresolved. With DIR the read runs there with this
-# launcher's team and private-file selectors dropped, and every credential its
-# checkout's load added, so DIR's checkout picks the workspace and credential:
-# linear.sh reads them from its working directory's checkout, and a value in
-# its environment can outrank that checkout's. A credential the launcher
-# inherited stays, as the overseer's own linear.sh calls there see it.
-linear_team_key() {
-  local record
-  record="$(
-    if [[ -n "${2:-}" ]]; then
-      cd -- "$2" || exit 1
-      unset KENDEX_ENV_FILE LINEAR_TEAM
-      for name in "${linear_credentials[@]}"; do
-        [[ "$inherited_linear_credentials" == *" $name "* ]] || unset "$name"
-      done
-    fi
-    "$linear_cli" teams get "$1" --format raw
-  )" \
-    || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
-  jq -er '.team.key | strings | select(length > 0)' <<<"$record" \
-    || { ot_message item-repo-unresolved tracker=linear "team=$1" >&2; return 1; }
-}
-
-repo="$(resolve_repo)"
-# The checkout, not GH_REPO or --repo, owns the fleet. GitHub names and
-# configured Linear team names are resolved by their existing tracker owners.
-checkout_repo=""
-if [[ "$TRACKER" == github ]]; then
-  checkout_repo="$(cd -- "${CLAIM_ROOT:-$PWD}" && GH_REPO= orch_resolve_gh_repo "${CLAIM_ROOT:-$PWD}")" \
-    || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; exit 1; }
-elif [[ -n "${LINEAR_TEAM:-}" ]]; then
-  linear_cli="$SKILLS_DIR/linear/scripts/linear.sh"
-  [[ -x "$linear_cli" ]] || { ot_message helper-missing "path=$linear_cli" >&2; exit 1; }
-  checkout_repo="$(linear_team_key "$LINEAR_TEAM")" || exit 1
-fi
-# A fleet launch runs in its overseer's repository, or in one the overseer's
-# checkout lists in ORCH_CONNECTED_REPOS; lib/lane-cap.sh's overseer_bind judges
-# it.
-[[ "$FLEET" != true ]] || overseer_bind || exit 1
-# A connected launch also admits the overseer checkout's own Linear team: the
-# overseer lists the repository because that team's items run there.
-# overseer_team_key reads it once, for the first item the launch checkout's
-# team does not take, so a launch of that team's items never depends on it.
-# The team name and its key are read in the overseer's directory with this
-# launcher's settings dropped, as the caps below are, because they can be this
-# checkout's, whose Linear workspace can differ from the overseer's.
-overseer_repo=""
-overseer_team_read=false
-overseer_team_key() {
-  local team
-  [[ "$overseer_team_read" != true ]] || return 0
-  [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; return 1; }
-  team="$(cd -- "$OVERSEER_DIR" && unset LINEAR_TEAM KENDEX_ENV_FILE && "$SCRIPT_DIR/orch-env" LINEAR_TEAM "")" || return 1
-  [[ -z "$team" ]] || overseer_repo="$(linear_team_key "$team" "$OVERSEER_DIR")" || return 1
-  overseer_team_read=true
-}
-# same_key ITEM KEY — prints whether the item's repository or team is KEY,
-# compared case-insensitively, or refuses as item-repo-unresolved.
-same_key() {
-  jq -n --arg item "$1" --arg key "$2" '$item | ascii_downcase == ($key | ascii_downcase)' \
-    || { ot_message item-repo-unresolved "tracker=$TRACKER" >&2; return 1; }
-}
 if [[ "$CAP_GATED" == true ]]; then
   [[ -x "$SCRIPT_DIR/orch-env" ]] || { ot_message helper-missing "path=$SCRIPT_DIR/orch-env" >&2; exit 1; }
   if [[ "$OVERSEER_BIND" == connected ]]; then
@@ -4119,91 +4203,11 @@ preparing=0
 failed=0
 skipped=0
 attempted=0
-# The oversee state every record is written into is created once, on the first
-# item that will write one, after that item's id and --repo are validated
-# below and before any window opens: a state that cannot be created refuses the
-# whole batch here, so no operator is left closing one window per item. A wake
-# creates nothing — it only ever patches a record a launch wrote — so a wake
-# against an address holding no state refuses the batch as state-absent before
-# waking anything, naming the file it looked for: the fix is pointing the wake
-# at the fleet's state, never a skeleton this launcher would leave behind and
-# never a relaunch of a lane that is still running.
-state_ready=false
 # The DISTINCT lanes this run LAUNCHED on, so the summary cannot attribute a
 # spread batch to whichever lane happened to be last, inflate the count when a
 # re-pick returns to a lane already used, or count a lane picked for an item
 # that turned out to be owned by another session.
 lanes_seen=""
-admitted_items=()
-for raw in "${ITEMS[@]}"; do
-  item="$raw"
-  if [[ "$TRACKER" == "linear" ]]; then
-    # git-context owns the canonical spelling of a tracker item, so this brief,
-    # the mailbox the lane opens under it, its status file and its
-    # workflow-state key cannot name one item two ways on a case-sensitive
-    # disk. A lowercase-convention GH_ISSUE_PATTERN (e.g. "cc-[0-9]+") is still
-    # accepted on input and never emitted. `worktree` lowercases the id for the
-    # path and the branch itself, so the canonical item is also the worktree id.
-    canonical_rc=0
-    item="$("$SCRIPT_DIR/git-context" issue-canonical "$raw" "$GH_ISSUE_PATTERN")" || canonical_rc=$?
-    if [[ "$canonical_rc" -eq 1 ]]; then
-      ot_message issue-invalid "item=$raw" >&2; exit 1
-    elif [[ "$canonical_rc" -ne 0 ]]; then
-      ot_message issue-canonical-failed "item=$raw" "exit=$canonical_rc" >&2; exit 1
-    fi
-    wt_id="$item"
-    title="$item"
-  else
-    [[ "$item" =~ ^[0-9]+$ ]] || { ot_message github-item-invalid "item=$raw" >&2; exit 1; }
-    [[ -n "$repo" ]] || { ot_message repo-missing "option=--repo" >&2; exit 1; }
-    wt_id="issue-$item"
-    title="gh-$item"
-  fi
-  item_repo="$repo"
-  [[ "$TRACKER" != linear ]] || item_repo="${item%-*}"
-  if [[ -n "$checkout_repo" ]]; then
-    repo_match="$(same_key "$item_repo" "$checkout_repo")" || exit 1
-    if [[ "$repo_match" != true && "$TRACKER" == linear && "$OVERSEER_BIND" == connected ]]; then
-      overseer_team_key || exit 1
-      [[ -z "$overseer_repo" ]] || repo_match="$(same_key "$item_repo" "$overseer_repo")" || exit 1
-    fi
-    if [[ "$repo_match" != true ]]; then
-      ot_message item-foreign "repo=$item_repo" route=peer-mail >&2
-      exit 1
-    fi
-  fi
-  [[ "$OVERSEER_BIND" != foreign ]] \
-    || { ot_message overseer-foreign "item=$item" "repo=$LAUNCH_NAME" "overseer=$OVERSEER_NAME" route=connected-repos,peer-mail >&2; exit 1; }
-  if [[ "$FLEET" == true && "$state_ready" != true ]]; then
-    if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
-      if [[ "$WAKE" == true ]]; then
-        ot_message state-absent "item=$item" "state=$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" >&2
-        exit 1
-      fi
-      "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null \
-        || { ot_message state-unwritable "state=oversee" >&2; exit 1; }
-    fi
-    state_ready=true
-  fi
-  admitted_items+=("$item")
-done
-if [[ "$FLEET" == true ]]; then
-  lifecycle_path="$("$WORKFLOW_STATE" "${WORKFLOW_STATE_ARGS[@]}" path oversee)" || exit 1
-  lifecycle_commands=()
-  lifecycle_items="$(printf '%s\n' "${admitted_items[@]}" | LC_ALL=C sort -u)" || exit 1
-  while IFS= read -r lifecycle_item; do
-    [[ "$TRACKER" != github ]] || lifecycle_item="issue-$lifecycle_item"
-    lifecycle_key="${lifecycle_path%/*}/.lane-lifecycle/$lifecycle_item.lock"
-    lane_lifecycle_owned "$lifecycle_key" || lifecycle_commands+=("$WORKFLOW_STATE" "${WORKFLOW_STATE_ARGS[@]}" lane-run "$lifecycle_item" --)
-  done <<<"$lifecycle_items"
-  if [[ ${#lifecycle_commands[@]} -gt 0 ]]; then
-    # The re-entry reloads this checkout; only caller credentials are inherited.
-    for name in "${linear_credentials[@]}"; do
-      [[ "$inherited_linear_credentials" == *" $name "* ]] || unset "$name"
-    done
-    exec "${lifecycle_commands[@]}" "$0" "${ORIGINAL_ARGS[@]}"
-  fi
-fi
 for item in "${admitted_items[@]}"; do
   cap_release
   cap_unreserve

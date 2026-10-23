@@ -502,14 +502,36 @@ cloud_stall_close() { # ITEM SINCE
 # reported lane-long once per age interval, its stage the Step line of its
 # status file. Keep the launch with the interval so a fresh launch starts over.
 check_lane_long() {
-  local entry item launched age paused interval prior rows="${PW_SEEN[0]}"
+  local entry item launched age paused interval prior rows="${PW_SEEN[0]}" candidates="" timings=""
+  local due=()
   for entry in ${LANE_AGES[@]+"${LANE_AGES[@]}"}; do
     item="${entry%%=*}"
     launched="${entry#*=}"
-    paused="$(jq -er --arg item "$item" --argjson from "$launched" --argjson to "$PASS_NOW" "$LANE_INTERVALS_JQ"'
-      .lanes[]? | select(.item == $item) | lane_parked_seconds($from; $to)' <<<"$FLEET_STATE")" || {
-      ow_message lane-time-unavailable "item=$item" >&2; continue;
+    # Confirmed pauses only subtract: a raw age below the bound cannot be due,
+    # even when its pause timing is unavailable.
+    (( PASS_NOW - launched >= LANE_AGE_SECS )) || continue
+    due+=("$entry")
+    candidates+="${candidates:+$'\n'}$entry"
+  done
+  if [[ ${#due[@]} -gt 0 ]]; then
+    timings="$(jq -r --arg candidates "$candidates" --argjson to "$PASS_NOW" "$LANE_INTERVALS_JQ"'
+      (reduce (.lanes[]? | objects | select(.item | type == "string")) as $lane
+        ({}; .[$lane.item] += [$lane])) as $lanes
+      | $candidates | split("\n")[] | split("=")
+      | .[0] as $item | (.[1] | tonumber) as $from
+      | (try (
+          $lanes[$item]
+          | if length == 1 then .[0] else error("lane-unread") end
+          | lane_parked_seconds($from; $to)
+        ) catch "unavailable") as $paused
+      | [$item, $from, $paused] | @tsv' <<<"$FLEET_STATE")" || {
+      for entry in "${due[@]}"; do ow_message lane-time-unavailable "item=${entry%%=*}" >&2; done
+      timings=""
     }
+  fi
+  while IFS=$'\t' read -r item launched paused; do
+    [[ -n "$item" ]] || continue
+    [[ "$paused" != unavailable ]] || { ow_message lane-time-unavailable "item=$item" >&2; continue; }
     age=$((PASS_NOW - launched - paused))
     (( age >= LANE_AGE_SECS )) || continue
     interval=$((age / LANE_AGE_SECS))
@@ -524,7 +546,7 @@ check_lane_long() {
     echo "EVENT lane-long $item age=$age review_rounds=$LANE_REVIEW_ROUNDS fix_receipts=$LANE_FIX_RECEIPTS validation_runs=$LANE_VALIDATION_RUNS restacks=$LANE_RESTACKS repeated_class_rounds=$LANE_REPEATED_CLASS_ROUNDS stage=$LANE_STEP"
     PASS_EVENT=1
     rows="$(lane_row_set lane-long "$rows" "$item" "$launched|$interval")"
-  done
+  done <<<"$timings"
   # Pruned only once no record names the item, so the gap a relaunch or a
   # handoff leaves between running records keeps the reported interval.
   rows="$(lane_row_prune lane-long "$rows" ${RECORDED_ITEMS[@]+"${RECORDED_ITEMS[@]}"})"
