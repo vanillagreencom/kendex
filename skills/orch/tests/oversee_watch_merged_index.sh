@@ -253,6 +253,7 @@ stage_work_contract() {
 }
 
 # case | items | unrelated saved rows | bundled ownership
+# saved_state adds one unrelated row per recorded item with item work fixed.
 while IFS='|' read -r name count saved bundle; do
   new_case "stage_$name"
   mkdir -p "$STATE_DIR"
@@ -413,7 +414,7 @@ done <<'ROWS'
 empty|0|0|no
 recorded|66|0|no
 inventory|132|0|no
-saved_state|66|512|no
+saved_state|66|66|no
 bundle|6|0|yes
 ROWS
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
