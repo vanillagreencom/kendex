@@ -62,11 +62,10 @@ Drain what a review bot would surface before the PR exists.
 
 **Skip if** any holds: `lifecycle` is `"managed"`; a PR number argument was provided (arrived comments are triaged in § 3); or `.agents/skills/second-opinion/scripts/second-opinion` does not exist.
 
-Run `second-opinion …`; it backgrounds itself and prints when to check.
+Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this local batch with state writes enabled. Use its bound freshness boundary as `LOCAL_STARTED_AT`. The launch, acceptance failure and disposition routes are below. Run `second-opinion …`; it backgrounds itself and prints when to check.
 
 ```bash
 mkdir -p [WORKTREE_PATH]/tmp
-.agents/skills/orch/scripts/git-context timestamp epoch
 .agents/skills/orch/scripts/git-context timestamp compact
 .agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground
 ```
@@ -75,17 +74,17 @@ Capture the launch status, stdout, and stderr. A nonzero launch or stdout with n
 
 Execute the exact command printed after `wait:` and repeat it per its exit code (`second-opinion --help`) until terminal, doing other event checks in between, before running `review-artifact-check`.
 
-Use the epoch output as `LOCAL_STARTED_AT`:
+Apply the shared contract's acceptance to `LOCAL_OUTPUT`:
 
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [WORKTREE_PATH] [LOCAL_STARTED_AT]
+.agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [WORKTREE_PATH] [LOCAL_STARTED_AT] --issue [ISSUE_ID]
 ```
 
 `ok == true` → route the findings below; `reason == "valid_undermeasured"` → report its `measurement_failed` string (and `measurement_suppressed` when present) with the findings; never treat the local pass as clean. `ok == false`, or any non-zero exit, → report the `reason` and its `detail` and continue to § 2. Local review is advisory, never a submission blocker, and none of those outcomes is a pass.
 
-Route the findings per the `review-finding` schema. Disposition every finding per [references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. No blockers and no `category: "fix"` or `category: "issue"` suggestions → § 2. Otherwise delegate any blockers and fix-category suggestions: `⤵ workflows/dev-fix.md § 1-3 → § 1.2 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (blockers plus fix-category suggestions), `source: local-review`. `category: "issue"` suggestions and the fix round's escalated items that clear the filing bar ([references/finding-disposition.md](../../reviewer/references/finding-disposition.md)) build an audit-input file at `tmp/audit-local-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "local-review"`, then apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`, each escalated item taking the `origin` its `outcome` maps to in [`review-pr.md`](review-pr.md) § 8, with the created IDs listed in the PR body.
+Route the findings per the `review-finding` schema. Disposition every finding per [references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. Complete the shared contract for this batch before taking any route below. No blockers and no `category: "fix"` or `category: "issue"` suggestions → § 2. Otherwise delegate any blockers and fix-category suggestions: `⤵ workflows/dev-fix.md § 1-3 → § 1.2 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (blockers plus fix-category suggestions), `source: local-review`. `category: "issue"` suggestions and the fix round's escalated items that clear the filing bar ([references/finding-disposition.md](../../reviewer/references/finding-disposition.md)) build an audit-input file at `tmp/audit-local-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "local-review"`, then apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`, each escalated item taking the `origin` its `outcome` maps to in [`review-pr.md`](review-pr.md) § 8, with the created IDs listed in the PR body.
 
-**The loop is bounded at one confirming pass.** If dev-fix applied commits, run the review once more over the updated diff, then run § 1.1's validation for the new HEAD, then → § 2 regardless of what the review found. If nothing was applied, → § 2.
+**The loop is bounded at one confirming pass.** If dev-fix applied commits, take the shared contract's fresh admission, launch and accept the review once more over the updated diff, and apply the same disposition and completion to its findings. This confirming pass delegates no further fix round. Then run § 1.1's validation for the new HEAD and → § 2 regardless of what the review found. If nothing was applied, → § 2.
 
 ---
 

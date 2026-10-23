@@ -87,13 +87,7 @@ Map each comment to a domain from its source type and file path. Domain-to-agent
 
 ## 3. Analyze
 
-Before delegating each new triage batch, mint its own review-round token. Never reuse a token from an earlier internal review or triage pass:
-
-```bash
-.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] review_round_id
-```
-
-Bind the printed token as `[TRIAGE_REVIEW_ROUND_ID]` in this batch's context. Keep it with each assigned and accepted domain or synthesis report path through § 5 and subsequent passes, even after state holds a later token. Under `--dry-run`, skip this state write and leave the token unavailable; § 5 reports proposed observations only.
+Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this native batch, using § 1's inline, PR-level and review-body identities and this invocation's `--dry-run` status. Bind its token as `[TRIAGE_REVIEW_ROUND_ID]` for the domain and synthesis reports below. § 5 supplies acceptance, disposition and completion.
 
 Apply [Delegation](../references/skill-rules.md#delegation) before selecting domain, architecture, or fix agents on every pass. Delegate to the mapped domain agents in parallel.
 
@@ -151,7 +145,7 @@ Delegate to the architecture reviewer with the domain report paths, this batch's
 
 ## 5. Triage Report
 
-After the existing disposition pass below, and before routing to § 6 even for a reply-only pass, [record verified findings](../schemas/workflow-state.md#record-verified-findings). Set each observation's `source.round_id` from its accepted report's bound `[TRIAGE_REVIEW_ROUND_ID]`, matching `qa_metadata.review_round_id`, never from the current mutable state token. Keep the native identities from § 1; copied findings never become new local observations, and a fresh batch token never changes their deduplication identity. A source without its original round or review/comment binding records unknown coverage. Under `--dry-run`, report the proposed observations and unavailable round provenance without writing state.
+Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) acceptance to each domain and synthesis report with its assigned `[TRIAGE_REVIEW_ROUND_ID]`. Complete that contract after the disposition below and before § 6, using this native batch's identities and dry-run status.
 
 Read every report and aggregate across agents preserving attribution. Keep every review-body item with its source identity and verified reply draft through § 6.3; do not deduplicate it away. Deduplicate other items by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions. Show verified body declines in SKIPPING with their draft reason. These reply-only items never enter the fix set.
 

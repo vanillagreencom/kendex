@@ -153,15 +153,7 @@ Store the active set. On a continuation, include retained attempted/live assignm
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [AGENT_LIST_JSON] | .review_agent_ids = [AGENT_ID_MAP_JSON] | .review_agent_runtime_types = [AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
-Stamp the freshness boundary immediately before a fresh delegation batch. In wave mode, re-stamp before each fresh wave's batch. A proved original-batch continuation skips both writes below, retaining the original token/stage and evidence boundary even when a never-launched domain starts later:
-
-```bash
-.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] review_round_id
-```
-
-```bash
-.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
-```
+Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this local batch with state writes enabled. Use § 3.1's acceptance, § 4's disposition and completion, and the continuation proof above when resuming an original batch.
 
 For Codex, prepare each complete `DELEGATION:` message under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), including the target reviewer's full instructions and workflow. A reused thread's fixed runtime instructions must permit that review. Delegate to every reviewer selected for launch in parallel after current native room and overlap admission, including for each continuation spawn or followup. Preserve existing attempted/live assignments in the active state rather than replacing their ownership. When `EXTERNAL_REVIEW_REQUESTED=true` on a fresh batch, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
 
@@ -294,11 +286,11 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Blockers or suggestions present → § 4. Otherwise → § 5.
+Blockers or suggestions present → § 4. Otherwise complete [Record verified findings](../schemas/workflow-state.md#record-verified-findings) with the empty finding set, then → § 5.
 
 ## 4. Handle Review Items
 
-Collect blockers and suggestions from the appended JSONs. None → § 5. Retain each accepted path's original review-round token for its source binding. After the existing disposition pass, [record verified findings](../schemas/workflow-state.md#record-verified-findings) before routing onward, including true tracked findings and an empty fix set. Record the same way in § 7 after QA disposition; false claims, questions and Step 0 exclusions never count. A source binding that cannot be read remains unknown.
+Collect blockers and suggestions from the appended JSONs. Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) completion after this section's disposition, before any route below. None → complete with the empty finding set, then § 5. This also dispositions the `category == "issue"` findings whose filing route is § 8.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -440,9 +432,11 @@ Previous review cycle context (cycle [CYCLES]):
 - Do NOT re-report the fixed, escalated or declined items listed above, unless you check a listed fixed item against the current diff and the defect is still there — then report it again, copying that entry's location and description verbatim and naming its recorded commit sha in your recommendation, or saying it was recorded then dropped in a rebase when the entry carries no sha. A listed fixed item you did not check, and every listed escalated or declined item, stays suppressed. Otherwise report only new issues or regressions the fixes introduced.
 </delegation_format>
 
-Omit `[OWNER/REPO]` when `TRACKER=linear`. Before each QA agent's initial delegation, mint `review_round_id` with `workflow-state new-round-id`, stamp `review_delegated_at` with `set-now`. Accept the return through § 3.1's check; on `ok == true`, append the artifact path to `json_paths` and carry its `repeats` to § 7; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first. After all QA reviewers resolve, → § 7 — every verdict, every time: § 7 owns the exit and no branch here decides one around it, carrying the blockers and the `category == "fix"` suggestions not already in `escalated_items`. An item this round's QA artifact reports again is retained even when `fixed_items` lists it, as § 7 states.
+Omit `[OWNER/REPO]` when `TRACKER=linear`. Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for each QA agent's local batch with state writes enabled. Accept the return through § 3.1's check; on `ok == true`, append the artifact path to `json_paths` and carry its `repeats` to § 7; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first. After all QA reviewers resolve, → § 7 — every verdict, every time: § 7 owns the exit and no branch here decides one around it, carrying the blockers and the `category == "fix"` suggestions not already in `escalated_items`. An item this round's QA artifact reports again is retained even when `fixed_items` lists it, as § 7 states.
 
 ## 7. Handle QA Items
+
+Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) completion to this QA batch after its disposition and before either route below. Include the `category == "issue"` findings whose filing route is § 8.
 
 When **Converged** below is false, follow the § 4 pattern — collect, present, run its recurrence check on the same two records, then delegate through `workflows/dev-fix.md`, by rule and with no selection prompt — with these overrides: the `fix set` is § 4's, dispositions and all, its candidate rule applied to the `repeats` § 6 carried; items come from the QA JSONs excluding anything already in `escalated_items`, and excluding a `fixed_items` entry only when this round's QA artifact does not report it again; the table header is `QA Agent` and the title `QA Review Items — [ISSUE_ID]`; `source` is `qa-review` and `qa_agent` carries the agent name. A re-found item is retained on purpose: its `fixed_items` entry is stale, and the Converged exit below is what drops that entry and records the item. **No cap check runs here**, and the § 4 budget `REVIEW_MAX_CYCLES` bounds is neither read nor raised in this section. After the fix round, apply the § 4 bounded re-review rule with § 6 as the target instead of § 2 — a focused QA re-check whose panel is set on `qa_recheck_panel` — unless the round's diff reaches beyond QA's own surface, which returns to § 2 with its panel on `verification_panel`. Either target re-runs the QA agents or the reviewers and comes back here; neither decides an exit.
 
@@ -464,7 +458,7 @@ On the way out, and before § 8, disposition every item still outstanding — ev
 
 Empty `json_paths` → report "No review items" and → § 9. Otherwise read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
 
-After their existing filing-bar disposition, [record verified findings](../schemas/workflow-state.md#record-verified-findings) for true `category == "issue"` findings not already recorded in § 4/7. Keep each actual accepted source before display deduplication; rereading a recorded source adds nothing.
+The § 4/7 shared-contract completion precedes this filing route; do not re-admit old artifacts as a new batch.
 
 **Declined items are re-derived, then matched to their record.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Carry the reason its `declined_items` entry records, matched on (location, description); where no entry records it, report `reason: not recorded` rather than inventing one.
 
