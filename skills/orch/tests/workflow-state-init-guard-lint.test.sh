@@ -23,7 +23,7 @@ W="$SKILL_DIR/workflows"
 GUARDED=()
 guard_fenced() { GUARDED+=("$2"); rule_fenced "$1 reads exists in its init section" "$W/$2" "$3" "$4"; }
 guard_prose() { GUARDED+=("$2"); rule "$1 reads exists on its init line" "$W/$2" "" 'workflow-state exists --json [ISSUE_ID]' 'workflow-state init'; }
-guard_minted() { GUARDED+=("$2"); rule_fenced "$1 mints the key it inits in its init section" "$W/$2" "$3" "$4"; }
+guard_minted() { GUARDED+=("$2"); rule "$1 mints the key it inits in its init section" "$W/$2" "$3" 'workflow-state new-local-key' 'workflow-state init [LOCAL_KEY]'; }
 keeps_state() {
   rule_fenced "$1 keeps existing state: sets worktree" "$W/$2" "$3" 'workflow-state set [ISSUE_ID] worktree'
   rule_fenced "$1 keeps existing state: sets branch" "$W/$2" "$3" 'workflow-state set [ISSUE_ID] branch'
@@ -41,7 +41,7 @@ guard_prose post-summary post-summary.md
 guard_prose review-pr review-pr.md
 guard_prose submit-pr submit-pr.md
 guard_prose review-pr-comments review-pr-comments.md
-guard_minted review review.md "## 4. Present And Fix" 'workflow-state new-local-key'
+guard_minted review review.md "## 2. Launch Reviewers"
 
 # init_files DIR — the sorted base names of DIR's workflows that run `init`.
 # Returns grep's status when grep failed rather than matched nothing.

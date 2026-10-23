@@ -892,9 +892,12 @@ ROW8='| KEN-8 (no PR, running) | Title 8 | Outcome 8 \| kept |'
 VAL3='- KEN-3: 62 min over 4 runs: implement full 55 selection=all lanes=lint,test, fix range 5 selection=subset lanes=lint, restack range 1 selection=unreported, restack range 1 selection=unreported; restack re-test skipped 2 times'
 ROUND3='- KEN-3: review_rounds=5 fix_receipts=3 validation_runs=unread restacks=4 repeated_class_rounds=1'
 ROUND8='- KEN-8: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread'
+FINDING3='- KEN-3: {"prior":"unknown","classes":[]}'
+FINDING8='- KEN-8: {"prior":"unknown","classes":[]}'
 VAL8='- KEN-8: validation unread, its host unreachable'
-WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" round3="$ROUND3" round8="$ROUND8" awk '{ print }
-  $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] } $0 == ENVIRON["round3"] { print ENVIRON["round8"] }' <<<"$WANT")"
+WANT8="$(row10="$ROW10" row8="$ROW8" val3="$VAL3" val8="$VAL8" round3="$ROUND3" round8="$ROUND8" finding3="$FINDING3" finding8="$FINDING8" awk '{ print }
+  $0 == ENVIRON["row10"] { print ENVIRON["row8"] } $0 == ENVIRON["val3"] { print ENVIRON["val8"] } $0 == ENVIRON["round3"] { print ENVIRON["round8"] }
+  $0 == ENVIRON["finding3"] { print ENVIRON["finding8"] }' <<<"$WANT")"
 assert_eq "$RC|$OUT" "0|$WANT8
 $MARK" "render lists KEN-8 under Running, marks its validation unread and its mailbox under Waiting on you, and every other lane as before"
 printf 'One lane is unreadable.\n%s\n' "$OWNER_ROWS" > "$CASE/summary.txt"
