@@ -13,6 +13,7 @@ afterEach(() => {
 describe("child pane title ownership", () => {
 	test("bg one-shot child identity with inherited TMUX_PANE does not set the tmux pane title", async () => {
 		currentHarness = createHarness({ childAgent: "reviewer-security", tmuxPane: "%parent" });
+		expect(currentHarness.cwd).toMatch(/[/\\]pi-agents-child-title-child-pane-title-L\d+-[a-zA-Z0-9]{6}$/);
 		const onSessionStart = await installExtension(currentHarness);
 		await withoutRealIntervals(async () => {
 			await onSessionStart({}, fakeCtx(currentHarness!));
