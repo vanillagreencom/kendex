@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 5.0.3
+
+- Update the HTTP body parsing and JSON-schema URI dependencies to body-parser 2.4.0 and fast-uri 3.1.9, which fix the reported denial-of-service and URI-handling advisories.
+
 ### 5.0.2
 
 - The shipped bridge bundles use zod 4.6.7, which fixes the oversized-collection validation memory advisory GHSA-mrhx-c7xc-m3w5.
