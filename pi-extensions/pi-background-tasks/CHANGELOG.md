@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.2.1
 
 - Widget lifecycle tests disable Bun's automatic peer downloads. A delayed package registry no longer makes these tests reject unrelated merge-queue changes. Each scenario keeps its own process and widget assertions.
 

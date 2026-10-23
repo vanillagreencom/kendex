@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 4.2.1
 
 - Gemini web search returns each batch query's answer and sources in its own section. It passes publication date filters as prompt hints, resolves source redirect links in parallel within 2.5 seconds, and inserts numbered citations from Gemini's grounding data. Rate limits and server errors retry once after one second. Thanks to zichsw for the report (#4940).
 - Every nested setting saved from `/extensions:settings` now reaches the tool: `video.enabled`, `githubClone.enabled`, `githubClone.maxRepoSizeMB` and `htmlExtraction.jinaFallback`, not only `video.geminiModel`. The settings screen saves them as flat dotted keys, such as `"githubClone.enabled": false`, and the tool read only the nested form, so it kept the default while the screen showed the saved value.

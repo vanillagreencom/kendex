@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.1.5
 
 - OpenAI tool activation and background image commands discover models from Pi's registry. New or renamed models need no probe-list update. Reasoning requests use the model's declared thinking levels. Priority cost estimates use the same multiplier for every model.
 

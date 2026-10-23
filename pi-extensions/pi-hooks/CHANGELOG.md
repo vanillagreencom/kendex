@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 0.19.2
 
 - Stop hooks receive `pi_run_outcome` from Pi's settle event. Jarvis can count a completed brief turn with no tool call while leaving errored and aborted turns unstamped.
 

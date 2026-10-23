@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.11
 
 - A bash row whose command has a long list of git options (for example `git -c a=b -o v0 -o v1 ...`) no longer hangs Pi while the renderer checks whether it is a `git diff`.
 - With the compact renderers on, the system prompt lists `read`, `bash`, `grep`, `find` and `ls` under Available tools again and keeps Pi's guidelines for them, such as using `read` instead of `cat`. With `renderMutationTools` on, `edit` and `write` keep their entries and guidelines too.

@@ -2,9 +2,9 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 5.0.0
 
-- **Breaking:** The model menu offers Pi's Anthropic registry entries at run time. A model absent from that registry no longer appears in the menu. A saved `pi-claude` selection absent from the registry uses Pi's initial model with Pi's fallback message. Claude Code chooses the safety fallback. New registry entries need no bridge release. An unknown model request handed to the bridge keeps its ID and shows one notice per session.
+- **Breaking:** The model menu offers Pi's Anthropic registry entries at run time. A model absent from that registry no longer appears in the menu. A saved model that Pi’s Anthropic list no longer has falls back to Pi’s starting model, so pick a model again once. Pi shows its fallback message. Claude Code chooses the safety fallback. New registry entries need no bridge release. An unknown model request handed to the bridge keeps its ID and shows one notice per session.
 
   You do: Select a `pi-claude` model from Pi's model menu if your saved model is absent from the list.
 

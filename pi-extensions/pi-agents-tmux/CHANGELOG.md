@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 3.5.0
 
 - The exported agent stats interface gives pi-hooks the session's working task count from its task registry.
 
