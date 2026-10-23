@@ -1980,10 +1980,10 @@ handoff_instruction() { # DECISION
   if [ "$ARM" = halt ]; then
     AGENT_INSTRUCTION="lane-mail-check: detached-route=orch-job-runner${NL}Use the orch job runner described in waiter-launch.md, Launch, or a separate session for work that must survive this session.$NL$AGENT_INSTRUCTION"
   fi
-  # DECISION is the context reading refuse_judged_handoff names, or null where
-  # no context judgement ran. The library binds it to this session; a
-  # library not yet loaded, or an older retained one, binds nothing, so the
-  # record's context stays unknown rather than built a second way here.
+  # DECISION is the context reading refuse_judged_handoff names, or null. The
+  # library binds it to this session; a library not yet loaded, or an older
+  # retained one, binds nothing, so the record's context stays unknown rather
+  # than built a second way here.
   HANDOFF_CONTEXT=null
   if declare -F lane_context_handoff_context >/dev/null; then
     HANDOFF_CONTEXT=$(lane_context_handoff_context "$1" "$HARNESS" "$SESSION" "$TRANSCRIPT" \
@@ -2411,10 +2411,8 @@ attached_launch_check() {
 # the subshell ends at 0, so the mailbox check still runs and any mail rides
 # in the same context.
 #
-# DECISION is the context reading the library's decision recorded for this
-# session, which the handoff record the refusal names carries, or null where no
-# context judgement ran. At an account mark it is the context reading beside the
-# mark, not the mark's own reading.
+# DECISION is a context decision record from the library, which the handoff
+# record the refusal names carries, or null.
 refuse_judged_handoff() { # DECISION KEY VALUE [CAUSE]
   local decision=$1
   shift
@@ -2434,7 +2432,7 @@ refuse_judged_handoff() { # DECISION KEY VALUE [CAUSE]
   refuse "$@"
 }
 
-# The same refusal where no reading was judged: its record's decision is null.
+# The same refusal with a null decision.
 refuse_handoff() { # KEY VALUE [CAUSE]
   refuse_judged_handoff null "$@"
 }
