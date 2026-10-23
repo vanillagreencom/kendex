@@ -48,13 +48,14 @@
 # orchestrator, not a failure). Exact-commit binding (.commit == the observed
 # HEAD) and tracker corroboration stay in the orch workflow.
 #
-# The same rebase orphans the round record's base_sha, and there the answer is
-# to stop: the protected-additions gate does not run, says so on stderr, and
-# names no file.
+# An orphaned round base needs its complete guarded-restack map before the
+# protected-additions gate can compare the round's rewritten starting tree.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/rebase-map.sh
+source "$SCRIPT_DIR/lib/rebase-map.sh"
 # Path-safe token grammar for --issue / --round-id (no '/', '..', whitespace).
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
 # --expect-items is a comma-separated list of item numbers.
@@ -221,9 +222,11 @@ reason meanings when ok=false:
               a fix round added a protected file since the round record's
               base_sha without naming that exact file in adds. The files field
               names every refused path. Renames and moves do not count. This
-              gate runs only while base_sha is an ancestor of HEAD.
+              gate compares base_sha, or its proved guarded-restack projection,
+              while that comparison base is an ancestor of HEAD.
   additions_unattributable
-              a rebase moved base_sha off the branch, so the additions gate
+              a rebase moved base_sha off the branch without a complete map
+              proving its live ancestor projection, so the additions gate
               could not run and no file was classified either way; files is
               empty, because naming one would accuse the round of an addition
               the comparison cannot honestly attribute (kendex#944). This
@@ -636,11 +639,13 @@ is_protected_addition() {
 # base_sha is HEAD at delegation, and a rebase orphans it exactly as it orphans
 # the artifact's `.commit`. The orphaned SHA still resolves, so the
 # comparison succeeds across the base branch's whole advance and names files
-# another author merged as this round's additions. No comparison recovers the
-# round's real starting tree once it is off the branch, so the gate does not
-# run: it says that on stderr and names no file.
+# another author merged as this round's additions. The supported worktree
+# restack producer records the rewritten starting commit in its ordered map.
+# Only a complete projection to a live ancestor can replace the comparison
+# value; the original round record and the map remain unchanged.
 collect_unapproved_additions() {
   local repo="$1" round_record="$2" result="$3" base_sha path probe
+  local rebase_map mapped_base=''
   local additions=()
   base_sha="$(jq -r '.base_sha' "$round_record")"
   # 40 hex naming no object here is not an orphaned base, it is a base this
@@ -650,11 +655,22 @@ collect_unapproved_additions() {
     return 2
   fi
   if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then
-    message base-orphaned >&2
-    printf '[]\n' > "$result" || return 3
-    # 4, not 0: a gate that did not run and a gate that cleared the round are
-    # the same empty file, and only the caller can refuse on the difference.
-    return 4
+    rebase_map="$(git -C "$repo" rev-parse --git-path kendex-rebase-map 2>/dev/null)" || return 2
+    [[ "$rebase_map" == /* ]] || rebase_map="$repo/$rebase_map"
+    if [[ -e "$rebase_map" || -L "$rebase_map" ]] \
+      && rebase_map_load "$rebase_map" && rebase_map_project "$base_sha"; then
+      mapped_base="$REBASE_MAP_PROJECTED"
+    fi
+    if [[ "$mapped_base" =~ ^[0-9a-f]{40}$ ]] \
+      && [[ "$(git -C "$repo" cat-file -t "$mapped_base" 2>/dev/null)" == commit ]] \
+      && git -C "$repo" merge-base --is-ancestor "$mapped_base" HEAD >/dev/null 2>&1; then
+      base_sha="$mapped_base"
+    else
+      message base-orphaned >&2
+      printf '[]\n' > "$result" || return 3
+      # 4 distinguishes an unproved comparison from a gate that cleared.
+      return 4
+    fi
   fi
   probe="$(mktemp "$repo/tmp/.dev-artifact-additions.XXXXXX")" \
     || return 3

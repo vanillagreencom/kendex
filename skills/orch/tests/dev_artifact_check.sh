@@ -411,6 +411,100 @@ git -C "$RB" commit -q -m round-addition
 run_check --worktree "$RB" --issue issue-944 --round-id 2-2 --expect-items-from-round
 assert_eq "$(observe 'reason=unapproved_additions files=["tools/round-tool"]')" 'reason=unapproved_additions files=["tools/round-tool"]' "a round whose base survived the restack is gated on its own addition alone" "$ERR"
 
+echo "=== supported restack preserves the original round's additions ==="
+# The launcher calls this producer's create --reuse. Keep the native-format
+# synthetic run from before both restacks: the map proves correspondence,
+# while the writer still binds that same run to the original delegation.
+SP="$(new_repo supported-main issue-945 seed 1000000)"
+git -C "$SP" config gc.auto 0
+git -C "$SP" config maintenance.auto false
+git init -q --bare "$TMP_ROOT/supported-origin.git"
+git --git-dir="$TMP_ROOT/supported-origin.git" config gc.auto 0
+git --git-dir="$TMP_ROOT/supported-origin.git" config maintenance.auto false
+git -C "$SP" remote add origin "$TMP_ROOT/supported-origin.git"
+git -C "$SP" push -q -u origin main
+WORKTREE_BIN="$REPO_ROOT/skills/worktree/scripts/worktree"
+supported_reuse() {
+  (cd "$SP" && WORKTREE_DEFAULT_BRANCH=main WORKTREE_BASE_DIR="$TMP_ROOT/supported-lanes" \
+    "$WORKTREE_BIN" create issue-945 "$@")
+}
+SR="$(supported_reuse 2>"$TMP_ROOT/supported-create.err")"
+init_growth_state "$STATE" "$SR" issue-945 seed 1000000 >/dev/null
+mkdir -p "$SR/.cache/tracker-fixture"
+cp "$SP/.cache/tracker-fixture/issues.json" "$SR/.cache/tracker-fixture/issues.json"
+printf 'before round\n' > "$SR/branch.md"
+git -C "$SR" add branch.md
+git -C "$SR" commit -q -m branch-base
+round_write --worktree "$SR" --issue issue-945 --round-id denied --item 1 fix "tools/guard staged render" >/dev/null
+round_write --worktree "$SR" --issue issue-945 --round-id allowed --adds tools/round-tool --item 1 fix "tools/guard staged render" >/dev/null
+SB="$(git -C "$SR" rev-parse HEAD)"
+mkdir -p "$SR/tools"
+printf 'round\n' > "$SR/tools/round-tool"
+git -C "$SR" add tools/round-tool
+git -C "$SR" commit -q -m round-addition
+round_write --worktree "$SR" --issue issue-945 --round-id unchanged --item 1 fix "tools/guard staged render" >/dev/null
+SH="$(git -C "$SR" rev-parse HEAD)"
+ST="$(jq -r .delegated_at "$SR/tmp/dev-round-issue-945-unchanged.json")"
+SN="$(validate_run_dir "$TMP_ROOT/supported-native-run" full 0 "$SH" "$ST")"
+mkdir -p "$TMP_ROOT/supported-original"
+cp "$SR"/tmp/dev-round-issue-945-*.json "$SN/start" "$SN/timing" "$SN/exit" "$TMP_ROOT/supported-original/"
+for hop in first second; do
+  mkdir -p "$SP/crates/upstream"
+  printf '%s\n' "$hop" > "$SP/crates/upstream/$hop.rs"
+  git -C "$SP" add crates/upstream
+  git -C "$SP" commit -q -m "upstream-$hop"
+  git -C "$SP" push -q origin main
+  supported_reuse --reuse --keep-on-conflict >"$TMP_ROOT/supported-$hop.out" 2>"$TMP_ROOT/supported-$hop.err"
+done
+SM="$(git -C "$SR" rev-parse --git-path kendex-rebase-map)"
+[[ "$SM" == /* ]] || SM="$SR/$SM"
+SM_BEFORE="$(cat "$SM")"
+cp "$SM" "$TMP_ROOT/supported-original/map"
+for rid in denied allowed unchanged; do
+  "$WRITE" --worktree "$SR" --kind fix --issue issue-945 --round-id "$rid" --branch issue-945 \
+    --commit "$(git -C "$SR" rev-parse HEAD)" --validate pass --validate-run-dir "$SN" --item 1 Applied fixed >/dev/null
+done
+for row in \
+  'denied|rc=1 reason=unapproved_additions files=["tools/round-tool"]' \
+  'allowed|rc=0 reason=valid files=[]' \
+  'unchanged|rc=0 reason=valid files=[]'; do
+  IFS='|' read -r rid expect <<<"$row"
+  run_check --worktree "$SR" --issue issue-945 --round-id "$rid" --expect-items-from-round
+  assert_eq "$(observe "$expect")" "$expect" "supported restack: $rid preserves original attribution" "$ERR"
+done
+# Reuse the same accepted receipt while varying only the checker's provenance.
+# The writer's restack table owns stale/off-round run and hop-parser controls.
+for shape in missing unknown unrelated dropped unresolved malformed incomplete; do
+  case "$shape" in
+    missing) rm -- "$SM" ;;
+    unknown) printf 'rebase-hop:\nrebase-map: %s %s\n' "$SH" "$(git -C "$SR" rev-parse HEAD)" > "$SM" ;;
+    unrelated) printf 'rebase-hop:\nrebase-map: %s %s\n' "$SB" "$SH" > "$SM" ;;
+    dropped) printf 'rebase-hop:\nrebase-map: %s dropped\n' "$SB" > "$SM" ;;
+    unresolved) printf '%s\nrebase-unmapped: %s\n' "$SM_BEFORE" "$SH" > "$SM" ;;
+    malformed) printf '%s\nrebase-hop:\nrebase-map: invalid %s\n' "$SM_BEFORE" "$SH" > "$SM" ;;
+    incomplete) printf '%s\nrebase-hop:\n' "$SM_BEFORE" > "$SM" ;;
+  esac
+  run_check --worktree "$SR" --issue issue-945 --round-id allowed --expect-items-from-round
+  assert_eq "$(observe 'rc=1 reason=additions_unattributable files=[]')" 'rc=1 reason=additions_unattributable files=[]' \
+    "supported restack: $shape map cannot prove additions" "$ERR"
+done
+printf '%s\n' "$SM_BEFORE" > "$SM"
+for original in "$SR"/tmp/dev-round-issue-945-*.json "$SN/start" "$SN/timing" "$SN/exit"; do
+  assert_eq "$(cmp -s "$original" "$TMP_ROOT/supported-original/${original##*/}" && printf unchanged || printf changed)" unchanged \
+    "supported restack leaves original ${original##*/} bytes unchanged"
+done
+run_check --worktree "$SR" --issue issue-945 --round-id allowed --expect-items-from-round
+assert_eq "$(cmp -s "$SM" "$TMP_ROOT/supported-original/map" && printf unchanged || printf changed)" unchanged \
+  'supported restack checker leaves ordered map bytes unchanged'
+PROJECTION_MUTANT="$(mutant_scripts projection-mutant dev-artifact-check)/dev-artifact-check"
+mutate_file "$PROJECTION_MUTANT" 'mapped_base="$REBASE_MAP_PROJECTED"' 'mapped_base="" # $REBASE_MAP_PROJECTED'
+CHECK_SHIPPED="$CHECK"
+CHECK="$PROJECTION_MUTANT"
+run_check --worktree "$SR" --issue issue-945 --round-id allowed --expect-items-from-round
+assert_eq "$(observe 'rc=1 reason=additions_unattributable files=[]')" 'rc=1 reason=additions_unattributable files=[]' \
+  'control: disabling projection restores the supported round refusal' "$ERR"
+CHECK="$CHECK_SHIPPED"
+
 echo "=== a fix receipt carries the mode its round runs ==="
 # A fix round runs range, or full where the project sets no range command;
 # a receipt recording the other mode names a run that is not the round's. A
