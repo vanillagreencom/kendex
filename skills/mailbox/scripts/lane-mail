@@ -500,7 +500,7 @@ keys, first line `lane-mail: <key>=<value>`: verb-invalid, option-unknown,
 option-conflict, missing-value, option-required, item-invalid, after-invalid, box-invalid,
 seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress-needs-ref,
 recommend-invalid, recommend-missing, recommend-required, draft-field,
-draft-medium, attach-outside,
+draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
 overseer-only,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
@@ -612,6 +612,7 @@ fix=run `oversee register` from the orch skill in the session that should read t
     owner-action-missing) text='Use --do with the action and the evidence that closes it.' ;;
     box-invalid) text='--box takes to-lane or to-overseer, the one mailbox file events reads.' ;;
     attach-outside) text='An attachment is a regular file, not itself a symlink, whose directory resolves physically to the progress-report directory, and it is recorded at that physical path. The report writer alone sets it; a path anywhere else is refused so nothing outside that directory can be carried to the owner.' ;;
+    attach-repeated) text='A notice carries one attachment. Send each additional file in a separate notice.' ;;
     ask-reserved) text='The ask is an owner-reserved decision: no default stands for it at its deadline. Record the owner'"'"'s answer with send --re, then close it with resolve, or record and close together with resolve --text.' ;;
     ask-unknown) text='No eligible ask in the mailbox carries that id. An overseer send --re answers an owner ask; resolve closes any ask the overseer sent. A lane reply names an ask that lane sent.' ;;
     resolved-already) text='This ask is already closed by the record named above. Deliver later text as a directive with `send --item overseer --directive`.' ;;
@@ -738,7 +739,10 @@ while [ "$#" -gt 0 ]; do
     --to) need_val "$@"; TO="$2"; shift 2 ;;
     --ref) need_val "$@"; REF="$2"; shift 2 ;;
     --progress) PROGRESS=1; shift ;;
-    --attach) need_val "$@"; ATTACH="$2"; shift 2 ;;
+    --attach)
+      need_val "$@"
+      [ -z "$ATTACH" ] || refuse attach-repeated --attach
+      ATTACH="$2"; shift 2 ;;
     --recommend) need_val "$@"; RECOMMEND="$2"; shift 2 ;;
     --wait) need_val "$@"; WAIT="$2"; WAIT_GIVEN=1; shift 2 ;;
     --draft) need_val "$@"; DRAFT="$2"; shift 2 ;;

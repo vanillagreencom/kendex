@@ -45,6 +45,18 @@ reader_refusal() { # SEND|PEER
   assert_eq "$RC" 2 "$1 refuses without a reader"
   assert_eq "${ERR%%=*}" 'lane-mail: overseer-absent' "$1 keeps the reader refusal key"
 }
+attach_refusal() {
+  unchanged notice --item overseer --to owner --file "$TMP_ROOT/message" \
+    --attach "$TMP_ROOT/message" --attach "$TMP_ROOT/second"
+  assert_eq "$RC" 2 'notice refuses a repeated attachment'
+  assert_eq "$ERR" 'lane-mail: attach-repeated=--attach' 'notice names the repeated attachment option'
+}
+if [ "${1:-}" = --attach-row ]; then
+  attach_refusal
+  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
 if [ "${1:-}" = --reader-row ]; then
   reader_refusal send
   printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
@@ -74,6 +86,7 @@ lm watch --item overseer --once
 assert_eq "$RC" 0 'watch works alone'
 reader_refusal send
 reader_refusal peer
+attach_refusal
 while IFS='|' read -r verb item flag value; do
   args=("$verb" --item "$item" --root "$REPO")
   [ -z "$flag" ] || args+=("$flag")
@@ -91,7 +104,7 @@ notice|overseer|--attach|$TMP_ROOT/message
 ROWS
 
 if [ -z "${MAILBOX_UNDER_TEST:-}" ]; then
-  for control in startup reader require; do
+  for control in startup reader require attach; do
     mkdir -p "$TMP_ROOT/$control"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/$control/scripts"
     if [ "$control" = startup ]; then
@@ -102,6 +115,11 @@ if [ -z "${MAILBOX_UNDER_TEST:-}" ]; then
       mutate_file "$TMP_ROOT/$control/scripts/lane-mail" 'if [ ! -f "$ORCH_SCRIPTS/workflow-state" ]; then' \
         'if [ ! -f "$ORCH_SCRIPTS/workflow-state" ]; then return 0;'
       row=(--reader-row)
+    elif [ "$control" = attach ]; then
+      mutate_file "$TMP_ROOT/$control/scripts/lane-mail" \
+        '[ -z "$ATTACH" ] || refuse attach-repeated --attach' \
+        ': # [ -z "$ATTACH" ] || refuse attach-repeated --attach'
+      row=(--attach-row)
     else
       mutate_file "$TMP_ROOT/$control/scripts/lane-mail" 'lm_require_orch() { # FILE...' \
         'lm_require_orch() { return 0; # FILE...'
