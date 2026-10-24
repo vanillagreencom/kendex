@@ -234,6 +234,7 @@ new_caller() {
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
   record_caller "$1" "$CALLER_PANE"
+  if [[ "${CALLER_RECORD:-}" != preserve && -f "${FLEET_STATE:-}" ]]; then caller_permission_record; fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$marker"* ]] || return 0
     sleep 0.2
@@ -496,14 +497,125 @@ lane_process_env_readable ||
 # so rather than leaving a later relaunch nothing. Every row below runs from
 # $TMP_ROOT/work, which is where workflow-state resolves `tmp` to.
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+caller_permission_record() {
+  if [[ -n "${CALLER_PANE:-}" ]]; then
+    local harness=claude line permission
+    case "$(cat "$TMP_ROOT/caller.screen")" in
+      '  Context '*) harness=codex ;;
+    esac
+    permission="$(launch_choice_permission_write "$harness")"
+    if [[ "$harness" == claude ]]; then line="claude -n overseer $permission '$BRIEF'"
+    else line="codex $permission '$BRIEF'"; fi
+    jq --arg pane "$CALLER_PANE" --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg line "$line" \
+      '.overseer as $old | .overseer =
+        ((if ($old.pane // "") == "" or $old.pane == $pane then $old else {generation:$old.generation} end)
+         + {pane:$pane,server:$server,server_start:$start,launch_line:$line})' \
+      "$FLEET_STATE" > "$TMP_ROOT/fleet-state"
+    mv -- "$TMP_ROOT/fleet-state" "$FLEET_STATE"
+  fi
+}
 fleet_state() {
   mkdir -p "$(dirname "$FLEET_STATE")"
   printf '{"issue_id": "oversee", "overseer": {"generation": 1}}\n' > "$FLEET_STATE"
+  [[ "${1:-}" == absent ]] || caller_permission_record
+  if declare -F record_dead_line >/dev/null && [[ "$(dead_open)" == yes ]]; then record_dead_line; fi
   fixture_succession_handoff "$FLEET_STATE" "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
 }
 recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 orec() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 fleet_state
+
+# The managed hook/watch invocation has no trailing flags. Its permission
+# source is the launch record bound to that caller, at the production path.
+recorded_permission_row() { # NAME MODE PREFERENCE PERMISSION
+  local name="$1" mode="$2" preference="$3" permission="$4" line
+  new_caller "$MARK"
+  fleet_state
+  line="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $permission '$BRIEF'"
+  jq --arg pane "$CALLER_PANE" --arg server "$SERVER_PID" --argjson start "$SERVER_START" \
+    --arg cwd "$TMP_ROOT/work" --arg home "$H/.claude" --arg line "$line" \
+    '.overseer += {runtime:"tmux", server:$server, server_start:$start, pane:$pane,
+      harness:"claude", account:$home, home:$home, model:"claude-fable-5-1", cwd:$cwd, launch_line:$line}' \
+    "$FLEET_STATE" > "$TMP_ROOT/permission-state"
+  mv -- "$TMP_ROOT/permission-state" "$FLEET_STATE"
+  claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+  codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+  local args=()
+  [[ "$mode" != walled ]] || args=(--walled-pane "$CALLER_PANE")
+  run_succeed "recorded-permission-$name" "$preference" ${args[@]+"${args[@]}"}
+  local has_permission=no
+  if [[ -f "$TMP_ROOT/argv.claude" ]] && grep -Fx -- "$permission" "$TMP_ROOT/argv.claude" >/dev/null; then has_permission=yes; fi
+  assert_eq "$RC|$(caller_open)|$(overseers)|$has_permission" '0|no|1|yes' \
+    "recorded permission reaches $name successor argv" "$OUT"
+}
+recorded_permission_refusal_row() { # RECORD_KIND
+  local permission_record="$1" permission_line preference="" missing_word launches pane_after before_layout
+  new_caller "$MARK"
+  fleet_state absent
+  claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+  codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+  if [[ "$permission_record" != absent ]]; then
+    permission_line="claude -n overseer '$BRIEF'"
+    case "$permission_record" in
+      prompt) permission_line="claude -n overseer 'example $BYPASS'" ;;
+      bare) permission_line='claude -n overseer' ;;
+      plan)
+        permission_line="claude -n overseer --permission-mode plan '$BRIEF'"
+        preference=codex:gpt-6-astra:high
+        claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json" ;;
+    esac
+    jq --arg pane "$CALLER_PANE" --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg line "$permission_line" \
+      --arg home "$H/.claude" --arg cwd "$TMP_ROOT/work" \
+      '.overseer += {pane:$pane,server:$server,server_start:$start,launch_line:$line,
+        harness:"claude",account:$home,home:$home,cwd:$cwd,model:"claude-fable-5-1"}' \
+      "$FLEET_STATE" > "$TMP_ROOT/missing-permission-state"
+    mv -- "$TMP_ROOT/missing-permission-state" "$FLEET_STATE"
+  fi
+  before_layout="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
+  run_succeed "recorded-permission-refusal-$permission_record" "$preference"
+  missing_word="$(keyed --summary launch-choice-failed "$OUT")"
+  launches="$(find "$TMP_ROOT" -maxdepth 1 -name 'argv.*' -type f | wc -l | tr -d ' ')"
+  pane_after="$(tm display-message -p -t "$CALLER_PANE" '#{pane_id}' 2>/dev/null)" || pane_after=gone
+  printf '%s\n' "$OUT" > "$TMP_ROOT/permission-refusal.out"
+  assert_eq "$RC|$missing_word|$launches|$(caller_open)|$pane_after|$(tm list-windows -t fleet -F '#{window_id} #{window_index}')" \
+    "1|oversee-succeed: launch-choice-failed entry=caller reason=permission-unrecorded harness=claude word=$BYPASS|0|yes|$CALLER_PANE|$before_layout" \
+    "$permission_record recorded permission refuses at account fallback without launch or pane replacement" "$TMP_ROOT/permission-refusal.out"
+}
+for permission_row in 'self|succeed|' 'account-fallback|succeed|codex:gpt-6-astra:high' 'walled|walled|'; do
+  IFS='|' read -r row_name row_mode row_pref <<<"$permission_row"
+  recorded_permission_row "$row_name" "$row_mode" "$row_pref" "$BYPASS"
+done
+for permission_record in absent empty prompt bare plan; do
+  recorded_permission_refusal_row "$permission_record"
+done
+PERMISSIONCTL="$(mutant_scripts permissionctl oversee-succeed)" || exit 1
+mutate_file "$PERMISSIONCTL/oversee-succeed" \
+  '&& ol_record_permission "$OL_CUR_RECORD" "$CALLER_HARNESS"; then' \
+  '&& false; then'
+saved_fail="$FAIL"
+FAIL=0
+SUCCEED_BIN="$PERMISSIONCTL/oversee-succeed" recorded_permission_row permission-control succeed 'codex:gpt-6-astra:high' "$BYPASS" > "$TMP_ROOT/permission-control.out"
+control_fail="$FAIL"
+FAIL="$saved_fail"
+assert_eq "$((control_fail > 0))" 1 'control: omitting recorded permission fails the account-fallback row' "$TMP_ROOT/permission-control.out"
+new_caller "$MARK"
+fleet_state
+claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+for permission_account in "$H/.claude" "$H/.eclaude"; do
+  if [[ -f "$permission_account/.claude.json" ]]; then
+    jq --arg cwd "$TMP_ROOT/work" 'del(.projects[$cwd])' "$permission_account/.claude.json" > "$TMP_ROOT/permission-trust"
+    mv -- "$TMP_ROOT/permission-trust" "$permission_account/.claude.json"
+  fi
+done
+if [[ "${OVERSEE_PERMISSION_ROWS_ONLY:-0}" == 1 ]]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
 
 # The owner relay consumes keyed refusal lines. Every refusal uses the same
 # channel contract, including failures before a mark could be measured.
@@ -931,12 +1043,12 @@ cross_permission_refuses() { # NAME FLAGS...
   local name="$1"
   shift
   new_caller "$MARK"
-  fleet_state
+  fleet_state absent
   claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
   codex_usage 20 > "$FIXTURE_DIR/.codex.json"
   run_succeed "$name" 'codex:gpt-6-astra:high' -- --model fable --effort high "$@"
   assert_eq "$RC|$(keyed --summary entry-permission-untransferable "$OUT")|$(overseers)|$(recorded codex)" \
-    "3|oversee-succeed: entry-permission-untransferable entry=codex:gpt-6-astra:high source=claude target=codex lane=none|0|none" \
+    "3|oversee-succeed: entry-permission-untransferable entry=codex:gpt-6-astra:high source=claude target=codex word=--dangerously-bypass-approvals-and-sandbox lane=none|0|none" \
     "$name skips the cross-harness entry"
 }
 cross_permission_refuses restricted --permission-mode dontAsk
@@ -956,7 +1068,7 @@ claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-restricted 'claude:fable:high' -- \
   -m caller-model -c model_reasoning_effort=high --approve-for-me
 assert_eq "$RC|$(keyed --summary entry-permission-untransferable "$OUT")|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude lane=none|0|none" \
+  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude word=--dangerously-skip-permissions lane=none|0|none" \
   "codex approve-for-me skips the cross-harness entry"
 
 new_caller "$CODEX_SCREEN" 'Context 48% left'
@@ -964,7 +1076,7 @@ fleet_state
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-never 'claude:fable:high' -- \
   -m caller-model -c model_reasoning_effort=high -a never
 assert_eq "$RC|$(keyed --summary entry-permission-untransferable "$OUT")|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude lane=none|0|none" \
+  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude word=--dangerously-skip-permissions lane=none|0|none" \
   "codex ask-for-approval never skips the cross-harness entry"
 
 new_caller "$CODEX_SCREEN" 'Context 48% left'
@@ -972,7 +1084,7 @@ fleet_state
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codex-mixed 'claude:fable:high' -- \
   -m caller-model -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox -a never
 assert_eq "$RC|$(keyed --summary entry-permission-untransferable "$OUT")|$(overseers)|$(recorded claude)" \
-  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude lane=none|0|none" \
+  "3|oversee-succeed: entry-permission-untransferable entry=claude:fable:high source=codex target=claude word=--dangerously-skip-permissions lane=none|0|none" \
   "codex full bypass beside ask-for-approval never skips the cross-harness entry"
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 
@@ -1090,7 +1202,7 @@ new_caller "$UNDER_MARK"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed headroom 'claude:fable:high'
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "account headroom under the trigger: succession fires under the context mark, on the picked lane"
 
 # The empty preference keeps the caller's own harness and passes no model or
@@ -1098,7 +1210,7 @@ assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
 new_caller "$UNDER_MARK"
 run_succeed headroom-caller '' -- --verbose
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;--verbose;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;--verbose;$BYPASS;$BRIEF;" \
   "empty preference at the account mark: the caller's own account is left behind"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 
@@ -1125,7 +1237,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 new_caller "$MARK" '(fixture@example.com)' "cat '$TMP_ROOT/caller.screen'; exec '$BIN/hclaude' 100000"
 CALLER_LANE=none run_succeed callerdefault ''
 assert_eq "$RC|$(caller_open)|$(keyed --summary successor-launch "$OUT")|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=preapproved|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=preapproved|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a caller entry naming no account variable launches on the account its room was measured on"
 
 # The same refusal from a CODEX overseer. Its account's reset arrives from the
@@ -1368,9 +1480,9 @@ seed_overseer() {
     "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
 }
 seed_overseer
-new_caller "$MARK"
+CALLER_RECORD=preserve new_caller "$MARK"
 touch "$TMP_ROOT/idle"
-VIRTUAL_CLOCK=1 run_succeed restore 'claude:fable:high' --wait-secs "$IDLE_WAIT"
+VIRTUAL_CLOCK=1 run_succeed restore 'claude:fable:high' --wait-secs "$IDLE_WAIT" -- "$BYPASS"
 rm -f "$TMP_ROOT/idle"
 assert_eq "$RC|generation=$(orec generation) pane=$(orec pane) account=$(orec account) line=$(recorded_line)" \
   "1|generation=5 pane=%900 account=/seed/.claude line=$SEED_LINE" \
@@ -1405,9 +1517,9 @@ fi
 STUB
   chmod +x "$1/workflow-state"
   seed_overseer
-  new_caller "$MARK"
+  CALLER_RECORD=preserve new_caller "$MARK"
   touch "$TMP_ROOT/idle"
-  SUCCEED_BIN="$1/oversee-succeed" run_succeed recordcommit 'claude:fable:high' --wait-secs 30
+  SUCCEED_BIN="$1/oversee-succeed" run_succeed recordcommit 'claude:fable:high' --wait-secs 30 -- "$BYPASS"
   rm -f "$TMP_ROOT/idle"
 }
 seed_overseer
@@ -1505,7 +1617,7 @@ assert_eq "$RC|$(keyed --summary mark-reached "$OUT")|$(overseers)" \
 new_caller "$UNDER_MARK"
 WALL_MINUTES=30 run_succeed ratefast ''
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a rate trigger moves off the caller account even when it has more headroom"
 stage_usage_pair rateslow 22 20 600
 new_caller "$UNDER_MARK"
@@ -1641,7 +1753,7 @@ new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=1 LANE_DIRS="$THREE_LANES" run_succeed qualifyinglaunch ''
 mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "the qualifying-set trigger succeeds onto the remaining account"
 
 # A setting at the count of two meets the count from either account, so a
@@ -1675,7 +1787,7 @@ for pref_row in \
   # ol_walk emits permission/count notices; refused picks also emit exclusions.
   # Exercise their positions without changing the raw transcript used elsewhere.
   summary_transcript="$(printf '%s\n' \
-    'oversee-succeed: entry-permission-untransferable entry=pi:openai/gpt-5:high source=claude target=pi lane=none' \
+    'oversee-succeed: entry-permission-untransferable entry=pi:openai/gpt-5:high source=claude target=pi word=none lane=none' \
     "$OUT" \
     'oversee-succeed: successor-lane-excluded entry=caller lane=none reason=no-lane-qualifies')"
   assert_eq "$(keyed --summary "$pref_want" "$summary_transcript")" "$pref_want" \
@@ -1771,7 +1883,7 @@ new_caller "$UNDER_MARK"
 SUCCESSOR_ACCOUNTS=2 LANE_DIRS="$THREE_LANES" SUCCEED_BIN="$REFIRECTL/oversee-succeed" \
   run_succeed refirectl ''
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "control: a walk that never counts for its successor opens it onto the other account"
 
 # The headroom comparison still holds a count the setting reaches: an account
@@ -2117,7 +2229,7 @@ assert_eq "$RC|$(keyed --summary harness-unnamed "$OUT")" \
 # its first turn end no reading names one either: --harness does, so the watch
 # can record its launch line inside that first turn.
 new_caller "$NO_CONTEXT" "$NO_CONTEXT" "cat '$TMP_ROOT/caller.screen'; exec '$BIN/node' 100000"
-CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed nodeprint '' --print-launch-line --harness codex -- --verbose
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed nodeprint '' --print-launch-line --harness codex -- --verbose --dangerously-bypass-approvals-and-sandbox
 assert_eq "$RC|$(grep -c ' codex ' <<<"$OUT")|$(grep -c 'claude' <<<"$OUT")" "0|1|0" \
   "a node pane with no reading prints its codex line where --harness names codex"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.neutralclaude.json"
@@ -2284,8 +2396,8 @@ for row in "badcontext|--check-marks --context 12|1|oversee-succeed: invalid-con
 done
 
 # --check-marks' one control: the judgement runs on past its own answer. It is
-# the launch path's own steps that follow, so a check that does not stop opens
-# a successor window and spends an account every pass the watch makes. The
+# the launch path's own steps that follow. Permission admission rejects that
+# path because a check carries no launch words. The
 # reached-mark branch identifies the guard separately from runtime setup and
 # unmeasured answers.
 CHECKCTL="$(mutant_scripts checkctl oversee-succeed)" || exit 1
@@ -2299,7 +2411,7 @@ SUCCEED_BIN="$CHECKCTL/oversee-succeed" run_succeed checkctl '' --check-marks
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(overseers)|$(caller_open)" \
-  "0|1|no" "control: a judgement that does not stop opens a successor and closes the caller"
+  "1|0|yes" "control: a judgement that does not stop reaches permission admission instead of returning its answer"
 
 # ORCH_OVERSEER_SUCCESSION over a screen past the mark, which would launch.
 for row in \
@@ -2326,13 +2438,13 @@ echo "=== an overseer that DIED, which reaches none of the marks above ==="
 new_caller "$UNDER_MARK"
 run_succeed printline '' --print-launch-line -- --verbose
 assert_eq "$RC|$OUT|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|yes|0|none" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS '$BRIEF'|yes|0|none" \
   "--print-launch-line prints the caller's own line, judges no mark and launches nothing"
 
 new_caller "$UNDER_MARK"
 WALL_MINUTES=bad SUCCESSOR_ACCOUNTS=bad run_succeed printbadmarks '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|0" \
   "malformed trigger settings do not block a non-judging launch-line print"
 
 # The preference names where a LATER successor goes; the printed line records
@@ -2341,7 +2453,7 @@ assert_eq "$RC|$OUT|$(overseers)" \
 new_caller "$UNDER_MARK"
 run_succeed printpref 'codex:gpt-6-astra:high' --print-launch-line
 assert_eq "$RC|$OUT|$(recorded codex)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|none" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|none" \
   "--print-launch-line walks the caller entry whatever the preference names"
 
 # The account the printed line opens its successor on is the one the fleet
@@ -2353,20 +2465,20 @@ assert_eq "$RC|$OUT|$(recorded codex)" \
 # named on the line, as a watch recording inside the first turn names it.
 record_account() { # PANE ACCOUNT
   jq --arg server "$SERVER_PID" --arg pane "$1" --arg account "$2" --argjson start "$SERVER_START" \
-    '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, account: $account, server_start: $start}' \
+    '.overseer = {runtime: "tmux", generation: 1, server: $server, pane: $pane, account: $account, server_start: $start, launch_line:.overseer.launch_line}' \
     "$FLEET_STATE" > "$FLEET_STATE.tmp" && mv "$FLEET_STATE.tmp" "$FLEET_STATE"
 }
 new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 run_succeed printrecord '' --print-launch-line --harness claude
 assert_eq "$RC|$OUT" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
   "the printed line opens on the account the fleet state records for this pane"
 new_caller "$UNDER_MARK"
 record_account '%999' "$H/.eclaude"
-run_succeed printother '' --print-launch-line --harness claude
+run_succeed printother '' --print-launch-line --harness claude -- "$BYPASS"
 assert_eq "$RC|$OUT" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
   "a record naming another pane is another session's: the environment's account stands"
 # The control on the record fallback: a copy that never reads the recorded
 # account prints the environment's for the pane the record names.
@@ -2376,7 +2488,7 @@ new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 SUCCEED_BIN="$PRINTREC/oversee-succeed" run_succeed printrecctl '' --print-launch-line --harness claude
 assert_eq "$RC|$OUT" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
   "control: a print that ignores the record names the environment's account for the recorded pane"
 fleet_state
 
@@ -2639,7 +2751,7 @@ PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
 CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
   run_succeed printskip '' --print-launch-line
-assert_eq "$RC|$OUT" "0|$SCRUB_ENV CODEX_HOME='$H/.codex' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CODEX_HOME='$H/.codex' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --dangerously-bypass-approvals-and-sandbox '$BRIEF'" \
   "control: a print that skips the preparation records the bare account, not the prepared home"
 
 # Both arms of lib/lane-context.sh's answer for the caller's own lane: the
@@ -2653,7 +2765,7 @@ for row in \
   IFS='|' read -r row_lane row_what <<<"$row"
   new_caller "$CODEX_SCREEN" 'Context 48% left'
   CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
-  assert_eq "$RC|$OUT|$(overseers)" "0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 '$BRIEF'|0" \
+  assert_eq "$RC|$OUT|$(overseers)" "0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --dangerously-bypass-approvals-and-sandbox '$BRIEF'|0" \
     "--print-launch-line on a codex caller records the home trust was made in, under $row_what"
 done
 # A codex caller launched by this script already runs with the startup update
@@ -2662,7 +2774,7 @@ done
 new_caller "$CODEX_SCREEN" 'Context 48% left'
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex-settings '' --print-launch-line -- \
   --verbose -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust
-assert_eq "$RC|$OUT" "0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --verbose --dangerously-bypass-approvals-and-sandbox '$BRIEF'" \
   "a codex caller entry carrying the update setting keeps it exactly once"
 
 CALLER_BRIEF_FILE="$TMP_ROOT/caller-brief.md"
@@ -2698,8 +2810,8 @@ while IFS='|' read -r harness expected; do
     assert_eq "$assertion_rc" "$want_rc" "$harness prompt assertion rejects lost text or option interpretation: $brief_text" "$TMP_ROOT/brief-assertion.out"
   done
 done <<ROWS
-claude|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose -- '$brief_text'
-codex|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -- '$brief_text'
+claude|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS -- '$brief_text'
+codex|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --dangerously-bypass-approvals-and-sandbox -- '$brief_text'
 copilot|$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all --interactive='$brief_text'
 ROWS
 done <<'BRIEFS'
@@ -2829,7 +2941,7 @@ assert_eq "$RC|$(keyed --summary context-below-mark "$OUT")|$(caller_open)|$(ove
 new_caller "$UNDER_MARK"
 SUCCESSION=off run_succeed printoff '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|0" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|0" \
   "succession off still prints the line: printing launches nothing"
 
 # A successor overseer carries the words that take its harness question tool
@@ -2838,12 +2950,12 @@ assert_eq "$RC|$OUT|$(overseers)" \
 # the words is dropped under overseer and carried once under off. A value
 # that is neither refuses before a line is built.
 for row in \
-  "claude|unset||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|unset takes the claude question tool away" \
-  "claude|off||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode '$BRIEF'|off takes the claude question tool away" \
-  "claude|overseer||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'|overseer keeps the claude question tool" \
-  "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --verbose '$BRIEF'|overseer drops the caller's own question-tool words" \
-  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose '$BRIEF'|off carries a caller's own copy of the words once" \
-  "codex|off||0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false '$BRIEF'|off takes the codex question tool away" \
+  "claude|unset||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode $BYPASS '$BRIEF'|unset takes the claude question tool away" \
+  "claude|off||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode $BYPASS '$BRIEF'|off takes the claude question tool away" \
+  "claude|overseer||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|overseer keeps the claude question tool" \
+  "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS '$BRIEF'|overseer drops the caller's own question-tool words" \
+  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose $BYPASS '$BRIEF'|off carries a caller's own copy of the words once" \
+  "codex|off||0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false --dangerously-bypass-approvals-and-sandbox '$BRIEF'|off takes the codex question tool away" \
   "claude|on||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=on|on is not a value: refused before a line is built" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=sometimes|a value that is neither off nor overseer refuses" \
   ; do
@@ -2872,12 +2984,19 @@ new_dead_pane() {
   local spec
   spec="$(tm new-window -d -t fleet:5 -c "$TMP_ROOT/work" -P -F '#{pane_id} #{window_id}' 'exec sleep 100000')"
   read -r DEAD_PANE DEAD_WINDOW <<<"$spec"
+  record_dead_line
+}
+record_dead_line() {
+  local line
+  line="$(cat "$TMP_ROOT/line-file")"
+  jq --arg line "$line" '.overseer.pending = {harness:"claude", launch_line:$line}' "$FLEET_STATE" > "$TMP_ROOT/dead-state"
+  mv -- "$TMP_ROOT/dead-state" "$FLEET_STATE"
 }
 dead_open() { if [[ "$(tm list-windows -t fleet -F '#{window_id}')" == *"$DEAD_WINDOW"* ]]; then echo yes; else echo no; fi; }
 overseer_index() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$2 == "overseer" { printf "%s", $1 }'; }
 # The recorded line names its lane, as every line the print and succeed modes
 # build does: the harness reads that lane's own folder trust.
-RECORDED_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer 'relaunched from the record'"
+RECORDED_LINE="env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer $BYPASS 'relaunched from the record'"
 printf '%s\n' "$RECORDED_LINE" > "$TMP_ROOT/line-file"
 
 # A mistyped ORCH_QUESTION_TOOL rides along: the recorded line is sent
@@ -2886,8 +3005,16 @@ new_caller "$MARK"
 new_dead_pane
 QUESTION_TOOL=sometimes run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
 assert_eq "$RC|$(overseer_index)|$(caller_open)|$(dead_open)|$(recorded claude)" \
-  "0|0|yes|no|lane=$H/.claude;-n;overseer;relaunched from the record;" \
+  "0|0|yes|no|lane=$H/.claude;-n;overseer;$BYPASS;relaunched from the record;" \
   "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing, a mistyped question-tool setting unread"
+printf '%s\n' "claude -n overseer 'no recorded permission'" > "$TMP_ROOT/line-file"
+new_caller "$MARK"
+new_dead_pane
+run_succeed dead-permission-absent '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
+missing_word="$(keyed --summary launch-choice-failed "$OUT")"
+assert_eq "$RC|${missing_word##*word=}|$(caller_open)|$(dead_open)|$(overseers)|$(recorded claude)" \
+  '1|--dangerously-skip-permissions|yes|yes|0|none' 'a dead replay missing permission leaves both panes untouched'
+printf '%s\n' "$RECORDED_LINE" > "$TMP_ROOT/line-file"
 new_caller "$MARK"
 new_dead_pane
 SUCCESSION=off run_succeed deadoff '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
@@ -3323,7 +3450,7 @@ HEADROOM_PCT=60 run_succeed headroomset 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a non-default trigger is read: 50 headroom fires the account mark at 60"
 
 # The trigger's own boundary, caller side. `at or below` is the documented
@@ -3333,7 +3460,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed calleratbound 'claude:fable:high'
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "caller at exactly the trigger fires the account mark"
 
 new_caller "$UNDER_MARK"
@@ -3369,7 +3496,7 @@ run_succeed defaultfloor 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "the shipped default opens the successor on a candidate at 7 percent headroom"
 
 # The same boundary on the pick side: the only candidate sits exactly at the
@@ -3408,7 +3535,7 @@ run_succeed pickabovebound 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a candidate one percent above the trigger is chosen"
 
 # An account nothing could measure is its own state, never a healthy one. With
@@ -3422,7 +3549,7 @@ run_succeed unmeasured ''
 mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "an unmeasured caller account is not reused at the context mark"
 
 # The same unmeasured account where the pick names NO lane. At the context
@@ -3438,7 +3565,7 @@ run_succeed unmeasuredwall ''
 mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(keyed --summary successor-account-unmeasured "$OUT" | sed 's/ detail=.*/ detail=/')|$(caller_open)|$(recorded claude)|$(jq -r --arg l "oversee-succeed: successor-account-unmeasured lane=$H/.claude status=unreachable detail=" '[(.fleet_log // [])[] | select(.text | startswith($l))] | length' "$FLEET_STATE")" \
-  "0|oversee-succeed: successor-account-unmeasured lane=$H/.claude status=unreachable detail=|no|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;|1" \
+  "0|oversee-succeed: successor-account-unmeasured lane=$H/.claude status=unreachable detail=|no|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;|1" \
   "an unmeasured caller with every lane of its harness walled keeps its own account at the context mark"
 
 # The same wall with the caller's own account MEASURED at the trigger: the
@@ -3466,7 +3593,7 @@ run_succeed claimedcaller ''
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a claim on the caller pane does not move the judged account, and its account mark fires"
 
 # The other side of that rule: a caller account MEASURED above the trigger
@@ -3481,7 +3608,7 @@ run_succeed callerhasroom ''
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a caller with room above the trigger keeps its own lane, not the roomier one the pick names"
 
 # The account mark reads the buckets THIS session spends. The caller's recorded
@@ -3519,7 +3646,7 @@ run_succeed matchedbucket 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a spent window scoped to the model this overseer runs fires the account mark"
 
 # A historical reading can carry a model without a window. That model still
@@ -3554,7 +3681,7 @@ jq -n '{
 }' > "$FIXTURE_DIR/.eclaude.json"
 run_succeed callerfallbackmodel ''
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "the caller fallback pick is judged on the model this overseer runs"
 
 # The successor pick and the successor's own first judgement read ONE bucket.
@@ -3578,7 +3705,7 @@ run_succeed bindingfloor 'claude:fable:high'
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a lane with room for the entry's model and none outside it is opened on"
 
 # Which reading the pick is held to is lib/lane-context.sh's answer, because it
@@ -3710,7 +3837,7 @@ succeed_shim() {
 new_caller "$MARK"
 succeed_shim shim 'claude:fable:high'
 assert_eq "$RC|$(caller_open)|$(keyed --summary successor-launch "$OUT")|$(recorded_argv0 4claude)|$(recorded 4claude)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=account-config|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;|none" \
+  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=account-config|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;|none" \
   "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix"
 
 # A successor stopped at a folder-trust dialog is reported as that, with the
@@ -3779,7 +3906,7 @@ RC=0
 OUT="$(exec env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANE_DIRS="$H/.$QLANE" \
   "$TMP_ROOT/succeed-env" quoted 'claude:fable:high' 2>&1)" || RC=$?
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.$QLANE;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|lane=$H/.$QLANE;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "a lane directory carrying an apostrophe is quoted for the pane shell and reaches the harness"
 
 # ── The account the pane is really on ───────────────────────────────────────
@@ -3979,9 +4106,9 @@ walled_world_reset() { claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"; 
 new_caller "$MARK"
 walled_world
 run_succeed walledpane '' --walled-pane "$CALLER_PANE"
-WALLED_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer $CLAUDE_COMPACT_LINE '$BRIEF'"
+WALLED_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "--walled-pane opens the successor on the lane the pick named, never on the caller's own"
 # The line is on stdout ahead of every keyed line, and in the fleet state: the
 # caller is oversee-watch, which reports the recovery it just performed, and a
@@ -4001,7 +4128,7 @@ assert_eq "$RC|$(keyed --summary context-below-mark "$OUT")|$(caller_open)|$(ove
 new_caller "$UNDER_MARK"
 run_succeed walledundermark '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|0 overseer;|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "and the walled recovery of it launches, judging no mark at all"
 
 # Succession off launches nothing here as everywhere else: the operator's
@@ -4049,7 +4176,7 @@ claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed walledspent '' --walled-pane "$CALLER_PANE"
 walled_world
 assert_eq "$RC|$(caller_open)|$(recorded claude)" \
-  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|no|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "the walled account is left out of the pick, although it reads the most room"
 
 # The backstop for an inventory that names it anyway: a `lanes` that answers
@@ -4104,7 +4231,7 @@ mutate_file "$WALLCTL/oversee-succeed" '    print:* | *:*:model) OL_WALK_CALLER_
 new_caller "$MARK"
 SUCCEED_BIN="$WALLCTL/oversee-succeed" run_succeed wallctl '' --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(recorded claude)" \
-  "0|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BRIEF;" \
+  "0|lane=$H/.claude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "control: without that gate the successor opens on the account that walled"
 walled_world_reset
 

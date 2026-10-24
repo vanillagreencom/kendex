@@ -1042,7 +1042,7 @@ printf 'payload.context_window = usage.contextWindow;\n' > "$PI_CARRIER"
 # the pending successor's where that is the line, the dead session's own
 # otherwise. Its first watch start then prints a line on a pane whose command
 # names no harness and which has no reading yet.
-DEAD_LINE="claude -n overseer 'relaunched from the record'"
+DEAD_LINE="claude -n overseer $BYPASS 'relaunched from the record'"
 printf '%s\n' "$DEAD_LINE" > "$TMP_ROOT/line-file"
 # dead_relaunch EXTRA_JSON [SUCCEED_BIN] — a dead pane the record names with
 # EXTRA_JSON merged over its record, relaunched; sets SUCC_PANE to the pane the
@@ -1080,14 +1080,14 @@ for row in \
   assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$row_account' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model $print_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
     "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
 done
-# The control: a relaunch that records no identity leaves its session's print
-# to a screen that names nothing.
+# A replay with no identity refuses before it can produce an unidentified successor.
 DEADCTL="$(mutant_scripts deadctl oversee-succeed)" || exit 1
 mutate_file "$DEADCTL/oversee-succeed" '! ol_record_line_identity "$cmd"; then' '! ol_identity "" "" "" "" "" ""; then'
 dead_relaunch "$OWN" "$DEADCTL/oversee-succeed"
-print_on_successor
-assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=$SUCC_PANE" \
-  "control: a relaunch that records no identity leaves the next print refused"
+unidentified_successors="$(tm list-windows -t fleet -F '#{window_name}' | awk '$0 == "overseer" {n++} END {print n+0}')"
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")|$unidentified_successors" \
+  '1|oversee-succeed: launch-choice-failed reason=permission-unrecorded harness=none word=|0' \
+  "control: a replay with no identity refuses and produces no unidentified successor"
 # The control: a projection of the six positional fields alone drops the class.
 DEADCLASSCTL="$(mutant_scripts deadclassctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$DEADCLASSCTL/lib/overseer-launch.sh" \

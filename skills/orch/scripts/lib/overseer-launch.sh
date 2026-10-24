@@ -734,8 +734,9 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
 # source harness (copilot's `claude-opus-5.5` is claude's `claude-opus-5-5`),
 # and no table here translates one harness's spelling into another's.
 ol_entry_permitted() { # ENTRY
-  local tab=$'\t' row posture
+  local tab=$'\t' row posture permission
   row="$(launch_choice_row "$OL_HARNESS")"
+  permission="$(launch_choice_permission_write "$OL_HARNESS")" || permission=none
   IFS='|' read -r _ _ _ _ _ posture _ <<<"$row"
   if [[ -z "$OL_WALK_SOURCE_HARNESS" ]]; then
     [[ "$posture" != no-word ]] && launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0
@@ -744,7 +745,7 @@ ol_entry_permitted() { # ENTRY
   fi
   [[ "$OL_HARNESS" != "$OL_WALK_SOURCE_HARNESS" ]] || return 0
   if [[ "$OL_ENTRY_DEPRECATED" == true && "$1" =~ :[1-9][0-9]*: ]]; then
-    OL_WALK_SKIPS+=("entry-permission-untransferable${tab}entry=$1${tab}source=$OL_WALK_SOURCE_HARNESS${tab}target=$OL_HARNESS${tab}model=${OL_MODEL:-none}${tab}lane=none")
+    OL_WALK_SKIPS+=("entry-permission-untransferable${tab}entry=$1${tab}source=$OL_WALK_SOURCE_HARNESS${tab}target=$OL_HARNESS${tab}model=${OL_MODEL:-none}${tab}word=${permission:-none}${tab}lane=none")
     return 1
   fi
   if [[ "${PREFERENCE_ACTIVE:-false}" == true && "$posture" == no-word ]] \
@@ -758,7 +759,7 @@ ol_entry_permitted() { # ENTRY
       return 0
     fi
   fi
-  OL_WALK_SKIPS+=("entry-permission-untransferable${tab}entry=$1${tab}source=$OL_WALK_SOURCE_HARNESS${tab}target=$OL_HARNESS${tab}lane=none")
+  OL_WALK_SKIPS+=("entry-permission-untransferable${tab}entry=$1${tab}source=$OL_WALK_SOURCE_HARNESS${tab}target=$OL_HARNESS${tab}word=${permission:-none}${tab}lane=none")
   return 1
 }
 
@@ -784,12 +785,18 @@ ol_entry_permitted() { # ENTRY
 # could not be read, and its fields in OL_FIELDS.
 OL_FLAGS=()
 ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [FLAG...]
-  local question=() words lead_model
+  local question=() words lead_model permission
   if [[ "$1" == --question-off ]]; then question=(--question-off); shift; fi
   local harness="$1" model="$2" effort="$3" pick_model="$4" source="$5"
   shift 5
   OL_FLAGS=() OL_FIELDS=()
   OL_REASON=launch-choice-failed
+  # open-terminal owns lane preference admission; this requirement is for overseers.
+  if [[ "${PREFERENCE_ACTIVE:-false}" != true && "$harness" == "$source" ]] \
+    && ! launch_choice_permission_present "$source" "$*"; then
+    permission="$(launch_choice_permission_write "$harness")" && [[ -z "$permission" ]] \
+      || { OL_FIELDS=(reason=permission-unrecorded "harness=$harness" "word=${permission:-none}"); return 1; }
+  fi
   words="$(launch_choice_write "$harness" "$model" "$effort")" || { OL_FIELDS=("harness=$harness"); return 1; }
   launch_choice_shell_words "$words" || return 1
   OL_FLAGS=(${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})
@@ -937,8 +944,8 @@ ol_command_line() { # [--brief TEXT] [--resume ID] HARNESS HANDOFF LANE_DIR LAUN
     || OL_IDENTITY=""
 }
 
-# Read the command ol_command_line writes. Its Claude argv ends with one
-# prompt, after the fixed session name. Prefix environment words stay outside
+# Read the command ol_command_line writes. Its argv ends with one prompt,
+# positional or Copilot's interactive option. Prefix environment words stay outside
 # the returned flags. The producer's handoff prompt also supplies its bound
 # destination; an arbitrary --brief has none. No command text is evaluated.
 OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF="" OL_COMMAND_CWD="" OL_COMMAND_HANDOFF_FILE=""
@@ -948,7 +955,6 @@ ol_command_read() { # HARNESS LINE
   launch_choice_shell_words "$2" || return 1
   [[ ${#LAUNCH_CHOICE_ARGV[@]} -gt 0 ]] || return 1
   end=$((${#LAUNCH_CHOICE_ARGV[@]} - 1))
-  [[ "$1" == claude ]] || return 1
   prompt="${LAUNCH_CHOICE_ARGV[end]}"
   if [[ "$prompt" == "$OL_HANDOFF_PROMPT"* ]]; then
     handoff="${prompt#"$OL_HANDOFF_PROMPT"}"
@@ -960,15 +966,55 @@ ol_command_read() { # HARNESS LINE
     # Recovery must supply a path the public succession and watch can accept.
     if [[ "$handoff" =~ ^[A-Za-z0-9._/-]+$ ]]; then OL_COMMAND_HANDOFF="$handoff"; fi
   fi
-  for ((i = 0; i + 1 < end; i++)); do
-    [[ "${LAUNCH_CHOICE_ARGV[i]}" == -n && "${LAUNCH_CHOICE_ARGV[i+1]}" == overseer ]] || continue
-    i=$((i + 2))
+  for ((i = 0; i < end; i++)); do
+    if [[ "$1" == claude ]]; then
+      (( i + 1 < end )) || continue
+      [[ "${LAUNCH_CHOICE_ARGV[i]}" == -n && "${LAUNCH_CHOICE_ARGV[i+1]:-}" == overseer ]] || continue
+      i=$((i + 2))
+    else
+      [[ "${LAUNCH_CHOICE_ARGV[i]}" != *=* && "${LAUNCH_CHOICE_ARGV[i]##*/}" == "$1" ]] || continue
+      i=$((i + 1))
+      if [[ "$1" == copilot ]]; then
+        if [[ "$prompt" == --interactive=* ]]; then
+          :
+        elif [[ "${LAUNCH_CHOICE_ARGV[end-1]:-}" == -i ]]; then
+          end=$((end - 1))
+        else
+          return 1
+        fi
+      fi
+    fi
     [[ "${LAUNCH_CHOICE_ARGV[end-1]:-}" != -- ]] || end=$((end - 1))
     OL_COMMAND_FLAGS=("${LAUNCH_CHOICE_ARGV[@]:i:end-i}")
     OL_COMMAND_MODEL="$(launch_choice_launch_model "$1" "$2")" || return 1
     return 0
   done
   return 1
+}
+
+# Only the command the record retained supplies permission intent. Read the
+# producer's argv, excluding its prompt; never infer bypass from unattended use.
+OL_PERMISSION_FLAGS=()
+ol_record_permission() { # RECORD HARNESS
+  local line permission spellings i span
+  OL_PERMISSION_FLAGS=()
+  line="$(jq -er '.launch_line | strings | select(length > 0)' <<<"$1" 2>"$DEP_ERR")" || return 1
+  ol_command_read "$2" "$line" || return 1
+  # Keep a nontransferable combination whole: dropping an unknown mode beside
+  # a bypass word would turn the rejected source into a transferable posture.
+  OL_PERMISSION_FLAGS=(${OL_COMMAND_FLAGS[@]+"${OL_COMMAND_FLAGS[@]}"})
+  if launch_choice_permission_transferable "$2" "${OL_COMMAND_FLAGS[*]+${OL_COMMAND_FLAGS[*]}}"; then
+    spellings="$(launch_choice_permission_spellings "$2")"
+    for ((i = 0; i < ${#OL_COMMAND_FLAGS[@]}; i++)); do
+      launch_choice_permission_match "$spellings" "${OL_COMMAND_FLAGS[i]}" "${OL_COMMAND_FLAGS[i+1]:-}"
+      span="$LAUNCH_CHOICE_PERMISSION_SPAN"
+      (( span > 0 )) || continue
+      OL_PERMISSION_FLAGS=("${OL_COMMAND_FLAGS[@]:i:span}")
+      return 0
+    done
+  fi
+  launch_choice_permission_present "$2" "${OL_PERMISSION_FLAGS[*]+${OL_PERMISSION_FLAGS[*]}}" && return 0
+  permission="$(launch_choice_permission_write "$2")" && [[ -z "$permission" ]]
 }
 
 # The record retains both halves of a relative file reference. Public commands
