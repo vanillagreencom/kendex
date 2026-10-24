@@ -373,6 +373,55 @@ listed() { tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$1" || true; }
 recorded_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf 'none'; fi; }
 BRIEF='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
+# Recorded commands must read back both forms the shared account launcher emits.
+recorded_launcher_permission_rows() {
+  source "${1:-$SRC_DIR}/lib/overseer-launch.sh"
+  local SCRIPT_DIR="$SRC_DIR" DEP_ERR="$TMP_ROOT/readback.err"
+  local bin="$TMP_ROOT/readback/bin" harness shape posture launch_home word var cmd form line record status flags
+  local PATH="$TMP_ROOT/readback/bin:$PATH"
+  mkdir -p "$bin"
+  for harness in codex copilot; do
+    printf '#!/bin/sh\nexit 1\n' > "$bin/1$harness"
+    chmod +x "$bin/1$harness"
+    word="$(launch_choice_permission_write "$harness")" || exit 1
+    var="$(lane_env_prefix "$harness" -)" || exit 1
+    var="${var%%=*}"
+    for shape in prefix launcher; do
+      launch_home="$TMP_ROOT/readback/.$harness"
+      [[ "$shape" != launcher ]] || launch_home="$TMP_ROOT/readback/.1$harness"
+      mkdir -p "$launch_home"
+      for posture in recorded prompt-only; do
+        cmd="$harness"
+        [[ "$posture" != recorded ]] || cmd+=" $word"
+        [[ "$harness" != copilot ]] || cmd+=' -i'
+        cmd+=" 'prompt mentions $word'"
+        form="$(lane_launch_form "$cmd" "$harness" "$launch_home")" || return 1
+        line="$(lane_launch_line "$cmd" "$harness" "$var" "$launch_home" "$form")" || return 1
+        record="$(jq -cn --arg home "$launch_home" --arg line "$line" '{home:$home,account:$home,launch_line:$line}')" || return 1
+        status=0
+        ol_record_permission "$record" "$harness" || status=$?
+        flags="${OL_PERMISSION_FLAGS[*]+${OL_PERMISSION_FLAGS[*]}}"
+        local want_form=prefix want_status=1 want_flags=""
+        [[ "$shape" != launcher ]] || want_form="launcher:$bin/1$harness"
+        [[ "$posture" != recorded ]] || { want_status=0; want_flags="$word"; }
+        assert_eq "$form|$status|$flags" "$want_form|$want_status|$want_flags" \
+          "$harness $shape $posture permission reads back from the shared producer" "$DEP_ERR"
+      done
+    done
+  done
+}
+recorded_launcher_permission_rows
+READBACKCTL="$(mutant_scripts readbackctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$READBACKCTL/lib/overseer-launch.sh" \
+  '|| "$form" == "launcher:${LAUNCH_CHOICE_ARGV[i]}"' \
+  '|| ( "$form" == "launcher:${LAUNCH_CHOICE_ARGV[i]}" && 0 == 1 )'
+saved_fail="$FAIL"
+FAIL=0
+recorded_launcher_permission_rows "$READBACKCTL" > "$TMP_ROOT/readback-control.out"
+control_fail="$FAIL"
+FAIL="$saved_fail"
+assert_eq "$((control_fail > 0))" 1 'control: omitting account executable readback fails the producer rows' "$TMP_ROOT/readback-control.out"
+
 predecessor_permission_row() { # POSTURE [OVERSEE_BIN]
   local posture="$1" pred before word launched=no
   run_oversee -- launch --wait-secs 20

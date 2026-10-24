@@ -949,9 +949,13 @@ ol_command_line() { # [--brief TEXT] [--resume ID] HARNESS HANDOFF LANE_DIR LAUN
 # the returned flags. The producer's handoff prompt also supplies its bound
 # destination; an arbitrary --brief has none. No command text is evaluated.
 OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF="" OL_COMMAND_CWD="" OL_COMMAND_HANDOFF_FILE=""
-ol_command_read() { # HARNESS LINE
-  local i end prompt handoff=""
+ol_command_read() { # HARNESS LINE [LAUNCH_HOME]
+  local i end prompt handoff="" form=prefix
   OL_COMMAND_FLAGS=() OL_COMMAND_MODEL="" OL_COMMAND_HANDOFF="" OL_COMMAND_CWD="" OL_COMMAND_HANDOFF_FILE=""
+  # Resolve account executables through the same judge that rendered the line.
+  if [[ "$1" != claude ]]; then
+    form="$(lane_launch_form "$1 " "$1" "${3:-}")" || return 1
+  fi
   launch_choice_shell_words "$2" || return 1
   [[ ${#LAUNCH_CHOICE_ARGV[@]} -gt 0 ]] || return 1
   end=$((${#LAUNCH_CHOICE_ARGV[@]} - 1))
@@ -972,7 +976,8 @@ ol_command_read() { # HARNESS LINE
       [[ "${LAUNCH_CHOICE_ARGV[i]}" == -n && "${LAUNCH_CHOICE_ARGV[i+1]:-}" == overseer ]] || continue
       i=$((i + 2))
     else
-      [[ "${LAUNCH_CHOICE_ARGV[i]}" != *=* && "${LAUNCH_CHOICE_ARGV[i]##*/}" == "$1" ]] || continue
+      [[ "${LAUNCH_CHOICE_ARGV[i]}" != *=* ]] || continue
+      [[ "${LAUNCH_CHOICE_ARGV[i]##*/}" == "$1" || "$form" == "launcher:${LAUNCH_CHOICE_ARGV[i]}" ]] || continue
       i=$((i + 1))
       if [[ "$1" == copilot ]]; then
         if [[ "$prompt" == --interactive=* ]]; then
@@ -996,10 +1001,11 @@ ol_command_read() { # HARNESS LINE
 # producer's argv, excluding its prompt; never infer bypass from unattended use.
 OL_PERMISSION_FLAGS=()
 ol_record_permission() { # RECORD HARNESS
-  local line permission spellings i span
+  local line record_home permission spellings i span
   OL_PERMISSION_FLAGS=()
   line="$(jq -er '.launch_line | strings | select(length > 0)' <<<"$1" 2>"$DEP_ERR")" || return 1
-  ol_command_read "$2" "$line" || return 1
+  record_home="$(jq -r '.home // .account // ""' <<<"$1" 2>"$DEP_ERR")" || return 1
+  ol_command_read "$2" "$line" "$record_home" || return 1
   # Keep a nontransferable combination whole: dropping an unknown mode beside
   # a bypass word would turn the rejected source into a transferable posture.
   OL_PERMISSION_FLAGS=(${OL_COMMAND_FLAGS[@]+"${OL_COMMAND_FLAGS[@]}"})

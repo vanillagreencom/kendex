@@ -1875,7 +1875,7 @@ if [[ "$MODE" == dead ]]; then
   fi
   replay_harness="$(jq -r '.harness // ""' <<<"${OL_IDENTITY:-null}" 2>"$DEP_ERR")" \
     || die record-unread field=harness
-  replay_permission="$(jq -cn --arg line "$cmd" '{launch_line:$line}' 2>"$DEP_ERR")" \
+  replay_permission="$(jq -c --arg line "$cmd" '. + {launch_line:$line}' <<<"${OL_IDENTITY:-null}" 2>"$DEP_ERR")" \
     || die record-unread field=launch_line
   ol_record_permission "$replay_permission" "$replay_harness" \
     || die launch-choice-failed reason=permission-unrecorded "harness=${replay_harness:-none}" "word=$(launch_choice_permission_write "$replay_harness" || true)"
