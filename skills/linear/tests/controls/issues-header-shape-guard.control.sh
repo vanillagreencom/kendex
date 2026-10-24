@@ -1,15 +1,6 @@
-# One mutation per branch the guard makes, each written against the file as it
-# ships. Mutations 1 and 2 are the issue's must-fail control: without them the
-# validator accepts both refused bodies, as it did before the guard.
-#
-# 1. The opening check. Without it a body opening with `**Source**:` or
-#    `Reached by:` files, on create and update alike.
-control_expect "a create opening with a **Source**: line is refused"
-control_expect "a create whose first non-empty line is Reached by: is refused"
-control_replace scripts/lib/issue-validation.sh 1 \
-	'		  elif $first != null and ($first.text | header) then' \
-	'		  elif false then'
-
+# Mutations exercise independent diagnostic and compatibility guarantees in
+# the real create/update/bulk routes. Header-first refusal is also covered by
+# the structural opening check; its diagnostic remains protected by the suite.
 # 2. The length check. Without it a header of any length files.
 control_expect "a create with a 501-character **Symptom**: line is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
@@ -27,8 +18,8 @@ control_replace scripts/lib/issue-validation.sh 1 \
 #    refused.
 control_expect "a create whose header is under 500 characters and over 500 bytes exits zero"
 control_replace scripts/lib/issue-validation.sh 1 \
-	'			| {line: (.key + 1), length: (.value | length), text: .value}] as $lines' \
-	'			| {line: (.key + 1), length: (.value | utf8bytelength), text: .value}] as $lines'
+	'			| {line: (.key + 1), length: (.value | header_text | length), text: .value}] as $lines' \
+	'			| {line: (.key + 1), length: (.value | header_text | utf8bytelength), text: .value}] as $lines'
 
 # 5. The update wiring. Without it an update rewrites a body into the shape a
 #    create refuses.
@@ -81,7 +72,7 @@ control_replace scripts/lib/issue-validation.sh 1 \
 	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \
 	'		| ($content | first) as $first'
 
-control_expect "an owner-shaped opening **Brad, what you do:** Run the check. Comment the result. followed by a header is refused"
+control_expect "an owner-shaped opening **Brad, what you do:** Run the check. Comment the result. followed by a header names the rule, the line and its length"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \
 	'		| ($content | if length > 0 and (.[0].text | owner_action) then [] else . end | first) as $first'
@@ -100,3 +91,10 @@ control_expect "a 501-character owner action over the unchanged stored body is r
 control_replace scripts/lib/issue-validation.sh 1 \
 	'			([$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)] | first // empty)' \
 	'			empty'
+
+# Missing quoted blocks must reach the structural refusal through the real
+# create entry point, independently of the older header-first refusal.
+control_expect "create refuses missing-why opening"
+control_replace scripts/lib/issue-validation.sh 1 \
+	'		  elif $opening_ok | not then' \
+	'		  elif false then'

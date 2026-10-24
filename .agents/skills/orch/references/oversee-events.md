@@ -10,6 +10,8 @@ The overseer owns fleet judgement, not just liveness; every `oversee.md` § 4 ev
 
 The fleet log is the oversee state's `fleet_log[]` ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), which exists before the first append per `oversee.md` § 3 Lane record; every record a rule below asks for is one append, `[KIND]` being `proposal`, `ruling`, `close`, `peer` or `use1` and `[ITEM]` the issue or repository it is about. `[ONE_LINE]` carries text the overseer did not author, so the record crosses a file and never argv ([SKILL.md](../SKILL.md) § Harness-Safe Shell): write it with the harness file-write tool, then bind the path.
 
+For a ruling, make its text name the decision, cause, source and next action or blocker. Preserve required prefixes such as `filed ` and `design-review`. Keep detailed item decisions on the issue and cite that record here.
+
 Append each record before replacing the file for the next one.
 
 The record carries no time: `append-file` stamps `at` from its own clock and refuses as `fleet-log-at-future` a record already dated later than it. `[ONE_LINE]` holds at most `ORCH_FLEET_LOG_ROW_BYTES` bytes, default 600, and a longer one is refused as `fleet-log-row-bytes`.
@@ -54,7 +56,7 @@ For Linear, reply with `.agents/skills/linear/scripts/linear.sh comments create 
 
 For GitHub, use `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`; its first line is `Proposal outcome for [COMMENT_URL]:`.
 
-Each outcome carries the created issue ID or one-line decline.
+Each outcome carries the created issue ID or one-line decline, with the disposition’s cause and source. Keep the proposal-comment binding and any required first-line marker.
 
 Record the source and outcome in the fleet log.
 
@@ -981,7 +983,7 @@ Its `--help` states the local merge-read limits and finding contract.
 
 Its overdue boxes remain findings with exit 1.
 
-On each due or overdue box, apply that acceptance rule in that pass and post an evidence comment on the item.
+On each due or overdue box, apply that acceptance rule in that pass and post an evidence comment on the item using [verify.md § 4](../workflows/verify.md#4-record-the-pass). Keep the actual evidence reading, accepted or rejected result, and remaining action explicit. Comment labels create no trigger or deadline.
 
 Write one `N: text` line per proved box in `[EVIDENCE_FILE]` under the checkout’s `tmp/`.
 

@@ -60,13 +60,13 @@ guard() { printf '[env]\nLINEAR_TEAM = "Configured"\n%b' "$1" >"$PROJECT/kendex.
 
 REACH_LINE='**Reached by**: running `kendex refresh` in a linked worktree'
 SYMPTOM_LINE='**Symptom**: the refresh printed "skipped" and left the render stale'
-# The body opens with its outcome, so the header-shape guard under the same key passes it.
-OUTCOME='Refresh keeps the render current in a linked worktree.'
+# Keep the independent structural opening valid when testing reach.
+OUTCOME=$'> **Story:** Refresh keeps the render current.\n\n> **Why this matters:** Readers use current instructions.\n\n## Filing record'
 
 echo "=== guard on: a body naming nothing it reaches is refused, one naming it creates ==="
 guard 'LINEAR_REQUIRE_REACH = "1"\n'
-run_linear issues create --title "Filed from a thread"
-assert_refused_before_api "a create with no description"
+run_linear issues create --title "Filed from a thread" --description "$OUTCOME"
+assert_refused_before_api "a create with no reach"
 assert_contains "the refusal names the missing line" "$ERR" "Reached by"
 # The one sentence that routes the author somewhere instead of naming a gap.
 assert_contains "the refusal says an unnamed item is a decline" "$ERR" "decline"
@@ -75,7 +75,7 @@ assert_contains "the refusal says an unnamed item is a decline" "$ERR" "decline"
 # alternative: `[REACH]` is the placeholder this repo's templates ship (bold
 # leaves its `**` on it); TBD is the other, and so is the symptom read below.
 run_linear issues create --title "Template copied" \
-  --description "$(printf '**Reached by: [REACH]**\n')"
+  --description "$(printf '%s\n\n**Reached by: [REACH]**\n' "$OUTCOME")"
 assert_refused_before_api "a whole-line bold [REACH] placeholder body"
 
 run_linear issues create --title "Null token" \
@@ -86,7 +86,7 @@ run_linear issues create --title "Refresh skips a worktree" \
   --description "$(printf '%s\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
 assert_created "a create whose body names the run that reaches it"
 
-printf '%s\n' 'Keep generated skill files current after refresh.' \
+printf '%s\n' "$OUTCOME" \
   '' 'The work is complete when refresh updates the installed skill.' \
   '' '## Done when' '' '- [ ] Refresh updates the installed skill.' \
   '' '## Requirements' '' '- Update the installed skill during refresh.' \
@@ -95,7 +95,7 @@ printf '%s\n' 'Keep generated skill files current after refresh.' \
 run_linear issues create --title "Refresh updates the skill" --description-file "$TMP_ROOT/body.md"
 assert_created "a create with its reach under Filing record after the outcome"
 
-printf -- '- Reached by: `tools/guard` on a fresh clone\n' >"$TMP_ROOT/body.md"
+printf '%s\n\n%s\n' "$OUTCOME" '- Reached by: `tools/guard` on a fresh clone' >"$TMP_ROOT/body.md"
 run_linear issues create --title "Guard body" --description-file "$TMP_ROOT/body.md"
 assert_created "a create whose reach is a list item arriving by --description-file"
 
@@ -121,7 +121,7 @@ assert_created "a structural priority-2 create with no Symptom line"
 
 echo "=== no key is on, an empty key is off, and help never trips ==="
 guard ''
-run_linear issues create --title "Default repo"
+run_linear issues create --title "Default repo" --description "$OUTCOME"
 assert_refused_before_api "a bare create with no LINEAR_REQUIRE_REACH key"
 
 guard 'LINEAR_REQUIRE_REACH = ""\n'

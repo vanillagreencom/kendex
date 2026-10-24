@@ -32,7 +32,7 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 # 3. The presence check — without it an issue naming nothing it reaches gets
 #    filed, which is the disposition the reply grammar already makes cheap.
-control_expect "a create with no description is refused"
+control_expect "a create with no reach is refused"
 control_expect "a whole-line bold [REACH] placeholder body is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	if [ -z "$reach" ]; then' \

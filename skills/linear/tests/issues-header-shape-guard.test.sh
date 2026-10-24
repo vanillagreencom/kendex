@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
-# Tests for the header-shape guard. Under the reach guard's key, `issues
+# Tests for the structural opening guard. Under the reach guard's key, `issues
 # create`, `issues update --description` / `--description-file`, and `issues
-# bulk-update --description` refuse an opening header other than an owner
-# action, a header after the owner action instead of an outcome, and a
-# `**Key**:` or `Reached by:` header, and one with a header line over 500
+# bulk-update --description` require quoted Story and Why blocks before
+# headings, reject header-first bodies, and refuse a header line over 500
 # characters; each refusal names the line and its length. Create and
 # bulk-update refuse before any API call; update reads the stored body first
 # and refuses before any write, and a body that only places, replaces or
@@ -92,7 +91,7 @@ assert_refused() { # DESC RULE LINE LENGTH
 # pad PREFIX N — PREFIX followed by filler to N characters.
 pad() { local s="$1"; while [ "${#s}" -lt "$2" ]; do s+="x"; done; printf '%s' "$s"; }
 
-OUTCOME='Refresh keeps the installed render current in a linked worktree.'
+OUTCOME=$'> **Story:** Refresh keeps the installed render current.\n\n> **Why this matters:** Readers can use the current instructions.\n\n## Filing record'
 REACH_LINE='**Reached by**: running `kendex refresh` in a linked worktree'
 SOURCE_LINE='**Source**: review of owner/repo#47'
 body() { printf '%s\n' "$@" >"$TMP_ROOT/body.md"; }
@@ -152,6 +151,12 @@ assert "the owner ask writes its exact description" \
   jq -s -e --arg desc "$ASK" \
   'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
 printf '%s' "$ASK" >"$FILED"
+REPLACED="$(owner_ask_over "$FILED" 'Read the new result.')"; REPLACED="${REPLACED%.}"
+run_linear issues update CC-1 --description "$REPLACED"
+assert_written "replacing only an owner action on a stored legacy body" issueUpdate
+assert "the replacement preserves the legacy body" \
+  jq -s -e --arg desc "$REPLACED" \
+  'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
 run_linear issues update CC-1 --description "$STORED"
 assert_written "the rollback or close writing the stored body back without the action line" issueUpdate
 assert "the rollback writes the stored body exactly" \
@@ -159,6 +164,8 @@ assert "the rollback writes the stored body exactly" \
   'any(.[]; (.query | contains("issueUpdate")) and .variables.input.description == $desc)' "$CURL_LOG"
 
 printf '%s' "$STORED" >"$FILED"
+run_linear issues update CC-1 --title 'Keep the legacy description'
+assert_written "a metadata-only update keeps a stored legacy body" issueUpdate
 OTHER_SOURCE='**Source**: y'
 run_linear issues update CC-1 --description "$(printf '%s\n\n%s\n%s' "$ACTION_LINE" "$OTHER_SOURCE" "$OUTCOME")"
 assert_refused "an owner action over a header-first body other than the stored one" \
@@ -176,7 +183,7 @@ echo "=== create: the header length ==="
 LONG="$(pad '**Symptom**: ' 501)"
 body "$OUTCOME" '' "$SOURCE_LINE" "$LONG" "$REACH_LINE"
 run_linear issues create --title "Long symptom" --description-file "$TMP_ROOT/body.md"
-assert_refused "a create with a 501-character **Symptom**: line" issue-header-length 4 501
+assert_refused "a create with a 501-character **Symptom**: line" issue-header-length 8 501
 
 body "$OUTCOME" '' "$(pad '**Symptom**: ' 500)" "$REACH_LINE"
 run_linear issues create --title "Edge symptom" --description-file "$TMP_ROOT/body.md"
@@ -202,7 +209,7 @@ assert_refused "an update --description opening with a **Source**: line" issue-h
 
 body "$OUTCOME" '' "$LONG"
 run_linear issues update CC-1 --description-file "$TMP_ROOT/body.md"
-assert_refused "an update --description-file with a 501-character header" issue-header-length 3 501
+assert_refused "an update --description-file with a 501-character header" issue-header-length 7 501
 
 body "$OUTCOME" '' "$SOURCE_LINE"
 run_linear issues update CC-1 --description-file "$TMP_ROOT/body.md"
@@ -217,10 +224,10 @@ for form in split equals; do
     rule=""
     case "$shape" in
       opening) description="$SOURCE_LINE"; rule=issue-header-opening; line=1; length="${#SOURCE_LINE}" ;;
-      long) description="$(printf '%s\n\n%s' "$OUTCOME" "$LONG")"; rule=issue-header-length; line=3; length=501 ;;
+      long) description="$(printf '%s\n\n%s' "$OUTCOME" "$LONG")"; rule=issue-header-length; line=7; length=501 ;;
       template) description="$(printf '%s\n\n%s' "$OUTCOME" "$SOURCE_LINE")" ;;
       boundary) description="$(printf '%s\n\n%s' "$OUTCOME" "$(pad '**Symptom**: ' 500)")" ;;
-      empty) description="" ;;
+      empty) description=""; rule=issue-header-opening; line=1; length=0 ;;
     esac
     case "$form" in
       split) description_args=(--description "$description") ;;
@@ -266,7 +273,7 @@ for operation in create update bulk-update; do
     bulk-update) box_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
   esac
   while IFS='|' read -r trigger deadline rule; do
-    description="$(printf '%s\n' "$OUTCOME" "$REACH_LINE" '## Done when' \
+    description="$(printf '%s\n' "$OUTCOME" "$REACH_LINE" '' '## Done when' '' \
       "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: $trigger; Deadline: $deadline")"
     run_linear "${box_args[@]}" --description "$description"
     if [ "$rule" = valid ]; then
@@ -285,6 +292,57 @@ merge|+72h|valid
 merge|2026-10-02T00:00:00Z|valid
 2026-10-01T00:00:00Z|2026-10-02T00:00:00Z|valid
 ROWS
+done
+
+echo "=== structural opening through every authored-description route ==="
+for operation in create update bulk-update; do
+  case "$operation" in
+    create) opening_args=(issues create --title "Opening structure"); mutation=issueCreate ;;
+    update) opening_args=(issues update CC-1); mutation=issueUpdate ;;
+    bulk-update) opening_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
+  esac
+  for shape in valid multiline crlf absent missing-story missing-why empty-story empty-why placeholder-story placeholder-why reversed joined heading-first unquoted-story unquoted-why no-heading-gap unquoted-continuation; do
+    story='> **Story:** The owner reads the work.'
+    why='> **Why this matters:** The owner can decide.'
+    gap=$'\n\n'
+    before_heading=$'\n\n'
+    case "$shape" in
+      multiline) story+=$'\n> Current instructions explain the change.'; why+=$'\n> Reading takes less time.' ;;
+      absent) story='An old outcome sentence.'; why='' ;;
+      missing-story) story='' ;;
+      missing-why) why='' ;;
+      empty-story) story='> **Story:**' ;;
+      empty-why) why='> **Why this matters:**' ;;
+      placeholder-story) story='> **Story:** [STORY]' ;;
+      placeholder-why) why='> **Why this matters:** [COST AND BENEFIT]' ;;
+      reversed) story='> **Why this matters:** The owner can decide.'; why='> **Story:** The owner reads the work.' ;;
+      joined) gap=$'\n>\n' ;;
+      heading-first) story=$'## Context\n\n'"$story" ;;
+      unquoted-story) story='**Story:** The owner reads the work.' ;;
+      unquoted-why) why='**Why this matters:** The owner can decide.' ;;
+      no-heading-gap) before_heading=$'\n' ;;
+      unquoted-continuation) story+=$'\nUnquoted continuation.' ;;
+    esac
+    description="$story$gap$why$before_heading## Filing record"$'\n\n'"$REACH_LINE"
+    [[ "$shape" != crlf ]] || description="${description//$'\n'/$'\r\n'}"
+    run_linear "${opening_args[@]}" --description "$description"
+    case "$shape" in
+      valid|multiline|crlf) assert_written "$operation accepts $shape quoted opening" "$mutation" ;;
+      *)
+        assert_ne "$operation refuses $shape opening" "$RC" 0
+        assert_unwritten "$operation $shape opening"
+        assert_jq "$operation categorizes $shape opening" "$ERR" \
+          '.rule == "issue-header-opening" and (.line | type) == "number" and (.length | type) == "number"'
+        ;;
+    esac
+  done
+done
+
+for length in 500 501; do
+  body '> **Story:** The owner reads the work.' '' "> $(pad '**Why this matters:** ' "$length")" '' '## Filing record' '' "$REACH_LINE"
+  run_linear issues create --title "Why label length" --description-file "$TMP_ROOT/body.md"
+  if [[ "$length" == 500 ]]; then assert_written "a 500-character quoted Why header" issueCreate
+  else assert_refused "a 501-character quoted Why header" issue-header-length 3 501; fi
 done
 
 body "$SOURCE_LINE" "$REACH_LINE"

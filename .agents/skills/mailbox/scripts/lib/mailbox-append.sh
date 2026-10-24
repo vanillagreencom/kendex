@@ -347,9 +347,15 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
   # The close guard supplies the ruling from the owner's last answer or the
   # default. Read that record, rather than computing another ruling here.
   ask_id="$(jq -r '.id' <<<"$ask")" || return 1
-  jq -rs --arg id "$close" --arg ask "$ask_id" '
+  jq -rs --arg id "$close" --arg ask "$ask_id" --argjson question "$ask" '
     ([.[] | select(.kind == "answer" and .re == $ask)] | last | .text // "") as $ruling
-    | .[] | select(.id == $id) | "ask=" + .re + " closed (" + .by + "): " + $ruling' \
+    | .[] | select(.id == $id)
+    | (if $ruling != "" then $ruling else "The recorded resolution closes this request." end), "",
+      ("**Decision**: Close this request (" + .by + ")."), "",
+      ("**Evidence**: Recorded resolution `" + .id + "` for ask `" + .re + "`."
+        + (if ($question.tracker_comment // "") != "" then
+            " [Original question](#comment-" + $question.tracker_comment + ")." else "" end)), "",
+      ("ask=" + .re + " closed (" + .by + "): " + $ruling)' \
     "$TO_LANE" >"$work/tracker-comment" || return 1
   "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
     owner_tracker_unwritten "$issue" close-comment; return 0;

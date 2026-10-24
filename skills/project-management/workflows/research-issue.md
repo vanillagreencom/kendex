@@ -48,24 +48,38 @@ Write the description to a file, then:
 
 `--state "Backlog"` is mandatory, never the team-default Triage.
 
-`[REACH]` is the ask, run, or decision that raised the question.
+`[REACH]` is the ask, run, or decision that raised the question. `[ORIGIN_CONTEXT]` identifies that source. Fill the opening and fields under the [issue template](../templates/issue-description-template.md), preserving the research question and approved scope.
 
 ```markdown
+> **Story:** [Who needs this research.] [What is unknown today.] [What answering it enables, and its consequence.]
+
+> **Why this matters:** [The cost of the uncertainty, and what the answer buys.]
+
+## Done when
+
+- [ ] Findings answer the approved questions and include sources, recommendation, risks, revisit conditions and research metadata.
+- [ ] The findings and raw metadata are published on this issue.
+
+## Requirements
+
+[QUESTIONS]
+
+[TYPE_SECTION]
+
+## Filing record
+
+**Source**: [ORIGIN_CONTEXT]
+
 **Reached by**: [REACH]
 
-## Summary
-[1-2 sentences on TOPIC]
+## Context
 
-## Questions
-[QUESTIONS]
-[TYPE_SECTION]
-## Expected Decision
-Next available ID via `.agents/skills/decider/scripts/decisions next-id`
+**Expected Decision**: Next available ID via `.agents/skills/decider/scripts/decisions next-id`
 ```
 
-Execution and output sections are appended in § 3.
+Execution and output details are placed under Context in § 3.
 
-`[TYPE_SECTION]`: omitted for Targeted; `## Affected Domains` with each domain and its reason for Pervasive; `## Creates Roadmap` with scope and phases for Strategic.
+`[TYPE_SECTION]`: omitted for Targeted; `### Affected Domains` with each domain and its reason for Pervasive; `### Creates Roadmap` with scope and phases for Strategic. Add Evidence after Context only when source facts are available.
 
 Capture the returned identifier as `[RESEARCH_ISSUE_ID]`. **Skip if** no `blocked_issue` — otherwise record the dependency as a relation, never as description text:
 
@@ -130,20 +144,24 @@ Reply with a structured section per item.
 
 ## 3. Publish the Assets
 
-Read the current description (`issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`) and append the block below. Expand the context glob and append both run assets so Assets lists one concrete repository path per § 2 file. Apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`, then publish every prepared asset through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). Only after attachment and description writes succeed, run `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
+Read the current description (`issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`) and place the block below under Context, before Evidence if present. Expand the context glob and append both run assets so Assets lists one concrete repository path per § 2 file. Apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`, then publish every prepared asset through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). Only after attachment and description writes succeed, run `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
 
 ```markdown
-## Assets
+### Assets
+
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-*.md
 
-## Output
+### Output
+
 Save findings to: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 
-## Completion
+### Completion
+
 `research-complete [RESEARCH_ISSUE_ID]`
 
-## Researcher Execution
+### Researcher Execution
+
 Before either execution route, use existing local assets first. For each absent file in Assets, find it on [RESEARCH_ISSUE_ID] by the route the project-management skill's SKILL.md § Planning artifacts gives, create its parent directories inside this checkout, and copy the resolved bytes to its listed repository path. Stop on any lookup or copy failure before starting research. Use the deep-research skill with Exa. Prefer Pi `web_research`, taking `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` from `command.txt`'s `--query-file`, `--context-glob`, `--mode`, `--output`, and `--raw-output` arguments respectively. If Pi is unavailable, run `bash [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
 ```
 
@@ -173,4 +191,4 @@ Requirements:
 
 On return, verify both files exist, that every required section in findings.md is non-empty, and that no raw JSON block was embedded. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) before reporting the result. Comment on the research issue with a concise summary, the findings path, the researcher identity, and the raw metadata path.
 
-**If managed**: invoke `research-complete [RESEARCH_ISSUE_ID]` directly. **If standalone**: set the research issue Done after verification and present `research-complete [RESEARCH_ISSUE_ID]` as the next command.
+**If managed**: invoke `research-complete [RESEARCH_ISSUE_ID]` directly. **If standalone**: complete the proved research-output boxes after verification using `issues complete [RESEARCH_ISSUE_ID] --done-when-met [PROVED_BOX_NUMBERS] --evidence-file [EVIDENCE_FILE]`. Write one `N: text` line per proved box under `tmp/`, citing the posted result and published findings/metadata; leave any unproved box open. Present `research-complete [RESEARCH_ISSUE_ID]` as the next command.

@@ -264,7 +264,8 @@ Rows:
                   capabilities), a Claude cloud session, has no mailbox read.
 A row with nothing in it reads `none`. Landed, Running and Next are tables
 whose columns ORCH_REPORT_COLUMNS lists: `issue`; `what it is`, the issue's
-title; `why it matters`, the first line of its `## Done when` section. The
+title; `why it matters`, its quoted `Why this matters` block, falling back to
+the first line of its `## Done when` section for legacy descriptions. The
 tracker is the lane record's, else the one the key names (lib/lane-state.sh,
 lane_key_tracker). A Linear issue is read live through the linear skill, a
 GitHub issue-N from the record's repo. An item whose tracker neither answers
@@ -800,7 +801,7 @@ fi
 # tracker its lane record names, else the one lane_key_tracker says its key
 # names. Where neither answers, or a GitHub record names no repository, the
 # issue is not read: TITLE names why in parentheses and WHY stays empty, so an
-# unread row reads apart from a read one with no Done-when. The report never
+# unread row reads apart from a read one with no reason. The report never
 # guesses a tracker or a repo.
 TITLE=""
 WHY=""
@@ -845,10 +846,14 @@ issue_cells() {
     <<<"$json" 2>"$WORK_DIR/tracker.err")"; then
     refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
   fi
-  WHY="$(jq -r '(("\n" + (.description // "")) | gsub("\r\n"; "\n") | split("\n## Done when\n")) as $s
+  WHY="$(jq -r '((.description // "") | gsub("\r\n"; "\n")) as $body
+    | ((try ($body | capture("(?:^|\n)> \\*\\*Why this matters:\\*\\*(?<why>[^\n]*(?:\n>[^\n]*)*)").why
+		| gsub("\n> ?"; "\n") | sub("^\\s+"; "") | select(test("\\S"))) catch null) // null) as $why
+    | if $why != null then $why else
+      (("\n" + $body) | split("\n## Done when\n")) as $s
     | if ($s | length) > 1 then ($s[1] | split("\n## ")[0]) else "" end
     | [split("\n")[] | select(test("\\S"))] | first // ""
-    | sub("^\\s*([-*]|[0-9]+\\.)\\s+"; "")' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
+    | sub("^\\s*([-*]|[0-9]+\\.)\\s+"; "") end' <<<"$json" 2>"$WORK_DIR/tracker.err")" \
     || refuse tracker-read "$item" "$(cat "$WORK_DIR/tracker.err")"
 }
 

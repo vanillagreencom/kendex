@@ -434,6 +434,25 @@ assert_eq "$RC|$(awk 'NR <= 4' <<<"$OUT")" "0|Landed:
 | --- | --- |
 | Outcome 1 \\| kept | KEN-1 (#11, abcdef1) |" "a custom column list renders those columns in its order"
 
+echo "=== render: quoted Why takes precedence with legacy fallback ==="
+for reason_shape in quoted multiline crlf legacy empty-quote; do
+  seed_fleet "reason-$reason_shape"
+  reason=$'> **Story:** A reader opens the issue.\n\n> **Why this matters:** Named benefit.\n\n## Done when\n\n- [ ] Branch proof.'
+  expected_reason='Named benefit.'
+  case "$reason_shape" in
+    multiline) reason="${reason/Named benefit./Named benefit.$'\n> 'Continuation.}"; expected_reason='Named benefit. Continuation.' ;;
+    crlf) reason="${reason//$'\n'/$'\r\n'}" ;;
+    legacy) reason=$'Legacy outcome.\n\n## Done when\n\n- [ ] Branch proof.'; expected_reason='[ ] Branch proof.' ;;
+    empty-quote) reason="${reason/Named benefit./}"; expected_reason='[ ] Branch proof.' ;;
+  esac
+  jq --arg description "$reason" '.description = $description' "$CASE/linear-KEN-1.json" > "$CASE/state.next"
+  mv -- "$CASE/state.next" "$CASE/linear-KEN-1.json"
+  run -- render --state "$CASE/state.json" --repo owner/repo
+  assert_eq "$RC|$(awk '/^\| KEN-1 \(#11,/ {print}' <<<"$OUT")" \
+    "0|| KEN-1 (#11, abcdef1) | Title 1 | $expected_reason |" \
+    "the report reason cell reads $reason_shape through the tracker"
+done
+
 echo "=== render: the tracker is the record's, else the key's, and never a guess ==="
 # Rows: tracker | repo | the issue-7 row it renders.
 while IFS='|' read -r tracker repo want; do

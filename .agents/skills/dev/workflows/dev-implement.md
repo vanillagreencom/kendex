@@ -105,6 +105,8 @@ Linear only, when an existing issue blocks this one:
 When the prerequisite issue does not exist yet, label the issue `blocked` (`linear.sh issues update [ISSUE_ID] --labels "agent:[AGENT_TYPE],[COMPONENT],blocked"`), then write `tmp/blocked-[ISSUE_ID].md` and post it with `linear.sh comments create [ISSUE_ID] --body-file tmp/blocked-[ISSUE_ID].md`:
 
 ```markdown
+[This work is stopped until the prerequisite provides the needed result, and what that delays.]
+
 BLOCKED: Cross-domain prerequisite needed.
 
 **Required Domain**: [DOMAIN]
@@ -117,7 +119,9 @@ BLOCKED: Cross-domain prerequisite needed.
 **Suggested Scope**:
 - [Deliverable 1]
 
-Requesting orchestrator create prerequisite issue.
+**Evidence**: [SOURCE_OF_THE_BLOCKER]
+
+**Next**: Requesting orchestrator create prerequisite issue.
 ```
 
 Your return states the blocker, the domain and labels for the new issue, and that the description is ready for creation. When a blocker later resolves: `linear.sh issues unblock [ISSUE_ID]`.
@@ -258,45 +262,59 @@ Always required. Linear posts it to the issue you implemented: write `tmp/comple
 
 **Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `dev-validate-run --record --run-dir [RUN_DIR]` evidence while available. Use `--record` for its reported fields and `start` for that run's actual `timeout-secs` bound. Include one row per run, with its original round id and kind, run directory, recorded head/start identity, and source references. Keep implementation, fix and restack runs separate; a restack has no dev round id. Preserve earlier attempts and recovery or reused-run references rather than replacing their outcomes with the final verdict.
 
-Print every field in the Validation Routes template below. Each missing, legacy or unread field is `unknown`, including absent `scoped` or `ci-fallback`; retain reported values such as `selection=unreported` and `verdict=unfinished`. An unread source keeps its reference and diagnostic. Preserve `FAILING` and required CI's `pending` separately from local `pass`. Keep native bound-hit and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel and any bound-run source reference; never infer fallback, scope or a bound hit from prose or elapsed seconds. `dev-validate-run --help` owns those classifications. A refused start is recorded as such and creates no validation run or verdict.
+Print every field in the Validation routes template below. Each missing, legacy or unread field is `unknown`, including absent `scoped` or `ci-fallback`; retain reported values such as `selection=unreported` and `verdict=unfinished`. An unread source keeps its reference and diagnostic. Preserve `FAILING` and required CI's `pending` separately from local `pass`. Keep native bound-hit and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel and any bound-run source reference; never infer fallback, scope or a bound hit from prose or elapsed seconds. `dev-validate-run --help` owns those classifications. A refused start is recorded as such and creates no validation run or verdict.
 
 A validation-routing check reads these durable comments on the originating item. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
 
 ```markdown
+[What the implemented change does and whether acceptance is complete, failed or still pending.]
+
 ## Completion Summary
 
 **Agent**: [AGENT_NAME]
+
 **Branch**: `[BRANCH]`
 
-### Validation Routes
+**Revision**: [COMMIT_AND_SOURCE]
+
+### Evidence
+
+- Box [N]: [PROVED_RESULT_AND_ARTIFACT_LINK_AT_REVISION_WITH_CONDITIONS; PENDING_CI_OR_LIVE_ACCEPTANCE_STAYS_EXPLICIT]
+
+### Validation routes
+
 - round=[ORIGINAL_ROUND_ID_OR_UNKNOWN] kind=[implement|fix|restack] run-dir=[RUN_DIR_OR_UNKNOWN] head=[RECORDED_HEAD_OR_UNKNOWN] start=[RECORDED_START_OR_UNKNOWN] source=[NATIVE_START_AND_RECORD_REFERENCES] validate-mode=[VALUE_OR_UNKNOWN] selection=[VALUE_OR_UNKNOWN] ci-fallback=[VALUE_OR_UNKNOWN] scoped=[VALUE_OR_UNKNOWN] seconds=[VALUE_OR_UNKNOWN] timeout-secs=[ACTUAL_BOUND_OR_UNKNOWN] verdict=[VALUE_OR_UNKNOWN] outcome=[NATIVE_CLASSIFICATION_OR_UNKNOWN]
 
-### Files Created/Modified
-- `path/to/file` - Description
-
 ### Key Decisions
-1. Decision and reasoning (DXXX if recorded)
 
-### Skills/Docs/Rules Updated
-- `skill-name`: Updated X
+1. Decision and reasoning (link DXXX if recorded)
+
+### Files Created/Modified
+
+- `path/to/file` - Meaningful change, including skills, documentation and rules
 
 ### Domain Metrics
-[Agent-specific: frame time, latency, etc.]
+
+[Actual reading beside its target, scope, observation time and source.]
 
 ### Screenshots
+
 - `tmp/ui-shots/[FILE]` - [View], [before|after], [THEME]
 
 ### Discovered Work
+
 - [Type]: Description (estimate: N)
 
 ### Handoff Notes
+
 [What the next agent in this bundle needs for its current-scope work: struct changes, API contracts, file locations]
 
 ### Proposed Rules
+
 - [Rule the validation list is missing]
 ```
 
-Omit any section that has nothing in it. Discovered Work is backlog work beyond this scope; Handoff Notes are for the next agent only, with no aspirational suggestions.
+Omit any section that has nothing in it. Link each proof once in Evidence and bind checked boxes to that comment rather than copying the proof. Keep pending proof explicit. Discovered Work is backlog work beyond this scope; Handoff Notes are for the next agent only, with no aspirational suggestions.
 
 **Discovered Work marker prefixes.** A bullet belonging to a later stage of THIS PR rather than to the backlog carries a marker as the first token of the bullet text, before `[Type]`. Unmarked bullets go through the TPM audit as backlog work.
 
@@ -308,7 +326,7 @@ Omit any section that has nothing in it. Discovered Work is backlog work beyond 
 
 **Skip if** the tracker is not Linear, this issue blocks nothing, or completion alone unblocks the downstream work.
 
-Read `.blocks` from `linear.sh issues get [ISSUE_ID]`. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on: write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` naming what changed and what downstream needs to know, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`. Never post it to the completed issue.
+Read `.blocks` from `linear.sh issues get [ISSUE_ID]` and read the downstream comments for an existing `Handoff from [ISSUE_ID]:`. Reuse that handoff unless the dependency changed again. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on: write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` beginning `Handoff from [ISSUE_ID]:`, naming the changed API, interface, file or decision, its source and the downstream action, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`. Never post it to the completed issue.
 
 ---
 
@@ -353,10 +371,13 @@ Summary: [ISSUE_ID] ✓
 
 1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation. The near-ceiling lines need no union: the writer's probe measures the whole branch, every sub-issue's commits included.
 
-2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`, with one `--attach` per screenshot. Its Screenshots section is the union of the sub-issues' lists.
+2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`, with one `--attach` per screenshot. Its Screenshots section is the union of the sub-issues' lists. Link child summaries for detailed files, decisions and metrics; file and commit counts do not replace acceptance proof.
 
    ```markdown
+   [The combined effect and each child’s acceptance state, including pending proof.]
+
    ## Bundle Complete
+
    **Agent**: [NAME] | **Branch**: [BRANCH]
 
    Sub-issues (tree):
@@ -364,6 +385,14 @@ Summary: [ISSUE_ID] ✓
    ↳ [SUB_ISSUE_2] ✓ | blocked by: [SUB_ISSUE_1]
       ↳ [SUB_ISSUE_3] ✓  ← nested
    Files: N | Commits: N | QA: [LABELS]
+
+   ### Evidence
+
+   - [CHILD_SUMMARY_LINK]: [RESULT_AND_REMAINING_PROOF]
+
+   ### Validation routes
+
+   [Each child’s original fixed-field rows, retaining run identities and outcomes.]
 
    ### Screenshots
    - `tmp/ui-shots/[FILE]` - [SUB_ISSUE], [View], [before|after], [THEME]

@@ -8,7 +8,7 @@ Write a plain briefing as a chain of events. Open each area with good or bad, do
 
 State the goal as the outcome the person needs. Put the observed reading beside it. A measure alone is not the goal.
 
-Apply the [visible comparison](questions.md#today-and-after). Keep technical detail on the tracker item.
+Use the description’s Story for its today-and-after account. A report or comment opens with the changed result; use the [visible comparison](questions.md#today-and-after) when a decision needs it. Keep technical detail on the tracker item.
 
 A report names the author's own misses since the previous report. Give each miss its cause and the fix, or the reason no fix is needed.
 

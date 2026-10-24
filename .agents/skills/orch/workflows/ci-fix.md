@@ -189,7 +189,13 @@ A passing or unconfigured CI result clears the head-bound standalone budget:
 Write the status body with the harness file-write tool to `tmp/ci-fix-status-[STATE_KEY].md` and bind that path as `[BODY_FILE]`:
 
 ```markdown
+[What the correction restores, or what remains stopped and its consequence.]
+
 CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]
+
+**Evidence**: [ACTUAL_CHECK_OR_RUN_SOURCE_AND_VERDICT; REQUIRED_MERGE_GROUP_PROOF_PENDING_WHEN_APPLICABLE]
+
+**Next**: [REMAINING_PROOF_OR_STOPPED_ACTION_AND_OWNER_IF_ANY]
 ```
 
 ```bash

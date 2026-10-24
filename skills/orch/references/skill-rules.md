@@ -419,7 +419,7 @@ Resolve the lane's tracker before recording it.
 
 Linear uses `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file [PATH]`; GitHub uses `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`.
 
-The first line is `Proposal: [TITLE]`.
+The first line is `Proposal: [TITLE]`. Follow it with a plain explanation of the person’s problem and the proposed benefit. Keep the literal machine fields below unquoted and at line start; the opening does not replace them.
 
 The comment also carries `Source: [SOURCE]`, either `Source PR: [OWNER/REPO#N]` or `Source commit: [LANDED_SHA]` for a direct push, `Priority: [1-4]`, `Reached by: [BEHAVIOR]`, `Reason: [WHY TRACKED WORK IS NEEDED]`, and `Evidence: [REPOSITORY_PATH]`.
 

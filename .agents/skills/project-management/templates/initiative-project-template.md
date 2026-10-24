@@ -12,12 +12,12 @@ Use this template when roadmap-create creates an initiative or project.
 
 ## Content
 
-`--content` is the markdown body. Fill at most four short sections in plain words. Omit a section with nothing to say.
+`--content` is the markdown body. Begin with the same quoted opening as the issue template, then fill the three sections in order, in plain words. Separate the opening blocks and every section with blank lines. Omit a section with nothing to say.
 
 ```markdown
-## Why
+> **Story:** [Who this is about.] [What happens today.] [What the grouped work changes, and its consequence.]
 
-[The need and its effect on people]
+> **Why this matters:** [The harm or cost today, and what the change buys.]
 
 ## What ships
 

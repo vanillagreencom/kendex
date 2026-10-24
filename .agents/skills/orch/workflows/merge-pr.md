@@ -210,7 +210,15 @@ A non-zero exit or empty output **aborts the merge**. Otherwise reparent each sa
 Write the comment body with the harness file-write tool to `tmp/rebundle-comment-[ISSUE].md` and bind that path as `[BODY_FILE]`:
 
 ```markdown
-Pending children rebundled under [NEW_BUNDLE] before merge to avoid cascade-Done. Labels the taxonomy does not declare, left off the bundle: [DROPPED_LABELS].
+Pending children remain open under [NEW_BUNDLE] while [ISSUE] merges.
+
+**Reason**: Reparented before merge to avoid cascade-Done.
+
+**Evidence**: [LINK_TO_NEW_BUNDLE_AND_ITS_ACTUAL_CHILD_RELATIONS]
+
+**Next**: [NEXT_CHILD_OR_BLOCKER]
+
+Labels the taxonomy does not declare, left off the bundle: [DROPPED_LABELS].
 ```
 
 ```bash
@@ -365,7 +373,7 @@ Use the output as `MAIN_REPO_ROOT`.
    1. On `cause: late_findings_dequeue_failed`, first apply the disarm-then-dequeue order and PR-node-id lookup from `merge-pr-restack.md`; the PR must be out of the queue before triage pushes.
    2. Run § 3.3. With the head unmoved, return to step 1 and wait.
 
-2. **Post the merge comment, complete the issue and close a finished container.** Before tracker completion or worktree cleanup, post the merge summary through [post-summary.md § 1](post-summary.md#1-post-the-summary), with this PR and item's caller context. Include every actual round/run's Validation Routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-comment), including fix and restack runs since the previous summary. Keep original pending, failed and no-verdict rows even after the merge-group CI passes; record that CI proof separately by run reference. Post each bundled child's rows on its originating item through the same comment interface. A validation-routing Done-when box reads these durable comments on that item.
+2. **Post the merge comment, complete the issue and close a finished container.** Before tracker completion or worktree cleanup, post the merge summary through [post-summary.md § 1](post-summary.md#1-post-the-summary), with this PR and item's caller context. Include every actual round/run's Validation routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-comment), including fix and restack runs since the previous summary. Keep original pending, failed and no-verdict rows even after the merge-group CI passes; record that CI proof separately by run reference. Post each bundled child's rows on its originating item through the same comment interface. A validation-routing Done-when box reads these durable comments on that item.
 
    **Linear only from here.** Skip the remainder of this step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 

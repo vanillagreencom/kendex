@@ -528,30 +528,7 @@ Exit `1` prints one line per failing rule. Rewrite each reply it counts as one o
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
-Post a summary comment when there were fixes or created issues. Fix SHAs come from workflow state; artifact-sourced SHAs resolve through `.rebase_map` first. Write the summary to a file and post it:
-
-```bash
-.agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
-```
-
-Linear items also get it on the issue; GitHub items get linkage through `Closes #N` in the PR body:
-
-```bash
-.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
-```
-
-```markdown
-## Recommendations Processed
-
-### Fixed in PR
-- [SOURCE]: [ITEM] — [SHA]
-
-### Issues Created
-- [ISSUE_ID] - [TITLE] — [PROJECT]
-
-### Skipped
-- [SOURCE]: [ITEM] — [REASON]
-```
+Use [post-summary.md § 1](post-summary.md#1-post-the-summary) for the standalone session summary at this delivery point, with this worktree, issue and PR caller context, then resume here. That owner supplies the single form, skip condition, validation rows, source reconciliation and tracker delivery. Describe the current merge state in its opening. Keep GitHub item linkage through `Closes #N` in the PR body. Keep the PR body’s `## Merge decision`, exact head and returned merge route as their own workflow record.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 

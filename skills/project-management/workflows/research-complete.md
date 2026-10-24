@@ -26,7 +26,7 @@ Issue labels only, validated per [labels.md](../references/labels.md) § Validat
 
 ## 3. Type
 
-`## Creates Roadmap` in the description → Strategic (§ 5.3); 2+ domain labels → Pervasive (§ 5.2); 1 domain label → Targeted (§ 5.1). Routing uses the label count, not the description section.
+`### Creates Roadmap` in Requirements (or legacy `## Creates Roadmap`) → Strategic (§ 5.3); 2+ domain labels → Pervasive (§ 5.2); 1 domain label → Targeted (§ 5.1). Routing uses the label count, not the description section.
 
 ## 4. Link to Blocked Issues
 
@@ -62,9 +62,9 @@ Report with tables:
 
 List a technical change only when it changes what a user or operator experiences, or blocks work that does. Say so plainly when the finding needs no work. </delegation_format>
 
-**Cross-domain impact reported** → add the new domain labels (compute the final set, preflight, update), append `## Affected Domains` to the description, and switch to § 5.2. Do not assess severity yourself.
+**Cross-domain impact reported** → add the new domain labels (compute the final set, preflight, update), add `### Affected Domains` under Requirements, and switch to § 5.2. Do not assess severity yourself.
 
-**Initiative-level scope** (10+ issues, needs phasing) → ask the user "Research scope suggests a new initiative. Escalate to a roadmap?" On yes, append `## Creates Roadmap` and switch to § 5.3.
+**Initiative-level scope** (10+ issues, needs phasing) → ask the user "Research scope suggests a new initiative. Escalate to a roadmap?" On yes, add `### Creates Roadmap` under Requirements and switch to § 5.3.
 
 ### 5.2 Pervasive
 
@@ -146,15 +146,17 @@ Agent-reported refactors go into the audit input as standalone items in step 7 b
 For each blocked issue, keeping the Research, Artifacts, and Decision references, the effort rollup, and the dependency lines:
 
 - **Children were created** → apply [parent-issue-template.md](../templates/parent-issue-template.md): replace `## Requirements` with `## Sub-Issues` and `## Context`, and remove every implementation-level requirement. Set the parent's agent label to the project's multi-agent label when the children span 2+ agent domains (compute the final set, replace only the agent category, preflight, update), and clear the parent's estimate.
-- **No children** → replace the vague summary with the concrete scope from the decision (1-2 sentences), add `## Requirements` with one bullet per deliverable, and add `## Context` with the key constraints and cross-references.
+- **No children** → fill the quoted Story and Why this matters from the research’s concrete scope using the issue template, add `## Requirements` with one bullet per deliverable, and add `## Context` with the key constraints and cross-references. Keep Done when for observable acceptance rather than repeating it in Requirements.
 
 Adjust the estimate when the research materially changed the size of the work, and add domain labels for any cross-domain work it revealed.
 
 ### 6.6 Close Out
 
-Comment on the research issue, omitting empty sections:
+Write the close-out below to `[SUMMARY_FILE]` under `tmp/`, then post it on the research issue with `comments create [ISSUE_ID] --body-file [SUMMARY_FILE]`, omitting empty sections:
 
 ```markdown
+[What the research established, what decision or work follows, and what remains unknown. Research completion does not claim implementation shipped.]
+
 ## Research Complete
 
 ### Decision
@@ -179,8 +181,10 @@ Comment on the research issue, omitting empty sections:
 
 For informational research that produced no decision, replace the Decision section with `### Key Findings` (2-3 bullets) and `### Outcome` (what was learned or why no action is needed).
 
+Read the current Done-when boxes. Select only proved boxes in section order and write `[EVIDENCE_FILE]` under `tmp/` with one `N: text` line per selected box, citing this close-out comment and the published research evidence. Leave unproved boxes open. For a legacy body with no boxes, omit both selection flags.
+
 ```bash
-.agents/skills/linear/scripts/linear.sh issues complete [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh issues complete [ISSUE_ID] --done-when-met [PROVED_BOX_NUMBERS] --evidence-file [EVIDENCE_FILE]
 ```
 
 ## 7. Return State

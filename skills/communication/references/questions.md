@@ -4,11 +4,11 @@ Read when requesting a decision or action. The caller decides whether to ask and
 
 ## Decision requests
 
-Ask one question per message. When a chat or relay may show only the ask's first sentence, name the person's decision and its subject in that sentence, for example 'Decision for you on ITEM, SUBJECT: ...'. Give the options and a recommendation. Use the [visible comparison](#today-and-after). Each option states its gain, its cost and the likelihood of that cost. Use the reader mode from [messages](messages.md#reader-modes).
+Ask one question per message. When a chat or relay may show only the ask's first sentence, name the person's decision and its subject in that sentence, for example 'Decision for you on ITEM, SUBJECT: ...'. Give the options and a recommendation when the caller’s ask form permits one. Use the [visible comparison](#today-and-after). Each option states its gain, its cost and the likelihood of that cost. Use the reader mode from [messages](messages.md#reader-modes).
 
 ## Today and After
 
-Show Today and After side by side in the words of the screen or app the person uses. Put this comparison first in work-item descriptions, comments and completion summaries. A goal statement alone never replaces the Today and After picture.
+For a decision, show Today and After side by side in the words of the screen or app the person uses. A goal statement alone never replaces that comparison. A work-item description carries today and after in its template-owned Story opening. A comment or completion summary opens with the changed result and consequence; do not repeat the description’s Story. Keep an explicit comparison when the decision needs it.
 
 For a folder change, show the folders today and where each moves.
 
@@ -27,6 +27,8 @@ Decision for you on [ITEM], [SUBJECT]: [WHAT THIS CHANGES FOR THE USER, ONE SENT
 
 **Recommended:** [A OR B], because [ONE SENTENCE IN OUTCOME TERMS].
 ```
+
+When the caller’s envelope renders options, recommendation or deadline labels, keep those authoritative fields there and omit duplicate labels from authored prose. Explain the options and reason in the question text. An owner-reserved ask waits for approval and invents no default.
 
 Use outcomes only. Name no mechanism the person does not act on and no option by its internal name.
 
