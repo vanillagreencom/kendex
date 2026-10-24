@@ -544,9 +544,12 @@ esac
 [[ -n "$mail_root" ]] || { message record-invalid "item=$ITEM" "field=mail_root" >&2; exit 1; }
 
 update_status() { # STATUS
+  local brief
+  brief="$(jq -r '.recovery.brief // empty' <<<"$record")" || return 1
+  [[ -z "$brief" ]] || rm -f -- "$brief" || return 1
   "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
     --arg item "$ITEM" --arg status "$1" \
-    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = $status | if $status == "done" then del(.pending_pr, .parked) else . end) else error("lane record disappeared") end' \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item)) |= (.status = $status | del(.recovery.brief) | if $status == "done" then del(.pending_pr, .parked) else . end) else error("lane record disappeared") end' \
     >/dev/null
 }
 

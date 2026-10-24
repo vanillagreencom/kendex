@@ -116,7 +116,7 @@ if [[ "$verb" == get && "$1" != oversee ]]; then
 fi
 [[ "$1" == oversee ]]; shift
 case "$verb" in
-  get) jq "$1" "$LANE_CLOSE_STATE" ;;
+  get) jq -r "$1" "$LANE_CLOSE_STATE" ;;
   update-report)
     expr="$1"; shift
     jq "$@" "$expr" "$LANE_CLOSE_STATE" >"$LANE_CLOSE_STATE.report"
@@ -1909,7 +1909,7 @@ parts = []
 start = text.index("UNPARK_JQ='")
 end = text.index("'\n", start) + 2
 parts.append(text[start:end])
-for name in ("lane_record_write", "host_launch_pending"):
+for name in ("lane_record_write", "lane_record_read", "host_launch_pending"):
     marker = f"\n{name}() {{"
     if text.count(marker) != 1:
         raise SystemExit(f"writer match count={text.count(marker)} name={name}")
@@ -1927,6 +1927,7 @@ selection_state() ( # [WRITERS] [STEP]
   LAUNCH_SESSION=kendex LAUNCH_PANE=%7 LAUNCH_SERVER=999 LAUNCH_HARNESS_ID=""
   LAUNCH_HARNESS=codex LAUNCH_MODEL=model LAUNCH_EFFORT=medium TERMINAL_MODE=tmux
   CLAIM_ROOT="$FIXTURE" LAUNCH_FLAGS="" LANE_REFRESH=false CMD_TEMPLATE=""
+  BRIEF_FILE="" BRIEF_TEXT="" RECOVERY_BRIEF=""
   TRACKER=linear REPO=owner/repo CONNECTED_REPO="" PREFERENCE_ENTRY="" CAP_PASSED=""
   LAUNCH_TIER_RECORD='{}' HOST_KIND=ssh
   launched_at=2026-09-20T00:00:00Z

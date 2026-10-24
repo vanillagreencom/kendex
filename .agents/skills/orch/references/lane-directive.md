@@ -181,6 +181,8 @@ The shell reads that copy when the command runs, so brief newlines never enter t
 
 Worktree removal deletes the saved copy.
 
+Under `--state-dir`, the launch owner also keeps a controller-side copy in `recovery.brief`, including for a custom command. Every fresh relaunch without `--cmd` replays that text through the same quoting route. A resume carries only its continuation line. A `--cmd` relaunch with a new `--brief-file` replaces the copy; a launch without a brief and `lane-close` remove it.
+
 Only a hosted terminal launch quotes the brief text inline for the remote shell behind the provider's prefix.
 
 Each route preserves the brief's text, less trailing newlines.
@@ -197,6 +199,7 @@ Each refusal below comes before any worktree or window:
 - `brief-file-missing` (naming `option=--cmd`): the command carries `{brief}` with no `--brief-file`. Pass the file.
 - `brief-file-unreadable` (naming `path`): the path is not a readable file. Write the brief and pass that path.
 - `brief-file-empty` (naming `path`): the file holds only whitespace, so the harness would start with nothing to do. Write the brief into it.
+- `relaunch-brief-harness` (naming `item`, requested `harness`, `recorded` harness and stored `brief`): the recorded brief belongs to another harness. Follow [handoff.md § 2](../workflows/handoff.md#2-launch) with `--cmd` and a new `--brief-file`.
 
 ## Obligation lineage
 
@@ -298,7 +301,7 @@ Keep the tracker, repository, harness, and item arguments, and `--lane-refresh` 
 
 Local relaunches and hosted Claude, Codex and Pi relaunches need no `--cmd`.
 
-Hosted Codex and Pi select a matching session on the host, or run the `start` brief in the same call when none exists.
+Hosted Codex and Pi select a matching session on the host, or replay the recorded launch brief in the same call when none exists. A record without a brief keeps the `start` template.
 
 A `--cmd` relaunch follows [§ Lane preference](#lane-preference), with no session lookup, harness-switch check or `start` template.
 
@@ -310,9 +313,9 @@ The new command reaches a fresh session.
 
 A relaunch that matches a session resumes that session's own workflow at its recorded tier: a `small` lane keeps running small.md under its bounds, and a `micro` lane micro.md.
 
-A relaunch that matches no session, or takes the `start` template by a route below, renders it and runs the standard cycle on the branch the tier's run left, its [start-worktree.md](../workflows/start-worktree.md) § 1 recording the tier as `standard`.
+A relaunch that starts fresh replays its recorded launch brief, including its tier instructions. A record without a brief renders the `start` template and runs the standard cycle on the branch the tier's run left, its [start-worktree.md](../workflows/start-worktree.md) § 1 recording the tier as `standard`.
 
-A relaunch of an item whose handoff record stands looks for no session: the launcher reports `session-retired` and renders the `start` template, whose [start.md](../workflows/start.md) § 0 continues from the record; a record the launcher cannot read refuses as `handoff-unreadable`.
+A relaunch of an item whose handoff record stands looks for no session: the launcher reports `session-retired` and replays the recorded brief, or the `start` template where none was recorded. The start workflow's [§ 0](../workflows/start.md#0-resume-from-a-handoff) continues from the handoff record; a record the launcher cannot read refuses as `handoff-unreadable`.
 
 The launcher asks from the lane's worktree, where the lane wrote the record.
 
@@ -332,7 +335,7 @@ A changed native/custom command route restarts through the preparation owner und
 
 A record carrying `host` adds `--host [HOST]`: the provider keeps its tree.
 
-A hosted Claude relaunch runs the `start` brief when `claude --continue` exits 1 for no session.
+A hosted Claude relaunch replays the recorded brief when `claude --continue` exits 1 for no session, or the `start` template where none was recorded.
 
 Hosted no-command Claude, Codex and Pi relaunches require a harness screen or Claude's brief check, including a fresh start after a harness switch.
 
@@ -350,7 +353,7 @@ The background job writes it once cleanup reaches window close, even if that clo
 
 When changing harnesses, supply the new brief required by [handoff.md § 2](../workflows/handoff.md#2-launch) through `--brief-file` and `--cmd`.
 
-Without a custom command, a relaunch whose lane record names another harness as the last one to run the lane renders the `start` template directly, reported as `harness-switched`.
+Without a custom command, a relaunch whose lane record names another harness and holds a brief refuses as `relaunch-brief-harness` before any worktree or window, naming that stored brief. A record without a brief keeps the `harness-switched` fresh route.
 
 A hosted harness switch requires a successful stop of that recorded harness before the fresh start.
 

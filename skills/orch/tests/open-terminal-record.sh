@@ -546,7 +546,7 @@ touch "$EXISTS_DIR/CC-1"
 LAUNCHED_AT=2026-01-01T00:00:00Z
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'" | .running_at = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort low" CC-1
-assert_eq "$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | .recovery' | jq -c .)" \
+assert_eq "$RC $("$WS" --state-dir "$STATE" get oversee '.lanes[] | select(.item == "CC-1") | .recovery' | jq -c '{cwd,flags,session,refresh}')" \
   "0 $(jq -cn --arg cwd "$REPO" '{cwd:$cwd,flags:"--model opus --effort low",session:"",refresh:false}')" \
   "a native relaunch records its original flags and launch checkout for automatic recovery"
 RELAUNCH_RUNNING_AT="$(running_at CC-1)"

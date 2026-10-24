@@ -12,7 +12,7 @@
 # means no session; exit 2 means lookup failed, never permission to start fresh.
 
 # open-terminal records the choices it can repeat in `recovery`. Older records
-# and custom commands cannot recover their original permissions, so the watch
+# and custom commands with only recovery.brief cannot recover their original permissions, so the watch
 # must refuse before stopping a lane. The host and tracker retain their existing
 # lane-record meanings, including null host meaning local.
 lane_recovery_args() { # RECORD ACCOUNT STATE_DIR LAUNCHER [model-switched]

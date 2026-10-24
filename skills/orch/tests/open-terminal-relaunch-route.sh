@@ -97,6 +97,7 @@ RUN_SEQ=0
 # never draws one. RUN_ENV holds any further stub settings for the run. Sets
 # OUT, RC and RUN.
 RUN_ENV=() RUN_ARGS=() SEED_LANES='[]' SELECT_KIND=- HANDOFF_CASE=neutral RUN_CMD="" REQUIRE_PREPARED=false
+RUN_RELAUNCH=true RUN_HOST="" RUN_LOCAL=false RUN_RECOVERY=false
 run_ot() {
   local recorded="$1" screen="$2" harness="$3" flags="${4:---model opus --effort high}" prev="${RUN:-}" lane=work pool=""
   [[ "$harness" != codex ]] || flags='-m gpt-6-astra -c model_reasoning_effort=high'
@@ -129,6 +130,9 @@ run_ot() {
   fi
   local -a selection_env=(LANE_HOST_STUB_SELECTION=resume)
   local -a command_args=(--launch-flags "$flags")
+  local -a route_args=(--relaunch) lane_args=(--lane "$lane")
+  [[ "$RUN_RELAUNCH" == true ]] || route_args=()
+  [[ "$RUN_LOCAL" != true ]] || lane_args=()
   [[ -z "$RUN_CMD" ]] || command_args=(--cmd "$RUN_CMD")
   "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '[.lanes[]? | objects | select(.item == "KEN-1") | .harness] | first' > "$RUN/live"
   : > "$RUN/saved-session"
@@ -183,6 +187,9 @@ run_ot() {
     fi
   fi
   [[ "$REQUIRE_PREPARED" != true ]] || selection_env+=(OT_HANDOFF_READY_FILE="$RUN/ready")
+  local -a launch_args=("$OPEN_TERMINAL" --state-dir "$RUN/state" --host "${RUN_HOST:-$RELAUNCH_PROVIDER}" --repo o/r ${route_args[@]+"${route_args[@]}"}
+    --harness "$harness" ${lane_args[@]+"${lane_args[@]}"} "${command_args[@]}" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} KEN-1)
+  [[ "$RUN_RECOVERY" != true ]] || launch_args=("${LANE_RECOVERY_ARGS[@]}")
   # TMUX_PANE is cleared ahead of RUN_ENV: the launch write refuses the
   # caller's own pane, and the stub names this run's window %1, an id the pane
   # running the suite can hold.
@@ -192,8 +199,7 @@ run_ot() {
     TMUX=stub,1,0 ORCH_TMUX_SESSION=stub OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     RELAUNCH_FIXTURE="$HOST_STUB" RELAUNCH_LIVE="$RUN/live" RELAUNCH_READY="$RUN/ready" \
-    "$OPEN_TERMINAL" --state-dir "$RUN/state" --host "$RELAUNCH_PROVIDER" --repo o/r --relaunch \
-    --harness "$harness" --lane "$lane" "${command_args[@]}" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} KEN-1 2>&1)"
+    "${launch_args[@]}" 2>&1)"
   RC=$?
   printf '%s\n' "$OUT" > "$RUN/launcher.out"
 }
@@ -241,6 +247,155 @@ pi_switch_case() {
   assert_eq "$(tr '\0' '\n' < "$RUN/pi-switch/harness.log" | sed -n '/^--model$/{n;p;}; /^--thinking$/{n;p;}')" \
     $'github-copilot/claude-opus-5.5\nhigh' 'the executed Pi command retains the requested launch flags'
 }
+
+# These rows use the same production launcher and host replay as the route
+# cases below. The extra argument selects pinned-main scripts for controls.
+brief_cases() {
+  local H="$H" FIXTURE_DIR="$FIXTURE_DIR"
+  standard_home brief-home
+  claude_usage 0 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+  local row harness route kind expected arg found path old new record recovery_rc filter="${1:-all}" selection
+  local brief=$'Sentinel: keep the agent\x27s $HOME, `literal`, {brief} and &.\nSecond line.\ntier=small brief=small cause=fixture estimate=2 delta=90 paths=7'
+  local brief_file="$TMP_ROOT/recorded-input" screen="$HARNESS_SCREEN"
+  printf '%s\n' "$brief" > "$brief_file"
+  for row in 'codex|standing|matching|fresh' 'claude|fallback|none|fresh' \
+    'codex|lookup|none|fresh' 'pi|lookup|none|fresh' \
+    'codex|resume|matching|resume' 'pi|resume|matching|resume' 'claude|resume|matching|resume' \
+    'claude|local|none|fresh' 'codex|automatic|none|fresh'; do
+    IFS='|' read -r harness route kind expected <<<"$row"
+    [[ "$filter" == all || "$filter" == "$row" ]] || continue
+    RUN_RELAUNCH=false RUN_CMD="$harness --model opus --effort high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL"
+    [[ "$harness" != codex ]] || RUN_CMD="codex -m gpt-6-astra -c model_reasoning_effort=high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL"
+    [[ "$harness" != pi ]] || RUN_CMD="pi --model github-copilot/claude-sonnet-5 --thinking high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL"
+    RUN_ARGS=(--brief-file "$brief_file")
+    run_ot "$harness" "$screen" "$harness"
+    assert_eq "$RC" 0 "$row initial custom launch succeeds" "$RUN/launcher.out"
+    path="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].recovery.brief // empty')"
+    assert_eq "$([[ -n "$path" && -f "$path" ]] && cat -- "$path")" "$brief" "$row records the original brief at the controller"
+    RUN_RELAUNCH=true RUN_CMD="" RUN_ARGS=() HANDOFF_CASE=neutral
+    [[ "$route" != standing ]] || HANDOFF_CASE=stands
+    if [[ "$route" == automatic ]]; then
+      # The watch's existing permission-bound native record, extended by the
+      # launch brief. A custom record containing only a brief still refuses.
+      record="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0]')"
+      source "$SCRIPTS_DIR/lib/lane-launch.sh"
+      source "$SCRIPTS_DIR/lib/lane-capabilities.sh"
+      source "$SCRIPTS_DIR/lib/lane-relaunch.sh"
+      set +e
+      SCRIPT_DIR="$SCRIPTS_DIR"
+      recovery_rc=0
+      lane_recovery_args "$record" "" "$RUN/state" "$OPEN_TERMINAL" || recovery_rc=$?
+      assert_eq "$recovery_rc:$LANE_RECOVERY_CAUSE" '1:permission-choice-unrecorded' 'a custom brief supplies no recovery permission choice'
+      "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg cwd "$PWD" \
+        '.lanes[0].recovery += {cwd:$cwd,flags:"-m gpt-6-astra -c model_reasoning_effort=high",session:"stub",refresh:false}' >/dev/null
+      record="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0]')"
+      recovery_rc=0
+      RELAUNCH_FIXTURE="$HOST_STUB" lane_recovery_args "$record" "$H/.eclaude" "$RUN/state" "$OPEN_TERMINAL" || recovery_rc=$?
+      assert_eq "$recovery_rc" 0 'the watch composes the recorded native recovery'
+      [[ "$recovery_rc" == 0 ]] || return 1
+      RUN_RECOVERY=true
+    fi
+    if [[ "$route" == local ]]; then
+      RUN_HOST=local RUN_LOCAL=true
+      printf '%s\nWorking (esc to interrupt)\n' "$brief" > "$TMP_ROOT/local-screen"
+      RUN_ENV=(OT_SCREEN_FILE="$TMP_ROOT/local-screen")
+    fi
+    selection="$kind"
+    [[ "$harness" != claude ]] || selection=-
+    SELECT_KIND="$selection" run_ot - "$screen" "$harness"
+    RUN_ARGS=() RUN_HOST="" RUN_LOCAL=false RUN_RECOVERY=false RUN_ENV=() HANDOFF_CASE=neutral
+    assert_eq "$RC" 0 "$row relaunch succeeds" "$RUN/launcher.out"
+    [[ "$route" != standing ]] || assert_eq "$(said '^open-terminal: session-retired ')" 1 'a standing recorded brief retires its session'
+    if [[ "$route" == local ]]; then
+      : > "$RUN/claude-args"
+      new="$(find "$RUN" -type f -name 'local-command.*' -print)"
+      if [[ -n "$new" ]]; then
+        env PATH="$HARNESS_BIN:$PATH" CLAUDE_LOG="$RUN/claude.log" CLAUDE_ARGS_LOG="$RUN/claude-args" CLAUDE_CONTINUE_RC=0 "$BASH" "$new"
+      else
+        new="$(awk '/^clear; / {sub(/^clear; /, ""); print}' "$RUN/tmux.log")"
+        env PATH="$HARNESS_BIN:$PATH" CLAUDE_LOG="$RUN/claude.log" CLAUDE_ARGS_LOG="$RUN/claude-args" CLAUDE_CONTINUE_RC=0 "$BASH" -c "$new"
+      fi
+      path="$RUN/claude-args"
+    elif [[ "$harness" == claude ]]; then
+      : > "$RUN/claude-args"
+      new="$(remote)"; new="${new/#exec bash -lc /bash -c }"; new="${new/cd \/srv\/lane /cd $RUN\/remote\/srv\/lane }"
+      env PATH="$HARNESS_BIN:$PATH" CLAUDE_LOG="$RUN/claude.log" CLAUDE_ARGS_LOG="$RUN/claude-args" CLAUDE_CONTINUE_RC="$([[ "$route" == fallback ]] && echo 1 || echo 0)" "$BASH" -c "$new" 2> "$RUN/replay.err"
+      path="$RUN/claude-args"
+    else path="$RUN/inline/harness.log"; fi
+    found=0
+    while IFS= read -r -d '' arg; do
+      if [[ "$expected" == fresh ]]; then [[ "$arg" != "$brief"* ]] || found=$((found + 1))
+      else [[ "$arg" != *'Resume the orch workflow'* || "$arg" == *Sentinel:* ]] || found=$((found + 1)); fi
+    done < "$path"
+    if [[ "$harness:$expected" == codex:resume ]]; then
+      assert_eq "$found:$(said '^open-terminal: resume-lineless ')" '0:1' "$row keeps the promptless hosted Codex resume" "$RUN/launcher.out"
+    else assert_eq "$found" 1 "$row delivers the whole recorded brief only in a fresh session" "$RUN/launcher.out"; fi
+    [[ "$expected" != resume ]] || assert_not_contains "$(tr '\0' '\n' < "$path")" Sentinel: "$row carries no launch brief on resume"
+  done
+  [[ "$filter" == all ]] || return 0
+
+  SELECT_KIND=none run_ot codex "$screen" codex
+  assert_eq "$(cat "$RUN/inline/replay.out")" 'rc=0 runs=1 resume=0 fresh=1 target=0' 'a legacy record without a brief keeps the original start template'
+
+  # The close, replacement and no-brief launch share one lifetime table.
+  for row in replace clear close; do
+    RUN_RELAUNCH=false RUN_CMD="claude --model opus --effort high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" RUN_ARGS=(--brief-file "$brief_file")
+    run_ot claude "$screen" claude
+    assert_eq "$RC" 0 "$row initial launch succeeds" "$RUN/launcher.out"
+    old="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].recovery.brief // empty')"
+    RUN_RELAUNCH=true RUN_CMD="" RUN_ARGS=()
+    case "$row" in
+      replace)
+        printf '%s\n' 'Replacement sentinel' > "$TMP_ROOT/replacement"
+        RUN_CMD="claude --model opus --effort high {brief} $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" RUN_ARGS=(--brief-file "$TMP_ROOT/replacement")
+        run_ot - "$screen" claude
+        RUN_CMD="" RUN_ARGS=()
+        new="$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].recovery.brief // empty')"
+        assert_eq "$([[ -f "$new" ]] && cat -- "$new")" 'Replacement sentinel' 'replacement saves the new brief'
+        run_ot - "$screen" claude
+        assert_contains "$(remote)" 'Replacement sentinel' 'the next native relaunch replays the replacement' ;;
+      clear)
+        RUN_RELAUNCH=false run_ot - "$screen" claude
+        assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].recovery.brief // empty')" '' 'a new launch without a brief clears the record' ;;
+      close)
+        "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee '.lanes[0] |= (.status="preparing" | .window=null | .prepare={step:"marker"})' >/dev/null
+        env PATH="$OT_STUB_BIN:$PATH" OT_TMUX_LOG="$RUN/tmux.log" LANE_HOST_STUB_LOG="$RUN/host.log" LANE_HOST_STUB_DIR="$RUN/remote" RELAUNCH_FIXTURE="$HOST_STUB" \
+          "${OPEN_TERMINAL%/*}/lane-close" --state-dir "$RUN/state" --keep-sandbox KEN-1 > "$RUN/close.out" 2>&1
+        assert_eq "$?" 0 'the production close completes' "$RUN/close.out"
+        assert_eq "$("$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" get oversee '.lanes[0].recovery.brief // empty')" '' 'close clears the recorded brief' ;;
+    esac
+    assert_eq "$([[ -n "$old" && -e "$old" ]] && echo exists || echo absent)" absent "$row removes the previous stored copy"
+  done
+  RUN_RELAUNCH=true RUN_CMD="" RUN_ARGS=()
+
+  # A record from the other harness is a real producer of the refusal.
+  "$SCRIPTS_DIR/workflow-state" --state-dir "$RUN/state" update oversee --arg p "$brief_file" \
+    '.lanes[0] |= (.harness="codex" | .recovery={brief:$p})' >/dev/null
+  run_ot - "$screen" claude
+  assert_eq "rc=$RC refusal=$(said '^open-terminal: relaunch-brief-harness ')" 'rc=1 refusal=1' 'a stored brief cannot silently switch harnesses' "$RUN/launcher.out"
+  assert_eq "worktrees=$(grep -c '^create ' "$RUN/worktree.log" 2>/dev/null || true) windows=$(grep -c '^new-window ' "$RUN/tmux.log" 2>/dev/null || true)" 'worktrees= windows=0' 'harness refusal precedes every worktree and window'
+}
+
+if [[ "${1:-}" == --brief-cases ]]; then
+  [[ -z "${2:-}" ]] || OPEN_TERMINAL="$2/open-terminal"
+  orch_fixture_shared_libs "${OPEN_TERMINAL%/scripts/open-terminal}"
+  brief_cases
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+brief_cases
+BRIEF_SHIPPED="$OPEN_TERMINAL"
+BRIEF_CONTROL_SCRIPTS="$(mutant_scripts brief-control/orch open-terminal)" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/brief-control/orch"
+mutate_file "$BRIEF_CONTROL_SCRIPTS/open-terminal" '    if [[ "$LANE_RECORD_VALUE" != absent ]]; then' \
+  '    if false && [[ "$LANE_RECORD_VALUE" != absent ]]; then'
+OPEN_TERMINAL="$BRIEF_CONTROL_SCRIPTS/open-terminal"
+BRIEF_SAVED_FAIL="$FAIL"; FAIL=0
+brief_cases 'codex|lookup|none|fresh' > "$TMP_ROOT/brief-control.out"
+BRIEF_CONTROL_RED="$FAIL"; FAIL="$BRIEF_SAVED_FAIL"
+assert_eq "$BRIEF_CONTROL_RED" 1 'control: removing stored-brief restoration rejects the fresh prompt assertion' "$TMP_ROOT/brief-control.out"
+OPEN_TERMINAL="$BRIEF_SHIPPED"
 
 echo "=== a hosted claude relaunch continues, and runs the start brief where claude finds no session ==="
 run_ot claude "$HARNESS_SCREEN" claude

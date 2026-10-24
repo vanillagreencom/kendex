@@ -32,6 +32,7 @@ ot_message() { # REASON FIELD=VALUE...
     brief-prompt-failed) text='The brief could not be saved in the launch worktree git directory. The shell or git error above gives the cause. No terminal was opened.' ;;
     brief-command-failed) text='The launch command could not be saved in the launch worktree git directory. The shell error above gives the cause. No terminal was opened.' ;;
     brief-file-empty) text='The --brief-file holds no text but whitespace, so the harness would start with nothing to do and hold its seat idle. Write the brief into the file. Nothing was launched.' ;;
+    relaunch-brief-harness) text='The recorded launch brief belongs to another harness. Follow handoff.md section 2 with --cmd and a new --brief-file to replace it. Nothing was launched.' ;;
     obligation-unanchored) text='The obligation belongs to a fleet lane record. Pass --state-dir with --obligation-file, or omit the obligation file. Nothing was launched.' ;;
     obligation-file-unreadable) text='The obligation file is not a readable regular file. Supply the accepted original mapping in a readable file. Nothing was launched.' ;;
     obligation-file-invalid) text='The obligation file must contain one JSON null or the supported four-field mapping. The parser diagnostic follows. Nothing was launched.' ;;
@@ -272,6 +273,12 @@ Options:
                     brief-file-missing, a path that is not a readable file as
                     brief-file-unreadable, and a file holding only whitespace
                     as brief-file-empty.
+                    Under --state-dir the launcher also records a controller
+                    copy as recovery.brief. Every fresh no-command relaunch
+                    replays it. A --cmd relaunch with a new --brief-file
+                    replaces it; a launch without a brief and lane-close
+                    remove it. A different recorded harness refuses as
+                    relaunch-brief-harness and names the stored brief.
   --obligation-file PATH
                     Accepted original lineage as one JSON null or
                     {repo,item,parent_repo,parent_item} object; both parent
@@ -676,7 +683,7 @@ Options:
                     only an actual resume reports resume-lineless and needs
                     its continuation pasted into
                     the pane. A fresh start needs no paste. See --host.
-                    With no match the normal brief
+                    With no match the recorded launch brief
                     starts fresh, and so does a relaunch of an item
                     whose handoff record stands (`workflow-state
                     handoff-standing`), reported as session-retired: its lane
@@ -686,13 +693,18 @@ Options:
                     remote state directory, including an older configured
                     location. A verdict that cannot be read refuses as
                     handoff-unreadable and launches nothing. A relaunch whose
-                    fleet record names another harness as the last one to run
-                    the lane starts fresh too, hosted or local, reported as
-                    harness-switched: no session this harness holds carries
-                    that work. Local relaunches and hosted Claude, Codex and
+                    fleet record names another harness and holds a brief
+                    refuses as relaunch-brief-harness before any worktree or
+                    window, naming the stored brief. Replace it with --cmd
+                    and a new --brief-file. A record without a brief keeps
+                    the normal start template and harness-switched route.
+                    Resume arms carry only their continuation line.
+                    Local relaunches and hosted Claude, Codex and
                     Pi relaunches need no --cmd. Hosted Codex and Pi select a
                     matching session through lane-relaunch on the host, or
-                    run the start brief in the same call when none exists.
+                    replay the recorded brief in the same call when none
+                    exists, as Claude does after --continue exits 1. A
+                    record without a brief keeps the start template.
                     These hosted no-command relaunches count as launched only
                     after the pane shows a harness screen, including a fresh
                     start after a harness switch. A --cmd relaunch follows

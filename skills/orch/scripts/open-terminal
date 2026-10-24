@@ -617,8 +617,12 @@ fi
 # brief is that line, and two distinct ones are no tier. The item-tier line
 # retains the inputs without calling a tracker or classifying the item again.
 # Older callers supply no line, so their inputs are explicitly unknown.
+INPUT_BRIEF_FILE="$BRIEF_FILE" INPUT_BRIEF_TEXT="$BRIEF_TEXT" RECOVERY_BRIEF=""
+launch_tier_record() {
 if [[ "$HOST_LAUNCH" == cloud-session ]]; then RUN_TEXT=""
-else RUN_TEXT="${CMD_TEMPLATE:-/orch start}"$'\n'"$BRIEF_TEXT"; fi
+elif [[ -n "$CMD_TEMPLATE" ]]; then RUN_TEXT="$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT"
+elif [[ -n "$BRIEF_FILE" ]]; then RUN_TEXT="$BRIEF_TEXT"
+else RUN_TEXT="/orch start"; fi
 LAUNCH_TIER_RECORD="$(jq -cn --arg run "$RUN_TEXT" --arg text "$CMD_TEMPLATE"$'\n'"$BRIEF_TEXT" '
   def count: if . == "-" then null else tonumber end;
   ([ $run | capture("(?:/orch|/skill:orch|\\$orch|execute the orch) (?<verb>micro|small|start)(?:[[:space:]]|$)"; "i") ] | first | .verb) as $verb
@@ -628,6 +632,7 @@ LAUNCH_TIER_RECORD="$(jq -cn --arg run "$RUN_TEXT" --arg text "$CMD_TEMPLATE"$'\
   | {tier: (if $verb == null then $inputs.tier elif $verb == "start" then "standard" else $verb end),
      tier_inputs: {estimate: ($inputs.estimate // "-" | count), delta: ($inputs.delta // "-" | count), paths: ($inputs.paths // "-" | count)}}
 ')" || { ot_message tier-inputs-unreadable "option=--cmd" >&2; exit 1; }
+}
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
 # How lane_record_write treats an entry that already names the item.
 RECORD_MODE=launch
@@ -1570,13 +1575,26 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
+  # This trap must not replace the launcher's resource teardown.
+  (
   local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" status="${7:-running}" rec host="" account="" surface=gui report record_repo
-  local running_at="" record_model previous
+  local running_at="" record_model previous brief_path="$RECOVERY_BRIEF" old_brief="" state_path new_brief=false
+  trap '[[ "$new_brief" != true ]] || rm -f -- "$brief_path"' EXIT
   record_model="$(launch_choice_model_id "$LAUNCH_HARNESS" "$LAUNCH_MODEL" launch)" || return 1
   [[ "$status" != running ]] || running_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
   [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
+  if [[ "$mode" != wake && ( "$mode" != relaunch || "$status" == running || "${host_pending_step:-}" == selection ) ]]; then
+    lane_record_read "$item" recovery.brief || return 1
+    [[ "$LANE_RECORD_VALUE" == absent ]] || old_brief="$LANE_RECORD_VALUE"
+    if [[ -n "$BRIEF_FILE" && -z "$brief_path" ]]; then
+      state_path="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" || return 1
+      brief_path="$(mktemp "${state_path%/*}/lane-brief-$item.XXXXXX")" || return 1
+      if ! printf '%s' "$BRIEF_TEXT" > "$brief_path"; then rm -f -- "$brief_path"; return 1; fi
+      new_brief=true
+    fi
+  fi
   # A GitHub lane records the repository the launch settled on, which is the
   # --repo option where one was given and the resolver's answer otherwise:
   # the option alone leaves a resolved launch's record null, and lane-close
@@ -1597,10 +1615,11 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     --argjson pick "${LANE_PICK_RECORD:-null}" --argjson cloud_repo_access "${LAUNCH_REPO_ACCESS:-null}" \
     --argjson touched "${LAUNCH_TOUCHED:-null}" --argjson in_scope "${IN_SCOPE:-[]}" --argjson obligation "${OBLIGATION:-null}" \
-    --arg recovery_cwd "$CLAIM_ROOT" --arg recovery_flags "$LAUNCH_FLAGS" --arg recovery_session "$LAUNCH_SESSION" --argjson recovery_refresh "$LANE_REFRESH" --arg custom "$CMD_TEMPLATE" \
+    --arg recovery_cwd "$CLAIM_ROOT" --arg recovery_flags "$LAUNCH_FLAGS" --arg recovery_session "$LAUNCH_SESSION" --argjson recovery_refresh "$LANE_REFRESH" --arg custom "$CMD_TEMPLATE" --arg brief "$brief_path" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
      | map_values(if . == "" then null else . end) + {allow_all: $allow_all, touched: $touched, in_scope: $in_scope, obligation: $obligation} + $tier_record
-       + {recovery: (if $custom != "" then null else {cwd: $recovery_cwd, flags: $recovery_flags, session: $recovery_session, refresh: $recovery_refresh} end)}
+       + {recovery: ((if $custom != "" then null else {cwd: $recovery_cwd, flags: $recovery_flags, session: $recovery_session, refresh: $recovery_refresh} end)
+           | if $brief == "" then . else (. // {}) + {brief: $brief} end)}
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $live_display then {live_display: true} else {} end)
        + (if $pick == null then {} else {pick: ($pick | {account: .config_dir, binding_bucket, claims,
@@ -1651,6 +1670,9 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
        else {state: (.lanes = $l + [$rec]), report: "appended"} end end' --argjson rec "$rec" --arg mode "$mode")" || return 1
   [[ "$report" != '"obligation-conflict"' ]] || { ot_message obligation-conflict "item=$item" >&2; return 1; }
   [[ "$report" != '"unrecorded"' ]] || return 2
+  new_brief=false
+  [[ -z "$old_brief" || "$old_brief" == "$brief_path" ]] || rm -f -- "$old_brief" || return 1
+  )
 }
 
 # The FIELD the fleet state records for the item into LANE_RECORD_VALUE,
@@ -1751,7 +1773,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
     printf '%s\n' "$rendered$text"
     return
   fi
-  # The codex arms must stay plain prose built from shell-inert characters
+  # The built-in codex prompts stay plain prose built from shell-inert characters
   # (letters, digits, space, ./#-): codex has no /orch slash command, and the
   # composed line crosses at least one more quoting layer (e.g. an agent-confine
   # wrapper) before the spawned window's shell runs it, so a `$` that has lost
@@ -1850,9 +1872,21 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR] [BRIEF_PATH]
         if [[ -n "$wake_dir" ]]; then printf 'copilot %s--resume=%q -p%s\n' "$flags" "$session_id" "$line"
         else printf 'copilot %s--resume=%q -i%s\n' "$flags" "$session_id" "$line"; fi ;; esac; return
   fi
-  # The copilot arms take the brief as the value of `-i`, which starts the
-  # interactive session and submits it, and are prose built from the same
-  # shell-inert characters as the codex arms, for the same reason.
+  # Copilot takes the brief as the value of -i, which starts and submits it.
+  if [[ -n "$BRIEF_FILE" ]]; then
+    local prompt
+    if [[ -n "$brief_path" ]]; then prompt="\"\$(cat -- $(lane_single_quote "$brief_path"))\""
+    else prompt="$(lane_single_quote "$BRIEF_TEXT")" || return 1; fi
+    [[ "$BRIEF_TEXT" == *"$LAUNCH_UNATTENDED_TEXT"* ]] || prompt+="$(lane_single_quote "$unattended")" || return 1
+    case "$HARNESS" in
+      claude) printf 'claude -n %q %s%s\n' "$item" "$flags" "$prompt" ;;
+      codex|pi) printf '%s %s%s\n' "$HARNESS" "$flags" "$prompt" ;;
+      copilot) printf 'copilot %s-i %s\n' "$flags" "$prompt" ;;
+      opencode) printf 'opencode %s--prompt %s\n' "$flags" "$prompt" ;;
+      *) ot_message harness-unsupported "harness=$HARNESS" >&2; return 1 ;;
+    esac
+    return
+  fi
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s%s'\n" "$item" "$flags" "$item" "$unattended" ;;
     linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s.%s'\n" "$flags" "$item" "$unattended" ;;
@@ -3160,7 +3194,7 @@ launch_finish() {
   fi
   cmd="$(LAUNCH_FLAGS="$gui_flags" start_cmd "$item" "$wt_id" "$repo" "$record_session" "${wake_args[0]-}" "$brief_prompt_file")" || return 1
   local compaction_cmd="$cmd" compaction_env=""
-  if [[ "$HARNESS" == codex && -n "$brief_prompt_file" ]]; then
+  if [[ "$HARNESS" == codex && -n "$brief_prompt_file" && -n "$CMD_TEMPLATE" ]]; then
     # Parse the small template before adding its literal brief. The reader
     # keeps a brief used as a config argument in the same argument position.
     compaction_cmd="$(cmd_template_text "$item" "$repo")" || return 1
@@ -3180,7 +3214,8 @@ launch_finish() {
   # answer, and open_tmux checks for a harness screen instead.
   brief=""
   if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$RELAUNCH_ROUTE" != resume-or-fresh ]]; then
-    if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
+    if [[ -n "$BRIEF_FILE" ]]; then brief="$BRIEF_TEXT"
+    elif [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
   local model_env
   model_env="$(lane_model_env)"
@@ -4141,6 +4176,7 @@ for raw in "${ITEMS[@]}"; do
     fi
     state_ready=true
   fi
+  BRIEF_FILE="$INPUT_BRIEF_FILE" BRIEF_TEXT="$INPUT_BRIEF_TEXT" RECOVERY_BRIEF=""
   if ! lane_live_display_apply "$wt_id" "$item"; then
     failed=$((failed + 1))
     continue
@@ -4172,6 +4208,17 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     break
   fi
+  if [[ "$FLEET" == true && "$RELAUNCH" == true && -z "$CMD_TEMPLATE" ]]; then
+    lane_record_read "$wt_id" recovery.brief || exit 1
+    if [[ "$LANE_RECORD_VALUE" != absent ]]; then
+      RECOVERY_BRIEF="$LANE_RECORD_VALUE"
+      lane_record_read "$wt_id" harness || exit 1
+      [[ "$LANE_RECORD_VALUE" == "$HARNESS" ]] || { ot_message relaunch-brief-harness "item=$item" "harness=$HARNESS" "recorded=$LANE_RECORD_VALUE" "brief=$RECOVERY_BRIEF" >&2; exit 1; }
+      lane_brief_read "$RECOVERY_BRIEF" || { ot_message "$LANE_BRIEF_REASON" "path=$RECOVERY_BRIEF" >&2; exit 1; }
+      BRIEF_FILE="$RECOVERY_BRIEF" BRIEF_TEXT="$LANE_BRIEF_TEXT"
+    fi
+  fi
+  launch_tier_record
   LAUNCH_PANE="" LAUNCH_PREPARE="" UNTAKEN_PANE="" LAUNCH_SERVER="" LAUNCH_HARNESS_ID="" LAUNCH_WAKE="" HOST_PANE_LAUNCH=unstarted
   host_pending_step="" host_line="" host_command_restart=none
   if [[ "$LANE_HOST" != local ]]; then
