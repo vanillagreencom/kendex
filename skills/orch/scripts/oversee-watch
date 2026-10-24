@@ -5407,7 +5407,10 @@ owed_read() {
   # One row per owed item on the unit separator, since a model id is the
   # launcher's to spell: id, state, priority, lane, then the host, harness and
   # model a wall is judged for and the delivery identifier, `-` where none.
-  rows="$(jq -r --argjson items "$items" "$LANE_RUNNING_JQ"'
+  # Tracker descriptions can exceed exec's single-argument limit. Stream the
+  # prepared items before the carried fleet, keeping both out of argv.
+  rows="$(printf '%s\n' "$items" "$FLEET_STATE" | jq -rs "$LANE_RUNNING_JQ"'
+    .[0] as $items | .[1:][] |
     def token($field): if type == "string" and test("^[A-Za-z0-9._-]+$") then .
       else error("lane-field field=\($field) value=\(tojson)") end;
     if type != "object" then error("state-type expected=object actual=\(type)") else . end
@@ -5429,7 +5432,7 @@ owed_read() {
         else ($rec.cycle | if has("pr") and (has("commit") | not) and (.pr | type) == "number" then "pr=\(.pr)"
           elif has("commit") and (has("pr") | not) and (.commit | type) == "string" and (.commit | test("^[0-9a-f]+$")) then "commit=\(.commit)"
           else error("lane-field field=cycle value=\($rec.cycle | tojson)") end) end)]
-    | join("\u001f")' <<<"$FLEET_STATE" 2>"$errf")" \
+    | join("\u001f")' 2>"$errf")" \
     || die state-invalid "$(cat "$errf")" "option=--state" "path=$STATE_FILE"
   while IFS=$'\037' read -r id state priority lane host harness model delivery; do
     [[ -n "$id" ]] || continue
