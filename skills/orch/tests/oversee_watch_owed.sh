@@ -16,7 +16,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 # A direct run keeps every row; run-all bounds each measured group separately.
 PART="${1:-all}"
 case "$PART" in
-  all|development|membership|shared|pagination|release|bulk) ;;
+  all|development|handoff|membership|shared|pagination|release|bulk) ;;
   *) echo "oversee_watch_owed: part-invalid value=$PART" >&2; exit 1 ;;
 esac
 
@@ -155,6 +155,72 @@ KEN-12|owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue
 KEN-13|owed KEN-13 state=in-review priority=2 lane=done verdict=merged commit=0123456789abcdef0123456789abcdef01234567'
 
 echo "=== oversee-watch owed items ==="
+
+if [[ "$PART" == all || "$PART" == development || "$PART" == handoff ]]; then
+# The tracker produces descriptions in the prepared items, even though the
+# owed rows do not print them. 256 KiB crosses Linux's 128 KiB argument bound
+# and macOS's aggregate exec bound once the other arguments are included.
+while IFS='|' read -r name padding defect key; do
+  world "owed_handoff_$name"
+  jq --argjson padding "$padding" \
+    'map(if .id == "KEN-2" then .description = ("x" * $padding) else . end)' \
+    "$STUB_DIR/tracker.out" >"$STUB_DIR/padded.json"
+  mv -- "$STUB_DIR/padded.json" "$STUB_DIR/tracker.out"
+  assert_eq "$(jq '[.[] | select(.id == "KEN-2") | .description | length] | first' "$STUB_DIR/tracker.out")" \
+    "$padding" "the tracker input carries the size-boundary workload"
+  case "$defect" in
+    none) ;;
+    tracker_unread) printf '1\n' >"$STUB_DIR/tracker.rc" ;;
+    tracker_malformed) printf '{\n' >"$STUB_DIR/tracker.out" ;;
+    state_malformed)
+      jq '.launch_queue = {}' "$STUB_DIR/state.json" >"$STUB_DIR/invalid-state.json"
+      mv -- "$STUB_DIR/invalid-state.json" "$STUB_DIR/state.json" ;;
+    state_unread) rm -- "$STUB_DIR/state.json" ;;
+  esac
+  watch_pass -- --state "$STUB_DIR/state.json"
+  if [[ "$defect" == none ]]; then
+    assert_eq "$RC" 0 "the $name handoff completes the pass" "$ERR"
+    while IFS='|' read -r item want; do
+      assert_eq "$(owed "$item")" "$want" "the $name handoff preserves owed $item" "$ERR"
+    done <<<"$WORLD_ROWS"
+    assert_eq "$(grep -c '^owed ' <<<"$OUT" || true)" \
+      "$(awk -F'|' '$2 != "-" {n++} END {print n+0}' <<<"$WORLD_ROWS")" \
+      "the $name handoff returns exactly the owed set" "$ERR"
+  else
+    assert_eq "rc=$RC heartbeat=$(grep -c '^EVENT heartbeat' <<<"$OUT" || true) owed=$(grep -c '^owed ' <<<"$OUT" || true) key=$(grep -c "^oversee-watch: $key " "$ERR" || true)" \
+      'rc=2 heartbeat=0 owed=0 key=1' "the $name handoff refuses unread or malformed input" "$ERR"
+  fi
+done <<'ROWS'
+small|0|none|-
+large|262144|none|-
+tracker_unread|262144|tracker_unread|tracker-list-failed
+tracker_malformed|262144|tracker_malformed|tracker-list-failed
+state_malformed|262144|state_malformed|state-invalid
+state_unread|262144|state_unread|state-unreadable
+ROWS
+
+# Restore the oversized transfer in a private source copy. Only the large
+# handoff case runs here; the unchanged row assertions must reject it.
+handoff_scripts="$(mutant_scripts owed-handoff-argv/orch oversee-watch)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/owed-handoff-argv/github"
+ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/owed-handoff-argv/linear"
+mutate_file "$handoff_scripts/oversee-watch" \
+  'jq -rs "$LANE_RUNNING_JQ"' \
+  'jq -rs --argjson items "$items" "$LANE_RUNNING_JQ"'
+world owed_handoff_control
+jq 'map(if .id == "KEN-2" then .description = ("x" * 262144) else . end)' \
+  "$STUB_DIR/tracker.out" >"$STUB_DIR/padded.json"
+mv -- "$STUB_DIR/padded.json" "$STUB_DIR/tracker.out"
+WATCH_BIN="$handoff_scripts/oversee-watch" watch_pass -- --state "$STUB_DIR/state.json"
+control_rc=0
+( FAIL=0; assert_eq "$RC:$(owed KEN-2)" \
+    '0:owed KEN-2 state=in-progress priority=2 lane=stopped verdict=queue' \
+    'large handoff preserves the owed row' "$ERR"; [[ "$FAIL" == 0 ]] ) \
+  >"$TMP_ROOT/owed-handoff-control.log" || control_rc=$?
+assert_eq "$control_rc" 1 "control: the large handoff assertion rejects the oversized argv transfer" "$ERR"
+assert_eq "rc=$RC key=$(grep -c '^oversee-watch: state-invalid option=--state path=' "$ERR" || true)" \
+  'rc=2 key=1' "control: the old transfer reaches the owed-row call's refusal" "$ERR"
+fi
 
 if [[ "$PART" == all || "$PART" == development ]]; then
 world owed
