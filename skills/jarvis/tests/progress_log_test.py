@@ -29,8 +29,10 @@ class ProgressLog(MailWorld):
         self.handoff.parent.mkdir()
         self.executable("date", "#!/bin/sh\necho " + STAMP + "\n")
 
-    def log(self, fields=FIELDS, cwd=None):
+    def log(self, fields=FIELDS, cwd=None, handoff=None):
         args = [arg for pair in fields.items() for arg in pair]
+        if handoff is not None:
+            args += ["--handoff", str(handoff)]
         return self.command([sys.executable, "-B", self.scripts / "progress-log", *args], cwd or self.home)
 
     def test_records(self):
@@ -50,6 +52,7 @@ class ProgressLog(MailWorld):
             ("typed time", HANDOFF, dict(FIELDS, **{"--result": "23:04Z sent"}), "time-typed=observed-result-and-source"),
             ("typed stamp", HANDOFF, dict(FIELDS, **{"--operation": "2026-10-18T23:04 reply"}), "time-typed=operation"),
             ("no section", HANDOFF.replace("## Progress log", "## Log"), FIELDS, "section-missing=Progress log"),
+            ("ambiguous section", HANDOFF + "\n## Progress log\n", FIELDS, "section-ambiguous=Progress log"),
         )
         for name, text, fields, expected in rows:
             with self.subTest(row=name):
@@ -72,6 +75,10 @@ class ProgressLog(MailWorld):
                          ["P-20261018T230501Z", "P-20261018T230501Z-2"])
 
     def test_unwritable_and_subdirectory(self):
+        result = self.log()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: handoff-missing")
+        self.assertFalse(self.handoff.exists())
         self.handoff.write_text(HANDOFF)
         self.handoff.chmod(0o444)
         try:
@@ -87,6 +94,70 @@ class ProgressLog(MailWorld):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(records(self.handoff.read_text())), 2)
         self.assertFalse((inside / "state").exists())
+
+    def test_selected_handoff(self):
+        self.handoff.write_text(HANDOFF)
+        selected = self.home / "state/delegate/handoff.md"
+        selected.parent.mkdir()
+        inside = self.home / "notes/deeper"
+        inside.mkdir(parents=True)
+        for target in ("state/delegate/handoff.md", selected):
+            with self.subTest(target=target):
+                selected.write_text(HANDOFF)
+                for suffix in ("", "-2"):
+                    result = self.log(cwd=inside, handoff=target)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    row = records(selected.read_text())[-1]
+                    self.assertEqual(row["id"], "P-20261018T230501Z" + suffix)
+                    self.assertEqual(row["at"], STAMP)
+                    self.assertEqual(row["Operation"], FIELDS["--operation"])
+                    self.assertEqual(row["Observed result and source"], FIELDS["--result"])
+                    self.assertEqual(row["Decision"], FIELDS["--decision"])
+                    self.assertEqual(row["State change"], FIELDS["--state-change"])
+                before, after = HANDOFF.split("## Progress log", 1)[0], "## Notes\n\nlast\n"
+                self.assertTrue(selected.read_text().startswith(before))
+                self.assertTrue(selected.read_text().endswith(after))
+                self.assertEqual(self.handoff.read_text(), HANDOFF)
+        for text, mode, category in (
+                (None, 0o644, "handoff-missing"),
+                (HANDOFF, 0o444, "handoff-unwritable"),
+                ("## State\nunchanged\n", 0o644, "section-missing"),
+                (HANDOFF + "\n## Progress log\n", 0o644, "section-ambiguous")):
+            with self.subTest(category=category):
+                selected.unlink(missing_ok=True)
+                if text is not None:
+                    selected.write_text(text)
+                    selected.chmod(mode)
+                try:
+                    result = self.log(cwd=inside, handoff="state/delegate/handoff.md")
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: " + category)
+                    if text is None:
+                        self.assertFalse(selected.exists())
+                    else:
+                        self.assertEqual(selected.read_text(), text)
+                    self.assertEqual(self.handoff.read_text(), HANDOFF)
+                finally:
+                    if selected.exists():
+                        selected.chmod(0o644)
+        # The selected-target assertions must reject a writer that ignores the option.
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / "jarvis"
+            shutil.copytree(SCRIPTS.parent / "scripts", copy / "scripts")
+            script = copy / "scripts/progress-log"
+            source = script.read_text()
+            old = " / args.handoff, values)"
+            self.assertEqual(source.count(old), 1)
+            script.write_text(source.replace(old, ' / "state/handoff.md", values)'))
+            scripts, self.scripts = self.scripts, copy / "scripts"
+            try:
+                with self.assertRaises(AssertionError):
+                    selected.write_text(HANDOFF)
+                    result = self.log(handoff=selected)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(records(selected.read_text())[-1]["at"], STAMP)
+            finally:
+                self.scripts = scripts
 
     def test_instrument_control(self):
         # A typed-in time, not the clock read, must fail the record row.
