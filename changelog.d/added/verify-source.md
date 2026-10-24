@@ -1,0 +1,1 @@
+- Verify JSON includes each recorded installation's source identity alongside its emitted positions, so tools can distinguish catalog renders from project-owned in-place content.

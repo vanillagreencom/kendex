@@ -391,7 +391,9 @@ fn check_scope(
         style,
         &kendex_core::manifest::manifest_file_name(env, &scope),
     );
-    installation_rows(env, &lock, &report, &placer, &named, tally, style);
+    installation_rows(
+        env, &lock, !fallback, &report, &placer, &named, tally, style,
+    );
     for shim in &report.instruction_shims {
         if !named(&shim.name) {
             continue;
@@ -420,9 +422,11 @@ fn check_scope(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn installation_rows(
     env: &Env,
     lock: &kendex_core::lock::Lock,
+    recorded: bool,
     report: &EngineReport,
     placer: &Placer,
     named: &dyn Fn(&str) -> bool,
@@ -450,6 +454,7 @@ fn installation_rows(
                 .map(|installation| installation.positions.as_slice())
                 .unwrap_or_default(),
         );
+        row.source = recorded.then(|| attest::Source::recorded(entry));
         row.remedy = remedy.flatten();
         tally.rows.push(row);
     }
@@ -933,6 +938,7 @@ impl<'a> Placer<'a> {
             kind: kind.to_owned(),
             name: name.to_owned(),
             harness,
+            source: None,
             state,
             detail,
             remedy: None,

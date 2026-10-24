@@ -92,6 +92,30 @@ pub struct Placed {
     pub foreign: Option<Foreign>,
 }
 
+/// A recorded installation's source identity, independent of whether its
+/// source bytes can currently be read or its rendered content compares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    /// The recorded source alias, or a reserved source such as `in-place`,
+    /// `local` or `builtin`.
+    pub name: String,
+    /// The recorded durable repository identity: a repository reference,
+    /// portable path identity or reserved source identity, not a resolved
+    /// machine checkout path.
+    pub repo: String,
+}
+
+impl Source {
+    /// Project the exact readable recorded entry; synthesized fallback
+    /// entries are not recorded provenance and must not be passed here.
+    pub fn recorded(entry: &LockEntry) -> Source {
+        Source {
+            name: entry.source.clone(),
+            repo: entry.source_repo.clone(),
+        }
+    }
+}
+
 /// One record of `kendex verify --json`: what the verb's human row
 /// decided, with the positions the engine resolved. `kind` is the item
 /// kind's name, or `shim`, `record`, `inventory`, `adopted-workflow`,
@@ -104,6 +128,14 @@ pub struct Row {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<crate::model::HarnessId>,
+    /// Present only for an installation from a readable record, including
+    /// when its source bytes are unavailable. Absent for synthesized
+    /// fallback entries, unrecorded declarations and non-item rows:
+    /// unavailable or inapplicable, never proof of local origin. This
+    /// metadata grants no ownership or authority over an in-place tree.
+    /// Older version-1 documents may omit it; readers ignore unknown metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
     pub state: State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,

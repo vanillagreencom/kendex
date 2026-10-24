@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use kendex_core::attest::{Document, Foreign, Row, State};
+use kendex_core::attest::{Document, Foreign, Row, Source, State};
 use kendex_core::drift::report::Remedy;
 use kendex_core::engine::Owns;
 use kendex_core::env::Env;
@@ -436,6 +436,7 @@ fn every_row_prints_the_positions_it_rendered() {
     let (output, document) = verify(&world, Some(INSTALLED));
     assert!(output.status.success(), "{}", said(&output));
     assert!(document.clean, "{document:?}");
+    assert_eq!(document.version, 1);
     assert_eq!((document.checked, document.failed), (10, 0), "{document:?}");
     // The fixture pins `guard` to Claude: each other installed tool the hook
     // runs on is a notice row with no position, and the run stays clean.
@@ -466,6 +467,23 @@ fn every_row_prints_the_positions_it_rendered() {
         let found = row(&document, kind, name, harness)
             .unwrap_or_else(|| panic!("no row for {kind} {name} {harness:?}: {document:?}"));
         assert_eq!(found.state, State::Ok, "{found:?}");
+        let source = match (kind, name) {
+            ("shim" | "record" | "inventory", _) => None,
+            ("plugin", _) => Some(("plugin", "marketplace".to_owned())),
+            ("skill", "data-science/eda") => {
+                Some(("market", world.home.join("market").display().to_string()))
+            }
+            ("pi-extension", _) => Some(("picat", format!("file://{}", world.catalog.display()))),
+            _ => Some(("cat", format!("file://{}", world.catalog.display()))),
+        };
+        assert_eq!(
+            found.source,
+            source.map(|(name, repo)| Source {
+                name: name.into(),
+                repo
+            }),
+            "{kind} {name} {harness:?}"
+        );
         let printed: Vec<(&str, Owns, Option<Foreign>)> = found
             .positions
             .iter()
@@ -481,6 +499,20 @@ fn every_row_prints_the_positions_it_rendered() {
             assert!(shape, "{path} is not the {owns:?} the row says it is");
         }
     }
+    let mut legacy: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    for row in legacy["rows"].as_array_mut().unwrap() {
+        row.as_object_mut().unwrap().remove("source");
+        row["future-metadata"] = true.into();
+    }
+    let legacy: Document = serde_json::from_value(legacy).unwrap();
+    assert!(legacy.rows.iter().all(|row| row.source.is_none()));
+    assert!(
+        document
+            .rows
+            .iter()
+            .filter(|row| row.state == State::Notice)
+            .all(|row| row.source.is_none())
+    );
 
     // Without a base revision a keys position carries no judgement, and
     // the field is absent rather than answered.
@@ -493,6 +525,153 @@ fn every_row_prints_the_positions_it_rendered() {
             .collect::<Vec<_>>(),
         vec![None, None],
         "{hook:?}"
+    );
+}
+
+/// CI input selectors consume these identities and positions. A missing or
+/// unreadable record can still match a render, but cannot attest its origin.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn installation_provenance_requires_a_readable_record() {
+    for case in [
+        "recorded",
+        "missing-record",
+        "unreadable-record",
+        "unrecorded",
+        "unavailable-source",
+        "changed-declaration",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = home.join("app");
+        let catalog = project.join("catalog");
+        write(&catalog.join("kendex.toml"), "[catalog]\n");
+        write(
+            &catalog.join("skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: ship it\n---\nDeploy.\n",
+        );
+        let manifest = "schema = 7\n[sources.cat]\npath = \"catalog\"\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.deploy]\nsource = \"cat\"\n";
+        write(&project.join("kendex.toml"), manifest);
+        repository(&project);
+        let installed = kendex(&home, &project, &["apply", "-y", "--leave"]);
+        assert!(installed.status.success(), "{case}: {}", said(&installed));
+        let record = project.join(RECORD);
+        match case {
+            "recorded" => {}
+            "missing-record" => fs::remove_file(&record).unwrap(),
+            "unreadable-record" => fs::write(&record, "{").unwrap(),
+            "unrecorded" => {
+                fs::remove_file(&record).unwrap();
+                fs::remove_dir_all(project.join(".agents/skills/deploy")).unwrap();
+            }
+            "unavailable-source" => fs::remove_dir_all(&catalog).unwrap(),
+            "changed-declaration" => write(
+                &project.join("kendex.toml"),
+                &manifest.replace("path = \"catalog\"", "path = \"elsewhere\""),
+            ),
+            _ => unreachable!(),
+        }
+        let (output, document) = verify_from(&home, &project, "project", None);
+        let found = row(&document, "skill", "deploy", Some(HarnessId::Codex)).unwrap();
+        let recorded = matches!(
+            case,
+            "recorded" | "unavailable-source" | "changed-declaration"
+        );
+        assert_eq!(
+            found.source,
+            recorded.then(|| Source {
+                name: "cat".into(),
+                repo: "./catalog".into()
+            }),
+            "{case}"
+        );
+        assert_eq!(
+            found.scope,
+            kendex_core::model::Scope::Project {
+                root: project.clone()
+            },
+            "{case}"
+        );
+        let unavailable = matches!(case, "unavailable-source" | "changed-declaration");
+        assert_eq!(
+            found.state,
+            if unavailable {
+                State::Failed
+            } else if case == "unrecorded" {
+                State::Unrecorded
+            } else {
+                State::Ok
+            },
+            "{case}"
+        );
+        let positions: Vec<_> = found
+            .positions
+            .iter()
+            .map(|position| (position.path.as_str(), position.owns))
+            .collect();
+        assert_eq!(
+            positions,
+            if unavailable {
+                vec![]
+            } else {
+                vec![(".agents/skills/deploy", Owns::Tree)]
+            },
+            "{case}"
+        );
+        assert_eq!(output.status.success(), case == "recorded", "{case}");
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        for row in json["rows"].as_array().unwrap() {
+            if !recorded || row["kind"] != "skill" {
+                assert!(row.get("source").is_none(), "{case}");
+            }
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn in_place_provenance_keeps_the_authored_tree_identity_and_positions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("app");
+    let skill = project.join(".agents/skills/deploy/SKILL.md");
+    write(
+        &skill,
+        "---\nname: deploy\ndescription: ship it\n---\nAuthored.\n",
+    );
+    write(
+        &project.join("kendex.toml"),
+        "schema = 7\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n[skills.deploy]\nsource = \"in-place\"\n",
+    );
+    repository(&project);
+    let installed = kendex(&home, &project, &["apply", "-y", "--leave"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    write(
+        &skill,
+        "---\nname: deploy\ndescription: ship it\n---\nEdited by the project.\n",
+    );
+    let (output, document) = verify_from(&home, &project, "project", None);
+    assert!(output.status.success(), "{}", said(&output));
+    let found = row(&document, "skill", "deploy", Some(HarnessId::Codex)).unwrap();
+    assert_eq!(
+        found.source,
+        Some(Source {
+            name: "in-place".into(),
+            repo: "in-place".into()
+        })
+    );
+    assert_eq!(
+        found.scope,
+        kendex_core::model::Scope::Project { root: project }
+    );
+    assert_eq!(found.state, State::Ok);
+    assert_eq!(
+        found
+            .positions
+            .iter()
+            .map(|position| (position.path.as_str(), position.owns))
+            .collect::<Vec<_>>(),
+        vec![(".agents/skills/deploy", Owns::Tree)]
     );
 }
 
