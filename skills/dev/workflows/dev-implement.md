@@ -213,6 +213,30 @@ A script written only to produce a number for the issue is not committed; report
 
 **Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
+### Optional held-first-push local proof
+
+After the required dev completion tail, the publication caller may choose one configured full local validation while that lane's first push is held. This is optional caller work, separate from the dev round's required Validate result. Skipping it adds no command, qualification probe, owner ask or pre-push prerequisite. Required local checks and integrated CI keep their existing owners.
+
+On choosing it, read the actual issuing authority, affected lane/branch/action and release condition. The publication owner must establish no successful push from its retained branch-creation and complete publication history through this held boundary. Retain those source references in existing notes. A missing PR, empty tracking ref or lease, delivery cursor or purpose marker proves no first-push authority. Unread or incomplete authority/history withholds this optional choice and adds no stop to ordinary work. The actual publication hold remains effective until its issuer releases it.
+
+Read the original delegation and all prior native starts, including exceptional and unfinished attempts, through the existing run inventory and notes/handoff. The allowance is one optional local attempt for this lane before its first push. A prior exceptional attempt for this purpose spends it. Unknown remaining allowance permits no start. Edits, commits, ordinary fixes, new round tokens, publication, host/session changes and handoff never renew it.
+
+With clean committed final work and an unspent allowance, freeze validation inputs/settings and run:
+
+```bash
+.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --held-first-push
+```
+
+Use [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) for the attached route where required and for holding the run through its actual verdict. The flag selects full local execution under resolved push-first, implies fresh, and keeps the configured command, class, whole-branch inputs and bound. It is distinct from required-failure `--reproduce`. The runner requires its snapshot to match current HEAD's committed tree. A configured selector must supply a successful unambiguous full, non-scoped preview; the full command still runs. Without a configured selector, no selector preview is required. An absent optional total estimate is recorded as absent and proves no fit within the bound. A usable actual total above the unchanged bound refuses before a run. Add no estimator, selector override, smaller base, replacement command or timeout.
+
+Retain the native `start`, command, log/sentinel/timing and `--record` evidence in existing notes/status/handoff. Name `local-purpose=held-first-push`, the authority and first-publication references, original baseline/round, preview and absent optional total or actual estimate, bound, tested HEAD/tree, elapsed time and allowance disposition. The purpose records intent, never permission. Creating a start spends the allowance even if it fails or remains unproved. A pre-directory refusal or `run-live` starts no command and grants no retry loop or proof. Keep the existing live-run wait ownership.
+
+A failure, timeout, lost/interrupted or unread result ends this local choice. Preserve its actual FAILED, no-verdict or unfinished evidence and unreached checks as unproved. Take no required-recovery, no-verdict fallback or context-handoff rerun to repeat optional proof. An optional failure adds no hold on ordinary code repair, review, screenshots or normal push-first CI. Keep every independently required gate and unrelated publication/safety hold under its own authority; a flag or note never reclassifies an aggregate required or mixed failure.
+
+For an actual in-scope defect, use the existing managed orch `workflows/dev-fix.md` route with real items/source evidence, scope/freshness/recurrence checks and a real new round/base/delegation time. This ordinary repair needs no owner ask from this permission. It follows its normal ci/range/full resolution and mandatory local fallbacks, inherits no optional flag, and grants no optional retry. Select the new accepted current-head receipt for ordinary publication after the actual hold releases. Retain the old failed artifact and native run unchanged; a selected failing dev artifact still blocks submission. An earlier optional exception recorded in a failed dev artifact ends that failed workflow; it is never accepted as a pass.
+
+An optional native observation after an accepted CI-pending receipt leaves that receipt unchanged. Write no additional dev-return slot and use no `--recovery` solely because that receipt exists. Genuine required-failure recovery retains its original failed parent, one immutable terminal companion, original base/mode and already spent limits. A successful optional run proves only the configured work on its actual tested committed tree. Required new-head integrated CI remains pending until the existing submit/queue route proves it.
+
 ---
 
 ## 6. Reflect

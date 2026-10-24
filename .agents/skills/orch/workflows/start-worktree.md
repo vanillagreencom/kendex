@@ -105,6 +105,8 @@ Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
 
 All orders end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
 
+At a held first-publication boundary after required dev completion, the publication caller may choose [dev-implement.md § Optional held-first-push local proof](../../dev/workflows/dev-implement.md#optional-held-first-push-local-proof). Follow its qualification, allowance, evidence and result route. Then continue to the review step while the actual hold remains; enter early submit only after its issuing authority releases publication. Ordinary repair uses the referenced managed fix route.
+
 - `review-first` → the review step. A non-zero exit takes this row and reports its `pr-order-error:` line once.
 - `push-first` → the same early submit and existence check as `open-first` below. Submit creates a draft and leaves auto-merge unarmed. Its `ci` record accepts completed local edits with required CI pending. After the successful existence check, read `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state,headRefOid` and bind the open PR's head as `[HEAD_SHA]`; a failed read stops this pass. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing).
 

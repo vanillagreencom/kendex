@@ -85,6 +85,8 @@ A session keeps the rule text it loaded, and a push, `worktree create --reuse` o
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle. Once the artifact is written, start no validation, test, lint or build run except the admitted stopped-round recovery in [dev-implement.md § 5](workflows/dev-implement.md#5-validate); otherwise the orchestrator validates there next.
 
+The publication caller's separate optional action is [Optional held-first-push local proof](workflows/dev-implement.md#optional-held-first-push-local-proof). It grants the dev agent no additional run after its completion tail.
+
 Under push-first, queue-only work can close its local round before a pull request exists when `dev-validate-run` proves that the resolved base requires the merge queue and the configured validation context. Its CI record names `ci-event=merge_group` and remains pending. The orchestrator's existing queue route proves that required run.
 
 The Codex caller follows [orch codex-runtime.md § Delegated round wait](../orch/references/codex-runtime.md#delegated-round-wait) while this agent works.
@@ -96,6 +98,8 @@ The Codex caller follows [orch codex-runtime.md § Delegated round wait](../orch
 ## Validation
 
 The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate). For that gate, run no proof, rerun, receipt, isolation step, or approval step that section does not name. That section also owns the one proposed-rule route and verification of the controls code-quality § Tests requires.
+
+Caller-owned optional execution follows that section's [held-first-push rule](workflows/dev-implement.md#optional-held-first-push-local-proof), using the same launch and wait routes below.
 
 A test or sandbox run outside that gate, such as a nested-session smoke run or one test file run alone while investigating, is an investigation run and names its question first. Before it starts, append `Run N: question: <what this run decides>; expect: <the result that answers yes or no>` to the round notes, `[WORKTREE_PATH]/tmp/run-notes-[ARTIFACT_KEY]-[DEV_ROUND_ID].md`; after it, append `Run N: answer: <yes|no|inconclusive> <one line>`. A run with no question line is not started. A second `inconclusive` in a row on one question sends the agent back to the code and logs, never to a third run. Every run the gate lists is exempt, its must-fail controls included.
 

@@ -56,6 +56,8 @@ SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_RECORD%% *}"
 SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"
 ```
 
+At a held first-publication boundary, a directly invoked publication caller may choose [dev-implement.md § Optional held-first-push local proof](../../dev/workflows/dev-implement.md#optional-held-first-push-local-proof). Follow that rule after required dev completion and this section's required acceptance. Retain its independent native result beside the selected dev receipt. While the actual hold remains, return that held outcome to the caller before § 2; push nothing. Its ordinary repair route returns here with the newly selected current-head receipt. Every required and failing-artifact rule above still applies.
+
 ### 1.2 Local Pre-PR Review
 
 Drain what a review bot would surface before the PR exists.

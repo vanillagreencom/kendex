@@ -44,7 +44,7 @@
 # setsid. The log's first line is the runner line.
 #
 # Usage:
-#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range|ci] [--base REF] [--attached] [--fresh] [--reproduce | --restack]
+#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range|ci] [--base REF] [--attached] [--fresh] [--reproduce | --held-first-push | --restack]
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Harness launch and resume routes:
 #       ../../dev/SKILL.md § Long-Running Validation.
@@ -55,6 +55,14 @@
 #       or no-verdict, never ci. It implies --fresh, so no earlier pass or
 #       bound-ended run answers it: the fix's tree always runs the command.
 #       With --validate-mode ci it is refused as reproduce-ci.
+#       --held-first-push requests optional full local proof under push-first.
+#       The publication caller owns qualification and the one-attempt allowance
+#       in ../../dev/workflows/dev-implement.md section 5. This flag records
+#       intent, never authority. It implies --fresh, skips CI and scoped
+#       execution, and runs DEV_VALIDATE_CMD on the current committed snapshot.
+#       A configured selector must preview all or subset successfully in full,
+#       non-scoped mode. Its optional expected-secs still obeys the bound.
+#       Other modes, --reproduce and --restack conflict with this intent.
 #       --restack marks a ci request as the restack's own, which
 #       ../workflows/merge-pr-restack.md step 2 makes: a restack is no round,
 #       so it skips selector preview and scoped suites. Successful CI admission
@@ -110,6 +118,9 @@
 #       takes a receipt's mode, class base and wall time from it, a receipt's
 #       pass needs its pass and its no-verdict its no-verdict. Fix-round
 #       binding belongs to dev-return-write, per schemas/dev-return.md.
+#       Optional held-first-push records also carry local-purpose=held-first-push
+#       and expected-secs when the preview supplied a usable numeric total.
+#       Absent fields retain legacy meaning; malformed present fields refuse.
 #   dev-validate-run --resolve-mode --worktree PATH [--base REF] [--require-proof SHA --expected-head SHA]
 #       Print a range request's mode, read-only and starting nothing. Without
 #       --base it resolves the local command: range, or full without a range
@@ -205,7 +216,7 @@
 #          protection, as GitHub reports them for the repository gh resolves
 #          (GH_REPO, else the worktree). The base is the pull request's own,
 #          which a stacked pull request sets to a branch other than the
-#          default. A full request under push-first also
+#          default. An ordinary full request under push-first also
 #          takes CI where these coverage checks pass. With no
 #          DEV_VALIDATE_SELECTION_CMD, or under --restack, a deferred round
 #          runs no command and completes at once, with a zero-second wall
@@ -453,7 +464,7 @@ die() {
       required) printf 'The required option is absent or empty.\n' ;;
       unknown-argument) printf 'The argument is not supported.\n' ;;
       mode-conflict) printf 'Use one of --worktree, --wait, --stop, --record, --resolve-mode, --last-pass, --live or --child.\n' ;;
-      record-unreadable) printf 'The start record names no validation mode of full, range or ci.\n' ;;
+      record-unreadable) printf 'The start record contains unreadable validation evidence.\n' ;;
       option-unused) printf 'The option has no meaning in this mode and would be silently dropped.\n' ;;
       repeated) printf 'The option was given twice, and one of its values would be silently dropped.\n' ;;
       not-directory) printf 'The path is not a directory.\n' ;;
@@ -741,7 +752,7 @@ validate_mode_given=false
 base_given=false
 attached=false
 fresh=false
-reproduce=false
+local_intent=ordinary
 restack=false
 proof_head=""
 proof_given=false
@@ -755,6 +766,12 @@ set_mode() { # FLAG NEW
 
 once() { # FLAG GIVEN
   [[ "$2" == false ]] || die repeated "option=$1"
+}
+
+set_local_intent() { # FLAG INTENT
+  [[ "$local_intent" != "$2" ]] || die repeated "option=$1"
+  [[ "$local_intent" == ordinary && "$restack" == false ]] || die option-conflict "option=$1" "local-intent=$local_intent"
+  local_intent="$2"
 }
 
 while (( $# > 0 )); do
@@ -776,7 +793,8 @@ while (( $# > 0 )); do
     --base)     need "$1" $# "${2:-}"; once "$1" "$base_given"; base_given=true; base="$2"; shift 2 ;;
     --attached) once "$1" "$attached"; attached=true; shift ;;
     --fresh)    once "$1" "$fresh"; fresh=true; shift ;;
-    --reproduce) once "$1" "$reproduce"; reproduce=true; shift ;;
+    --reproduce) set_local_intent "$1" required-failure; shift ;;
+    --held-first-push) set_local_intent "$1" held-first-push; shift ;;
     --restack)  once "$1" "$restack"; restack=true; shift ;;
     -h|--help)  usage; exit 0 ;;
     *)          die unknown-argument "argument=$1" ;;
@@ -792,10 +810,21 @@ done
 # a full start: its notice lets that resolved start proceed.
 [[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
 [[ "$fresh" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--fresh" "mode=$mode"
-[[ "$reproduce" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--reproduce" "mode=$mode"
-[[ "$reproduce" == false || "$validate_mode" != ci ]] || die reproduce-ci "option=--reproduce" "validate-mode=$validate_mode"
-# A reproduction proves the fix by running the failed command on its tree.
-[[ "$reproduce" == false ]] || fresh=true
+[[ "$restack" == false || "$local_intent" == ordinary ]] || die option-conflict "option=--restack" "local-intent=$local_intent"
+case "$local_intent" in
+  ordinary) ;;
+  required-failure)
+    [[ -z "$mode" || "$mode" == start ]] || die option-unused "option=--reproduce" "mode=$mode"
+    [[ "$validate_mode" != ci ]] || die reproduce-ci "option=--reproduce" "validate-mode=$validate_mode"
+    fresh=true
+    ;;
+  held-first-push)
+    [[ "$mode" == start ]] || die option-unused "option=--held-first-push" "mode=$mode"
+    [[ "$validate_mode" == full ]] || die option-unused "option=--held-first-push" "validate-mode=$validate_mode"
+    fresh=true
+    ;;
+  *) die invalid-local-intent "value=$local_intent" ;;
+esac
 [[ "$restack" == false || -z "$mode" || ( "$mode" == start && "$validate_mode" == ci ) ]] \
   || die option-unused "option=--restack" "mode=$mode" "validate-mode=$validate_mode"
 [[ -z "$proof_head" || "$mode" == resolve ]] || die option-unused option=--require-proof "mode=$mode"
@@ -1018,6 +1047,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   if order_line="$("$SCRIPT_DIR/pr-order" "$worktree")"; then
     pr_order="${order_line#pr-order=}"
   fi
+  [[ "$local_intent" != held-first-push || "$pr_order" == push-first ]] \
+    || die held-first-push-order "pr-order=$pr_order"
   selection_previewed=false
   ci_admission_attempted=false
   selection_cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_SELECTION_CMD "")" \
@@ -1068,7 +1099,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   fi
   # A ci request runs as range where CI may not run the checks for the change;
   # --help's ci mode names when.
-  if [[ "$reproduce" == false ]] && [[ "$validate_mode" == ci || "$pr_order" == push-first || -n "$proof_head" ]]; then
+  if [[ "$local_intent" == ordinary ]] && [[ "$validate_mode" == ci || "$pr_order" == push-first || -n "$proof_head" ]]; then
     ci_admission_attempted=true
     classify ""
     [[ "$requested_mode" == full ]] || validate_mode=range
@@ -1117,7 +1148,13 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   fi
   scoped=false
   if [[ "$validate_mode" != ci && "$selection_previewed" == false ]]; then
-    if [[ "$reproduce" == false && "$restack" == false && -n "${selection_cmd//[[:space:]]/}" ]]; then
+    if [[ "$local_intent" == held-first-push && -n "${selection_cmd//[[:space:]]/}" ]]; then
+      preview_selection || die selection-unread "local-purpose=held-first-push"
+      case "$selection" in
+        selection=all|selection=subset) ;;
+        *) die selection-unread "local-purpose=held-first-push" ;;
+      esac
+    elif [[ "$local_intent" == ordinary && "$restack" == false && -n "${selection_cmd//[[:space:]]/}" ]]; then
       if preview_selection && { [[ "$selection" == selection=all ]] \
           || [[ "$requested_mode" == range && "$selection" == selection=subset ]]; }; then
         if [[ "$ci_admission_attempted" == false ]]; then
@@ -1227,6 +1264,11 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   # A worktree with no commit has no HEAD to record; the empty value binds the
   # run to no round.
   head_sha="$(git rev-parse --verify -q 'HEAD^{commit}')" || head_sha=""
+  if [[ "$local_intent" == held-first-push ]]; then
+    committed_tree="$(git rev-parse --verify 'HEAD^{tree}')" || die snapshot-unread "local-purpose=held-first-push"
+    [[ -n "$snapshot_tree" ]] || die snapshot-unread "local-purpose=held-first-push"
+    [[ "$snapshot_tree" == "$committed_tree" ]] || die snapshot-changed "local-purpose=held-first-push" "head=$head_sha"
+  fi
 
   # Judged just before this run's directory is made: two starts that both
   # pass it must each reach the check inside the other's launch, a window of
@@ -1255,6 +1297,10 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     printf 'class=%s\n' "$class"
     printf 'docs-only=%s\n' "$docs_only"
     printf 'validate-mode=%s\n' "$validate_mode"
+    if [[ "$local_intent" == held-first-push ]]; then
+      printf 'local-purpose=held-first-push\n'
+      [[ ! "${expected_secs:-}" =~ ^[0-9]+$ ]] || printf 'expected-secs=%s\n' "$expected_secs"
+    fi
     case "${selection:-}" in selection=all|selection=subset) printf '%s\n' "$selection" ;; esac
     [[ "$scoped" == false ]] || printf 'scoped=true\n'
     printf 'validate-base=%s\n' "$base_sha"
@@ -1528,6 +1574,17 @@ if [[ "$mode" == record ]]; then
     full|range|ci) ;;
     *) die record-unreadable "path=$run_dir/start" "validate-mode=$record_mode" ;;
   esac
+  record_local=""
+  if grep -q '^local-purpose=' "$run_dir/start"; then
+    record_purpose="$(start_field "$run_dir/start" local-purpose)" || die record-unreadable "path=$run_dir/start"
+    [[ "$record_purpose" == held-first-push && "$record_mode" == full ]] || die record-unreadable "path=$run_dir/start"
+    record_local=" local-purpose=$record_purpose"
+  fi
+  if grep -q '^expected-secs=' "$run_dir/start"; then
+    record_expected="$(start_field "$run_dir/start" expected-secs)" || die record-unreadable "path=$run_dir/start"
+    [[ -n "$record_local" && "$record_expected" =~ ^[0-9]+$ ]] || die record-unreadable "path=$run_dir/start"
+    record_local="$record_local expected-secs=$record_expected"
+  fi
   record_verdict=unfinished
   record_timing=""
   if [[ -s "$run_dir/exit" ]]; then
@@ -1554,10 +1611,10 @@ if [[ "$mode" == record ]]; then
     die record-unreadable "path=$run_dir/start"
   fi
   [[ "$record_ci_event" == merge_group ]] || record_ci_event=""
-  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
+  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
     "$(start_field "$run_dir/start" head)" "$(start_field "$run_dir/start" start)" \
     "${record_orphaned:+ validate-base-orphaned=$record_orphaned}" "${record_class_base:+ class-base=$record_class_base}" "$record_timing" \
-    "${record_scoped:+ scoped=$record_scoped}" "${record_ci_fallback:+ ci-fallback=$record_ci_fallback}" "${record_ci_event:+ ci-event=$record_ci_event}"
+    "${record_scoped:+ scoped=$record_scoped}" "${record_ci_fallback:+ ci-fallback=$record_ci_fallback}" "${record_ci_event:+ ci-event=$record_ci_event}" "$record_local"
   exit 0
 fi
 

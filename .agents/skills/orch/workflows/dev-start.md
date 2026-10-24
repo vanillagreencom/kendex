@@ -195,6 +195,8 @@ A round that meets the Stalled round conditions of [references/skill-rules.md §
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
+The retry row ends that failed round/workflow. The publication caller's optional-run result and later ordinary repair follow [dev-implement.md § Optional held-first-push local proof](../../dev/workflows/dev-implement.md#optional-held-first-push-local-proof). That rule grants no acceptance of a failing selected artifact.
+
 Each Store subsection below runs whatever the one before it did. `status: no_pr` in Store Proposed Rules ends that subsection, not the accept path.
 
 ### Store Proposed Rules

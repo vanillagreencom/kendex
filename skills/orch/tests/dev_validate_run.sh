@@ -1746,37 +1746,70 @@ rm -f -- "${CI_SCRIPT:?}.mutant"
 # push-first, with queue-only work whose base requires the merge queue and the
 # context, a plain request is admitted to CI; --reproduce runs the command its
 # mode runs and records that mode and its pass or failure.
-# label|requested mode|selector|command exit|recorded mode|verdict|command output
+# label|requested mode|selector|command exit|recorded mode|verdict|command output|intent|attached full
 REPRODUCE_ROWS=(
   'a merge-group reproduction runs the full command|full|none|0|full|pass|full'
   'a red merge-group reproduction records its failure|full|none|7|full|FAILING|full'
   'a reproduction with a selector runs the full command, not the selector|full|all|0|full|pass|full'
   'a range reproduction runs the range command|range|all|0|range|pass|range'
+  'held first push runs the full command|full|none|0|full|pass|full|held-first-push'
+  'held first push previews all without scoped execution|full|all|0|full|pass|full|held-first-push'
+  'held first push previews subset without scoped execution|full|subset|0|full|pass|full|held-first-push'
+  'held first push retains a failed result|full|none|7|full|FAILING|full|held-first-push'
+  'held first push retains a host no-verdict|full|none|3|full|no-verdict|full|held-first-push'
+  'held first push runs despite a prior passing full command|full|none|0|full|pass|full|held-first-push'
+  'held first push accepts attached explicit full with an ignored base|full|none|0|full|pass|full|held-first-push|yes'
 )
 reproduce_rows() { # SCRIPT [LABEL]
-  local row label request selector status proj dir args n=0
+  local row label request selector status intent attached_full proj dir args head tree n=0 initial_fail="$FAIL"
   for row in "${REPRODUCE_ROWS[@]}"; do
-    IFS='|' read -r label request selector status _ _ _ <<<"$row"
+    IFS='|' read -r label request selector status _ _ _ intent attached_full <<<"$row"
     [[ -z "${2:-}" || "$label" == "$2" ]] || continue
     n=$((n + 1))
     proj="$(ci_proj "reproduce-$n-${1##*/}" CI)"
     sed -i.bak 's/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = "push-first"/; s/^DEV_VALIDATE_CMD = .*/DEV_VALIDATE_CMD = "echo full; exit $STUB_LOCAL_EXIT"/' "$proj/kendex.settings.toml"
-    [[ "$selector" == none ]] || printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml"
+    if [[ "$selector" != none ]]; then
+      printf 'DEV_VALIDATE_SELECTION_CMD = "mkdir -p tmp; echo $DEV_VALIDATE_MODE:$DEV_VALIDATE_SCOPED:$DEV_VALIDATE_CLASS >> tmp/preview; echo selection=%s"\n' "$selector" >> "$proj/kendex.settings.toml"
+    fi
+    git -C "$proj" add -A
+    git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m command
+    head="$(git -C "$proj" rev-parse HEAD)"
+    tree="$(git -C "$proj" rev-parse 'HEAD^{tree}')"
     ci_world queue-required
-    args=(--worktree "$proj" --poll 1 --reproduce)
+    args=(--worktree "$proj" --poll 1 "--${intent:-reproduce}")
     [[ "$request" == full ]] || args+=(--validate-mode "$request" --base HEAD)
+    [[ "$attached_full" != yes ]] || args+=(--attached --fresh --validate-mode full --base HEAD)
+    if [[ "$label" == 'held first push runs despite a prior passing full command' ]]; then
+      RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE='queue_only=true cause=queue-lane' STUB_ANSWER=change_class=standard STUB_DOCS=false \
+        STUB_MEASURED=true STUB_LOCAL_EXIT=0 run_script "$1" --worktree "$proj" --poll 1 --reproduce
+    fi
     RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE='queue_only=true cause=queue-lane' STUB_ANSWER=change_class=standard STUB_DOCS=false \
       STUB_MEASURED=true STUB_LOCAL_EXIT="$status" run_script "$1" "${args[@]}"
     dir="$(run_dir_of "$OUT")"
+    if [[ "$intent" == held-first-push && -z "${2:-}" ]]; then
+      assert_eq "$(start_line "$dir" head) $(start_line "$dir" tree) $(start_line "$dir" timeout-secs) $(start_line "$dir" scoped) $(start_line "$dir" local-purpose) $(start_line "$dir" class-base)" \
+        "$head $tree 20  held-first-push " "$label binds the committed full inputs and bound" "$ERR"
+      assert_eq "$(cat "$dir/cmd") $(start_line "$dir" pass-run) $(start_line "$dir" bound-run)" \
+        'echo full; exit $STUB_LOCAL_EXIT  ' "$label starts the configured command freshly"
+      if [[ "$selector" != none ]]; then
+        assert_eq "$(cat "$proj/tmp/preview")" full:false:standard "$label previews the actual full class once"
+      fi
+    fi
     run_script "$1" --record --run-dir "$dir"
+    if [[ "$intent" == held-first-push && -z "${2:-}" ]]; then
+      assert_eq "$(record_field local-purpose "$OUT") $(record_field scoped "$OUT") $(record_field head "$OUT") $(record_field tree "$OUT")" \
+        "held-first-push  $head $tree" "$label retains optional purpose and tested snapshot" "$ERR"
+      assert_eq "$([[ "$(record_field seconds "$OUT")" =~ ^[0-9]+$ ]] && echo measured || echo absent)" measured "$label records performed wall time"
+    fi
     printf '%s\t%s|%s|%s|%s\n' "$label" "$(record_field validate-mode "$OUT")" "$(record_field verdict "$OUT")" \
       "$(record_field ci-event "$OUT")" "$(sed 1d "$dir/log" 2>/dev/null | paste -sd, -)"
     rm -rf -- "${proj:?}"
   done
+  [[ "$FAIL" == "$initial_fail" ]]
 }
 REPRODUCE_GOT="$(reproduce_rows "$CI_SCRIPT")"
 for row in "${REPRODUCE_ROWS[@]}"; do
-  IFS='|' read -r label _ _ _ want_mode want_verdict want_out <<<"$row"
+  IFS='|' read -r label _ _ _ want_mode want_verdict want_out _ _ <<<"$row"
   assert_eq "$(awk -F'\t' -v want="$label" '$1 == want { print $2 }' <<<"$REPRODUCE_GOT")" \
     "$want_mode|$want_verdict||$want_out" "$label"
 done
@@ -1784,17 +1817,118 @@ done
 # reproduction to CI, which runs nothing and stays pending.
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
 # shellcheck disable=SC2016 # the script's own text
-mutate_file "$CI_SCRIPT.mutant" '--reproduce) once "$1" "$reproduce"; reproduce=true; shift ;;' '--reproduce) shift ;;'
+mutate_file "$CI_SCRIPT.mutant" '--reproduce) set_local_intent "$1" required-failure; shift ;;' '--reproduce) shift ;;'
 assert_eq "$(reproduce_rows "$CI_SCRIPT.mutant" 'a red merge-group reproduction records its failure' | cut -f2)" \
   'ci|pending|merge_group|' \
   'control: an ignored reproduction flag leaves the red fix pending in CI'
 rm -f -- "${CI_SCRIPT:?}.mutant"
+# The optional intent must bypass CI even when the configured full command fails.
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" '--held-first-push) set_local_intent "$1" held-first-push; shift ;;' '--held-first-push) shift ;;'
+assert_eq "$(reproduce_rows "$CI_SCRIPT.mutant" 'held first push retains a failed result' | cut -f2)" \
+  'ci|pending|merge_group|' \
+  'control: ignoring optional local intent turns failed full proof into CI pending without a command'
+rm -f -- "${CI_SCRIPT:?}.mutant"
 run_script "$CI_SCRIPT" --worktree "$proj_ci" --reproduce --validate-mode ci --base HEAD
 assert_eq "$RC $(sed -n 1p <"$ERR")" '2 dev-validate-run: reproduce-ci option=--reproduce validate-mode=ci' \
   'a reproduction is never a ci request' "$ERR"
+
+# --record is consumed by dev-return-write; malformed present optional fields
+# cannot silently become legacy records with those fields absent.
+HELD_RECORD_ROWS=(
+  'legacy|||0||'
+  'purpose|held-first-push||0|held-first-push|'
+  'estimate|held-first-push|19|0|held-first-push|19'
+  'unknown purpose|other||2||'
+  'empty purpose|EMPTY||2||'
+  'repeated purpose|DUPLICATE||2||'
+  'negative estimate|held-first-push|-1|2||'
+  'empty estimate|held-first-push|EMPTY|2||'
+  'repeated estimate|held-first-push|DUPLICATE|2||'
+  'orphan estimate||19|2||'
+)
+for row in "${HELD_RECORD_ROWS[@]}"; do
+  IFS='|' read -r label purpose estimate want_rc want_purpose want_estimate <<<"$row"
+  record_dir="$TMP_ROOT/held-record"
+  mkdir -p "$record_dir"
+  printf 'validate-mode=full\n' > "$record_dir/start"
+  case "$purpose" in
+    '') ;;
+    EMPTY) printf 'local-purpose=\n' >> "$record_dir/start" ;;
+    DUPLICATE) printf 'local-purpose=held-first-push\nlocal-purpose=held-first-push\n' >> "$record_dir/start" ;;
+    *) printf 'local-purpose=%s\n' "$purpose" >> "$record_dir/start" ;;
+  esac
+  case "$estimate" in
+    '') ;;
+    EMPTY) printf 'expected-secs=\n' >> "$record_dir/start" ;;
+    DUPLICATE) printf 'expected-secs=19\nexpected-secs=19\n' >> "$record_dir/start" ;;
+    *) printf 'expected-secs=%s\n' "$estimate" >> "$record_dir/start" ;;
+  esac
+  run_script "$CI_SCRIPT" --record --run-dir "$record_dir"
+  assert_eq "$RC|$(record_field local-purpose "$OUT")|$(record_field expected-secs "$OUT")" \
+    "$want_rc|$want_purpose|$want_estimate" "optional native record: $label" "$ERR"
+  if [[ "$want_rc" == 0 ]]; then
+    assert_eq "$(record_field verdict "$OUT")" unfinished "optional native record: $label remains unfinished"
+  fi
+done
 run_script "$CI_SCRIPT" --worktree "$proj_ci" --restack --validate-mode range --base HEAD
 assert_eq "$RC $(sed -n 1p <"$ERR")" '2 dev-validate-run: option-unused option=--restack mode=start validate-mode=range' \
   'a restack flag belongs to a ci request only' "$ERR"
+
+# These are runner inputs, not a model of the caller's hold or publication history.
+# label|variant|arguments|refusal key
+HELD_REFUSAL_ROWS=(
+  'range|clean|--held-first-push --validate-mode range --base HEAD|option-unused'
+  'ci|clean|--held-first-push --validate-mode ci --base HEAD|option-unused'
+  'reproduce|clean|--held-first-push --reproduce|option-conflict'
+  'reverse reproduce|clean|--reproduce --held-first-push|option-conflict'
+  'restack|clean|--held-first-push --restack|option-conflict'
+  'reverse restack|clean|--restack --held-first-push|option-conflict'
+  'repeated|clean|--held-first-push --held-first-push|repeated'
+  'resolve|clean|--held-first-push --resolve-mode|option-unused'
+  'live|clean|--held-first-push --live|option-unused'
+  'last pass|clean|--held-first-push --last-pass|option-unused'
+  'stop|clean|--held-first-push --stop|option-unused'
+  'wait|clean|--held-first-push --wait|option-unused'
+  'record|clean|--held-first-push --record|option-unused'
+  'child|clean|--held-first-push --child|option-unused'
+  'review first|review-first|--held-first-push|held-first-push-order'
+  'dirty snapshot|dirty|--held-first-push|snapshot-changed'
+  'failed preview|failed|--held-first-push|selection-unread'
+  'ambiguous preview|ambiguous|--held-first-push|selection-unread'
+  'unreported preview|unreported|--held-first-push|selection-unread'
+)
+held_refusal_row() { # SCRIPT VARIANT ARGUMENTS
+  local script="$1" variant="$2" arguments="$3" proj dir created=absent
+  proj="$(ci_proj held-refusal CI)"
+  sed -i.bak 's/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = "push-first"/' "$proj/kendex.settings.toml"
+  case "$variant" in
+    review-first) sed -i.bak 's/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = "review-first"/' "$proj/kendex.settings.toml" ;;
+    failed) printf 'DEV_VALIDATE_SELECTION_CMD = "exit 1"\n' >> "$proj/kendex.settings.toml" ;;
+    ambiguous) printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=all; echo selection=subset"\n' >> "$proj/kendex.settings.toml" ;;
+    unreported) printf 'DEV_VALIDATE_SELECTION_CMD = "true"\n' >> "$proj/kendex.settings.toml" ;;
+  esac
+  git -C "$proj" add -A
+  git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m policy
+  [[ "$variant" != dirty ]] || printf 'edit\n' > "$proj/dirty-input"
+  ci_world queue-required
+  # shellcheck disable=SC2086 # the table contains literal argument words
+  RUN_PATH="$GH_STUB_BIN:$PATH" STUB_QUEUE='queue_only=true cause=queue-lane' STUB_ANSWER=change_class=standard STUB_DOCS=false STUB_MEASURED=true \
+    run_script "$script" --worktree "$proj" --poll 1 $arguments
+  for dir in "$proj"/tmp/dev-validate-*; do [[ ! -d "$dir" ]] || created=created; done
+  printf '%s|%s|%s\n' "$RC" "$(awk 'NR == 1 {print $2}' "$ERR")" "$created"
+  rm -rf -- "$proj"
+}
+for row in "${HELD_REFUSAL_ROWS[@]}"; do
+  IFS='|' read -r label variant args reason <<<"$row"
+  assert_eq "$(held_refusal_row "$CI_SCRIPT" "$variant" "$args")" "2|$reason|absent" \
+    "held first push refuses $label before recording a start"
+done
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.mutant"
+mutate_file "$CI_SCRIPT.mutant" 'snapshot_tree="$tree"' 'snapshot_tree="" # snapshot_tree="$tree"'
+assert_eq "$(held_refusal_row "$CI_SCRIPT.mutant" clean --held-first-push)" '2|snapshot-unread|absent' \
+  'held first push refuses an unread committed snapshot'
+rm -f -- "${CI_SCRIPT:?}.mutant"
 
 # merge-pr-restack's ci call has no scoped round to preview. A failing
 # selector must not turn required merge-group CI into a local range run.
@@ -2805,8 +2939,8 @@ SH
 }
 # The selector owns its estimate. The runner compares it with the same bound
 # before either the full command or the selector's scoped execution can start.
-selection_seconds_row() { # SCRIPT ESTIMATE PR_WORLD
-  local script="$1" estimate="$2" world="$3" proj dir result launch=absent run=absent selected=absent estimate_record=absent
+selection_seconds_row() { # SCRIPT ESTIMATE PR_WORLD [INTENT]
+  local script="$1" estimate="$2" world="$3" intent="${4:-}" proj dir result args launch=absent run=absent selected=absent estimate_record=absent
   proj="$(ci_proj proj-selection-seconds CI)"
   sed -i.bak 's/^DEV_VALIDATE_CMD = .*/DEV_VALIDATE_CMD = "echo full >> tmp\/launched; echo validate: lanes=full selection=all"/' "$proj/kendex.settings.toml"
   cat > "$proj/selection" <<'SH'
@@ -2821,19 +2955,27 @@ fi
 SH
   chmod +x "$proj/selection"
   printf 'DEV_VALIDATE_SELECTION_CMD = "./selection"\n' >> "$proj/kendex.settings.toml"
+  args=(--worktree "$proj" --poll 1)
+  if [[ -n "$intent" ]]; then
+    sed -i.bak 's/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = "push-first"/' "$proj/kendex.settings.toml"
+    rm -f -- "$proj/kendex.settings.toml.bak"
+    git -C "$proj" add -A
+    git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m selector
+    args+=("--$intent")
+  fi
   ci_world "$world"
   RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=standard STUB_DOCS=false STUB_MEASURED=true \
-    STUB_EXPECTED="$estimate" run_script "$script" --worktree "$proj" --poll 1
+    STUB_EXPECTED="$estimate" run_script "$script" "${args[@]}"
   result="$RC|$(sed -n 's/^dev-validate-run: //p' "$ERR")"
   [[ ! -e "$proj/tmp/launched" ]] || launch="$(cat "$proj/tmp/launched")"
   # A refusal must leave no run directory, even if it printed no start line.
   for dir in "$proj"/tmp/dev-validate-*; do
     [[ -d "$dir" ]] || continue
     run=created
-    [[ -z "$(start_line "$dir" expected-secs)" ]] || estimate_record=present
+    [[ -z "$(start_line "$dir" expected-secs)" ]] || estimate_record="$(start_line "$dir" expected-secs)"
     run_script "$script" --record --run-dir "$dir"
     selected="$(record_field selection "$OUT")"
-    [[ -z "$(record_field expected-secs "$OUT")" ]] || estimate_record=present
+    [[ "$(record_field expected-secs "$OUT")" == "$(start_line "$dir" expected-secs)" ]] || estimate_record=mismatch
   done
   printf '%s|%s|%s|%s|%s\n' "$result" "$launch" "$run" "$selected" "$estimate_record"
   rm -rf -- "$proj"
@@ -2845,15 +2987,23 @@ SECONDS_ROWS=(
   'above|21|unrequired|2|over-bound expected-secs=21 bound=20|absent|absent|absent|absent'
   'ci within|19|rules|0||scoped|created|subset|absent'
   'ci above|21|rules|2|over-bound expected-secs=21 bound=20|absent|absent|absent|absent'
+  'held missing||queue-required|0||full|created|all|absent|held-first-push'
+  'held below|19|queue-required|0||full|created|all|19|held-first-push'
+  'held equal|20|queue-required|0||full|created|all|20|held-first-push'
+  'held above|21|queue-required|2|over-bound expected-secs=21 bound=20|absent|absent|absent|absent|held-first-push'
 )
 for row in "${SECONDS_ROWS[@]}"; do
-  IFS='|' read -r label estimate world expected <<<"$row"
-  assert_eq "$(selection_seconds_row "$CI_SCRIPT" "$estimate" "$world")" "$expected" \
+  IFS='|' read -r label estimate world rc diagnostic launch created selected estimate_record intent <<<"$row"
+  expected="$rc|$diagnostic|$launch|$created|$selected|$estimate_record"
+  assert_eq "$(selection_seconds_row "$CI_SCRIPT" "$estimate" "$world" "$intent")" "$expected" \
     "selector expected seconds: $label"
 done
 cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.seconds-mutant"
 # shellcheck disable=SC2016 # private production mutation
 mutate_file "$CI_SCRIPT.seconds-mutant" '(( 10#$expected_secs > 10#$timeout_secs ))' false
+assert_eq "$(selection_seconds_row "$CI_SCRIPT.seconds-mutant" 21 queue-required held-first-push)" \
+  '0||full|created|all|21' \
+  'control: ignoring the actual estimate launches held first push above the bound'
 for world in unrequired rules; do
   seconds_control="$(selection_seconds_row "$CI_SCRIPT.seconds-mutant" 21 "$world")"
   case "$world" in unrequired) expected='0||full|created|all|absent' ;; rules) expected='0||scoped|created|subset|absent' ;; esac
@@ -3011,6 +3161,11 @@ bound_row() {
     sed -i.bak 's/DEV_VALIDATE_FINDING_PREFIX = "echo: "/DEV_VALIDATE_FINDING_PREFIX = ""/' "$proj/kendex.settings.toml"
   fi
   shift 7
+  if [[ " $* " == *' --held-first-push '* ]]; then
+    sed -i.bak 's/^ORCH_PR_ORDER = .*/ORCH_PR_ORDER = "push-first"/' "$proj/kendex.settings.toml"
+    git -C "$proj" add -A
+    git -C "$proj" -c user.name=t -c user.email=t@example.com commit -q -m policy
+  fi
   ci_world unrequired
   RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STUB_MEASURED=true STUB_PATHS="$paths" \
     run_script "$script" --worktree "$proj" --poll 1 "$@"
@@ -3034,6 +3189,7 @@ BOUND_ROWS=(
   "a run an earlier run's bound answered, which ran nothing, is no evidence|docs/a.md|full|docs/a.md|20||bound-run=/elsewhere|--|full|$OK|full|"
   "a fresh request runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--fresh|full|$OK|full|"
   "a merge-group reproduction runs its command whatever the evidence|docs/a.md|full|docs/a.md|20|||--reproduce|full|$OK|full|"
+  "held first push runs despite prior bound evidence|docs/a.md|full|docs/a.md|20|||--held-first-push|full|$OK|full|"
   "a bound-ended run that recorded no finding prefix is no evidence|docs/a.md|full|docs/a.md|20||no-finding-prefix|--|full|$OK|full|"
   "a ci request that falls back to range keeps its local run after a range run from another base|docs/a.md|range|docs/a.md|20||validate-base=0000000000000000000000000000000000000000|--validate-mode ci --base HEAD|range|$OK|range|"
   "a bound-ended run handed another class is no evidence|docs/a.md|full|docs/a.md|20||class=standard|--|full|$OK|full|"
@@ -3081,8 +3237,10 @@ bound_control 'answered runs taken as evidence' $'    [[ -z "$(start_field "$sta
   "a run an earlier run's bound answered, which ran nothing, is no evidence"
 bound_control '--fresh unread' ' && "$fresh" == false' '' \
   'a fresh request runs its command whatever the evidence'
-bound_control '--reproduce not implying --fresh' $'[[ "$reproduce" == false ]] || fresh=true\n' '' \
+bound_control '--reproduce not implying --fresh' $'    fresh=true\n    ;;\n  held-first-push)' $'    : # fresh=true\n    ;;\n  held-first-push)' \
   'a merge-group reproduction runs its command whatever the evidence'
+bound_control 'held first push not implying fresh' $'    fresh=true\n    ;;\n  *) die invalid-local-intent' $'    : # fresh=true\n    ;;\n  *) die invalid-local-intent' \
+  'held first push runs despite prior bound evidence'
 bound_control 'a missing finding prefix read as none' '  [[ -n "$prefix" ]] || return 0' '  [[ -n "$prefix" ]] || return 1' \
   'a bound-ended run that recorded no finding prefix is no evidence'
 bound_control 'no base rule' $'    [[ "$(start_field "$start_file" validate-base)" == "$7" ]] || continue\n' '' \
