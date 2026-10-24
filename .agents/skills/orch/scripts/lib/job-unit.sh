@@ -40,7 +40,9 @@
 #       --cap is the unit's RuntimeMaxSec, from the timeout the caller already
 #       has: set above that bound plus the kill grace, so the job's own bound
 #       fires first. A job with no timeout, which runs until it is stopped,
-#       passes none, and its unit has no RuntimeMaxSec.
+#       passes none, and its unit has no RuntimeMaxSec. A launch that would
+#       run under setsid, where no route holds a lifetime bound, refuses a
+#       --cap rather than start a job that outlives it.
 #       --memory-max is the unit's MemoryMax in MiB, in place of the
 #       MemoryHigh the unit otherwise takes from its caller; no process group
 #       holds a memory bound, so a launch that would run under setsid refuses
@@ -52,7 +54,9 @@
 #       no setsid where the fallback needs it (missing-command); 3 usage; 4
 #       the job was not started (launch-failed: setsid's exit status, or a
 #       unit the manager would not describe); 5 --memory-max where the job
-#       would run under setsid (memory-max-unheld, with the runner line).
+#       would run under setsid (memory-max-unheld, with the runner line); 6
+#       --cap where the job would run under setsid (cap-unheld, with the
+#       runner line).
 #   job-unit.sh attach RECORD -- ARGV...
 #       Run ARGV attached: a child of this process, in its session, working
 #       directory and environment, that leads a process group of its own,
@@ -209,13 +213,13 @@ job_unit_read() { # RECORD
 }
 
 job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
-  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger memory_max="" load nofile name arg slice cgroup_dir cap
+  local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger memory_max="" cap_secs="" load nofile name arg slice cgroup_dir cap
   local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -lt 2 ]] || shift 2
   while [[ "${1:-}" == --cap || "${1:-}" == --memory-max ]] && [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; do
     case "$1" in
-      --cap) unit_props+=(-p "RuntimeMaxSec=$2") ;;
+      --cap) unit_props+=(-p "RuntimeMaxSec=$2"); cap_secs="$2" ;;
       --memory-max) unit_props+=(-p "MemoryMax=${2}M"); memory_max="$2" ;;
     esac
     shift 2
@@ -311,6 +315,7 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
     JOB_UNIT_LINE="runner=setsid reason=unit-launch-failed detail=${launch_err%%$'\n'*}"
   fi
   [[ -z "$memory_max" ]] || { job_unit_fail memory-max-unheld "$JOB_UNIT_LINE" 5; return; }
+  [[ -z "$cap_secs" ]] || { job_unit_fail cap-unheld "$JOB_UNIT_LINE" 6; return; }
   job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
   # setsid -f returns once it has forked; a status here is a fork it could not
   # make or an argv it could not start.
