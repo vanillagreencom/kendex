@@ -497,10 +497,9 @@ cloud_stall_close() { # ITEM SINCE
   PASS_EVENT=1
 }
 
-# A running or parked lane LANE_AGE_SECS past its record's launched_at, which
-# --relaunch and handoffs keep and a fresh launch after lane-close renews, is
-# reported lane-long once per age interval, its stage the Step line of its
-# status file. Keep the launch with the interval so a fresh launch starts over.
+# Confirmed parked intervals do not advance a lane's active-age interval.
+# Keep the original launch with the reported interval across relaunches and
+# handoffs, so only a fresh launch after lane-close starts reporting over.
 check_lane_long() {
   local entry item launched age paused interval prior rows="${PW_SEEN[0]}" candidates="" timings=""
   local due=()

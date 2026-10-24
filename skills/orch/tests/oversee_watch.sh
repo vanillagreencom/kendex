@@ -1561,7 +1561,9 @@ ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/dependency-own/github"
 mutate_file "$DEPENDENCY_BIN" 'gh pr view "$until" --repo "$repo" --json state' 'gh pr view 2 --repo "$repo" --json state'
 CLOSED_REPEAT_BIN="$(mutant_scripts dependency-closed-repeat/orch oversee-watch)/oversee-watch" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/dependency-closed-repeat/github"
-mutate_file "$CLOSED_REPEAT_BIN" 'if [[ "$key" != "$prior" ]]; then' 'if true; then'
+mutate_file "$CLOSED_REPEAT_BIN" '      if [[ "$key" != "$prior" ]]; then
+        case "$dependency_state" in' '      if true; then
+        case "$dependency_state" in'
 dependency_case() { # NAME OWN_PR DEPENDENCY_STATE [WATCH_BIN]
   parked_fleet "$1"
   jq --arg own "$2" '(.lanes[] | select(.item == "issue-2")).parked |=

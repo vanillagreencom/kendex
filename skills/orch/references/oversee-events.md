@@ -648,7 +648,7 @@ Name the fleet-log cause in the relaunch's own `ruling` row.
 
 ### `lane-long [ITEM] age=[SECONDS] review_rounds=[COUNT] fix_receipts=[COUNT] validation_runs=[COUNT] restacks=[COUNT] repeated_class_rounds=[COUNT] stage=[STEP]`
 
-a `running` or `parked` lane is `ORCH_WATCH_LANE_AGE_SECS` past its record's `launched_at` (default 12600 seconds, 3.5 hours), which `--relaunch` and handoffs keep and a fresh launch after `lane-close` renews; `stage=` is the `Step` line of its status file, `parked`, `unread` or `none`.
+A `running` or `parked` lane reaches `ORCH_WATCH_LANE_AGE_SECS` of active age (default 12600 seconds, 3.5 hours). Active age is elapsed time since the record's original `launched_at` minus the union of confirmed parked intervals, including an open park. `--relaunch` and handoffs keep that launch stamp; a fresh launch after `lane-close` renews it. Unavailable park timing reports unavailable age. `stage=` is the `Step` line of the status file, `parked`, `unread` or `none`.
 
 The repeat schedule is `oversee-watch --help` § `EVENT lane-long`. `review_rounds=` adds the first internal review panel, re-review cycles and comment-review iterations from workflow state. `fix_receipts=` counts `stages` entries whose `kind` is `fix`, not `cycles`, which can count fixed items. `validation_runs=` counts each `dev-validate-run` start in the lane worktree, including finished, bounded and running runs before round acceptance.
 

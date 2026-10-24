@@ -207,7 +207,7 @@ done
 echo "=== lane-long repeats at age intervals across a relaunch and a handoff ==="
 # issue-1 was launched at LAUNCHED; issue-2 an hour later and recorded running
 # an hour after that, so it crosses at the last pass only when aged from its
-# launched_at, not its running_at; issue-3 is parked.
+# launched_at, not its running_at; issue-3 parked after only 1800 active seconds.
 new_case lane_long
 ROOT_1="$(worktree issue-1 status)"
 ROOT_2="$(worktree issue-2 status)"
@@ -220,22 +220,45 @@ long_state() { # STATUS_1 [RUNNING_AFTER_1]
 # crosses it, later passes, the stopped record a handoff leaves, and the
 # relaunch that renews running_at but keeps launched_at.
 for row in "running||12599|" \
-  "running||12600|EVENT lane-long issue-3 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
+  "running||12600|EVENT lane-long issue-1 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running||12660|" "stopped||15000|" "running|15060|15100|" "running|15060|16199|" \
   "running|15060|16200|EVENT lane-long issue-2 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|15060|25199|" \
-  "running|15060|25200|EVENT lane-long issue-3 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
+  "running|15060|25200|EVENT lane-long issue-1 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|25300|25360|" \
   "running|25300|28800|EVENT lane-long issue-2 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|25300|37799|" \
-  "running|25300|37800|EVENT lane-long issue-3 age=37800 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=37800 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
-  "running|25300|63000|EVENT lane-long issue-3 age=63000 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked|EVENT lane-long issue-1 age=63000 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1|EVENT lane-long issue-2 age=59400 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
+  "running|25300|37800|EVENT lane-long issue-1 age=37800 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
+  "running|25300|63000|EVENT lane-long issue-1 age=63000 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1|EVENT lane-long issue-2 age=59400 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1" \
   "running|25300|63060|"; do
   IFS='|' read -r status running age want <<<"$row"
   want="${row#*|*|*|}"
   long_state "$status" "$running"
   watch "$age"
   assert_eq "events=$EVENTS" "events=$want" "a $status issue-1 record ${age}s after launch reports '${want:-nothing}'" "$STUB_DIR/err"
+done
+
+echo "=== confirmed parking freezes the reported interval until active work resumes ==="
+new_case lane_long_park_resume
+ROOT_1="$(worktree issue-1 status)"
+for row in \
+  'parked|12600|EVENT lane-long issue-1 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked' \
+  'parked|18000|' \
+  'running|18000|' \
+  'running|30599|' \
+  'running|30600|EVENT lane-long issue-1 age=25200 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=dev round 1' \
+  'running|30660|'; do
+  IFS='|' read -r status age want <<<"$row"
+  write_state "$(launched issue-1 "$ROOT_1" claude | jq -c --arg status "$status" '
+    .status = $status
+    | if $status == "parked" then
+        .parked = {pr:9,repo:"owner/repo",head:"abc",at:"2026-08-15T13:30:00Z"}
+      else
+        .pauses = [{from:"2026-08-15T13:30:00Z",to:"2026-08-15T15:00:00Z",cause:"parked"}]
+      end')"
+  watch "$age"
+  assert_eq "events=$EVENTS" "events=$want" \
+    "$status at ${age}s preserves confirmed parked time and active-age repeats" "$STUB_DIR/err"
 done
 
 echo "=== lane-long uses the shared default at the threshold ==="
@@ -276,7 +299,7 @@ rounds_case() { # NAME STATE [WATCH_BIN] [MODE]
     fileless)
       write_state "$(launched issue-1 "$root" claude claude-cloud)"
       printf '7\tissue-1\tcloud lane\toctocat\tabc111\t## Lane status\n' > "$STUB_DIR/open.txt" ;;
-    parked) write_state "$(launched issue-1 "$root" claude | jq -c '.status = "parked" | .parked = {pr:9,repo:"owner/repo",head:"abc",at:"2026-08-15T10:30:00Z"}')" ;;
+    parked) write_state "$(launched issue-1 "$root" claude | jq -c '.status = "parked" | .parked = {pr:9,repo:"owner/repo",head:"abc",at:"2026-08-15T13:30:01Z"}')" ;;
     *) write_state "$(launched issue-1 "$root" claude)" ;;
   esac
   WATCH_BIN="${3:-}" watch 12601
@@ -373,7 +396,7 @@ assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_roun
 new_case lane_long_parked_rounds
 : > "$STUB_DIR/host.log"
 HOSTED_ENV=(ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$REMOTE_DISK")
-write_state "$(launched issue-1 /srv/lane/issue-1 claude "$FIXTURE_HOST" | jq -c '.status = "parked" | .parked = {pr:9,repo:"owner/repo",head:"abc",at:"2026-08-15T10:30:00Z"}')"
+write_state "$(launched issue-1 /srv/lane/issue-1 claude "$FIXTURE_HOST" | jq -c '.status = "parked" | .parked = {pr:9,repo:"owner/repo",head:"abc",at:"2026-08-15T13:30:01Z"}')"
 watch 12601 "${HOSTED_ENV[@]}"
 assert_eq "events=$EVENTS" "events=EVENT lane-long issue-1 age=12601 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked" \
   "a parked lane carries unavailable counts" "$STUB_DIR/err"
