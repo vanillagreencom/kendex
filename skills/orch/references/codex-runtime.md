@@ -122,6 +122,26 @@ sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/review-art
 
 Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog). This replaces each background watchdog. Start [waiter-launch.md § Completion](waiter-launch.md#completion)'s foreground poll for each run before polling their sessions. Keep all completion waits inside this turn with `exec_command` and empty `write_stdin` polls, as [§ Delegated round wait](#delegated-round-wait) requires. After every tool return, sweep all run directories for nonempty `wait.exit` files and run § 3.2's filesystem sweep and due actions before the next poll. Read each completed run's `wait.exit` and `wait.log`; § 3.2 owns refusal replacement and § 3.1 owns artifact acceptance. Continue the review workflow in this turn; an agent message alone never releases a watchdog wait.
 
+## Process-owned reviewers
+
+Read when [review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers) receives `alternate-review` from the explicit Codex attached-launch check. This route runs each mandatory canonical domain as a separate Codex session. Panel selection, one-domain waves, original-batch provenance, deadlines, the one re-delegation and artifact acceptance stay with that workflow. An advisory external reviewer cannot replace a required domain.
+
+Use the installed `codex exec` interface: [CLI reference](https://developers.openai.com/codex/cli/reference/). Bind `[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS]` from this lane's current native model/effort and recorded launch selection under [Model class](skill-rules.md#model-class). [lane-launch.sh](../scripts/lib/lane-launch.sh) owns the supported flag spellings. Keep the current launch home and account in the inherited environment, including a private `CODEX_HOME` when the lane uses one. Do not select another model, effort, account, provider or installed executable. A missing CLI, runner or native launch/source binding stops this route and is reported to the caller.
+
+Prepare a fresh `[JOB_DIR]` through [waiter-launch.md § Launch](waiter-launch.md#launch), including its unchanged `launch.sh`. Save the complete `DELEGATION:` prompt as `[JOB_DIR]/delegation.md` with the harness file-write tool. Use the installed canonical role's full instructions and workflow, followed by review-pr's complete unchanged delegation with its exact minted artifact path, concrete range, decisions and re-review context. A role name or shortened review request is insufficient. Launch from the owned worktree:
+
+```bash
+sh "[JOB_DIR]/launch.sh" "[JOB_DIR]/review" sh -c 'exec codex exec --ephemeral [CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS] --output-last-message "$1/last-message.md" - < "$1/delegation.md"' sh "[JOB_DIR]"
+```
+
+This is a transparent job launch: [job-units.md](job-units.md) owns the inherited environment, lifetime, runner identity and stop. Record `review.runner`, `review.exit`, `review.log`, `last-message.md` and the assigned artifact path under the job's exact directory in existing status and ownership prose. The job has no attached agent ID, reusable thread, chat channel or child-wait target. Hold completion through [waiter-launch.md § Completion](waiter-launch.md#completion), substituting `review` for `wait`, and keep § Reviewer round wait's artifact watchdog active. Process completion and actual measurement evidence in the log supply liveness. review-pr § 3 owns all acceptance, failure and deadline actions; neither a launch nor a last message supplies acceptance.
+
+For review-pr § 3.1's process collection, run the exact assigned-file check only after a zero runner exit. `[CHECK_BOUNDARY]` is the original batch's evidence boundary, or its stricter rejection boundary under § 3.2. Read the retained log beside this result. A failed exit read or nonzero execution result supplies no artifact verdict and leaves required evidence unread under that workflow's failure route:
+
+```bash
+sh -c 'code=$(cat "$1/review.exit") || exit 2; case "$code" in 0) ;; *) printf "codex-review: execution-exit=%s\n" "$code" >&2; exit 1 ;; esac; exec .agents/skills/orch/scripts/review-artifact-check --file "$2" "$3" "$4" --issue "$5"' sh "[JOB_DIR]" "[ASSIGNED_ARTIFACT_PATH]" "[WORKTREE_PATH]" "[CHECK_BOUNDARY]" "[ISSUE_ID]"
+```
+
 ## Lane mailbox
 
 A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): a lane idle at its prompt holds no turn, and Codex starts none for a monitor's output. The overseer follows each `lane-mail send` to a Codex lane with `open-terminal --wake` ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)), which resumes the lane's newest session in print mode with one line that runs `lane-mail inbox`. Codex publishes no idle signal, so the wake refuses a lane whose Codex process still runs, as `working` or `unjudged` ([lane-reach.md § Wake refusals](lane-reach.md#wake-refusals)). The wake refuses a hosted Codex lane as `wake-invalid`. Mail to a Codex lane the wake refuses takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).

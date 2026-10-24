@@ -669,6 +669,82 @@ if section pre-panel; then
   fi
 fi
 
+if section codex-alternate; then
+  # review-pr consumes verdict. These native rollouts reproduce the measured
+  # Luna/Sol inputs; the ordinary judge still owns both plain boundaries.
+  while IFS='|' read -r name model tokens window operation evidence reserve want; do
+    transcript="$T/codex-panel"
+    { codex_context "$model"; codex_count "$tokens" "$window"; } > "$transcript"
+    overrides="$ORCH_COMPACTION_OVERRIDES"
+    case "$evidence" in
+      known) ;;
+      absent) overrides='' ;;
+      invalid) overrides=not-json ;;
+      unread) cp "$T/codex-unread" "$transcript" ;;
+      empty) cp "$T/codex-none" "$transcript" ;;
+      missing) transcript="$T/absent-panel" ;;
+      *) echo "lane_context_adapters: evidence=$evidence" >&2; exit 1 ;;
+    esac
+    args=(--reading)
+    case "$operation" in
+      legacy-five | legacy-six) ;;
+      *) args+=("--$operation") ;;
+    esac
+    args+=(codex s1 "$transcript" "$PANEL_BOX" "$T")
+    [[ "$operation" != legacy-six ]] || args+=("")
+    rc=0
+    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$PANEL_HOME/codex" \
+      ORCH_COMPACTION_OVERRIDES="$overrides" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS="$reserve" \
+      "$BASH" "$LIB" "${args[@]}" 2>"$T/panel.err") || rc=$?
+    verdict=''
+    [[ "$rc" != 0 ]] || verdict=$(jq -r '.verdict' <<<"$out")
+    assert_eq "$rc:$verdict" "$want" "Codex admission $name" "$T/panel.err"
+    if [[ "$rc" == 0 && "$evidence" == known && "$window" != null ]]; then
+      assert_eq "$(jq -c '[.decision.tokens,.source.harness,.source.session_id,.source.transcript]' <<<"$out")" \
+        "[$tokens,\"codex\",\"s1\",\"$transcript\"]" "Codex admission binding $name"
+      if [[ "$operation" == attached-launch && "$verdict" == alternate-review ]]; then
+        assert_eq "$(jq -c '[.decision.reserve_applied,.decision.reserve_tokens]' <<<"$out")" \
+          "[true,$reserve]" "Codex admission retains reserve decision $name"
+      fi
+    fi
+  done <<'ROWS'
+luna-fresh|gpt-6-luna|84140|258400|attached-launch|known|150000|0:alternate-review
+luna-reserve-room|gpt-6-luna|82559|258400|attached-launch|known|150000|0:room
+luna-reserve-equal|gpt-6-luna|82560|258400|attached-launch|known|150000|0:alternate-review
+luna-plain-equal|gpt-6-luna|232560|258400|attached-launch|known|150000|0:alternate-review
+luna-plain-due|gpt-6-luna|232561|258400|attached-launch|known|150000|0:due
+sol-reserve-room|gpt-6.1-sol|249999|475000|attached-launch|known|150000|0:room
+sol-reserve-equal|gpt-6.1-sol|250000|475000|attached-launch|known|150000|0:alternate-review
+sol-measured|gpt-6.1-sol|269524|475000|attached-launch|known|150000|0:alternate-review
+sol-successor|gpt-6.1-sol|283010|475000|attached-launch|known|150000|0:alternate-review
+sol-plain-reading|gpt-6.1-sol|319607|475000|attached-launch|known|150000|0:alternate-review
+sol-before-cap|gpt-6.1-sol|399999|475000|attached-launch|known|150000|0:alternate-review
+sol-at-cap|gpt-6.1-sol|400000|475000|attached-launch|known|150000|0:due
+luna-legacy-five|gpt-6-luna|84140|258400|legacy-five|known|150000|0:due
+luna-legacy-six|gpt-6-luna|84140|258400|legacy-six|known|150000|0:due
+luna-checkpoint|gpt-6-luna|84140|258400|checkpoint|known|150000|0:room
+luna-checkpoint-equal|gpt-6-luna|232560|258400|checkpoint|known|150000|0:room
+luna-checkpoint-due|gpt-6-luna|232561|258400|checkpoint|known|150000|0:due
+unknown-point|gpt-6-luna|84140|null|attached-launch|known|150000|2:
+unverified-point|gpt-6-luna|84140|258400|attached-launch|absent|150000|2:
+invalid-point-evidence|gpt-6-luna|84140|258400|attached-launch|invalid|150000|2:
+independent-reserve-cap|gpt-6.1-sol|300000|null|attached-launch|known|150000|0:due
+independent-invalid-window-cap|gpt-6.1-sol|300000|-1|attached-launch|known|150000|0:due
+invalid-window-below-cap|gpt-6-luna|84140|-1|attached-launch|known|150000|2:
+independent-plain-cap|gpt-6.1-sol|400000|null|attached-launch|known|150000|0:due
+unread-usage|gpt-6-luna|84140|258400|attached-launch|unread|150000|2:
+absent-usage|gpt-6-luna|84140|258400|attached-launch|empty|150000|2:
+missing-transcript|gpt-6-luna|84140|258400|attached-launch|missing|150000|2:
+invalid-reserve|gpt-6-luna|84140|258400|attached-launch|known|-1|2:
+zero-reserve|gpt-6-luna|84140|258400|attached-launch|known|0|0:room
+ROWS
+  "$BASH" -c 'source "$1"; lane_context_compaction_flag "$2" copilot auto s1' _ "$LIB" "$PANEL_BOX"
+  out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
+    "$BASH" "$LIB" --attached-launch --reading copilot s1 '' "$PANEL_BOX" "$T")
+  assert_eq "$(jq -c '[.verdict,.decision,.source.compacted]' <<<"$out")" '["due",null,true]' \
+    'automatic compaction keeps the parent handoff'
+fi
+
 if section pi-panel; then
   # A Pi lane runs the pre-panel command from its Bash tool, where no payload
   # names a window. The window comes from the session's record or Pi's own
@@ -834,6 +910,10 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '117965 of 131072 at 90: rc=0 due'
   control reserve-mark-ceiling lane-context.sh 'window_mark=$((($2 * pct + 99) / 100 - $4))' 'window_mark=$(($2 * pct / 100 - $4))' \
     'agent reserve: 67964 of 131072 at 90 with 50000: rc=0 room'
+  control alternate-review lane-context.sh \
+    '    if [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
+    '    if false && [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
+    'Codex admission luna-fresh'
   control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false SOURCE=' \
     'pre-panel fresh transcript 250001: due'
   control launch-only-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if true; then' \

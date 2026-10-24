@@ -1093,7 +1093,10 @@ copilot_reading_pending() {
 # the reading is judged with the agent reserve, for an impending attached
 # launch, which --attached-launch names; --checkpoint, an ordinary
 # checkpoint, uses the plain mark.
-# stdout is the judge's room or due answer, or with --reading one JSON object
+# Explicit Codex attached-launch callers also get alternate-review when only
+# the reserve refuses the launch. review-pr runs that panel through job-unit;
+# the native hook and legacy callers keep the reserve's due answer.
+# stdout is room, due or alternate-review, or with --reading one JSON object
 # carrying `verdict`, `decision` and `source`; an unavailable read exits
 # nonzero. The hook keeps its own callbacks and never enters this arm.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
@@ -1115,8 +1118,9 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   done
   if [ "${1:-}" = --help ]; then
     printf '%s\n' 'Usage: bash lib/lane-context.sh [--attached-launch | --checkpoint] [--reading] HARNESS SESSION TRANSCRIPT BOX PROJECT' \
-      'Print room or due for the current session context. The agent reserve applies, as for an impending attached launch,' \
+      'Print room, due or alternate-review for the current session context. The agent reserve applies, as for an impending attached launch,' \
       'unless --checkpoint asks for the plain mark of an ordinary checkpoint.' \
+      'Explicit Codex --attached-launch returns alternate-review when the plain mark still has room; review-pr uses process-owned reviewers.' \
       '--reading prints the native verdict, decision and source binding as JSON for the handoff record.'
     exit 0
   fi
@@ -1167,6 +1171,17 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
       1) message context-unmeasured window-unavailable; exit 2 ;;
       *) message context-judge invalid-input; exit 2 ;;
     esac
+    if [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then
+      # A reserve-only refusal is not a parent handoff. An unmeasured or invalid
+      # plain reading cannot establish room, even if the reserve proved its cap due.
+      PLAIN_RC=0
+      PLAIN_VERDICT=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK") || PLAIN_RC=$?
+      case "$PLAIN_RC" in
+        0) [ "$PLAIN_VERDICT" != room ] || VERDICT=alternate-review ;;
+        1 | 2) ;;
+        *) message context-judge invalid-input; exit 2 ;;
+      esac
+    fi
   fi
   if [ "$CLI_OUTPUT_READING" = true ]; then
     # Compaction is due before any judgement, so it records no decision.
