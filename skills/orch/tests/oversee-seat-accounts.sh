@@ -11,6 +11,8 @@ source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/lanes-fixture.sh"
 source "$TEST_DIR/lib/growth-state.sh"
 SUCCEED="${OVERSEE_SUCCEED_UNDER_TEST:-$TEST_DIR/../scripts/oversee-succeed}"
+source "$TEST_DIR/../scripts/lib/lane-launch.sh"
+BYPASS="$(launch_choice_permission_write claude)" || exit 1
 TMP_ROOT="$(mktemp -d)" || { echo 'oversee-seat-accounts: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'oversee-seat-accounts: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'oversee-seat-accounts: scratch=resolve-failed' >&2; exit 1; }
@@ -122,7 +124,7 @@ while IFS='|' read -r name credentials provider host accounts_rc cloud_repos hea
   fi
   assert_notice 'the account mark'
   rc=0
-  out="$(run_seat --print-launch-line --harness claude --entry claude::high 2>"$TMP_ROOT/err")" || rc=$?
+  out="$(run_seat --print-launch-line --harness claude --entry claude::high -- "$BYPASS" 2>"$TMP_ROOT/err")" || rc=$?
   assert_eq "$rc" "$pick_rc" "$name: the seat pick answers" "$TMP_ROOT/err"
   if [[ "$pick_rc" == 0 ]]; then
     # oversee-watch stores this shell command verbatim for death recovery.
@@ -140,7 +142,7 @@ while IFS='|' read -r name credentials provider host accounts_rc cloud_repos hea
     assert_eq "$rc" 0 'control: the old reader still answers' "$TMP_ROOT/err"
     assert_contains "$out" 'mark-unmeasured kind=headroom' 'control: the old reader cannot measure the token-only folder' "$TMP_ROOT/err"
     rc=0
-    out="$(SEAT_CACHE=control-state run_seat --print-launch-line --harness claude --entry claude::high 2>"$TMP_ROOT/err")" || rc=$?
+    out="$(SEAT_CACHE=control-state run_seat --print-launch-line --harness claude --entry claude::high -- "$BYPASS" 2>"$TMP_ROOT/err")" || rc=$?
     assert_eq "$rc" 3 'control: the old reader cannot pick the token-only seat' "$TMP_ROOT/err"
     assert_contains "$(cat "$TMP_ROOT/err")" 'unmeasured=1' 'control: the old reader reports its unmeasured folder'
     SUCCEED="$TEST_DIR/../scripts/oversee-succeed"
@@ -150,7 +152,7 @@ while IFS='|' read -r name credentials provider host accounts_rc cloud_repos hea
     mutate_file "$CONTROL/lib/overseer-launch.sh" '[[ "$launch:$pool" != ssh:plan ]]' '[[ "$launch:$pool" != ssh:plan && "$launch:$pool" != cloud-session:cloud-credit ]]'
     SUCCEED="$CONTROL/oversee-succeed"
     rc=0
-    out="$(SEAT_CACHE=control-state run_seat --print-launch-line --harness claude --entry claude::high 2>"$TMP_ROOT/err")" || rc=$?
+    out="$(SEAT_CACHE=control-state run_seat --print-launch-line --harness claude --entry claude::high -- "$BYPASS" 2>"$TMP_ROOT/err")" || rc=$?
     assert_eq "$rc" 3 'control: cloud launch policy rejects the local plan seat' "$TMP_ROOT/err"
     SUCCEED="$TEST_DIR/../scripts/oversee-succeed"
   fi

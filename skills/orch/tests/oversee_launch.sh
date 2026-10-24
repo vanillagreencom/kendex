@@ -373,6 +373,101 @@ listed() { tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$1" || true; }
 recorded_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf 'none'; fi; }
 BRIEF='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
+# Recorded commands must read back both forms the shared account launcher emits.
+recorded_launcher_permission_rows() {
+  source "${1:-$SRC_DIR}/lib/overseer-launch.sh"
+  local SCRIPT_DIR="$SRC_DIR" DEP_ERR="$TMP_ROOT/readback.err"
+  local bin="$TMP_ROOT/readback/bin" harness shape posture launch_home word var cmd form line record status flags
+  local PATH="$TMP_ROOT/readback/bin:$PATH"
+  mkdir -p "$bin"
+  for harness in codex copilot; do
+    printf '#!/bin/sh\nexit 1\n' > "$bin/1$harness"
+    chmod +x "$bin/1$harness"
+    word="$(launch_choice_permission_write "$harness")" || exit 1
+    var="$(lane_env_prefix "$harness" -)" || exit 1
+    var="${var%%=*}"
+    for shape in prefix launcher; do
+      launch_home="$TMP_ROOT/readback/.$harness"
+      [[ "$shape" != launcher ]] || launch_home="$TMP_ROOT/readback/.1$harness"
+      mkdir -p "$launch_home"
+      for posture in recorded prompt-only; do
+        cmd="$harness"
+        [[ "$posture" != recorded ]] || cmd+=" $word"
+        [[ "$harness" != copilot ]] || cmd+=' -i'
+        cmd+=" 'prompt mentions $word'"
+        form="$(lane_launch_form "$cmd" "$harness" "$launch_home")" || return 1
+        line="$(lane_launch_line "$cmd" "$harness" "$var" "$launch_home" "$form")" || return 1
+        record="$(jq -cn --arg home "$launch_home" --arg line "$line" '{home:$home,account:$home,launch_line:$line}')" || return 1
+        status=0
+        ol_record_permission "$record" "$harness" || status=$?
+        flags="${OL_PERMISSION_FLAGS[*]+${OL_PERMISSION_FLAGS[*]}}"
+        local want_form=prefix want_status=1 want_flags=""
+        [[ "$shape" != launcher ]] || want_form="launcher:$bin/1$harness"
+        [[ "$posture" != recorded ]] || { want_status=0; want_flags="$word"; }
+        assert_eq "$form|$status|$flags" "$want_form|$want_status|$want_flags" \
+          "$harness $shape $posture permission reads back from the shared producer" "$DEP_ERR"
+      done
+    done
+  done
+}
+recorded_launcher_permission_rows
+READBACKCTL="$(mutant_scripts readbackctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$READBACKCTL/lib/overseer-launch.sh" \
+  '|| "$form" == "launcher:${LAUNCH_CHOICE_ARGV[i]}"' \
+  '|| ( "$form" == "launcher:${LAUNCH_CHOICE_ARGV[i]}" && 0 == 1 )'
+saved_fail="$FAIL"
+FAIL=0
+recorded_launcher_permission_rows "$READBACKCTL" > "$TMP_ROOT/readback-control.out"
+control_fail="$FAIL"
+FAIL="$saved_fail"
+assert_eq "$((control_fail > 0))" 1 'control: omitting account executable readback fails the producer rows' "$TMP_ROOT/readback-control.out"
+
+predecessor_permission_row() { # POSTURE [OVERSEE_BIN]
+  local posture="$1" pred before word launched=no
+  run_oversee -- launch --wait-secs 20
+  pred="$(recorded pane)"
+  jq --arg posture "$posture" --arg bypass "$BYPASS" '
+    .overseer.launch_line |= (if contains($bypass)
+      then sub($bypass; $posture) else error("permission fixture word absent") end)' \
+    "$FLEET_STATE" > "$TMP_ROOT/permission-state"
+  mv -- "$TMP_ROOT/permission-state" "$FLEET_STATE"
+  before="$(jq -c '.overseer' "$FLEET_STATE")"
+  printf '%s\n' '{"rate_limit":{"primary_window":{"used_percent":20,"reset_at":1785000000,"limit_window_seconds":18000},"secondary_window":null}}' > "$FIXTURE_DIR/.codex.json"
+  LAUNCH_PREF=codex:gpt-6-astra:high OVERSEE_BIN="${2:-}" run_oversee \
+    ORCH_LANE_DIRS="$H/.claude:$H/.codex" -- launch --predecessor "$pred" --wait-secs 20
+  [[ ! -s "$TMP_ROOT/argv.codex" ]] || launched=yes
+  local key=entry-permission-untransferable code=3
+  [[ -n "$posture" ]] || { key=launch-choice-failed; code=1; }
+  word="$(field "$(keyed "$key" "$OUT")" word)"
+  local want_word
+  want_word="$(launch_choice_permission_write codex)" || return 1
+  [[ -n "$posture" ]] || want_word="$BYPASS"
+  assert_eq "$RC|$word|$(listed "$pred")|$launched|$(jq -c '.overseer' "$FLEET_STATE")" \
+    "$code|$want_word|1|no|$before" "predecessor permission ${posture:-absent} refuses without replacement" "$TMP_ROOT/permission.out"
+  local active
+  active="$(recorded pane)"
+  [[ "$(listed "$active")" == 0 ]] || tm kill-window -t "$active"
+  rm -f -- "$FLEET_STATE"
+}
+for posture in '--permission-mode dontAsk' ''; do predecessor_permission_row "$posture"; done
+PREDPERMISSIONCTL="$(mutant_scripts predecessor-permissionctl oversee)" || exit 1
+mutate_file "$PREDPERMISSIONCTL/oversee" '  if [[ -n "$PREDECESSOR" ]]; then' '  if false; then'
+saved_fail="$FAIL"
+FAIL=0
+predecessor_permission_row '--permission-mode dontAsk' "$PREDPERMISSIONCTL/oversee" > "$TMP_ROOT/predecessor-permission-control.out"
+control_fail="$FAIL"
+FAIL="$saved_fail"
+assert_eq "$((control_fail > 0))" 1 'control: fresh-launch permission would replace the restricted predecessor' "$TMP_ROOT/predecessor-permission-control.out"
+if [[ -f "$H/.claude/.claude.json" ]]; then
+  jq --arg cwd "$TMP_ROOT/work" 'del(.projects[$cwd])' "$H/.claude/.claude.json" > "$TMP_ROOT/permission-trust"
+  mv -- "$TMP_ROOT/permission-trust" "$H/.claude/.claude.json"
+fi
+if [[ "${OVERSEE_PERMISSION_ROWS_ONLY:-0}" == 1 ]]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" -eq 0 ]]
+  exit
+fi
+
 echo "=== oversee ==="
 
 # A first launch from outside tmux: the window at the end of the named
@@ -879,7 +974,10 @@ tm kill-window -t "$UNNAMED_PANE"
 # --predecessor names the live recorded overseer: the successor opens beside
 # it, takes its window slot once its turn runs, and the record names it one
 # generation on, with no pending successor left.
+prior_pane="$(recorded pane)"
+[[ "$(listed "$prior_pane")" == 0 ]] || tm kill-window -t "$prior_pane"
 run_oversee -- launch --wait-secs 20
+assert_eq "$RC" 0 'the succession fixture starts a fresh recorded predecessor'
 PRED="$(recorded pane)"
 PRED_GEN="$(recorded generation)"
 PRED_INDEX="$(tm show-options -Av -t fleet base-index)"
@@ -916,6 +1014,8 @@ run_oversee -- launch --wait-secs 20
 PRED="$(recorded pane)"
 PRIOR_RECORD="$(jq -cS .overseer "$FLEET_STATE")"
 PRIOR_LINE="$(recorded launch_line)"
+PENDING_LINE="${PRIOR_LINE/ "$BYPASS"/}"
+PENDING_LINE="${PENDING_LINE%" '$BRIEF'"} $BYPASS '$BRIEF'"
 HOLD_BIN="$TMP_ROOT/hold-create-bin"
 mkdir -p "$HOLD_BIN"
 cat > "$HOLD_BIN/tmux" <<STUB
@@ -945,7 +1045,7 @@ pending_seen() { # [OVERSEE_BIN] — the pending line a --predecessor launch wri
 }
 pending_seen
 assert_eq "$PENDING_SEEN|$(jq -cS .overseer "$FLEET_STATE")|$(overseers)|$(listed "$PRED")|$(tm display-message -p -t "$PRED" '#{window_index}')" \
-  "$PRIOR_LINE|$PRIOR_RECORD|1|1|0" \
+  "$PENDING_LINE|$PRIOR_RECORD|1|1|0" \
   "a --predecessor launch records its successor as pending before it opens, and the abandoned launch puts the record back"
 # A stop the host refuses at the commit point closes the successor and puts
 # the record back: the predecessor keeps running and stays the recorded
@@ -1092,9 +1192,11 @@ STUB
     assert_eq "$RC" 0 "the numeric $form row has a live predecessor"
     predecessor=(--predecessor "$(recorded pane)")
   fi
+  permission_order="$BYPASS;$COMPACT;$QUESTION_OFF"
+  [[ "$verb" != predecessor ]] || permission_order="$COMPACT;$QUESTION_OFF;$BYPASS"
   LAUNCH_PREF=claude:1:high run_oversee -- launch ${predecessor[@]+"${predecessor[@]}"} --wait-secs 20
   assert_eq "$RC|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(recorded_argv)" \
-    "0|1|claude|$H/.eclaude|opus|high|lane=$H/.eclaude;-n;overseer;--model;opus;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
+    "0|1|claude|$H/.eclaude|opus|high|lane=$H/.eclaude;-n;overseer;--model;opus;--effort;high;$permission_order;$BRIEF;" \
     "a numeric $verb preference uses the default preference model under $form"
   conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
   assert_eq "$(grep -c '^preference-deprecated ' <<<"$OUT")|$(field "$conversion" entry)|$(field "$conversion" replacement)|$(field "$(keyed overseer-launch "$OUT")" form)" \
@@ -1338,8 +1440,19 @@ echo "=== resume ==="
 # resume run's output; RESUMED the new pane.
 RESUME_LANES="$H/.claude:$H/.eclaude:$H/.codex:$H/.1copilot"
 lost_record() { # HARNESS ACCOUNT MODEL EFFORT SESSION_ID [CWD] [LAUNCH_LINE]
+  local line="${7:-}" words permission
+  if [[ -z "$line" ]]; then
+    words="$(launch_choice_write "$1" "$3" "$4")" || return 1
+    permission="$(launch_choice_permission_write "$1")" || return 1
+    words+=" $permission"
+    case "$1" in
+      claude) line="claude -n overseer $words '$BRIEF'" ;;
+      copilot) line="copilot $words -i '$BRIEF'" ;;
+      *) line="$1 $words '$BRIEF'" ;;
+    esac
+  fi
   jq --arg server "$SERVER_PID" --arg harness "$1" --arg account "$2" --arg model "$3" --arg effort "$4" \
-    --arg id "$5" --arg cwd "${6:-$WORK_REAL}" --arg line "${7:-lost}" '.overseer = {runtime: "tmux", server: $server, server_start: 1,
+    --arg id "$5" --arg cwd "${6:-$WORK_REAL}" --arg line "$line" '.overseer = {runtime: "tmux", server: $server, server_start: 1,
       pane: "%999", window: "@999", generation: 5, harness: $harness, account: $account, home: $account,
       model: $model, effort: $effort, cwd: $cwd, launch_line: $line, session_id: $id}
       | if $id == "" then del(.overseer.session_id) else . end' "$TMP_ROOT/resume.saved" > "$FLEET_STATE"
@@ -1358,7 +1471,7 @@ resume_row() { # HARNESS ACCOUNT MODEL EFFORT RESUME_WORDS FLAG_WORDS [OVERSEE_B
   local flags n
   flags="$6;$(launch_choice_permission_write "$1")" || { echo "fixture: no $1 permission word in the launch table" >&2; exit 1; }
   n="$(tr ';' '\n' <<<"$flags" | wc -l | tr -d ' ')"
-  lost_record "$1" "$2" "$3" "$4" "native-$1" "$WORK_REAL" "${8:-lost}"
+  lost_record "$1" "$2" "$3" "$4" "native-$1" "$WORK_REAL" "${8:-}"
   OVERSEE_BIN="${7:-}" run_oversee ORCH_LANE_DIRS="$RESUME_LANES" -- resume --wait-secs 20
   RESUMED="$(field "$(keyed resumed "$OUT")" session)"
   printf '%s\n' "$OUT" > "$TMP_ROOT/resume.out"

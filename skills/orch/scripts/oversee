@@ -287,6 +287,7 @@ message() { # KEY FIELD=VALUE...
     preference-class-unread) text='kendex tier-model could not classify the model this entry names, so the model its launch would run is unknown. Nothing was launched. kendex is missing, or it refused this project'"'"'s manifest or personal settings; its words follow. Install or repair kendex, or fix the setting they name.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names clears the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
+    entry-permission-untransferable) text='The recorded predecessor posture cannot carry the target permission word. The entry is skipped before any session opens.' ;;
     successor-lane-excluded) text='' ;;
     successor-status-line) text='The shared installer could not configure this Copilot home or its statusLine fallback. detail names the setup failure and cause names the fallback failure. The entry is skipped.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
@@ -406,6 +407,7 @@ source "$SCRIPT_DIR/lib/lane-state.sh"
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 # shellcheck source=lib/overseer-launch.sh
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
+PREFERENCE_ACTIVE=false
 # shellcheck source=lib/tmux-server.sh
 source "$SCRIPT_DIR/lib/tmux-server.sh"
 
@@ -561,22 +563,20 @@ question_off_read() {
 # The flag words a relaunch of the session RECORD names runs under, into
 # OL_FLAGS: its HARNESS, MODEL and EFFORT, where a Claude record's launch line
 # gives the executable model in place of the record's comparison form, which
-# drops an exact id's window, and the harness's full-bypass words, since the
-# session ran unattended whatever words of its launch the record kept: the
-# words ol_launch_flags keeps beside the recorded model and effort. Returns 1
+# drops an exact id's window, and its recorded permission posture. Returns 1
 # with ol_launch_flags's OL_REASON and OL_FIELDS.
 record_flags() { # RECORD HARNESS MODEL EFFORT
-  local record="$1" harness="$2" model="$3" effort="$4" line words
+  local record="$1" harness="$2" model="$3" effort="$4" line
   if [[ "$harness" == claude ]]; then
     line="$(jq -r '.launch_line // ""' <<<"$record" 2>"$DEP_ERR")" || die state-unwritable field=overseer
     if [[ -n "$line" ]] && ol_command_read claude "$line" && [[ -n "$OL_COMMAND_MODEL" ]]; then
       model="$OL_COMMAND_MODEL"
     fi
   fi
-  words="$(launch_choice_permission_write "$harness")" && launch_choice_shell_words "$words" \
-    || die launch-choice-failed "harness=${harness:-none}"
+  ol_record_permission "$record" "$harness" \
+    || { OL_REASON=launch-choice-failed; OL_FIELDS=(reason=permission-unrecorded "harness=${harness:-none}" "word=$(launch_choice_permission_write "$harness" || true)"); return 1; }
   ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$harness" "$model" "$effort" "" "$harness" \
-    ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"}
+    ${OL_PERMISSION_FLAGS[@]+"${OL_PERMISSION_FLAGS[@]}"}
 }
 
 # The recovery entry into the handover `oversee resume` runs, from the pane
@@ -763,11 +763,19 @@ else
   ol_preference_entries "$(ol_preference)" || die invalid-preference "entry=$OL_BAD_ENTRY"
   (( OL_NAMED > 0 )) || die preference-empty setting=ORCH_OVERSEER_PREFERENCE
 
+  predecessor_harness="" predecessor_flags=()
+  if [[ -n "$PREDECESSOR" ]]; then
+    predecessor_harness="$(jq -r '.harness // ""' <<<"$OL_PRIOR" 2>"$DEP_ERR")" || die state-unwritable field=overseer
+    ol_record_permission "$OL_PRIOR" "$predecessor_harness" \
+      || die launch-choice-failed reason=permission-unrecorded "harness=${predecessor_harness:-none}" "word=$(launch_choice_permission_write "$predecessor_harness" || true)"
+    predecessor_flags=(${OL_PERMISSION_FLAGS[@]+"${OL_PERMISSION_FLAGS[@]}"})
+    OL_WALK_SOURCE_HARNESS="$predecessor_harness" OL_WALK_SOURCE_FLAGS="${predecessor_flags[*]+${predecessor_flags[*]}}"
+  fi
+
   # The walk and the flags are lib/overseer-launch.sh's ol_walk and
-  # ol_launch_flags, the ones `oversee-succeed` takes. A launch here has no
-  # caller entry and no predecessor flags to carry, so every entry is a
-  # preference entry and every command writes the table's words alone; the
-  # walk skips an entry whose harness row names no full-bypass word, pi's.
+  # ol_launch_flags, the ones `oversee-succeed` takes. Every entry here is a
+  # preference entry. A first launch writes the table's posture; a successor
+  # carries the predecessor's recorded posture through the same walk.
   rc=0
   ol_walk "$HEADROOM_TRIGGER" "" "${OL_ENTRIES[@]}" || rc=$?
   for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
@@ -780,7 +788,8 @@ else
          "walled=$OL_WALKED_WALLED" "unmeasured=$OL_WALKED_UNMEASURED" ;;
     *) die "$OL_REASON" "${OL_FIELDS[@]}" ;;
   esac
-  ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" "$OL_PICK_MODEL" "" \
+  ol_launch_flags ${QUESTION_OFF[@]+"${QUESTION_OFF[@]}"} "$OL_HARNESS" "$OL_MODEL" "$OL_EFFORT" "$OL_PICK_MODEL" "${predecessor_harness:-}" \
+    ${predecessor_flags[@]+"${predecessor_flags[@]}"} \
     || die "$OL_REASON" "entry=$OL_CHOSEN" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
   lane_dir="$OL_LANE_DIR"
   ol_command_line "$OL_HARNESS" "$HANDOFF" "$lane_dir" "$CWD" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"} \

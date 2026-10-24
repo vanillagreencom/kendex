@@ -682,6 +682,7 @@ source "$SCRIPT_DIR/lib/lane-model.sh"
 # stop.
 # shellcheck source=lib/overseer-launch.sh
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
+PREFERENCE_ACTIVE=false
 # shellcheck source=lib/watch-pid.sh
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/job-unit.sh
@@ -1185,6 +1186,14 @@ if [[ "$MODE" != dead ]]; then
       claude | codex | copilot | pi) CALLER_HARNESS="$reading_harness" ;;
       *) die harness-unnamed "pane=$CALLER_PANE" ;;
     esac
+  fi
+  if [[ "$MODE" != check && "$OL_CUR_RECORD" != null ]] \
+    && ! launch_choice_permission_present "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}"; then
+    permission_word="$(launch_choice_permission_write "$CALLER_HARNESS")" || permission_word=""
+    if launch_choice_permission_transferable "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}} $permission_word" \
+      && ol_record_permission "$OL_CUR_RECORD" "$CALLER_HARNESS"; then
+      HARNESS_FLAGS+=(${OL_PERMISSION_FLAGS[@]+"${OL_PERMISSION_FLAGS[@]}"})
+    fi
   fi
   # The model passes through the rule a reading takes (lib/lane-context.sh §
   # lane_context_mark_model), so a codex session is judged on its account's
@@ -1864,6 +1873,12 @@ if [[ "$MODE" == dead ]]; then
     message record-unwritten field=overseer step=identity >&2
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
   fi
+  replay_harness="$(jq -r '.harness // ""' <<<"${OL_IDENTITY:-null}" 2>"$DEP_ERR")" \
+    || die record-unread field=harness
+  replay_permission="$(jq -c --arg line "$cmd" '. + {launch_line:$line}' <<<"${OL_IDENTITY:-null}" 2>"$DEP_ERR")" \
+    || die record-unread field=launch_line
+  ol_record_permission "$replay_permission" "$replay_harness" \
+    || die launch-choice-failed reason=permission-unrecorded "harness=${replay_harness:-none}" "word=$(launch_choice_permission_write "$replay_harness" || true)"
   replay_cwd="$(jq -r '.cwd // empty' <<<"${OL_IDENTITY:-null}" 2>/dev/null)" || replay_cwd=""
   [[ -z "$replay_cwd" ]] || CALLER_PATH="$replay_cwd"
 fi
