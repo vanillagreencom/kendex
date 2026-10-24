@@ -6,7 +6,7 @@
 # the verdict from that file, with a cap derived from the setting rather than
 # chosen by the agent. The rows below pin each of those.
 
-set -euo pipefail
+set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 # mutant_scripts and mutate_file, the two halves of the controls below.
@@ -23,7 +23,17 @@ SCRIPTS_DIR="$REPO_ROOT/skills/orch/scripts"
 TMP_ROOT="$(mktemp -d)" || { echo "dev_validate_run: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev_validate_run: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev_validate_run: scratch=resolve-failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'status=$? failed_command=$BASH_COMMAND; [[ $- != *e* ]] || printf "dev_validate_run: exit=%s command=%s\n" "$status" "$failed_command" >&2' ERR
+trap '
+  status=$? failed_command=$BASH_COMMAND
+  if [[ $status != 0 ]]; then
+    printf "dev_validate_run: exit=%s command=%s\n" "$status" "$failed_command" >&2
+    for err in "$TMP_ROOT"/err.*; do
+      [[ ! -f $err ]] || cat -- "$err" >&2
+    done
+  fi
+  rm -rf -- "${TMP_ROOT:?}"
+' EXIT
 
 RUN="$SCRIPTS_DIR/dev-validate-run"
 
@@ -187,6 +197,45 @@ farm_path() { # NAME OMIT...
 }
 
 if [[ "$PART" != selection ]]; then
+echo "=== selection abort diagnostics ==="
+ABORT_DIR="$TMP_ROOT/abort/skills/orch/tests"
+mkdir -p "$ABORT_DIR"
+ln -s "$TEST_DIR/lib" "$ABORT_DIR/lib"
+# Use the suite's setup and run_script without running its other rows.
+awk '/^# The run directory the start line names/ { exit } { print }' \
+  "$TEST_DIR/dev_validate_run.sh" > "$ABORT_DIR/setup"
+for abort_variant in retained silent; do
+  cp "$ABORT_DIR/setup" "$ABORT_DIR/$abort_variant.sh"
+  if [[ "$abort_variant" == silent ]]; then
+    cat >> "$ABORT_DIR/$abort_variant.sh" <<'SH'
+trap - ERR
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+SH
+  fi
+  cat >> "$ABORT_DIR/$abort_variant.sh" <<'SH'
+abort_selection_row() {
+  run_script "$BASH" -c 'printf "abort-stderr\n" >&2; exit 37'
+  (exit "$RC")
+}
+ABORT_GOT="$(abort_selection_row)"
+printf 'pass: 1   fail: 0\n'
+SH
+  run_script "$BASH" "$ABORT_DIR/$abort_variant.sh" selection
+  assert_eq "$RC" 37 "selection abort: $abort_variant preserves raw status" "$ERR"
+  assert_eq "$OUT" '' "selection abort: $abort_variant never reaches the tally" "$ERR"
+  if [[ "$abort_variant" == retained ]]; then
+    if grep -Fxq -- 'dev_validate_run: exit=37 command=ABORT_GOT="$(abort_selection_row)"' "$ERR"; then
+      pass 'selection abort: command and status survive'
+    else
+      fail 'selection abort: command and status survive'
+      dump_stderr "$ERR"
+    fi
+    assert_file_contains "$ERR" 'abort-stderr' 'selection abort: per-call stderr survives cleanup'
+  else
+    assert_eq "$(cat "$ERR")" '' 'must-fail control: removing diagnostics loses command, status and stderr'
+  fi
+done
+
 echo "=== start inventories include legacy runs before round acceptance ==="
 INDEX_PROJ="$(make_proj index-runs 'echo index-run' 20)"
 validate_run_dir "$INDEX_PROJ/tmp/dev-validate-finished" full 0 >/dev/null
