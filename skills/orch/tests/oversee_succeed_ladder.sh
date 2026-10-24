@@ -485,7 +485,7 @@ new_caller codex
 CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=high -a never)
 CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexcaller unset
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)|$(launched codex | sed "s|^$H/.dcodex[^ ]* |dcodex |")|$(grep -cx never "$TMP_ROOT/argv.codex")" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:standard:high source=codex target=claude lane=none|none|dcodex |1" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:standard:high source=codex target=claude word=$BYPASS lane=none|none|dcodex |1" \
   "a codex caller whose permission words cannot cross skips the claude entries and succeeds on codex"
 # Its control: a walk that chooses the claude entry anyway refuses after it,
 # launching nothing.
@@ -547,7 +547,7 @@ claude_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_RO
 CLAUDE_SUCCESSOR="lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$CLAUDE_COMPACT"
 copilot_ladder copilotcaller walled
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(claude_argv)" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:1:high source=copilot target=claude model=claude-opus-5.5 lane=none|$CLAUDE_SUCCESSOR;$BRIEF;" \
+  "0|oversee-succeed: entry-permission-untransferable entry=claude:1:high source=copilot target=claude model=claude-opus-5.5 word=$BYPASS lane=none|$CLAUDE_SUCCESSOR;$BRIEF;" \
   "a Copilot caller onto claude skips the numeric entry and carries no Copilot word onto the claude line"
 # Its controls, one per rule: a walk that hands the caller's other words on,
 # as the cross-harness line once did, puts the Copilot words on the claude
@@ -837,7 +837,7 @@ pi_skip_row() { # [SUCCEED_BIN]
 }
 pi_skip_row
 assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched pi)|$(launched claude | awk '{print $1}')" \
-  "0|oversee-succeed: entry-permission-untransferable entry=pi:pi-claude/claude-opus-5-5:high source=claude target=pi lane=none|none|$H/.fclaude" \
+  "0|oversee-succeed: entry-permission-untransferable entry=pi:pi-claude/claude-opus-5-5:high source=claude target=pi word=none lane=none|none|$H/.fclaude" \
   "a claude caller skips a pi entry no permission posture crosses to"
 # Its control asks the source row alone and opens the forbidden Pi successor.
 PISKIPCTL="$(mutant_scripts piskipctl lib/overseer-launch.sh)" || exit 1

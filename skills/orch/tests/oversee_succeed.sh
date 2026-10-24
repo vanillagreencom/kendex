@@ -3083,7 +3083,7 @@ done
 mv -- "$FLEET_STATE" "$TMP_ROOT/fleet-state.away"
 new_caller "$MARK"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-run_succeed nostate ''
+run_succeed nostate '' -- "$BYPASS"
 assert_eq "$RC|$(keyed --summary handoff-stale "$OUT")|$(overseers)|$(caller_open)" \
   "1|oversee-succeed: handoff-stale path=tmp/handoffs/OVERSEER-HANDOFF.md expected=unknown found=none|0|yes" \
   "a succession without fleet state refuses before opening a successor"
@@ -3191,6 +3191,7 @@ fleet_state
 new_caller "$MARK"
 new_dead_pane
 cp -- "$TMP_ROOT/written-launch-line" "$TMP_ROOT/line-file"
+record_dead_line
 HANDOFF_FIXTURE=off run_succeed handoff-body-replay '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
 assert_eq "$RC|$(overseers)|$(orec generation)|$(dead_open)" '0|1|2|no' \
   'dead recovery replays the saved launch after the body file is removed'

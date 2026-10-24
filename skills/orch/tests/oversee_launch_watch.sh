@@ -819,7 +819,7 @@ cat > "$WSTUBS/succeed" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" >> "$WSTUBS/succeed.args"
 case "\$1" in
-  --print-launch-line) echo "claude -n overseer $BYPASS brief" ;;
+  --print-launch-line) exit 1 ;;
   --check-marks)
     if [ -f "$HARNESS_PIDS/wall-\${TMUX_PANE#%}" ]; then
       echo "oversee-succeed: mark-reached kind=headroom value=0 mark=5 succession=on"
@@ -1102,6 +1102,7 @@ for _ in $(seq 1 300); do
   [[ -z "$DEAD" ]] || break
   sleep 0.1
 done
+printf '%s\n' "$OUT" >> "$TMP_ROOT/work/tmp/oversee-watch.err"
 assert_eq "$RC|${REAL_OLD:+recorded}|${NEW:+restarted}|${DEAD:+dead}|$(grep -c "^--dead-pane $SUCC " "$WSTUBS/succeed.args" 2>/dev/null || true)" \
   "0|recorded|restarted|dead|1" \
   "a successor that dies right after the handover is reported overseer-dead by the watch handed to it, and relaunched" \
@@ -1232,6 +1233,7 @@ for _ in $(seq 1 300); do
 done
 LIVE_PANE=none
 ! watch_pid_live "$FLEET_STATE" || LIVE_PANE="$WATCH_PANE"
+printf '%s\n' "$OUT" >> "$WATCH_ERR_FILE"
 assert_eq "$RC|${HELPER_LINE%% log=*}|$(grep -c '^oversee-watch: auth-failed service=github$' "$WATCH_ERR_FILE" || true)|$(test "$LIVE_PANE" = "$SUCC" && echo claimed || echo unclaimed)" \
   "0|oversee-succeed: watch-restart-failed step=claim|1|unclaimed" \
   "a caller with no GitHub credential hands over a watch that refuses before it claims, reported failed" "$WATCH_ERR_FILE"
