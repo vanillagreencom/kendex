@@ -161,7 +161,7 @@ Store the active set. On a continuation, include retained attempted/live assignm
 
 Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this local batch with state writes enabled. Use § 3.1's acceptance, § 4's disposition and completion, and the continuation proof above when resuming an original batch.
 
-For Codex, prepare each complete `DELEGATION:` message under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), including the target reviewer's full instructions and workflow. A reused thread's fixed runtime instructions must permit that review. For attached review, delegate to every reviewer selected for launch in parallel after current native room and overlap admission, including for each continuation spawn or followup. For process-owned review, prepare the same complete role, workflow and unchanged delegation below in the prompt file required by codex-runtime.md, then launch its single domain wave through that reference. Do not call a collaboration spawn or followup for this process assignment. Preserve existing attempted/live assignments in the active state rather than replacing their ownership. When `EXTERNAL_REVIEW_REQUESTED=true` on a fresh batch, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
+For Codex, prepare each complete `DELEGATION:` message under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), including the target reviewer's full instructions and workflow. A reused thread's fixed runtime instructions must permit that review. For attached review, delegate to every reviewer selected for launch in parallel after current native room and overlap admission, including for each continuation spawn or followup. For process-owned review, prepare the same complete role, workflow and unchanged delegation below in the prompt file required by codex-runtime.md, then pass through Process launch admission below before its single domain wave. Do not call a collaboration spawn or followup for this process assignment. Preserve existing attempted/live assignments in the active state rather than replacing their ownership. When `EXTERNAL_REVIEW_REQUESTED=true` on a fresh batch, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
@@ -191,6 +191,16 @@ Fresh session — you have no memory of earlier cycles. Read your prior report [
 </delegation_format>
 
 `[PRIOR_REPORT_PATH]` is that reviewer's most recent `review-[AGENT]-*.json` from state `json_paths`.
+
+### Process launch admission
+
+Every process-owned initial, later or continuation wave, and the one allowed terminal replacement in § 3.1, enters here immediately before the runtime launch command. Refresh the parent from the same native inputs and inherited launch home used in § 2. Run from the worktree:
+
+```bash
+bash .agents/skills/orch/scripts/lib/lane-context.sh --checkpoint --reading "[HARNESS]" "[SESSION_ID]" "[TRANSCRIPT_PATH]" "[WORKTREE_PATH]/tmp/lane-mail/[ISSUE_ID]" "[WORKTREE_PATH]"
+```
+
+Only a successful `room` result launches the selected process through codex-runtime.md. A `due` result takes § 2's existing checkpoint/publication and provenance-preserving handoff with this latest `decision` and `source`; start no process. A failed or unavailable read starts nothing and reports its cause. Admission re-entry starts no fresh batch and repeats no external availability detection. Keep the full panel, exact assignment, concrete head/range, original token/evidence boundary, accepted-file rechecks and spent allowances. Record an actual first delegation only when the existing runner confirms that job started. Denied or unavailable admission keeps a never-launched domain unlaunched and starts no clock. A replacement keeps its original clock and rejection boundary.
 
 **External review** (only when requested). Run `second-opinion …`; it backgrounds itself and prints when to check. `[RANGE_FLAG]` is `--range [DIFF_RANGE]` with the same concrete endpoints sent internally. Only a missing fix boundary leaves it empty, using the script's own `origin/BASE...HEAD` default: the external lane sits in the scoped panel and takes the panel's boundary.
 
@@ -244,7 +254,7 @@ Wave mode uses this combined write instead, then shuts that reviewer's session d
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.json_paths += ["[PATH]"] | .review_wave_done += ["[AGENT]"]'
 ```
 
-For a process-owned assignment, a terminal failure or rejected artifact is **incomplete**. Its one allowed re-delegation uses a fresh job only after the previous process is terminal, with the same canonical role and complete delegation, exact assigned artifact and § 3.2 rejection boundary. Retain the original first-delegation/deadline and spent allowance; with no message channel, record that limit instead of inventing a ping. A failed replacement or exhausted deadline marks the domain `unresponsive`.
+For a process-owned assignment, a terminal failure or rejected artifact is **incomplete**. Its one allowed re-delegation passes through Process launch admission in § 2.2 and uses a fresh job only after the previous process is terminal, with the same canonical role and complete delegation, exact assigned artifact and § 3.2 rejection boundary. Return there with the existing attempted assignment; do not classify the replacement as a never-launched domain. Retain the original first-delegation/deadline and spent allowance; with no message channel, record that limit instead of inventing a ping. A failed replacement or exhausted deadline marks the domain `unresponsive`.
 
 `ok == false`, including `moving_tree`, after an attached return means the return is **incomplete**, whatever its `File:` path or message body claims. Send that agent **exactly one** re-delegation. A continuation retains any already-spent re-delegation and names its exact assigned path in the message below instead of a new timestamped path. A `moving_tree` refusal requires a new review after development finishes, with a new starting snapshot:
 
@@ -279,7 +289,7 @@ Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] review_wave_done "[AGENT]"
 ```
 
-`OUTSTANDING` empty (`unresponsive` counts as execution resolved, never accepted) → § 3.3 in persistent mode only when no never-launched required domain remains unread; otherwise return to § 2 for admission of that subset. In wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3. A proved continuation keeps its original batch across these launches; ordinary new waves keep § 2.2's fresh-batch rule.
+`OUTSTANDING` empty (`unresponsive` counts as execution resolved, never accepted) → § 3.3 in persistent mode only when no never-launched required domain remains unread; otherwise return to § 2 for admission of that subset. In wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3. Every process-owned next wave passes its Process launch admission before the runtime command; returning here skips neither admission nor the preserved batch ownership. A proved continuation keeps its original batch across these launches; ordinary new waves keep § 2.2's fresh-batch rule.
 
 ### 3.3 Present
 

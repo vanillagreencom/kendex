@@ -738,6 +738,50 @@ missing-transcript|gpt-6-luna|84140|258400|attached-launch|missing|150000|2:
 invalid-reserve|gpt-6-luna|84140|258400|attached-launch|known|-1|2:
 zero-reserve|gpt-6-luna|84140|258400|attached-launch|known|0|0:room
 ROWS
+  # Execute the workflow's shared process admission command twice against
+  # the same native transcript. The second reading must see collection's
+  # newer usage, not the earlier alternate-review decision.
+  checkpoint_command=$(awk '/^### Process launch admission$/ { section=1; next }
+    /^###? / && section { section=0 }
+    section && /^```bash$/ { active=1; next } /^```$/ && active { active=0; next }
+    active && /lane-context.sh/ { print; hits++ }
+    END { if (hits != 1 || active) exit 1 }' "$SCRIPTS_DIR/../workflows/review-pr.md")
+  checkpoint_command="${checkpoint_command/.agents\/skills\/orch\/scripts\/lib\/lane-context.sh/\"$LIB\"}"
+  checkpoint_command="${checkpoint_command//\[HARNESS\]/codex}"
+  checkpoint_command="${checkpoint_command//\[SESSION_ID\]/s1}"
+  checkpoint_command="${checkpoint_command//\[TRANSCRIPT_PATH\]/$T/codex-wave}"
+  checkpoint_command="${checkpoint_command//\[WORKTREE_PATH\]/$T/wave}"
+  checkpoint_command="${checkpoint_command//\[ISSUE_ID\]/fixture-4642}"
+  mkdir -p "$T/wave/tmp/lane-mail/fixture-4642"
+  while IFS='|' read -r name model window before after evidence want; do
+    { codex_context "$model"; codex_count "$before" "$window"; } > "$T/codex-wave"
+    for phase in before after; do
+      overrides="$ORCH_COMPACTION_OVERRIDES"
+      expected=0:room
+      if [[ "$phase" == after ]]; then
+        { codex_context "$model"; codex_count "$after" "$window"; } > "$T/codex-wave"
+        [[ "$evidence" != unread ]] || cp "$T/codex-unread" "$T/codex-wave"
+        [[ "$evidence" != absent ]] || overrides=''
+        expected="$want"
+      fi
+      rc=0
+      out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" ORCH_COMPACTION_OVERRIDES="$overrides" \
+        ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
+        "$BASH" -c "$checkpoint_command" 2>"$T/panel.err") || rc=$?
+      verdict=''
+      [[ "$rc" != 0 ]] || verdict=$(jq -r '.verdict' <<<"$out")
+      assert_eq "$rc:$verdict" "$expected" "process checkpoint $name $phase" "$T/panel.err"
+      if [[ "$rc" == 0 ]]; then
+        assert_eq "$(jq -c '[.decision.reserve_applied,.decision.reserve_tokens,.source.session_id]' <<<"$out")" \
+          '[false,0,"s1"]' "process checkpoint native plain binding $name $phase"
+      fi
+    done
+  done <<'ROWS'
+sol-crossing|gpt-6.1-sol|475000|399999|400000|known|0:due
+luna-crossing|gpt-6-luna|258400|232560|232561|known|0:due
+unavailable-usage|gpt-6-luna|258400|232560|232561|unread|2:
+unavailable-capacity|gpt-6-luna|258400|232560|100000|absent|2:
+ROWS
   "$BASH" -c 'source "$1"; lane_context_compaction_flag "$2" copilot auto s1' _ "$LIB" "$PANEL_BOX"
   out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
     "$BASH" "$LIB" --attached-launch --reading copilot s1 '' "$PANEL_BOX" "$T")
@@ -914,6 +958,9 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '    if [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
     '    if false && [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
     'Codex admission luna-fresh'
+  control process-checkpoint-fresh lane-context.sh '  context_read_and_record "$BOX" ""' \
+    '  context_read_and_record "$BOX" ""; TOKENS=399999 WINDOW=475000' \
+    'process checkpoint sol-crossing after'
   control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false SOURCE=' \
     'pre-panel fresh transcript 250001: due'
   control launch-only-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if true; then' \

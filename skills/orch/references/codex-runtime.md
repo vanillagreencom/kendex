@@ -131,8 +131,12 @@ Use the installed `codex exec` interface: [CLI reference](https://developers.ope
 Prepare a fresh `[JOB_DIR]` through [waiter-launch.md § Launch](waiter-launch.md#launch), including its unchanged `launch.sh`. Save the complete `DELEGATION:` prompt as `[JOB_DIR]/delegation.md` with the harness file-write tool. Use the installed canonical role's full instructions and workflow, followed by review-pr's complete unchanged delegation with its exact minted artifact path, concrete range, decisions and re-review context. A role name or shortened review request is insufficient. Launch from the owned worktree:
 
 ```bash
-sh "[JOB_DIR]/launch.sh" "[JOB_DIR]/review" sh -c 'exec codex exec --ephemeral [CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS] --output-last-message "$1/last-message.md" - < "$1/delegation.md"' sh "[JOB_DIR]"
+sh "[JOB_DIR]/launch.sh" "[JOB_DIR]/review" sh -c 'exec codex exec --ephemeral [CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS] --disable hooks --output-last-message "$1/last-message.md" - < "$1/delegation.md"' sh "[JOB_DIR]"
 ```
+
+The invocation-only `--disable hooks` prevents this separate session from delivering or acknowledging its parent's lane mail. `--ephemeral` controls persistence alone. Keep the override after the current selection flags; change no stored configuration, trust, account or home.
+
+Every launch, including an allowed replacement, requires [review-pr.md § Process launch admission](../workflows/review-pr.md#process-launch-admission) immediately before this command. An earlier `alternate-review` verdict is not a fresh plain-context reading.
 
 This is a transparent job launch: [job-units.md](job-units.md) owns the inherited environment, lifetime, runner identity and stop. Record `review.runner`, `review.exit`, `review.log`, `last-message.md` and the assigned artifact path under the job's exact directory in existing status and ownership prose. The job has no attached agent ID, reusable thread, chat channel or child-wait target. Hold completion through [waiter-launch.md § Completion](waiter-launch.md#completion), substituting `review` for `wait`, and keep § Reviewer round wait's artifact watchdog active. Process completion and actual measurement evidence in the log supply liveness. review-pr § 3 owns all acceptance, failure and deadline actions; neither a launch nor a last message supplies acceptance.
 

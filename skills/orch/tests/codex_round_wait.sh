@@ -16,7 +16,7 @@ caller_pid=""
 cleanup() {
   local runner leader
   if [[ -n "$caller_pid" ]]; then kill -TERM "$caller_pid" 2>/dev/null || true; wait "$caller_pid" 2>/dev/null || true; fi
-  for runner in "$TMP_ROOT"/*/wait.runner "$TMP_ROOT/process-work/tmp"/*/review.runner; do
+  for runner in "$TMP_ROOT"/*/wait.runner "$TMP_ROOT/process-work/tmp"/*/review.runner "$TMP_ROOT"/native-*/tmp/job/review.runner; do
     [[ -f "$runner" ]] || continue
     leader="$(pgrep -f "${runner%.runner} " || true)"
     [[ -z "$leader" || "$leader" == *$'\n'* ]] || "$SKILL_DIR/scripts/lib/job-unit.sh" stop-job "$runner" "$leader" "*${runner%.runner}*" >/dev/null 2>&1 || true
@@ -31,6 +31,105 @@ command -v setsid >/dev/null || { echo 'rowless: codex_round_wait setsid=absent'
 
 awk '/^```sh$/ { active=1; blocks++; next } /^```$/ && active { active=0; next } active { print } END { if (blocks != 1 || active) exit 1 }' \
   "$SKILL_DIR/references/waiter-launch.md" > "$TMP_ROOT/launch.sh"
+
+runtime="${CODEX_RUNTIME_UNDER_TEST:-$SKILL_DIR/references/codex-runtime.md}"
+awk '/^## Process-owned reviewers$/ { section=1; next } /^## / && section { section=0 }
+  section && /^```bash$/ { active=1; next } /^```$/ && active { active=0; next }
+  active && /exec codex exec / { print; hits++ } END { if (hits != 1 || active) exit 1 }' \
+  "$runtime" > "$TMP_ROOT/process-launch"
+awk '/^## Process-owned reviewers$/ { section=1; next } /^## / && section { section=0 }
+  section && /^```bash$/ { active=1; next } /^```$/ && active { active=0; next }
+  active && /exec .*review-artifact-check --file/ { print; hits++ } END { if (hits != 1 || active) exit 1 }' \
+  "$runtime" > "$TMP_ROOT/process-collect"
+
+# Explicit integration route: the installed Codex uses its unchanged inherited
+# account/home. Hook trust and feature overrides are invocation-only. The ordinary suite
+# below uses a controlled executable and needs no model service.
+if [[ "${CODEX_ROUND_WAIT_ONLY:-}" == native-hooks ]]; then
+  native_codex="$(type -P codex)" || { echo 'codex_round_wait: codex=unavailable' >&2; exit 1; }
+  proof_dir="${CODEX_NATIVE_PROOF_DIR:?native proof needs a caller-owned evidence directory}"
+  [[ -d "$proof_dir" && ! -L "$proof_dir" ]] || exit 1
+  printf '%s\n' "$native_codex" > "$proof_dir/executable"
+  [[ "$(cat "$TMP_ROOT/process-launch")" == *' --disable hooks '* ]] || exit 1
+  for native_case in isolated control; do
+    fixture="$TMP_ROOT/native-$native_case"
+    job="$fixture/tmp/job"
+    mkdir -p "$job" "$fixture/.codex/hooks" "$fixture/.agents/skills/orch" "$fixture/.agents/skills/mailbox" "$fixture/offline-home"
+    git -C "$fixture" init -q
+    git -C "$fixture" config gc.auto 0
+    git -C "$fixture" config maintenance.auto false
+    git -C "$fixture" checkout -q -b fixture-4642
+    git -C "$fixture" -c user.name=Test -c user.email=test@example.com -c core.hooksPath=/dev/null commit -q --allow-empty -m fixture
+    mkdir "$fixture/.git/lane-mail"
+    printf '%s\n' "$fixture" > "$fixture/.git/lane-mail/fixture-4642"
+    ln -s "$SKILL_DIR/scripts" "$fixture/.agents/skills/orch/scripts"
+    ln -s "$SKILL_DIR/../mailbox/scripts" "$fixture/.agents/skills/mailbox/scripts"
+    cp "$SKILL_DIR/../../hooks/lane-mail-check.sh" "$fixture/.codex/hooks/lane-mail-check.sh"
+    cat > "$fixture/.codex/hooks/observe.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+payload="$(cat)"
+printf '%s\n' "$payload" >> "$HOOK_PROOF_FIXTURE/hook-events.jsonl"
+before="$(cat "$HOOK_PROOF_FIXTURE/tmp/lane-mail/FIXTURE-4642/to-lane.cursor")"
+rc=0
+LANES_HOME="$HOOK_PROOF_FIXTURE/offline-home" "$BASH" "$HOOK_PROOF_FIXTURE/.codex/hooks/lane-mail-check.sh" <<< "$payload" || rc=$?
+after="$(cat "$HOOK_PROOF_FIXTURE/tmp/lane-mail/FIXTURE-4642/to-lane.cursor")"
+jq -nc --arg before "$before" --arg after "$after" --argjson exit "$rc" \
+  '{before:$before,after:$after,exit:$exit}' >> "$HOOK_PROOF_FIXTURE/hook-cursors.jsonl"
+exit "$rc"
+SH
+    python3 - "$fixture" "$BASH" <<'PY'
+import json, pathlib, shlex, sys
+root = pathlib.Path(sys.argv[1])
+(root / '.codex/config.toml').write_text('[features]\nhooks = true\n')
+command = shlex.join([sys.argv[2], str(root / '.codex/hooks/observe.sh')])
+(root / '.codex/hooks.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [{'type': 'command', 'command': command, 'timeout': 30}]}]}}))
+PY
+    printf '%s\n' 'Synthetic parent directive for hook isolation. Respond only HOOK_PROOF; do not run any tools.' > "$fixture/directive.md"
+    (cd "$fixture" && "$SKILL_DIR/../mailbox/scripts/lane-mail" send --item FIXTURE-4642 --root "$fixture" --directive --file "$fixture/directive.md") > "$job/send.log" 2>&1
+    printf '0\n' > "$fixture/tmp/lane-mail/FIXTURE-4642/to-lane.cursor"
+    cp "$TMP_ROOT/launch.sh" "$job/launch.sh"
+    printf '%s\n' 'This is an isolated hook transport fixture. Run no tools. Respond only HOOK_PROOF. If a Stop hook continues the turn, respond HOOK_PROOF once more without running any tools.' > "$job/delegation.md"
+    launch="$(cat "$TMP_ROOT/process-launch")"
+    launch="${launch//\[JOB_DIR\]/$job}"
+    # Current lane selection is explicit; no auth/config file is inspected.
+    flags='--model gpt-6.1-sol -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust -c features.hooks=true'
+    launch="${launch//\[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS\]/$flags}"
+    if [[ "$native_case" == control ]]; then
+      launch="${launch/ --disable hooks/}"
+    fi
+    # Remove parent project redirections; native HOME and CODEX_HOME, auth,
+    # model and effort stay inherited. Mail ownership is synthetic only.
+    (cd "$fixture" && env -u CLAUDE_PROJECT_DIR -u ORCH_STATE_DIR \
+      LANE_MAIL_ITEM=FIXTURE-4642 HOOK_PROOF_FIXTURE="$fixture" \
+      "$BASH" -c "$launch") > "$job/launch.log" 2>&1
+    rc=0
+    "$TIMEOUT" 300 sh -c 'while [ ! -s "$1/review.exit" ]; do sleep 1; done' sh "$job" || rc=$?
+    if [[ "$rc" != 0 ]]; then
+      cp -R "$fixture/." "$proof_dir/$native_case"
+      echo "codex_round_wait: native-completion=$rc case=$native_case" >&2
+      exit 1
+    fi
+    hook_count=0
+    [[ ! -f "$fixture/hook-events.jsonl" ]] || hook_count="$(jq -s 'length' "$fixture/hook-events.jsonl")"
+    cursor="$(cat "$fixture/tmp/lane-mail/FIXTURE-4642/to-lane.cursor")"
+    exit_code="$(cat "$job/review.exit")"
+    cp -R "$fixture/." "$proof_dir/$native_case"
+    assert_eq "$exit_code" 0 "native $native_case exits normally" "$job/review.log"
+    if [[ "$native_case" == isolated ]]; then
+      assert_eq "$hook_count:$cursor" '0:0' 'native hooks disabled leaves synthetic parent mail unread'
+    else
+      [[ "$hook_count" -gt 0 ]] && pass 'native control executes the trusted hook' || fail 'native control executes the trusted hook'
+      assert_eq "$cursor" 1 'native control hook acknowledges synthetic parent directive'
+      assert_eq "$(jq -s 'any(.[]; .before == "0" and .after == "1" and .exit == 2)' "$fixture/hook-cursors.jsonl")" true \
+        'native callback itself advances the synthetic cursor'
+    fi
+  done
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [[ "$FAIL" == 0 ]]
+  exit
+fi
+
 awk '/^## Delegated round wait$/ { section=1; next } /^## / && section { section=0 } section && /^```bash$/ { active=1; blocks++; next } /^```$/ && active { active=0; next } active { print } END { if (blocks != 1 || active) exit 1 }' \
   "$SKILL_DIR/references/codex-runtime.md" > "$TMP_ROOT/command"
 awk '/^## Reviewer round wait$/ { section=1; next } /^## / && section { section=0 } section && /^```bash$/ { active=1; blocks++; next } /^```$/ && active { active=0; next } active { print } END { if (blocks != 1 || active) exit 1 }' \
@@ -187,15 +286,6 @@ if [[ -z "${CODEX_ROUND_WAIT_ONLY:-}" || "$CODEX_ROUND_WAIT_ONLY" == process ]];
   # controlled executable receives the installed complete role and workflow
   # plus the review-pr delegation. This proves transport, not model obedience
   # to the workflow's panel selection, continuation or deadline instructions.
-  runtime="${CODEX_RUNTIME_UNDER_TEST:-$SKILL_DIR/references/codex-runtime.md}"
-  awk '/^## Process-owned reviewers$/ { section=1; next } /^## / && section { section=0 }
-    section && /^```bash$/ { active=1; next } /^```$/ && active { active=0; next }
-    active && /exec codex exec / { print; hits++ } END { if (hits != 1 || active) exit 1 }' \
-    "$runtime" > "$TMP_ROOT/process-launch"
-  awk '/^## Process-owned reviewers$/ { section=1; next } /^## / && section { section=0 }
-    section && /^```bash$/ { active=1; next } /^```$/ && active { active=0; next }
-    active && /exec .*review-artifact-check --file/ { print; hits++ } END { if (hits != 1 || active) exit 1 }' \
-    "$runtime" > "$TMP_ROOT/process-collect"
   cat > "$TMP_ROOT/bin/codex" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -276,7 +366,7 @@ PY
     assert_eq "$(cat "$job/review.exit")" "$expected_exit" "process $domain $result: terminal exit"
     assert_eq "$(wc -l < "$job/invocations" | tr -d ' ')" 1 "process $domain $result: one job"
     assert_eq "$(jq -c '.' "$job/invocations")" \
-      "[\"exec\",\"--ephemeral\",\"--model\",\"gpt-6.1-sol\",\"-c\",\"model_reasoning_effort=high\",\"--dangerously-bypass-approvals-and-sandbox\",\"--output-last-message\",\"$job/last-message.md\",\"-\"]" \
+      "[\"exec\",\"--ephemeral\",\"--model\",\"gpt-6.1-sol\",\"-c\",\"model_reasoning_effort=high\",\"--dangerously-bypass-approvals-and-sandbox\",\"--disable\",\"hooks\",\"--output-last-message\",\"$job/last-message.md\",\"-\"]" \
       "process $domain $result: native exec instead of attached launch"
     assert_eq "$(cat "$job/account")|$(cat "$job/cwd")" "$TMP_ROOT/process-account|$process_work" \
       "process $domain $result: account and owned worktree"
