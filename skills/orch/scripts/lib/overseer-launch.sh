@@ -589,7 +589,7 @@ OL_WALK_SKIPS=() OL_FIELDS=()
 ol_walk_pick_skips() { # ENTRY PICK_RECORD
   local rows lane reason tab=$'\t'
   rows="$(jq -r 'if (.exclusions // [] | length) == 0 then [["none", "no-lane-qualifies"]]
-    else [.exclusions[] | [.config_dir, .reason]] end | .[] | @tsv' <<<"$2" 2>"$DEP_ERR")" || {
+    else [.exclusions[] | [.config_dir, .reason]] end | .[] | @tsv' <<<"$2" 2>>"$DEP_ERR")" || {
     OL_REASON=lanes-failed OL_FIELDS=("entry=$1" step=exclusion-record)
     return 1
   }

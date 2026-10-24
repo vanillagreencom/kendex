@@ -806,12 +806,15 @@ mutate_file "$ENTRYCOUNTCTL/oversee-succeed" '      (( OL_NAMED == 1 ))' '      
 ENTRYMODECTL="$(mutant_scripts entrymodectl oversee-succeed)" || exit 1
 mutate_file "$ENTRYMODECTL/oversee-succeed" \
   '(( ! ENTRY_GIVEN )) || [[ "$MODE" == print ]] || die mode-conflict "mode=$MODE" "entry=$ENTRY_ARG"' ':'
-# NAME|CALLER|ENTRY|FLAGS|MODE|CODEX USAGE|EXIT|KEYS|LINE|SCRIPT (a control)
+ENTRYERRCTL="$(mutant_scripts entryerrctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$ENTRYERRCTL/lib/overseer-launch.sh" '<<<"$2" 2>>"$DEP_ERR"' '<<<"$2" 2>"$DEP_ERR"'
+# NAME|CALLER|ENTRY|FLAGS|MODE|CODEX USAGE|EXIT|KEYS|LINE|SCRIPT (a control)|PICKER KEY
 ENTRY_ROWS="$(printf '%s\n' \
   "claude-codex|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|20|0||$ENTRY_CODEX_LINE|" \
   "codex-claude|codex|claude:fable:high|--dangerously-bypass-approvals-and-sandbox --verbose|--print-launch-line|20|0||$ENTRY_CLAUDE_LINE|" \
   "same-harness|claude|claude:fable:high|--permission-mode dontAsk --verbose|--print-launch-line|20|0||$ENTRY_SAME_LINE|" \
-  "walled|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|95|3|successor-lane-excluded;no-lane-qualifies;||" \
+  "walled|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|95|3|successor-lane-excluded;no-lane-qualifies;|||lanes: no-candidate" \
+  "stderr-control|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|95|3|successor-lane-excluded;no-lane-qualifies;||$ENTRYERRCTL/oversee-succeed|lanes: no-candidate" \
   "restricted|claude|codex:gpt-6-astra:high|--permission-mode dontAsk|--print-launch-line|20|3|entry-permission-untransferable;no-lane-qualifies;||" \
   "malformed|claude|codex:bad model:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||" \
   "two|claude|codex:gpt-6-astra:high,claude:fable:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||" \
@@ -821,7 +824,7 @@ ENTRY_ROWS="$(printf '%s\n' \
   "caller-control|claude|codex:gpt-6-astra:high|--dangerously-skip-permissions --verbose|--print-launch-line|20|0||$ENTRY_CODEX_LINE|$ENTRYCTL/oversee-succeed" \
   "count-control|claude|codex:gpt-6-astra:high,claude:fable:high|--dangerously-skip-permissions|--print-launch-line|20|1|invalid-preference;||$ENTRYCOUNTCTL/oversee-succeed" \
   "mode-control|claude|codex:gpt-6-astra:high||--check-marks|20|1|mode-conflict;||$ENTRYMODECTL/oversee-succeed")"
-while IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage row_rc row_keys row_line row_script; do
+while IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage row_rc row_keys row_line row_script row_picker; do
   fleet_state
   row_lane="CLAUDE_CONFIG_DIR=$H/.claude"
   if [[ "$row_caller" == codex ]]; then
@@ -850,8 +853,11 @@ while IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage
     $row_mode --entry "$row_entry" -- $row_flags) > "$TMP_ROOT/entry.out" 2> "$TMP_ROOT/entry.err" || RC=$?
   OUT="$(cat "$TMP_ROOT/entry.out")"
   row_got_keys="$(sed -n 's/^oversee-succeed: \([^ ]*\).*/\1/p' "$TMP_ROOT/entry.err" | tr '\n' ';')"
-  row_got="$RC|$row_got_keys|$OUT|$(tm list-windows -t fleet -F '#{window_id} #{window_index}')|$(cat "$FLEET_STATE")|$(recorded claude)|$(recorded codex)"
-  row_want="$row_rc|$row_keys|$row_line|$row_layout|$row_state|none|none"
+  # Supervisors relay the failed picker's machine header as well as their own
+  # refusal and exclusion. JSON exclusion parsing must preserve that capture.
+  row_got_picker="$(sed -n 's/^\(lanes: no-candidate\) .*/\1/p' "$TMP_ROOT/entry.err")"
+  row_got="$RC|$row_got_keys|$OUT|$(tm list-windows -t fleet -F '#{window_id} #{window_index}')|$(cat "$FLEET_STATE")|$(recorded claude)|$(recorded codex)|$row_got_picker"
+  row_want="$row_rc|$row_keys|$row_line|$row_layout|$row_state|none|none|$row_picker"
   if [[ -n "$row_script" ]]; then
     if (FAIL=0; assert_eq "$row_got" "$row_want" "$row_name"; (( FAIL == 0 ))) > "$TMP_ROOT/entry-control.out"; then
       fail "$row_name: the entry contract accepts the mutant"
@@ -860,6 +866,10 @@ while IFS='|' read -r row_name row_caller row_entry row_flags row_mode row_usage
     fi
   else
     assert_eq "$row_got" "$row_want" "print entry $row_name" "$TMP_ROOT/entry.err"
+  fi
+  if [[ "$row_name" == stderr-control ]]; then
+    assert_eq "${row_got%|*}|$row_got_picker" "${row_want%|*}|" \
+      'control: truncation loses only the picker header, retaining the refusal and state'
   fi
   case "$row_name" in
     walled|restricted)
