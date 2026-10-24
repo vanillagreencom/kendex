@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Append one progress record to the home handoff's Progress log section.
 
-Usage: progress-log --operation TEXT --result TEXT --decision TEXT --state-change TEXT
+Usage: progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
 
 The record takes the field form of references/long-session.md § Progress
 records. Its id and time come from `date -u` at this call. Run it anywhere in
-the Jarvis home; it writes that home's state/handoff.md. A refusal prints
+the Jarvis home; --handoff selects an absolute or home-relative path and
+defaults to state/handoff.md. A refusal prints
 `progress-log: KEY=VALUE fix=PATH#progress-records` on stderr, exits 2 and
 writes nothing. Keys: field-empty, time-typed, clock-unreadable,
 handoff-missing, handoff-unwritable, handoff-unreadable, section-missing,
@@ -86,6 +87,7 @@ def append(handoff, values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--handoff", type=Path, default=Path("state/handoff.md"))
     for option, field in zip(("--operation", "--result", "--decision", "--state-change"), FIELDS):
         parser.add_argument(option, required=True, help=field)
     args = parser.parse_args()
@@ -97,7 +99,7 @@ def main():
         for field, value in values.items():
             if TYPED_TIME.match(value):
                 raise Refusal("time-typed", field.lower().replace(" ", "-"))
-        identity, stamp = append(home_root(Path.cwd()) / "state/handoff.md", values)
+        identity, stamp = append(home_root(Path.cwd()) / args.handoff, values)
     except Refusal as refusal:
         print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX), file=sys.stderr)
         return 2

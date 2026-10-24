@@ -9,7 +9,7 @@ Read when setting up an assistant home, choosing a home path or starting a conti
 | `AGENTS.md` | Committed | Your standing instructions travel with you. |
 | `skills/own/` | Committed | You are the source. kendex installs your skills from here. |
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](memory.md). |
-| `state/handoff.md` | Committed | The session model writes the current handoff under [Handoff](long-session.md#handoff). |
+| `state/handoff.md` | Committed | Default current handoff; a consumer's home contract may select another path under [Handoff](long-session.md#handoff). |
 | `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](long-session.md#handoff). |
 | Other files under `state/` | Committed | A consumer's file and shell tools write its work here. An app-managed home limits model file and shell writes to this folder. |
 | `${XDG_STATE_HOME:-$HOME/.local/state}/kendex/jarvis/<canonical-home-key>/jarvis-session.json` | Outside the home | The session runtime and the native SessionStart hook write the local controller record. The runtime writes no start-critical record under `state/`. |

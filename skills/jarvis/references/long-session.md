@@ -24,7 +24,7 @@ Each record kind has one home. Write a record to its home, never to the handoff.
 
 Before normal succession, wait for every attached sub-agent this session launched to return in the current turn. Use the harness wait or result tool and collect each result. Record a failed child as failed. Launch an attached child only when the context room holds its return. Otherwise use the orch job runner described in `waiter-launch.md`, Launch, or a separate session. Record its run directory in the handoff. If the session is dead, walled, or cannot read its child state, the emergency handoff names each known unfinished child, its known output location, and any unknown state or location. An output location can be a file path or a harness reply. The successor reads existing child output before repeating the task.
 
-The current handoff is `state/handoff.md` in the [home layout](home-layout.md). Read this contract when writing, reading or checking a handoff or lane result during the [session workflow](../workflows/session.md). Each item has a durable id and a recorded time. The current handoff has these four sections.
+The current handoff defaults to `state/handoff.md` in the [home layout](home-layout.md). A consumer's home contract may name another path. Read this contract when writing, reading or checking a handoff or lane result during the [session workflow](../workflows/session.md). Each item has a durable id and a recorded time. The current handoff has these four sections.
 
 | Section | Required content |
 |---|---|
@@ -58,6 +58,7 @@ Use named fields for each record. Record values rather than a prose account that
 | State change | Set or remove, the handoff section and durable item id, and the changed field names and values. Use none when the action changes no session state. |
 
 - Write each record with `.agents/skills/jarvis/scripts/progress-log --operation TEXT --result TEXT --decision TEXT --state-change TEXT`. It stamps the id and the clock time. The [README](../README.md#control-host-events) states the id form. The State checkpoint's log range uses these ids.
+- When the consumer's home contract names another handoff, add `--handoff PATH`, for example `--handoff state/delegate/handoff.md`. Relative paths start at the home root, including when invoked from a subdirectory; absolute paths select that file. The selected file must exist and contain one Progress log section. Omitting the option selects `state/handoff.md`.
 - A record about a user's message names the message's full id in Operation or Decision. When the record handles a request without a reply, its Decision says `no reply`. `owner-unanswered` then stops listing the message.
 
 ### Lane results
