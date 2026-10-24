@@ -173,7 +173,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source-commit }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
