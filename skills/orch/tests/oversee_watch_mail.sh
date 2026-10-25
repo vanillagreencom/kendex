@@ -15,7 +15,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/growth-state.sh"
 # A direct run keeps every row; run-all bounds each measured group separately.
 PART="${1:-all}"
 case "$PART" in
-  all|delivery|local|hosted|cadence|failures|tracker|tracker_close|tracker_controls|process|long_process) ;;
+  all|delivery|local|hosted|cadence|failures|tracker|tracker_close|tracker_controls|tracker_reactions|process|long_process) ;;
   *) echo "oversee_watch_mail: part-invalid value=$PART" >&2; exit 1 ;;
 esac
 
@@ -1926,7 +1926,7 @@ assert_eq "$(grep -c '^oversee-watch: lane-host-busy ' "$STUB_DIR/lane-mail-busy
 
 # Tracker replies share the mailbox replay guard.
 fi
-if [[ "$PART" == all || "$PART" == tracker || "$PART" == tracker_close || "$PART" == tracker_controls ]]; then
+if [[ "$PART" == all || "$PART" == tracker || "$PART" == tracker_close || "$PART" == tracker_controls || "$PART" == tracker_reactions ]]; then
 TRACKER_MAIL="$(mutant_scripts owner-tracker/orch lane-mail)/lane-mail"
 mkdir -p "$TMP_ROOT/owner-tracker/linear/scripts"
 TRACKER_STUB="$TMP_ROOT/owner-tracker/linear/scripts/linear.sh"
@@ -1976,6 +1976,9 @@ case "$1:$2" in
     cp -- "$5" "$TRACKER_CASE_DIR/posted"
     jq -cn --arg id "question-$(wc -l <"$TRACKER_CASE_DIR/calls" | tr -d ' ')" '{success:true,data:{success:true,comment:{id:$id}}}' ;;
   comments:bulk-list) cat "$TRACKER_CASE_DIR/comments" ;;
+  comments:reaction)
+    [[ ! -f "$TRACKER_CASE_DIR/reaction-fail" ]] || exit 1
+    echo '{"success":true}' ;;
   *) exit 1 ;;
 esac
 STUB
@@ -2218,7 +2221,7 @@ tracker_case() { # ROW WATCH
   if [[ "$row" == enabled || "$row" == no-team || "$row" == replacement || "$row" == restored || "$row" == close ]]; then
     assert_eq "$ACTION_CORRECT" true "$row opens with the resolved first name, action and unchanged body"
   fi
-  if [[ "$row" == due || "$row" == failed-* ]]; then
+  if [[ "$row" == due || "$row" == failed-* || "$row" == reaction-close-failed ]]; then
     jq -c '.deadline = "2000-01-01T00:00:00Z"' \
       "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl" >"$STUB_DIR/due-ask"
     mv -- "$STUB_DIR/due-ask" "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl"
@@ -2247,6 +2250,16 @@ tracker_case() { # ROW WATCH
     {id:"owner-comment", body:"OK", user_email:$email, created_at:$time}]
     + (if $row == "large" then [range(0;512) | {id:("history-" + tostring), body:("Ordinary history " + ("x" * 1024)),
         user_email:"agent@example.test", created_at:"2026-10-01T00:00:00.000Z"}] else [] end))}' >"$STUB_DIR/comments"
+  case "$row" in
+    reaction-failed|reaction-close-failed) touch "$STUB_DIR/reaction-fail" ;;
+    reaction-default)
+      jq '."KEN-7" |= map(select(.id != "owner-comment"))' "$STUB_DIR/comments" >"$STUB_DIR/next"
+      mv -- "$STUB_DIR/next" "$STUB_DIR/comments" ;;
+    reaction-last)
+      jq '."KEN-7" += [{id:"last-comment",body:"Hold",user_email:"owner@example.com",created_at:"2026-10-03T00:00:00.000Z"}]' \
+        "$STUB_DIR/comments" >"$STUB_DIR/next"
+      mv -- "$STUB_DIR/next" "$STUB_DIR/comments" ;;
+  esac
   if [[ "$row" == failed-* && "$row" != failed-read ]]; then
     assert_contains "$(cat "$STUB_DIR/write.err")" "lane-mail: tracker-unwritten issue=KEN-7 cause=${row#failed-}" \
       "$row names its failed operation"
@@ -2284,6 +2297,7 @@ tracker_case() { # ROW WATCH
   [[ "$row" != failed-read ]] || printf 'read\n' >"$STUB_DIR/fail"
   before="$(wc -l <"$STUB_DIR/calls" | tr -d ' ')"
   tracker_pass "$watch"
+  cp -- "$STUB_DIR/tracker.err" "$STUB_DIR/first-pass.err"
   if [[ "$row" == restored ]]; then
     assert_eq "$(jq --rawfile body "$STUB_DIR/old-description" --slurpfile owner "$STUB_DIR/owner" --arg action "$action" \
       '.description == ("**" + ($owner[0].name | split(" ")[0]) + ", what you do:** " + $action + "\n\n" + $body)' \
@@ -2305,6 +2319,49 @@ tracker_case() { # ROW WATCH
   second="$(tracker_answer_count "$id")"
   second=$((second - first))
   TRACKER_FACTS="$first,$second"
+  # Other watch controls deliberately change delivery, outside this assertion.
+  if [[ "$watch" == "$REPO_ROOT/skills/orch/scripts/oversee-watch" || "$watch" == "${REACTION_WATCH:-}" ]]; then
+  case "$row" in
+    enabled|legacy-comment|reaction-failed|reaction-close-failed|reaction-last|reaction-chat|reaction-default|other-author|old-comment)
+      local eyes
+      eyes="$(jq -cs '[.[] | select(.[0:2] == ["comments","reaction"] and .[3] == "eyes" and length == 4) | .[2]]' "$STUB_DIR/calls")"
+      local wanted='["owner-comment"]'
+      case "$row" in
+        reaction-last) wanted='["owner-comment","last-comment"]' ;;
+        reaction-default|other-author|old-comment) wanted='[]' ;;
+      esac
+      assert_eq "$eyes" "$wanted" "$row acknowledges delivered answers once"
+      if [[ "$row" == reaction-failed || "$row" == reaction-close-failed ]]; then
+        assert_contains "$(cat "$STUB_DIR/first-pass.err")" 'oversee-watch: reaction-unwritten comment=owner-comment emoji=eyes' \
+          "$row reports the failed acknowledgement"
+      fi ;;
+  esac
+  fi
+  case "$row" in
+    reaction-last|reaction-chat|reaction-default|reaction-close-failed)
+      case "$row" in
+        reaction-chat)
+          printf 'Chat ruling.\n' >"$STUB_DIR/ruling"
+          tracker_mail send --item overseer --re "$id" --file "$STUB_DIR/ruling" >/dev/null
+          tracker_mail resolve --item overseer --id "$id" >/dev/null ;;
+        reaction-default) tracker_mail resolve --item overseer --id "$id" --default >/dev/null ;;
+        reaction-last) tracker_mail resolve --item overseer --id "$id" >/dev/null ;;
+      esac
+      local closed_reactions wanted='[]'
+      case "$row" in
+        reaction-last) wanted='[["comments","reaction","last-comment","white_check_mark"],["comments","reaction","last-comment","eyes","--remove"]]' ;;
+        reaction-close-failed) wanted='[["comments","reaction","owner-comment","white_check_mark"],["comments","reaction","owner-comment","eyes","--remove"]]' ;;
+      esac
+      closed_reactions="$(jq -cs '[.[] | select(.[0:2] == ["comments","reaction"] and (.[3] == "white_check_mark" or .[4] == "--remove"))]' "$STUB_DIR/calls")"
+      assert_eq "$closed_reactions" "$wanted" "$row marks only the closing ruling"
+      assert_eq "$(tracker_mail pending --item overseer --to owner)" '' "$row closes despite reaction outcomes"
+      if [[ "$row" == reaction-close-failed ]]; then
+        for emoji in white_check_mark eyes; do
+          assert_contains "$(cat "$STUB_DIR/first-pass.err")" "lane-mail: reaction-unwritten comment=owner-comment emoji=$emoji" \
+            "$row reports failed $emoji on close"
+        done
+      fi ;;
+  esac
   if [[ "$row" == due ]]; then
     assert_eq "$(jq -s '[.[] | select(.delivery_id == "linear:owner-comment")] | length' \
       "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")" 1 'tracker reply wins before the deadline close'
@@ -2325,6 +2382,11 @@ tracker_case() { # ROW WATCH
 }
 if [[ "$PART" != tracker_controls ]]; then
 TRACKER_CASES='enabled|1,0
+reaction-failed|1,0
+reaction-close-failed|1,0
+reaction-last|2,0
+reaction-chat|1,0
+reaction-default|0,0
 legacy-comment|1,0
 missing-action|0,0
 empty-action|0,0
@@ -2382,6 +2444,7 @@ large|1,0'
 case "$PART" in
   tracker) TRACKER_CASES="$(awk -F '|' '$1 !~ /^close-/' <<<"$TRACKER_CASES")" ;;
   tracker_close) TRACKER_CASES="$(awk -F '|' '$1 ~ /^close-/' <<<"$TRACKER_CASES")" ;;
+  tracker_reactions) TRACKER_CASES="$(awk -F '|' '$1 ~ /^reaction-/ || $1 == "enabled" || $1 == "legacy-comment" || $1 == "other-author" || $1 == "old-comment"' <<<"$TRACKER_CASES")" ;;
 esac
 TRACKER_ROWS=0
 while IFS='|' read -r row want; do
@@ -2396,6 +2459,36 @@ fi
 fi
 
 NORMAL_TRACKER_MAIL="$TRACKER_MAIL"
+if [[ "$PART" == all || "$PART" == tracker_controls || "$PART" == tracker_reactions ]]; then
+# Each control runs only the answer acknowledgement rows it changes.
+REACTION_WATCH="$(mutant_scripts tracker-reaction/orch oversee-watch)/oversee-watch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-reaction/github"
+mutate_file "$REACTION_WATCH" $'if [[ "$rc" -eq 0 ]]; then\n      OWNER_TRACKER_DELIVERED=1' \
+  $'if true; then\n      OWNER_TRACKER_DELIVERED=1'
+reaction_control_rc=0
+(
+  FAIL=0
+  tracker_case enabled "$REACTION_WATCH"
+  [[ "$FAIL" -eq 0 ]]
+) >"$TMP_ROOT/tracker-reaction-control.out" 2>&1 || reaction_control_rc=$?
+assert_eq "$reaction_control_rc" 1 'control: repeated delivery fails acknowledgement once'
+assert_contains "$(cat "$TMP_ROOT/tracker-reaction-control.out")" \
+  'FAIL  enabled acknowledges delivered answers once' 'control: the once-only acknowledgement assertion runs'
+REACTION_MAIL="$(mutant_scripts tracker-reaction-close/orch lib/mailbox-append.sh)/lane-mail"
+ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-reaction-close/linear"
+mutate_file "${REACTION_MAIL%/*}/lib/mailbox-append.sh" 'for emoji in white_check_mark eyes; do' \
+  'for emoji in white_check_mark eyes; do continue'
+reaction_control_rc=0
+(
+  FAIL=0
+  TRACKER_MAIL="$REACTION_MAIL"
+  tracker_case reaction-last "$REPO_ROOT/skills/orch/scripts/oversee-watch"
+  [[ "$FAIL" -eq 0 ]]
+) >"$TMP_ROOT/tracker-reaction-close-control.out" 2>&1 || reaction_control_rc=$?
+assert_eq "$reaction_control_rc" 1 'control: missing close reactions fail the closing-ruling assertion'
+assert_contains "$(cat "$TMP_ROOT/tracker-reaction-close-control.out")" \
+  'FAIL  reaction-last marks only the closing ruling' 'control: the closing-ruling reaction assertion runs'
+fi
 if [[ "$PART" == all || "$PART" == tracker_controls ]]; then
 SETTINGS_CONTROLS='team|no-team|no-team opens with the resolved first name, action and unchanged body
 fallback|close-unset|close-unset clears the recorded tracker ownership
@@ -2623,7 +2716,7 @@ assert_contains "$(cat "$STUB_DIR/posted")" "ask=$TRACKER_ASK closed (text): App
 assert_eq "$(tracker_mail pending --item overseer --to owner)" '' 'tracker close leaves no pending ask'
 RULING_MAIL="$(mutant_scripts tracker-ruling/orch lib/mailbox-append.sh)/lane-mail"
 ln -s "$TMP_ROOT/owner-tracker/linear" "$TMP_ROOT/tracker-ruling/linear"
-mutate_file "${RULING_MAIL%/*}/lib/mailbox-append.sh" '+ $ruling' '+ ""'
+mutate_file "${RULING_MAIL%/*}/lib/mailbox-append.sh" '+ ($ruling.text // "")' '+ ""'
 "$BASH" -n "${RULING_MAIL%/*}/lib/mailbox-append.sh"
 tracker_case enabled "$REPO_ROOT/skills/orch/scripts/oversee-watch"
 NORMAL_TRACKER_MAIL="$TRACKER_MAIL"

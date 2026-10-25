@@ -18,6 +18,11 @@ Actions:
   create     Create a new comment
   update  Update an existing comment
   delete  Delete a comment
+  reaction   Add or remove the current actor's reaction on a comment
+
+Reaction:
+  comments.sh reaction <comment-id> <emoji-name> [--remove]
+                        Removal leaves other actors' reactions in place.
 
 List:
   comments.sh list <issue-id>
@@ -358,6 +363,35 @@ delete_comment() {
     normalize_mutation_response "$result" "commentDelete" "comment"
 }
 
+comment_reaction() {
+    if [[ $# -lt 2 || $# -gt 3 || -z "${1:-}" || -z "${2:-}" || ( $# -eq 3 && "$3" != --remove ) ]]; then
+        echo 'linear: reaction-arguments usage=comments reaction <comment-id> <emoji-name> [--remove]' >&2
+        return 1
+    fi
+    local comment="$1" emoji="$2" variables result operation=reactionCreate mutation
+    variables=$(jq -cn --arg comment "$comment" --arg emoji "$emoji" '{input:{commentId:$comment,emoji:$emoji}}') || return 1
+    mutation='mutation CommentReaction($input: ReactionCreateInput!) { reactionCreate(input: $input) { success } }'
+    if [[ "${3:-}" == --remove ]]; then
+        # Linear deletes by reaction ID. Resolve only this actor's reaction.
+        variables=$(jq -cn --arg id "$comment" '{id:$id}') || return 1
+        result=$(graphql_query 'query CommentReaction($id: String!) { viewer { id } comment(id: $id) { reactions { id emoji user { id } } } }' "$variables") || return 1
+        local reaction
+        reaction=$(jq -er --arg emoji "$emoji" '
+            .viewer.id as $actor | if $actor == null or .comment == null then error("reaction-unread") else
+            [.comment.reactions[] | select(.emoji == $emoji and .user.id == $actor) | .id] | first // "" end' <<<"$result") || return 1
+        if [[ -z "$reaction" ]]; then printf '{"success":true}\n'; return 0; fi
+        operation=reactionDelete
+        variables=$(jq -cn --arg id "$reaction" '{id:$id}') || return 1
+        mutation='mutation RemoveCommentReaction($id: String!) { reactionDelete(id: $id) { success } }'
+    fi
+    result=$(graphql_query "$mutation" "$variables") || return 1
+    if ! jq -e --arg op "$operation" '.[$op].success == true' <<<"$result" >/dev/null; then
+        printf 'linear: reaction-unwritten comment=%s emoji=%s operation=%s\n' "$comment" "$emoji" "$operation" >&2
+        return 1
+    fi
+    normalize_mutation_response "$result" "$operation" reaction
+}
+
 # Main routing
 action="${1:-help}"
 shift || true
@@ -375,6 +409,9 @@ case "$action" in
         ;;
     bulk-list)
         bulk_list_comments "$@"
+        ;;
+    reaction)
+        comment_reaction "$@"
         ;;
     create)
         if [ -z "${1:-}" ]; then

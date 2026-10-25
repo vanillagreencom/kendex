@@ -2831,7 +2831,11 @@ read_owner_tracker_answers() {
     if [[ "$rc" -ne 0 && "$(head -n 1 "$WORK_DIR/tracker.err")" != lane-mail:\ delivery-repeated=* ]]; then
       echo 'KEN-3624-unread cause=delivery' >&2; return 0
     fi
-    [[ "$rc" -ne 0 ]] || OWNER_TRACKER_DELIVERED=1
+    if [[ "$rc" -eq 0 ]]; then
+      OWNER_TRACKER_DELIVERED=1
+      "$TRACKER" comments reaction "$id" eyes >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" ||
+        printf 'oversee-watch: reaction-unwritten comment=%s emoji=eyes\n' "$id" >&2
+    fi
   done <"$WORK_DIR/tracker-answers"
   OWNER_TRACKER_READ=read
 }

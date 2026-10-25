@@ -347,10 +347,20 @@ owner_tracker_close() { # TRACKER ASK CLOSE_ID WORK DIRECTORY
   # The close guard supplies the ruling from the owner's last answer or the
   # default. Read that record, rather than computing another ruling here.
   ask_id="$(jq -r '.id' <<<"$ask")" || return 1
-  jq -rs --arg id "$close" --arg ask "$ask_id" '
-    ([.[] | select(.kind == "answer" and .re == $ask)] | last | .text // "") as $ruling
-    | .[] | select(.id == $id) | "ask=" + .re + " closed (" + .by + "): " + $ruling' \
+  local ruling delivery emoji
+  ruling="$(jq -cs --arg ask "$ask_id" '[.[] | select(.kind == "answer" and .re == $ask)] | last' "$TO_LANE")" || return 1
+  jq -rs --arg id "$close" --argjson ruling "$ruling" '
+    .[] | select(.id == $id) | "ask=" + .re + " closed (" + .by + "): " + ($ruling.text // "")' \
     "$TO_LANE" >"$work/tracker-comment" || return 1
+  delivery="$(jq -r '.delivery_id // ""' <<<"$ruling")" || return 1
+  case "$delivery" in linear:?*)
+    for emoji in white_check_mark eyes; do
+      local remove=()
+      [[ "$emoji" != eyes ]] || remove=(--remove)
+      "$tracker" comments reaction "${delivery#linear:}" "$emoji" ${remove[@]+"${remove[@]}"} >"$work/tracker.out" 2>"$work/tracker.err" ||
+        printf 'lane-mail: reaction-unwritten comment=%s emoji=%s\n' "${delivery#linear:}" "$emoji" >&2
+    done ;;
+  esac
   "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker.err" || {
     owner_tracker_unwritten "$issue" close-comment; return 0;
   }
