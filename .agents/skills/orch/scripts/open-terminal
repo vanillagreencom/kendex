@@ -432,7 +432,8 @@ export ORCH_MODEL_LINES_HELD=1
 # and unmeasured refusal still apply, and the first with room stops the walk
 # before the marked entry. An entry skipped before any pick is not asked. The
 # entry with room stays walled for this launch; only the marked entry's spend
-# changes.
+# changes. An unread entry also holds the last choice: its failed reading
+# establishes no wall and is never asked the room question.
 # On a named lane, a lanes check refusal judged that entry's harness and model
 # alone, so it skips the entry as a pick exit 3 does: a retired plan leaves a
 # later Pi anthropic/ entry its grant. An exclusion refuses every entry, and a
@@ -440,15 +441,16 @@ export ORCH_MODEL_LINES_HELD=1
 preference_select() {
   local preference_entry preference_rc preference_word preference_record preference_mode="$TERMINAL_MODE"
   local preference_lane_dir preference_pick_args preference_refused=""
-  local preference_index=0 preference_room="" preference_err
+  local preference_index=0 preference_room="" preference_unread="" preference_err
   if [[ -z "$preference_mode" ]]; then
     if tmux_server_named; then preference_mode=tmux; else preference_mode=gui; fi
   fi
   PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
   for preference_entry in "${OL_ENTRIES[@]}"; do
     preference_index=$((preference_index + 1))
-    if [[ "$OL_LAST_CHOICE" == 1 && "$preference_index" -eq "${#OL_ENTRIES[@]}" && -n "$preference_room" ]]; then
-      ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" "last-choice=$preference_entry" "room=$preference_room" >&2
+    if [[ "$OL_LAST_CHOICE" == 1 && "$preference_index" -eq "${#OL_ENTRIES[@]}" && ( -n "$preference_room" || -n "$preference_unread" ) ]]; then
+      ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" "last-choice=$preference_entry" \
+        ${preference_room:+"room=$preference_room"} ${preference_unread:+"unread=$preference_unread"} >&2
       return 1
     fi
     ol_entry_model "$preference_entry" || {
@@ -498,6 +500,7 @@ preference_select() {
         LANE_PICK_RECORD="$preference_record" PREFERENCE_ENTRY="$preference_entry"
         break ;;
       3) ;;
+      4|5|7) preference_unread+="${preference_unread:+,}$preference_entry"; continue ;;
       *) ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" >&2; return 1 ;;
     esac
     [[ "$OL_LAST_CHOICE" == 1 && -z "$preference_room" && "$preference_index" -lt "${#OL_ENTRIES[@]}" ]] || continue
@@ -507,6 +510,9 @@ preference_select() {
     case "$preference_rc" in
       0) preference_room="$preference_entry" ;;
       3) ;;
+      4|5|7)
+        printf '%s\n' "$preference_err" >&2
+        preference_unread+="${preference_unread:+,}$preference_entry" ;;
       *)
         printf '%s\n' "$preference_err" >&2
         ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" "step=last-choice" >&2; return 1 ;;
@@ -515,7 +521,9 @@ preference_select() {
   if [[ -z "$PREFERENCE_ENTRY" && -n "$preference_refused" ]]; then
     ot_message lane-refused "lane=$LANE" "walk=$ORCH_LANE_PREFERENCE" >&2; return 1
   fi
-  [[ -n "$PREFERENCE_ENTRY" ]] || { ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" >&2; return 1; }
+  [[ -n "$PREFERENCE_ENTRY" ]] || {
+    ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" ${preference_unread:+"unread=$preference_unread"} >&2; return 1;
+  }
   ol_model_line "$OL_ENTRY_WARNING"
   ol_launch_flags --question-off "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" "$OL_ENTRY_EFFORT" \
     "$OL_ENTRY_MODEL" "$preference_harness" ${preference_input[@]+"${preference_input[@]}"} || {
