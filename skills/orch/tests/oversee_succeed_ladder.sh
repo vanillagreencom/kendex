@@ -3,7 +3,8 @@
 # ORCH_OVERSEER_PREFERENCE entry names the model its successor runs, on
 # claude, codex, copilot or pi, the pick is judged on the bucket that walls
 # that model, the walk takes the setting's order and no other, and an unset
-# setting walks lib/overseer-launch.sh's default. Run over a real tmux server
+# setting walks lib/overseer-launch.sh's default except at a context mark.
+# Run over a real tmux server
 # on a private socket, as oversee_succeed.sh is; claude, codex, copilot and pi
 # are stubs on PATH, and `lanes pick` answers from the lanes-fixture usage
 # bodies. The
@@ -199,6 +200,80 @@ keyed() { grep -m1 "^oversee-succeed: $1 " <<<"$OUT" || echo none; }
 
 echo "=== oversee-succeed: the model ladder ==="
 
+# The hook's context handoff and an explicit preference exercise the same
+# production resolver. Record, flags and context-only identity cover the
+# sources a real caller supplies before its account model is normalized.
+context_preference_row() { # HARNESS MODEL_SOURCE PREFERENCE [SUCCEED_BIN]
+  local harness="$1" model_source="$2" pref="$3" model permission reading lane_var=CLAUDE_CONFIG_DIR
+  model=claude-fable-5-1 reading=950000:1000000
+  [[ "$harness" != codex ]] || { model=gpt-5.6-sol; reading=250000:258400; lane_var=CODEX_HOME; }
+  permission="$(launch_choice_permission_write "$harness")" || return 1
+  seat claude 10 10 10
+  seat eclaude 10 10 10
+  seat fclaude 10 10 10
+  codex_seat codex 20
+  codex_seat dcodex 20
+  new_caller "$harness" "$model"
+  CALLER_FLAGS=("$permission")
+  case "$model_source" in
+    record)
+      jq -n --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$CALLER_PANE" \
+        --arg harness "$harness" --arg account "$H/.$harness" --arg model "$model" \
+        '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server,
+          server_start: $start, pane: $pane, harness: $harness, account: $account,
+          home: $account, model: $model, effort: "high", cwd: null, launch_line: "recorded"}}' \
+        > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+      ;;
+    flags)
+      lane_context_record "$MAILBOX_DIR" "$harness" 100000 1000000 "" "" "$SERVER_PID $CALLER_PANE"
+      CALLER_FLAGS+=(--model "$model")
+      ;;
+    reading) ;;
+    *) return 1 ;;
+  esac
+  CALLER_LANE="$lane_var=$H/.$harness" \
+    SUCCEED_BIN="${4:-}" run_succeed "context-$harness-$model_source" "$pref" --context "$reading" --harness "$harness"
+  CONTEXT_ACTUAL="$RC|$(caller_open)|$(jq -r '[.overseer.harness, .overseer.model] | join("|")' "$TMP_ROOT/work/tmp/workflow-state-oversee.json")"
+  # The recorded model must also be the model the actual harness received.
+  CONTEXT_ACTUAL+="|$(launched claude | awk '{print $2}')|$(launched codex | awk '{print $2}')"
+  CALLER_FLAGS=("$BYPASS")
+}
+
+for row in \
+  'codex|reading|unset|codex|gpt-5.6-sol||gpt-5.6-sol' \
+  'claude|reading|unset|claude|claude-fable-5-1|claude-fable-5-1|' \
+  'codex|record|unset|codex|gpt-5.6-sol||gpt-5.6-sol' \
+  'codex|flags|unset|codex|gpt-5.6-sol||gpt-5.6-sol' \
+  'codex|reading|claude:standard:high|claude|opus|opus|' \
+  'claude|reading|claude:standard:high|claude|opus|opus|' \
+  'codex|reading|codex:gpt-7-nova:high|codex|gpt-7-nova||gpt-7-nova' \
+  'codex|flags||codex|gpt-5.6-sol||gpt-5.6-sol'; do
+  IFS='|' read -r harness model_source pref expected_harness expected_model expected_claude expected_codex <<<"$row"
+  context_preference_row "$harness" "$model_source" "$pref"
+  assert_eq "$CONTEXT_ACTUAL" "0|no|$expected_harness|$expected_model|$expected_claude|$expected_codex" \
+    "context succession from $harness/$model_source honors preference [$pref]" "$TMP_ROOT/out"
+done
+
+# Run only this changed contract on private mutants: restoring the old
+# default, or losing the context-only model, must redden its assertion.
+CONTEXTCTL="$(mutant_scripts contextctl lib/overseer-launch.sh)" || exit 1
+mutate_file "$CONTEXTCTL/lib/overseer-launch.sh" \
+  '  [[ "${1:-}" != context ]] || fallback=""' '  : # [[ "${1:-}" != context ]] || fallback=""'
+context_preference_row codex record unset "$CONTEXTCTL/oversee-succeed"
+assert_eq "$CONTEXT_ACTUAL" '0|no|claude|opus|opus|' \
+  'control: the old unset default changes a context successor to Claude' "$TMP_ROOT/out"
+control_status=0
+(FAIL=0; assert_eq "$CONTEXT_ACTUAL" '0|no|codex|gpt-5.6-sol||gpt-5.6-sol' 'context continuity'; [[ "$FAIL" -eq 0 ]]) \
+  > "$TMP_ROOT/context-control.log" || control_status=$?
+assert_eq "$control_status" 1 'control: the context continuity assertion rejects the old default'
+CONTEXTMODELCTL="$(mutant_scripts contextmodelctl oversee-succeed)" || exit 1
+mutate_file "$CONTEXTMODELCTL/oversee-succeed" \
+  '    OL_WALK_CALLER_MODEL="$OL_PREFERENCE_CALLER_MODEL"' \
+  '    OL_WALK_CALLER_MODEL="" # OL_WALK_CALLER_MODEL="$OL_PREFERENCE_CALLER_MODEL"'
+context_preference_row codex reading unset "$CONTEXTMODELCTL/oversee-succeed"
+assert_eq "$CONTEXT_ACTUAL" '0|no|codex|||' \
+  'control: losing the context-only model launches the native default' "$TMP_ROOT/out"
+
 # Every claude seat is Fable-walled, .eclaude alone has Opus room, and codex is
 # walled. Under the default ladder the first entry is Opus and that
 # entry takes .eclaude: the seat is judged on the bucket that walls Opus, not
@@ -353,7 +428,7 @@ assert_eq "$RC|$(launched claude)|$(launched codex | awk '{print $2}')" "0|none|
 # opens on Opus, the built-in first entry, and ignores the edit.
 ORDERCTL="$(mutant_scripts orderctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$ORDERCTL/lib/overseer-launch.sh" \
-  '"${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"' '"$OL_DEFAULT_PREFERENCE"'
+  '"${ORCH_OVERSEER_PREFERENCE-$fallback}"' '"$OL_DEFAULT_PREFERENCE"'
 order_row "$ORDERCTL/oversee-succeed"
 assert_eq "$RC|$(launched claude | awk '{print $2}')|$(launched codex)" "0|opus|none" \
   "control: a walk on a built-in order ignores the edited setting"

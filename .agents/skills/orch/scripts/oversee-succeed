@@ -1451,7 +1451,7 @@ build_entries() {
     # The parse is lib/overseer-launch.sh's ol_preference_entries, the one
     # `oversee launch` reads the same setting with, so the two launchers cannot
     # come to admit different entries.
-    ol_preference_entries "$(ol_preference)" || die invalid-preference "entry=$OL_BAD_ENTRY"
+    ol_preference_entries "$(ol_preference "$MARK_KIND")" || die invalid-preference "entry=$OL_BAD_ENTRY"
     ENTRIES=(${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"})
     NAMED_ENTRIES="$OL_NAMED"
     # The walk ALWAYS ends here, whatever the setting says. The caller entry is
@@ -1525,6 +1525,16 @@ walk_entries() {
   OL_WALK_CALLER_PICK_MODEL="$CALLER_MODEL" OL_WALK_CALLER_MODEL="" OL_WALK_CALLER_EFFORT=""
   [[ -z "$OL_CUR_MODEL" ]] || OL_WALK_CALLER_MODEL="$OL_CUR_MODEL" OL_WALK_CALLER_EFFORT="$OL_CUR_EFFORT"
   [[ -z "$CALLER_EXEC_MODEL" ]] || OL_WALK_CALLER_MODEL="$CALLER_EXEC_MODEL"
+  # A bootstrap session may name its model only in the context reading.
+  # With no preference, its context successor must keep that model too.
+  if [[ "$MARK_KIND" == context && -z "${ORCH_OVERSEER_PREFERENCE+x}" \
+    && -z "$OL_WALK_CALLER_MODEL" && -z "$flag_model" ]]; then
+    OL_WALK_CALLER_MODEL="$OL_PREFERENCE_CALLER_MODEL"
+    if [[ -n "$OL_WALK_CALLER_MODEL" ]] \
+      && ! OL_WALK_CALLER_EFFORT="$(launch_choice_effort "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
+      die launch-choice-failed "harness=$CALLER_HARNESS" step=effort-read
+    fi
+  fi
   # A pi successor runs, and so records, the provider-bearing model its
   # caller's account was judged on, in place of a model from the record or
   # the flags that names no provider, so no generation's record holds a
