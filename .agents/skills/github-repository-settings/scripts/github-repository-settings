@@ -62,14 +62,16 @@ fi
 private_file="$(rg_setting KENDEX_ENV_FILE '' '')" || exit 2
 private_file=${private_file:-.env.local}
 location="$(rg_setting GITHUB_STANDARD_CHECK_LOCATION '' "$private_file")" || exit 2
-review="$(rg_setting GITHUB_STANDARD_BOT_REVIEW off "$private_file")" || exit 2
+review_default=off
+[ "$verb" != check ] || review_default=''
+review="$(rg_setting GITHUB_STANDARD_BOT_REVIEW "$review_default" "$private_file")" || exit 2
 case "$location" in
   hosted|local|'') ;;
   *) fail setting GITHUB_STANDARD_CHECK_LOCATION 'Choose hosted or local.' ;;
 esac
-case "$review" in
-  off) output=local ;;
-  on) output=full ;;
+case "$verb:$review" in
+  *:off|check:) output=local ;;
+  *:on) output=full ;;
   *) fail setting GITHUB_STANDARD_BOT_REVIEW 'Choose off or on.' ;;
 esac
 if [ "$verb" = adopt ] && [ -z "$location" ]; then
@@ -77,6 +79,11 @@ if [ "$verb" = adopt ] && [ -z "$location" ]; then
 fi
 if [ "$verb" = check ]; then
   printf 'github-standard-check-location=%s\n' "${location:-unset}" >&2
+  if [ -z "$location" ] && [ -z "$review" ]; then
+    printf '%s\n' 'github-repository-settings: not-adopted=unset' \
+      'Set GITHUB_STANDARD_CHECK_LOCATION and GITHUB_STANDARD_BOT_REVIEW to adopt review-file checks.' >&2
+    exit 0
+  fi
 fi
 status=0
 "$library" "${args[@]}" --repo "$PWD" --output "$output" || status=$?
