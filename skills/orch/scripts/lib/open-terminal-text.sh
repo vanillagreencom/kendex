@@ -52,6 +52,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-separator) text='A tab or newline in the lane path cannot be stored in a claim.' ;;
     lane-harness-missing) text='Select a harness for automatic lane selection.' ;;
     lane-unavailable) text='No lane was selected. For a measured wall, wait for a reset, raise the threshold or select a lane. The keyed lanes: line above names each reading and threshold. Repair the reading named by each unread entry’s keyed lanes: line; a reset does not answer an unread reading. A last-choice field names the ORCH_LANE_PREFERENCE entry marked :last, held because an earlier entry is unread or the entry room names still has projected room below 100% use or Codex credit above the floor. An entry with room stays walled at the launch threshold.' ;;
+    cloud-first-skipped) text='The implicit cloud pick refused this launch. Its cause names the existing account refusal or exclusion. Continue through the inherited route and preference policy in lane-directive.md, Lane preference.' ;;
     invalid-preference) text='ORCH_LANE_PREFERENCE uses the ORCH_OVERSEER_PREFERENCE grammar in kendex.settings.toml.example § Fleet, with @host after the harness and :last after the final entry alone. The named entry is invalid. Nothing was launched.' ;;
     preference-command-invalid) text='A model-free --cmd using ORCH_LANE_PREFERENCE must name the plain harness as its first word. The remaining arguments must suit the selected harness. Name an explicit model to keep an arbitrary shell command unchanged.' ;;
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
@@ -261,14 +262,15 @@ Options:
                     Command selection and settings follow lane-directive.md
                     § Lane preference. --launch-flags beside --cmd are refused
                     as launch-flags-unreachable. Put caller flags inside --cmd.
-  --brief-file PATH The brief a --cmd command places as {brief}: the file's
-                    text less its trailing newlines, the one route for a brief
+  --brief-file PATH The ordinary Claude prompt, or the brief a custom --cmd
+                    places as {brief}: the file's text less its trailing newlines,
+                    the one route for a brief
                     holding any quote, `$` or backtick. Local launches save a
                     snapshot in the worktree git directory and read it when
                     the command executes, so slow shell startup cannot split
-                    the brief into terminal commands. The two come as a pair:
-                    a --brief-file with no --cmd carrying {brief} is refused
-                    as brief-unreferenced outside a cloud-session launch, a {brief} with no --brief-file as
+                    the brief into terminal commands. A custom --cmd that
+                    omits {brief} refuses as brief-unreferenced;
+                    a {brief} with no --brief-file refuses as
                     brief-file-missing, a path that is not a readable file as
                     brief-file-unreadable, and a file holding only whitespace
                     as brief-file-empty.

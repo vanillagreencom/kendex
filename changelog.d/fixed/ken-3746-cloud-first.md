@@ -1,0 +1,1 @@
+- Ordinary Claude fleet launches try eligible cloud credit before inherited VM placement and retain the same model, effort and file brief on VM fallback. Intentional host choices and custom model commands keep their existing route.

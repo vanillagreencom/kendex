@@ -410,13 +410,9 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # need no edit when model versions change. An empty setting names no entries.
 # ORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"
 
-# Lane defaults use harness[@host]:model:effort. @host names a host kind or
-# provider executable path for that entry; without it, the caller's --host or
-# resolved ORCH_LANE_HOST applies. Overseer preferences keep the grammar above.
-# open-terminal walks lanes pick only when --cmd and --launch-flags name no model.
-# The first eligible entry with room supplies the harness, host, model and effort.
-# Eligibility follows references/lane-directive.md § Lane preference. Explicit
-# models keep the caller's route. Unset or empty leaves that route unchanged.
+# Lane defaults use harness[@host]:model:effort. Host choice, implicit cloud
+# eligibility and intentional opt-outs follow references/lane-directive.md
+# § Lane preference. Overseer preferences keep the grammar above.
 # A lane launch names its model, so a lane entry names an exact id or a claude
 # class: a codex or copilot class runs no model and refuses as
 # launch-model-missing until codex list evidence reaches the launch.
@@ -463,8 +459,8 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
 # Minutes a stalled Claude cloud lane may leave its one directive unanswered,
 # nothing pushed, before oversee-watch closes it as cloud-stall-closed for a
-# hosted relaunch on its branch. A fleet that sees repeated cloud stalls drops
-# cloud from ORCH_LANE_PREFERENCE instead of raising this.
+# hosted relaunch on its branch. For repeated cloud stalls use the host opt-out
+# in references/lane-directive.md § Lane preference instead of raising this.
 # ORCH_CLOUD_STALL_MINUTES = "30"
 
 # Age threshold in seconds for lane-long on a running or parked lane.

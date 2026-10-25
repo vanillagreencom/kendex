@@ -79,7 +79,7 @@ Every selected item takes a tier before it launches. `item-tier` assigns it, and
 - `small`: `/orch small [ISSUE_ID]`, which runs [small.md](small.md): the standard session under thin review bounds.
 - `start`: `/orch start [ISSUE_ID]`, the `standard` tier, as the rest of this section states.
 
-A `micro` item launches as a lane like any other, with its model class and effort selected through [Model class](../references/skill-rules.md#delegation), and always with `--cmd`.
+A `micro` item launches as a lane with model class and effort selected through [Model class](../references/skill-rules.md#delegation). Claude uses the ordinary invocation below. Other harnesses carry the complete tier brief through `--brief-file` and their existing `--cmd` template with `{brief}`.
 
 On a hosted fleet it launches only that way, waiting for a free lane ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes).
 
@@ -119,14 +119,20 @@ Every other surface or harness launches as § 1 says, with no inventory or pick.
 
 1. Inventory: `lanes list`. On a control host the inventory is that host's login dirs. On a hosted fleet it also carries the provider's own reading of each account it holds a credential for; the `THROUGH` column, `measured_through` under `--json`, says which credential measured each row, and the two readings of one account can disagree.
 2. Model: read the item's body once. Apply the project-management skill's [SKILL.md § Disposition](../../project-management/SKILL.md#disposition) **Judge the approach**. Record go, change or drop and the short cause-and-effect answer in the launch `ruling` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). The overseer judges directly whether the design choice is consequential or the approach uncertain. Record that review decision in the same ruling. When either holds, carry the brief and an instruction for one one-shot `reviewer-arch` review at launch. The lane runs that review before implementing through [design-review.md § Patch-chain actions](../references/design-review.md#patch-chain-actions), row **Second opinion**. Read `orch-env ORCH_LANE_PREFERENCE ""` as the program's default. Select the model class and effort through [Model class](../references/skill-rules.md#delegation), and keep a model the brief names. Select the model before the lane, because it is what the lane is judged on: an account with plan-wide room can have none left for one model, and choosing the lane first picks an account the launch then opens a usage banner on. Never pick a weaker model because a lane is near its wall: pick another lane. The same read judges span: an item whose Location still names more than one subsystem, as [small.md](small.md)'s opening defines one, or whose body names no Location, goes back to filing under the project-management skill's [SKILL.md](../../project-management/SKILL.md) § Disposition **One landing per subsystem** before it launches, unless its body names why it cannot land in parts. Record that span reason in the same launch ruling.
-3. Choose: when step 2 keeps the program default, skip the explicit pick and use [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference) in step 4. For a sized-up or brief-specified model, or with no preference set, run `lanes pick --harness [HARNESS] --model [MODEL] --json` and launch on the lane it returns rather than naming one by hand. Window thresholds, `binding_bucket`, and the projection rule: `lanes --help`, pick. It returns this fleet's overseer account last, while its projected room exceeds `ORCH_OVERSEER_SEAT_RESERVE_PCT`. The same rule holds a peer fleet's seat while that fleet runs a lane in the shared claim store, and an account the host provider marks `seat=1` for an overseer or Jarvis session on any machine (`lanes --help`, pick). A lane whose windows measure nothing for the model is dropped rather than treated as free. Exit 3 means no lane has room for that model, and nothing launches: [lane-directive.md § No lane has room](../references/lane-directive.md#no-lane-has-room) says what to read, wait on and report.
-4. Launch: use the `handoff.md` § 2 `open-terminal` invocation with `--state-dir [OVERSEE_STATE_DIR]` (§ Lane record), one item per launch. For the program default, pass `--lane auto` and omit model and effort overrides. For an explicit model, pass `--lane [CONFIG_DIR]` from step 3. A fleet launch carries its brief in `--cmd`, so its model, effort and permission flags go inside that command and never in `--launch-flags`; a launch without `--cmd` puts them in `--launch-flags`. [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) holds how `open-terminal` judges the launch and what each refusal licenses.
+3. Choose: when step 2 keeps the program default, skip the explicit pick and use [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference) in step 4. For an ordinary Claude launch with no preference, keep the model and effort selected in step 2 and let step 4 pick the account. For another harness with no preference, or a sized-up or brief-specified model, run `lanes pick --harness [HARNESS] --model [MODEL] --json` and launch on the lane it returns rather than naming one by hand. Window thresholds, `binding_bucket`, and the projection rule: `lanes --help`, pick. It returns this fleet's overseer account last, while its projected room exceeds `ORCH_OVERSEER_SEAT_RESERVE_PCT`. The same rule holds a peer fleet's seat while that fleet runs a lane in the shared claim store, and an account the host provider marks `seat=1` for an overseer or Jarvis session on any machine (`lanes --help`, pick). A lane whose windows measure nothing for the model is dropped rather than treated as free. Exit 3 means no lane has room for that model, and nothing launches: [lane-directive.md § No lane has room](../references/lane-directive.md#no-lane-has-room) says what to read, wait on and report.
+4. Launch: use the `handoff.md` § 2 `open-terminal` invocation with `--state-dir [OVERSEE_STATE_DIR]` (§ Lane record), one item per launch. For inherited placement, omit `--host`. An ordinary Claude program-default launch uses the invocation below: `--lane auto`, native flags in `--launch-flags` and its complete file brief, with no `--cmd`. When a preference supplies its model and effort, omit their overrides. Other harnesses keep their existing `--cmd` templates and prompt flags from handoff, with `{brief}` and `--brief-file`. Use a model-free template with `--lane auto` when a preference supplies the model; otherwise use `--lane [CONFIG_DIR]` from step 3 and put model, effort and permissions inside `--cmd`. A sized-up or brief-specified Claude model keeps that explicit custom-command form. [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) owns admission and refusals.
+
+#### Ordinary Claude invocation
+
+Bind `ORCH_SCRIPTS` to this skill's scripts directory, `OVERSEE_STATE_DIR` to the fleet state, `ITEM` to the item, and `LANE_BRIEF` to its complete file brief. Include the entire item body and tier line. Mark the terminal workflow instruction below as applying to terminal lanes; the cloud launch appends its existing `LAUNCH_SESSION_TEXT` instructions. Set `LANE_FLAGS` to the caller's native permission flags plus the model and effort selected in step 2 when no preference supplies them. Keep `PLACEMENT_ARGS` empty for inherited placement; an intentional host choice supplies `--host` and its value there. Run:
+
+```bash
+"$ORCH_SCRIPTS/open-terminal" --tmux --state-dir "$OVERSEE_STATE_DIR" --harness claude --lane auto --launch-flags "$LANE_FLAGS" --brief-file "$LANE_BRIEF" ${PLACEMENT_ARGS[@]+"${PLACEMENT_ARGS[@]}"} "$ITEM"
+```
 
 The launch cap and its refusals: [lane-directive.md § Caps](../references/lane-directive.md#caps).
 
-Placement: a Claude-class lane tries a Claude cloud entry first while its grant admits it, then the Codex fallback.
-
-Use the preference walk in [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference).
+Placement follows the implicit candidate and explicit host policy in [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference). Read the memory and OOM measurements below before any eligible ordinary Claude launch, because inherited VM placement can select cloud.
 
 Add no cloud session while the control host's available memory is under 2 GB or its kernel `oom_kill` count has risen.
 
@@ -140,7 +146,7 @@ Its directives use the session channel.
 
 The mailbox pass excludes these sessions.
 
-When its pull request is approved, it needs one landing lane on the fleet host.
+When its pull request is approved, follow [Cloud landing](../references/lane-directive.md#cloud-landing).
 
 A Claude cloud review or audit is item work.
 
@@ -148,7 +154,7 @@ Launch it through `open-terminal --host claude-cloud` with its brief file, so it
 
 Before each launch, read `lane-host resolve`; any value but `local` makes a hosted fleet.
 
-A cloud entry uses `--host claude-cloud`; other launches use `--host [HOST]`, subject to the approved cloud landing rule below.
+An intentional cloud choice uses `--host claude-cloud`; other intentional host choices use `--host [HOST]`, subject to the approved cloud landing rule below. Inherited placement uses the ordinary invocation above.
 
 Report any other surface or harness without launching locally.
 
@@ -170,7 +176,7 @@ A lane whose harness has an Arm in [watch-delivery.md](../references/watch-deliv
 
 At the `micro` and `small` tiers each of those reads the tier's `brief=` word where it reads `start`.
 
-A `micro` or `small` item therefore always launches with `--cmd` carrying its brief: `open-terminal`'s own template renders `start` for every tracker and harness pair it handles, so a launch without `--cmd` runs the standard cycle whatever the tier said.
+A `micro` or `small` item carries its complete tier brief in `--brief-file`. Ordinary Claude uses the form above; other harnesses and custom commands pair the file with their existing `--cmd` template and `{brief}`. A launch with neither renders the standard `start` cycle.
 
 Size launch flags to the item, then launch on the § 1 surface.
 
@@ -221,7 +227,14 @@ At a native handoff or an explicit service/scope boundary, use [Source-only cont
 
 ### Recovery relaunch
 
-A dead or walled terminal lane uses native resume, as [lane-directive.md § Recovery relaunch](../references/lane-directive.md#recovery-relaunch) states.
+Use [lane-directive.md § Recovery relaunch](../references/lane-directive.md#recovery-relaunch) for host, preparation, resume and refusal contracts.
+
+1. For a standing source-only handoff, read the native standing record and the retained artifact named by its first `remaining` entry. Load the successor's current protocol and obtain native admission. Follow [start.md § 0](start.md#0-resume-from-a-handoff) and [start-worktree.md § 1 step 3](start-worktree.md#1-open-the-session) through the existing-state branch. Apply [Source-only continuation](../references/oversee-events.md#source-only-continuation) to retained inputs, bindings, costs, opinion status and missing artifacts. Continue only the root-authorized pending action. An unread standing record stops recovery and requires a report; it grants no standard-start restart, new allowance, helper, opinion replay or next phase. An independent prerequisite alone does not authorize a stopped phase to continue.
+2. For terminal recovery, read the saved host capability line from the saved recovery checkout. Require a local lane or an absolute provider executable before any manual prior stop. An unavailable capability read leaves the harness, window and record untouched. Give `pane=verb` recovery to the launcher, without a manual prior stop. A line omitting `pane` retains the local-pane default. Follow the reference's relative-provider refusal.
+3. Start from [handoff.md § 2](handoff.md#2-launch). Add `--relaunch`, the selected `--lane`, the chosen `--launch-flags` and `--state-dir [OVERSEE_STATE_DIR]`. Keep tracker, repository, harness and item arguments. Preserve `--lane-refresh` for a refresh lane and `--live-display` when the record holds `live_display: true`. Omitting either clears its retained declaration. A record carrying `host` supplies `--host [HOST]`, retaining the provider's tree.
+4. When changing harnesses, provide the new brief through `--brief-file` and `--cmd` as handoff requires. Follow the reference's native/custom preparation and prior-retirement contracts; do not infer a successful start from a readable pane alone.
+5. Read the actual launch result. Only `resume-lineless`, from an actual hosted Codex resume, requires a continuation paste. Automatic account recovery passes `--continue-resume`, so the launcher delivers it after confirming resume. For a manual `resume-lineless` result, use [Talking to a lane](../references/oversee-lanes.md#talking-to-a-lane), Pane paste. A fresh start carries its brief and requires no paste.
+
 
 ### Lane record
 
@@ -259,99 +272,26 @@ For an existing surface-2 item, use `workflow-state update-report` to merge into
 
 `mail_root` is the lane's worktree path as its own host sees it, and the lane's status file is `[MAIL_ROOT]/tmp/lane-status-[ISSUE_ID].md`. Every later mailbox call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value and names the root: `lane-mail send --root [MAIL_ROOT] --host`, and `lane-host cat` or `touch`; `lane-close` reads the host from the record. A lane on this host needs neither, and a local lane whose `mail_root` is a worktree of another repository still takes `--root [MAIL_ROOT]`, run from a checkout of that repository: `lane-mail` refuses a cross-repository `send` as `lane-foreign`.
 
-## 4. Watch And Advance
+## 4. Watch and advance
 
-The overseer launch starts one detached repeat watch for the fleet.
-
-Read its events as § Watch delivery states.
-
-A harness that wakes only at a background command's exit reads that same log in single passes.
-
-A hand-opened session with no live watch claim launches its watch by that reference.
-
-The launcher passes the first lane record's `launched_at` as `--since`.
-
-With no lane record, it uses the first watch launch time.
-
-Succession keeps that floor.
-
-A hand-opened session passes the first lane record's `launched_at` as `--since` with its repeat command.
-
-Pass `--state [OVERSEE_STATE]` with the file that [Fleet state address](oversee-takeover.md#fleet-state-address) resolves.
-
-Before every pass, and before every loop that a quiet pass makes, the watch reads every `lanes[]` record whose status is `running`.
-
-It reads the item, its window, and its `mail_root`.
-
-It uses the named host for a record that has one.
-
-Automatic close uses the directory containing `[OVERSEE_STATE]`; each lane's own workflow-state reads keep their lane-specific location.
-
-A lane launch, relaunch, or close while the watch runs needs no watch restart.
-
-Each pass prints every event it found as one block in the shape that `oversee-watch --help` states.
-
-Handle every line, even when its pass exits nonzero.
-
-Fix the cause that stderr names.
-
-The next pass starts after the `--repeat` delay. `lane-close` is the only terminal-lane close-out; [lane-reach.md § Lane close](../references/lane-reach.md#lane-close) holds how it ends a lane, what each refusal asks, and each surface's close.
-
-A successful dead-overseer or walled-overseer succession makes the single pass exit 3.
-
-The repeat command converts that status to 0 and stops after the succession helper receives the complete watch command.
-
-The helper starts and confirms the successor's detached watch even after the old claim is removed.
-
-Notice-only recovery, an exhausted retry, and a blocked recovery that no account in the fleet qualifies for also stop the repeat command with status 0, so a manual replacement starts one new watch and owns the overseer mailbox.
-
-Do not restart the old watch after any of those stops.
-
-For any other exit, fix the cause that stderr names and start it again.
-
-Never hand-roll a monitor.
-
-Without the github skill's watcher, the watch skips its pr-watch step and a `disarmed` or `awaiting-stale` pull request is invisible ([references/gates.md](../references/gates.md) § Multi-PR watching). `LINEAR_TEAM` enables triage.
-
-A fleet that tracks work elsewhere runs the same command and gets one stderr notice that triage is off.
-
-An event block prints only the pr-watch lines whose keys rose in that pass.
-
-A key that clears and recurs is news again.
-
-The heartbeat prints the full latest reducer output.
-
-The watch also reads each repository `ORCH_CONNECTED_REPOS` lists, after the `--repo` values.
-
-Pass the item repository first.
-
-The first repository and `ORCH_CONNECTED_REPOS` feed pr-watch.
-
-Additional `--repo` values feed the existing merge, heartbeat, report and repository checks, but do not add repositories to pr-watch.
-
-The first repository's baseline holds the triage, lane, and merged rows.
-
-With `--state`, each long pass reads the tracker once: `LINEAR_TEAM`'s In Progress, In Review and Verifying items or, with no team, the first repository's open `issue-N` pull requests.
-
-The heartbeat consumes that read.
-
-Verifying boxes and deadlines are printed even for queued or active lane records.
-
-They never become `owed` development work.
-
-```bash
-.agents/skills/orch/scripts/lane-close --state-dir [OVERSEE_STATE_DIR] [ITEM_KEY]
-```
+1. Follow [Watch delivery](../references/watch-delivery.md) to read the detached repeat watch started by the overseer launcher. A hand-opened session with no live watch claim starts one through that reference. A harness that wakes only when a background command exits reads the same log in single passes. Never start a second monitor.
+2. Pass `--state [OVERSEE_STATE]` using [Fleet state address](oversee-takeover.md#fleet-state-address). Set `[FLEET_SINCE]` to the first lane record's `launched_at`, or the first watch launch time when no lane exists. Retain that floor through succession. Put the item repository first; use `ORCH_CONNECTED_REPOS` and further `--repo` arguments under `oversee-watch --help`'s repository contract.
+3. Pass this session's harness, permission, model and effort flags, even with `ORCH_OVERSEER_PREFERENCE` set. Start from the overseer's own pane and retain `TMUX_PANE`. Missing permission flags can leave a successor at a prompt; missing model or effort flags can select harness defaults. A Copilot CLI overseer follows [Overseer succession](../references/copilot-runtime.md#overseer-succession); without `/proc`, register it with `oversee register --account [DIR]` first. The preference grammar lives in [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet; the watch owns entry eligibility, flag transfer, recorded-line precedence and start refusals through its `--help`.
 
 ```bash
 .agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --harness [HARNESS] --repo [ITEMS_REPO] --repo [OTHER_REPO]... -- [FLAGS]
 ```
 
-`[HARNESS]` is the harness this overseer runs, `claude`, `codex`, `copilot` or `pi`; `oversee-succeed --help`, `--harness`, states when a pane needs it. A Copilot CLI overseer's account and marks follow [copilot-runtime.md § Overseer succession](../references/copilot-runtime.md#overseer-succession); on a host without `/proc`, register it with `oversee register --account [DIR]` first. `[FLAGS]` are the permission flags this overseer runs under, plus its current model and effort flags. Pass all of them even when `ORCH_OVERSEER_PREFERENCE` is set. The watch records this session. A caller or print entry keeps the flags whole except the question-tool words, which a successor carries exactly when `ORCH_QUESTION_TOOL` is off, its default. A named same-harness entry replaces model and effort but keeps the permission words exact. A named cross-harness entry requires one full-bypass mode with an exact equivalent, and no other permission word, writes the target harness's spelling and carries no other word of the caller's; none crosses to or from `pi`, whose row has no permission word. Under any other permission posture, the walk skips that entry, with `entry-permission-untransferable` on stderr, and goes on to the next one, ending at the caller's own harness. Numeric model selection and eligibility follow [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet. The record binds the launch line to the tmux server, pane and window because a dead pane names neither its model nor its account. Start the watch from the overseer's own pane, with `TMUX_PANE` as that pane's shell sets it, and never unset it: a watch with no pane judges no overseer. A record the start cannot build or write, `overseer-line-missing` or `overseer-unrecorded`, is a notice on stderr and in the fleet log, never a stop: the watch still judges the pane, a wall picks its own account, and a death relaunches from the line the fleet state already holds where its record names this pane by server, server start and pane id, the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand in the same pane may not have been started with, and the start's `held=` field names it; a record naming another pane, or none, reports the death with no successor and names that record. Missing permission flags can stop a caller-entry successor at a prompt. Missing model or effort flags can relaunch it with harness defaults. Where the fleet state's `overseer` record names this pane, it supplies the harness and account of that line ahead of `[HARNESS]`, the pane and the environment, and its model and effort as one pair, only where it names a model ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)); the flags supply the permission words, and the model and effort where the record names no model.
+4. Handle every event line, including a nonzero pass's output and a successor's `watch-replayed` lines. Use [Judgement at every event](#judgement-at-every-event). Fix the cause stderr names. A running watch sees lane launches, relaunches and closes without a restart. Its `--help` owns event fields, cadence, repository scope and partial or unavailable-read outcomes.
+5. Read stopped-watch outcomes before restarting. A successful self-succession hands the complete watch command to the successor and stops the predecessor's repeat watch. Notice-only recovery, exhausted recovery and recovery blocked by no qualifying account also stop it; a manual replacement starts one new watch and owns the mailbox. Do not restart the predecessor's watch after those outcomes. For any other failed exit, fix the named cause and restart through Watch delivery.
+6. Close a terminal lane only through `lane-close`, whose [Lane close contract](../references/lane-reach.md#lane-close) owns resource retirement and refusals:
 
-`oversee-watch --help` states each refusal at start. After a self-succession the successor's own start takes over the watch `oversee-succeed` restarted and first prints what it reported, under `watch-replayed`: handle those lines as events.
+```bash
+.agents/skills/orch/scripts/lane-close --state-dir [OVERSEE_STATE_DIR] [ITEM_KEY]
+```
 
-**The watch rule.** A turn never ends while the watch is stopped: it alone closes an owner ask at its deadline where its form allows (lane-mail ask help), reported as `owner-ask-closed`. Read `oversee-watch --help` for the mail cadence and delay contract. The long pass, holding pr-watch, the merged check, triage, the outside-contribution and security-alert checks and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
+A turn does not end while the watch is stopped. The watch alone closes an owner ask at its deadline where that form permits it, as `lane-mail ask --help` specifies; the event is `owner-ask-closed`. Verifying items and their due boxes belong to the verification pass and do not become development work.
+
 
 ### Watch delivery
 
@@ -420,17 +360,7 @@ For an owner note marked as a voice request, apply orch's [approval and delivery
 
 The overseer owns each contribution the watch reports as `outside-contribution`, until it is merged or closed. `ORCH_EXTERNAL_TRIAGE`, default `on`, has each long pass of the watch list the open pull requests of every repository and the open issues of the first, and report each one whose author is outside the fleet once, and a pull request again on each new head; `off` lists nothing and changes nothing else. `oversee-watch --help` states who counts as the fleet and the event's fields.
 
-The fleet is every author GitHub marks type `Bot` or whose `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`, and every other author whose permission on the repository, read once per pass per repository and login from `GET repos/{repo}/collaborators/{login}/permission`, is `admin`, `maintain` or `write`, because no setting names the lanes app or the owner login and these reads cover them without one.
-
-The permission read is there because GitHub computes the association against the reading token: an organization member whose membership is private reads as `CONTRIBUTOR` to the app's token.
-
-A 404 is outside, and any other failed read exits the watch.
-
-The permission read prints `outside-fleet-by-permission repo= author= permission=` on stderr for each author it admits as fleet.
-
-The note appears once per pass per repository and login.
-
-It creates no event.
+`oversee-watch --help` owns fleet-author classification, permission reads and their failure outcomes.
 
 A Linear mirror of a reported GitHub issue is left untouched: under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `triage`, take out of `[ISSUES]` each item whose `github_sync` in `linear.sh issues get [ID] --format=safe`, the live read, names a `[REPO]#[N]` that an `outside-contribution` event in the same block, or its step 1 fleet-log row, names.
 

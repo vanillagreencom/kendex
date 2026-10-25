@@ -3,7 +3,7 @@
 # lanes owns room; this consumer fixture answers its documented exit codes and
 # logs the harness and model it was asked to judge. Captured launch commands
 # run private harness recorders, so argument checks include command files.
-# Inputs: open-terminal, lane-launch, overseer-launch and the shared fixtures.
+# Inputs: .gitattributes skills/orch/scripts/* skills/orch/tests/lib/* skills/orch/tests/fixtures/* skills/orch/workflows/oversee.md
 # No live account is read.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -485,9 +485,19 @@ printf 'Session started: https://claude.ai/code/session_01PREFERENCE\n' > "$TMP_
 printf 'Working (esc to interrupt)\n' > "$TMP_ROOT/host-screen"
 printf 'dev@lane:~$\n' > "$TMP_ROOT/ssh-screen"
 CLOUD_PREF='claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high'
+# Execute the ordinary producer's published command itself, with fixture inputs.
+# The heading selects its fenced invocation; no launch argv is copied here.
+awk '{ sub(/\r$/, "") }
+  /^#### Ordinary Claude invocation$/ { section=1; next }
+  section && /^```bash$/ { code=1; next }
+  code && /^```$/ { exit }
+  code { print }' "$TEST_DIR/../workflows/oversee.md" > "$TMP_ROOT/ordinary-producer"
+[[ -s "$TMP_ROOT/ordinary-producer" ]] || { echo 'ordinary producer is missing' >&2; exit 1; }
 cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
-  local row="$1" root="${2:-$REPO/scripts}" pref="${3:-$CLOUD_PREF}" remaining=20 lock=null expiry='2099-11-04T00:00:00Z' repos='claude=owner/repo' rc=0 brief_args=()
-  local cloud_account=claude terminal_args=(--tmux) shape_args=() items=(CC-21) tmux_session=stub
+  local row="$1" root="${2:-$REPO/scripts}" pref="${3-$CLOUD_PREF}" remaining=20 lock=null expiry='2099-11-04T00:00:00Z' repos='claude=owner/repo' rc=0 brief_args=() native=false
+  local cloud_account=claude terminal_args=(--tmux) shape_args=() items=(CC-21) tmux_session=stub native_lanes="$root/lanes"
+  local native_flags='--model claude-opus-5-5 --effort high' native_command native_word
+  if [[ "$row" == native-* ]]; then native=true; row="${row#native-}"; fi
   case "$row" in floor) remaining=5 ;; locked) lock='"overage"' ;; expired) expiry='2020-11-04T00:00:00Z' ;; no-repo) repos='' ;; esac
   case "$row" in
     missing-credit | unread-credit) cloud_account=aclaude; repos='aclaude=owner/repo' ;;
@@ -511,17 +521,42 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$RUN/remote/srv/lane/.git"
   ot_fleet_state "$REPO/scripts/workflow-state" "$RUN/state" "$REPO" || exit 1
   [[ "$row" == no-brief ]] || brief_args=(--brief-file "$TMP_ROOT/brief")
+  local invocation=("$root/open-terminal" ${terminal_args[@]+"${terminal_args[@]}"} --state-dir "$RUN/state" --harness claude --lane auto \
+    --cmd "$rejudge_command" ${brief_args[@]+"${brief_args[@]}"} ${shape_args[@]+"${shape_args[@]}"} "${items[@]}")
+  if [[ "$native" == true ]]; then
+    [[ "$row" != error ]] || native_lanes="$BIN/lanes"
+    [[ "$row" != preference ]] || native_flags='--permission-mode default'
+    invocation=("$BASH" -c 'PLACEMENT_ARGS=();
+      case "$NATIVE_ROW" in
+        explicit-host) PLACEMENT_ARGS=(--host "$ORCH_LANE_HOST") ;;
+        relaunch|refresh) PLACEMENT_ARGS=("--$NATIVE_ROW"); [[ "$NATIVE_ROW" != refresh ]] || PLACEMENT_ARGS=(--lane-refresh) ;;
+        gui) PLACEMENT_ARGS=(--ghostty) ;;
+        non-claude) PLACEMENT_ARGS=(--harness codex --launch-flags "-m gpt-6.1-sol -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox") ;;
+      esac
+      source "$1"' ordinary "$TMP_ROOT/ordinary-producer")
+    if [[ "$row" == custom ]]; then
+      launch_choice_shell_words "$native_flags"
+      launch_choice_lead_settings --question-off claude "${LAUNCH_CHOICE_ARGV[@]}"
+      native_command=claude
+      for native_word in "${LAUNCH_CHOICE_KEPT[@]}"; do
+        native_command+=" $(printf %q "$native_word")"
+      done
+      invocation=("$root/open-terminal" --tmux --state-dir "$RUN/state" --harness claude --lane auto \
+        --cmd "$native_command {brief}" --brief-file "$TMP_ROOT/brief" CC-21)
+    fi
+  fi
   (cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" LANES_HOME="$TMP_ROOT/home" \
+    ORCH_SCRIPTS="$root" OVERSEE_STATE_DIR="$RUN/state" ITEM=CC-21 LANE_BRIEF="$TMP_ROOT/brief" \
+    LANE_FLAGS="$native_flags" NATIVE_ROW="$row" \
     ORCH_LANE_HOST="$REPO/daytona" ORCH_LANE_PREFERENCE="$pref" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 \
     ORCH_LANE_CLOUD_REPOS="$repos" ORCH_LANE_DIRS="$TMP_ROOT/home/.$cloud_account:$TMP_ROOT/home/.codex" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/cloud-usage" ORCH_LANES_USAGE_TTL=0 \
     OVERSEE_WATCH_STATE_DIR="$RUN/claims" ORCH_TMUX_SESSION="$tmux_session" ORCH_OVERSEER_LANES=3 \
-    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 WORKTREE_CLI="$BIN/worktree" LANES_CLI="$root/lanes" \
+    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 WORKTREE_CLI="$BIN/worktree" LANES_CLI="$native_lanes" WALL=error PICK_LOG="$RUN/picks" \
     OT_WT_LOG="$RUN/worktrees" OT_TMUX_LOG="$RUN/tmux" OT_TMUX_PANES="$RUN/panes" OT_TMUX_SERVER_PID="$$" \
     OT_HARNESS_EXITS=1 OT_COMPOSER_ON_ENTER=1 OT_SCREEN_FILE="$TMP_ROOT/cloud-screen" OT_HARNESS_SCREEN="$TMP_ROOT/host-screen" OT_SSH_SCREEN="$TMP_ROOT/ssh-screen" \
     LANE_HOST_STUB_DIR="$RUN/remote" LANE_HOST_STUB_LOG="$RUN/host" OT_SLEEP_INSTANT=1 \
-    TERMINAL=ghostty OT_CAPTURE="$RUN/command" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "$root/open-terminal" ${terminal_args[@]+"${terminal_args[@]}"} --state-dir "$RUN/state" --harness claude --lane auto \
-    --cmd "$rejudge_command" ${brief_args[@]+"${brief_args[@]}"} ${shape_args[@]+"${shape_args[@]}"} "${items[@]}" \
+    TERMINAL=ghostty OT_CAPTURE="$RUN/command" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' "${invocation[@]}" \
     > "$RUN/out" 2> "$RUN/err") || rc=$?
   local record key=none
   record="$("$REPO/scripts/workflow-state" --state-dir "$RUN/state" get oversee \
@@ -618,6 +653,80 @@ for row in relaunch batch gui; do
   cloud_observe "$row" "$root" "$preference"
   if [[ "$CLOUD_OBS" != "$want" ]]; then pass "control: $row compatibility changes the fallback"
   else fail "control: $row compatibility leaves the fallback unchanged"; fi
+done
+
+# The shipped ordinary oversee command must work without a preference. Each
+# fallback replays the actual remote command into the private harness recorder.
+NATIVE_CASES='room||cloud|cloud|
+preference|claude:claude-opus-5-5:high|cloud|cloud|
+floor||selected-vm|vm|cloud-credit
+locked||selected-vm|vm|cloud-credit
+expired||selected-vm|vm|cloud-credit
+no-repo||selected-vm|vm|cloud-repo-unset
+explicit-host||inherited-vm|vm|
+host-policy|claude@local:claude-opus-5-5:high|inherited-vm|vm|
+custom||inherited-vm|vm|
+relaunch||inherited-vm|none|
+refresh||inherited-vm|vm|
+gui||host-invalid|none|
+non-claude||brief-unreferenced|none|
+error||lane-resolution-failed|none|'
+native_rows() { # ROW [SCRIPT_ROOT]
+  local row="$1" root="${2:-$REPO/scripts}" want command inner actual cause pref route delivery entry
+  while IFS='|' read -r entry pref route delivery cause; do
+    [[ "$entry" != "$row" ]] || break
+  done <<< "$NATIVE_CASES"
+  cloud_observe "native-$row" "$root" "$pref"
+  case "$route" in
+    cloud) want="$CLOUD_WANT" ;;
+    selected-vm) want="0|none|claude|ssh|$REPO/daytona|claude-opus-5-5|claude:claude-opus-5-5:high|none" ;;
+    inherited-vm) want="0|none|claude|ssh|$REPO/daytona|claude-opus-5-5||none" ;;
+    host-invalid|lane-resolution-failed|brief-unreferenced) want="1|$route|" ;;
+  esac
+  assert_eq "$CLOUD_OBS" "$want" "ordinary producer: $row route" "$RUN/err"
+  [[ "${CLOUD_OBS%%|*}" == 0 ]] || return 0
+  if [[ "$delivery" == cloud ]]; then
+    command="$(sed -n '/^clear; /p' "$RUN/tmux")"
+    assert_eq "$(launch_choice_launch_model claude "$command"):$(launch_choice_effort claude "$command")" \
+      'claude-opus-5-5:high' 'ordinary producer: cloud model and effort'
+  elif [[ "$delivery" == vm ]]; then
+    command="$(sed -n '/^exec bash -lc /p' "$RUN/tmux")"
+    # Decode the remote shell argument, then map only the provider's fixture
+    # directory. The recorder runs the delivered command and its file brief.
+    eval "set -- ${command#exec }"
+    inner="$3"
+    inner="${inner/#cd \/srv\/lane /cd $RUN\/remote\/srv\/lane }"
+    actual="$(executed_command "$inner")" || return 1
+    assert_eq "$(launch_choice_launch_model claude "$actual"):$(launch_choice_effort claude "$actual")" \
+      'claude-opus-5-5:high' 'ordinary producer: VM model and effort'
+    assert_eq "$(jq -Rrs --arg brief "$(cat "$TMP_ROOT/brief")" 'split("\u0000") | any(. == $brief)' "$RUN/argv")" \
+      true 'ordinary producer: VM receives the exact file brief'
+  fi
+  if [[ -n "$cause" ]]; then
+    assert_file_contains "$RUN/err" "open-terminal: cloud-first-skipped cause=$cause" "ordinary producer: $row named skip"
+  else
+    assert_file_not_contains "$RUN/err" 'cloud-first-skipped' "ordinary producer: $row has no implicit skip"
+  fi
+}
+while IFS='|' read -r row case_details; do native_rows "$row"; done <<< "$NATIVE_CASES"
+for control in baseline skip-cause; do
+  root="$(mutant_scripts "implicit-$control" open-terminal)"
+  orch_fixture_shared_libs "${root%/scripts}"
+  git -C "${root%/scripts}" init -q
+  git -C "${root%/scripts}" config gc.auto 0
+  git -C "${root%/scripts}" config maintenance.auto false
+  git -C "${root%/scripts}" remote add origin https://github.com/owner/repo.git
+  case "$control" in
+    baseline)
+      mutate_file "$root/open-terminal" 'OL_ENTRIES=("$IMPLICIT_CLOUD_ENTRY" "${OL_ENTRIES[@]}")' 'OL_ENTRIES=("${OL_ENTRIES[@]}")'
+      row=room ;;
+    skip-cause)
+      mutate_file "$root/open-terminal" 'ot_message cloud-first-skipped "cause=$implicit_causes"' 'ot_message cloud-first-skipped "cause=unknown"'
+      row=floor ;;
+  esac
+  control_rc=0
+  ( FAIL=0; native_rows "$row" "$root"; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/implicit-$control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 "control: $control fails the same ordinary producer row" "$TMP_ROOT/implicit-$control.log"
 done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

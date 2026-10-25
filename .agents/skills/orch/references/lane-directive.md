@@ -86,39 +86,45 @@ A local host reads no API credit. `pick-provider-unmeasured` (exit 5) also names
 
 ## Lane preference
 
-A repository with a cloud grant lists its Claude cloud entry first and Codex on its own accounts as the fallback.
+An ordinary Claude launch first tries the existing `claude-cloud` pick when no caller host or `@host` preference names placement. It needs tmux, one item and a brief file. Relaunch, refresh, wake and custom model-bearing `--cmd` launches keep their existing route. The candidate uses the model and effort in `--launch-flags`, or the first Claude preference entry. It adds no model default. The successful pick supplies the account and is reused for launch. Exit 3 reports `cloud-first-skipped cause=` from the pick's refusal or exclusion and continues on the inherited route or preference walk. Other failures stop as `lane-resolution-failed`.
 
-Set the entries in [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet.
+Use an intentional `--host` or an `@host` preference to opt out, including after repeated cloud stalls. Set preference entries through [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet, which owns the grammar.
 
-A cloud lane declares `land=handoff` and cannot merge.
+After the implicit candidate, an unset or empty preference keeps the inherited route. An explicit model keeps the caller's model and effort. A model-free launch walks eligible entries through `lanes pick` on each entry's harness, host and model. An `@host` applies to its entry; without one, the entry uses the caller's `--host` or resolved `ORCH_LANE_HOST`.
 
-A `disarmed` line from `pr-watch` launches a landing lane on the fleet's lane host through [Recovery relaunch](#recovery-relaunch), with `/orch merge-pr N` ([KEN-3276](https://linear.app/vanillagreen/issue/KEN-3276)).
+The existing pick admits a cloud-credit account only above `ORCH_LANE_CLOUD_CREDIT_FLOOR`, with an unlocked, unexpired grant and a repository entry in `ORCH_LANE_CLOUD_REPOS`. It spends no plan window. A cloud-session selection requires tmux and `--brief-file`; that file becomes the cloud task and replaces a model-free command template.
 
-This uses another lane launch and that account's allowance for CI, review and merge.
+### Entry outcomes
 
-Early stops with no recorded cause belong to [KEN-3461](https://linear.app/vanillagreen/issue/KEN-3461).
+| Pick outcome | Action |
+| --- | --- |
+| Exit 0 | Reuse the successful record for launch. |
+| Exit 3 | Try the next entry. The implicit candidate reports its named skip first. |
+| Exit 4, 5 or 7 on an explicit preference entry | Keep its keyed `lanes:` line. Mark the entry unread and try the next entry without a room question. |
+| Exit 1, 6, 8 or any other failed status | Stop as `lane-resolution-failed entry= exit=`. |
 
-A pushed commit with no pull request belongs to [KEN-3035](https://linear.app/vanillagreen/issue/KEN-3035).
+A failed room question uses the same explicit-entry outcome split. A walk that selects nothing refuses `lane-unavailable`, with `walk=` naming the list and `unread=` naming any unread entries. Repair those readings; a reset does not answer them.
 
-`ORCH_LANE_PREFERENCE` uses the grammar in [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet. Unset or empty leaves the caller's route unchanged. An explicit model in `--cmd` or `--launch-flags` also keeps that route. Otherwise, a harness launch walks the entries through `lanes pick` on each eligible entry's harness, host and model. An entry with `@host` uses that host. An entry without it uses the caller's `--host`, or the resolved `ORCH_LANE_HOST`. A cloud-credit entry needs credit above `ORCH_LANE_CLOUD_CREDIT_FLOOR`, an unlocked grant before its expiry, and an account listed for the repository in `ORCH_LANE_CLOUD_REPOS`. It spends no plan window. A selected cloud-session entry still requires `--brief-file` and tmux. The launcher delivers that brief as the cloud task and replaces a model-free command template with the cloud launch. Permission eligibility uses `ol_entry_permitted`. It follows [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) and admits Pi's native no-approval posture for lane launches. A cross-harness caller still needs one transferable full-bypass posture. Pi extensions can ask for confirmation; excluding the question tool does not suppress those prompts. Overseer succession keeps its Pi refusals. Exit 3 means no room and tries the next entry. Exits 4, 5 and 7 mean the entry is unread: keep its keyed `lanes:` line and try the next entry without asking it the room question. Exits 1, 6, 8 and any other failed status stop the launch as `lane-resolution-failed entry= exit=`. The same split applies to a failed room question. A walk that selects nothing refuses `lane-unavailable` with `walk=` naming the list and, when present, `unread=` listing unread entries. Repair the readings their keyed lines name; a reset does not answer them. A final entry marked `:last` is a last choice, such as a costlier or reserved seat: before the walk reaches it, each earlier entry that exited 3 is asked again at `--max-pct 100` until one has room, which `lanes` answers with room for any projected room or Codex credit above `ORCH_LANE_CODEX_CREDIT_FLOOR`, its seat reserve and unmeasured refusal unchanged. Any earlier unread entry also holds the marked entry, with `last-choice=` and `unread=`. Where one has room, the launch refuses `lane-unavailable` with `last-choice=` naming the marked entry and `room=` the earlier one, which stays walled at the threshold: wait as [§ No lane has room](#no-lane-has-room) says. A walk with no marked entry asks nothing again. The fleet record carries the chosen `preference_entry` beside `model`. Each later tmux batch item and each `--wait-slot` rejudgment repeats the walk from the original caller input and rebuilds the command and its harness checks before creating the worktree.
+The final entry may carry `:last`. Before reaching it, the walk asks earlier entries that exited 3 again at `--max-pct 100`, retaining the pick's seat reserve and unmeasured refusal. Any earlier entry with projected room, or Codex credits above `ORCH_LANE_CODEX_CREDIT_FLOOR`, holds the marked entry. An earlier unread entry also holds it. The refusal names `last-choice=` and `room=` or `unread=`. The entry with room remains walled at the launch threshold; follow [No lane has room](#no-lane-has-room). An unmarked walk asks nothing again.
 
-A Codex entry can return an account on its credits, `binding_bucket=credits`, only when no Codex account has plan room: plan allowance resets and credits do not, so `lanes pick` ranks every account with plan room first.
+The fleet record carries `preference_entry` beside `model`. Each later tmux batch item and each `--wait-slot` rejudgment repeats selection from the original input, then rebuilds the command and harness checks before worktree creation.
 
-The walk takes that account as the entry's pick.
+A Codex entry uses credits only after every Codex account with plan room. The chosen account's `binding_bucket=credits` identifies that pick. The credits are already bought, so spending them is not overage.
 
-The credits are already bought, so spending them is no overage.
+### Commands and permissions
 
-A model-free `--cmd` is an argument template starting with the plain harness name.
+A model-free `--cmd` is an argument template starting with the plain harness name. The launcher replaces that name, model and effort with the selected entry, quotes the remaining arguments and leaves a bare `{brief}` for file delivery. Other arguments must suit the selected harness. Use an explicit model for arbitrary shell commands.
 
-The launcher replaces that name, model and effort with the chosen entry and quotes the remaining arguments, leaving a bare `{brief}` for brief-file delivery.
+The shared overseer flag builder preserves or transfers caller permissions and supplies the selected harness's question-tool and compaction settings. `ol_entry_permitted` owns eligibility under [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance). Pi's native no-approval posture is eligible for lane launches; a cross-harness caller still needs one transferable full-bypass posture. Excluding Pi's question tool does not suppress extension prompts. Overseer succession retains its Pi refusals.
 
-The shared overseer flag builder preserves or transfers the caller's permissions and supplies the chosen harness's question-tool and compaction settings.
+Invalid entries refuse `invalid-preference` before any pick. A template starting with another command refuses `preference-command-invalid` before opening a window.
 
-Other arguments must suit the chosen harness.
+### Cloud landing
 
-Use an explicit model for arbitrary shell commands.
+A cloud lane declares `land=handoff` and cannot merge. A `disarmed` line from `pr-watch` requires one landing lane on the fleet host, through [Recovery relaunch](#recovery-relaunch) with `/orch merge-pr N` ([KEN-3276](https://linear.app/vanillagreen/issue/KEN-3276)). That launch spends another lane slot and the landing account's allowance for CI, review and merge.
 
-Invalid entries refuse `invalid-preference` before any pick; a template starting with another command refuses `preference-command-invalid` before any window opens.
+Early stops with no recorded cause belong to [KEN-3461](https://linear.app/vanillagreen/issue/KEN-3461). A pushed commit with no pull request belongs to [KEN-3035](https://linear.app/vanillagreen/issue/KEN-3035).
+
 
 ## Launch gate
 
@@ -171,7 +177,7 @@ Provider-owned pane recovery follows [Recovery relaunch](#recovery-relaunch).
 
 ## Brief file
 
-A `--cmd` launch's brief travels as a file.
+A launch's brief travels as a file. An ordinary Claude launch can omit `--cmd`; the launcher delivers the file as its prompt with the native `--launch-flags`. This form preserves the same model, effort and brief when the implicit cloud pick falls through to the VM. Other harnesses keep their existing command templates.
 
 Write it under `tmp/` with the harness's file tool, pass it as `--brief-file [BRIEF_PATH]`, and put `{brief}` in the `--cmd` command where the brief goes, bare and outside every quote. `open-terminal` supplies the shell quoting.
 
@@ -193,7 +199,7 @@ Each refusal below comes before any worktree or window:
 
 - `cmd-unbalanced-quote` (naming `item`): the `--cmd` command leaves a quote open. Move the brief to a file, as above.
 - `brief-quoted` (naming `item`): the command puts `{brief}` inside a quote or behind a backslash. The launcher supplies shell quoting, so additional quoting can split or expand the brief. Write `{brief}` bare.
-- `brief-unreferenced` (naming `option=--brief-file`): no `--cmd` command carries `{brief}`, so the file would reach no harness. Pass a `--cmd` command with `{brief}` where the brief goes; a launch without `--cmd` renders its own brief and takes no file.
+- `brief-unreferenced` (naming `option=--brief-file`): the route supplies no command carrying `{brief}`, so the file would reach no harness. Use the ordinary Claude form, or put `{brief}` where the brief goes in `--cmd`.
 - `brief-file-missing` (naming `option=--cmd`): the command carries `{brief}` with no `--brief-file`. Pass the file.
 - `brief-file-unreadable` (naming `path`): the path is not a readable file. Write the brief and pass that path.
 - `brief-file-empty` (naming `path`): the file holds only whitespace, so the harness would start with nothing to do. Write the brief into it.
@@ -237,32 +243,11 @@ One with neither refuses as `tmux-missing`, so set `ORCH_TMUX_SESSION` for such 
 
 ### Source-only recovery
 
-A standing source-only handoff retains its phase scope. Read the native standing record and the retained artifact named by its first `remaining` entry, then load the successor's required current protocol and obtain native admission. Follow [start.md § 0](../workflows/start.md#0-resume-from-a-handoff) and [start-worktree.md § 1 step 3](../workflows/start-worktree.md#1-open-the-session): the standing record replaces implementation preparation and resumes that same entry through the existing-state branch.
+A standing source-only handoff retains its phase scope, original costs, opinion status and required artifacts under [Source-only continuation](oversee-events.md#source-only-continuation). The ordered recovery steps are in [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch).
 
-Apply [Source-only continuation](oversee-events.md#source-only-continuation) to retained reads, changed bindings, costs, opinion status and missing artifacts. The successor completes only the root-authorized pending action. A missing or unread standing record keeps the existing stop-and-report route; it grants no standard-start restart, fresh allowance, helper, opinion replay or next phase. Merely receiving an independent prerequisite does not grant continuation of a stopped phase.
+### Terminal recovery
 
-
-Before a manual stop for recovery, require a local lane or a host named by an absolute provider executable path.
-
-Read the saved host capability line from the saved recovery checkout.
-
-A provider whose line omits `pane` keeps the local-pane default.
-
-For `pane=verb`, give the launcher ownership without a manual prior stop.
-
-An unavailable capability read leaves the harness, window and record untouched.
-
-Local and absolute static SSH provider recovery keep their existing route.
-
-Automatic recovery through a relative provider executable path is deferred to KEN-3996.
-
-The watch reports `relative-provider-deferred:KEN-3996` before capability admission, provider stop, marker creation or dispatch.
-
-Keep that lane's harness, window and record.
-
-Do not stop it by hand for that recovery.
-
-Fresh launches with relative providers remain available.
+Automatic recovery through a relative provider executable is deferred to KEN-3996. The watch reports `relative-provider-deferred:KEN-3996` before capability admission, provider stop, marker creation or dispatch, preserving the harness, window and record. Fresh launches with relative providers remain available. Local and absolute static SSH providers retain their recovery route.
 
 A provider-owned replacement (`pane=verb`) completes setup before required prior retirement.
 
@@ -289,12 +274,6 @@ A GitHub window requires the repository and worktree identity the launcher recor
 An untagged GitHub window remains open and emits window-preserved.
 
 With no replaceable match, the launcher opens a new window.
-
-Start with the [handoff.md](../workflows/handoff.md) § 2 terminal command.
-
-Add `--relaunch`, the selected `--lane`, the chosen `--launch-flags` and `--state-dir [OVERSEE_STATE_DIR]`.
-
-Keep the tracker, repository, harness, and item arguments, and `--lane-refresh` for a refresh lane, since a relaunch without it removes the lane's refresh record, and `--live-display` for a lane whose record holds `live_display: true`, since a relaunch without it clears the three display names from the lane and removes that declaration.
 
 Local relaunches and hosted Claude, Codex and Pi relaunches need no `--cmd`.
 
@@ -330,8 +309,6 @@ A compatible saved selection checkpoint completes the already started harness's 
 
 A changed native/custom command route restarts through the preparation owner under [lane-host.md § Provider protocol](../schemas/lane-host.md#provider-protocol).
 
-A record carrying `host` adds `--host [HOST]`: the provider keeps its tree.
-
 A hosted Claude relaunch runs the `start` brief when `claude --continue` exits 1 for no session.
 
 Hosted no-command Claude, Codex and Pi relaunches require a harness screen or Claude's brief check, including a fresh start after a harness switch.
@@ -347,8 +324,6 @@ A confirmed replacement survives a later record-write failure.
 On the legacy SSH pane route, a foreground launch writes `stopped` only after a successful close.
 
 The background job writes it once cleanup reaches window close, even if that close fails.
-
-When changing harnesses, supply the new brief required by [handoff.md § 2](../workflows/handoff.md#2-launch) through `--brief-file` and `--cmd`.
 
 Without a custom command, a relaunch whose lane record names another harness as the last one to run the lane renders the `start` template directly, reported as `harness-switched`.
 
@@ -378,4 +353,4 @@ Automatic account recovery passes `--continue-resume`, so the launcher delivers 
 
 A fresh start carries its brief and needs no paste.
 
-Paste the resumed lane's continuation through [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane), Pane paste, the way a walled lane gets its nudge.
+The overseer delivers any required continuation through its [recovery workflow](../workflows/oversee.md#recovery-relaunch).

@@ -20,6 +20,7 @@ skills/orch/tests/lib/assertions.sh text eol=lf
 skills/orch/workflows/submit-pr.md text eol=lf
 skills/orch/workflows/merge-pr.md text eol=lf
 skills/orch/workflows/micro.md text eol=lf
+skills/orch/workflows/oversee.md text eol=lf
 skills/orch/tests/fixtures/oversee-watch/pi-current.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 skills/orch/tests/fixtures/oversee-watch/pi-hosted-startup.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 skills/orch/tests/fixtures/oversee-watch/pi-qol-idle.txt text eol=lf

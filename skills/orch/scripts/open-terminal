@@ -378,7 +378,7 @@ named_lane_resolve() { # HARNESS MODEL
 }
 
 # Keep the caller's input for every preference walk, including a batch's
-# rejudge and the cap's wait-slot callback. Explicit-model launches never enter.
+# rejudge and the cap's wait-slot callback. Custom model commands never enter.
 PREFERENCE_ENTRY="" PREFERENCE_LANE_ENV=""
 preference_pi_root="${PI_CODING_AGENT_DIR-}"
 CMD_INPUT="$CMD_TEMPLATE"
@@ -397,6 +397,41 @@ if [[ "$WAKE" != true && -n "${ORCH_LANE_PREFERENCE:-}" \
     ot_message invalid-preference "entry=$OL_BAD_ENTRY" >&2; exit 1;
   }
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+fi
+
+# The ordinary oversee producer leaves inherited placement to this owner.
+# Add its cloud candidate to the same walk, so waiting for a cap judges both
+# the grant and the inherited route again, without discarding a successful pick.
+IMPLICIT_CLOUD_ENTRY="" implicit_model="" implicit_effort=""
+implicit_mode="$TERMINAL_MODE"
+if [[ -z "$implicit_mode" ]]; then
+  if tmux_server_named; then implicit_mode=tmux; else implicit_mode=gui; fi
+fi
+if [[ "$preference_harness" == claude && -z "$HOST" && "$preference_host" != claude-cloud \
+      && "${ORCH_LANE_PREFERENCE:-}" != *@* && "$implicit_mode" == tmux \
+      && "$RELAUNCH" != true && "$LANE_REFRESH" != true && "$WAKE" != true \
+      && ${#ITEMS[@]} -eq 1 && -n "$BRIEF_FILE" \
+      && -z "$(launch_choice_launch_model claude "$CMD_INPUT")" ]]; then
+  [[ "$PREFERENCE_ACTIVE" == true ]] || source "$SCRIPT_DIR/lib/overseer-launch.sh"
+  implicit_model="$(launch_choice_launch_model claude "$LAUNCH_FLAGS")"
+  implicit_effort="$(launch_choice_effort claude "$LAUNCH_FLAGS")"
+  if [[ "$PREFERENCE_ACTIVE" == true ]]; then
+    for implicit_entry in "${OL_ENTRIES[@]}"; do
+      [[ "$implicit_entry" == claude:* ]] || continue
+      IMPLICIT_CLOUD_ENTRY="claude@claude-cloud:${implicit_entry#claude:}"
+      break
+    done
+  elif [[ -n "$implicit_model" && -n "$implicit_effort" ]]; then
+    OL_ENTRIES=("claude:$implicit_model:$implicit_effort")
+    IMPLICIT_CLOUD_ENTRY="claude@claude-cloud:$implicit_model:$implicit_effort"
+  fi
+  if [[ -n "$IMPLICIT_CLOUD_ENTRY" ]]; then
+    OL_ENTRIES=("$IMPLICIT_CLOUD_ENTRY" "${OL_ENTRIES[@]}")
+    PREFERENCE_ACTIVE=true
+    [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+  fi
+fi
+if [[ "$PREFERENCE_ACTIVE" == true ]]; then
   # A named lane is resolved and checked for each entry, whose harness and
   # model name the allowance the lane settings judge (preference_select).
   preference_named=true
@@ -449,26 +484,36 @@ preference_select() {
   for preference_entry in "${OL_ENTRIES[@]}"; do
     preference_index=$((preference_index + 1))
     if [[ "$OL_LAST_CHOICE" == 1 && "$preference_index" -eq "${#OL_ENTRIES[@]}" && ( -n "$preference_room" || -n "$preference_unread" ) ]]; then
-      ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" "last-choice=$preference_entry" \
+      ot_message lane-unavailable "walk=${ORCH_LANE_PREFERENCE:-}" "last-choice=$preference_entry" \
         ${preference_room:+"room=$preference_room"} ${preference_unread:+"unread=$preference_unread"} >&2
       return 1
     fi
-    ol_entry_model "$preference_entry" || {
-      ot_message preference-class-unread "entry=$preference_entry" >&2; printf '%s\n' "$OL_CLASS_ERR" >&2; return 1;
-    }
-    # The lane is checked before any skip below, so an exclusion refuses every
-    # entry whatever else drops it; lanes check reads only local settings.
+    if [[ -n "$IMPLICIT_CLOUD_ENTRY" && -n "$implicit_model" ]]; then
+      # Native flags already selected this model. A preference grammar or
+      # class conversion must not narrow or reinterpret their accepted ids.
+      OL_ENTRY_HARNESS=claude OL_ENTRY_HOST="" OL_ENTRY_MODEL="$implicit_model"
+      OL_ENTRY_EFFORT="$implicit_effort" OL_ENTRY_CLASS="" OL_ENTRY_WARNING=""
+      [[ "$preference_entry" != "$IMPLICIT_CLOUD_ENTRY" ]] || OL_ENTRY_HOST=claude-cloud
+    else
+      ol_entry_model "$preference_entry" || {
+        ot_message preference-class-unread "entry=$preference_entry" >&2; printf '%s\n' "$OL_CLASS_ERR" >&2; return 1;
+      }
+    fi
+    # A named VM account constrains the inherited route. The implicit cloud
+    # candidate must ask its own pool's automatic account owner instead.
     preference_pick_args=()
     if [[ "$preference_named" == true ]]; then
-      # A subshell, so a resolution failure returns from a batch rejudge as well.
-      preference_rc=0
-      preference_lane_dir="$(named_lane_resolve "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" && printf '%s' "$lane_dir")" || preference_rc=$?
-      case "$preference_rc" in
-        0) ;;
-        4) preference_refused=true; continue ;;
-        *) return 1 ;;
-      esac
-      preference_pick_args=(--lane "$preference_lane_dir" --projected)
+      if [[ "$preference_entry" != "$IMPLICIT_CLOUD_ENTRY" ]]; then
+        # A subshell, so a resolution failure returns from a batch rejudge as well.
+        preference_rc=0
+        preference_lane_dir="$(named_lane_resolve "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" && printf '%s' "$lane_dir")" || preference_rc=$?
+        case "$preference_rc" in
+          0) ;;
+          4) preference_refused=true; continue ;;
+          *) return 1 ;;
+        esac
+        preference_pick_args=(--lane "$preference_lane_dir" --projected)
+      fi
     fi
     OL_HARNESS="$OL_ENTRY_HARNESS" OL_WALK_SKIPS=()
     if ! ol_entry_permitted "$preference_entry"; then
@@ -494,6 +539,16 @@ preference_select() {
     esac
     preference_rc=0
     preference_record="$(pick_auto_lane ${preference_pick_args[@]+"${preference_pick_args[@]}"})" || preference_rc=$?
+    if [[ "$preference_entry" == "$IMPLICIT_CLOUD_ENTRY" && "$preference_rc" -ne 0 ]]; then
+      [[ "$preference_rc" -eq 3 ]] || {
+        ot_message lane-resolution-failed "entry=$preference_entry" "exit=$preference_rc" >&2; return 1;
+      }
+      implicit_causes="$(jq -er '[.refusals[]?.refusal.cause, .exclusions[]?.reason] | unique | select(length > 0) | join(",")' <<<"$preference_record")" || {
+        ot_message lane-resolution-failed "entry=$preference_entry" step=pick-record >&2; return 1;
+      }
+      ot_message cloud-first-skipped "cause=$implicit_causes" >&2
+      continue
+    fi
     case "$preference_rc" in
       0)
         PREFERENCE_LANE_ENV="$(pick_record_env "$preference_record")" || return 1
@@ -519,10 +574,10 @@ preference_select() {
     esac
   done
   if [[ -z "$PREFERENCE_ENTRY" && -n "$preference_refused" ]]; then
-    ot_message lane-refused "lane=$LANE" "walk=$ORCH_LANE_PREFERENCE" >&2; return 1
+    ot_message lane-refused "lane=$LANE" "walk=${ORCH_LANE_PREFERENCE:-}" >&2; return 1
   fi
   [[ -n "$PREFERENCE_ENTRY" ]] || {
-    ot_message lane-unavailable "walk=$ORCH_LANE_PREFERENCE" ${preference_unread:+"unread=$preference_unread"} >&2; return 1;
+    ot_message lane-unavailable "walk=${ORCH_LANE_PREFERENCE:-}" ${preference_unread:+"unread=$preference_unread"} >&2; return 1;
   }
   ol_model_line "$OL_ENTRY_WARNING"
   ol_launch_flags --question-off "$OL_ENTRY_HARNESS" "$OL_ENTRY_MODEL" "$OL_ENTRY_EFFORT" \
@@ -596,6 +651,19 @@ case "$HOST_LAUNCH" in
 esac
 }
 host_launch_judge || exit 1
+# A file brief is also the ordinary Claude producer's prompt. Build the
+# same quoted template the preference walk uses; custom commands retain their
+# existing requirement to name {brief} themselves.
+if [[ "$HARNESS" == claude && -z "$CMD_TEMPLATE" && -n "$BRIEF_FILE" && "$HOST_LAUNCH" != cloud-session ]]; then
+  launch_choice_shell_words "$LAUNCH_FLAGS"
+  launch_choice_lead_settings --question-off "$HARNESS" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"}
+  CMD_TEMPLATE="$HARNESS"
+  for brief_flag in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
+    CMD_TEMPLATE+=" $(printf %q "$brief_flag")"
+  done
+  CMD_TEMPLATE+=" {brief}"
+  LAUNCH_FLAGS=""
+fi
 # The brief a --cmd template places as {brief}, read once, here, from the file
 # the caller wrote. The caller never quotes it: start_cmd renders it through
 # a local prompt file or lane_single_quote on the hosted path, so each shell
