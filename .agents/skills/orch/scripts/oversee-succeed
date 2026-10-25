@@ -181,9 +181,10 @@
 #        runs and records that one; where none names a provider it spends an
 #        account nothing names, and its caller entry refuses
 #        `pi-account-unknown`. No permission posture crosses to or from pi,
-#        whose row names no permission word. Unset, the setting is
-#        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE, the default README.md
-#        § Setup states; set to empty, it names no entry. `kendex tier-model`
+#        whose row names no permission word. With an unset preference,
+#        context-mark succession keeps the caller's harness and model;
+#        other marks use lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE.
+#        A setting set to empty names no entry. `kendex tier-model`
 #        classifies each model (lib/overseer-launch.sh § ol_model_class): a
 #        class runs claude's family alias for it and codex's or copilot's
 #        native default, and a model kendex cannot classify refuses
