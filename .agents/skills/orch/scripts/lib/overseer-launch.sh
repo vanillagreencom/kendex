@@ -11,7 +11,7 @@
 # ol_session_inspect and ol_fleet_log. What is shared is here:
 #
 #   ol_preference          the ORCH_OVERSEER_PREFERENCE value, its default
-#                          where the setting is unset
+#                          where the setting is unset, except at a context mark
 #   ol_preference_entries  the shared overseer and lane preference parse
 #   ol_model_class         a model word classified by kendex, a class
 #                          resolved to the model a launch runs
@@ -120,8 +120,12 @@ ol_runtime_supported() {
 # claude's family alias for it, so a model release moves the overseer with no
 # orch release, and codex's native default. An empty setting names no entries.
 OL_DEFAULT_PREFERENCE="claude:standard:high,codex:standard:high"
-ol_preference() {
-  printf '%s\n' "${ORCH_OVERSEER_PREFERENCE-$OL_DEFAULT_PREFERENCE}"
+ol_preference() { # [MARK_KIND]
+  local fallback="$OL_DEFAULT_PREFERENCE"
+  # A context handoff replaces the session, not its harness or model. An
+  # explicit setting, including an empty one, still owns the walk.
+  [[ "${1:-}" != context ]] || fallback=""
+  printf '%s\n' "${ORCH_OVERSEER_PREFERENCE-$fallback}"
 }
 
 # ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's or ORCH_LANE_PREFERENCE's
