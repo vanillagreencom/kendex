@@ -28,6 +28,7 @@ TMP_ROOT="$(mktemp -d)" || { echo "oversee_succeed: scratch=mktemp-failed" >&2; 
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_succeed: scratch=resolve-failed" >&2; exit 1; }
 SOCK="oversee-succeed-$$"
 cleanup() {
+  [[ -z "${ATTACHED_CHILD_PID:-}" ]] || { kill "$ATTACHED_CHILD_PID" 2>/dev/null || true; wait "$ATTACHED_CHILD_PID" 2>/dev/null || true; }
   [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   [[ -z "${FOREIGN_PID:-}" ]] || kill "$FOREIGN_PID" 2>/dev/null || true
@@ -234,6 +235,12 @@ new_caller() {
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
   record_caller "$1" "$CALLER_PANE"
+  local transcript="$H/.claude/projects/fixture/s1.jsonl"
+  mkdir -p -- "${transcript%/*}"
+  : > "$transcript"
+  jq -nc --arg p "$transcript" --arg home "$H/.claude" \
+    '{event:"SessionStart",harness:"claude",session_id:"s1",transcript_path:$p,account:$home}' \
+    > "$TMP_ROOT/work/tmp/lane-mail/overseer/session-$SERVER_PID-${CALLER_PANE#%}.jsonl"
   if [[ "${CALLER_RECORD:-}" != preserve && -f "${FLEET_STATE:-}" ]]; then caller_permission_record; fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$marker"* ]] || return 0
@@ -524,6 +531,76 @@ fleet_state() {
 recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 orec() { jq -r ".overseer.$1 // \"none\"" "$FLEET_STATE" 2>/dev/null || echo unreadable; }
 fleet_state
+
+# Synthetic native events use the hook suite's measured launch/notification shape.
+attached_child_rows() {
+  local scenario expected_status handoff before_watch after_watch rows child_alive saved
+  for scenario in running completed unknown named-unknown misplaced-unknown; do
+    new_caller "$MARK"
+    fleet_state
+    TRANSCRIPT="$H/.claude/projects/fixture/s1.jsonl"
+    mkdir -p -- "${TRANSCRIPT%/*}"
+    : > "$TRANSCRIPT"
+    . "$TEST_DIR/../../../hooks/tests/lib/claude-agent-events.sh"
+    case "$scenario" in
+      running|completed) append_agent '{"name":"tpm-qualify","run_in_background":true}' 'Async agent launched successfully. agentId: tscwczujt' ;;
+      *) append_agent '{"name":"tpm-qualify","run_in_background":true}' 'Unclassified native Agent result' ;;
+    esac
+    [[ "$scenario" != completed ]] || append_notice tscwczujt completed
+    jq -nc --arg p "$TRANSCRIPT" '{event:"SessionStart",harness:"claude",session_id:"s1",transcript_path:$p}' \
+      > "$TMP_ROOT/work/tmp/lane-mail/overseer/session-$SERVER_PID-${CALLER_PANE#%}.jsonl"
+    handoff="$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md"
+    case "$scenario" in
+      named-unknown) printf '\n## Sub-agents\n- tpm-qualify: output unknown; preserve unfinished work.\n' >> "$handoff" ;;
+      misplaced-unknown) printf '\n## Progress log\n- tpm-qualify\n' >> "$handoff" ;;
+    esac
+    sleep 100000 &
+    ATTACHED_CHILD_PID=$!
+    saved="$TMP_ROOT/attached-saved-work"
+    printf 'retained child output\n' > "$saved"
+    run_succeed "attached-check-$scenario" '' --check-marks
+    rows="$(sed -n 's/^oversee-succeed: attached-agent=\([^ ]*\) id=[^ ]* status=\([^ ]*\) output=.*/\1 \2/p' <<<"$OUT")"
+    if [[ "$scenario" == completed ]]; then
+      assert_eq "$RC|$rows|$(caller_open)|$(overseers)" '0||yes|0' 'completed child leaves no check-mode hold'
+    else
+      expected_status=unknown
+      [[ "$scenario" != running ]] || expected_status=running
+      assert_eq "$RC|$rows|$(caller_open)|$(overseers)" "0|tpm-qualify $expected_status|yes|0" "attached $scenario check reports without refusing"
+    fi
+    before_watch="$(cksum "$TMP_ROOT/work/tmp/oversee-watch.argv")"
+    HANDOFF_FIXTURE=off run_succeed "attached-$scenario" '' -- "$BYPASS"
+    after_watch="$(cksum "$TMP_ROOT/work/tmp/oversee-watch.argv")"
+    case "$scenario" in
+      running|unknown|misplaced-unknown)
+        expected_status=unknown
+        [[ "$scenario" != running ]] || expected_status=running
+        rows="$(sed -n 's/^oversee-succeed: attached-agents-out name=\([^ ]*\) status=\([^ ]*\) output=.*/\1 \2/p' <<<"$OUT")"
+        child_alive=no
+        kill -0 "$ATTACHED_CHILD_PID" 2>/dev/null && child_alive=yes
+        assert_eq "$RC|$rows|$(caller_open)|$(overseers)|$([[ "$before_watch" == "$after_watch" ]] && echo kept || echo changed)|$child_alive|$(cat "$saved")" \
+          "1|tpm-qualify $expected_status|yes|0|kept|yes|retained child output" "attached $scenario refuses and preserves caller/watch"
+        ;;
+      *) assert_eq "$RC|$(caller_open)|$(overseers)" '0|no|1' "attached $scenario permits succession" ;;
+    esac
+    kill "$ATTACHED_CHILD_PID"
+    wait "$ATTACHED_CHILD_PID" 2>/dev/null || true
+    ATTACHED_CHILD_PID=""
+  done
+}
+attached_child_rows
+if [[ -z "${OVERSEE_SUCCEED_UNDER_TEST:-}" ]]; then
+  ATTACHED_CONTROL="$(mutant_scripts attached-control oversee-succeed)"
+  mutate_file "$ATTACHED_CONTROL/oversee-succeed" '  succession_attached_agents succeed' '  : # succession_attached_agents succeed'
+  control_rc=0
+  env OVERSEE_SUCCEED_UNDER_TEST="$ATTACHED_CONTROL/oversee-succeed" "$BASH" "$TEST_DIR/oversee_succeed.sh" --attached-agents \
+    > "$TMP_ROOT/attached.control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control: disabling production refusal fails attached preservation rows'
+fi
+if [[ "${1:-}" == --attached-agents ]]; then
+  printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
+  (( FAIL == 0 ))
+  exit
+fi
 
 # The managed hook/watch invocation has no trailing flags. Its permission
 # source is the launch record bound to that caller, at the production path.

@@ -9,21 +9,7 @@ set -euo pipefail
 
 # Claude's measured tool call and its result. A launched child with no
 # terminal notification after it is still out.
-append_call() { # TOOL INPUT RESULT [IS_ERROR] [STRUCTURED_RESULT]
-  CALL_SEQUENCE=$((${CALL_SEQUENCE:-0} + 1))
-  local call_id="call-fixture-$CALL_SEQUENCE"
-  jq -nc --arg c "$call_id" --arg t "$1" --argjson i "$2" '{type:"assistant",message:{role:"assistant",content:[{type:"tool_use",id:$c,name:$t,input:$i}]}}' >> "$TRANSCRIPT"
-  jq -nc --arg c "$call_id" --arg r "$3" --argjson e "${4:-false}" --argjson s "${5:-null}" \
-    '{type:"user",toolUseResult:$s,message:{role:"user",content:[{type:"tool_result",tool_use_id:$c,content:$r,is_error:$e}]}}' >> "$TRANSCRIPT"
-}
-append_agent() { # INPUT RESULT [IS_ERROR]
-  append_call Agent "$@"
-}
-append_launch() { append_agent '{"run_in_background":true}' 'Async agent launched successfully. agentId: a1'; }
-# The teammate spawn Claude Code writes for a named Agent call.
-append_teammate() {
-  append_agent '{"name":"reviewer"}' "$(printf 'Spawned successfully. (This tool result is internal metadata.)\nagent_id: areviewer-t1\nname: reviewer\nThe agent is now running and will receive instructions via mailbox.')"
-}
+. "$TEST_DIR/lib/claude-agent-events.sh"
 # The measured control-VM probe on KEN-4273 resumes a TaskStop-ended teammate.
 append_stopped_resume() { # [RESULT] [NOTIFICATION]
   append_teammate
@@ -65,12 +51,6 @@ append_overlapping_list() { # list-first|send-first|queued-idle|queued-task|resu
       message:{role:"user",content:[{type:"tool_result",tool_use_id:"call-list",
         content:(if $mode == "result-block-idle" then [{type:"text",text:("reviewer is " + $s)},{type:"text",text:$n}]
           else "reviewer is " + $s + "\n" + $n end)}]}}' >> "$TRANSCRIPT"
-}
-notice_text() { # ID STATUS
-  printf '<task-notification><task-id>%s</task-id><status>%s</status></task-notification>' "$1" "$2"
-}
-append_notice() { # ID STATUS
-  jq -nc --arg n "$(notice_text "$1" "$2")" '{type:"user",message:{role:"user",content:$n}}' >> "$TRANSCRIPT"
 }
 # The idle notification Claude Code delivers after each teammate report.
 idle_text() { # NAME [IDLE_REASON [COMPLETED_STATUS]]
@@ -235,6 +215,74 @@ launch() { # TOKENS TOOL [ENV...] — AGENTS names the earlier Agent call, if an
     '{session_id:"s1",transcript_path:$p,tool_name:$t,tool_input:{}}')" "$@"
   ARM_ARGS=()
 }
+
+agent_stop() { # BACKGROUND_FIELDS
+  local fields="$1"
+  shift
+  # shellcheck disable=SC2046
+  run_payload "$(jq -nc --arg p "$TRANSCRIPT" --argjson extra "$fields" \
+    '{session_id:"s1",transcript_path:$p,stop_hook_active:false} + $extra')" $(overseer_env) "$@"
+}
+agent_rows() { sed -n 's/^lane-mail-check: attached-agent=//p' "$ERR_FILE"; }
+# A host without the existing timeout command cannot safely read old Claude
+# history. Its native-list cases still run; its fallback must report unknown.
+expect_fallback() { # EXPECTED_ROWS CASE
+  if [ "$SCAN_AVAILABLE" -eq 1 ]; then
+    assert_eq "$(agent_rows)" "$1" "$2"
+  else
+    assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown "$2: bound unavailable"
+    assert_eq "$(agent_rows)" '' "$2: no unverified rows"
+  fi
+}
+agent_variant() { # NAME SED-ARGUMENT...
+  local name="$1" reducer hook="$HOOK"
+  shift
+  sed "$@" "$hook" > "$TMP_ROOT/$name.hook"
+  if ! cmp -s "$TMP_ROOT/$name.hook" "$hook"; then
+    hook="$TMP_ROOT/$name.hook"
+  fi
+  reducer="$TMP_ROOT/$name.reducer"
+  sed "$@" "$REPO_ROOT/skills/orch/scripts/lib/attached-agents.sh" > "$reducer"
+  if cmp -s "$reducer" "$REPO_ROOT/skills/orch/scripts/lib/attached-agents.sh"; then
+    if cmp -s "$hook" "$HOOK"; then echo "agent-variant: match=missing name=$name" >&2; exit 1; fi
+    VARIANT_PATH="$hook"
+    return
+  fi
+  sed "s|\$SCRIPTS/lib/attached-agents.sh|$reducer|g" "$hook" > "$TMP_ROOT/$name.final-hook"
+  VARIANT_PATH="$TMP_ROOT/$name.final-hook"
+}
+
+identity_rows() {
+  overseer_transcript
+  new_overseer agent_identity
+  judge_says "$CONTEXT_MARK_LINE"
+  write_transcript "$TRANSCRIPT" 600000
+  append_agent '{"name":"tpm-qualify","run_in_background":true}' 'Async agent launched successfully. agentId: tscwczujt'
+  mkdir -p "${TRANSCRIPT%.jsonl}/subagents"
+  local output="${TRANSCRIPT%.jsonl}/subagents/agent-atpm-qualify-5d1e94e72e6e8f3b.jsonl"
+  : > "$output"
+  printf '{"name":"tpm-qualify","taskKind":"in_process_teammate"}\n' > "${output%.jsonl}.meta.json"
+  agent_stop '{"background_tasks":[{"id":"tscwczujt","type":"subagent","status":"running"}]}'
+  assert_eq "$(agent_rows)" "tpm-qualify id=tscwczujt status=running output=$output" 'registry status uses launch name and named metadata output'
+  agent_stop '{}'
+  expect_fallback "tpm-qualify id=tscwczujt status=running output=$output" 'fallback shares launch identity and output'
+  printf '{"name":"direct-child"}\n' > "${TRANSCRIPT%.jsonl}/subagents/agent-direct.meta.json"
+  agent_stop '{"background_tasks":[{"id":"direct","type":"teammate","status":"running"},{"id":"unread","type":"teammate","status":"running"}]}'
+  assert_eq "$(agent_rows)" "$(printf 'direct-child id=direct status=running output=unknown\nunmapped id=unread status=unknown output=unknown')" 'metadata names direct ids; unmapped registry ids remain unknown'
+}
+if [[ "${1:-}" == --identity ]]; then
+  identity_rows
+  if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+    agent_variant agent-name-control -e 's/name="${name:-unmapped}"/name="unmapped"/'
+    control_rc=0
+    env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" --identity \
+      > "$TMP_ROOT/identity.control.log" 2>&1 || control_rc=$?
+    assert_eq "$control_rc" 1 'control: removing shared identity fails the production roster assertions'
+  fi
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
 
 new_lane agent_launch AGENT-1
 mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
@@ -555,24 +603,6 @@ assert_eq "$(handoff_context | jq -c '[.decision.tokens,.decision.cap,.decision.
 new_overseer agent_children
 judge_says "$CONTEXT_MARK_LINE"
 write_transcript "$TRANSCRIPT" 600000
-agent_stop() { # BACKGROUND_FIELDS
-  local fields="$1"
-  shift
-  # shellcheck disable=SC2046
-  run_payload "$(jq -nc --arg p "$TRANSCRIPT" --argjson extra "$fields" \
-    '{session_id:"s1",transcript_path:$p,stop_hook_active:false} + $extra')" $(overseer_env) "$@"
-}
-agent_rows() { sed -n 's/^lane-mail-check: attached-agent=//p' "$ERR_FILE"; }
-# A host without the existing timeout command cannot safely read old Claude
-# history. Its native-list cases still run; its fallback must report unknown.
-expect_fallback() { # EXPECTED_ROWS CASE
-  if [ "$SCAN_AVAILABLE" -eq 1 ]; then
-    assert_eq "$(agent_rows)" "$1" "$2"
-  else
-    assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown "$2: bound unavailable"
-    assert_eq "$(agent_rows)" '' "$2: no unverified rows"
-  fi
-}
 # The native registry names subagents and teammates; a task type outside the
 # documented agent and non-agent lists is unclassified, so the roster is
 # unknown. The turn-end judge takes the reading alone, whatever is out.
@@ -585,10 +615,10 @@ while IFS='|' read -r fields want unknown; do
   assert_eq "$(judge_argv)" '--check-marks --context 600000:1000000' "turn-end judge arguments for $fields"
 done <<'ROWS'
 {"background_tasks":[]}||
-{"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}|a1 status=running output=unknown|
+{"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}|unmapped id=a1 status=unknown output=unknown|agent-status
 {"background_tasks":[{"id":"a1","type":"subagent","status":"completed"},{"id":"s1","type":"shell","status":"running"}]}||
 {"background_tasks":[{"id":"m1","type":"monitor","status":"running"},{"id":"p1","type":"MCP task","status":"running"}]}||
-{"background_tasks":[{"id":"t1","type":"teammate","status":"running"}]}|t1 status=running output=unknown|
+{"background_tasks":[{"id":"t1","type":"teammate","status":"running"}]}|unmapped id=t1 status=unknown output=unknown|agent-status
 {"background_tasks":[{"id":"w1","type":"workflow","status":"running"}]}||task-type
 ROWS
 # A launch admitted with none out leaves its child running at the turn end,
@@ -611,18 +641,18 @@ assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown 'malf
 
 append_launch
 agent_stop '{}'
-expect_fallback 'a1 status=running output=unknown' 'fallback names the launched child'
+expect_fallback 'a1 id=a1 status=running output=unknown' 'fallback names the launched child'
 # The usage tail cannot establish a roster. Keep the launch outside that
 # window and add a recent usage line so only the full child scan can find it.
 jq -nc '{message:{role:"assistant",content:("x" * 1048576)}}' >> "$TRANSCRIPT"
 usage_line sonnet 600000 >> "$TRANSCRIPT"
 agent_stop '{}'
-expect_fallback 'a1 status=running output=unknown' 'complete history names a launch outside the usage window'
+expect_fallback 'a1 id=a1 status=running output=unknown' 'complete history names a launch outside the usage window'
 agent_stop '{"background_tasks":[]}'
 assert_eq "$(agent_rows)" '' 'a valid native empty list takes priority over old transcript state'
 append_notice monitor completed
 agent_stop '{}'
-expect_fallback 'a1 status=running output=unknown' 'a monitor notification clears no child'
+expect_fallback 'a1 id=a1 status=running output=unknown' 'a monitor notification clears no child'
 append_notice a1 completed
 agent_stop '{}'
 expect_fallback '' 'the matching terminal notification ends the child hold'
@@ -630,10 +660,10 @@ append_launch
 mkdir -p "${TRANSCRIPT%.jsonl}/subagents"
 : > "${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl"
 agent_stop '{}'
-expect_fallback "a1 status=running output=${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl" 'a later launch replaces completion and names existing output'
+expect_fallback "a1 id=a1 status=running output=${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl" 'a later launch replaces completion and names existing output'
 append_teammate
 agent_stop '{}'
-expect_fallback "$(printf 'a1 status=running output=%s\nareviewer-t1 status=running output=unknown' "${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl")" 'fallback names a spawned teammate'
+expect_fallback "$(printf 'a1 id=a1 status=running output=%s\nreviewer id=areviewer-t1 status=running output=unknown' "${TRANSCRIPT%.jsonl}/subagents/agent-a1.jsonl")" 'fallback names a spawned teammate'
 printf '{broken\n' >> "$TRANSCRIPT"
 agent_stop '{}'
 assert_eq "$(sed -n 's/^lane-mail-check: agents=//p' "$ERR_FILE")" unknown 'an unreadable fallback never reports no child'
@@ -672,11 +702,11 @@ SCAN_TIMEOUT
     esac
     scan_edits=(-e 's/^  JUDGE_RC=0$/  HOOK_AGENT_DEADLINE=$((SECONDS + 30)); SECONDS=$((SECONDS + 20)); JUDGE_RC=0/')
     case "$scan_case" in
-      unbounded-control) scan_edits+=(-e 's#^    agents=\$("\${scan_bound\[@\]}" jq -Rnr#    agents=$(jq -Rnr#') ;;
+      unbounded-control) scan_edits+=(-e 's#attached_agents_claude_history "\$TRANSCRIPT" "\${scan_bound\[@\]}"#attached_agents_claude_history "$TRANSCRIPT"#') ;;
       unavailable | native) scan_edits+=(-e 's/^! command -v timeout.*$/BOUND_BY=()/') ;;
       exhausted) scan_edits=(-e 's/^  JUDGE_RC=0$/  SECONDS=$((SECONDS + 30)); JUDGE_RC=0/') ;;
     esac
-    variant "agent-scan-$scan_case" "${scan_edits[@]}"
+    agent_variant "agent-scan-$scan_case" "${scan_edits[@]}"
     install_hook "$VARIANT_PATH" "$CASE_HOOK"
     write_transcript "$TRANSCRIPT" 600000
     append_launch
@@ -713,42 +743,24 @@ SCAN_TIMEOUT
   install_hook "$HOOK" "$CASE_HOOK"
 fi
 
+identity_rows
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground tool-result queued stop killed-resume known-unknown killed-result listed list-overlap sent-idle order remove register; do
+  agent_variant agent-name-control -e 's/name="${name:-unmapped}"/name="unmapped"/'
+  control_rc=0
+  env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" --identity \
+    > "$TMP_ROOT/identity.control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control: removing shared identity fails the production roster assertions'
+fi
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  for mutation in launch input children capability reserve wait; do
     case "$mutation" in
       launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
       input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
       children) variant agent-no-children -e 's/^    claude_attached_agents$/    AGENT_ROWS=""/' ;;
-      native) variant agent-no-native -e 's/^  if jq -e '\''has("background_tasks")'\'' <<<"\$INPUT" >\/dev\/null; then$/  if false; then/' ;;
-      completion) variant agent-no-completion -e 's/if \.agents | has(\$n\[0\]) then/if false then/' ;;
       capability) variant agent-no-capability -e 's/load_context_lib reserve/load_context_lib/' ;;
-      # Main's rule: the reserve applies whether or not an agent is out.
       reserve) variant agent-reserve-always -e 's/^  attached_agents_out || return 0$/  attached_agents_out || :/' ;;
-      unclassified) variant agent-unclassified-none -e 's/else \.unclassified = true end)$/else . end)/' ;;
-      # Main's refusal: the reserve alone names the handoff.
       wait) variant agent-reserve-handoff -e 's/^    out:\*) refuse agent-reserve /    out:*) refuse_handoff agent-launch /' ;;
-      # Each measured transition the scan reads, removed in turn.
-      idle) variant agent-no-idle -e 's/if \.names | has(\$n\[0\]) then/if false then/' ;;
-      resume) variant agent-no-resume -e 's/if (\$c\.input\.message | type) == "string" then/if false then/' ;;
-      shutdown) variant agent-no-shutdown -e 's/and \$c\.input\.message\.type == "shutdown_request" then/and false then/' ;;
-      foreground) variant agent-no-foreground -e 's/elif \$c\.sync then \.$/elif false then ./' ;;
-      tool-result) variant agent-no-tool-notes -e 's/^        (if type == "array" then \.\[\] | select(\.type == "tool_result") | \.content | text else empty end);$/        empty;/' ;;
-      queued) variant agent-no-queued -e 's/if \.type == "queue-operation" then/if false then/' ;;
-      stop) variant agent-no-stop -e 's/elif \$c\.name == "TaskStop" and/elif false and/' ;;
-      killed-resume) variant agent-unproved-resume -e 's/elif \$c\.status == "running" and \.agents\[\$t\] == "killed" then/elif false then/' ;;
-      known-unknown) variant agent-sticky-unknown -e 's/else changed(\$t; "unconfirmed") end/else changed($t; "unconfirmed") | .unclassified = true end/' ;;
-      killed-result) variant agent-unread-resume -e 's/and (\$m\.result | type) == "object" then \$m\.result/and false then $m.result/' ;;
-      listed) variant agent-no-listed -e 's/elif \$c\.name == "ListAgents" then/elif false then/' ;;
-      list-overlap) variant agent-stale-list -e 's/if \$c\.overlap or \$c\.list != \.generation then/if false then/' ;;
-      sent-idle) variant agent-idle-before-consumption -e 's/if \.agents\[\$t\] | queued then/if false then/' ;;
-      # A record's call results applied before its notifications.
-      order) variant agent-results-first -e 's/^          | noted(\$m)$/          | ./' \
-        -e 's/else \.unclassified = true end)$/else .unclassified = true end) | noted($m)/' ;;
-      remove) variant agent-reads-remove -e 's/then select(\.operation == "enqueue") | /then /' ;;
-      # A record's launches registered beside its call results, after its
-      # notifications.
-      register) variant agent-launch-after-notes -e 's/^          reduce (\$m | results | \[\.content | text | launched\]\[0\] | objects) as \$l$/          reduce empty as $l/' \
-        -e 's/| if \[\$r\.content | text | launched\]\[0\] != null or \$c == null or/| [$r.content | text | launched][0] as $l | if $l != null then changed($l.id; "running") | if $l.name != null then .names[$l.name] = $l.id else . end elif $c == null or/' ;;
     esac
     control_rc=0
     env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \

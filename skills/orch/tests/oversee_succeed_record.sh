@@ -126,6 +126,12 @@ new_caller() {
   rm -f -- "${MAILBOX_DIR:?}/$LANE_CONTEXT_RECORD"
   CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$TMP_ROOT/work" -P -F '#{pane_id}' "$cmd")"
   fixture_watch_predecessor "$SUCCEED" "$TMP_ROOT/work/tmp/workflow-state-oversee.json" "$TMP_ROOT/work" "$CALLER_PANE"
+  local transcript="$H/.claude/projects/fixture/s1.jsonl"
+  mkdir -p -- "${transcript%/*}" "$MAILBOX_DIR"
+  : > "$transcript"
+  jq -nc --arg p "$transcript" --arg home "$H/.claude" \
+    '{event:"SessionStart",harness:"claude",session_id:"s1",transcript_path:$p,account:$home}' \
+    > "$MAILBOX_DIR/session-$SERVER_PID-${CALLER_PANE#%}.jsonl"
 }
 # reading MODEL — the context reading the caller's own turn-end hook records in
 # the overseer mailbox for this pane, naming MODEL, well under the context mark.
@@ -146,6 +152,15 @@ state() {
 # this server, bound to its start, as a launcher writes it, with EXTRA_JSON
 # merged over it.
 record() {
+  local transcript
+  if [[ "$2" == "$H/"* ]]; then
+    transcript="$2/projects/fixture/s1.jsonl"
+    mkdir -p -- "${transcript%/*}" "$MAILBOX_DIR"
+    : > "$transcript"
+    jq -nc --arg p "$transcript" --arg home "$2" \
+      '{event:"SessionStart",harness:"claude",session_id:"s1",transcript_path:$p,account:$home}' \
+      > "$MAILBOX_DIR/session-$SERVER_PID-${1#%}.jsonl"
+  fi
   local extra="${4:-}"
   [[ -n "$extra" ]] || extra='{}'
   jq -cn --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$1" --arg account "$2" --arg model "$3" \
@@ -378,10 +393,19 @@ BARRIER
         watch_pid_release "$2"
       ' _ "$scripts" "$FLEET_STATE" "$CALLER_PANE" "$handoff_path"
     fi
+    # Stub harnesses write no hooks. Bind this scenario's caller with no
+    # native attached launch; durable output below remains recovery evidence.
+    native_transcript="$H/.claude/projects/fixture/s1.jsonl"
+    mkdir -p -- "${native_transcript%/*}" "$MAILBOX_DIR"
+    : > "$native_transcript"
+    jq -nc --arg p "$native_transcript" --arg home "$H/.claude" \
+      '{event:"SessionStart",harness:"claude",session_id:"s1",transcript_path:$p,account:$home}' \
+      > "$MAILBOX_DIR/session-$SERVER_PID-${CALLER_PANE#%}.jsonl"
     transcript="$TMP_ROOT/work/tmp/model-parent.jsonl"
     : > "$transcript"
     mkdir -p "${transcript%.jsonl}/subagents"
     : > "${transcript%.jsonl}/subagents/agent-running-agent.jsonl"
+    printf '{"name":"running-agent"}\n' > "${transcript%.jsonl}/subagents/agent-running-agent.meta.json"
     "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee \
       '.child_sessions={runtime:{status:"active",agent_id:"running-agent"},retired:{status:"closed",agent_id:"closed-agent"}}' >/dev/null
     before=$(jq -c . "$FLEET_STATE")
@@ -440,12 +464,12 @@ BARRIER
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'a fallback records exactly one model-switched event'
       assert_eq "$(jq -r '.fleet_log[] | select(.kind=="model-switched") | .launch_identity.pane' "$FLEET_STATE")" "$old_pane" 'the model event names its predecessor'
       assert_file_contains "$handoff" 'Retain the owner constraint from the previous handoff.' 'model recovery preserves standing handoff notes'
-      assert_file_contains "$handoff" "attached-agent=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" "$scenario model recovery retains its active agent and output path"
+      assert_file_contains "$handoff" "attached-agent=running-agent id=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" "$scenario model recovery retains its active agent and output path"
       assert_file_not_contains "$handoff" 'attached-agent=closed-agent' 'model recovery omits closed agents'
       # ol_command_read parses this exact final prompt from a recorded command.
       assert_eq "$(cat "$TMP_ROOT/model.prompt")" "${BRIEF%tmp/handoffs/OVERSEER-HANDOFF.md}$handoff_path" "$scenario successor prompt retains its handoff destination"
       assert_eq "$(cat "$TMP_ROOT/model.cwd")" "$launch_dir" "$scenario successor keeps the recorded launch directory"
-      assert_file_contains "$TMP_ROOT/model.snapshot" "attached-agent=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" "$scenario successor reads the fresh handoff snapshot"
+      assert_file_contains "$TMP_ROOT/model.snapshot" "attached-agent=running-agent id=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" "$scenario successor reads the fresh handoff snapshot"
       deadline=$((SECONDS + 30))
       until watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PANE" == "$after" && "$WATCH_ORIGIN" == succession ]]; do
         if (( SECONDS >= deadline )); then fail "$scenario successor watch claims its pane"; break; fi

@@ -1593,7 +1593,7 @@ assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-75)" \
   "a notice the reader refuses is reported under its exit status, the record untouched, and the turn ends"
 assert_eq "$(grep -c '^planted: notice refused$' "$ERR_FILE")" "1" "with the reader's own words under it"
 
-# The reviewed claude_attached_agents fallback reads Agent and Task call ids
+# The shared attached_agents_claude_history fallback reads Agent and Task call ids
 # with their run_in_background and name inputs, SendMessage's `to` input and
 # whether its message is text or a shutdown_request, TaskStop's task_id, the
 # launch id and the spawn id and name a result opens with, whether a result
@@ -1608,14 +1608,15 @@ assert_eq "$(grep -c '^planted: notice refused$' "$ERR_FILE")" "1" "with the rea
 # is not read. Its tagged send states retain pending work across snapshots
 # and preceding-turn notices; all state changes invalidate older lists.
 # Pin that one jq read site; a change to its fields, another site
-# in that function, or a read in another tracked hook must remain forbidden.
+# in that function, or a read in a tracked hook must remain forbidden.
 # The block is a reviewed copy, not extracted from the hook at run time: an
 # extraction would admit whatever the hook's block becomes, so an unreviewed
 # read added inside it would pass. It is inventory data, not a second
 # executable parser. Normalize CRLF before comparing source lines.
 PERMITTED_AGENT_READ="$TMP_ROOT/permitted-agent-id-status-read"
 cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
-    agents=$("${scan_bound[@]}" jq -Rnr '
+  "$@" jq -Rnr '
+
       def text: if type == "string" then . elif type == "array" then
         [.[] | select(.type == "text") | .text] | join("\n") else "" end;
       def said: text,
@@ -1652,12 +1653,12 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
           | select(.type == "assistant" or .type == "user" or .type == "queue-operation") | . as $record
           | if .type == "queue-operation" then select(.operation == "enqueue") | {role: "user", content: (.content | strings)}
             else .message? | objects | . + {result: $record.toolUseResult} end) as $m
-          ({calls: {}, agents: {}, names: {}, generation: 0, unclassified: false};
+          ({calls: {}, agents: {}, names: {}, generation: 0, unknown_calls: {}};
         if $m.role == "assistant" then
           reduce ($m.content | if type == "array" then .[] else empty end
             | select(.type == "tool_use" and (.id | type) == "string")) as $c
             (. ; if $c.name == "Agent" or $c.name == "Task" then
-                .generation += 1 | .calls[$c.id] = {pending: true, sync: (($c.input.run_in_background | tostring) != "true"
+                .generation += 1 | .calls[$c.id] = {pending: true, name: $c.input.name, sync: (($c.input.run_in_background | tostring) != "true"
                   and (($c.input.name | type) != "string" or $c.input.name == ""))}
               elif $c.name == "SendMessage" and ($c.input.to | type) == "string" then
                 .generation += 1
@@ -1670,8 +1671,9 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
               elif $c.name == "ListAgents" then
                 .calls[$c.id] = {list: .generation, overlap: any(.calls[]; .pending == true)}
               else . end)
-        elif $m.role == "user" then
-          reduce ($m | results | [.content | text | launched][0] | objects) as $l
+        elif $m.role == "user" then . as $state
+          | reduce ($m | results | . as $r | [.content | text | launched][0] | objects
+            | . + {name: (.name // $state.calls[$r.tool_use_id].name)}) as $l
             (. ; changed($l.id; "running")
               | if $l.name != null then .names[$l.name] = $l.id else . end)
           | noted($m)
@@ -1710,13 +1712,15 @@ cat > "$PERMITTED_AGENT_READ" <<'AGENT_ID_STATUS_READ'
                         elif .agents[$t] == "unknown" or .agents[$t] == "unconfirmed" or .agents[$t] == "unconfirmed-active" then "unconfirmed-active"
                         else "queued-active" end) end
                 elif $c.sync then .
-                else .unclassified = true end)
+                else .unknown_calls[$r.tool_use_id] = ($c.name // "unmapped") end)
         else . end)
-      | (.agents | to_entries[] | [.key,
+      | . as $state
+      | (.agents | to_entries[] | .key as $id | [.key,
           (if .value == "queued" or .value == "queued-active" then "running"
-            elif .value == "unconfirmed" or .value == "unconfirmed-active" then "unknown" else .value end)] | @tsv),
-        (select(.unclassified) | ["?", "agent-result"] | @tsv)
-    ' <"$TRANSCRIPT" 2>"$WORK_DIR/agents.err") || scan_rc=$?
+            elif .value == "unconfirmed" or .value == "unconfirmed-active" then "unknown" else .value end),
+          ([$state.names | to_entries[] | select(.value == $id) | .key][0] // "unmapped")] | @tsv),
+        (.unknown_calls[] | ["unknown", "unknown", .] | @tsv)
+  ' <"$transcript"
 AGENT_ID_STATUS_READ
 text_reads() { # FILE...
   awk '
@@ -1724,15 +1728,15 @@ text_reads() { # FILE...
     FNR == 1 { in_agent = 0; reading = 0; block = ""; block_hits = 0; admitted = 0 }
     {
       sub(/\r$/, "")
-      if ($0 ~ /^claude_attached_agents\(\) \{([[:space:]]*#.*)?$/) in_agent = 1
+      if ($0 ~ /^attached_agents_claude_history\(\) \{([[:space:]]*#.*)?$/) in_agent = 1
       hit = ($0 ~ /asks_the_person|transcript_turn_start|transcript_final_line|select\(\.type == "text"\)|\.message\.content.*\.text/)
       forbidden += hit
       quote = sprintf("%c", 39)
-      if (in_agent && $0 == "    agents=$(\"${scan_bound[@]}\" jq -Rnr " quote) reading = 1
+      if (in_agent && $0 == "  \"$@\" jq -Rnr " quote) reading = 1
       if (reading) {
         block = block $0 "\n"; block_hits += hit
-        if ($0 == "    " quote " <\"$TRANSCRIPT\" 2>\"$WORK_DIR/agents.err\") || scan_rc=$?") {
-          if (FILENAME ~ /\/lane-mail-check\.sh$/ && !admitted && block == permitted) {
+        if ($0 == "  " quote " <\"$transcript\"") {
+          if (FILENAME ~ /\/attached-agents\.sh$/ && !admitted && block == permitted) {
             forbidden -= block_hits; admitted = 1
           }
           reading = 0; block = ""; block_hits = 0
@@ -1743,11 +1747,12 @@ text_reads() { # FILE...
     END { print forbidden + 0 }
   ' "$PERMITTED_AGENT_READ" "$@"
 }
-# The inventory includes every tracked source hook and harness render.
+# The inventory includes tracked hooks, their renders and the shared reducer.
 # A failed discovery cannot stand for an empty set.
 HOOK_INVENTORY="$TMP_ROOT/tracked-hook-inventory"
 git -C "$REPO_ROOT" ls-files -- ':(glob)hooks/*.sh' ':(glob).claude/hooks/*.sh' \
-  ':(glob).codex/hooks/*.sh' ':(glob).github/hooks/*.sh' ':(glob).pi/kendex/hooks/*.sh' > "$HOOK_INVENTORY" || exit 1
+  ':(glob).codex/hooks/*.sh' ':(glob).github/hooks/*.sh' ':(glob).pi/kendex/hooks/*.sh' \
+  skills/orch/scripts/lib/attached-agents.sh .agents/skills/orch/scripts/lib/attached-agents.sh > "$HOOK_INVENTORY" || exit 1
 RENDERS=()
 while IFS= read -r tracked_hook; do
   [ -n "$tracked_hook" ] || continue
@@ -1755,6 +1760,10 @@ while IFS= read -r tracked_hook; do
 done < "$HOOK_INVENTORY"
 assert_eq "$([ "${#RENDERS[@]}" -gt 0 ] && echo discovered || echo empty)" discovered \
   "the tracked-hook inventory is nonempty"
+assert_eq "$(grep -Fxc 'skills/orch/scripts/lib/attached-agents.sh' "$HOOK_INVENTORY")" 1 \
+  "the inventory includes the shared reducer source"
+assert_eq "$(grep -Fxc '.agents/skills/orch/scripts/lib/attached-agents.sh' "$HOOK_INVENTORY")" 1 \
+  "the inventory includes the shared reducer render"
 assert_eq "$(text_reads "${RENDERS[@]}")" "0" \
   "only the reviewed attached-agent roster read is permitted"
 
@@ -3366,7 +3375,7 @@ expect 0 "$GAP" "control: with the notice uncounted the lane's next idle turn pa
 
 # Each row plants one forbidden read or broadens the accepted read fields.
 # The same inventory assertion rejects every row, including a second read
-# inside claude_attached_agents but outside its one permitted jq block.
+# inside the shared reducer but outside its one permitted jq block.
 PLANTED_TEXT_READ="jq -r 'select(.type == \"text\")';"
 for read_case in outside-function outside-site changed-fields other-hook; do
   copy_name=lane-mail-check.sh
@@ -3374,8 +3383,12 @@ for read_case in outside-function outside-site changed-fields other-hook; do
     outside-function)
       mutant "text-$read_case" -e "s@^idle_check() {\$@idle_check() { $PLANTED_TEXT_READ@" ;;
     outside-site)
+      copy_name=attached-agents.sh
+      MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/attached-agents.sh"
       mutant "text-$read_case" -e "s@^  local agents row id status output.*\$@&; $PLANTED_TEXT_READ@" ;;
     changed-fields)
+      copy_name=attached-agents.sh
+      MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/attached-agents.sh"
       mutant "text-$read_case" -e 's@agentId: (?<id>@agentId: (?<words>@' ;;
     other-hook)
       MUTANT_SOURCE="$REPO_ROOT/hooks/lane-mail-halt.sh"
@@ -3383,6 +3396,7 @@ for read_case in outside-function outside-site changed-fields other-hook; do
       unset MUTANT_SOURCE
       copy_name=lane-mail-halt.sh ;;
   esac
+  unset MUTANT_SOURCE
   mkdir -p "$TMP_ROOT/text-inventory-$read_case"
   cp "$MUTANT_PATH" "$TMP_ROOT/text-inventory-$read_case/$copy_name"
   assert_eq "$(text_reads "$TMP_ROOT/text-inventory-$read_case/$copy_name")" "1" \

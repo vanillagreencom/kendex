@@ -290,6 +290,7 @@ while IFS='|' read -r preparation launched original override expected_model obse
   mkdir -p "$LANE/tmp/parent/subagents"
   : > "$transcript"
   : > "$LANE/tmp/parent/subagents/agent-a1.jsonl"
+  printf '{"name":"a1"}\n' > "$LANE/tmp/parent/subagents/agent-a1.meta.json"
   extra=$(jq -nc --arg t "$transcript" --arg p "$preparation" \
     '{stop_hook_active:true,transcript_path:$t} + (if $p == "complete" then
       {background_tasks:[{type:"subagent",id:"a1",status:"running"}]} else {} end)')

@@ -141,8 +141,7 @@
 #        The shared lane_context_handoff_due rule judges both independent
 #        context triggers, using the same setting as the lane hook, and no
 #        agent reserve, even with an agent out: the reserve protects only a
-#        new launch, and a succession waits for every attached child or names
-#        each unfinished one in the handoff.
+#        new launch. Attached children follow the rule below.
 #        Below both it prints `context-below-mark`. An unmeasured context rule
 #        prints `context-unmeasured`, with `reason=window-unnamed` for a reading whose
 #        capacity is unknown below the token cap, and `reason=context-unread` for a
@@ -462,6 +461,17 @@
 #                    caller's own output records the line it sent, and it is
 #                    recorded in the fleet state as a live succession's is
 #
+# Attached children:
+#   After judging a mark and before launching, live Claude self-succession reads
+#   the caller transcript named by its SessionStart row through the same
+#   attached-work reducer as lane-mail-check. Running always refuses. Unknown
+#   refuses unless the supplied handoff names that child in its Sub-agents
+#   section. An unmapped child has no named exception. Each refusal prints
+#   attached-agents-out name=NAME status=STATUS output=PATH and uses the normal
+#   fleet log and owner notice. The caller, children, saved work and watch stay
+#   in place. --check-marks prints attached-agent=NAME id=ID status=STATUS
+#   output=PATH rows without refusing. Dead/walled recovery reads no roster.
+#
 # Output: every line is `oversee-succeed: <key> <field>=<value>` first, with the
 # explanation and any failing dependency's own stderr under it.
 # From the mode decision on, every live self-succession refusal writes its
@@ -524,6 +534,7 @@ message() { # KEY FIELD=VALUE...
     handoff-stale) text='The handoff must carry one Start here line with the current fleet generation. found= names what the reader took from the handoff. Rewrite it before succession; no successor was launched.' ;;
     handoff-body-invalid) text='Supply a separate nonempty regular body file with no Start here line. Move labeled Progress log records to the named home: rulings and filing history to the fleet log, Verifying readings to their tracker items.' ;;
     handoff-write-failed) text='The snapshot could not replace the handoff. The previous handoff remains in place.' ;;
+    attached-agents-out) text='Wait for every running child to return before retrying. Preserve the caller, its watch and child output. An unknown child may proceed only when the handoff names it in Sub-agents; running children have no handoff exception.' ;;
     model-recovery-refused) text='The acquired model recovery could not complete for its recorded predecessor. Read the reason and recover that bound session or register its executable launch command before requesting recovery again.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
@@ -660,7 +671,7 @@ esac
 # settings load keeps it.
 DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
 export DEP_ERR
-trap 'rm -f -- "$DEP_ERR" "${memo_tmp:-}"' EXIT
+trap 'if [[ "${MODE:-}" == check && -n "${CHECK_AGENT_ROWS:-}" ]]; then printf "%s\n" "$CHECK_AGENT_ROWS"; fi; rm -f -- "$DEP_ERR" "${memo_tmp:-}"' EXIT
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
@@ -693,6 +704,79 @@ source "$SCRIPT_DIR/lib/job-unit.sh"
 source "$SCRIPT_DIR/lib/watch-handover.sh"
 # shellcheck source=orch-env
 source "$SCRIPT_DIR/orch-env"
+
+# Read the same roster as the turn-end hook, through the SessionStart row
+# for this pane. Check mode reports only; dead and walled recovery never call it.
+succession_attached_agents() { # check|succeed
+  local mode="$1" key="" row_file transcript="" session="" harness="${CALLER_HARNESS:-${HARNESS_ARG:-}}"
+  local home="${OL_CUR_HOME:-${CALLER_CFG:-}}" roster rows row name status output blocked=0 dir bound=""
+  local AGENT_STATE=unknown AGENT_ROWS="" AGENT_ROSTER='[]'
+  if [[ -n "${CALLER_SERVER:-}" && -n "${CALLER_PANE:-}" ]]; then
+    key="$CALLER_SERVER $CALLER_PANE"
+  elif [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]]; then
+    key="$(lane_context_caller_key 2>"$DEP_ERR")" || key=""
+  fi
+  if [[ -n "$key" ]]; then
+    row_file="$(session_rows_overseer_file "$PROJECT_ROOT" "${key%% *}" "${key#* }")"
+    if session_rows_last "$row_file" SessionStart && [[ -n "$SESSION_ROW" ]]; then
+      harness="${harness:-$(jq -r '.harness // ""' <<<"$SESSION_ROW")}"
+      transcript="$(jq -r '.transcript_path // ""' <<<"$SESSION_ROW")" || die record-unread field=transcript_path
+      session="$(jq -r '.session_id // ""' <<<"$SESSION_ROW")" || die record-unread field=session_id
+      [[ -n "$home" ]] || home="$(jq -r '.account // ""' <<<"$SESSION_ROW")"
+    fi
+  fi
+  # This shared reducer interprets Claude events alone; other harnesses retain
+  # their existing recovery policy and native attached-work contracts.
+  [[ "$harness" == claude ]] || return 0
+  [[ -n "$home" ]] || home="$(lane_context_caller_cfg claude)"
+  dir="$(mktemp -d)" || die launch-failed step=agent-scratch
+  if lane_context_transcript_owned claude "$transcript" "$session" "$home"; then
+    if command -v timeout >/dev/null 2>&1; then bound=timeout; fi
+    # shellcheck source=lib/attached-agents.sh
+    source "$SCRIPT_DIR/lib/attached-agents.sh"
+    if ! attached_agents_claude '{}' "$transcript" "$dir" "$((SECONDS + ATTACHED_AGENTS_SCAN_SECONDS))" 3 "$bound"; then
+      AGENT_STATE=unknown AGENT_ROSTER='[]'
+    fi
+  fi
+  rm -rf -- "${dir:?}"
+  roster="$AGENT_ROSTER"
+  if [[ "$AGENT_STATE" == unknown && "$roster" == '[]' ]]; then
+    roster='[{"name":"unmapped","id":"unknown","status":"unknown","output":"unknown"}]'
+  fi
+  rows="$(jq -c '.[]' <<<"$roster")" || die record-unread field=attached-agents
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    name="$(jq -r '.name' <<<"$row")" || die record-unread field=agent-name
+    status="$(jq -r '.status' <<<"$row")" || die record-unread field=agent-status
+    output="$(jq -r '.output' <<<"$row")" || die record-unread field=agent-output
+    if [[ "$mode" == check ]]; then
+      # The hook consumes the first mark line; the EXIT owner prints roster
+      # details after that judgement, including the context-first exit.
+      printf -v row 'oversee-succeed: attached-agent=%s id=%s status=%s output=%s' \
+        "$name" "$(jq -r '.id' <<<"$row")" "$status" "$output"
+      CHECK_AGENT_ROWS="${CHECK_AGENT_ROWS:+$CHECK_AGENT_ROWS$'\n'}$row"
+      continue
+    fi
+    if [[ "$status" == unknown && "$name" != unmapped ]] && awk -v name="$name" '
+      /^#+ / {
+        heading=$0; sub(/^#+[[:space:]]+/, "", heading)
+        if (heading == "Sub-agents") { inside=1; next }
+        if (inside) inside=0
+      }
+      inside {
+        line=$0; gsub(/[^[:alnum:]_.-]/, " ", line)
+        n=split(line, words, /[[:space:]]+/)
+        for (i=1; i<=n; i++) if (words[i] == name) found=1
+      }
+      END { exit !found }' "$HANDOFF_FILE"; then
+      continue
+    fi
+    message attached-agents-out "name=$name" "status=$status" "output=$output" >&2
+    fleet_log_refusal attached-agents-out "name=$name" "status=$status" "output=$output"
+    blocked=1
+  done <<<"$rows"
+  (( ! blocked )) || exit 1
+}
 
 # The internal `--watch-restart STATE CALLER_SESSION PANE LANE_VAR LANE_HOME
 # HARNESS CWD SCRIPT ARGC ARGS... [FLAG...]` run, step 6's helper, which the succession starts before its
@@ -1031,6 +1115,7 @@ if (( JUDGES )) && [[ "$CONTEXT_STATE" == unmeasured ]]; then
   context_fields=("context_decision=$(lane_context_handoff_decision "$tokens" "$window" "$CONTEXT_PCT")")
 fi
 if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then
+  succession_attached_agents check
   message mark-reached kind=context "value=$tokens" "mark=$CONTEXT_PCT" \
     "succession=$SUCCESSION" headroom=unreadable "window=$window" ${context_fields[@]+"${context_fields[@]}"}
   exit 0
@@ -1611,6 +1696,8 @@ if (( JUDGES )) && (( SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLE
   fi
 fi
 
+[[ "$MODE" != check ]] || succession_attached_agents check
+
 if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
     # A reading that did not succeed is not a mark that did not fire, and only
     # `check` has to tell them apart: its caller holds a standing mark across a
@@ -1851,6 +1938,7 @@ if [[ "$MODE" == succeed ]]; then
     || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation" found=none
   [[ "$handoff_generation" == "$generation" ]] \
     || die handoff-stale "path=$HANDOFF_FILE" "expected=$generation" "found=$handoff_generation"
+  succession_attached_agents succeed
 fi
 # The successor is recorded BEFORE its window opens, not after the close: the
 # close kills this script's own window and a write placed after it may never

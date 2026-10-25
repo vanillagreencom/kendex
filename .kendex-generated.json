@@ -682,6 +682,7 @@
   ".agents/skills/orch/scripts/lib/adapters/copilot.sh",
   ".agents/skills/orch/scripts/lib/adapters/pi-registry-window.mjs",
   ".agents/skills/orch/scripts/lib/adapters/pi.sh",
+  ".agents/skills/orch/scripts/lib/attached-agents.sh",
   ".agents/skills/orch/scripts/lib/branch-growth.sh",
   ".agents/skills/orch/scripts/lib/cause-keys.jq",
   ".agents/skills/orch/scripts/lib/change-class.sh",
