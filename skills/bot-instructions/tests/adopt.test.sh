@@ -8,6 +8,7 @@
 # TOML.
 
 . "$(dirname "$0")/lib/harness.sh"
+export MSYS=winsymlinks:nativestrict
 
 # Does the file hold these exact bytes? The second argument is a byte string
 # written with `\xNN` escapes, so a control can name a byte no text encoding
@@ -308,9 +309,8 @@ fi
 # Discovery asks the writer's marker owner before it reports a path. A
 # hand-written file or region must not enter a caller's commit set merely
 # because the current manifest would generate that pathname. kendex reads
-# these lines (`crates/core/src/bot_instructions.rs`): released engines from
-# `--dry-run`, later ones from `--discover`. The fixture's `AGENTS.md` region
-# is hand-written.
+# these lines (`crates/core/src/bot_instructions.rs`) from `--discover`.
+# The fixture's `AGENTS.md` region is hand-written.
 repo="$(bi_new_repo discovery-owned)"
 mkdir -p "$repo/.github"
 printf 'the repository owns this\n' > "$repo/.github/copilot-instructions.md"
@@ -330,7 +330,7 @@ discovery_lists() { # LAUNCHER FLAG
     printf 'changed the tree: %s' "$(git -C "$repo" status --porcelain | tr '\n' ' ')"
   fi
 }
-for flag in --dry-run --discover; do
+for flag in --discover; do
   why="$(discovery_lists "$BI" "$flag")"
   if [ -z "$why" ]; then ok "render $flag lists owned outputs only and writes nothing"
   else bad "render $flag lists owned outputs only and writes nothing" "$why"; fi
@@ -345,6 +345,105 @@ if [ "$why" = 'listed the unowned file' ]; then
   ok 'control: discovery without the ownership filter lists the unowned file'
 else
   bad 'control: discovery without the ownership filter lists the unowned file' "${why:-passed}"
+fi
+
+# Render preview uses the same ownership refusal as render, without writing.
+repo="$(bi_rendered_repo render-preview-ownership)" || exit 1
+empty="$(bi_new_repo render-preview-unowned-only)" || exit 1
+if python3 -B - "$BI" "$repo" "$BI_TMP" "$empty" <<'PYTHON'
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+launcher, fixture, scratch, empty = map(Path, sys.argv[1:])
+
+
+def snapshot(root):
+    return {p.relative_to(root).as_posix():
+            ("link", p.readlink().as_posix()) if p.is_symlink() else
+            ("file", p.read_bytes()) if p.is_file() else ("dir", None)
+            for p in root.rglob("*") if ".git" not in p.relative_to(root).parts}
+
+
+def contract(root, command, state):
+    shutil.copytree(empty if state == "only-unowned" else fixture, root)
+    path = root / (".pr_agent.toml" if state == "only-unowned" else ".github/copilot-instructions.md")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if state in ("unowned-file", "disabled-file", "only-unowned"):
+        path.write_text("The repository owns this.\n")
+    elif state == "unowned-region":
+        agents = root / "AGENTS.md"
+        agents.write_text("# fixture\n\n## Code Review Rules\n\nHand-written.\n")
+    elif state == "owned-symlink":
+        target = root / "held.md"
+        target.write_bytes(path.read_bytes())
+        path.unlink()
+        path.symlink_to(target)
+        assert path.is_symlink()
+    if state in ("disabled-file", "only-unowned"):
+        manifest = root / "kendex.toml"
+        text = manifest.read_text()
+        bots = ("copilot",) if state == "disabled-file" else (
+            "codex", "copilot", "coderabbit", "qodo_best_practices", "qodo_review_md", "macroscope")
+        for bot in bots:
+            old = f"{bot} = true"
+            assert text.count(old) == 1, bot
+            text = text.replace(old, f"{bot} = false")
+        manifest.write_text(text)
+    before = snapshot(root)
+    preview = subprocess.run([str(command), "render", "--dry-run", "--repo", str(root)],
+                             capture_output=True, text=True)
+    assert snapshot(root) == before, (state, "preview changed tree")
+    actual = subprocess.run([str(command), "render", "--repo", str(root)],
+                            capture_output=True, text=True)
+    if state in ("unowned-file", "unowned-region", "only-unowned"):
+        # The launcher exposes RenderError's key to callers as this record.
+        expected = f"bot-instructions: render={root.resolve()}"
+        assert preview.returncode == actual.returncode == 2, (state, preview, actual)
+        assert preview.stderr.splitlines()[0] == actual.stderr.splitlines()[0] == expected
+        assert snapshot(root) == before, (state, "refusal changed tree")
+    else:
+        assert preview.returncode == actual.returncode == 0, (state, preview, actual)
+        report = preview.stdout.replace("would write ", "wrote ").replace("would remove ", "removed ")
+        assert report == actual.stdout, (state, preview, actual)
+        if state == "disabled-file":
+            assert path.read_bytes() == before[path.relative_to(root).as_posix()][1]
+    return preview
+
+
+for state in ("owned", "unowned-file", "unowned-region", "disabled-file", "only-unowned", "owned-symlink"):
+    contract(scratch / ("render-preview-" + state), launcher, state)
+    print(f"  ok   render preview ownership and no-write contract: {state}")
+
+# Restore the old preview filter in a disposable package, then run only the
+# unowned-file row. The old success must fail the ownership-refusal assertion.
+mutant = scratch / "render-preview-filter-mutant"
+shutil.copytree(launcher.parent.parent, mutant)
+verbs = mutant / "scripts/lib/verbs.py"
+text = verbs.read_text()
+old = """        for path in paths:
+            writer.replace(root, path, ctx.build.files[path], dry_run=True)
+"""
+new = "        paths = [path for path in paths if writer.inspect(root, path)[1]]\n"
+assert text.count(old) == 1
+changed = text.replace(old, new)
+assert changed != text
+verbs.write_text(changed)
+try:
+    contract(scratch / "render-preview-filter-control", mutant / "scripts/bot-instructions", "unowned-file")
+except AssertionError as exc:
+    assert exc.args[0][0] == "unowned-file", exc
+    assert exc.args[0][1].returncode == 0, exc
+    assert exc.args[0][2].returncode == 2, exc
+    print("  ok   control: old preview filter fails the unowned-file row")
+else:
+    raise AssertionError("old preview filter passed the unowned-file row")
+PYTHON
+then
+  ok 'render preview ownership contracts and old-filter control pass'
+else
+  bad 'render preview ownership contracts and old-filter control pass'
 fi
 
 # Git can track a directory symlink as an output ancestor. The canonical
