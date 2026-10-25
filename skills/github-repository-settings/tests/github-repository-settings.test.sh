@@ -160,13 +160,46 @@ def checking(root):
         assert snapshot(root) == before
 
 
+def assert_not_adopted(result):
+    assert result.returncode == 0 and result.stdout == "", result
+    # Command callers consume these diagnostic records, not the English line.
+    assert result.stderr.splitlines()[:2] == [
+        "github-standard-check-location=unset",
+        "github-repository-settings: not-adopted=unset",
+    ], result
+    assert "bot-instructions:" not in result.stderr, result
+
+
+def adoption(root):
+    rendered(root, "on")
+    # Full output differs from the local default even before the stale edit.
+    path = root / "AGENTS.md"
+    original = path.read_text()
+    assert original.count(".github/instructions/code-review.md") == 1
+    path.write_text(original.replace(".github/instructions/code-review.md", "missing.md"))
+    assert path.read_text() != original
+    subprocess.run(["git", "-C", str(root), "add", "-A"], env=environment, check=True)
+    for review, location, status in ((None, None, 0), ("", "", 0),
+                                     (None, "", 0), ("", None, 0),
+                                     ("on", None, 1), ("off", None, 1),
+                                     (None, "hosted", 1), ("", "local", 1)):
+        for args in ((), ("--staged",)):
+            before = snapshot(root)
+            result = invoke(root, "check", "--json", *args, setting=review, location=location)
+            if status == 0:
+                assert_not_adopted(result)
+            else:
+                assert result.returncode == status, (review, location, result)
+            assert snapshot(root) == before
+
+
 def staged(root):
     # Expected output and exit classes are independent of the wrapper's selection.
     for name, status, review, private, process, output, nested, location in (
         ("clean", 0, "off", "", {}, "local", None, "hosted"),
         ("stale", 1, "off", "", {}, "local", None, "hosted"),
         ("incomplete", 2, "off", "", {}, "local", None, "hosted"),
-        ("absent-settings", 0, None, "", {}, "local", None, "unset"),
+        ("absent-settings", 0, None, "", {}, "full", None, "unset"),
         ("private", 0, "on", "GITHUB_STANDARD_BOT_REVIEW=off\n", {}, "local", None, "hosted"),
         ("process", 0, "off", "GITHUB_STANDARD_BOT_REVIEW=off\n",
          {"GITHUB_STANDARD_BOT_REVIEW": "on", "GITHUB_STANDARD_CHECK_LOCATION": "hosted",
@@ -180,7 +213,7 @@ def staged(root):
         ("root-symlink-explicit", 0, "on", "", {"REVIEW_GATE_SETTINGS_FILE": "explicit.toml"},
          "local", None, "hosted"),
         ("root-symlink-defaults", 0, "on", "", {"REVIEW_GATE_SETTINGS_FILE": "/dev/null"},
-         "local", None, "unset"),
+         "full", None, "unset"),
     ):
         config = root / "kendex.settings.toml"
         config.unlink(missing_ok=True)
@@ -234,6 +267,10 @@ def staged(root):
         before = snapshot(root)
         result = invoke(root, "check", "--staged", "--json", setting=None,
                         location=None, extra_env=process)
+        if name in ("absent-settings", "root-symlink-defaults"):
+            assert_not_adopted(result)
+            assert snapshot(root) == before, name
+            continue
         if status == 2 and link is not None:
             assert result.returncode == status and result.stdout == "", (name, result)
             # Command callers read the shared diagnostics protocol.
@@ -271,6 +308,14 @@ def locations(root):
 
 
 def settings(root):
+    for verb, args, review, status in (("adopt", ("--dry-run",), None, 1),
+                                       ("adopt", ("--dry-run",), "", 2),
+                                       ("render", (), "", 2), ("render", (), None, 0)):
+        before = snapshot(root)
+        result = invoke(root, verb, *args, setting=review)
+        assert result.returncode == status, (verb, review, result)
+        if verb == "adopt" or status == 2:
+            assert snapshot(root) == before
     (root / "kendex.settings.toml").write_text('[env]\nGITHUB_STANDARD_CHECK_LOCATION = "hosted"\nGITHUB_STANDARD_BOT_REVIEW = "on"\n')
     result = invoke(root, "render", setting=None, location=None)
     assert result.returncode == 0 and (root / ".github/copilot-instructions.md").exists(), result
@@ -282,10 +327,28 @@ def settings(root):
         assert result.returncode == 2 and f"setting={key}\n" in result.stderr, result
     (root / "kendex.settings.toml").write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = true\n')
     assert invoke(root, "render").returncode == 2
+    for failure in ("syntax", "unreadable", "bot-instructions", "review-gate"):
+        broken = fixture(f"settings-{failure}")
+        if failure == "syntax":
+            (broken / "kendex.settings.toml").write_text('[env]\nOTHER = true\n')
+        elif failure == "unreadable":
+            (broken / "kendex.settings.toml").symlink_to("missing-settings.toml")
+        elif failure == "bot-instructions":
+            (broken / "catalog/bot-instructions/scripts/bot-instructions").unlink()
+        else:
+            (broken / "catalog/review-gate/scripts/lib/settings.sh").unlink()
+        subprocess.run(["git", "-C", str(broken), "add", "-A"], env=environment, check=True)
+        for args in ((), ("--staged",)):
+            before = snapshot(broken)
+            result = invoke(broken, "check", *args, setting=None, location=None)
+            assert result.returncode == 2, (failure, args, result)
+            assert "github-repository-settings: not-adopted=" not in result.stderr, result
+            assert snapshot(broken) == before
 
 
 contracts = {"preview": preview, "symlink": symlink, "selection": selection,
-             "equality": equality, "checking": checking, "staged": staged, "locations": locations,
+             "equality": equality, "checking": checking, "adoption": adoption,
+             "staged": staged, "locations": locations,
              "settings": settings}
 completed = 0
 for name, contract in contracts.items():
@@ -313,7 +376,10 @@ for name, contract, path, old, new in (
     ("preview-write", preview, "bot-instructions/scripts/lib/writer.py",
      '    if dry_run:\n        return True', '    if False:\n        return True'),
     ("ignore-review", selection, "github-repository-settings/scripts/github-repository-settings",
-     'off) output=local', 'off) output=full'),
+     "*:off|check:) output=local", "*:off|check:) output=full"),
+    ("not-adopted", adoption, "github-repository-settings/scripts/github-repository-settings",
+     'if [ -z "$location" ] && [ -z "$review" ]; then',
+     'if [ -n "$location" ] && [ -z "$review" ]; then'),
     ("library-bytes", equality, "github-repository-settings/scripts/github-repository-settings",
      '--output "$output"', '--output full'),
     ("check-write", checking, "bot-instructions/scripts/lib/verbs.py",
