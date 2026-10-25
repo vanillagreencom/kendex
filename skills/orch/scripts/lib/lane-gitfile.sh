@@ -301,8 +301,9 @@ lane_state_rounds() { # STATE_JSON [ERRF] [VALIDATION_RUNS]
 # to ITEM and selects only the workflow-state file, including older archives
 # without a recorded member. A PR-key fallback keeps the host's item identity.
 # Sets LANE_ITEM_STATE to the item's own workflow-state JSON, empty where
-# the lane has written none. A local lane's, HOST empty, is under the project
-# state directory of its own checkout, ROOT, where ROOT is a directory, so a
+# the lane has written none. A local advisory read, HOST empty and STRICT false,
+# tries ROOT/tmp before the project state directory of its own checkout, ROOT,
+# where ROOT is a directory, so a
 # lane of another repository reads from that repository, and of the caller's
 # checkout where ROOT is gone or unrecorded; a hosted lane's is in the state
 # directory the launch uses, with lane_hosted_state_dir's older-launch fallback, read
@@ -392,6 +393,15 @@ lane_item_state() {
         lane_hosted_state_dir "" "$4" "$6" "$7" || return $?
         path="$(cd -- "$6" && "$1" --state-dir "$LANE_HOSTED_STATE_DIR" --no-private-env path "$state_key" 2>"$7/state.err")" || return 2
       else
+        lane_hosted_state_path "$6" "$6/tmp" "$state_key"
+        path="$LANE_HOSTED_STATE_PATH"
+        LANE_ITEM_STATE_TRIED+=("$path")
+        lane_host_fetch "" "$4" "$path" "$7/item-state.json" "$7/state.err" || rc=$?
+        case "$rc" in
+          0) LANE_ITEM_STATE="$(jq -c . -- "$7/item-state.json" 2>"$7/state.err")" || return 2; return 0 ;;
+          1) ;;
+          *) return "$rc" ;;
+        esac
         path="$(cd -- "$6" && "$1" path "$state_key" 2>"$7/state.err")" || return 2
       fi
     elif [[ "${10:-false}" == true ]]; then

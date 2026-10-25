@@ -218,6 +218,72 @@ run -- render --state "$CASE/state.json" --repo owner/repo
 assert_contains "$OUT" 'Rounds:
 - KEN-3: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread' "a running lane with no state has unread round counts"
 
+echo "=== render: authoritative local state and main-checkout fallback ==="
+# Real linked checkouts expose workflow-state's relative-directory rule.
+# The report protocol is consumed by oversee-watch and the owner report writer.
+local_state_report() {
+  local name lane_state main_state expected root state name_state measured
+  while IFS='|' read -r name lane_state main_state expected; do
+    new_case "local-state-$1-$name"
+    escapes_checkout "$CASE/clone"
+    escapes_commit "$CASE/clone" "$NOW" fixture
+    git -C "$CASE/clone" worktree add -q -b lane "$CASE/lane"
+    mkdir -p "$CASE/lane/tmp" "$CASE/clone/tmp"
+    measured='{"first_panel":{},"rereview_cycles":2,"pr_comment_review":{"iterations":1},
+      "stages":[{"kind":"fix"}],"restacks":1,
+      "post_pr_stop":{"name":"ci-fix-cap","gate":"ci","remaining":["test"]},
+      "validate_rounds":[{"kind":"implement","mode":"full","seconds":189},
+        {"kind":"fix","mode":"range","seconds":424}]}'
+    for state in lane clone; do
+      if [[ "$state" == lane ]]; then name_state="$lane_state"; else name_state="$main_state"; fi
+      case "$name_state" in
+        measured) printf '%s\n' "$measured" > "$CASE/$state/tmp/workflow-state-KEN-7.json" ;;
+        empty) printf '{}\n' > "$CASE/$state/tmp/workflow-state-KEN-7.json" ;;
+        broken) printf '{\n' > "$CASE/$state/tmp/workflow-state-KEN-7.json" ;;
+        directory) mkdir "$CASE/$state/tmp/workflow-state-KEN-7.json" ;;
+        absent) ;;
+      esac
+    done
+    root="$CASE/lane"
+    [[ "$name" != main-checkout ]] || root="$CASE/clone"
+    printf 'dev-validate-runs-v1\ndev-validate-first\ndev-validate-second\n' > "$root/tmp/validation-runs"
+    report -60
+    fleet '' "$(lane KEN-7 running '' '' '' '' "$root")"
+    issue KEN-7 'Title 7' 'Outcome 7'
+    run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
+    case "$expected" in
+      measured)
+        assert_eq "$RC|$(awk '/^Validation:/ {getline; print}' <<<"$OUT")" \
+          '0|- KEN-7: 10 min over 2 runs: implement full 3 selection=unreported, fix range 7 selection=unreported' "$name retains actual validation seconds" "$CASE/err"
+        assert_contains "$OUT" '- KEN-7: review_rounds=4 fix_receipts=1 validation_runs=2 restacks=1 repeated_class_rounds=unread' "$name retains round counts"
+        assert_contains "$OUT" '- KEN-7 waits on a stopped ci gate, ci-fix-cap: test' "$name retains stopped-round evidence" ;;
+      unread)
+        assert_eq "$RC|$(awk '/^Validation:/ {getline; print}' <<<"$OUT")" \
+          '0|- KEN-7: validation unread, its state unavailable' "$name cannot establish zero validation runs" "$CASE/err"
+        assert_contains "$OUT" '- KEN-7: review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread' "$name leaves state round counts unread" ;;
+      refused)
+        assert_eq "$RC|$(first_err)" '2|oversee-report: item-state=KEN-7' "$name refuses unread state rather than reading another address" ;;
+    esac
+  done <<'ROWS'
+lane-local|measured|empty|measured
+main-fallback|absent|measured|measured
+main-checkout|absent|measured|measured
+missing|absent|absent|unread
+broken-lane|broken|measured|refused
+unreadable-lane|directory|measured|refused
+broken-main|absent|broken|refused
+ROWS
+}
+local_state_report shipped
+LOCAL_REPORT="$(mutant_scripts local-address/orch lib/lane-gitfile.sh)/oversee-report" || exit 1
+ln -s "$(cd "$TEST_DIR/../../github" && pwd)" "$TMP_ROOT/local-address/github"
+mutate_file "${LOCAL_REPORT%/*}/lib/lane-gitfile.sh" 'lane_hosted_state_path "$6" "$6/tmp" "$state_key"' 'lane_hosted_state_path "$6" "$6/absent" "$state_key"'
+if (FAIL=0; REPORT_UNDER_TEST="$LOCAL_REPORT" local_state_report wrong-address; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/local-address.out"; then
+  fail 'the local address mutation did not redden the local-state table'
+else
+  assert_file_contains "$TMP_ROOT/local-address.out" '  FAIL  ' 'the local-state table rejects the missing worktree address'
+fi
+
 echo "=== render: one completed restack reads 1 whatever its validation route ==="
 # KEN-2 restacked with no run or skip recorded, KEN-3 with a range run, KEN-4
 # with a skipped re-test: each counts its restack once.
@@ -805,7 +871,7 @@ report -60
 fleet '' "$(lane KEN-7 running -86400 claude-cloud)"
 issue KEN-7 "Title 7" "Outcome 7"
 cloud_row() { printf '%s|%s|%s|%s' "$RC" "$(first_err)" "$(awk '/^Validation:/ { getline; print }' <<<"$OUT")" "$(awk '/^Waiting on you/ { on = 1 } on' <<<"$OUT")"; }
-CLOUD_WANT="0||- KEN-7: no validation run recorded|Waiting on you: none"
+CLOUD_WANT="0||- KEN-7: validation unread, its state unavailable|Waiting on you: none"
 run -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$(cloud_row)" "$CLOUD_WANT" \
   "a running claude-cloud lane renders with no mailbox blocker, no host-unreachable validation row and no item-state refusal"
@@ -870,8 +936,8 @@ run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: item-state=KEN-7" "a round whose seconds are no number refuses rather than render a total"
 rm -f -- "${CASE:?}/host/clone/tmp/workflow-state-KEN-7.json"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
-assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: no validation run recorded" \
-  "a lane with no state on its host has no validation run recorded"
+assert_eq "$RC|$(awk '/^Validation/ { on = 1; next } on && /^$/ { on = 0 } on' <<<"$OUT")" "0|- KEN-7: validation unread, its state unavailable" \
+  "a lane with no state on its host has unread validation evidence"
 echo "=== render and write: a lane whose mailbox cannot be read is marked, the rest reported ==="
 # KEN-8 runs on a host that no longer knows the item: its mailbox read fails,
 # and its state, on that host too, is not read (the host fails every call, so

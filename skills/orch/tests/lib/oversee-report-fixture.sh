@@ -146,7 +146,9 @@ if [[ "$1 $2 $3 $4 $5 $6" == "notice --item overseer --to owner --attach" && "$8
   exit 0
 fi
 [[ "$1 $2" == "pending --item" ]] || { echo "unexpected lane-mail call: $*" >&2; exit 2; }
-want="--root /w/$3"; host=""
+root="/w/$3"; host=""
+[[ ! -f "$CASE/root-$3" ]] || root="$(cat "$CASE/root-$3")"
+want="--root $root"
 [[ ! -f "$CASE/hosted-$3" ]] || { host="$(cat "$CASE/hosted-$3")"; want+=" --host"; }
 [[ "${*:4}" == "$want" && "${ORCH_LANE_HOST:-}" == "$host" ]] \
   || { echo "lane-mail stub: wrong route for $3: ${*:4} host=${ORCH_LANE_HOST:-}" >&2; exit 9; }
@@ -201,16 +203,17 @@ issue() {
     '{title: $title, description: ("Context first.\n\n## Done when\n\n* " + $why + "\n* A second line.\n\n## Context\n\nMore.")}' \
     > "$CASE/linear-$1.json"
 }
-# lane ITEM STATUS [LAUNCH_OFFSET] [HOST] [TRACKER] [REPO] — one lanes[]
+# lane ITEM STATUS [LAUNCH_OFFSET] [HOST] [TRACKER] [REPO] [ROOT] — one lanes[]
 # record; an empty HOST, TRACKER or REPO is recorded as null. A HOST is also
 # written to hosted-ITEM, the route the lane-mail and lane-host stubs hold
 # every read of that item to.
 lane() {
   [[ -z "${4:-}" ]] || printf '%s' "$4" > "$CASE/hosted-$1"
+  [[ -z "${7:-}" ]] || printf '%s' "$7" > "$CASE/root-$1"
   jq -cn --arg item "$1" --arg status "$2" --arg at "$(at "${3:--86400}")" --arg host "${4:-}" \
-    --arg tracker "${5:-}" --arg repo "${6:-}" \
+    --arg tracker "${5:-}" --arg repo "${6:-}" --arg root "${7:-/w/$1}" \
     'def opt: if . == "" then null else . end;
-     {item: $item, status: $status, launched_at: $at, window: null, mail_root: "/w/\($item)",
+     {item: $item, status: $status, launched_at: $at, window: null, mail_root: $root,
       host: ($host | opt), tracker: ($tracker | opt), repo: ($repo | opt)}'
 }
 # item_state ITEM JSON — the item's own workflow state on this host.

@@ -219,7 +219,8 @@ Rows:
                   restack, from
                   the validate_rounds its own workflow state holds
                   (schemas/workflow-state.md), each rounded to the nearest
-                  minute; `no validation run recorded` where it holds none.
+                  minute; `no validation run recorded` where readable state
+                  holds none, and `validation unread` where state is absent.
                   Restacks that skipped their re-test, its restack_skips,
                   follow as `; restack re-test skipped N time(s)`, never
                   counted as runs.
@@ -1009,6 +1010,8 @@ running_lanes() {
     fi
     if [[ "$mail" == host-unreachable && -n "$host" ]]; then
       minutes="- $item: validation unread, its host unreachable"
+    elif [[ -z "$LANE_ITEM_STATE" || "$LANE_ITEM_STATE" == null ]]; then
+      minutes="- $item: validation unread, its state unavailable"
     elif ! minutes="$(jq -r --arg item "$item" 'def min: (. + 30) / 60 | floor;
       (if . == null then [] else .validate_rounds // [] end) as $rounds
       | (if . == null then 0 else .restack_skips // [] | length end) as $skips
