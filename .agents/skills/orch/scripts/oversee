@@ -796,8 +796,9 @@ else
     || die launch-trust-missing "lane=$lane_dir" "dir=$CWD" "reason=$OL_TRUST_REASON"
 fi
 
-# Every failure from here closes the session and puts the record back: the
-# close-out is the library's ol_session_abandon, the words are this script's.
+# Failure before successful predecessor stop closes the new session and puts
+# the prior record back. After that commit point, a record-write failure keeps
+# the successor. The close-out is the library's ol_session_abandon.
 abandon() {
   ol_session_abandon || { message record-unwritten field=overseer step=restore >&2; [[ -z "$OL_DETAIL" ]] || printf '%s\n' "$OL_DETAIL" >&2; }
   die "$@"

@@ -76,6 +76,8 @@ Where an execpolicy rule refuses top-level `git rebase`, no user authorization o
 
 Codex starts no turn for output that arrives after a turn ended, from a detached process or from a running exec session. The oversee watch ([watch-delivery.md](watch-delivery.md)) is held inside the turn by the unified exec tools. The limits are the Codex CLI tool descriptions (0.156.1):
 
+The synchronous Stop hook enforces the primary's native-session and generation-bound duty through the existing lifecycle/identity reader, as [watch-delivery.md](watch-delivery.md) defines. A `native-wait` continuation means return to this same in-turn wait, even when the wake is live and the turn already has `stop_hook_active`. It starts no replacement process and claims no asynchronous wake. Explicit stop/off and completed transfer release that duty; a saved handoff does not. Codex gives a matching hook's `continue:false` precedence over any continuation, so the hook never forces continuation past that native termination decision.
+
 | Step | Call | Limit |
 |------|------|-------|
 | Arm | `exec_command`, `cmd` the numbered follow command of [watch-delivery.md](watch-delivery.md), `yield_time_ms` 30000 | `yield_time_ms` takes 250-30000 ms. The call returns the first output and a `session_id` while the follow runs. |

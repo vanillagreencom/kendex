@@ -52,7 +52,7 @@ jq -nc --arg home "$LANE" --arg account "$ACCOUNT" --arg socket "$JARVIS_SOCKET"
   '{v:1,home:$home,harness:"claude",account:$account,effective_home:$account,
     state:"running",reason:"new-requested",generation:3,server_pid:$server,server_started_at:$start,
     terminal:{server:$socket,session:"jarvis",window:$window,pane:$pane},
-    pending:{generation:3,native_session_id:"s1",started_at:1}}' > "$RECORD"
+    pending:{generation:3,server:$server,pane:$pane,native_session_id:"s1",started_at:1}}' > "$RECORD"
 
 # Read the environment Claude supplies to hooks from the actual managed
 # launch, with neither compaction setting inherited from the test runner.
@@ -97,6 +97,8 @@ cp "$RECORD" "$RECORD.seed"
 while IFS='|' read -r shape label tokens active session agent expected key; do
   if [ "${1:-}" = --missing-pane ]; then
     case "$shape" in missing-pane*) ;; *) continue ;; esac
+  elif [ "${1:-}" = native-stop-registered ]; then
+    [ "$shape" = registered ] || continue
   elif [ -n "${1:-}" ]; then
     [ "$shape" = "$1" ] || continue
   fi
@@ -244,6 +246,57 @@ copilot-absent|the same SDK session with no controller record gets no mark|40000
 registered|a managed registered overseer retains its wake refusal|100000|false|s1||2|lane-mail-check: wake=unarmed
 ROWS
 
+# The lifecycle/identity reader and shared Stop consumer run together against
+# the live owned terminal. These are branch fixtures, not installed Codex
+# conversation or handler-completion evidence.
+if [ -z "${1:-}" ] || [ "${1:-}" = native-stop ] || [ "${1:-}" = native-stop-registered ]; then
+  # The preceding registered case owns a separate fleet binding. This table
+  # exercises standalone Jarvis, with that fixture's registration released.
+  if [ -d "$LANE/.git" ]; then
+    (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer null >/dev/null)
+  fi
+  if [ -n "${SESSION_ROWS_LIB_VARIANT:-}" ]; then
+    hole_install lib/session-rows.sh
+    cp -- "$SESSION_ROWS_LIB_VARIANT" "$LANE/.agents/skills/orch/scripts/lib/session-rows.sh"
+  fi
+  wake_process "$TMP_ROOT/native-wake" --home "$LANE"
+  while IFS='|' read -r shape edit generation session agent want; do
+    if [ "${2:-}" = activation ]; then
+      case "$shape" in starting-*) ;; *) continue ;; esac
+    fi
+    jq '.harness="codex" | .intent="start" | .app_off=false' "$RECORD.seed" > "$RECORD.native"
+    jq "$edit" "$RECORD.native" > "$RECORD"
+    install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
+    CALL_ENV=("HOME=$OFFLINE_HOME" "XDG_STATE_HOME=$STATE" "CODEX_HOME=$ACCOUNT"
+      "JARVIS_RECORD=$RECORD" "JARVIS_GENERATION=$generation" "TMUX=$JARVIS_SOCKET,$JARVIS_SERVER,0" "TMUX_PANE=$JARVIS_PANE")
+    payload=$(jq -nc --arg session "$session" --arg agent "$agent" \
+      '{session_id:$session,stop_hook_active:true} + (if $agent == "" then {} else {agent_id:$agent} end)')
+    run_payload "$payload"
+    if [ "$shape" = starting-brief ]; then
+      assert_eq "$(jq -r '[.state,.pending.brief_taken] | @csv' "$RECORD")" \
+        '"starting",true' 'first Stop takes the delivered brief before worker promotion'
+    fi
+    expect "$want" "$([ "$want" = 2 ] && printf 'lane-mail-check: native-wait=%s' "$session" || printf -- '-')" "native Stop $shape"
+  done <<'NATIVE_ROWS'
+current|.|3|s1||2
+starting-kickoff|. += {state:"starting",reason:"launching",identity_verified:true}|3|s1||0
+starting-brief|. += {state:"starting",reason:"launching",identity_verified:true,brief_delivered:true}|3|s1||2
+starting-off|. += {state:"starting",reason:"launching",brief_delivered:true,app_off:true,pending:(.pending + {brief_taken:true})}|3|s1||0
+starting-retained-stop|. += {state:"starting",reason:"launching",brief_delivered:true,intent:"stop",generation:4,pending:(.pending + {brief_taken:true})}|3|s1||0
+stop|. += {intent:"stop",state:"stopping",reason:"stop-requested",generation:4}|3|s1||0
+off|.app_off=true|3|s1||0
+retained-failed-stop|. += {intent:"stop",generation:4,reason:"existing"}|3|s1||0
+retained-failed-off|. += {intent:"stop",app_off:true,generation:4,reason:"existing"}|3|s1||0
+pending-transfer|{v,home,harness,generation:4,state:"handing-over",reason:"succession",intent:"succeed",app_off:false,predecessor:.,transfer:{phase:"saved"}}|3|s1||2
+failed-transfer|. += {intent:"succeed",generation:4,reason:"existing"}|3|s1||2
+successful-transfer|. += {intent:"succeed",transfer:{phase:"complete"},pending:{generation:4,native_session_id:"s2",started_at:1},generation:4}|3|s1||0
+successful-current|. += {intent:"succeed",transfer:{phase:"complete"}}|3|s1||2
+stale-generation|.|2|s1||0
+unrelated|.|3|s2||0
+child|.|3|s1|child|0
+NATIVE_ROWS
+fi
+
 # Keep the matched implementation text while removing its behavior. The
 # shared helper proves that the disposable source copy changed.
 if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${1:-}" ]; then
@@ -255,6 +308,14 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${1:-}" ]; then
   assert_eq "$control_rc" 1 'control rejects the missing Jarvis identification'
   assert_eq "$(grep -Fxc '  FAIL  past the percentage mark' "$TMP_ROOT/control.log" || :)" 1 \
     'control reaches the succession assertion'
+  wake_mutant kickoff-release \
+    'if candidate["state"] == "starting" and not (candidate.get("brief_delivered") and identity.get("brief_taken")):' \
+    'if candidate["state"] == "starting":' "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh"
+  control_rc=0
+  SESSION_ROWS_LIB_VARIANT="$MUTANT_PATH" "$BASH" "${BASH_SOURCE[0]}" native-stop activation > "$TMP_ROOT/activation-control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control rejects release of the taken Start brief'
+  assert_eq "$(grep -Fxc '  FAIL  native Stop starting-brief' "$TMP_ROOT/activation-control.log" || :)" 1 \
+    'control reaches the first active Stop'
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

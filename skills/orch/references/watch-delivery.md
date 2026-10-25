@@ -4,6 +4,8 @@ At [overseer takeover § 2](../workflows/oversee-takeover.md#2-claim-and-follow-
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
+On Codex, synchronous Stop returns an on-duty primary to that wait on every eligible turn end, including repeated `stop_hook_active` turns with a live follow. The existing lifecycle/identity reader binds this duty to the native session and generation. Explicit stop/off releases it. A pending or failed transfer and a saved handoff retain it until successful transfer retires the predecessor. A missing identity or unavailable reader is reported separately and grants no duty over an unrelated caller. A live process alone proves no later-turn delivery. Codex's native matching-hook `continue:false` takes precedence over continuation. This pre-settlement route proves no delivery after a session has already become idle; installed incoming and scheduled-event handling still needs consumer evidence. Other harnesses retain their own continuation limits.
+
 `oversee launch` and `oversee-succeed` start the repeat watch through the orch job runner. The watch serves the new pane and survives the session's exit. A failed runner launch refuses the overseer launch. A running watch is handed to the new pane by the succession helper. The retained command includes its script, directory and watch arguments after the old claim ends. Automatic death and wall recovery leave a watch for the successor.
 
 Read that watch's log without starting another watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside the turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
@@ -25,6 +27,14 @@ bash -c '. "$1" || exit 3; watch_pid_live "$2" && printf "%s\n" "$WATCH_PID"' _ 
 ```
 
 Exit 0 is a live claim. Exit 1 is no live claim. Any other status is a failed read: report its stderr and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, a session the fleet state records as its overseer restarts the watch as [takeover § 2](../workflows/oversee-takeover.md#watch-reader) states, unless the watch stopped itself with status 0 under [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance): after notice-only recovery, an exhausted retry or a blocked recovery, and in a session the fleet state does not record as its overseer, follow that section's stop and restart rules. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
+
+At an explicit workflow Stop on Codex, release this primary's duty through its existing record writer before ending the watch or follow. Use this session's native id and pane as `[SESSION_ID]` and `[PANE]`, and its checkout as `[ROOT]`:
+
+```bash
+bash -c '. "$1/lib/overseer-launch.sh" && ol_record_duty_stop "$2" codex "$3" "$4"' _ .agents/skills/orch/scripts "[ROOT]" "[SESSION_ID]" "[PANE]"
+```
+
+Require exit 0 with `duty:"release"` for this session and generation. A failed or unavailable result changes no successor's duty; report it before proceeding. This is an explicit Stop operation; do not run it when saving a handoff or retrying succession. A later explicit launch or registration clears this stop intent.
 
 To stop a launcher-owned watch, use `[PID]` from that claim read. Run `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[OVERSEE_STATE_DIR]/oversee-watch.runner" [PID] '*oversee-watch*'`. The runner stops its exact unit or its verified process group. Report any failed stop with its `job-unit:` line.
 

@@ -1902,9 +1902,9 @@ PENDING=pending
 # that asks no such question.
 message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}" "trust=${LANE_TRUST_ROUTE:-none}"
 
-# Two overseers never run: every failure from here closes the successor and
-# puts the predecessor's session record back, so the record names the
-# session that is still running. The close-out is the library's
+# Before successful predecessor stop, failure closes the successor and puts
+# the predecessor's record back. After that commit point, a record-write
+# failure preserves the successor. The close-out is the library's
 # ol_session_abandon, the same one `oversee launch` runs; the words are this
 # script's.
 SUCC_PANE="" SUCC_WINDOW=""
@@ -1976,8 +1976,7 @@ hand_over_watch() {
     abandon "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
   fi
 }
-# Every refusal closes the successor before the commit point, or at a stop
-# that failed, so a disagreement costs nothing but the successor.
+# A refusal before the commit point, or at a failed stop, closes the successor.
 if ! ol_succession "$CALLER_PANE" "$CALLER_PATH" "$cmd" "$OL_IDENTITY" "$PENDING" \
     "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS"; then
   case "$OL_REASON" in

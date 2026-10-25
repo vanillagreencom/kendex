@@ -499,7 +499,7 @@ MODELS
 # A competing succession writes after our read but before the writer takes its
 # lock. The same owner must reject pending, current and restore mutations.
 succession_binding_rows() (
-  local scripts operation stage race label status before replacement payload
+  local scripts operation stage race label status before replacement payload initial_intent selection="${1:-}"
   scripts="$(mutant_scripts bindingrun lib/overseer-launch.sh)" || exit 1
   if [[ "${MODEL_OWNER_CONTROL:-}" == binding ]]; then
     mutate_file "$scripts/lib/overseer-launch.sh" \
@@ -519,6 +519,8 @@ if [[ "\$1 \$2 \$4 \$5 \$6" == "update-report oversee --arg operation \$BIND_OPE
   : > '$TMP_ROOT/binding.fired'
   if [[ \$BIND_RACE == request ]]; then
     '$SRC_DIR/workflow-state' update oversee '.overseer.model_check={outcome:"switched",session_id:"s1"}' >/dev/null
+  elif [[ \$BIND_RACE == stop ]]; then
+    '$SRC_DIR/workflow-state' update oversee '.overseer.intent="stop"' >/dev/null
   else
     '$SRC_DIR/workflow-state' update oversee '.overseer=\$record[0]' --slurpfile record '$TMP_ROOT/binding-competitor.json' >/dev/null
   fi
@@ -526,9 +528,14 @@ fi
 exec '$SRC_DIR/workflow-state' "\$@"
 STATE
   chmod +x "$scripts/workflow-state"
-  while IFS='|' read -r operation stage race label; do
+  while IFS='|' read -r operation stage race label initial_intent; do
+    [[ "$selection" != stop || "$race" == stop ]] || continue
     rm -f -- "${TMP_ROOT:?}/binding.fired"
     before="$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6)"
+    if [[ "$race" == stop ]]; then
+      before="$(jq -c --arg intent "$initial_intent" '.session_id="s1"
+        | if $intent == "stop" then .intent="stop" else . end' <<<"$before")"
+    fi
     state "$before"
     payload='{"launch_line":"successor"}'
     status=0
@@ -545,6 +552,10 @@ STATE
     if [[ "$race" == request ]]; then
       assert_eq "$status" 0 "$label restores its predecessor" "$TMP_ROOT/binding.err"
       assert_eq "$(jq -r '.overseer.model_check.outcome' "$FLEET_STATE")" switched "$label retains the acquired model request"
+    elif [[ "$race" == stop ]]; then
+      assert_eq "$status" 2 "$label refuses a stopped writer" "$TMP_ROOT/binding.err"
+      assert_eq "$(jq -c .overseer "$FLEET_STATE")" "$(jq -c '.intent="stop"' <<<"$before")" \
+        "$label preserves the accepted stop intent"
     elif [[ "$stage" == restored || ( "$stage" == unwritten && "$operation" == restore ) ]]; then
       assert_eq "$status" 0 "$label is already complete"
       assert_eq "$(jq -c .overseer "$FLEET_STATE")" "$before" "$label leaves the record unchanged"
@@ -562,14 +573,50 @@ restore|unwritten|replacement|restore-unwritten
 restore|restored|replacement|restore-complete
 current|pending|request|current-request
 restore|pending|request|pending-request
+pending|unwritten|stop|pending-stop|
+current|pending|stop|current-stop|
+restore|current|stop|restore-stop|
+pending|unwritten|stop|already-stopped|stop
 BINDINGS
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
   [[ "$FAIL" -eq 0 ]]
 )
 
+succession_duty_rows() (
+  new_caller claude
+  local before next observed
+  before="$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 '{"generation":3,"session_id":"s1"}')"
+  next="$(jq -c '.pane="%next" | .generation=4 | .session_id="s2"' <<<"$before")"
+  state "$before"
+  cd -- "$TMP_ROOT/work"
+  export ORCH_STATE_DIR="$TMP_ROOT/work/tmp"
+  SCRIPT_DIR=$SRC_DIR DEP_ERR="$TMP_ROOT/duty.err"
+  source "$SRC_DIR/lib/overseer-launch.sh"
+  OL_SUCCESSION_EXPECTED=$before OL_PRIOR=$before OL_SUCCESSION_STAGE=unwritten
+  ol_succession_write current "$next" || { cat "$DEP_ERR"; return 1; }
+  observed="$(jq -c '.overseer.stop_predecessor' "$FLEET_STATE")"
+  assert_eq "$observed" "$before" 'an uncommitted transfer retains exact predecessor duty'
+  ol_record_restore
+  assert_eq "$(jq -c .overseer "$FLEET_STATE")" "$before" 'a failed transfer restores predecessor duty'
+  OL_SUCCESSION_STAGE=unwritten OL_SUCCESSION_EXPECTED=$before
+  ol_succession_write current "$next"
+  ol_succession_write complete null
+  assert_eq "$(jq -c '.overseer | {generation,session_id,retained:has("stop_predecessor")}' "$FLEET_STATE")" \
+    '{"generation":4,"session_id":"s2","retained":false}' 'successful stop releases predecessor duty'
+  OL_SUCCESSION_STAGE=stopped
+  ol_session_stop() { : > "$TMP_ROOT/committed-stop"; }
+  ol_record_restore() { : > "$TMP_ROOT/committed-restore"; }
+  local rc=0
+  ol_session_abandon || rc=$?
+  assert_eq "$rc:$([ -e "$TMP_ROOT/committed-stop" ] && echo yes || echo no):$([ -e "$TMP_ROOT/committed-restore" ] && echo yes || echo no)" \
+    '0:no:no' 'a post-stop write failure preserves the committed successor'
+  [[ "$FAIL" -eq 0 ]]
+)
+
 case "${1:-}" in
+  --stop-duty) succession_duty_rows; exit ;;
   --model-switch) model_switch_rows; exit ;;
-  --succession-binding) succession_binding_rows; exit ;;
+  --succession-binding) succession_binding_rows "${2:-}"; exit ;;
 esac
 
 echo "=== oversee-succeed: the caller's launch record ==="
@@ -1212,6 +1259,7 @@ assert_eq "$RC|$(grep -o '^oversee-succeed: no-lane-qualifies .* mark=headroom' 
 
 model_switch_rows || fail 'overseer model-switch behavior'
 succession_binding_rows || fail 'succession write ownership'
+succession_duty_rows || fail 'succession Stop duty ownership'
 for control in words identity handoff binding destination base; do
   status=0
   control_args=--model-switch

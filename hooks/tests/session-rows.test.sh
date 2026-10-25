@@ -150,6 +150,56 @@ last_row() { # JQ
 }
 row_count() { [ -f "$ROWS" ] && wc -l < "$ROWS" | tr -d ' ' || echo 0; }
 
+stop_duty_rows() {
+  local edit want label answer rc
+  new_checkout stop-duty .codex/hooks
+  (cd "$CHECKOUT" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
+  while IFS='|' read -r label edit want; do
+    jq -nc '{server:"7000",server_start:1790000000,pane:"%9",harness:"codex",home:"/accounts/one",session_id:"s1",generation:3}' > "$TMP_ROOT/duty.seed"
+    jq "$edit" "$TMP_ROOT/duty.seed" > "$TMP_ROOT/duty.record"
+    (cd "$CHECKOUT" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer "$(cat "$TMP_ROOT/duty.record")" >/dev/null)
+    rc=0
+    answer=$(env -u JARVIS_RECORD -u JARVIS_GENERATION PATH="$TMUX_BIN:$PATH" TMUX=fake TMUX_PANE=%9 \
+      TMUX_SERVER_ID=7000 CODEX_HOME=/accounts/one "$BASH" -euo pipefail -c '
+        . "$1/lib/session-rows.sh"
+        session_rows_stop_duty "$2" codex s1 %9' _ "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT") || rc=$?
+    [ -z "$answer" ] || answer=$(jq -r '[.duty,.generation] | @csv' <<<"$answer")
+    assert_eq "$rc:$answer" "$want" "native duty $label"
+  done <<'DUTY_ROWS'
+current|.|0:"wait",3
+pending|.pending={launch_line:"successor"}|0:"wait",3
+saved-handoff|.handoff={session_id:"s1"}|0:"wait",3
+ended|.exit={code:0}|0:"release",3
+explicit-stop|.intent="stop"|0:"release",3
+replaced|.session_id="s2"|1:
+old-server|.server_start=1|1:
+unrelated-pane|.pane="%8"|1:
+generation-unavailable|del(.generation)|2:
+predecessor-pending|{stop_predecessor:.,server:"7000",server_start:1790000000,pane:"%10",harness:"codex",home:"/accounts/one",session_id:"s2",generation:4}|0:"wait",3
+successful-transfer|{server:"7000",server_start:1790000000,pane:"%10",harness:"codex",home:"/accounts/one",session_id:"s2",generation:4}|1:
+DUTY_ROWS
+  # The explicit Stop instruction calls this existing record owner. A stale
+  # native caller cannot turn off a replacement in the same checkout.
+  rc=0
+  answer=$(env -u JARVIS_RECORD -u JARVIS_GENERATION PATH="$TMUX_BIN:$PATH" TMUX=fake TMUX_PANE=%9 \
+    TMUX_SERVER_ID=7000 CODEX_HOME=/accounts/one "$BASH" -euo pipefail -c '
+      . "$1/lib/overseer-launch.sh"
+      ol_record_duty_stop "$2" codex s1 %9' _ "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT") || rc=$?
+  assert_eq "$rc:$(jq -r .duty <<<"$answer")" '1:unavailable' 'explicit Stop refuses a replaced native caller'
+  (cd "$CHECKOUT" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer "$(cat "$TMP_ROOT/duty.seed")" >/dev/null)
+  answer=$(env -u JARVIS_RECORD -u JARVIS_GENERATION PATH="$TMUX_BIN:$PATH" TMUX=fake TMUX_PANE=%9 \
+    TMUX_SERVER_ID=7000 CODEX_HOME=/accounts/one "$BASH" -euo pipefail -c '
+      . "$1/lib/overseer-launch.sh"
+      ol_record_duty_stop "$2" codex s1 %9' _ "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT")
+  assert_eq "$(jq -r '[.duty,.session_id,.generation] | @csv' <<<"$answer")" \
+    '"release","s1",3' 'explicit Stop releases only the exact current generation'
+}
+if [ "${1:-}" = --stop-duty ]; then
+  stop_duty_rows
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+
 echo "=== session rows ==="
 
 # One table: each wrapper and payload, and the row it leaves. `-` is no row.
@@ -777,7 +827,7 @@ session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" "$2" 
  and .pending.pane == $pane@@pane@@TMUX_PANE=%8 JARVIS_GENERATION=3
 (.pending.generation | tostring) == $generation@true@generation@@JARVIS_GENERATION=2
 "mismatch"@"own"@preassigned@6a1d@JARVIS_GENERATION=3
-.harness == $harness and@true and@harness@@JARVIS_GENERATION=3
+.harness == $harness and (.pending | type) == "object"@true and (.pending | type) == "object"@harness@@JARVIS_GENERATION=3
 JARVISCONTROL
 
 # Each brief-taken rule removed from a copy reddens its row: the hook's own
@@ -846,5 +896,6 @@ CONTROL_OUT="$(assert_eq "$(jq -r '.pending.observed_account' "$RECORD")" /accou
   'native account acknowledgement')"
 assert_eq "$(grep -c '^  FAIL  native account acknowledgement$' <<<"$CONTROL_OUT")" "1" \
   "control: absent native acknowledgement fails the account assertion"
+stop_duty_rows
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

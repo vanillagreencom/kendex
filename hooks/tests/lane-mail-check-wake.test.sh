@@ -22,13 +22,17 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   [ -z "$SELECTED" ] || [ "$scenario:$harness" = "$SELECTED" ] || continue
   stop_wake_processes
   wake_overseer "wake-$scenario-$harness" "$harness"
+  if [ "$harness" = codex ]; then
+    (cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee \
+      '.overseer += {harness:"codex",generation:1}' >/dev/null)
+  fi
   command=$REARM
   payload='{"session_id":"s1","stop_hook_active":false}'
   if [ "$harness" = copilot ]; then
     payload=$(jq -nc --arg p "$COP_HOME/session-state/s1/events.jsonl" '{sessionId:"s1",transcriptPath:$p,timestamp:1}') || exit 1
   fi
   case "$scenario" in
-    armed) start_wake_watch repeat; start_follow ;;
+    armed | continuation-live | native-handoff | duty-source-unavailable | duty-capability-unavailable) start_wake_watch repeat; start_follow ;;
     succession-stale | succession-armed)
       # watch-handover writes the live stdout log beside the fleet state.
       # An idle linked reader cannot arm a follow running on an old log.
@@ -75,7 +79,7 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
       # watch is also deliberately left running throughout the refusal.
       CALL_ENV+=("ORCH_WAKE_PROCESS=oversee-watc[h]" "ORCH_WAKE_START=$JARVIS_START")
       ;;
-    continuation | continuation-mark | jarvis-continuation) payload=$(jq -c '. + {stop_hook_active:true}' <<< "$payload") || exit 1 ;;
+    continuation | continuation-mark | continuation-live | jarvis-continuation) payload=$(jq -c '. + {stop_hook_active:true}' <<< "$payload") || exit 1 ;;
     agent-id) payload=$(jq -c '. + {agent_id:"child"}' <<< "$payload") || exit 1 ;;
     agent-type) payload=$(jq -c '. + {agent_type:"worker"}' <<< "$payload") || exit 1 ;;
     subagent-stop) payload=$(jq -c '. + {hook_event_name:"SubagentStop"}' <<< "$payload") || exit 1 ;;
@@ -111,6 +115,13 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
       ;;
     empty-keys) CALL_ENV+=(ORCH_WAKE_PROCESS= ORCH_WAKE_START=) ;;
     incomplete-jarvis) CALL_ENV+=(ORCH_WAKE_START=); command="" ;;
+    native-handoff) record_overseer_handoff ;;
+    duty-source-unavailable) hole_install lib/session-rows.sh "$LANE/.claude/skills/orch/scripts" ;;
+    duty-capability-unavailable)
+      hole_install lib/session-rows.sh "$LANE/.claude/skills/orch/scripts"
+      sed 's/^session_rows_stop_duty()/session_rows_old_stop_duty()/' \
+        "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh" > "$LANE/.claude/skills/orch/scripts/lib/session-rows.sh"
+      ;;
   esac
   if [ -n "$wake_notice" ]; then
     # An unarmed continuation or failed wake probe coincides with a handoff
@@ -128,6 +139,12 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   [ "$first" = - ] || first="lane-mail-check: $first"
   [ "$context" = - ] || context="lane-mail-check: $context"
   run_payload "$payload"
+  if [ "$scenario" = continuation-live ]; then
+    # Both later Stops use the same live producer and follow, with no fixture
+    # keeping a model turn alive. Each production Stop must refuse settlement.
+    assert_eq "$RC:$(first_line)" '2:lane-mail-check: native-wait=s1' 'first continued Stop with live wake'
+    run_payload "$payload"
+  fi
   got=$(wake_observation "$command") || exit 1
   want="RC=$want_rc first=$first decision=$decision context=$context command=$commands"
   # Exit 0 alone does not end Claude Stop: additionalContext requests a turn.
@@ -171,7 +188,11 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   rm -f -- "$TMUX_BIN/pgrep" "$TMUX_BIN/ps"
 done <<'ROWS'
 armed|claude|0|-|-|-|0
-armed|codex|0|-|-|-|0
+armed|codex|2|native-wait=s1|-|-|0
+continuation-live|codex|2|native-wait=s1|-|-|0
+native-handoff|codex|2|native-wait=s1|-|-|0
+duty-source-unavailable|codex|0|native-duty=unavailable|-|-|0
+duty-capability-unavailable|codex|0|native-duty=unavailable|-|-|0
 armed|copilot|0|-|-|-|0
 armed|pi|0|-|-|-|0
 succession-stale|claude|2|wake=unarmed|-|-|1
@@ -179,7 +200,7 @@ succession-stale|codex|2|wake=unarmed|-|-|1
 succession-stale|copilot|0|wake=unarmed|block|-|1
 succession-stale|pi|2|wake=unarmed|-|-|1
 succession-armed|claude|0|-|-|-|0
-succession-armed|codex|0|-|-|-|0
+succession-armed|codex|2|native-wait=s1|-|-|0
 succession-armed|copilot|0|-|-|-|0
 succession-armed|pi|0|-|-|-|0
 no-follow|claude|2|wake=unarmed|-|-|1
@@ -187,7 +208,7 @@ no-follow|codex|2|wake=unarmed|-|-|1
 no-follow|copilot|0|wake=unarmed|block|-|1
 no-follow|pi|2|wake=unarmed|-|-|1
 continuation|claude|0|wake=unarmed|-|-|1
-continuation|codex|0|wake=unarmed|-|-|1
+continuation|codex|2|native-wait=s1|-|-|1
 continuation|copilot|0|wake=unarmed|-|-|1
 continuation|pi|0|wake=unarmed|-|-|1
 continuation-mark|claude|2|context=612000|-|-|1|wake=unarmed
@@ -320,6 +341,12 @@ if [ -z "$SELECTED" ]; then
   wake_control continued-held continuation:claude \
     '      [ "$CONTINUED" != true ] || { wake_report wake unarmed "$start"; return 0; }' \
     '      [ "$CONTINUED" != true ] || refuse wake unarmed "$start"'
+  wake_control native-process-accepted armed:codex \
+    '  [ "$NATIVE_DUTY" != wait ] || refuse native-wait "$SESSION"' \
+    '  [ "$NATIVE_DUTY" != wait ] || return 0'
+  wake_control native-continued-escape continuation-live:codex \
+    '  [ "$NATIVE_DUTY" != wait ] || refuse native-wait "$SESSION"' \
+    '  [ "$CONTINUED" = true ] || { [ "$NATIVE_DUTY" != wait ] || refuse native-wait "$SESSION"; }'
   wake_control empty-held absent-keys:claude \
     '      [ "$mode" != single ] || return 0' \
     '      [ "$mode" != single ] || refuse wake unarmed "$start"'

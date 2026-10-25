@@ -149,11 +149,11 @@ session_rows_controller_pane() ( # DIR HARNESS SESSION
 # pane recovery and the turn-end role consume this same native binding.
 # DEFAULT permits Session(home)'s canonical-home/XDG record lookup when the
 # launch bindings are absent; the normal role keeps its explicit bindings.
-session_rows_jarvis_identity() { # DIR HARNESS SESSION PANE [DEFAULT]
+session_rows_jarvis_identity() { # DIR HARNESS SESSION PANE [DEFAULT] [DUTY]
   local owner="${BASH_SOURCE[0]%/orch/scripts/lib/*}/jarvis/scripts/lib/session.py" socket="${TMUX:-}"
-  [ -f "$owner" ] || return 1
+  [ -f "$owner" ] || { [ "${6:-}" != duty ] || return 2; return 1; }
   env JARVIS_BASH="$BASH" python3 - "$owner" "$1" "${JARVIS_RECORD:-}" \
-    "${JARVIS_GENERATION:-}" "$2" "$3" "${socket%%,*}" "$4" "${5:-}" <<'PY'
+    "${JARVIS_GENERATION:-}" "$2" "$3" "${socket%%,*}" "$4" "${5:-}" "${6:-}" <<'PY'
 import json
 from pathlib import Path
 import runpy
@@ -164,22 +164,58 @@ session = owner["Session"](sys.argv[2])
 default = sys.argv[9] == "default"
 if (not default or sys.argv[3]) and session.path != Path(sys.argv[3]):
     sys.exit(1)
+duty = sys.argv[10] == "duty"
 record = session.read()
-if not record or record["state"] not in ("starting", "running") or record.get("harness") != sys.argv[5]:
+if not record:
+    sys.exit(2 if duty else 1)
+candidates = [record]
+if duty and record.get("predecessor") and (record.get("transfer") or {}).get("phase") != "complete":
+    candidates.append(record["predecessor"])
+for candidate in candidates:
+    identity = candidate.get("pending") or {}
+    terminal = candidate.get("terminal") or {}
+    if (candidate.get("harness") == sys.argv[5]
+            and (default and not sys.argv[4] or str(identity.get("generation")) == sys.argv[4])
+            and identity.get("native_session_id") == sys.argv[6]
+            and terminal.get("server") == sys.argv[7]
+            and (not sys.argv[8] or terminal.get("pane") == sys.argv[8])
+            and session.terminal(candidate)):
+        break
+else:
     sys.exit(1)
-identity = record.get("pending") or {}
-terminal = record.get("terminal") or {}
-if (((not default or sys.argv[4]) and str(identity.get("generation")) != sys.argv[4])
-        or identity.get("native_session_id") != sys.argv[6]
-        or terminal.get("server") != sys.argv[7]
-        or (sys.argv[8] and terminal.get("pane") != sys.argv[8])
-        or not session.terminal(record)):
+if not duty and candidate["state"] not in ("starting", "running"):
     sys.exit(1)
-print(json.dumps({"home": session.home, "account_home": record.get("effective_home") or record.get("account"),
-                  "pane": terminal["pane"], "state": record["state"],
+decision = "release" if record.get("app_off") or record.get("intent") == "stop" else "wait"
+if candidate["state"] == "starting" and not (candidate.get("brief_delivered") and identity.get("brief_taken")):
+    decision = "release"
+print(json.dumps({"home": session.home, "account_home": candidate.get("effective_home") or candidate.get("account"),
+                  "pane": terminal["pane"], "state": candidate["state"], "duty": decision,
                   "record": str(session.path), "generation": identity.get("generation")}))
 PY
 }
+
+# Stop duty uses the existing identity owners. A pending transfer keeps the
+# predecessor responsible until its lifecycle writer records successful stop.
+# This reads no transcript and grants no mailbox ownership to a predecessor.
+session_rows_stop_duty() ( # DIR HARNESS SESSION PANE
+  local scripts="${BASH_SOURCE[0]%/lib/*}" key start home record binding
+  [ -n "$3" ] && [ -n "$4" ] && [ -n "${TMUX:-}" ] || return 1
+  if [ -n "${JARVIS_RECORD:-}" ]; then
+    session_rows_jarvis_identity "$1" "$2" "$3" "$4" "" duty
+    return $?
+  fi
+  . "$scripts/lib/lane-context.sh" && . "$scripts/lib/overseer-launch.sh" || return 2
+  key=$(lane_context_caller_key) && start=$(tmux_server_start "$4" "${key%% *}") || return 2
+  home=$(lane_context_caller_home "$2") || return 2
+  record=$(cd -- "$1" && "$scripts/workflow-state" get oversee .overseer) || return 2
+  binding=$(jq -ec --arg server "${key%% *}" --arg start "$start" --arg pane "$4" \
+    --arg harness "$2" --arg home "$home" --arg session "$3" "$OL_JQ_DEFS"'
+      (., .stop_predecessor?) | objects
+      | select(ol_names($server; $start; $pane)
+        and .harness == $harness and .home == $home and .session_id == $session)
+      | {generation, duty:(if .intent == "stop" or .exit != null then "release" else "wait" end)}' <<<"$record") || return 1
+  jq -ec 'select(.generation | type == "number" and . > 0)' <<<"$binding" || return 2
+)
 
 # session_rows_last FILE [EVENT] — the last row of FILE into SESSION_ROW, or
 # the last whose event is EVENT, looked for over the last SESSION_ROWS_SPAN

@@ -3174,7 +3174,7 @@ assert_eq "RC=$RC first=$(first_line)" "RC=0 first=-" \
 # The fleet record's own control: the writer comparison removed, so a record
 # any session left on the shared item answers for this one and its turn end is
 # passed with both marks unjudged, for the life of the session.
-mutant overseer-record-owner -e 's@^      if \[ "\$ROLE" != overseer \] || handoff_is_mine; then$@      if true; then@'
+mutant overseer-record-owner -e 's@^      if \[ "\$NATIVE_DUTY" != wait \] && { \[ "\$ROLE" != overseer \] || handoff_is_mine; }; then$@      if true; then@'
 new_overseer control_record_owner
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 judge_says "$CONTEXT_MARK_LINE"

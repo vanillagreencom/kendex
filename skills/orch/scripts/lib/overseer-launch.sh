@@ -1081,7 +1081,7 @@ OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_succession_owned($written):
     (ol_model_launch | del(.session_id)) == ($written | ol_model_launch | del(.session_id))
     and (($written.session_id // "") == "" or .session_id == $written.session_id)
-    and .pending == $written.pending;
+    and .pending == $written.pending and .intent == $written.intent and .intent != "stop";
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
     and (.server_start | tostring) == $start;
@@ -1366,6 +1366,9 @@ ol_session_stop() { # SESSION [SUCCESSOR]
 # refusal.
 ol_session_abandon() {
   local detail rc=0 stop_detail=""
+  # A successful predecessor stop commits the transfer. A later record-write
+  # failure must never kill its successor or restore the retired identity.
+  [[ "$OL_SUCCESSION_STAGE" != stopped ]] || return 0
   detail="$(cat -- "$DEP_ERR" 2>/dev/null)" || detail=""
   [[ -n "$OL_SESSION" ]] || ol_session_from_out
   if [[ -n "$OL_SESSION" ]] && ! ol_session_stop "$OL_SESSION"; then
@@ -1455,11 +1458,12 @@ ol_succession_update() { # pending|current|restore PAYLOAD
   OL_REASON=succession-write-failed
   reply="$("$SCRIPT_DIR/workflow-state" update-report oversee "$OL_JQ_DEFS"'
       if (.overseer | ol_succession_owned($expected) | not)
-        or ($operation != "restore" and $request != null and (.overseer | ol_recovery_bound($request) | not))
+        or ($operation != "restore" and $operation != "complete" and $request != null and (.overseer | ol_recovery_bound($request) | not))
       then {state:., report:{result:"unbound"}}
       else .overseer as $prior
         | .overseer = (if $operation == "pending" then .overseer + {pending:$payload}
-          elif $operation == "current" then $payload
+          elif $operation == "current" then $payload + {stop_predecessor: ($prior | del(.pending))}
+          elif $operation == "complete" then .overseer | del(.stop_predecessor)
           elif $operation == "restore" and $stage == "pending" then
             .overseer | if $original_pending == null then del(.pending) else .pending=$original_pending end
           elif $operation == "restore" then $payload
@@ -1517,6 +1521,8 @@ ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
   ol_succession_hook verified
   trap '' HUP TERM INT
   ol_session_stop "$predecessor" "$OL_SESSION" || { OL_REASON=stop-failed; return 1; }
+  OL_SUCCESSION_STAGE=stopped
+  ol_succession_write complete null || { OL_SUCCESSION_STAGE=stopped; OL_STEP=complete; return 1; }
 }
 
 # ---------------------------------------------------------------------------
@@ -1601,6 +1607,29 @@ ol_record_get() { # [OUT_VAR]
   else printf '%s\n' "${_org_record:-null}"; fi
 }
 
+# Explicit workflow Stop releases duty while the native primary can still
+# finish its report. The identity snapshot prevents a successor inheriting it.
+ol_record_duty_stop() ( # DIR HARNESS SESSION PANE
+  local scripts="${BASH_SOURCE[0]%/lib/*}" key start home record result
+  . "$scripts/lib/lane-context.sh" || return 1
+  key=$(lane_context_caller_key) && start=$(tmux_server_start "$4" "${key%% *}") || return 1
+  home=$(lane_context_caller_home "$2") || return 1
+  record=$(cd -- "$1" && "$scripts/workflow-state" get oversee .overseer) || return 1
+  result=$(cd -- "$1" && "$scripts/workflow-state" update-report oversee "$OL_JQ_DEFS"'
+    if (.overseer | ol_model_launch) != ($expected | ol_model_launch)
+      or (.overseer | ol_names($server; $start; $pane) | not)
+      or .overseer.session_id != $session or $session == ""
+      or .overseer.harness != $harness or .overseer.home != $home
+      or (.overseer.generation | type != "number" or . <= 0)
+    then {state:.,report:{duty:"unavailable",cause:"identity-replaced"}}
+    else .overseer.intent="stop"
+      | {state:.,report:{duty:"release",generation:.overseer.generation,session_id:.overseer.session_id}}
+    end' --argjson expected "$record" --arg server "${key%% *}" --arg start "$start" \
+      --arg pane "$4" --arg harness "$2" --arg home "$home" --arg session "$3") || return 1
+  printf '%s\n' "$result" || return 1
+  jq -e '.duty == "release"' <<<"$result" >/dev/null
+)
+
 # ol_record_write RUNTIME SESSION WINDOW SERVER IDENTITY [LINE] — the record
 # for a session this launch opened, merged over OL_PRIOR: `runtime`,
 # `session`, `window`, `server`, IDENTITY, the launch identity object
@@ -1661,7 +1690,7 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
             then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)} + {server_socket: $socket}
             else {session: $session} end)
          + (if $line == "" then {} else {launch_line: $line} end)) as $fresh
-      | (if $same then $p | del(.pending, .exit, .session_id) else $identity | map_values(null) end) as $base
+      | (if $same then $p | del(.pending, .exit, .session_id, .intent) else $identity | map_values(null) end) as $base
       | {record: ($base + $fresh),
          retained: ($base | nonempty | with_entries(select(.key as $key | $fresh | has($key) | not)) | field_names),
          fresh: ($fresh | field_names)}' 2>"$DEP_ERR")" || return 1
