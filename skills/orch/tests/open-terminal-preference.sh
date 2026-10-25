@@ -50,6 +50,20 @@ for a in "$@"; do
   prev="$a"
 done
 printf '%s:%s%s\n' "$h" "$m" "${pct:+@$pct}" >> "$PICK_LOG"
+rc=0
+case "$WALL:$h:$pct" in
+  status-*:claude:|room-*:claude:100) rc="${WALL#*-}" ;;
+  unread-all:*) rc=5 ;;
+  room-*:claude:) exit 3 ;;
+esac
+if [[ "$rc" -ne 0 ]]; then
+  case "$rc" in
+    4) key=pick-lane-unlisted ;; 5) key=pick-provider-unmeasured ;; 7) key=cloud-repo-unset ;;
+    6) key=pick-lane-claims-refused ;; 8) key=pick-overseer-seats ;; *) key=pick-lane-failed ;;
+  esac
+  printf 'lanes: %s harness=%s model=%s\n' "$key" "$h" "$m" >&2
+  exit "$rc"
+fi
 case "$WALL:$h:$pct" in
   all:*|pi:pi:*|claude:claude:*|claude-room:claude:|claude-error:claude:) exit 3 ;;
   error:*|claude-error:claude:100) exit 6 ;;
@@ -218,6 +232,80 @@ ROWS
 observe "$LAST_PREF:last" claude-room flags '--dangerously-skip-permissions' claude
 assert_file_contains "$RUN/err" "open-terminal: lane-unavailable walk=$LAST_PREF:last last-choice=codex:gpt-6.1-sol:high room=claude:fable:high" \
   'the held refusal names the marked entry and the entry with room'
+# Pick status rows share the same observation and expected protocol for the
+# live launch and scoped controls. lanes emits these statuses; 9 represents
+# an unrecognized failure, which must retain the fatal default.
+preference_status_rows() { # all | unread | fatal | last
+  local group status wall pref picks want unread last
+  while IFS='|' read -r group status wall unread last; do
+    [[ "$1" == all || "$1" == "$group" ]] || continue
+    pref="$LAST_PREF"; [[ "$last" != yes ]] || pref+=:last
+    picks=claude:fable
+    [[ "$wall" != room-* ]] || picks+=,claude:fable@100
+    case "$group" in
+      unread) want="$CODEX_PICKED|$picks,codex:gpt-6.1-sol" ;;
+      fatal) want="1|lane-resolution-failed|none|none|none|no|$picks" ;;
+      *)
+        [[ "$wall" != unread-all && "$wall" != all ]] || picks+=,codex:gpt-6.1-sol
+        want="1|lane-unavailable|none|none|none|no|$picks" ;;
+    esac
+    observe "$pref" "$wall" flags '--dangerously-skip-permissions' claude
+    assert_eq "$OBS" "$want" "pick status: $wall $last" "$RUN/err"
+    if [[ "$group" == fatal ]]; then
+      assert_file_contains "$RUN/err" "entry=claude:fable:high exit=$status" 'fatal status names its entry and exit'
+    elif [[ "$group" != unread ]]; then
+      assert_file_contains "$RUN/err" "walk=$pref" 'unavailable status names the walk'
+      if [[ "$unread" == none ]]; then
+        assert_file_not_contains "$RUN/err" 'unread=' 'measured walls carry no unread entries'
+      else
+        assert_file_contains "$RUN/err" "unread=$unread" 'unavailable status names unread entries'
+      fi
+      [[ "$last" != yes ]] || assert_file_contains "$RUN/err" 'last-choice=codex:gpt-6.1-sol:high' 'unread status holds the last choice'
+      assert_eq "$(find "$RUN" -name 'wt.*' -print)" '' 'unavailable status creates no window worktree'
+    fi
+    case "$status" in
+      4) assert_file_contains "$RUN/err" 'lanes: pick-lane-unlisted ' 'unlisted keyed line survives' ;;
+      5) assert_file_contains "$RUN/err" 'lanes: pick-provider-unmeasured ' 'unmeasured keyed line survives' ;;
+      7) assert_file_contains "$RUN/err" 'lanes: cloud-repo-unset ' 'repository keyed line survives' ;;
+    esac
+  done <<'STATUS_ROWS'
+unread|4|status-4|none|no
+unread|5|status-5|none|no
+unread|7|status-7|none|no
+fatal|1|status-1|none|no
+fatal|6|status-6|none|no
+fatal|8|status-8|none|no
+fatal|9|status-9|none|no
+fatal|1|room-1|none|yes
+fatal|6|room-6|none|yes
+fatal|8|room-8|none|yes
+fatal|9|room-9|none|yes
+unavailable|5|unread-all|claude:fable:high,codex:gpt-6.1-sol:high|no
+unavailable|3|all|none|no
+last|4|status-4|claude:fable:high|yes
+last|5|status-5|claude:fable:high|yes
+last|7|status-7|claude:fable:high|yes
+last|4|room-4|claude:fable:high|yes
+last|5|room-5|claude:fable:high|yes
+last|7|room-7|claude:fable:high|yes
+STATUS_ROWS
+}
+preference_status_rows all
+for control in fatal last; do
+  OT="$(mutant_scripts "status-$control" open-terminal)/open-terminal"
+  orch_fixture_shared_libs "${OT%/scripts/open-terminal}"
+  git -C "${OT%/scripts/open-terminal}" init -q
+  git -C "${OT%/scripts/open-terminal}" config gc.auto 0
+  git -C "${OT%/scripts/open-terminal}" config maintenance.auto false
+  case "$control" in
+    fatal) mutate_file "$OT" '4|5|7) preference_unread+=' '*) preference_unread+=' ;;
+    last) mutate_file "$OT" '|| -n "$preference_unread" )' '|| ( -n "$preference_unread" && 1 == 0 ) )' ;;
+  esac
+  control_rc=0
+  ( FAIL=0; preference_status_rows "$control"; [[ "$FAIL" -eq 0 ]] ) > "$TMP_ROOT/status-$control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 "control: $control mutation fails the same status rows" "$TMP_ROOT/status-$control.log"
+done
+OT="$REPO/scripts/open-terminal"
 # The walk prints the model line of the entry it picks: the codex class is
 # classified, then skipped on the caller's posture, and the claude class picked
 # after it names the model its launch runs.
