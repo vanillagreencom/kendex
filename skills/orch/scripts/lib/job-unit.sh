@@ -26,7 +26,7 @@
 # Usage:
 #   job-unit.sh name NAME PID
 #       Print the unit name orch-NAME-PID.
-#   job-unit.sh launch NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
+#   job-unit.sh launch NAME RECORD [--require-containment] [--cap SECS] [--memory-max MIB] -- ARGV...
 #       Start ARGV detached, as the unit orch-NAME-PID where a manager
 #       answers and lingers, PID being this launch's own
 #       process, in this launch's own working directory, environment,
@@ -41,6 +41,11 @@
 #       has: set above that bound plus the kill grace, so the job's own bound
 #       fires first. A job with no timeout, which runs until it is stopped,
 #       passes none, and its unit has no RuntimeMaxSec.
+#       --require-containment requires a positive --cap and a supported unit
+#       launch. It refuses every setsid fallback. The cap bounds active work;
+#       the kill grace then bounds teardown of all descendants in the unit,
+#       including detached sessions. Include retention in ARGV's lifetime.
+#       --cap alone remains best effort: setsid does not enforce it.
 #       --memory-max is the unit's MemoryMax in MiB, in place of the
 #       MemoryHigh the unit otherwise takes from its caller; no process group
 #       holds a memory bound, so a launch that would run under setsid refuses
@@ -52,7 +57,10 @@
 #       no setsid where the fallback needs it (missing-command); 3 usage; 4
 #       the job was not started (launch-failed: setsid's exit status, or a
 #       unit the manager would not describe); 5 --memory-max where the job
-#       would run under setsid (memory-max-unheld, with the runner line).
+#       would run under setsid (memory-max-unheld, with the runner line); 6
+#       --require-containment where the job would run under setsid
+#       (containment-unheld, with the runner line). A confirmed absent unit
+#       leaves no record; a loaded or indeterminate unit retains its stop record.
 #   job-unit.sh attach RECORD -- ARGV...
 #       Run ARGV attached: a child of this process, in its session, working
 #       directory and environment, that leads a process group of its own,
@@ -208,19 +216,22 @@ job_unit_read() { # RECORD
   esac
 }
 
-job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
+job_unit_launch() { # NAME RECORD [--require-containment] [--cap SECS] [--memory-max MIB] -- ARGV...
   local job="${1:-}" record="${2:-}" probe_err="" launch_err="" linger memory_max="" load nofile name arg slice cgroup_dir cap
+  local require_containment="" runtime_cap=""
   local unit_props=() unit_env=() unit_argv=()
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""
   [[ $# -lt 2 ]] || shift 2
-  while [[ "${1:-}" == --cap || "${1:-}" == --memory-max ]] && [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; do
+  while [[ "${1:-}" == --require-containment || "${1:-}" == --cap || "${1:-}" == --memory-max ]]; do
+    if [[ "$1" == --require-containment ]]; then require_containment=yes; shift; continue; fi
+    [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || break
     case "$1" in
-      --cap) unit_props+=(-p "RuntimeMaxSec=$2") ;;
+      --cap) unit_props+=(-p "RuntimeMaxSec=$2"); runtime_cap="$2" ;;
       --memory-max) unit_props+=(-p "MemoryMax=${2}M"); memory_max="$2" ;;
     esac
     shift 2
   done
-  [[ -n "$job" && -n "$record" && $# -ge 2 && "$1" == -- ]] \
+  [[ -n "$job" && -n "$record" && $# -ge 2 && "$1" == -- && ( -z "$require_containment" || -n "$runtime_cap" ) ]] \
     || { job_unit_fail usage subcommand=launch 3; return; }
   shift
   JOB_UNIT_RUNNER=setsid
@@ -248,9 +259,6 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   else
     JOB_UNIT_LINE="runner=setsid reason=probe-failed detail=${probe_err%%$'\n'*}"
   fi
-  [[ "$JOB_UNIT_RUNNER" == systemd ]] || command -v setsid >/dev/null 2>&1 \
-    || { job_unit_fail missing-command commands=setsid; return; }
-
   if [[ "$JOB_UNIT_RUNNER" == systemd ]]; then
     job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
     # A service ignores SIGPIPE unless told not to, where a process the caller
@@ -301,15 +309,23 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
       return
     fi
     case "$load" in
-      not-found) ;;
+      not-found)
+        # Only confirmed absence releases the stop identity written before
+        # launch. A strict caller must not read it as a successful start.
+        if [[ -n "$require_containment" ]]; then
+          rm -f -- "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
+        fi ;;
       loaded) return 0 ;;
       *) job_unit_fail launch-failed "unit=$JOB_UNIT_NAME.service load=$load detail=${launch_err%%$'\n'*}" 4; return ;;
     esac
-    command -v setsid >/dev/null 2>&1 || { job_unit_fail missing-command commands=setsid; return; }
     JOB_UNIT_RUNNER=setsid
     JOB_UNIT_NAME=""
     JOB_UNIT_LINE="runner=setsid reason=unit-launch-failed detail=${launch_err%%$'\n'*}"
   fi
+  # Callers requiring descendant containment opt in; legacy capped validation
+  # keeps its documented best-effort fallback until its caller selects this route.
+  [[ -z "$require_containment" ]] || { job_unit_fail containment-unheld "$JOB_UNIT_LINE" 6; return; }
+  command -v setsid >/dev/null 2>&1 || { job_unit_fail missing-command commands=setsid; return; }
   [[ -z "$memory_max" ]] || { job_unit_fail memory-max-unheld "$JOB_UNIT_LINE" 5; return; }
   job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
   # setsid -f returns once it has forked; a status here is a fork it could not

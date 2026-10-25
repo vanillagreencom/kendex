@@ -79,6 +79,8 @@ validate-x $TMP_ROOT/usage.record --cap 0 -- true|a zero cap is refused as usage
 validate-x $TMP_ROOT/usage.record --cap -- true|a cap with no number is refused as usage
 validate-x $TMP_ROOT/usage.record --|a launch with no command is refused as usage
 validate-x $TMP_ROOT/usage.record --memory-max 0 -- true|a zero memory bound is refused as usage
+validate-x $TMP_ROOT/usage.record --require-containment -- true|strict containment without a finite cap is refused as usage
+validate-x $TMP_ROOT/usage.record --require-containment --cap 0 -- true|strict containment with a zero cap is refused as usage
 ROWS
 
 # --- An attached start -------------------------------------------------------
@@ -218,9 +220,102 @@ assert_eq "$(source "$MUTANT"; job_unit_cgroup_cap "$TMP_ROOT/uncapped" pids.max
 # A PATH holding what the setsid launch and its job call, and no systemd-run.
 FARM="$TMP_ROOT/farm"
 mkdir -p "$FARM"
-for name in bash setsid sleep mv tr; do
+for name in bash setsid sleep mv tr rm; do
   ln -sf "$(command -v "$name")" "$FARM/$name"
 done
+
+# These manager fixtures exercise actual launch admission and argv delivery,
+# not installed systemd lifetime enforcement. Every workload writes a marker;
+# a refused fallback must neither write that marker nor retain a launch record.
+STRICT_BIN="$TMP_ROOT/strict-bin"
+mkdir -p "$STRICT_BIN"
+cat > "$STRICT_BIN/loginctl" <<'STUB'
+#!/usr/bin/env bash
+case "$SCENARIO" in
+  no-linger) echo no ;;
+  linger-unread) exit 1 ;;
+  *) echo yes ;;
+esac
+STUB
+cat > "$STRICT_BIN/systemd-run" <<'STUB'
+#!/usr/bin/env bash
+[[ "$SCENARIO" != probe-failed ]] || exit 1
+[[ " $* " == *" --unit="* ]] || exit 0
+printf '%s\n' "$@" > "$STRICT_ARGS"
+while [[ "$1" != -- ]]; do shift; done
+shift
+# The manager unescapes ExecStart dollars before executing the command.
+argv=()
+for arg in "$@"; do argv+=("${arg//\$\$/\$}"); done
+set -- "${argv[@]}"
+case "$SCENARIO" in
+  supported) "$@" ;;
+  loaded) "$@"; exit 1 ;;
+  *) exit 1 ;;
+esac
+STUB
+cat > "$STRICT_BIN/systemctl" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$2" == stop ]]; then printf '%s\n' "${*: -1}" > "$STRICT_STOP"; exit 0; fi
+[[ "$SCENARIO" != unread ]] || exit 1
+printf '%s\n' "$SCENARIO"
+STUB
+cat > "$STRICT_BIN/setsid" <<'STUB'
+#!/usr/bin/env bash
+echo fallback > "$STRICT_MARKER"
+STUB
+chmod +x "$STRICT_BIN/"*
+
+strict_launch_state() { # SCRIPT SCENARIO [LAUNCH OPTIONS...]
+  local script="$1" scenario="$2" rec="$TMP_ROOT/strict.record" path="$STRICT_BIN:$FARM" key="" runner=absent stopped=none unit
+  shift 2
+  rm -f -- "$rec" "$TMP_ROOT/strict.ran" "$TMP_ROOT/strict.args" "$TMP_ROOT/strict.stop"
+  [[ "$scenario" != no-systemd-run ]] || path="$FARM"
+  run env PATH="$path" SCENARIO="$scenario" STRICT_ARGS="$TMP_ROOT/strict.args" STRICT_STOP="$TMP_ROOT/strict.stop" \
+    STRICT_MARKER="$TMP_ROOT/strict.ran" "$script" launch strict "$rec" "$@" -- bash -c 'echo workload > "$0"' "$TMP_ROOT/strict.ran"
+  [[ -z "$ERR" ]] || read -r _ key _ <<<"$ERR"
+  if [[ -f "$rec" ]]; then
+    runner="$(sed -n 's/^runner=//p' "$rec")"
+    if [[ "$runner" == systemd ]]; then
+      unit="$(sed -n 's/^unit=//p' "$rec")"
+      # stop-job must address the exact identity even after an unread launch.
+      env PATH="$path" SCENARIO="$scenario" STRICT_STOP="$TMP_ROOT/strict.stop" "$script" stop-job "$rec" ignored ignored
+      [[ "$(cat "$TMP_ROOT/strict.stop")" != "$unit.service" ]] || stopped=exact
+    fi
+  fi
+  printf '%s|%s|%s|%s|%s|%s' "$RC" "$key" "$runner" "$([[ -f "$TMP_ROOT/strict.ran" ]] && echo ran || echo unstarted)" \
+    "$([[ -f "$TMP_ROOT/strict.args" ]] && echo actual-launch || echo no-launch)" "$stopped"
+}
+
+# scenario|exit|failure key|record|workload|actual manager launch|stop identity
+while IFS='|' read -r scenario status key runner workload actual stopped; do
+  assert_eq "$(strict_launch_state "$JOB_UNIT" "$scenario" --require-containment --cap 60)" \
+    "$status|$key|$runner|$workload|$actual|$stopped" "strict launch admission: $scenario"
+done <<'ROWS'
+no-systemd-run|6|containment-unheld|absent|unstarted|no-launch|none
+no-linger|6|containment-unheld|absent|unstarted|no-launch|none
+linger-unread|6|containment-unheld|absent|unstarted|no-launch|none
+probe-failed|6|containment-unheld|absent|unstarted|no-launch|none
+supported|0||systemd|ran|actual-launch|exact
+not-found|6|containment-unheld|absent|unstarted|actual-launch|none
+loaded|0||systemd|ran|actual-launch|exact
+unrecognized|4|launch-failed|systemd|unstarted|actual-launch|exact
+unread|4|launch-failed|systemd|unstarted|actual-launch|exact
+ROWS
+# Actual launch, rather than the probe, must receive both lifetime and teardown bounds.
+strict_launch_state "$JOB_UNIT" supported --cap 60 --require-containment > /dev/null
+assert_eq "$(sed -n '/^RuntimeMaxSec=/p; /^TimeoutStopSec=/p' "$TMP_ROOT/strict.args")" \
+  "$(printf 'RuntimeMaxSec=60\nTimeoutStopSec=10')" "strict actual launch carries the runtime and teardown bounds"
+for cap in capped uncapped; do
+  options=()
+  [[ "$cap" != capped ]] || options=(--cap 60)
+  assert_eq "$(strict_launch_state "$JOB_UNIT" not-found ${options[@]+"${options[@]}"})" \
+    '0||setsid|ran|actual-launch|none' "legacy $cap fallback keeps its process-group contract"
+done
+mutant no-containment-refusal '[[ -z "$require_containment" ]] || { job_unit_fail containment-unheld "$JOB_UNIT_LINE" 6; return; }' ':'
+control_failures="$(FAIL=0; assert_eq "$(strict_launch_state "$MUTANT" probe-failed --require-containment --cap 60)" \
+  '6|containment-unheld|absent|unstarted|no-launch|none' 'strict admission control' > "$TMP_ROOT/strict-control.out"; printf '%s' "$FAIL")"
+assert_eq "$control_failures" 1 "control: strict admission rejects a launcher with its refusal disabled"
 # The pid the job wrote, once that process has exec'd `sleep 30`: the job
 # writes its pid before its exec, and the rows match its argv against
 # `*sleep 30`. Exit 1 when the bound passes first.
