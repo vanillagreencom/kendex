@@ -236,8 +236,11 @@ new_predecessor() {
   rm -f -- "$FLEET_STATE"
   run_oversee -- launch --wait-secs 20
   PRED="$(recorded pane)"
-  ! watch_pid_live "$FLEET_STATE" || watch_stop "$WATCH_PID" "$FLEET_STATE"
   [[ "$RC" -eq 0 && "$PRED" == %* ]] || { printf 'fixture: the first launch failed\n%s\n' "$OUT" >&2; exit 1; }
+  watch_pid_paths "$FLEET_STATE"
+  watch_job_pid_read "$WATCH_RUNNER_FILE"
+  [[ -n "$WATCH_JOB_PID" ]] || { printf 'fixture: the first launch recorded no watch pid\n' >&2; exit 1; }
+  watch_stop "$WATCH_JOB_PID" "$FLEET_STATE"
   # A previously stopped child can still finish after this setup starts.
   capture="$(mktemp -d "$TMP_ROOT/stand-in.XXXXXX")" || exit 1
   # shellcheck disable=SC2086
