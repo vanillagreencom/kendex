@@ -297,6 +297,7 @@ bi_surface() {
 # have a route, and a fixture with bots on and no rendered outputs reds on
 # `drift` under `check`.
 bi_surface ''
+bi_must_adopt --repo "$repo" || exit 1
 expect_green 'an ordinary [[bot-instructions.surface]] instructions, the pair below' \
   render --dry-run --repo "$repo"
 bi_surface '\u2028'

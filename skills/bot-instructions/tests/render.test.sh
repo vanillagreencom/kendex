@@ -342,6 +342,7 @@ printf '%s' "$BI_MIN_HEAD" > "$nothing/kendex.toml"
 expect_green 'a render with every [bot-instructions.bots] flag false writes nothing' render --repo "$nothing"
 
 dry="$(bi_new_repo dry-run-preview)"
+bi_must_adopt --repo "$dry" || exit 1
 bi_commit "$dry"
 expect_green 'a dry run validates and previews the set' render --dry-run --repo "$dry"
 if git -C "$dry" status --porcelain | grep -q .; then
