@@ -67,6 +67,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 CLASSIFY="$ROOT/.github/actions/change-class/classify"
 LANES_LIB="$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh"
 DECISION_LIB="$ROOT/skills/harness-ci/scripts/lib/change-class.sh"
+SCOPE_LIB="$ROOT/skills/change-scope/scripts/lib/change-scope.sh"
 ACTION="$ROOT/.github/actions/change-class/action.yml"
 
 mkdir -p "$ROOT/tmp"
@@ -158,6 +159,9 @@ chmod +x "$STUBS/skills/harness-ci/scripts/change-class" \
 mkdir -p "$STUBS/skills/harness-ci/scripts/lib"
 cp "$LANES_LIB" "$STUBS/skills/harness-ci/scripts/lib/ci-lanes.sh"
 cp "$DECISION_LIB" "$STUBS/skills/harness-ci/scripts/lib/change-class.sh"
+# harness-ci's library loads change-scope's from the sibling package beside it.
+mkdir -p "$STUBS/skills/change-scope/scripts/lib"
+cp "$SCOPE_LIB" "$STUBS/skills/change-scope/scripts/lib/change-scope.sh"
 mkdir -p "$TMP/no-lanes-lib"
 cp -R "$STUBS/skills" "$TMP/no-lanes-lib/skills"
 rm -- "${TMP:?}/no-lanes-lib/skills/harness-ci/scripts/lib/ci-lanes.sh"

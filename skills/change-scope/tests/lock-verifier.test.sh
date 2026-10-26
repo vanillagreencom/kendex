@@ -105,13 +105,13 @@ while IFS='|' read -r label lock changes want calls proof; do
     not-executable) lock_env=(env HARNESS_CI_LOCK_KENDEX="$not_executable") ;;
     *) echo "lock-verifier: unknown lock kendex $lock" >&2; exit 1 ;;
   esac
-  err="$(PATH="$PINNED_PATH" "${lock_env[@]}" "$CHANGE_CLASS" --repo "$repo" \
+  err="$(PATH="$PINNED_PATH" "${lock_env[@]}" "$CHANGE_SCOPE" --repo "$repo" \
     --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "$label" "$want" "$(printf '%s\n' "$err" | sed -n 's/^class: //p')"
   assert_eq "$label: verifiers run" "$calls" "$(paste -sd' ' - <"$VERIFIER_CALLS")"
   case "$proof" in
     legacy) want_args='verify --scope project --json' ;;
-    bot) want_args="verify --scope project --json --bot-instructions-from $(dirname "$CHANGE_CLASS")/../../bot-instructions" ;;
+    bot) want_args="verify --scope project --json --bot-instructions-from $(dirname "$CHANGE_SCOPE")/../../bot-instructions" ;;
     none) want_args='' ;;
     *) echo "lock-verifier: unknown proof capability $proof" >&2; exit 1 ;;
   esac
@@ -133,7 +133,7 @@ require_rows lock-verifier "$rows"
 git -C "$repo" checkout -q -B case "$base"
 record "$repo" v2
 git -C "$repo" commit -q -am "the record alone"
-lock_err="$(PATH="$PINNED_PATH" HARNESS_CI_LOCK_KENDEX="$LOCK_KENDEX" "$CHANGE_CLASS" \
+lock_err="$(PATH="$PINNED_PATH" HARNESS_CI_LOCK_KENDEX="$LOCK_KENDEX" "$CHANGE_SCOPE" \
   --repo "$repo" --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "the log names the lock kendex and its version" \
   "render-verifier: verifier=lock version=1.2.0+main.365.1cdc8b27" \
@@ -143,8 +143,8 @@ assert_eq "the log names the lock kendex and its version" \
 # arm can never be taken runs the pinned release on the record-only diff
 # above, with the lock kendex set, and answers that release's refusal.
 select_line='  if [ "$changed" = .kendex-lock.json ] && [ -n "${HARNESS_CI_LOCK_KENDEX:-}" ]; then'
-unselected="$(mutant unselected change-class "$select_line" "  if false && ${select_line#  if }")"
-if cmp -s -- "$CHANGE_CLASS" "$unselected"; then
+unselected="$(mutant unselected change-scope "$select_line" "  if false && ${select_line#  if }")"
+if cmp -s -- "$CHANGE_SCOPE" "$unselected"; then
   assert_eq "the control changes the copy" changed unchanged
 fi
 : >"$VERIFIER_CALLS"
@@ -158,7 +158,7 @@ assert_eq "and ran the pinned release alone" pinned "$(paste -sd' ' - <"$VERIFIE
 # Must-fail control: probing the release's help drops the supported option
 # from the rolling lock verifier's proof, despite selecting that verifier.
 help_line='  if verify_help="$("$verifier" verify --help 2>/dev/null </dev/null)" &&'
-wrong_help="$(mutant wrong-help change-class "$help_line" \
+wrong_help="$(mutant wrong-help change-scope "$help_line" \
   '  if verify_help="$(kendex verify --help 2>/dev/null </dev/null)" &&')"
 : >"$VERIFIER_CALLS"
 : >"$VERIFIER_ARGS"

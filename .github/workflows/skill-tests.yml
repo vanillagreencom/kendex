@@ -516,7 +516,7 @@ jobs:
     # margin; their figures are above their steps.
     # Slack retains the budget of the rest shard it splits from on both OSes.
     timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || (matrix.os == 'ubuntu-latest' && matrix.shard == 'orch-dev')) && 30 || 15 }}
-    # harness-ci's change-class suite skips its real-kendex rows where no
+    # change-scope's change-scope suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
     # shard that runs those suites must be one that installed a kendex
@@ -701,8 +701,8 @@ jobs:
           printf '%s\n' "$declared" | grep -qxF "$SHARD" || { echo "this leg's shard '$SHARD' is not in the matrix"; exit 1; }
 
       # kendex-cli, built from this checkout and put on PATH, for the
-      # shards whose suites run a real kendex: `rest`, for harness-ci's
-      # change-class rows, whose comment at the `rest` shard's verify-document
+      # shards whose suites run a real kendex: `rest`, for change-scope's
+      # change-scope rows, whose comment at the `rest` shard's verify-document
       # step says why the build is this checkout's and why Linux alone, and
       # `orch-terminal`, for the disableAllHooks rows of
       # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
@@ -1220,14 +1220,14 @@ jobs:
       # `claims` drops comment lines for the reason the `guards-commit` step
       # above gives. -------------------------------------------------------
 
-      # harness-ci's change-class suite drives a real consumer install and
+      # change-scope's change-scope suite drives a real consumer install and
       # refresh through a real kendex to say which refusal each one earns, and
       # skips those rows where none is on PATH. Without the kendex build step
       # above that skip would be permanent and the rows would be proved on no
       # runner at all.
       # HARNESS_CI_REQUIRE_KENDEX turns the skip into a failure; it is set for
       # every Linux leg in the job's env: above, not here, so a later shard
-      # split that moves harness-ci's suites off `rest` reds the shard that
+      # split that moves change-scope's suites off `rest` reds the shard that
       # picks them up instead of quietly going back to skipping. The fixture
       # builds its own catalog as a local git repository and fetches it into a
       # sandbox HOME, so no source mirror needs priming here. Linux only: the
@@ -1240,7 +1240,7 @@ jobs:
       # and the classifier that reads it ships in the same commit as the
       # verify that prints it, so a build from anywhere else would judge the
       # classifier against a verify from another commit. The contract between
-      # the two is the document's `version`, which change-class pins as
+      # the two is the document's `version`, which change-scope pins as
       # VERIFY_DOCUMENT_VERSION and which the check below reads out of the
       # script and holds the built binary's own document to, printed for a
       # throwaway project: a binary that answers no `--json`, or one printing
@@ -1250,7 +1250,7 @@ jobs:
       # set, which is what takes a debug build out of its dev sandbox — and
       # the cargo cache keyed at the build step keeps the build warm across
       # runs.
-      - name: the verify document the change-class render rows read
+      - name: the verify document the change-scope render rows read
         if: matrix.shard == 'rest' && runner.os == 'Linux'
         run: |
           set -euo pipefail
@@ -1258,7 +1258,7 @@ jobs:
             echo "kendex-verify-document-missing: the built kendex answers no verify --json" >&2
             exit 1
           fi
-          pinned="$(sed -n 's/^VERIFY_DOCUMENT_VERSION=//p' skills/harness-ci/scripts/change-class)"
+          pinned="$(sed -n 's/^VERIFY_DOCUMENT_VERSION=//p' skills/change-scope/scripts/change-scope)"
           throwaway="$(mktemp -d)"
           printf 'schema = 7\n' >"$throwaway/kendex.toml"
           git -C "$throwaway" init -q
@@ -1304,7 +1304,7 @@ jobs:
             set --
             case "$x" in
               github) set -- --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test --alone native-contracts.test ;;
-              harness-ci) set -- --alone wiring-errors.test ;;
+              change-scope) set -- --alone wiring-errors.test ;;
               orch) set -- --alone open-terminal-lane --alone oversee_watch_lifecycle ;;
               reviewer) set -- --alone mutation-stability.test ;;
               second-opinion)

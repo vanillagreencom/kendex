@@ -1024,12 +1024,14 @@ fi
 # --- The command learns the change class, and only from the classifier --------
 # The classifier and the docs reader are stubs beside a copy of the scripts,
 # laid out as the installed packages are: orch/scripts next to
-# harness-ci/scripts. The classifier records its arguments and answers what
-# the row names; the docs reader answers STUB_DOCS and writes the paths file.
-# The command prints what it was handed, so each row reads the battery's
+# harness-ci/scripts, whose wrapper is the classifier the reader runs where
+# that package is installed, and change-scope/scripts, whose harness-only is
+# the docs reader. The classifier records its arguments and answers what the
+# row names; the docs reader answers STUB_DOCS and writes the paths file. The
+# command prints what it was handed, so each row reads the battery's
 # selectors straight off the log.
 LAYOUT="$TMP_ROOT/layout"
-mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/harness-ci/scripts"
+mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/harness-ci/scripts" "$LAYOUT/change-scope/scripts"
 cp "$SCRIPTS_DIR/dev-validate-run" "$SCRIPTS_DIR/orch-env" "$SCRIPTS_DIR/resolve-base-branch" "$SCRIPTS_DIR/pr-view-json" "$SCRIPTS_DIR/pr-order" "$LAYOUT/orch/scripts/"
 cp -R "$SCRIPTS_DIR/lib/." "$LAYOUT/orch/scripts/lib/"
 # Exercise the installed PR lookup chain; only its external gh calls are stubs.
@@ -1066,7 +1068,7 @@ if [[ "$queue" == branch-only ]]; then
 fi
 [[ "$queue" == absent ]] || printf 'queue-only: %s\n' "$queue" >&2
 SH
-cat > "$LAYOUT/harness-ci/scripts/harness-only" <<'SH'
+cat > "$LAYOUT/change-scope/scripts/harness-only" <<'SH'
 #!/usr/bin/env bash
 prev=""
 base="" head="" repo="" paths=""
@@ -1090,7 +1092,7 @@ case "$STUB_DOCS" in
   *) printf 'docs_only=%s\n' "$STUB_DOCS" ;;
 esac
 SH
-chmod +x "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/harness-ci/scripts/harness-only"
+chmod +x "$LAYOUT/harness-ci/scripts/change-class" "$LAYOUT/change-scope/scripts/harness-only"
 export STUB_ARGS="$TMP_ROOT/stub-args" STUB_SEEN="$TMP_ROOT/stub-seen"
 if [[ "$PART" != selection ]]; then
 proj_class="$(make_proj proj-class 'printf %s:%s:%s ${DEV_VALIDATE_CLASS-unset} ${DEV_VALIDATE_DOCS_ONLY-unset} $(cat ${DEV_VALIDATE_PATHS-/dev/null})' 20)"
@@ -1172,7 +1174,8 @@ assert_eq "$RACY_BLOB" "$(printf 'aaaa\n' | git hash-object --stdin)" \
 cp -p -- "$TMP_ROOT/dev-validate-run.kept" "$LAYOUT/orch/scripts/dev-validate-run"
 rm -f "$proj_class/racy.txt"
 
-# With no classifier installed the class is standard, and says why.
+# With no classifier installed, neither harness-ci's wrapper nor
+# change-scope's own, the class is standard, and says why.
 mv "$LAYOUT/harness-ci" "$LAYOUT/harness-ci.off"
 run_script "$LAYOUT/orch/scripts/dev-validate-run" --worktree "$proj_class" --poll 1
 assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-secs=[0-9]* //p' <<<"$OUT")" \
@@ -2079,10 +2082,9 @@ assert_eq "$RC $(record_field selection "$OUT") $(record_field class-base "$OUT"
   "control: with battery outside the grammar the whole battery reads as unreported, which submit never reuses" "$ERR"
 mutant mutant-round-base '[[ "$validate_mode" != range ]] || class_base="$round_class_base"' \
   '[[ "$validate_mode" != range ]] || class_base=""'
-# The mutant's copy sits outside the catalog, so it finds the classifier on PATH.
-RUN_PATH="$REPO_ROOT/skills/harness-ci/scripts:$PATH"
+# The mutant's tree carries the change-scope copy mutant_scripts installs
+# beside it, so the real classifier runs.
 run_script "$MUTANT" --worktree "$proj_round" --poll 1 --validate-mode range --base "$round_base"
-RUN_PATH=""
 assert_eq "$RC $(output_of "$OUT") $(start_line "$(run_dir_of "$OUT")" class-base)" "0 false app.sh docs/note.md " \
   "control: classified from the base branch, the round reads the branch's code commit and records no class base" "$ERR"
 

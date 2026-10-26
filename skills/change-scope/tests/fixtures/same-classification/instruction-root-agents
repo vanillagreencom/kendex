@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=small
+changed-path: path=AGENTS.md
+harness-note: cause=product-source-or-unreadable-ownership path=AGENTS.md
+class: class=small measured=true cause=instruction-file path=AGENTS.md glob=AGENTS.md measured-class=trivial

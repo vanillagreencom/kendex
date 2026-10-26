@@ -6,11 +6,12 @@
 # lanes its diff selects, and the nightly full run runs every lane. A
 # workflow that does not ask, a ci.yml copied before the default, keeps its
 # lanes once a refresh delivers the render.
-# Inputs: harness-ci scripts, orch measurement and the change-class action.
+# Inputs: harness-ci scripts, the change-scope classifier and the change-class action.
 # Render causes are covered by render-claims.test.sh.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 
 ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CLASSIFY="$ROOT/.github/actions/change-class/classify"
@@ -172,9 +173,9 @@ assert_eq "the retired coverage flag is read with one notice" "1 queue_only=true
 # The control must complete, then fail the same machine-output assertion.
 mkdir -p "$SANDBOX/control"
 cp -R "$TEST_DIR/.." "$SANDBOX/control/harness-ci"
-cp -R "$TEST_DIR/../../orch" "$SANDBOX/control/orch"
-needle='      [ "$output" = /dev/null ] || printf '\''lanes=%s\nlanes_cause=%s\n'\'' "$lanes" "$lanes_cause"'
-NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] { hits++; print "      :"; next }
+cp -R "$CHANGE_SCOPE_PACKAGE" "$SANDBOX/control/change-scope"
+needle='    [ "$output" = /dev/null ] || printf '\''lanes=%s\nlanes_cause=%s\n'\'' "$lanes" "$lanes_cause"'
+NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] { hits++; print "    :"; next }
   { print } END { if (hits != 1) exit 2 }' "$CHANGE_CLASS" >"$SANDBOX/control/harness-ci/scripts/change-class"
 ! cmp -s "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class" || exit 1
 run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"

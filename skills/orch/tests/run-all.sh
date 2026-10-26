@@ -15,7 +15,7 @@
 #   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
 #   bash skills/orch/tests/run-all.sh --shard orch-oversee # CI's platform partition
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
-#   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone
+#   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone; DIR/NAME.sh must exist
 #   bash skills/orch/tests/run-all.sh --battery DIR --battery OTHER # shared pool
 #   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
 #   bash skills/orch/tests/run-all.sh --local --suite FILE # guard's direct run
@@ -216,6 +216,10 @@ if [ "${1-}" = --battery ]; then
     TEST_DIRS+=("$TEST_DIR")
     shift 2
     while [ "${1-}" = --alone ]; do
+      # A name no suite file answers to would isolate nothing and say so
+      # nowhere: the suite it meant would run pooled under its timing bound.
+      [ -f "$TEST_DIR/$2.sh" ] ||
+        { echo "run-all.sh: alone-missing suite=$2 battery=$TEST_DIR" >&2; exit 1; }
       ALONE+=("$TEST_DIR/$2.sh")
       shift 2
     done

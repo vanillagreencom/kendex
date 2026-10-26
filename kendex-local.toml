@@ -398,6 +398,15 @@ source = "."
 harnesses = ["claude", "codex", "pi", "copilot"]
 enabled = true
 
+[skills.change-scope]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+    "copilot",
+]
+
 [skills.code-quality]
 source = "."
 harnesses = [

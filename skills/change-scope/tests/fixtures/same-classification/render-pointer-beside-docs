@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=CLAUDE.md
+changed-path: path=docs/guide.md
+harness-note: cause=product-source-or-unreadable-ownership path=docs/guide.md
+class: class=standard measured=true cause=instruction-pointer path=CLAUDE.md glob=CLAUDE.md

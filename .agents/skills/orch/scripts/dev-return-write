@@ -162,8 +162,26 @@ set -euo pipefail
 PROG="dev-return-write"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# shellcheck source=lib/branch-growth.sh
-source "$SCRIPT_DIR/lib/branch-growth.sh"
+# The branch measurement is change-scope's, the required sibling beside this
+# package; a copy outside that layout is refused here. change-scope is
+# installed at its own revision, so the measurement can be older than this
+# script: its header's contract number is checked before the first call, and
+# 1 covers branch_growth_base_ref, branch_baseline_lines and
+# BRANCH_GROWTH_ERROR, the entry points used here.
+MEASUREMENT="$SCRIPT_DIR/../../change-scope/scripts/lib/branch-growth.sh"
+if [[ ! -r "$MEASUREMENT" ]]; then
+  printf '%s: cause=dependency-absent skill=change-scope path=%s\n' "$PROG" "$MEASUREMENT" >&2
+  exit 2
+fi
+# shellcheck source=../../change-scope/scripts/lib/branch-growth.sh
+source "$MEASUREMENT"
+MEASUREMENT_CONTRACT_REQUIRED=1
+measurement_contract="${BRANCH_GROWTH_CONTRACT:-0}"
+case "$measurement_contract" in '' | *[!0123456789]*) measurement_contract=0 ;; esac
+if [[ "$measurement_contract" -lt "$MEASUREMENT_CONTRACT_REQUIRED" ]]; then
+  printf '%s: cause=measurement-contract found=%s required=%s\n' "$PROG" "$measurement_contract" "$MEASUREMENT_CONTRACT_REQUIRED" >&2
+  exit 2
+fi
 # shellcheck source=lib/rebase-map.sh
 source "$SCRIPT_DIR/lib/rebase-map.sh"
 # shellcheck source=lib/validation-verdict.sh

@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=small
+changed-path: path=docs/guide.md
+harness-note: cause=product-source-or-unreadable-ownership path=docs/guide.md
+class: class=small measured=true cause=production-within-small subsystem=

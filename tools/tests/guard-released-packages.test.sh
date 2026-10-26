@@ -2,7 +2,7 @@
 # Inputs: tools/guard, tools/ci-job-set, tools/macos-test-contracts, tools/macos-test-contracts.json,
 # skills/orch/*, skills/commit-guards/*,
 # skills/github/*, skills/deep-research/*, skills/slack/*, skills/bot-instructions/*,
-# skills/jarvis/scripts/lib/watch.py, skills/harness-ci/tests/change-class.test.sh
+# skills/jarvis/scripts/lib/watch.py, skills/change-scope/tests/change-scope.test.sh
 # Package selection and PATH are exercised through the production guard and
 # battery. The fixture engines model a command added after a release.
 set -euo pipefail
@@ -162,7 +162,7 @@ prose|echo "a title (kendex#537)"|0:
 prose|echo "reinstall; kendex refresh"|0:
 prose|echo ready # reinstall; kendex refresh|0:
 caller|skills/orch/tests/claude-model-classes.sh|0:caller
-caller|skills/harness-ci/tests/change-class.test.sh|0:caller
+caller|skills/change-scope/tests/change-scope.test.sh|0:caller
 python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list
 ROWS
 

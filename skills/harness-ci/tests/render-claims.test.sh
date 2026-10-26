@@ -7,8 +7,9 @@
 # merge group. The real classifiers read synthetic git diffs; the
 # verifier double supplies ownership, not the lane decision under test.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 
 ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 ACTION="$ROOT/.github/actions/change-class/classify"
@@ -20,7 +21,7 @@ READER=.agents/skills/harness-ci/scripts/change-class
 QUEUE_READER=.agents/skills/harness-ci/scripts/lib/ci-lanes.sh
 mkdir -p "$SANDBOX/control/skills"
 cp -R "$ROOT/skills/harness-ci" "$SANDBOX/control/skills/"
-cp -R "$ROOT/skills/orch" "$SANDBOX/control/skills/"
+cp -R "$ROOT/skills/change-scope" "$SANDBOX/control/skills/"
 mkdir -p "$SANDBOX/action" "$SANDBOX/bin" "$SANDBOX/default/.github" "$SANDBOX/default/$(dirname "$READER")" "$SANDBOX/default/$(dirname "$QUEUE_READER")"
 cp "$ACTION" "$SANDBOX/action/classify"
 cp "$CHANGE_CLASS" "$SANDBOX/default/$READER"

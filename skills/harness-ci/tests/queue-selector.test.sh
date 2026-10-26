@@ -6,8 +6,9 @@
 # list in its named output keeps the change in the queue, `[]` leaves the
 # answer as it was, and every failure reads queue-only.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 
 # The fixture's selector: one job per changed path under slow/ or named
 # docs/slow*, each spelling the inputs it was asked with and the base tree's
@@ -136,7 +137,7 @@ control() { # ROW_LABEL EXPECTED NAME LINE REPLACEMENT [LINE REPLACEMENT]...
 RUN_LINE='  (cd -- "$tree" && env -i PATH="$PATH" HOME="${HOME:-}" CHANGE_CLASS="$1" \'
 control "a path the selector names is queue-only" \
   "queue_only=false cause=no-queue-path" \
-  no-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' -
+  no-call change-class '[ "$QUEUE_ONLY" = true ] || queue_selection "$class"' -
 control "a path the selector names no job for answers as without a selector" \
   "queue_only=true cause=queue-selection selector=ci/select output=jobs value=[]" \
   empty-list change-class "    '[]')" "    '[]-never')"
@@ -158,8 +159,8 @@ control "the selector is asked about a trivial class and its docs verdict" \
 control "the selector is asked about a class refused before the docs verdict" \
   'queue_only=true cause=queue-selector-failed selector=ci/select detail=inputs-unreadable' \
   no-lazy-docs change-class \
-  '    docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" --output /dev/null 2>/dev/null)" ||' \
-  '    docs="" ||'
+  '  docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" --output /dev/null 2>/dev/null)" ||' \
+  '  docs="" ||'
 control "the base commit's selector judges where the branch changes it" \
   "queue_only=true cause=queue-selector-failed selector=ci/select detail=exit-127" \
   head-tree change-class \
@@ -168,13 +169,13 @@ control "the base commit's selector judges where the branch changes it" \
 control "a selector named in the process environment alone never runs" \
   'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]' \
   environment-selector change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON' 'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'
+  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_PER_PUSH_REASON' 'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_PER_PUSH_REASON'
 control "a selector outside the repository is queue-only" \
   "queue_only=true cause=queue-selector-failed selector=../select detail=command-absent" \
   climbing change-class "    '' | /* | .. | ../* | */.. | */../*) name=\"\" ;;" "    '') name=\"\" ;;"
 control "a path the repository list names answers before the selector runs" \
   "queue_only=false cause=no-queue-path" \
-  unconditional-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' '  queue_selection "$1"'
+  unconditional-call change-class '[ "$QUEUE_ONLY" = true ] || queue_selection "$class"' 'queue_selection "$class"'
 control "a path the selector names is queue-only" \
   "queue_only=false cause=no-queue-path" \
   name-blind change-class '  if ! value="$(sed -n "s/^$name=//p" "$out" | tail -1)"; then' \

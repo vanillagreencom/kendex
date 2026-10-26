@@ -1,144 +1,27 @@
 #!/usr/bin/env bash
-# Shared path rules for change-class and orch's item-tier Location inputs.
-# Sourced with extglob enabled. Path helpers read no diff or repository settings.
-# change_class_lanes reads declarations and uses harness-only's resolved range.
+# The lane rules shared by the installed change-class and the change-class
+# action, over the path rules and shared helpers of change-scope's library,
+# which this file loads from the package installed beside this one so every
+# sourcer of this file keeps the names it read here before the move:
+# HARNESS_CI_REFRESH_CALLER, change_class_path and its loaders, and
+# names_only_roots_rendered. Sourced with extglob enabled.
 #
-# change_class_path PATH PHASE sets CHANGE_CLASS_PATH and
-# CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, pointer, narrow or
-# launch (all phases). An unmatched path leaves both empty.
-# The launch phase consumes CHANGE_CLASS_STANDARD_PATHS when the caller loads it.
-# change_class_path_load CONF reads the narrow-phase lists once. Returns 1
-# on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
-# narrow class. Call it before the narrow or launch phase.
-# change_class_path_match PATH GLOBS sets PATH_MATCH_HIT on the first match.
-# GLOBS is newline-separated, with bash patterns matching the whole path.
-# change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
+# A checkout without change-scope beside this package fails the load with one
+# `wiring-error: cause=dependency-absent skill=change-scope` line and status
+# 1; the sourcer refuses as it does any unreadable library.
+#
+# change_class_lanes reads declarations and uses harness-only's resolved range.
 
-# The adopted caller can lack an inventory entry when adoption preserves its
-# configuration. Candidacy permits proof setup; release comparison owns it.
-HARNESS_CI_REFRESH_CALLER=.github/workflows/kendex-refresh.yml
-
-# harness-only owns the names-only verdict. Its roots must also belong to
-# the caller's measurement roots before the inventory can leave the path set.
-# LOAD_ROOTS sets BRANCH_GROWTH_RENDER_ROOTS from the caller's trusted settings.
-names_only_roots_rendered() { # ROOTS LOAD_ROOTS [ARG...]
-  local roots="$1" root listed
-  shift
-  [ "$roots" != - ] || return 0
-  "$@" || return 1
-  set -f
-  for root in ${roots//,/ }; do
-    for listed in $BRANCH_GROWTH_RENDER_ROOTS; do
-      [ "$root" = "$listed" ] && continue 2
-    done
-    set +f
-    echo "inventory-kept: cause=root-not-rendered root=$root" >&2
-    return 1
-  done
-  set +f
-}
-
-change_class_path_match() { # PATH GLOBS
-  local glob
-  PATH_MATCH_HIT=""
-  while IFS= read -r glob; do
-    [ -n "$glob" ] || continue
-    # shellcheck disable=SC2254
-    case "$1" in
-      $glob) PATH_MATCH_HIT="path=$1 glob=$glob"; return 0 ;;
-    esac
-  done <<<"$2"
+# Named for this package: orch's reader sources this file under a
+# CHANGE_CLASS_LIB_DIR of its own.
+HARNESS_CI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+CHANGE_SCOPE_LIB="$HARNESS_CI_LIB_DIR/../../../change-scope/scripts/lib/change-scope.sh"
+if [ ! -r "$CHANGE_SCOPE_LIB" ]; then
+  printf 'wiring-error: cause=dependency-absent skill=change-scope path=%s\n' "$CHANGE_SCOPE_LIB" >&2
   return 1
-}
-
-change_class_list_globs() { # CONF KEYWORD
-  awk -v kind="$2" '
-    $1 == "superseded" { drop[$2] = 1 }
-    $1 == kind { glob[++n] = $2 }
-    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
-  ' "$1"
-}
-
-change_class_path_load() { # CONF
-  CHANGE_CLASS_PATH_CAUSE=narrow-change-list-unreadable
-  [ -r "$1" ] || return 1
-  CHANGE_CLASS_EXCLUDED="$(change_class_list_globs "$1" path)" &&
-    CHANGE_CLASS_INSTRUCTION="$(change_class_list_globs "$1" instruction)" || return 1
-  CHANGE_CLASS_PATH_CAUSE=narrow-change-floor-missing
-  [ -n "$CHANGE_CLASS_INSTRUCTION" ] || return 1
-  CHANGE_CLASS_PATH_CAUSE=""
-}
-
-change_class_path() { # PATH PHASE
-  local globs
-  CHANGE_CLASS_PATH=""
-  CHANGE_CLASS_PATH_CAUSE=""
-  if [ "$2" = launch ]; then
-    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = before-render ] || [ "$2" = launch ]; then
-    # These files decide the render and classifier inputs. Gemini's shim
-    # owns one key only, not the other settings its harness executes.
-    globs='kendex.toml
-kendex.settings.toml
-kendex-local.toml
-.kendex/settings.toml
-.gemini/settings.json'
-    if change_class_path_match "$1" "$globs"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = registry ] || [ "$2" = launch ]; then
-    # Registries execute hooks, permissions and MCP servers. A proven render
-    # can own their changed keys; a Location alone proves no render.
-    globs='.claude/settings.json
-.claude/settings.local.json
-.mcp.json
-.codex/config.toml
-.codex/hooks.json
-.cursor/hooks.json
-.cursor/mcp.json
-.agents/hooks.json
-.agents/mcp_config.json
-.github/copilot/settings.json
-.github/copilot/settings.local.json
-.github/mcp.json
-.github/hooks/*.json
-.pi/settings.json
-.pi/kendex/hooks.json
-opencode.json
-opencode.jsonc'
-    if change_class_path_match "$1" "$globs"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = pointer ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" $'CLAUDE.md\n*/CLAUDE.md'; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="instruction-pointer $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = narrow ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="excluded-path $PATH_MATCH_HIT"
-      return 0
-    fi
-    if change_class_path_match "$1" "$CHANGE_CLASS_INSTRUCTION"; then
-      CHANGE_CLASS_PATH=small
-      CHANGE_CLASS_PATH_CAUSE="instruction-file $PATH_MATCH_HIT"
-    fi
-  fi
-}
+fi
+# shellcheck source=../../../change-scope/scripts/lib/change-scope.sh
+. "$CHANGE_SCOPE_LIB" || return 1
 
 # Lane decisions shared by the installed command and the action. The caller
 # supplies the class and harness-only's paths, outside list and range log in

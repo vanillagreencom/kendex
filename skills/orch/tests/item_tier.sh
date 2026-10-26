@@ -2,8 +2,8 @@
 # Tests for item-tier, the gate that assigns an item's cycle.
 #
 # The script runs from a copy laid out as the installed packages are:
-# orch/scripts beside harness-ci/scripts. Range and Location rows use
-# harness-ci's shared path rules. The range rows use a real Git repository. The ceilings come from narrow-change.conf, so
+# orch/scripts beside change-scope/scripts, with no harness-ci. Range and
+# Location rows use change-scope's shared path rules. The range rows use a real Git repository. The ceilings come from narrow-change.conf, so
 # a boundary row follows the list rather than a second copy of its numbers.
 
 set -euo pipefail
@@ -20,17 +20,19 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/assertions.sh"
 
 LAYOUT="$TMP_ROOT/layout"
-mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/orch/references" \
-  "$LAYOUT/harness-ci/scripts/lib" "$LAYOUT/mailbox/scripts/lib"
+CHANGE_SCOPE_DIR="$ORCH_DIR/../change-scope"
+mkdir -p "$LAYOUT/orch/scripts/lib" "$LAYOUT/change-scope/scripts/lib" "$LAYOUT/change-scope/references" \
+  "$LAYOUT/mailbox/scripts/lib"
 cp "$ORCH_DIR/../mailbox/scripts/lib/common-root.sh" "$LAYOUT/mailbox/scripts/lib/"
 cp "$ORCH_DIR/scripts/git-context" "$LAYOUT/orch/scripts/"
-cp "$ORCH_DIR/../harness-ci/scripts/lib/change-class.sh" "$LAYOUT/harness-ci/scripts/lib/"
-cp "$ORCH_DIR/../harness-ci/scripts/harness-only" "$LAYOUT/harness-ci/scripts/"
+cp "$CHANGE_SCOPE_DIR/scripts/harness-only" "$LAYOUT/change-scope/scripts/"
+cp "$CHANGE_SCOPE_DIR/scripts/lib/change-scope.sh" "$CHANGE_SCOPE_DIR/scripts/lib/branch-growth.sh" \
+  "$CHANGE_SCOPE_DIR/scripts/lib/kendex-env.sh" "$LAYOUT/change-scope/scripts/lib/"
+cp "$CHANGE_SCOPE_DIR/references/narrow-change.conf" "$LAYOUT/change-scope/references/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
-cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/branch-growth.sh" "$ORCH_DIR/scripts/lib/kendex-env.sh" \
+cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/kendex-env.sh" \
   "$ORCH_DIR/scripts/lib/launch-overlap.sh" \
   "$LAYOUT/orch/scripts/lib/"
-cp "$ORCH_DIR/references/narrow-change.conf" "$LAYOUT/orch/references/"
 TIER="$LAYOUT/orch/scripts/item-tier"
 git -C "$TMP_ROOT" init -q -b main
 git -C "$TMP_ROOT" config gc.auto 0
@@ -41,11 +43,21 @@ git -C "$TMP_ROOT" config maintenance.auto false
 for variant in no-conf no-small-ceiling; do
   cp -R "$LAYOUT" "$TMP_ROOT/$variant"
 done
-rm -- "${TMP_ROOT:?}/no-conf/orch/references/narrow-change.conf"
-grep -v '^small_max_production=' "$ORCH_DIR/references/narrow-change.conf" \
-  >"$TMP_ROOT/no-small-ceiling/orch/references/narrow-change.conf"
+rm -- "${TMP_ROOT:?}/no-conf/change-scope/references/narrow-change.conf"
+grep -v '^small_max_production=' "$CHANGE_SCOPE_DIR/references/narrow-change.conf" \
+  >"$TMP_ROOT/no-small-ceiling/change-scope/references/narrow-change.conf"
 
-conf_value() { sed -n "s/^$1=//p" "$ORCH_DIR/references/narrow-change.conf"; }
+# Two layouts item-tier refuses at startup: one with no change-scope beside
+# orch, one whose measurement states a contract older than item-tier needs.
+cp -R "$LAYOUT" "$TMP_ROOT/no-change-scope"
+rm -r -- "${TMP_ROOT:?}/no-change-scope/change-scope"
+cp -R "$LAYOUT" "$TMP_ROOT/old-measurement"
+awk '/^BRANCH_GROWTH_CONTRACT=/ {hits++; print "BRANCH_GROWTH_CONTRACT=0"; next} {print}
+  END {exit hits == 1 ? 0 : 3}' "$LAYOUT/change-scope/scripts/lib/branch-growth.sh" \
+  >"$TMP_ROOT/old-measurement/change-scope/scripts/lib/branch-growth.sh" ||
+  { echo 'FAIL: the contract line does not occur once in branch-growth.sh' >&2; exit 1; }
+
+conf_value() { sed -n "s/^$1=//p" "$CHANGE_SCOPE_DIR/references/narrow-change.conf"; }
 MICRO_MAX="$(conf_value micro_max_production)"
 SMALL_MAX="$(conf_value small_max_production)"
 [[ "$MICRO_MAX" =~ ^[0-9]+$ && "$SMALL_MAX" =~ ^[0-9]+$ ]] || {
@@ -107,6 +119,21 @@ for row in "${ROWS[@]}"; do
   assert_eq "$(run_tier "$class" $args)" "$want" "$name"
 done
 
+# A startup refusal: the status, the tier line that must not print, and the
+# first stderr line, the keyed one.
+startup_refusal() { # LAYOUT_DIR
+  local out rc=0
+  out="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" TMPDIR="$TMP_ROOT" \
+    "$1/orch/scripts/item-tier" --repo "$TMP_ROOT" --production 1 2>"$TMP_ROOT/startup.err")" || rc=$?
+  printf 'rc=%s stdout=%s first=%s' "$rc" "$out" "$(sed -n '1p' "$TMP_ROOT/startup.err")"
+}
+assert_eq "$(startup_refusal "$TMP_ROOT/no-change-scope")" \
+  "rc=2 stdout= first=item-tier-error: cause=dependency-absent skill=change-scope path=$TMP_ROOT/no-change-scope/orch/scripts/../../change-scope/scripts/lib/branch-growth.sh" \
+  "without change-scope beside it, item-tier refuses at startup by key and prints no tier"
+assert_eq "$(startup_refusal "$TMP_ROOT/old-measurement")" \
+  "rc=2 stdout= first=item-tier-error: cause=measurement-contract found=0 required=1" \
+  "a measurement older than the contract item-tier needs is refused by key and prints no tier"
+
 # open-terminal records this machine-read cause with the launch tier.
 assert_standard_setting() {
   local setting globs want setting_root ceiling repo="${1:-$TMP_ROOT}" input="${2:-location}" args path_count
@@ -157,8 +184,8 @@ assert_standard_setting
 rm -rf -- "$TMP_ROOT/.kendex"
 cp -R "$LAYOUT" "$TMP_ROOT/no-standard-setting"
 awk '/^    if change_class_path_match "\$1" "\$\{CHANGE_CLASS_STANDARD_PATHS:-\}"; then$/ {hits++; print "    if false; then # " $0; next} {print} END {exit hits == 1 ? 0 : 3}' \
-  "$LAYOUT/harness-ci/scripts/lib/change-class.sh" >"$TMP_ROOT/no-standard-setting/harness-ci/scripts/lib/change-class.sh"
-if cmp -s "$LAYOUT/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/no-standard-setting/harness-ci/scripts/lib/change-class.sh"; then
+  "$LAYOUT/change-scope/scripts/lib/change-scope.sh" >"$TMP_ROOT/no-standard-setting/change-scope/scripts/lib/change-scope.sh"
+if cmp -s "$LAYOUT/change-scope/scripts/lib/change-scope.sh" "$TMP_ROOT/no-standard-setting/change-scope/scripts/lib/change-scope.sh"; then
   echo 'FAIL: standard paths control changed nothing' >&2; exit 1
 fi
 TIER_BIN="$TMP_ROOT/no-standard-setting/orch/scripts/item-tier"
@@ -331,12 +358,12 @@ awk '/item-tier-warning: cause=invalid-delta/ {hits++; print "    :"; getline; n
   "$TIER" > "$TMP_ROOT/no-delta-warning/orch/scripts/item-tier"
 cp -R "$LAYOUT" "$TMP_ROOT/no-empty-check"
 awk '$0 ~ /grep -qE "\$header"/ {hits++; print "  [[ -n \"$(sed -n \"/$header/p\" <<<\"$1\" | sed \"s/$header[[:space:]]*//\")\" ]] || return 0"; next} {print} END {exit hits == 1 ? 0 : 3}' \
-  "$ORCH_DIR/scripts/lib/branch-growth.sh" > "$TMP_ROOT/no-empty-check/orch/scripts/lib/branch-growth.sh"
+  "$CHANGE_SCOPE_DIR/scripts/lib/branch-growth.sh" > "$TMP_ROOT/no-empty-check/change-scope/scripts/lib/branch-growth.sh"
 cp -R "$LAYOUT" "$TMP_ROOT/no-zero"
 sed -e 's/(0 lines|1 line|/(1 line|/' -e 's/(0 test lines|1 test line|/(1 test line|/' \
-  "$ORCH_DIR/scripts/lib/branch-growth.sh" > "$TMP_ROOT/no-zero/orch/scripts/lib/branch-growth.sh"
+  "$CHANGE_SCOPE_DIR/scripts/lib/branch-growth.sh" > "$TMP_ROOT/no-zero/change-scope/scripts/lib/branch-growth.sh"
 for mutant in no-empty-check no-zero; do
-  if cmp -s "$ORCH_DIR/scripts/lib/branch-growth.sh" "$TMP_ROOT/$mutant/orch/scripts/lib/branch-growth.sh"; then
+  if cmp -s "$CHANGE_SCOPE_DIR/scripts/lib/branch-growth.sh" "$TMP_ROOT/$mutant/change-scope/scripts/lib/branch-growth.sh"; then
     echo "FAIL: $mutant control changed nothing" >&2; exit 1
   fi
 done
@@ -386,8 +413,8 @@ awk -v line="$floor_line" '
   $0 == line { hits++; print "      CHANGE_CLASS_PATH=\"\""; next }
   { print }
   END { exit hits == 1 ? 0 : 3 }
-' "$LAYOUT/harness-ci/scripts/lib/change-class.sh" >"$TMP_ROOT/no-floor/harness-ci/scripts/lib/change-class.sh"
-if cmp -s "$LAYOUT/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/no-floor/harness-ci/scripts/lib/change-class.sh"; then
+' "$LAYOUT/change-scope/scripts/lib/change-scope.sh" >"$TMP_ROOT/no-floor/change-scope/scripts/lib/change-scope.sh"
+if cmp -s "$LAYOUT/change-scope/scripts/lib/change-scope.sh" "$TMP_ROOT/no-floor/change-scope/scripts/lib/change-scope.sh"; then
   echo "FAIL: the floor control did not change the library" >&2; exit 1
 fi
 TIER_BIN="$TMP_ROOT/no-floor/orch/scripts/item-tier"
@@ -403,8 +430,8 @@ awk -v line="$configuration_line" '
   $0 == line { hits++; print "  if false; then # " line; next }
   { print }
   END { exit hits == 1 ? 0 : 3 }
-' "$LAYOUT/harness-ci/scripts/lib/change-class.sh" >"$TMP_ROOT/no-configuration/harness-ci/scripts/lib/change-class.sh"
-if cmp -s "$LAYOUT/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/no-configuration/harness-ci/scripts/lib/change-class.sh"; then
+' "$LAYOUT/change-scope/scripts/lib/change-scope.sh" >"$TMP_ROOT/no-configuration/change-scope/scripts/lib/change-scope.sh"
+if cmp -s "$LAYOUT/change-scope/scripts/lib/change-scope.sh" "$TMP_ROOT/no-configuration/change-scope/scripts/lib/change-scope.sh"; then
   echo "FAIL: the configuration control did not change the library" >&2; exit 1
 fi
 TIER_BIN="$TMP_ROOT/no-configuration/orch/scripts/item-tier"
@@ -422,7 +449,7 @@ unset TIER_BIN
 
 # A missing shared rule library refuses a narrow Location class.
 cp -R "$LAYOUT" "$TMP_ROOT/no-path-rules"
-rm -- "$TMP_ROOT/no-path-rules/harness-ci/scripts/lib/change-class.sh"
+rm -- "${TMP_ROOT:?}/no-path-rules/change-scope/scripts/lib/change-scope.sh"
 TIER_BIN="$TMP_ROOT/no-path-rules/orch/scripts/item-tier"
 assert_eq "$(run_tier - --floor micro --path src/main.rs)" \
   "tier=standard brief=start cause=classifier-path-rules-unreadable rc=0" "missing path rules are not an unmatched Location"

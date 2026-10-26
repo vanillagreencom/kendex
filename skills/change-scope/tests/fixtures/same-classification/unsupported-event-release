@@ -1,0 +1,4 @@
+exit=0
+stdout=change_class=standard
+harness-note: cause=unsupported-event event=release
+class: class=standard measured=false cause=unsupported-event event=release

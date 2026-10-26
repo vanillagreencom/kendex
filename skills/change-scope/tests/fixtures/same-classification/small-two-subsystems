@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=payload/data.conf
+changed-path: path=runtime/product.ts
+harness-note: cause=product-source-or-unreadable-ownership path=payload/data.conf
+class: class=standard measured=true cause=several-subsystems production=60

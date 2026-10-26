@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=skills/x/SKILL.md
+harness-note: cause=product-source-or-unreadable-ownership path=skills/x/SKILL.md
+class: class=standard measured=true cause=production-past-small production=200

@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=trivial
+changed-path: path=README.md
+harness-note: cause=product-source-or-unreadable-ownership path=README.md
+class: class=trivial measured=true cause=documentation-paths lines=3

@@ -88,6 +88,15 @@ mutant_scripts() {
       [ -e "$paired_orch/../github" ] || cp -R "$orch_src/../../github" "$paired_orch/../github" || _mutant_scripts_refuse copy-failed "$paired_orch"
     fi
   fi
+  # dev-return-write, item-tier and the classifier reader resolve change-scope
+  # beside their package and refuse at startup without it, so the tree carries
+  # that required sibling as real files a control can mutate.
+  local change_scope="${sibling%/*}/change-scope"
+  if [[ ! -e "$change_scope" ]]; then
+    mkdir -p "$change_scope" || _mutant_scripts_refuse mkdir-failed "$change_scope"
+    cp -R "$orch_src/../../change-scope/scripts" "$change_scope/scripts" || _mutant_scripts_refuse copy-failed "$change_scope"
+    cp -R "$orch_src/../../change-scope/references" "$change_scope/references" || _mutant_scripts_refuse copy-failed "$change_scope"
+  fi
   printf '%s\n' "$dir"
 }
 

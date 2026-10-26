@@ -50,11 +50,19 @@ set -euo pipefail
 shopt -s extglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"
+# The ceilings and the branch measurement are change-scope's, the required
+# sibling beside this package; a copy outside that layout is refused here.
+CHANGE_SCOPE_DIR="$SCRIPT_DIR/../../change-scope"
+NARROW_CONF="$CHANGE_SCOPE_DIR/references/narrow-change.conf"
+MEASUREMENT="$CHANGE_SCOPE_DIR/scripts/lib/branch-growth.sh"
+if [ ! -r "$MEASUREMENT" ]; then
+  echo "item-tier-error: cause=dependency-absent skill=change-scope path=$MEASUREMENT" >&2
+  exit 2
+fi
 # shellcheck source=lib/change-class.sh
 . "$SCRIPT_DIR/lib/change-class.sh"
-# shellcheck source=lib/branch-growth.sh
-. "$SCRIPT_DIR/lib/branch-growth.sh"
+# shellcheck source=../../change-scope/scripts/lib/branch-growth.sh
+. "$MEASUREMENT"
 # shellcheck source=lib/launch-overlap.sh
 . "$SCRIPT_DIR/lib/launch-overlap.sh"
 
@@ -64,6 +72,16 @@ die() { # CAUSE MESSAGE
   printf 'item-tier-error: cause=%s\n%s\n' "$1" "$2" >&2
   exit 2
 }
+
+# change-scope is installed at its own revision, so its measurement can be
+# older than this script. Its header's contract number is checked before the
+# first call: 1 covers expected_delta_read, the one entry point used here.
+MEASUREMENT_CONTRACT_REQUIRED=1
+measurement_contract="${BRANCH_GROWTH_CONTRACT:-0}"
+case "$measurement_contract" in '' | *[!0123456789]*) measurement_contract=0 ;; esac
+[ "$measurement_contract" -ge "$MEASUREMENT_CONTRACT_REQUIRED" ] ||
+  die "measurement-contract found=$measurement_contract required=$MEASUREMENT_CONTRACT_REQUIRED" \
+    "change-scope's branch-growth.sh beside this package is older than this script needs"
 
 need_value() { # FLAG REMAINING
   [ "$2" -ge 2 ] || die missing-value "$1 needs a value"

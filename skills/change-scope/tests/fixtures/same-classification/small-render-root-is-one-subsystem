@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=small
+changed-path: path=.agents/runtime/two.ts
+changed-path: path=runtime/one.ts
+harness-note: cause=product-source-or-unreadable-ownership path=.agents/runtime/two.ts
+class: class=small measured=true cause=production-within-small subsystem=runtime

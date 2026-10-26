@@ -5,7 +5,7 @@ summary: "Work-item orchestration for Linear or GitHub issues: prepare, delegate
 license: MIT
 user-invocable: true
 dependencies:
-  required: [communication, mailbox, github, worktree, dev, project-management, decider, reviewer, review-gate]
+  required: [communication, mailbox, github, worktree, dev, project-management, decider, reviewer, review-gate, change-scope]
   optional: [harness-ci, linear, second-opinion, commit-guards, jarvis]
 metadata:
   author: vanillagreen

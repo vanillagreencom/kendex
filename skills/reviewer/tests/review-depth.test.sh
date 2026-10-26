@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bash-runtime: 3.2
-# Surface: scripts/review-depth. Inputs: orch/scripts/lib/change-class.sh,
+# Surface: scripts/review-depth. Inputs: change-scope/scripts/lib/change-scope.sh,
 # orch/tests/lib/assertions.sh. The classifier fixture supplies its public
 # stdout/stderr protocol; the real reader and depth command consume it.
 set -euo pipefail
@@ -14,10 +14,10 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'review-depth.test: scratch=
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 INSTALL="$TMP_ROOT/skills"
-mkdir -p "$INSTALL/reviewer/scripts" "$INSTALL/orch/scripts/lib" "$INSTALL/harness-ci/scripts"
+mkdir -p "$INSTALL/reviewer/scripts" "$INSTALL/change-scope/scripts/lib"
 cp "$SKILL_DIR/scripts/review-depth" "$INSTALL/reviewer/scripts/"
-cp "$SKILL_DIR/../orch/scripts/lib/change-class.sh" "$INSTALL/orch/scripts/lib/"
-CLASSIFIER="$INSTALL/harness-ci/scripts/change-class"
+cp "$SKILL_DIR/../change-scope/scripts/lib/change-scope.sh" "$INSTALL/change-scope/scripts/lib/"
+CLASSIFIER="$INSTALL/change-scope/scripts/change-scope"
 cat > "$CLASSIFIER" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -58,7 +58,7 @@ ROWS
   [ "$FAIL" -eq "$before" ]
 }
 depth_table "$DEPTH" || :
-expected_args="$(printf '%s\n' --event pull_request --base base-ref --head head-ref --repo "$TMP_ROOT/judged tree" --output /dev/null)"
+expected_args="$(printf '%s\n' --event pull_request --base base-ref --head head-ref --repo "$TMP_ROOT/judged tree")"
 assert_eq "$(cat "$DEPTH_FIXTURE_ARGS")" "$expected_args" 'the real reader forwards the range and path as arguments'
 
 # A floor is the class a route promised: the class above the one a run escaped
@@ -111,7 +111,19 @@ status=0
 output="$(PATH=/usr/bin:/bin "$DEPTH" --base base-ref 2>"$TMP_ROOT/stderr")" || status=$?
 assert_eq "$status" 2 'missing classifier refuses'
 assert_eq "$output" '' 'missing classifier publishes no depth'
+assert_contains "$(cat "$TMP_ROOT/stderr")" 'review-depth: cause=classifier-absent ' 'missing classifier names its cause'
 mv "$CLASSIFIER.disabled" "$CLASSIFIER"
+
+# Without change-scope's library beside the package there is no reader to run
+# the classifier through: the keyed line first, exit 2, no depth.
+READER="$INSTALL/change-scope/scripts/lib/change-scope.sh"
+mv "$READER" "$READER.disabled"
+status=0
+output="$("$DEPTH" --base base-ref 2>"$TMP_ROOT/stderr")" || status=$?
+assert_eq "$status $output $(sed -n '1p' "$TMP_ROOT/stderr")" \
+  "2  review-depth: cause=dependency-absent skill=change-scope path=$INSTALL/reviewer/scripts/../../change-scope/scripts/lib/change-scope.sh" \
+  'missing change-scope library refuses at startup by key and publishes no depth'
+mv "$READER.disabled" "$READER"
 
 for option in --class --event; do
   status=0
@@ -146,7 +158,7 @@ mutant floor-ignored 'if [ -n "$FLOOR" ]; then' 'if false; then'
 assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  micro/floor=small depth' \
   'must-fail control: an ignored floor fails the micro escape row'
 
-mutant floor-as-class 'if [ "$CHANGE_CLASS_RANK" -gt "$MEASURED_RANK" ]; then' 'if true; then'
+mutant floor-as-class 'if [ "$CHANGE_SCOPE_RANK" -gt "$MEASURED_RANK" ]; then' 'if true; then'
 (floor_table "$INSTALL/reviewer/scripts/floor-as-class") >"$TMP_ROOT/control.log" 2>&1 || :
 assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  standard/floor=small depth' \
   'must-fail control: a floor taken as the class fails the standard row'

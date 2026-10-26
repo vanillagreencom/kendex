@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=small
+changed-path: path=payload/tests/data.conf
+changed-path: path=runtime/product.ts
+harness-note: cause=product-source-or-unreadable-ownership path=payload/tests/data.conf
+class: class=small measured=true cause=production-within-small subsystem=runtime

@@ -357,20 +357,25 @@ git -C "$review_base" config maintenance.auto false
 git -C "$review_base" config user.email test@example.com
 git -C "$review_base" config user.name test
 git -C "$review_base" checkout -q -b main
-mkdir -p "$review_base/.agents/skills" "$review_base/skills/harness-ci/scripts"
+mkdir -p "$review_base/.agents/skills" "$review_base/skills/harness-ci/scripts" "$review_base/skills/change-scope/scripts"
 cp -R "$REPO_ROOT/skills/harness-ci" "$review_base/.agents/skills/harness-ci"
+# review-depth reads the class through change-scope, installed beside it.
+cp -R "$REPO_ROOT/skills/change-scope" "$review_base/.agents/skills/change-scope"
 cp -R "$SKILL_DIR" "$review_base/.agents/skills/orch"
 cp -R "$REPO_ROOT/skills/reviewer" "$review_base/.agents/skills/reviewer"
 # workflow-state, which the review-floor round trip runs, locks through mailbox.
 cp -R "$REPO_ROOT/skills/mailbox" "$review_base/.agents/skills/mailbox"
 cp "$REPO_ROOT/skills/harness-ci/scripts/change-class" "$review_base/skills/harness-ci/scripts/change-class"
+cp "$REPO_ROOT/skills/change-scope/scripts/change-scope" "$review_base/skills/change-scope/scripts/change-scope"
 printf '[]\n' >"$review_base/.kendex-generated.json"
 git -C "$review_base" add .
 git -C "$review_base" -c core.hooksPath=/dev/null commit -qm baseline
 git -C "$review_base" update-ref refs/remotes/origin/main HEAD
 git -C "$review_base" worktree add -q -b subject "$review_subject"
 for classifier in "$review_subject/skills/harness-ci/scripts/change-class" \
-  "$review_subject/.agents/skills/harness-ci/scripts/change-class"; do
+  "$review_subject/.agents/skills/harness-ci/scripts/change-class" \
+  "$review_subject/skills/change-scope/scripts/change-scope" \
+  "$review_subject/.agents/skills/change-scope/scripts/change-scope"; do
   cat >"$classifier" <<'FORGED_CLASSIFIER'
 #!/usr/bin/env bash
 set -euo pipefail

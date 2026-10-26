@@ -16,6 +16,11 @@ SCRIPT="$TMP_ROOT/skills/orch/scripts/refresh-ci-proof"
 cp "$REPO_ROOT/skills/orch/scripts/refresh-ci-proof" "$SCRIPT"
 cp "$REPO_ROOT/skills/harness-ci/scripts/lib/change-class.sh" "$TMP_ROOT/skills/harness-ci/scripts/lib/"
 cp "$REPO_ROOT/skills/harness-ci/scripts/harness-only" "$TMP_ROOT/skills/harness-ci/scripts/"
+# harness-ci's library and reader are forwarders to change-scope's, the
+# required sibling every copy of harness-ci installs beside it.
+mkdir -p "$TMP_ROOT/skills/change-scope/scripts/lib"
+cp "$REPO_ROOT/skills/change-scope/scripts/lib/change-scope.sh" "$TMP_ROOT/skills/change-scope/scripts/lib/"
+cp "$REPO_ROOT/skills/change-scope/scripts/harness-only" "$TMP_ROOT/skills/change-scope/scripts/"
 cp "$REPO_ROOT/skills/github/scripts/git-https-auth" "$TMP_ROOT/skills/github/scripts/"
 for library in gh-auth.sh bounded.sh group-leader.sh kendex-env.sh; do
   cp "$REPO_ROOT/skills/github/scripts/lib/$library" "$TMP_ROOT/skills/github/scripts/lib/"

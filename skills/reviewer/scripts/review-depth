@@ -6,8 +6,9 @@ usage() {
   cat <<'USAGE'
 Usage: review-depth --base REF [--head REF] [--repo DIR] [--floor CLASS]
 
-Reads the range through orch's change_class_read and harness-ci's change-class.
-No argument replaces the measured class. Run the trusted base checkout's copy.
+Reads the range through change-scope's reader, change_scope_read, and its
+classifier beside this package. No argument replaces the measured class. Run
+the trusted base checkout's copy.
 
 The measured class selects package review depth:
   render, trivial, micro: none
@@ -16,8 +17,8 @@ The measured class selects package review depth:
 
 --floor CLASS (micro, small or standard) is a class the run already holds,
 as item-tier --floor gives it: the class above the one a run escaped from.
-Depth follows the wider of the measured class and the floor, ranked by orch's
-change_class_rank. The floor only raises: it never lowers the measured class,
+Depth follows the wider of the measured class and the floor, ranked by
+change-scope's change_scope_rank. The floor only raises: it never lowers the measured class,
 and a failed or unmeasured classifier keeps its exit. stderr names the floor
 when it decided the depth.
 
@@ -61,25 +62,31 @@ done
 [ -n "$BASE" ] || fail arguments --base
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd -P)" || exit 2
-READER="$SCRIPT_DIR/../../orch/scripts/lib/change-class.sh"
-[ -r "$READER" ] || fail reader-absent "$READER"
-# shellcheck source=../../orch/scripts/lib/change-class.sh
+# The classifier and its reader are change-scope's, the required sibling
+# beside this package; a copy outside that layout is refused here.
+READER="$SCRIPT_DIR/../../change-scope/scripts/lib/change-scope.sh"
+if [ ! -r "$READER" ]; then
+  printf 'review-depth: cause=dependency-absent skill=change-scope path=%s\n' "$READER" >&2
+  exit 2
+fi
+# shellcheck source=../../change-scope/scripts/lib/change-scope.sh
 . "$READER" || exit 2
-[ -z "$FLOOR" ] || change_class_floor "$FLOOR" || fail arguments "--floor=$FLOOR"
+[ -z "$FLOOR" ] || change_scope_floor "$FLOOR" || fail arguments "--floor=$FLOOR"
 CLASS_ERR="$(mktemp "${TMPDIR:-/tmp}/review-depth.XXXXXX")" || fail scratch "${TMPDIR:-/tmp}"
 trap 'rm -f -- "${CLASS_ERR:?}"' EXIT
 
-if ! change_class_read "$BASE" "$HEAD" "$REPO" "$CLASS_ERR"; then
+if ! change_scope_read "$BASE" "$HEAD" "$REPO" "$CLASS_ERR"; then
   cat -- "$CLASS_ERR" >&2
-  fail "$CHANGE_CLASS_CAUSE" "$REPO"
+  fail "$CHANGE_SCOPE_CAUSE" "$REPO"
 fi
 cat -- "$CLASS_ERR" >&2
-case "$CHANGE_CLASS_MEASURED" in
+CHANGE_CLASS="$CHANGE_SCOPE_CLASS"
+case "$CHANGE_SCOPE_MEASURED" in
   true) ;;
   false)
     printf 'review-depth: cause=classifier-unmeasured value=%q\n' "$CHANGE_CLASS" >&2
     exit 3 ;;
-  *) fail classifier-unreadable "$CHANGE_CLASS_MEASURED" ;;
+  *) fail classifier-unreadable "$CHANGE_SCOPE_MEASURED" ;;
 esac
 depth_of() { # CLASS; sets DEPTH
   case "$1" in
@@ -88,13 +95,13 @@ depth_of() { # CLASS; sets DEPTH
     standard) DEPTH=full ;;
   esac
 }
-change_class_rank "$CHANGE_CLASS" || fail classifier-unreadable "$CHANGE_CLASS"
-MEASURED_RANK="$CHANGE_CLASS_RANK"
+change_scope_rank "$CHANGE_CLASS" || fail classifier-unreadable "$CHANGE_CLASS"
+MEASURED_RANK="$CHANGE_SCOPE_RANK"
 depth_of "$CHANGE_CLASS"
 if [ -n "$FLOOR" ]; then
   MEASURED_DEPTH="$DEPTH"
-  change_class_rank "$FLOOR"
-  if [ "$CHANGE_CLASS_RANK" -gt "$MEASURED_RANK" ]; then
+  change_scope_rank "$FLOOR"
+  if [ "$CHANGE_SCOPE_RANK" -gt "$MEASURED_RANK" ]; then
     depth_of "$FLOOR"
     [ "$DEPTH" = "$MEASURED_DEPTH" ] ||
       printf 'review-depth: floor=%s change_class=%s\n' "$FLOOR" "$CHANGE_CLASS" >&2

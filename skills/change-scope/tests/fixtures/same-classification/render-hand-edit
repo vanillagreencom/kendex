@@ -1,0 +1,4 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=.agents/skills/orch/SKILL.md
+class: class=standard measured=false cause=verify-refused verifier=path version=0.0.0-stub

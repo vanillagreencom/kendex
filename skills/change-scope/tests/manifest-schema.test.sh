@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Surface: harness-only's schema-step changed-path filter.
-# Inputs: skills/harness-ci/scripts/harness-only skills/harness-ci/scripts/lib/change-class.sh
+# Inputs: skills/change-scope/scripts/harness-only skills/change-scope/scripts/lib/change-scope.sh
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"

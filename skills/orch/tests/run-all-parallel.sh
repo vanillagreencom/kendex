@@ -36,8 +36,10 @@
 #      suite, which still sets its own
 #   8. --battery — the suites of the directory it names run in place of the
 #      runner's own, and the verdict line names that directory's tree
-#   9. --alone — with --battery, the suites it names run alone, and a suite
-#      sharing a name with one in the runner's own ALONE list runs pooled
+#   9. --alone — with --battery, the suites it names run alone, a suite
+#      sharing a name with one in the runner's own ALONE list runs pooled,
+#      and a name no suite file in the battery answers to refuses the run
+#      before any suite starts
 #  10. the bounds — one table, a row for each rule run-all.sh's header states
 #      for RUN_ALL_SUITE_SECS and RUN_ALL_DEADLINE_EPOCH, each with the
 #      control that plants a defect in that rule alone; and a bound that is
@@ -517,6 +519,17 @@ assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '    TEST_DIRS+=("$TEST_DI
   "control: the runner's own list kept holds back the other tree's same-named suite"
 assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$TEST_DIR/$2.sh")' ':')" "rc=0 started=aaa-alone mmm-alone $O zzz-pool " \
   "control: --alone left unread runs every suite pooled"
+# A stale --alone name, one left behind when its suite moved to another
+# battery, isolates nothing; the runner refuses it by key instead of pooling
+# the suite it meant. The row is a function so a control can run it alone.
+alone_missing_row() { # RUNNER_DIR
+  battery "$1"
+  run_battery "$1" 1 -- --battery "$OTHER" --alone aaa-alone --alone no-such-suite
+  assert_eq "rc=$RC started=$(started_of | tr '\n' ' ')refusal=$(printf '%s\n' "$OUT" | sed -n 's/^\(run-all.sh: alone-missing suite=[^ ]* \)battery=.*/\1/p')" \
+    "rc=1 started=refusal=run-all.sh: alone-missing suite=no-such-suite " \
+    "--alone naming no suite file refuses by key before any suite starts"
+}
+alone_missing_row "$TMP_ROOT/alone-missing/tests"
 
 echo "=== 10. a suite past its bound is stopped and reported under its own name ==="
 # Batteries, each run on one worker. suite-clock: three suites on a clock

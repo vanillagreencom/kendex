@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# change-class.sh — dev-validate-run's, item-tier's, oversee-cycle's and
-# review-depth's reader of harness-ci's change classifier, and the owner of the
-# class order item-tier and review-depth rank by. CI's
-# .github/actions/change-class reads the shipped scripts from its own trusted
-# checkout. Sourced; it defines the functions below and sets nothing until one
-# runs.
+# change-class.sh — dev-validate-run's, item-tier's and oversee-cycle's reader
+# of the change classifier, and the owner of the class order item-tier ranks
+# by. CI's .github/actions/change-class reads the shipped scripts from its own
+# trusted checkout. Sourced; it defines the functions below and sets nothing
+# until one runs.
 #
-# The classifier is <skills>/harness-ci/scripts/change-class beside this
-# package, else change-class on PATH. harness-only is read from the directory
-# the classifier resolved to, so both answers come from one install.
+# The classifier, its reader harness-only and the path rules are change-scope's,
+# the required sibling beside this package (<skills>/change-scope). Where
+# harness-ci, an optional sibling, is installed beside it too, its
+# scripts/change-class wrapper runs in the classifier's place: its log is the
+# classifier's lines plus the queue-only record dev-validate-run's PR coverage
+# reads, so one run answers both. Nothing is read from PATH, and a layout
+# holding neither answers classifier-absent.
 #
 # change_class_read BASE HEAD REPO STDERR_FILE
 #   Classifies the pull-request range BASE...HEAD of REPO and sets CHANGE_CLASS
@@ -27,8 +30,7 @@
 #   CHANGE_CLASS_DOCS_ONLY to true or false and writes the changed paths the
 #   verdict read to PATHS_FILE, one per line. Returns 1 on failure with
 #   CHANGE_CLASS_CAUSE set to docs-reader-absent, docs-reader-exit-N or
-#   docs-reader-unreadable. Call it after change_class_read, which resolves the
-#   install.
+#   docs-reader-unreadable.
 #
 # change_class_rank CLASS
 #   Sets CHANGE_CLASS_RANK to CLASS's place in the order
@@ -38,7 +40,7 @@
 #   Returns 0 when CLASS is a floor item-tier and review-depth take: a class
 #   at or above micro, the narrowest class a work item runs at.
 #
-# change_class_location_load REPO loads harness-ci's shared path rules, the
+# change_class_location_load REPO loads change-scope's shared path rules, its
 # narrow-change list and CHANGE_CLASS_STANDARD_PATHS from the main checkout.
 # Returns 1 with CHANGE_CLASS_CAUSE on unreadable rules or settings.
 # After loading, change_class_path PATH launch applies
@@ -49,13 +51,14 @@
 # Actions record. No argument here carries a class.
 
 CHANGE_CLASS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHANGE_SCOPE_SCRIPTS="$CHANGE_CLASS_LIB_DIR/../../../change-scope/scripts"
+HARNESS_CI_SCRIPTS="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts"
 CHANGE_CLASS=""
 CHANGE_CLASS_CAUSE=""
 CHANGE_CLASS_MEASURED=""
 CHANGE_CLASS_QUEUE_ONLY=""
 CHANGE_CLASS_DOCS_ONLY=""
 CHANGE_CLASS_RANK=""
-CHANGE_CLASS_SCRIPTS=""
 
 change_class_rank() { # CLASS
   case "$1" in
@@ -76,12 +79,12 @@ change_class_floor() { # CLASS
 }
 
 change_class_location_load() { # REPO
-  local library="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/lib/change-class.sh" root
+  local library="$CHANGE_SCOPE_SCRIPTS/lib/change-scope.sh" root
   CHANGE_CLASS_CAUSE=classifier-path-rules-unreadable
   [ -r "$library" ] || return 1
-  # shellcheck source=../../../harness-ci/scripts/lib/change-class.sh
+  # shellcheck source=../../../change-scope/scripts/lib/change-scope.sh
   . "$library" || return 1
-  if ! change_class_path_load "$CHANGE_CLASS_LIB_DIR/../../references/narrow-change.conf"; then
+  if ! change_class_path_load "$CHANGE_SCOPE_SCRIPTS/../references/narrow-change.conf"; then
     CHANGE_CLASS_CAUSE="$CHANGE_CLASS_PATH_CAUSE"
     return 1
   fi
@@ -104,7 +107,7 @@ change_class_location_load() { # REPO
 
 # An unreadable or absent verdict keeps the inventory under the path rules.
 change_class_inventory_rendered() { # BASE HEAD REPO STDERR_FILE
-  local reader="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/harness-only" inventory_change
+  local reader="$CHANGE_SCOPE_SCRIPTS/harness-only" inventory_change
   [ -x "$reader" ] || return 1
   "$reader" --mode harness --event pull_request --base "$1" --head "$2" --repo "$3" \
     --output /dev/null > /dev/null 2>"$4" || return 1
@@ -123,17 +126,17 @@ change_class_read() { # BASE HEAD REPO STDERR_FILE
   CHANGE_CLASS_CAUSE=""
   CHANGE_CLASS_MEASURED=""
   CHANGE_CLASS_QUEUE_ONLY=""
-  classifier="$CHANGE_CLASS_LIB_DIR/../../../harness-ci/scripts/change-class"
-  if [[ ! -x "$classifier" ]]; then
-    classifier="$(command -v change-class 2>/dev/null)" || classifier=""
-  fi
-  if [[ -z "$classifier" ]]; then
+  # The wrapper takes --output, which /dev/null keeps off a caller's
+  # GITHUB_OUTPUT; the classifier takes no such flag.
+  if [[ -x "$HARNESS_CI_SCRIPTS/change-class" ]]; then
+    classifier=("$HARNESS_CI_SCRIPTS/change-class" --output /dev/null)
+  elif [[ -x "$CHANGE_SCOPE_SCRIPTS/change-scope" ]]; then
+    classifier=("$CHANGE_SCOPE_SCRIPTS/change-scope")
+  else
     CHANGE_CLASS_CAUSE=classifier-absent
     return 1
   fi
-  CHANGE_CLASS_SCRIPTS="$(dirname -- "$classifier")"
-  answer="$("$classifier" --event pull_request --base "$1" --head "$2" --repo "$3" \
-    --output /dev/null 2>>"$4")" || status=$?
+  answer="$("${classifier[@]}" --event pull_request --base "$1" --head "$2" --repo "$3" 2>>"$4")" || status=$?
   if (( status != 0 )); then
     CHANGE_CLASS_CAUSE="classifier-exit-$status"
     return 1
@@ -180,10 +183,10 @@ change_class_merged() { # BASE HEAD CHECKOUT REPOSITORY STDERR_FILE
 }
 
 change_class_docs() { # BASE HEAD REPO PATHS_FILE STDERR_FILE
-  local reader="$CHANGE_CLASS_SCRIPTS/harness-only" answer status=0
+  local reader="$CHANGE_SCOPE_SCRIPTS/harness-only" answer status=0
   CHANGE_CLASS_DOCS_ONLY=""
   CHANGE_CLASS_CAUSE=""
-  if [[ -z "$CHANGE_CLASS_SCRIPTS" || ! -x "$reader" ]]; then
+  if [[ ! -x "$reader" ]]; then
     CHANGE_CLASS_CAUSE=docs-reader-absent
     return 1
   fi

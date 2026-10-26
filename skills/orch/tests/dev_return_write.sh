@@ -1145,6 +1145,29 @@ jq '.recovery_of="other.json"' "$RW/tmp/valid-companion" > "$companion"
 assert_eq "$("$CONTROL_CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery --expect-items-from-round | jq -r '.reason')" valid \
   'control: ignoring the parent identity admits the invalid companion'
 
+echo "=== the measurement beside the package is required, at the contract this writer needs ==="
+# Each tree is a mutant_scripts layout of its own, so removing or ageing its
+# change-scope sibling touches no other row's tree. The writer refuses before
+# it reads an argument, so a bare call reaches the guard.
+startup_refusal() { # WRITER -> the status, the stdout that must stay empty, the keyed first stderr line
+  local out rc=0
+  out="$("$1" 2>"$TMP_ROOT/startup.err")" || rc=$?
+  printf 'rc=%s stdout=%s first=%s' "$rc" "$out" "$(sed -n '1p' "$TMP_ROOT/startup.err")"
+}
+ABSENT_WRITE="$(mutant_scripts absent-measurement/orch)/dev-return-write" || exit 1
+rm -r -- "${TMP_ROOT:?}/absent-measurement/change-scope"
+assert_eq "$(startup_refusal "$ABSENT_WRITE")" \
+  "rc=2 stdout= first=dev-return-write: cause=dependency-absent skill=change-scope path=$TMP_ROOT/absent-measurement/orch/scripts/../../change-scope/scripts/lib/branch-growth.sh" \
+  'without change-scope beside it the writer refuses at startup by key and writes nothing'
+OLD_WRITE="$(mutant_scripts old-measurement/orch)/dev-return-write" || exit 1
+OLD_MEASUREMENT="$TMP_ROOT/old-measurement/change-scope/scripts/lib/branch-growth.sh"
+CONTRACT_NOW="$(sed -n 's/^BRANCH_GROWTH_CONTRACT=//p' "$OLD_MEASUREMENT")"
+[[ "$CONTRACT_NOW" =~ ^[0-9]+$ ]] || { echo 'FAIL: branch-growth.sh states no contract number' >&2; exit 1; }
+mutate_file "$OLD_MEASUREMENT" "BRANCH_GROWTH_CONTRACT=$CONTRACT_NOW" 'BRANCH_GROWTH_CONTRACT=0'
+assert_eq "$(startup_refusal "$OLD_WRITE")" \
+  'rc=2 stdout= first=dev-return-write: cause=measurement-contract found=0 required=1' \
+  'a measurement older than the contract the writer needs is refused by key and writes nothing'
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -3,6 +3,10 @@
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# The launch rows run orch's item-tier beside the classifier: both consume
+# this package's path rules and ceilings, and a source with its documentation
+# has to admit the same tier at launch and in CI.
+ORCH_PACKAGE="$(cd "$CHANGE_SCOPE_PACKAGE/../orch" && pwd)"
 
 SANDBOX="$(cd -- "$SANDBOX" && pwd -P)"
 repo="$(new_repo documentation-subsystem)"
@@ -38,8 +42,8 @@ while IFS='|' read -r label estimate launch_tier class_line specs; do
     docs_control_head="$(git -C "$repo" rev-parse HEAD)"
   fi
   class_err="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
-    "$CHANGE_CLASS" --repo "$repo" --event pull_request --base "$base" \
-    --head HEAD --output /dev/null 2>&1 >/dev/null)"
+    "$CHANGE_SCOPE" --repo "$repo" --event pull_request --base "$base" \
+    --head HEAD 2>&1 >/dev/null)"
   launch="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
     "$ORCH_PACKAGE/scripts/item-tier" --repo "$repo" --production "$estimate" \
     "${location_args[@]}")"
@@ -66,10 +70,10 @@ LINE
 IFS= read -r docs_no_skip <<'LINE'
   case "$non_docs" in *$'\n'"$path"$'\n'*) ;; *) : ;; esac
 LINE
-docs_mutant="$(mutant docs-subsystem change-class "$docs_skip" "$docs_no_skip")"
+docs_mutant="$(mutant docs-subsystem change-scope "$docs_skip" "$docs_no_skip")"
 old_err="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
   "$docs_mutant" --repo "$repo" --event pull_request --base "$base" \
-  --head "$docs_control_head" --output /dev/null 2>&1 >/dev/null)"
+  --head "$docs_control_head" 2>&1 >/dev/null)"
 old_line="$(sed -n '/^class: /p' <<<"$old_err")"
 if (PASS=0; FAIL=0; assert_eq docs-subsystem \
   'class: class=small measured=true cause=production-within-small subsystem=runtime' \
@@ -97,7 +101,7 @@ while IFS='|' read -r label head class_line; do
   fallback_rows=$((fallback_rows + 1))
   err="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
     "$failed_reader" --repo "$repo" --event pull_request --base "$base" \
-    --head "$head" --output /dev/null 2>&1 >/dev/null)"
+    --head "$head" 2>&1 >/dev/null)"
   assert_eq "$label" "$class_line" "$(sed -n '/^class: /p' <<<"$err")"
 done <<FALLBACK
 incomplete docs discovery cannot narrow a small source diff|$docs_control_head|class: class=standard measured=false cause=documentation-paths-unreadable
@@ -106,11 +110,11 @@ FALLBACK
 require_rows documentation-discovery "$fallback_rows"
 
 empty_guard='if [ "$docs_verdict" = docs_only=false ] && [ -z "$non_docs" ]; then'
-unchecked="$(mutant docs-discovery-unchecked change-class "$empty_guard" "if false; then # $empty_guard")"
+unchecked="$(mutant docs-discovery-unchecked change-scope "$empty_guard" "if false; then # $empty_guard")"
 cp "$(dirname -- "$failed_reader")/harness-only" "$(dirname -- "$unchecked")/harness-only"
 unchecked_err="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
   "$unchecked" --repo "$repo" --event pull_request --base "$base" \
-  --head "$docs_control_head" --output /dev/null 2>&1 >/dev/null)"
+  --head "$docs_control_head" 2>&1 >/dev/null)"
 unchecked_line="$(sed -n '/^class: /p' <<<"$unchecked_err")"
 if (PASS=0; FAIL=0; assert_eq docs-discovery \
   'class: class=standard measured=false cause=documentation-paths-unreadable' \

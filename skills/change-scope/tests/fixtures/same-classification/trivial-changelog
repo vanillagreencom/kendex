@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=trivial
+changed-path: path=changelog.d/fixed/note.md
+harness-note: cause=product-source-or-unreadable-ownership path=changelog.d/fixed/note.md
+class: class=trivial measured=true cause=documentation-paths lines=2

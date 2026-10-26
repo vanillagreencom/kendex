@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=render
+changed-path: path=CLAUDE.md
+render-proof: checked=4 failed=0
+render-coverage: named=4
+class: class=render measured=true cause=renders-match-their-sources

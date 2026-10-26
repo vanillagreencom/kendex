@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=.claude/hooks/guard.sh
+harness-note: cause=product-source-or-unreadable-ownership path=.claude/hooks/guard.sh
+class: class=standard measured=true cause=excluded-path path=.claude/hooks/guard.sh glob=*/hooks/!(*/*|*.md)

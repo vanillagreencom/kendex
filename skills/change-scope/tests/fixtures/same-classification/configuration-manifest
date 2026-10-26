@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=kendex.toml
+harness-note: cause=product-source-or-unreadable-ownership path=kendex.toml
+class: class=standard measured=true cause=configuration-source path=kendex.toml glob=kendex.toml

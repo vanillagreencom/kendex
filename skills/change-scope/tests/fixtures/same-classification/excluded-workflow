@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=.github/workflows/ci.yml
+harness-note: cause=product-source-or-unreadable-ownership path=.github/workflows/ci.yml
+class: class=standard measured=true cause=excluded-path path=.github/workflows/ci.yml glob=.github/workflows/*

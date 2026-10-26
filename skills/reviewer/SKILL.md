@@ -5,7 +5,7 @@ summary: "Strict review and QA workflows: reviewer ethos, code-review classifica
 license: MIT
 user-invocable: true
 dependencies:
-  required: [orch, github, code-quality, docs-writing, harness-ci, project-management]
+  required: [orch, github, code-quality, docs-writing, change-scope, project-management]
   optional: [linear]
 metadata:
   author: vanillagreen
@@ -29,7 +29,7 @@ Shared contract for every review specialist; each agent's domain and probes live
 
 Read [references/finding-disposition.md](references/finding-disposition.md) before classifying findings. It owns verification, dispositions, recurrence and the filing bar. Orch owns execution and counters. Project-management owns issue creation.
 
-Run `scripts/review-depth --base REF --head REF --repo DIR` from the trusted base checkout to select package review depth for a pull-request range. The command uses harness-ci through orch's existing reader. `review-depth --help` owns its class mapping, output and failure contract. Every result leaves GitHub's native approval requirements in force.
+Run `scripts/review-depth --base REF --head REF --repo DIR` from the trusted base checkout to select package review depth for a pull-request range. The command reads the class through change-scope's reader. `review-depth --help` owns its class mapping, output and failure contract. Every result leaves GitHub's native approval requirements in force.
 
 ## Ethos
 
