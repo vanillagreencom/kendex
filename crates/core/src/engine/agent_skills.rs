@@ -76,15 +76,21 @@ pub(super) fn assigned_skills(
     Ok(skills)
 }
 
-/// The expanded declarations include bundle members and dependencies.
-/// Offered catalog content alone does not mean the scope installs it.
+/// Expanded coverage includes parked declarations, bundle members and
+/// dependencies. Offered content alone covers none of the agent's tools.
 pub(super) fn warn_uninstalled(ctx: &ItemCtx, state: &mut DesiredState, skills: &EffectiveSkills) {
-    let installed = ctx.expansion.of(ItemKind::Skill);
     let missing: std::collections::BTreeSet<_> = skills
         .effective
         .iter()
         .chain(&skills.unresolved)
-        .filter(|skill| !installed.iter().any(|(name, _)| *name == *skill))
+        .filter(|skill| {
+            let installed = ctx.expansion.harnesses(ItemKind::Skill, skill);
+            installed.is_empty()
+                || ctx
+                    .harnesses
+                    .iter()
+                    .any(|harness| !installed.contains(harness))
+        })
         .collect();
     for skill in missing {
         state.warnings.push(super::ItemWarning {

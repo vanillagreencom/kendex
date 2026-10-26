@@ -403,9 +403,9 @@ struct Wanted {
     /// companion and the pass judges pins: each asked again with the pin
     /// dropped ([`withheld_past_pin`]).
     left_out: Vec<HarnessId>,
-    /// For an agent, the assigned skills the scope already holds
-    /// ([`held_elsewhere`]): its edge brings none of them, and [`walk`]
-    /// only switches each on while the agent is on.
+    /// For an agent, assigned skills held on at least one tool
+    /// ([`held_elsewhere`]). [`walk`] switches them on while the agent is
+    /// on, even when its edge must still derive them on another tool.
     loads_held: Vec<String>,
 }
 
@@ -908,15 +908,9 @@ fn wanted_by(
         }
         Offer::NotOffered | Offer::Silent => return Some(wanted),
     };
-    let Some(mut declared) = declared_by(catalog, manifest, kind, parent, &dir) else {
+    let Some(declared) = declared_by(catalog, manifest, kind, parent, &dir) else {
         return Some(wanted);
     };
-    if kind == ItemKind::Agent {
-        (wanted.loads_held, declared.required_skills) = declared
-            .required_skills
-            .into_iter()
-            .partition(|skill| held_elsewhere(expansion, parent, skill));
-    }
     let header = hook_header(sealed, kind, &dir);
     if let Ok(Some(own)) = &header
         && state.judge_pins
@@ -952,7 +946,7 @@ fn wanted_by(
     // Each name taken to the companion it names, and that companion to
     // the catalog the plan writes it from. A name that resolves to nothing
     // derives nothing, which withholds an armed hook where it is required.
-    let mut companions: Vec<(ItemKind, String, Dependency)> = Vec::new();
+    let mut companions = Vec::new();
     let mut unresolved = Vec::new();
     for (_, dep_kind) in DEPENDENT_KINDS
         .iter()
@@ -973,12 +967,20 @@ fn wanted_by(
             .iter()
             .chain(optional.iter().filter(|o| chosen.contains(o)))
         {
+            let on = if kind == ItemKind::Agent {
+                assignment_harnesses(expansion, parent, name, &on, &mut wanted.loads_held)
+            } else {
+                on.clone()
+            };
+            if on.is_empty() {
+                continue;
+            }
             let Some(dep) = resolve(kind, *dep_kind, name, parent, catalog, &own.0, found) else {
                 unresolved.extend(on.iter().copied());
                 continue;
             };
             let selected = expansion.dependency(kind, parent, *dep_kind, &dep);
-            companions.push((*dep_kind, dep, selected));
+            companions.push((*dep_kind, dep, selected, on));
         }
     }
     if kind == ItemKind::Hook && wanted.armed {
@@ -988,8 +990,6 @@ fn wanted_by(
     derive(
         kind,
         parent,
-        &harnesses,
-        declared.requires_on.as_deref(),
         companions,
         manifest,
         catalogs,
@@ -1037,9 +1037,8 @@ fn declared_by(
 /// a row may name a skill another source carries, and one nothing installs
 /// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
 /// agent that will not read or parse needs nothing; the renderer reports it.
-/// [`wanted_by`] makes the edge's required skills only those
-/// [`held_elsewhere`] finds the scope does not hold; the rest follow only
-/// the agent's switch.
+/// [`wanted_by`] derives only tools [`held_elsewhere`] finds the scope
+/// does not hold; held tools follow only the agent's switch.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
@@ -1069,23 +1068,47 @@ fn agent_assignment(
     }
 }
 
-/// Whether the scope holds `skill`, which `agent`'s assignment names, for
-/// any reason but this agent's edge. The assignment is what the agent
-/// loads, not what it needs to install, so its edge is soft: it brings
-/// only a skill the scope does not already hold, and a skill held for any
-/// other reason — declared, a set's, required by another item or brought
-/// by another agent, the skill that requires this agent among them —
-/// keeps its own declaration, revision and reasons, with no revision
-/// disagreement, finding or reason from this edge. Only its switch
-/// follows the agent: one brought in parked is switched on while the
-/// agent is on ([`walk`]), never one the person declared off.
+/// Another reason satisfies this installation without adding an agent
+/// edge. An own-only assignment remains derivable on a revisit, when the
+/// agent may have gained tools. First derivation is item-wide and cannot
+/// distinguish an installation another agent supplied on a different tool.
+/// Held installations still follow the agent's switch ([`walk`]), never
+/// overriding a skill the person declared off.
 /// [`wanted_by`] drops the findings on the skills this edge does bring.
-fn held_elsewhere(expansion: &Expansion, agent: &str, skill: &str) -> bool {
-    match expansion.derived_from(ItemKind::Skill, skill) {
-        Some(Reason::RequiredBy { by }) => by.kind != ItemKind::Agent || by.name != agent,
-        Some(Reason::Requested | Reason::MemberOf { .. }) => true,
-        None => expansion.contains(ItemKind::Skill, skill),
+fn held_elsewhere(expansion: &Expansion, agent: &str, skill: &str, harness: HarnessId) -> bool {
+    expansion
+        .reasons(ItemKind::Skill, skill, harness)
+        .iter()
+        .any(|reason| match reason {
+            Reason::RequiredBy { by } => by.kind != ItemKind::Agent || by.name != agent,
+            Reason::Requested | Reason::MemberOf { .. } => true,
+        })
+}
+
+fn assignment_harnesses(
+    expansion: &Expansion,
+    agent: &str,
+    skill: &str,
+    harnesses: &[HarnessId],
+    loads_held: &mut Vec<String>,
+) -> Vec<HarnessId> {
+    let mut held = false;
+    let remaining = harnesses
+        .iter()
+        .copied()
+        .filter(|harness| {
+            if held_elsewhere(expansion, agent, skill, *harness) {
+                held = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    if held {
+        loads_held.push(skill.to_owned());
     }
+    remaining
 }
 
 /// Of `harnesses`, the tools the plan writes the hook's position on
@@ -1189,13 +1212,10 @@ fn chosen_extras(
 /// and for an armed hook the tools it is withheld from — every tool a
 /// companion misses, or every tool where the companion's catalog says
 /// nothing of it ([`silent`]).
-#[allow(clippy::too_many_arguments)]
 fn derive(
     kind: ItemKind,
     parent: &str,
-    harnesses: &[HarnessId],
-    requires_on: Option<&[String]>,
-    companions: Vec<(ItemKind, String, Dependency)>,
+    companions: Vec<(ItemKind, String, Dependency, Vec<HarnessId>)>,
     manifest: &Manifest,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
@@ -1206,12 +1226,11 @@ fn derive(
     let withholds = kind == ItemKind::Hook && wanted.armed;
     // Every companion's catalog is opened before any is read, since an
     // open may move what is already open.
-    for (_, _, selected) in &companions {
+    for (_, _, selected, _) in &companions {
         catalogs.get(&selected.decl.source, selected.decl.rev.as_deref(), state);
     }
-    for (dep_kind, dep, selected) in companions {
+    for (dep_kind, dep, selected, harnesses) in companions {
         let key = (selected.decl.source.clone(), selected.decl.rev.clone());
-        let harnesses = dependency_harnesses(dep_kind, harnesses, requires_on);
         let source = key.0.as_str();
         let found = &mut wanted.findings;
         let because = match catalogs.offer(&key, dep_kind, &dep) {

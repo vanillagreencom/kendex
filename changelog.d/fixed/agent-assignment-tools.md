@@ -1,0 +1,1 @@
+- Required agents bring assigned skills to missing tools even when another item already installs the skill elsewhere. Explicit skill tool restrictions stay in force and produce one warning per agent and missing skill.
