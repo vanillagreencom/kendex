@@ -1,17 +1,15 @@
 import { beforeEach, expect, test } from "bun:test";
-import type { ExtensionAPI, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { Theme, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { newStackItem, renderStackItemText, setStackItemResultText } from "../tool-renderer/stack.js";
 import { commandExit } from "../tool-renderer/text.js";
-import { registerBash } from "../tool-renderer/tools.js";
+import { createBashRenderers } from "../tool-renderer/tools.js";
 import { useWorld } from "./helpers/world.js";
 
 const world = useWorld();
 const theme = { fg: (color: string, text: string) => `[${color}]${text}[/]`, bold: (text: string) => text } as Theme;
-let definition: ToolDefinition;
+let definition: ToolRenderers;
 beforeEach(() => {
-	registerBash({ registerTool: (tool: ToolDefinition) => { definition = tool; } } as ExtensionAPI, {
-		createBashTool: () => ({ description: "fixture", parameters: {}, execute: async () => ({ content: [] }) }),
-	}, world().cwd);
+	definition = createBashRenderers(world().cwd);
 });
 
 const cases = [

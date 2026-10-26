@@ -13,7 +13,7 @@ Tool and message displays for Pi. It provides compact output, optional file diff
 
 ## Install
 
-Requires Pi 0.99.0 or later for guarded batch execution.
+Requires Pi 1.0.1 or later. Update older Pi installations before installing this package.
 
 - npm: `pi install npm:@vanillagreen/pi-tool-renderer`.
 - kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
@@ -37,7 +37,7 @@ Pi runs a tool and gives its call and result to the display extension. The exten
 - A dropped call that Pi draws again (ctrl+o, a resize) is shown on its own and is not kept.
 - Grouped calls and the list of tool displays to refresh are cleared when a session starts or ends. A tool display Pi no longer shows is not kept alive.
 - With `pendingStatusAnimation` on, a running tool row blinks until its result arrives, the agent run ends or the session ends. A row the agent run ended without a result does not blink again when Pi draws it again. The ids of those rows are kept until the session ends.
-- A write diff reads at most 700 KB of the old file and builds no diff for more than 700 KB of new content; past either limit the row says the diff was skipped. A write row keeps the old file's text only until the write finishes or the agent run ends.
+- A write diff reads at most 700 KB of the old file and builds no diff for more than 700 KB of new content; past either limit the row says the diff was skipped. In a UI session, at most 256 in-flight writes keep old-file snapshots; a result, error or session reset releases them. A write row's call preview also drops its old text when the write finishes or the agent run ends. Headless sessions load no old-file snapshots for display.
 - An edit's result diff comes from the patch Pi's edit tool returns, so the renderer reads no file for it. A patch over 700 KB is not shown, and the row says the diff was skipped.
 
 ## Setup
@@ -51,7 +51,7 @@ Open `/extensions:settings`; settings appear under the **Tool Renderer** tab. Pr
 - `registerBatchTool`, `batchMaxCalls`, `batchCallTimeoutMs`: the `tool_batch` tool and its limits.
 - `readOutputMode`, `searchOutputMode`, `bashOutputMode`, `mcpOutputMode`, and the `*PreviewLines` and `bashLiveOutputDelayMs`, `bashLiveTailLines`, `bashCollapsedLines`, `commandPreviewChars` budgets: how much of each result shows collapsed and expanded.
 - `showReadImages`: images in `read` results; needs Pi's own `terminal.showImages` off.
-- `renderMutationTools`, `splitDiffs`, `diffPreviewLines`, `diffExpandedLines`, `mutationCallPreview`, `mutationCallPreviewLines`, `shikiDiffs`, `wordDiffHighlights`, `diffBackgrounds`, `showDiffHunkMeta`: the edit and write diff view. `renderMutationTools` is off by default, which keeps Pi's own edit and write view. Turned on, its replacement `edit` and `write` tools keep Pi's prompt text for those tools, so the system prompt still lists them and their guidelines.
+- `renderMutationTools`, `splitDiffs`, `diffPreviewLines`, `diffExpandedLines`, `mutationCallPreview`, `mutationCallPreviewLines`, `shikiDiffs`, `wordDiffHighlights`, `diffBackgrounds`, `showDiffHunkMeta`: the edit and write diff view. `renderMutationTools` is off by default, which keeps Pi's own edit and write view. Tool execution, argument preparation and prompt guidance remain with Pi. Pi and your tool selection control activation; compact drawing does not enable `grep`, `find` or `ls`.
 - `renderBashDiffs`, `renderGitDiffCommandDiffs`, `applyPatchRenderer`, `applyPatchPreview`, `applyPatchPreviewLines`, `genericToolRenderers`: diffs and views for tools other than edit and write.
 - `compactUserMessages`, `userMessageTrailingBlankLine`, `compactCompactionMessages`, `compactSkillMessages`, `alignAssistantMessages`, `styledCodeBlocks`: message rendering.
 - `toolChrome`, `rightMarginGuard`, `pendingStatusAnimation`, `workingIndicator`, `maxLineWidth`: borders and the hard cap on one rendered line.
