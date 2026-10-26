@@ -72,13 +72,46 @@ pub fn mutex_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// The clock a bounded wait reads and the sleep it pauses with. Production
+/// is [`SystemTimer`]; a test passes a fake that advances on each sleep, so
+/// a timeout row runs without real time passing.
+pub trait Timer: Sync {
+    fn now(&self) -> Instant;
+    fn sleep(&self, duration: Duration);
+}
+
+/// The process clock and `std::thread::sleep`.
+#[derive(Debug)]
+pub struct SystemTimer;
+
+impl Timer for SystemTimer {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
 /// How long a lock acquisition may wait before it refuses `lock-timeout`,
-/// and how often it retries. The legacy writers wait 10 s and poll every
-/// 100 ms; a test passes a shorter limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// how often it retries, and the timer it waits on. The legacy writers wait
+/// 10 s and poll every 100 ms; a test passes a shorter limit and a fake
+/// timer.
+#[derive(Clone, Copy)]
 pub struct Wait {
     pub limit: Duration,
     pub poll: Duration,
+    pub timer: &'static dyn Timer,
+}
+
+impl std::fmt::Debug for Wait {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wait")
+            .field("limit", &self.limit)
+            .field("poll", &self.poll)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Wait {
@@ -86,15 +119,48 @@ impl Wait {
     pub const LEGACY: Wait = Wait {
         limit: Duration::from_secs(10),
         poll: Duration::from_millis(100),
+        timer: &SystemTimer,
     };
+
+    /// Start the wait: the deadline `limit` from now, which every
+    /// acquisition made under it shares, so two locks taken in turn never
+    /// wait longer than one limit together.
+    pub fn start(&self) -> Deadline {
+        Deadline {
+            at: self.timer.now() + self.limit,
+            wait: *self,
+        }
+    }
 }
 
-fn lock_timeout(lock: &Path, wait: Wait) -> Error {
+/// One wait in progress: the instant it refuses at, and the pauses up to
+/// it. A pause is one poll, clamped to the time left, so the wait never
+/// runs past the deadline by more than the acquisition attempt after it.
+#[derive(Debug, Clone, Copy)]
+pub struct Deadline {
+    at: Instant,
+    wait: Wait,
+}
+
+impl Deadline {
+    /// Pause before the next attempt on `lock`, or refuse `lock-timeout`
+    /// once the deadline has passed.
+    fn pause(&self, lock: &Path) -> Result<()> {
+        let now = self.wait.timer.now();
+        if now >= self.at {
+            return Err(lock_timeout(lock, self.wait.limit));
+        }
+        self.wait.timer.sleep(self.wait.poll.min(self.at - now));
+        Ok(())
+    }
+}
+
+fn lock_timeout(lock: &Path, limit: Duration) -> Error {
     Error::refused(
         "lock-timeout",
         &[
             ("path", &lock.display().to_string()),
-            ("wait_s", &wait.limit.as_secs().to_string()),
+            ("wait_s", &limit.as_secs().to_string()),
         ],
     )
 }
@@ -124,8 +190,8 @@ fn is_executable(_path: &Path) -> bool {
 }
 
 /// The legacy `mkdir` mutex `<file>.lock.d`, held while the value lives and
-/// removed on drop. Acquisition retries `mkdir` every `wait.poll` until
-/// `wait.limit` passes, then refuses `lock-timeout`, as `file-lock.sh`'s
+/// removed on drop. Acquisition retries `mkdir` every poll until the
+/// deadline passes, then refuses `lock-timeout`, as `file-lock.sh`'s
 /// `orch_take_lock` does; like it, this takes no view on a standing
 /// directory's age, since a holder that died leaves one only an operator
 /// removes.
@@ -140,19 +206,13 @@ impl Drop for MutexDir {
     }
 }
 
-/// Take the legacy `mkdir` mutex beside `path`.
-pub fn mutex_lock(path: &Path, wait: Wait) -> Result<MutexDir> {
+/// Take the legacy `mkdir` mutex beside `path`, waiting up to `deadline`.
+pub fn mutex_lock(path: &Path, deadline: &Deadline) -> Result<MutexDir> {
     let dir = mutex_path(path);
-    let started = Instant::now();
     loop {
         match fs::create_dir(&dir) {
             Ok(()) => return Ok(MutexDir { dir }),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                if started.elapsed() >= wait.limit {
-                    return Err(lock_timeout(&dir, wait));
-                }
-                std::thread::sleep(wait.poll);
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => deadline.pause(&dir)?,
             Err(e) => return Err(Error::io("mkdir-lock", &dir, e)),
         }
     }
@@ -191,22 +251,19 @@ impl Guard {
         f()
     }
 
-    /// Run `f` while holding the lock, waiting at most `wait.limit` for it
-    /// and refusing `lock-timeout` once that passes. The lock is polled every
-    /// `wait.poll`, so the wait never outlives a holder by more than one
-    /// poll.
-    pub fn with_wait<R>(&mut self, wait: Wait, f: impl FnOnce() -> Result<R>) -> Result<R> {
+    /// Run `f` while holding the lock, waiting up to `deadline` for it and
+    /// refusing `lock-timeout` once that passes. The lock is polled, so the
+    /// wait never outlives a holder by more than one poll.
+    pub fn with_wait<R>(
+        &mut self,
+        deadline: &Deadline,
+        f: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
         let path = self.path.clone();
-        let started = Instant::now();
         loop {
             match self.rw.try_write() {
                 Ok(_held) => return f(),
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    if started.elapsed() >= wait.limit {
-                        return Err(lock_timeout(&path, wait));
-                    }
-                    std::thread::sleep(wait.poll);
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => deadline.pause(&path)?,
                 Err(e) => return Err(Error::io("flock", &path, e)),
             }
         }
@@ -425,6 +482,7 @@ pub fn replace_atomically(path: &Path, value: &Value) -> Result<()> {
 mod tests {
     use super::*;
     use serde::Deserialize;
+    use std::sync::Mutex;
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct Body {
@@ -537,14 +595,57 @@ mod tests {
         );
     }
 
-    const SHORT: Wait = Wait {
-        limit: Duration::from_millis(300),
-        poll: Duration::from_millis(20),
-    };
+    /// A clock that moves only when the wait sleeps on it, and the record of
+    /// every sleep; no real time passes in a timeout row.
+    pub(crate) struct FakeTimer {
+        now: Mutex<Instant>,
+        slept: Mutex<Vec<Duration>>,
+    }
 
-    /// A timer-wiring test: the holder keeps the flock past the waiter's
-    /// limit, and the waiter refuses instead of blocking. The claim is only
-    /// that the bound is applied, not how closely.
+    impl FakeTimer {
+        /// A leaked fake: a `Wait` holds its timer for `'static`, and a test
+        /// process ends with its handful of fakes.
+        pub(crate) fn leaked() -> &'static FakeTimer {
+            Box::leak(Box::new(FakeTimer {
+                now: Mutex::new(Instant::now()),
+                slept: Mutex::new(Vec::new()),
+            }))
+        }
+
+        pub(crate) fn slept(&self) -> Vec<Duration> {
+            self.slept.lock().unwrap().clone()
+        }
+    }
+
+    impl Timer for FakeTimer {
+        fn now(&self) -> Instant {
+            *self.now.lock().unwrap()
+        }
+
+        fn sleep(&self, duration: Duration) {
+            *self.now.lock().unwrap() += duration;
+            self.slept.lock().unwrap().push(duration);
+        }
+    }
+
+    /// 250 ms in 100 ms polls: two whole polls and one clamped to the rest.
+    fn short(timer: &'static FakeTimer) -> Wait {
+        Wait {
+            limit: Duration::from_millis(250),
+            poll: Duration::from_millis(100),
+            timer,
+        }
+    }
+
+    const CLAMPED: [Duration; 3] = [
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+        Duration::from_millis(50),
+    ];
+
+    /// The holder keeps the flock past the waiter's limit, and the waiter
+    /// refuses once its clock reaches the deadline: the sleeps sum to the
+    /// limit exactly, the last one clamped, and none is real.
     #[test]
     fn a_bounded_wait_refuses_lock_timeout_while_another_holder_keeps_the_flock() {
         let dir = tempfile::tempdir().unwrap();
@@ -564,8 +665,12 @@ mod tests {
                 .unwrap();
         });
         held_rx.recv().unwrap();
+        let timer = FakeTimer::leaked();
+        let wait = short(timer);
+        let started = Instant::now();
         let mut waiter = lock(&path).unwrap();
-        let err = waiter.with_wait(SHORT, || Ok(())).unwrap_err();
+        let err = waiter.with_wait(&wait.start(), || Ok(())).unwrap_err();
+        assert!(started.elapsed() < wait.limit, "no real sleep");
         assert_eq!(err.key(), "lock-timeout");
         let Error::Refused { fields, .. } = &err else {
             panic!("{err}")
@@ -574,10 +679,14 @@ mod tests {
             fields[0],
             ("path".to_owned(), lock_file.display().to_string())
         );
+        assert_eq!(fields[1], ("wait_s".to_owned(), "0".to_owned()));
+        assert_eq!(timer.slept(), CLAMPED);
         release_tx.send(()).unwrap();
         holder.join().unwrap();
-        // Once released, the same bounded wait runs the closure.
-        assert_eq!(waiter.with_wait(SHORT, || Ok(7)).unwrap(), 7);
+        // Once released, the same bounded wait runs the closure and sleeps
+        // no more.
+        assert_eq!(waiter.with_wait(&wait.start(), || Ok(7)).unwrap(), 7);
+        assert_eq!(timer.slept().len(), CLAMPED.len());
     }
 
     #[test]
@@ -586,20 +695,49 @@ mod tests {
         let path = dir.path().join("r.json");
         let mutex = mutex_path(&path);
         assert_eq!(mutex, dir.path().join("r.json.lock.d"));
+        let timer = FakeTimer::leaked();
+        let wait = short(timer);
         // A legacy writer holds the mutex: its directory stands.
         fs::create_dir(&mutex).unwrap();
-        let err = mutex_lock(&path, SHORT).unwrap_err();
+        let err = mutex_lock(&path, &wait.start()).unwrap_err();
         assert_eq!(err.key(), "lock-timeout");
         let Error::Refused { fields, .. } = &err else {
             panic!("{err}")
         };
         assert_eq!(fields[0], ("path".to_owned(), mutex.display().to_string()));
+        assert_eq!(timer.slept(), CLAMPED);
         assert!(mutex.is_dir(), "a refused wait removes nothing");
         fs::remove_dir(&mutex).unwrap();
-        let held = mutex_lock(&path, SHORT).unwrap();
+        let held = mutex_lock(&path, &wait.start()).unwrap();
         assert!(mutex.is_dir());
         drop(held);
         assert!(!mutex.exists());
+    }
+
+    /// Two acquisitions under one started wait share its deadline: the
+    /// second gets only what the first left, so together they never exceed
+    /// the limit.
+    #[test]
+    fn acquisitions_under_one_deadline_share_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.json");
+        let mutex = mutex_path(&path);
+        let timer = FakeTimer::leaked();
+        let wait = short(timer);
+        let deadline = wait.start();
+        // The first acquisition spends 150 ms of the 250 ms limit.
+        timer.sleep(Duration::from_millis(150));
+        fs::create_dir(&mutex).unwrap();
+        let err = mutex_lock(&path, &deadline).unwrap_err();
+        assert_eq!(err.key(), "lock-timeout");
+        assert_eq!(
+            timer.slept(),
+            [Duration::from_millis(150), Duration::from_millis(100)]
+        );
+        // A deadline already passed refuses before any sleep.
+        let err = mutex_lock(&path, &deadline).unwrap_err();
+        assert_eq!(err.key(), "lock-timeout");
+        assert_eq!(timer.slept().len(), 2);
     }
 
     #[test]

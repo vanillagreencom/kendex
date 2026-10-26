@@ -1,11 +1,15 @@
 //! The `agent-runtime` command: the versioned boundary other languages and
 //! hosts speak to the library through. Every verb prints one JSON reply on
-//! stdout; a refusal also prints one keyed line on stderr and exits 1.
+//! stdout; a refusal also prints one keyed line on stderr and exits 1. A
+//! usage error prints `agent-runtime: usage` and clap's message on stderr
+//! and exits 2, clap's own convention, with no reply: there was no request
+//! to answer.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
@@ -463,10 +467,24 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
     }
 }
 
+/// Exit status of a usage error, clap's convention.
+const USAGE_EXIT: i32 = 2;
+
 fn main() {
-    let cli = Cli::parse();
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) => {
+            let _ = e.print();
+            return;
+        }
+        Err(e) => {
+            let _ = writeln!(stderr.lock(), "agent-runtime: usage");
+            let _ = writeln!(stderr.lock(), "{e}");
+            std::process::exit(USAGE_EXIT);
+        }
+    };
     match run(cli) {
         Ok(value) => {
             let reply = Reply::ok(value);

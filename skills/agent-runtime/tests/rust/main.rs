@@ -40,6 +40,33 @@ fn a_refusal_prints_one_keyed_line_and_a_refused_reply() {
     assert_eq!(reply["refusal"]["key"], "record-missing");
 }
 
+/// A usage error is clap's, not a refusal: the keyed usage line, clap's
+/// message, exit 2 and no JSON reply. orch-runtime answers the same way, so
+/// a wrapper routing on the exit status reads both alike.
+#[test]
+fn a_usage_error_prints_the_usage_key_exits_2_and_gives_no_reply() {
+    let rows: [&[&str]; 3] = [
+        &["inspect"],
+        &["judge", "--harness", "claude"],
+        &["frobnicate"],
+    ];
+    for args in rows {
+        let out = Command::new(binary()).args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            stderr.lines().next().unwrap_or_default(),
+            "agent-runtime: usage",
+            "{args:?}"
+        );
+        assert!(stderr.lines().count() >= 2, "{args:?}: {stderr}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+    }
+    let out = Command::new(binary()).arg("--help").output().unwrap();
+    assert!(out.status.success());
+    assert!(out.stderr.is_empty());
+}
+
 #[test]
 fn judge_reads_a_screen_fixture_through_the_one_judge() {
     let dir = tempfile::tempdir().unwrap();

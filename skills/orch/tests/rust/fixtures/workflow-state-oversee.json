@@ -1,0 +1,150 @@
+{
+  "issue_id": "oversee",
+  "sub_issues": [],
+  "agent": "",
+  "worktree": "",
+  "branch": "",
+  "qa_labels": [],
+  "near_ceiling": [],
+  "finding_occurrences": {
+    "prior": "none",
+    "records": []
+  },
+  "child_sessions": {},
+  "review_agents": [],
+  "review_agent_ids": {},
+  "review_agent_runtime_types": {},
+  "pre_delegate_sha": null,
+  "skip_qa": false,
+  "cycles": 0,
+  "rereview_cycles": 0,
+  "json_paths": [],
+  "fixed_items": [],
+  "escalated_items": [],
+  "audit_issues_created": [],
+  "pr_review_baseline": null,
+  "pr_comment_review": {
+    "iterations": 0,
+    "fixes": [],
+    "issues_created": [],
+    "skipped": []
+  },
+  "post_pr_budgets": {
+    "review_wait": null,
+    "ci_fix": null
+  },
+  "post_pr_stop": null,
+  "tmux": {
+    "session": "kendex-fleet"
+  },
+  "overseer": {
+    "runtime": "tmux",
+    "generation": 3,
+    "server": "41020",
+    "server_start": 1769590000,
+    "server_socket": "/tmp/tmux-1000/default",
+    "pane": "%7",
+    "window": "@3",
+    "session_rows": "tmp/lane-mail/overseer/session-41020-7.jsonl",
+    "session_id": "0f3d2c1b-9a8e-4d7c-b6a5-443322110000",
+    "harness_pid": 41388,
+    "harness_start": "ticks:9912345",
+    "harness": "claude",
+    "account": "/home/u/.claude-lanes/a1",
+    "home": "/home/u/.claude-lanes/a1",
+    "model": "claude-opus-5-5",
+    "class": "opus",
+    "effort": "high",
+    "cwd": "/home/u/dev/kendex",
+    "launch_line": "cd /home/u/dev/kendex && CLAUDE_CONFIG_DIR=/home/u/.claude-lanes/a1 claude --model claude-opus-5-5 --effort high"
+  },
+  "lanes": [
+    {
+      "item": "KEN-4437",
+      "tracker": "linear",
+      "repo": null,
+      "harness": "codex",
+      "window": "kendex-fleet:KEN-4437",
+      "account": "/home/u/.codex-lanes/c2",
+      "host": null,
+      "kind": "local",
+      "mail_root": "/home/u/dev/.worktrees/kendex/ken-4437",
+      "surface": "tmux",
+      "model": "gpt-5.5-codex",
+      "effort": "high",
+      "session_id": null,
+      "session_since": "2026-10-24T18:02:11Z",
+      "launched_at": "2026-10-24T18:02:11Z",
+      "running_at": "2026-10-24T18:02:19Z",
+      "status": "done",
+      "over_cap": null,
+      "allow_all": null,
+      "touched": null,
+      "in_scope": [],
+      "obligation": null,
+      "tier": "small",
+      "tier_inputs": {
+        "estimate": 40,
+        "delta": 12,
+        "paths": 3
+      },
+      "recovery": {
+        "cwd": "/home/u/dev/.worktrees/kendex/ken-4437",
+        "flags": "--model gpt-5.5-codex -c model_reasoning_effort=high",
+        "session": "kendex-fleet",
+        "refresh": true
+      },
+      "launch": {
+        "pane": "%9",
+        "server": 41020,
+        "pid": 42210,
+        "start": "ticks:9930001"
+      }
+    }
+  ],
+  "fleet_log": [
+    {
+      "kind": "ruling",
+      "item": "KEN-4437",
+      "text": "launch KEN-4437 on codex: small fix, one lane",
+      "at": "2026-10-24T18:02:05Z"
+    },
+    {
+      "kind": "close",
+      "item": "KEN-4437",
+      "text": "lane closed; merged #5814",
+      "at": "2026-10-24T22:40:51Z"
+    }
+  ],
+  "triaged": [
+    {
+      "issue": "KEN-4411",
+      "reason": "duplicate of KEN-4409",
+      "verdict": "canceled"
+    },
+    {
+      "item": "KEN-4400",
+      "verdict": "kept",
+      "reason": "written by the triage verifier before the issue key"
+    },
+    "KEN-4399"
+  ],
+  "alerts_triaged": [
+    {
+      "repo": "bmethod/kendex",
+      "kind": "dependabot",
+      "number": 17,
+      "verdict": "filed",
+      "item": "KEN-4420",
+      "reason": "transitive serde_yaml advisory; fix item filed"
+    }
+  ],
+  "launch_queue": [
+    "KEN-4468",
+    "KEN-4470"
+  ],
+  "last_backlog_audit": {
+    "at": "2026-10-24T20:00:00Z",
+    "backlog": 61
+  }
+}
