@@ -38,7 +38,7 @@ const oversized = "x".repeat(MAX_DIFF_INPUT_BYTES + 1);
 
 for (const [name, patch, expected] of [
 	["a small patch builds the diff", "--- absent.txt\n+++ absent.txt\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n", { kendexDiff: { additions: 1, removals: 1, path: "absent.txt" } }],
-	["a patch over the cap is skipped", `--- absent.txt\n+++ absent.txt\n@@ -1 +1 @@\n-old\n+${oversized}\n`, { kendexDiffSkipped: "over 700 KB" }],
+	["a patch over the cap is skipped", `--- absent.txt\n+++ absent.txt\n@@ -1 +1 @@\n-over-cap-deletion-sentinel\n+${oversized}\n`, { kendexDiffSkipped: "over 700 KB" }],
 ] as const) {
 	test(`edit takes Pi's patch and reads no file of its own: ${name}`, async () => {
 		const { cwd } = world();
@@ -51,7 +51,7 @@ for (const [name, patch, expected] of [
 		if ("kendexDiff" in expected) {
 			expect(lines).toContain("old");
 			expect(lines).toContain("new");
-		} else expect(lines).not.toContain(oversized);
+		} else expect(lines).not.toContain("over-cap-deletion-sentinel");
 	});
 }
 
