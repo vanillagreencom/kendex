@@ -68,7 +68,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   const hold = (read: SettingsRead, at: number) => {
     if (at < newest) return;
     newest = at;
-    set({ settings: read.settings, base: read.base });
+    const current = get().settings?.projects;
+    const incoming = read.settings.projects;
+    // Startup and editor initialization both read settings. Keep an equal
+    // registry's identity so its readers do not repeat project-wide work.
+    const projects =
+      current !== undefined &&
+      incoming !== undefined &&
+      current.length === incoming.length &&
+      current.every((root, index) => root === incoming[index])
+        ? current
+        : incoming;
+    set({ settings: { ...read.settings, projects }, base: read.base });
   };
 
   /** How many writes are still to answer.

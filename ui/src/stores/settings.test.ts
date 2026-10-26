@@ -85,6 +85,47 @@ describe("settings store", () => {
     });
   });
 
+  it("preserves equal project lists while publishing the incoming settings and base", async () => {
+    const rows = [
+      { before: undefined, after: undefined, equal: true },
+      { before: [], after: undefined, equal: false },
+      { before: undefined, after: [], equal: false },
+      { before: [], after: [], equal: true },
+      { before: ["/work/a"], after: ["/work/a"], equal: true },
+      { before: [], after: ["/work/a"], equal: false },
+      { before: ["/work/a"], after: [], equal: false },
+      { before: ["/work/a"], after: ["/work/b"], equal: false },
+      {
+        before: ["/work/a", "/work/b"],
+        after: ["/work/b", "/work/a"],
+        equal: false,
+      },
+    ];
+    for (const { before, after, equal } of rows) {
+      useSettingsStore.setState({
+        settings: { ...settings, projects: before },
+        base: oldBase,
+      });
+      const incoming = {
+        ...settings,
+        appearance: "dark" as const,
+        projects: after,
+      };
+      vi.mocked(commands.getSettings).mockResolvedValue({
+        status: "ok",
+        data: { settings: incoming, base: freshBase },
+      });
+
+      await useSettingsStore.getState().reload();
+
+      const held = useSettingsStore.getState();
+      expect(held.settings).toEqual(incoming);
+      expect(held.settings?.projects).toBe(equal ? before : after);
+      expect(held.base).toBe(freshBase);
+      expect(incoming.projects).toBe(after);
+    }
+  });
+
   it("shows the error modal with the backend message and leaves settings untouched when a save fails", async () => {
     useSettingsStore.setState({ settings });
     vi.mocked(commands.updateSettings).mockResolvedValue({
