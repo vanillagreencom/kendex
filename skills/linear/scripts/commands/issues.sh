@@ -101,7 +101,7 @@ Bulk Get:
 Bulk Update:
   issues.sh bulk-update <id1> <id2> ... [update-options]
   issues.sh bulk-update --stdin [update-options]
-  (Same update options as 'update' action, applied to all issues)
+  (Shared update options apply to all issues; --attach-uploaded is update-only)
 
 Create Options:
   --title <text>        Issue title (required)
@@ -209,6 +209,14 @@ Update Options:
                         attach-only update answers with the same
                         attachments_requested and attachments fields as
                         issues create.
+  --attach-uploaded <file>  Bind retained non-image {url, repo_path} pairs from
+                        a nonempty JSON array. No original files are required
+                        and these records perform no fileUpload or PUT.
+                        The entire file is captured before any API call;
+                        URLs require https://uploads.linear.app/ and a
+                        nonempty path, without query/fragment or private
+                        uploadUrl/headers. Queue delimiters are refused.
+                        May combine with --attach for remaining uploads.
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
   --format <fmt>        Output format for the updated issue: safe | compact | ids |
                         raw. When omitted, emits the mutation summary
@@ -216,6 +224,19 @@ Update Options:
                         attach-only update runs no issueUpdate and ignores
                         this flag: it answers with its own object, which has
                         the attachment fields and no data key.
+
+Attachment failures on create/update:
+  A failed upload returns success:false, pending_attachments (completed
+  non-image {url, repo_path} pairs), failed_path and remaining_files (the failed
+  and unattempted upload suffix). partial is true when pending records exist.
+  Failed attachmentCreate returns the attempted non-image set as retryable
+  pending_attachments, with partial:true and empty confirmed attachments.
+  Both failures retain their nonzero status and safe stderr cause, and return
+  JSON even with --format. To resume, extract .pending_attachments into a file
+  and pass it to issues update ID --attach-uploaded FILE. Same issue/URL pairs
+  may be retried. Caller-retained pairs establish no upload provenance.
+  This does not recover failed issueCreate/issueUpdate mutations, image embeds
+  unwritten by a failed batch, or historical URLs absent from retained output.
 
 Relation Options (add-relation):
   --blocks <id>         This issue blocks another
@@ -1223,22 +1244,26 @@ issue_project_id() {
 
 # Create pending non-image attachments on an issue that already exists.
 # Entries are "assetUrl<TAB>title" strings from the upload loop. A failure
-# here is a partial write: the issue mutation succeeded but an attachment is
-# missing, so each failure emits a JSON error naming the issue with
-# partial: true (same posture as bulk-update), and the caller must exit
-# non-zero. Usage: apply_pending_attachments <uuid> <identifier> <entry>...
+# leaves missing bindings on the existing issue. Keep the first failure's
+# status and diagnostic; the caller publishes retryable pairs separately
+# from confirmed receipts. Usage: apply_pending_attachments <uuid> <identifier> <entry>...
 apply_pending_attachments() {
     local issue_uuid="$1" issue_identifier="$2"
     shift 2
-    local failed=0 entry
+    local failed=0 entry attachment_status
     for entry in "$@"; do
         local pending_url="${entry%%$'\t'*}"
         local pending_name="${entry#*$'\t'}"
-        if [[ -z "$issue_uuid" ]] ||
-            ! attach_create_issue_attachment "$issue_uuid" "$pending_url" "$pending_name"; then
+        attachment_status=0
+        if [[ -z "$issue_uuid" ]]; then
+            attachment_status=1
+        else
+            attach_create_issue_attachment "$issue_uuid" "$pending_url" "$pending_name" || attachment_status=$?
+        fi
+        if [ "$attachment_status" -ne 0 ]; then
             jq -cn --arg id "${issue_identifier:-$issue_uuid}" --arg name "$pending_name" --arg url "$pending_url" \
-                '{error: ("attachmentCreate failed for " + $name + " on issue " + $id + " - the issue write succeeded but this attachment is missing (uploaded asset: " + $url + ")"), identifier: $id, partial: true}' >&2
-            failed=1
+                '{error: ("attachmentCreate failed for " + $name + " on issue " + $id + " - the issue exists but this attachment is missing (uploaded asset: " + $url + ")"), identifier: $id, partial: true}' >&2
+            [ "$failed" -ne 0 ] || failed=$attachment_status
         fi
     done
     return "$failed"
@@ -1263,12 +1288,24 @@ pending_attachments_json() {
 # Usage: upload_attach_paths <path>...
 # Caller contract: `description` and `attach_pending` are the CALLER's
 # variables (description grows ![name](assetUrl) embeds; attach_pending grows
-# "assetUrl<TAB>filename" entries). Returns 1 on any upload failure.
+# "assetUrl<TAB>filename" entries). A failed upload returns its status and
+# the reusable non-image queue; images are not written by a failed batch.
 upload_attach_paths() {
-    local attach_path attach_info
+    local attach_path attach_info upload_status pending_json remaining_json
     local attach_sep=$'\n\n'
-    for attach_path in "$@"; do
-        attach_info=$(attach_upload_file "$attach_path") || return 1
+    while [ "$#" -gt 0 ]; do
+        attach_path="$1"
+        upload_status=0
+        attach_info=$(attach_upload_file "$attach_path") || upload_status=$?
+        if [ "$upload_status" -ne 0 ]; then
+            pending_json=$(pending_attachments_json "${attach_pending[@]}") || return "$upload_status"
+            remaining_json=$(jq -cn --args '$ARGS.positional' -- "$@") || return "$upload_status"
+            jq -cn --argjson pending "$pending_json" --argjson remaining "$remaining_json" \
+                --arg failed_path "$attach_path" \
+                '{success: false, partial: ($pending | length > 0), pending_attachments: $pending,
+                  remaining_files: $remaining, failed_path: $failed_path}' || return "$upload_status"
+            return "$upload_status"
+        fi
         local attach_url attach_name attach_type
         attach_url=$(echo "$attach_info" | jq -r '.assetUrl')
         attach_name=$(echo "$attach_info" | jq -r '.filename')
@@ -1282,6 +1319,7 @@ upload_attach_paths() {
             attach_title=$(attach_issue_title "$attach_path") || return 1
             attach_pending+=("${attach_url}"$'\t'"${attach_title}")
         fi
+        shift
     done
 }
 
@@ -1547,7 +1585,7 @@ create_issue() {
 
     # Uploads run only after the routing guard and the resolvers above.
     if [ ${#attach_paths[@]} -gt 0 ]; then
-        upload_attach_paths "${attach_paths[@]}" || return 1
+        upload_attach_paths "${attach_paths[@]}" || return $?
     fi
 
     # Build input object - use jq for proper JSON escaping
@@ -1714,7 +1752,7 @@ create_issue() {
             created_uuid=$(echo "$created_issue" | jq -r '.id // empty')
             created_identifier=$(echo "$created_issue" | jq -r '.identifier // empty')
             apply_pending_attachments "$created_uuid" "$created_identifier" \
-                "${attach_pending[@]}" || attach_failed=1
+                "${attach_pending[@]}" || attach_failed=$?
         else
             echo '{"error": "Issue was created but the response omitted the issue object; uploaded files could not be attached", "partial": true}' >&2
             attach_failed=1
@@ -1729,26 +1767,28 @@ create_issue() {
     local attach_record_count=${#attach_pending[@]}
     if [ "$attach_record_count" -gt 0 ]; then
         local created_attachments='[]'
-        if [ "$attach_failed" = "0" ]; then
-            created_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1
-        fi
+        local created_pending
+        created_pending=$(pending_attachments_json "${attach_pending[@]}") || return 1
+        [ "$attach_failed" != "0" ] || created_attachments="$created_pending"
         # Pretty, like normalize_mutation_response: the create response has one
         # shape whether or not --attach was passed.
         normalized=$(echo "$normalized" | jq --argjson count "$attach_record_count" \
             --argjson attachments "$created_attachments" \
             '. + {attachments_requested: $count, attachments: $attachments}') || return 1
+        if [ "$attach_failed" -ne 0 ]; then
+            normalized=$(jq --argjson pending "$created_pending" \
+                '. + {success: false, partial: true, pending_attachments: $pending}' <<<"$normalized") || return "$attach_failed"
+        fi
     fi
     # --format=ids mirrors the query-command contract: print ONLY the created
     # identifier (one per line, nothing else) so workflows can capture it
     # deterministically. Any other/absent format keeps the default JSON output.
-    if [ "$output_format" = "ids" ]; then
+    if [[ "$output_format" == "ids" && "$attach_failed" == "0" ]]; then
         echo "$normalized" | jq -r '.identifier // empty'
     else
         echo "$normalized"
     fi
-    if [ "$attach_failed" = "1" ]; then
-        return 1
-    fi
+    return "$attach_failed"
 }
 
 # Both update routes use the description that will be written. Completion can
@@ -1813,9 +1853,24 @@ update_issue() {
     local output_format=""
     local attach_paths=()
     local attach_pending=()
+    local attach_uploaded="" attach_uploaded_set=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --attach-uploaded)
+            if [ -z "${2-}" ]; then
+                echo '{"code":"ATTACH_UPLOADED_INVALID","error":"--attach-uploaded requires a JSON array file"}' >&2
+                return 1
+            fi
+            attach_uploaded="$2"
+            attach_uploaded_set=true
+            shift 2
+            ;;
+        --attach-uploaded=*)
+            attach_uploaded="${1#*=}"
+            attach_uploaded_set=true
+            shift
+            ;;
         --attach)
             if [ -z "${2-}" ]; then
                 echo '{"error": "--attach requires a path argument"}' >&2
@@ -1983,6 +2038,29 @@ update_issue() {
         description_set="true"
     fi
 
+    # Caller-retained pending_attachments are ordinary input. Capture the
+    # entire array before any API work, then consume only that captured value.
+    if [ "$attach_uploaded_set" = true ]; then
+        local retained_queue retained_entry
+        if [[ ! -f "$attach_uploaded" || ! -r "$attach_uploaded" ]] ||
+            ! retained_queue=$(jq -ers '
+                def field: type == "string" and length > 0 and (explode | all(. != 0 and . != 9 and . != 10 and . != 13));
+                if length == 1 and (.[0] | type == "array" and length > 0 and all(.[];
+                    type == "object" and keys == ["repo_path", "url"]
+                    and (.repo_path | field) and (.url | field
+                        and startswith("https://uploads.linear.app/")
+                        and length > ("https://uploads.linear.app/" | length)
+                        and (test("[?#]") | not))))
+                then .[0] | map(.url + "\t" + .repo_path) | join("\n")
+                else error("invalid retained attachment array") end' -- "$attach_uploaded" 2>/dev/null); then
+            jq -cn --arg path "$attach_uploaded" \
+                '{code: "ATTACH_UPLOADED_INVALID", path: $path, error: "--attach-uploaded requires a readable nonempty array of {url, repo_path} pairs with unsigned uploads.linear.app URLs and no queue delimiters"}' >&2
+            return 1
+        fi
+        while IFS= read -r retained_entry; do
+            attach_pending+=("$retained_entry")
+        done <<<"$retained_queue"
+    fi
     # --attach: refuse unreadable paths before any API call.
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
@@ -2121,7 +2199,7 @@ update_issue() {
                 description=$(echo "$issue_result" | jq -r '.issue.description // empty')
             fi
         fi
-        upload_attach_paths "${attach_paths[@]}" || return 1
+        upload_attach_paths "${attach_paths[@]}" || return $?
     fi
 
     if [ -n "$title" ]; then
@@ -2239,20 +2317,19 @@ update_issue() {
         attach_only_url=$(echo "$issue_result" | jq -r '.issue.url // empty')
         local attach_only_failed=0
         apply_pending_attachments "$attach_only_uuid" "$attach_only_identifier" \
-            "${attach_pending[@]}" || attach_only_failed=1
+            "${attach_pending[@]}" || attach_only_failed=$?
         local attachments_json='[]'
-        if [ "$attach_only_failed" = "0" ]; then
-            attachments_json=$(pending_attachments_json "${attach_pending[@]}") || return 1
-        fi
+        local pending_json
+        pending_json=$(pending_attachments_json "${attach_pending[@]}") || return 1
+        [ "$attach_only_failed" != "0" ] || attachments_json="$pending_json"
         jq -cn --arg identifier "$attach_only_identifier" --arg url "$attach_only_url" \
             --argjson ok "$([ "$attach_only_failed" = "0" ] && echo true || echo false)" \
             --argjson count "${#attach_pending[@]}" \
             --argjson attachments "$attachments_json" \
-            '{success: $ok, identifier: $identifier, url: (if $url == "" then null else $url end), attachments_requested: $count, attachments: $attachments}'
-        if [ "$attach_only_failed" = "1" ]; then
-            return 1
-        fi
-        return 0
+            --argjson pending "$pending_json" \
+            '{success: $ok, identifier: $identifier, url: (if $url == "" then null else $url end), attachments_requested: $count, attachments: $attachments}
+             + (if $ok then {} else {partial: true, pending_attachments: $pending} end)'
+        return "$attach_only_failed"
     fi
 
     local input_json
@@ -2295,6 +2372,21 @@ update_issue() {
     if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
         wrapped_issue=$(jq -n --argjson i "$updated_issue" '{issue: $i}')
     fi
+    local attach_failed=0
+    if [ ${#attach_pending[@]} -gt 0 ]; then
+        local attach_target_uuid attach_target_identifier updated_attachments
+        attach_target_uuid=$(jq -r '.issue.id // empty' <<<"$issue_result") || return 1
+        attach_target_identifier=$(jq -r '.issue.identifier // empty' <<<"$issue_result") || return 1
+        apply_pending_attachments "$attach_target_uuid" "$attach_target_identifier" \
+            "${attach_pending[@]}" || attach_failed=$?
+        updated_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1
+        if [ "$attach_failed" -ne 0 ]; then
+            normalized=$(jq -c --argjson count "${#attach_pending[@]}" --argjson pending "$updated_attachments" \
+                '. + {success: false, partial: true, attachments_requested: $count, attachments: [], pending_attachments: $pending}' <<<"$normalized") || return "$attach_failed"
+            echo "$normalized"
+            return "$attach_failed"
+        fi
+    fi
     case "$output_format" in
     safe)
         if [[ -n "$wrapped_issue" ]]; then
@@ -2321,28 +2413,8 @@ update_issue() {
         ;;
     esac
 
-    # Non-image --attach files: attachmentCreate after the update. The update
-    # itself succeeded, so a failure here must name
-    # the issue and exit non-zero — never a zero exit with a silent gap.
-    if [ ${#attach_pending[@]} -gt 0 ]; then
-        local attach_target_uuid attach_target_identifier
-        if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
-            attach_target_uuid=$(echo "$updated_issue" | jq -r '.id // empty')
-            attach_target_identifier=$(echo "$updated_issue" | jq -r '.identifier // empty')
-        else
-            attach_target_uuid=$(echo "$issue_result" | jq -r '.issue.id // empty')
-            attach_target_identifier=$(echo "$issue_result" | jq -r '.issue.identifier // empty')
-        fi
-        apply_pending_attachments "$attach_target_uuid" "$attach_target_identifier" \
-            "${attach_pending[@]}" || {
-                [ -n "$output_format" ] || echo "$normalized"
-                return 1
-            }
-    fi
     if [ -z "$output_format" ]; then
         if [ ${#attach_pending[@]} -gt 0 ]; then
-            local updated_attachments
-            updated_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1
             normalized=$(jq -c --argjson count "${#attach_pending[@]}" \
                 --argjson attachments "$updated_attachments" \
                 '. + {attachments_requested: $count, attachments: $attachments}' <<<"$normalized") || return 1

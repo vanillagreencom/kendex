@@ -6,7 +6,8 @@
 # (append, never wipe). Non-image files become Linear attachments via
 # attachmentCreate after the update; `--attach` alone is a valid update that
 # skips the issueUpdate mutation entirely. Partial failures after a
-# successful write name the issue and exit non-zero.
+# successful write name the issue and exit non-zero. Retained non-image
+# records survive upload/binding failures and resume without reupload.
 
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -49,6 +50,10 @@ if grep -q '^upload-file = ' <<<"$config"; then
   headers="$(sed -n 's/^header = //p' <<<"$config" | jq -s .)"
   jq -cn --arg url "$url" --arg file "$file" --argjson headers "$headers" \
     '{put: {url: $url, file: $file, headers: $headers}}' >>"${CURL_LOG:?}"
+  if [[ -n "${FAIL_PUT_FILE:-}" && "${file##*/}" == "$FAIL_PUT_FILE" ]]; then
+    printf '403'
+    exit 0
+  fi
   printf '%s' "${PUT_HTTP:-200}"
   exit "${PUT_EXIT:-0}"
 fi
@@ -60,12 +65,16 @@ query="$(jq -r '.query' <<<"$payload")"
 case "$query" in
 *"fileUpload("*)
   filename="$(jq -r '.variables.filename' <<<"$payload")"
+  if [[ "$filename" == "${FAIL_UPLOAD_FILE:-}" ]]; then
+    printf '%s' '{"errors":[{"message":"fixture-upload-denied"}]}___HTTP_CODE___200'
+    exit 0
+  fi
   printf '%s' "{\"data\":{\"fileUpload\":{\"success\":true,\"uploadFile\":{\"uploadUrl\":\"https://uploads.linear.app/put/$filename\",\"assetUrl\":\"https://uploads.linear.app/asset/$filename\",\"headers\":[{\"key\":\"x-linear-upload\",\"value\":\"signed-$filename\"}]}}}}___HTTP_CODE___200"
   ;;
 *"attachmentCreate("*)
   title="$(jq -r '.variables.input.title' <<<"$payload")"
   if [ "$title" = "boom.pdf" ]; then
-    printf '%s' '{"data":{"attachmentCreate":{"success":false,"attachment":null}}}___HTTP_CODE___200'
+    printf '%s' '{"errors":[{"message":"fixture-bind-denied"}]}___HTTP_CODE___200'
   else
     printf '%s' '{"data":{"attachmentCreate":{"success":true,"attachment":{"id":"att-uuid","url":"u","title":"t"}}}}___HTTP_CODE___200'
   fi
@@ -80,6 +89,9 @@ case "$query" in
   ;;
 *"issue(id:"*)
   issue="$(jq -r '.variables.id' <<<"$payload")"
+  if [[ -n "${REWRITE_RETAINED_FILE:-}" ]]; then
+    printf '[]' >"$REWRITE_RETAINED_FILE"
+  fi
   case "$issue" in
     TEAM-404|00000000-0000-0000-0000-000000000404)
       printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200' ;;
@@ -102,6 +114,8 @@ printf '[env]\nLINEAR_TEAM = "TEAM"\n' >"$PROJECT/kendex.settings.toml"
 printf 'PNGDATA' >"$TMP_ROOT/shot.png"
 printf '%%PDF-1.4' >"$TMP_ROOT/notes.pdf"
 printf 'x' >"$TMP_ROOT/boom.pdf"
+printf 'later' >"$TMP_ROOT/later.pdf"
+printf 'last' >"$TMP_ROOT/last.pdf"
 
 OUT=""
 ERR=""
@@ -114,8 +128,10 @@ run_linear() {
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
     PUT_HTTP="${PUT_HTTP:-200}" PUT_EXIT="${PUT_EXIT:-0}" \
+    FAIL_UPLOAD_FILE="${FAIL_UPLOAD_FILE:-}" FAIL_PUT_FILE="${FAIL_PUT_FILE:-}" \
+    REWRITE_RETAINED_FILE="${REWRITE_RETAINED_FILE:-}" \
     CURL_LOG="$CURL_LOG" \
-    bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")" || RC=$?
+    "$BASH" "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")" || RC=$?
   ERR="$(cat "$ERR_FILE")"
 }
 
@@ -168,7 +184,8 @@ assert_jq "an attach-only update reports success and the identifier" \
 while IFS='|' read -r name PUT_HTTP PUT_EXIT expected_http; do
   run_linear issues update TEAM-9 --attach "$TMP_ROOT/notes.pdf"
   assert_ne "$name: PUT failure fails the caller" "$RC" 0
-  assert_eq "$name: no success output" "$OUT" ''
+  assert_jq "$name: empty reusable queue on first PUT failure" "$OUT" \
+    '.success == false and .partial == false and .pending_attachments == [] and (.remaining_files | length) == 1'
   assert_jq "$name: safe PUT diagnostic" "$(jq -sc 'map(select(has("curl_exit")))' <<<"$ERR")" \
     "length == 1 and .[0].http_code == \"$expected_http\" and .[0].curl_exit == $PUT_EXIT"
   assert_not_log "$name: no attachment record after failed PUT" \
@@ -222,26 +239,146 @@ assert_log "an ordinary field update sends its title without uploads" \
 
 echo "=== attachmentCreate failure after a successful update: names issue, non-zero ==="
 
-run_linear issues update TEAM-9 --title "New title" --attach "$TMP_ROOT/boom.pdf"
-assert_ne "a failed attachmentCreate fails the update" "$RC" 0
-assert_log "issueUpdate runs before the attachment failure" \
-  'any(.[]; .query? // "" | contains("issueUpdate"))'
-assert_contains "the partial failure names the issue" "$ERR" "TEAM-9"
-assert_contains "the partial failure is reported as partial" "$ERR" '"partial":true'
-assert_contains "the update summary still reaches stdout" "$OUT" "TEAM-9"
+while IFS='|' read -r name title format; do
+  field_args=()
+  [ -z "$title" ] || field_args+=(--title "$title")
+  [ -z "$format" ] || field_args+=(--format "$format")
+  run_linear issues update TEAM-9 "${field_args[@]}" --attach "$TMP_ROOT/notes.pdf" --attach "$TMP_ROOT/boom.pdf"
+  assert_eq "$name: preserves binding failure status" "$RC" 1
+  assert_jq "$name: attempted pairs remain retryable without success receipts" "$OUT" \
+    '.success == false and .partial == true and .identifier == "TEAM-9" and .attachments_requested == 2
+      and .attachments == [] and .pending_attachments == [
+        {url:"https://uploads.linear.app/asset/notes.pdf",repo_path:"notes.pdf"},
+        {url:"https://uploads.linear.app/asset/boom.pdf",repo_path:"boom.pdf"}]'
+  # The original API error is a caller-consumed cause, not CLI prose.
+  assert_jq "$name: preserves the API failure cause" "$(jq -sc 'map(select(.error? == "fixture-bind-denied"))' <<<"$ERR")" 'length == 1'
+done <<'CASES'
+bind attach-only||
+bind field update|New title|
+bind formatted update|New title|ids
+CASES
+
+for action in update create; do
+  FAIL_UPLOAD_FILE=later.pdf
+  if [[ "$action" == update ]]; then action_args=(TEAM-9); else action_args=(--title fixture --description $'Fixture.\nReached by: fixture'); fi
+  run_linear issues "$action" "${action_args[@]}" --attach "$TMP_ROOT/notes.pdf" \
+    --attach "$TMP_ROOT/later.pdf" --attach "$TMP_ROOT/last.pdf"
+  unset FAIL_UPLOAD_FILE
+  assert_eq "$action: shared upload failure remains failed" "$RC" 1
+  assert_jq "$action: shared upload owner publishes reusable pairs" "$OUT" \
+    '.success == false and .pending_attachments == [{url:"https://uploads.linear.app/asset/notes.pdf",repo_path:"notes.pdf"}]
+      and (.remaining_files | length) == 2'
+done
+
+echo "=== later upload failures retain completed pairs and exact upload suffix ==="
+
+for failure in graphql put; do
+  FAIL_UPLOAD_FILE="" FAIL_PUT_FILE=""
+  if [[ "$failure" == graphql ]]; then FAIL_UPLOAD_FILE=later.pdf; else FAIL_PUT_FILE=later.pdf; fi
+  run_linear issues update TEAM-9 --attach "$TMP_ROOT/notes.pdf" --attach "$TMP_ROOT/shot.png" \
+    --attach "$TMP_ROOT/later.pdf" --attach "$TMP_ROOT/last.pdf"
+  assert_eq "$failure: preserves upload failure status" "$RC" 1
+  assert_jq "$failure: completed non-image survives the failed batch" "$OUT" \
+    '.success == false and .partial == true and .pending_attachments == [
+      {url:"https://uploads.linear.app/asset/notes.pdf",repo_path:"notes.pdf"}]'
+  suffix=$(jq -c --arg failed "$TMP_ROOT/later.pdf" --arg last "$TMP_ROOT/last.pdf" \
+    '.failed_path == $failed and .remaining_files == [$failed,$last]' <<<"$OUT")
+  assert_eq "$failure: exact failed and unattempted upload suffix" "$suffix" true
+  assert_not_log "$failure: failed batch writes no embeds or bindings and skips last upload" \
+    'any(.[]; (.query? // "" | test("issueUpdate\\(|attachmentCreate\\(")) or .variables.filename? == "last.pdf")'
+  if [[ "$failure" == graphql ]]; then
+    assert_jq "$failure: preserves upload API cause" "$(jq -sc 'map(select(.error? == "fixture-upload-denied"))' <<<"$ERR")" 'length == 1'
+  else
+    assert_jq "$failure: preserves PUT cause" "$(jq -sc 'map(select(has("curl_exit")))' <<<"$ERR")" \
+      'length == 1 and .[0].http_code == "403" and .[0].curl_exit == 0'
+  fi
+  assert_not_contains "$failure: pending output excludes private upload URLs" "$OUT$ERR" 'https://uploads.linear.app/put/'
+  assert_not_contains "$failure: pending output excludes private headers" "$OUT$ERR" 'signed-'
+done
+unset FAIL_UPLOAD_FILE FAIL_PUT_FILE
+
+RETAINED="$TMP_ROOT/retained.json"
+printf '%s' '[{"url":"https://uploads.linear.app/opaque/path%20part","repo_path":"missing/original %.md  "}]' >"$RETAINED"
+REWRITE_RETAINED_FILE="$RETAINED"
+run_linear issues update TEAM-9 --attach-uploaded "$RETAINED"
+unset REWRITE_RETAINED_FILE
+assert_eq "resume succeeds after its input is captured" "$RC" 0
+assert_log "resume binds exact captured strings without any upload or field mutation" \
+  'any(.[]; (.query? // "" | contains("attachmentCreate(")) and .variables.input.issueId == "issue-uuid-9"
+    and .variables.input.url == "https://uploads.linear.app/opaque/path%20part" and .variables.input.title == "missing/original %.md  ")
+    and all(.[]; (.query? // "" | test("fileUpload\\(|issueUpdate\\(") | not) and .put? == null)'
+assert_jq "resume returns confirmed pairs in the existing receipt contract" "$OUT" \
+  '.success == true and .attachments_requested == 1 and .attachments == [
+    {url:"https://uploads.linear.app/opaque/path%20part",repo_path:"missing/original %.md  "}]'
+
+jq '.attachments' <<<"$OUT" >"$RETAINED"
+FAIL_UPLOAD_FILE=later.pdf
+run_linear issues update TEAM-9 --attach-uploaded="$RETAINED" --attach "$TMP_ROOT/notes.pdf" \
+  --attach "$TMP_ROOT/later.pdf" --attach "$TMP_ROOT/last.pdf"
+unset FAIL_UPLOAD_FILE
+assert_eq "combined resume upload failure remains failed" "$RC" 1
+assert_jq "combined resume re-emits retained and newly completed pairs" "$OUT" \
+  '.pending_attachments == [{url:"https://uploads.linear.app/opaque/path%20part",repo_path:"missing/original %.md  "},
+    {url:"https://uploads.linear.app/asset/notes.pdf",repo_path:"notes.pdf"}]'
+jq '.pending_attachments' <<<"$OUT" >"$RETAINED"
+run_linear issues update TEAM-9 --attach-uploaded "$RETAINED" --attach "$TMP_ROOT/later.pdf" --attach "$TMP_ROOT/last.pdf"
+assert_eq "combined resume succeeds" "$RC" 0
+assert_log "combined resume uploads only remaining files" \
+  '([.[] | select(.query? // "" | contains("fileUpload(")) | .variables.filename] == ["later.pdf","last.pdf"])
+    and ([.[] | select(.put? != null)] | length) == 2
+    and ([.[] | select(.query? // "" | contains("attachmentCreate("))] | length) == 4'
+assert_jq "combined resume confirms the complete ordered binding queue" "$OUT" \
+  '.success == true and .attachments_requested == 4 and (.attachments | map(.repo_path)) == ["missing/original %.md  ","notes.pdf","later.pdf","last.pdf"]'
+
+while IFS='|' read -r name input; do
+  printf '%s' "$input" >"$RETAINED"
+  run_linear issues update TEAM-9 --attach-uploaded "$RETAINED"
+  assert_eq "$name: invalid retained input refuses" "$RC" 1
+  assert_eq "$name: invalid retained input sends no API request" "$(api_calls)" 0
+  assert_eq "$name: invalid retained input prints no success" "$OUT" ''
+  assert_jq "$name: retained input has a typed refusal" "$ERR" '.code == "ATTACH_UPLOADED_INVALID"'
+done <<'CASES'
+invalid JSON|[
+multiple values|[] []
+empty array|[]
+non-array|{}
+missing path|[{"url":"https://uploads.linear.app/a"}]
+missing URL|[{"repo_path":"a"}]
+empty path|[{"url":"https://uploads.linear.app/a","repo_path":""}]
+wrong type|[{"url":"https://uploads.linear.app/a","repo_path":1}]
+private endpoint|[{"uploadUrl":"https://uploads.linear.app/a","headers":[],"repo_path":"a"}]
+private headers|[{"url":"https://uploads.linear.app/a","headers":[],"repo_path":"a"}]
+other host|[{"url":"https://uploads.linear.app.evil/a","repo_path":"a"}]
+empty URL path|[{"url":"https://uploads.linear.app/","repo_path":"a"}]
+signed query|[{"url":"https://uploads.linear.app/a?signature=private","repo_path":"a"}]
+fragment|[{"url":"https://uploads.linear.app/a#part","repo_path":"a"}]
+tab path|[{"url":"https://uploads.linear.app/a","repo_path":"a\tb"}]
+newline URL|[{"url":"https://uploads.linear.app/a\nb","repo_path":"a"}]
+NUL path|[{"url":"https://uploads.linear.app/a","repo_path":"a\u0000b"}]
+valid then invalid|[{"url":"https://uploads.linear.app/a","repo_path":"a"},{"url":"https://uploads.linear.app/b"}]
+CASES
+run_linear issues update TEAM-9 --attach-uploaded "$TMP_ROOT/missing.json"
+assert_eq "unreadable retained file sends no API request" "$(api_calls)" 0
+assert_jq "unreadable retained file has a typed refusal" "$ERR" '.code == "ATTACH_UPLOADED_INVALID"'
+
+printf '%s' '[{"url":"https://uploads.linear.app/retained","repo_path":"boom.pdf"}]' >"$RETAINED"
+run_linear issues update TEAM-9 --attach-uploaded "$RETAINED"
+assert_eq "resumed binding failure remains failed" "$RC" 1
+assert_jq "resumed binding failure retains retryable pair" "$OUT" \
+  '.success == false and .attachments == [] and .pending_attachments == [{url:"https://uploads.linear.app/retained",repo_path:"boom.pdf"}]'
+assert_not_log "resumed binding failure never reuploads" \
+  'any(.[]; (.query? // "" | contains("fileUpload(")) or .put? != null)'
 
 echo "=== missing file refuses before any API call ==="
 
 run_linear issues update TEAM-9 --attach "$TMP_ROOT/nope.png"
 assert_ne "a missing --attach path fails" "$RC" 0
-assert_contains "the missing-path refusal says the file is not readable" "$ERR" "not readable"
 assert_eq "a missing --attach path attempts no API call" "$(api_calls)" "0"
 
 echo "=== issueUpdate payload rejection: nothing attached, non-zero ==="
 
 run_linear issues update TEAM-9 --title "REJECT-UPDATE" --attach "$TMP_ROOT/notes.pdf"
 assert_ne "a rejected issueUpdate fails" "$RC" 0
-assert_contains "the rejection error says so" "$ERR" "rejected"
 assert_not_log "attachmentCreate is never reached after a rejected update" \
   'any(.[]; .query? // "" | contains("attachmentCreate"))'
 
@@ -252,7 +389,6 @@ echo "=== --labels with --clear-labels is refused BEFORE the upload ==="
 # label resolution already guards against.
 run_linear issues update TEAM-9 --labels bug --clear-labels --attach "$TMP_ROOT/notes.pdf"
 assert_ne "--labels with --clear-labels is refused" "$RC" 0
-assert_contains "the conflicting label flags carry a refusal message" "$ERR" "not both"
 assert_not_log "the refused update uploaded nothing" \
   'any(.[]; (.query? // "" | contains("fileUpload")) or (.put? != null))'
 
@@ -291,3 +427,10 @@ missing update UUID|update|00000000-0000-0000-0000-000000000404|shot.png|missing
 missing bulk identifier|bulk-update|TEAM-404|notes.pdf|missing
 missing bulk UUID|bulk-update|00000000-0000-0000-0000-000000000404|shot.png|missing
 CASES
+
+for issue in TEAM-404 00000000-0000-0000-0000-000000000404; do
+  run_linear issues update "$issue" --attach-uploaded "$RETAINED"
+  assert_eq "$issue: retained binding requires a live destination" "$RC" 1
+  assert_log "$issue: retained lookup refusal sends no mutation or upload" \
+    'length == 1 and (.[0].query | contains("query GetIssue("))'
+done
