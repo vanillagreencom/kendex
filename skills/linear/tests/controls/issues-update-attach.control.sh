@@ -11,6 +11,11 @@ control_replace scripts/commands/issues.sh 1 \
     '            --argjson attachments "$attachments_json" \' \
     "            --argjson attachments '[]' \\"
 
+control_expect "mixed attach-only: returns actual non-image receipts in request order"
+control_replace scripts/commands/issues.sh 1 \
+    '                '\''. + {attachments_requested: $count, attachments: $attachments}'\'' <<<"$normalized") || return 1' \
+    '                '\''. + {attachments_requested: $count, attachments: []}'\'' <<<"$normalized") || return 1'
+
 # Keep the live read but let its null result pass, exposing the upload that
 # the destination check must prevent in update and its bulk-update caller.
 control_expect "missing update identifier: lookup is the only request, with no upload or mutation"

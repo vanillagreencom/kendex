@@ -2317,12 +2317,12 @@ update_issue() {
         linear_public_result "$result"
         ;;
     "" | *)
-        echo "$normalized"
+        output_format=""
         ;;
     esac
 
     # Non-image --attach files: attachmentCreate after the update. The update
-    # itself succeeded (and was reported above), so a failure here must name
+    # itself succeeded, so a failure here must name
     # the issue and exit non-zero — never a zero exit with a silent gap.
     if [ ${#attach_pending[@]} -gt 0 ]; then
         local attach_target_uuid attach_target_identifier
@@ -2334,7 +2334,20 @@ update_issue() {
             attach_target_identifier=$(echo "$issue_result" | jq -r '.issue.identifier // empty')
         fi
         apply_pending_attachments "$attach_target_uuid" "$attach_target_identifier" \
-            "${attach_pending[@]}" || return 1
+            "${attach_pending[@]}" || {
+                [ -n "$output_format" ] || echo "$normalized"
+                return 1
+            }
+    fi
+    if [ -z "$output_format" ]; then
+        if [ ${#attach_pending[@]} -gt 0 ]; then
+            local updated_attachments
+            updated_attachments=$(pending_attachments_json "${attach_pending[@]}") || return 1
+            normalized=$(jq -c --argjson count "${#attach_pending[@]}" \
+                --argjson attachments "$updated_attachments" \
+                '. + {attachments_requested: $count, attachments: $attachments}' <<<"$normalized") || return 1
+        fi
+        echo "$normalized"
     fi
 }
 

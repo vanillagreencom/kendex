@@ -190,6 +190,36 @@ assert_eq "a cited artifact attach-only update exits zero" "$RC" 0
 assert_jq "an attach-only update returns the new asset URL and repo path" \
   "$OUT" '.attachments == [{url: "https://uploads.linear.app/asset/findings.md", repo_path: "docs/research/TEAM-9/findings.md"}]'
 
+while IFS='|' read -r name title; do
+  field_args=()
+  [ -z "$title" ] || field_args=(--title "$title")
+  run_linear issues update TEAM-9 "${field_args[@]}" --attach "$PROJECT/docs/research/TEAM-9/findings.md" \
+    --attach "$TMP_ROOT/shot.png" --attach "$TMP_ROOT/notes.pdf"
+  assert_eq "$name: succeeds" "$RC" 0
+  assert_jq "$name: returns actual non-image receipts in request order" "$OUT" \
+    '.success == true and .identifier == "TEAM-9" and .data != null and .attachments_requested == 2
+      and .attachments == [{url: "https://uploads.linear.app/asset/findings.md", repo_path: "docs/research/TEAM-9/findings.md"},
+        {url: "https://uploads.linear.app/asset/notes.pdf", repo_path: "notes.pdf"}]'
+  assert_log "$name: preserves the image embed and uploads each file once" \
+    '([.[] | select(.query? // "" | contains("fileUpload("))] | length) == 3
+      and ([.[] | select(.put? != null)] | length) == 3
+      and ([.[] | select(.query? // "" | contains("attachmentCreate("))] | length) == 2
+      and any(.[]; (.query? // "" | contains("issueUpdate("))
+        and .variables.input.description == "Existing text.\n\n![shot.png](https://uploads.linear.app/asset/shot.png)")'
+done <<'CASES'
+mixed attach-only|
+mixed with title|New title
+CASES
+
+run_linear issues update TEAM-9 --title "New title"
+assert_eq "an ordinary field update succeeds" "$RC" 0
+assert_jq "an ordinary field update retains its mutation summary without receipts" "$OUT" \
+  '.success == true and .identifier == "TEAM-9" and .data != null
+    and (has("attachments_requested") | not) and (has("attachments") | not)'
+assert_log "an ordinary field update sends its title without uploads" \
+  'any(.[]; (.query? // "" | contains("issueUpdate(")) and .variables.input.title == "New title")
+    and all(.[]; ((.query? // "" | contains("fileUpload(")) | not) and .put? == null)'
+
 echo "=== attachmentCreate failure after a successful update: names issue, non-zero ==="
 
 run_linear issues update TEAM-9 --title "New title" --attach "$TMP_ROOT/boom.pdf"
