@@ -8646,12 +8646,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b80e91ec5597106f7d4ab0779f9a426d5d92ab61effc696602a8ffe064274d1f",
+      "sourceHash": "bd1ace493306c809acafb94855316e455c9d8dd64cd89e2b077386e55a55ff7b",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "2f89e06297c2d7d42aad6ca956c6cedd2cbfb0063f44181b4e7ac63c892ff008",
+      "renderedHash": "20b9ab7b0e8e9c39483f0e10dc57980cd81046839288fa0f3454f4e41229c749",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -8691,12 +8691,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b80e91ec5597106f7d4ab0779f9a426d5d92ab61effc696602a8ffe064274d1f",
+      "sourceHash": "bd1ace493306c809acafb94855316e455c9d8dd64cd89e2b077386e55a55ff7b",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "2f89e06297c2d7d42aad6ca956c6cedd2cbfb0063f44181b4e7ac63c892ff008",
+      "renderedHash": "20b9ab7b0e8e9c39483f0e10dc57980cd81046839288fa0f3454f4e41229c749",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -8735,12 +8735,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b80e91ec5597106f7d4ab0779f9a426d5d92ab61effc696602a8ffe064274d1f",
+      "sourceHash": "bd1ace493306c809acafb94855316e455c9d8dd64cd89e2b077386e55a55ff7b",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "2f89e06297c2d7d42aad6ca956c6cedd2cbfb0063f44181b4e7ac63c892ff008",
+      "renderedHash": "20b9ab7b0e8e9c39483f0e10dc57980cd81046839288fa0f3454f4e41229c749",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -8779,12 +8779,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b80e91ec5597106f7d4ab0779f9a426d5d92ab61effc696602a8ffe064274d1f",
+      "sourceHash": "bd1ace493306c809acafb94855316e455c9d8dd64cd89e2b077386e55a55ff7b",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "2f89e06297c2d7d42aad6ca956c6cedd2cbfb0063f44181b4e7ac63c892ff008",
+      "renderedHash": "20b9ab7b0e8e9c39483f0e10dc57980cd81046839288fa0f3454f4e41229c749",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -11142,7 +11142,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "eec80b91ea79d53f54b33032d47eb64f7cafd254"
+      "commit": "556acc7c8d1656bf2d17e47b8a1e8ab3aaeb6ed6"
     }
   },
   "claudeProjectDefault": "released"
