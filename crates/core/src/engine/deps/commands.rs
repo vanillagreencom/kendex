@@ -166,10 +166,21 @@ pub(crate) fn check(
 ) -> Vec<CommandIssue> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let suffixes = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned());
+    check_on(dependencies, deadline, &path, cfg!(windows), &suffixes)
+}
+
+/// [`check`] over a given search path, the host's or a fixture's.
+fn check_on(
+    dependencies: &[CommandDependency],
+    deadline: Option<Instant>,
+    path: &std::ffi::OsStr,
+    windows: bool,
+    suffixes: &str,
+) -> Vec<CommandIssue> {
     dependencies
         .iter()
         .filter_map(|dependency| {
-            let command = command_path(&dependency.command, &path, cfg!(windows), &suffixes);
+            let command = command_path(&dependency.command, path, windows, suffixes);
             let problem = match command {
                 None => Some(CommandProblem::Missing),
                 Some(command) => dependency.floor.as_ref().and_then(|floor| {
@@ -229,6 +240,14 @@ pub(crate) fn report(
 
 /// Other PATH probes only detect a fixed package manager or kendex itself.
 /// Publisher-declared names need the executable bit and Windows suffixes too.
+///
+/// The path comes back as the search path spells it, never canonicalized:
+/// it is run, not compared, and a toolchain proxy such as rustup's
+/// `cargo` dispatches on the name it was invoked by, so resolving the link
+/// first runs the proxy under its own name and reads the proxy's version.
+/// An empty search-path entry names the working directory, as a shell
+/// reads it, and is spelled `.` so the program keeps a directory component
+/// and the launcher looks nothing up a second time.
 fn command_path(
     command: &str,
     path: &std::ffi::OsStr,
@@ -237,6 +256,10 @@ fn command_path(
 ) -> Option<PathBuf> {
     std::env::split_paths(path)
         .flat_map(|dir| {
+            let dir = match dir.as_os_str().is_empty() {
+                true => PathBuf::from("."),
+                false => dir,
+            };
             let mut candidates = vec![dir.join(command)];
             if windows && std::path::Path::new(command).extension().is_none() {
                 candidates.extend(
@@ -249,7 +272,6 @@ fn command_path(
             candidates
         })
         .find(|path| crate::fs::is_executable(path))
-        .map(|path| crate::paths::absolute(&path))
 }
 
 /// Browser commands publish more numeric components than semantic versions.

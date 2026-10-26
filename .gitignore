@@ -1,4 +1,6 @@
 /target
+/skills/agent-runtime/runtime/target/
+/skills/orch/runtime/target/
 node_modules
 dist
 .claude/settings.local.json

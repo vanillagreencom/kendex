@@ -32,3 +32,15 @@ path = "templates/review-gate-writer.yml"
 rule = "rce"
 line-hash = "618f4343fe7c8f11804fe06194842baf1a8df814e3e8bddbe55faa277cace1ed"
 message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
+
+[[package]]
+kind = "skill"
+name = "agent-runtime"
+
+[[package.file]]
+path = "runtime/src/harness.rs"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line-hash = "61f704fa1290ba7951ac9764e65853590ff37ae22e6ae455f6e59cec0f13a553"
+message = "`--dangerously-skip-permissions` turns off permission prompts"

@@ -1,0 +1,418 @@
+//! Launch intent and the one command builder.
+//!
+//! A caller states what it wants (harness, home, model, effort, posture,
+//! brief) and this module spells the command once. Nothing outside it
+//! writes a harness flag. The brief travels as a file: the shell line reads
+//! it at run time, so brief newlines never cross terminal input.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, Result};
+use crate::harness::Harness;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Permission {
+    /// The harness's own prompts stand.
+    #[default]
+    Native,
+    /// Full bypass: every tool runs with nobody at the pane.
+    Bypass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum QuestionTool {
+    #[default]
+    Off,
+    Keep,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Compaction {
+    /// The harness compacts on its own.
+    #[default]
+    Native,
+    /// The runtime's context judge owns the window; the harness is told not
+    /// to compact. Refused on a harness with no such word.
+    Off,
+}
+
+/// How the first instruction reaches the session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "kind")]
+pub enum Brief {
+    /// No brief: the session opens at its prompt.
+    None,
+    /// A file whose whole text is the opening instruction.
+    File { path: PathBuf },
+}
+
+/// A session to continue rather than start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resume {
+    pub session_id: String,
+    /// Pi resumes by session file, not id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchIntent {
+    pub harness: Harness,
+    /// The account home. `None` keeps the harness's default home.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<PathBuf>,
+    pub cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub permission: Permission,
+    #[serde(default)]
+    pub question_tool: QuestionTool,
+    #[serde(default)]
+    pub compaction: Compaction,
+    #[serde(default = "brief_none")]
+    pub brief: Brief,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<Resume>,
+    /// Environment the child must see beyond the inherited one.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// Environment names the child must not inherit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_remove: Vec<String>,
+    /// Extra words appended as given, for a caller that knows the harness.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_args: Vec<String>,
+}
+
+fn brief_none() -> Brief {
+    Brief::None
+}
+
+/// The spelled command: program, argv, the environment to set and clear,
+/// and whether the brief is read from a file at run time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub env_remove: Vec<String>,
+    pub cwd: PathBuf,
+    /// Where the brief sits in `args`: the index whose word is replaced by
+    /// the file's text when the line is rendered for a shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief_arg: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief_path: Option<PathBuf>,
+}
+
+/// The display names every unattended launch clears, so a lane cannot
+/// open windows on the person's desktop.
+pub const DISPLAY_SCRUB: [&str; 3] = ["WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"];
+
+/// Spell the command for an intent. Refuses an intent the harness cannot
+/// honour: compaction off where it has no word, a model-free lane launch is
+/// the caller's to refuse.
+pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
+    let h = intent.harness;
+    let mut args: Vec<String> = Vec::new();
+    let mut env = intent.env.clone();
+    let mut env_remove = intent.env_remove.clone();
+    for name in DISPLAY_SCRUB {
+        if !env_remove.iter().any(|n| n == name) {
+            env_remove.push(name.to_owned());
+        }
+    }
+    if let Some(home) = &intent.home {
+        if !home.is_absolute() {
+            return Err(Error::refused(
+                "home-relative",
+                &[("harness", h.name()), ("home", &home.display().to_string())],
+            ));
+        }
+        env.insert(h.home_var().to_owned(), home.display().to_string());
+    }
+    args.extend(h.settings_words().into_iter().map(str::to_owned));
+    if let Some(model) = &intent.model {
+        args.extend(h.model_words(model, intent.effort.as_deref()));
+    } else if let Some(effort) = &intent.effort {
+        args.extend(h.effort_words(effort));
+    }
+    match intent.permission {
+        Permission::Native => {}
+        Permission::Bypass => {
+            args.extend(h.bypass_words().into_iter().map(str::to_owned));
+            if h == Harness::Copilot {
+                // `true` also trusts the folder and loads its hooks; every
+                // other command carries it empty so an inherited value does
+                // not reach the lane.
+                env.insert("COPILOT_ALLOW_ALL".to_owned(), "true".to_owned());
+            }
+            if h == Harness::Claude {
+                env.insert(
+                    "CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT".to_owned(),
+                    "1".to_owned(),
+                );
+                env.insert(
+                    "CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT".to_owned(),
+                    "1".to_owned(),
+                );
+            }
+        }
+    }
+    if h == Harness::Copilot && intent.permission == Permission::Native {
+        env.insert("COPILOT_ALLOW_ALL".to_owned(), String::new());
+    }
+    if h == Harness::Copilot {
+        // Copilot reads a token from the environment ahead of its stored
+        // login, and refuses a placeholder, so the lane's own identity is
+        // the stored login.
+        env_remove.push("COPILOT_GITHUB_TOKEN".to_owned());
+        env.entry("COPILOT_SKILLS_DIRS".to_owned())
+            .or_insert_with(|| "~/.agents/skills".to_owned());
+    }
+    match intent.question_tool {
+        QuestionTool::Off => args.extend(h.question_off_words().into_iter().map(str::to_owned)),
+        QuestionTool::Keep => {}
+    }
+    match intent.compaction {
+        Compaction::Native => {}
+        Compaction::Off => match h.compaction_off_words() {
+            Some(words) => args.extend(words.into_iter().map(str::to_owned)),
+            None => {
+                return Err(Error::Unsupported {
+                    operation: "compaction-off",
+                    subject: h.name().to_owned(),
+                    cause: "the harness has no launch word that turns its own compaction off"
+                        .to_owned(),
+                });
+            }
+        },
+    }
+    if let Some(resume) = &intent.resume {
+        match h {
+            Harness::Claude => args.extend(["--resume".to_owned(), resume.session_id.clone()]),
+            Harness::Codex => args.extend(["resume".to_owned(), resume.session_id.clone()]),
+            Harness::Copilot => args.push(format!("--resume={}", resume.session_id)),
+            Harness::Pi => {
+                let Some(file) = &resume.session_file else {
+                    return Err(Error::refused(
+                        "resume-file-missing",
+                        &[("harness", "pi"), ("session", &resume.session_id)],
+                    ));
+                };
+                args.extend(["--session".to_owned(), file.display().to_string()]);
+            }
+        }
+    }
+    args.extend(intent.extra_args.iter().cloned());
+    let mut brief_arg = None;
+    let mut brief_path = None;
+    match &intent.brief {
+        Brief::None => {}
+        Brief::File { path } => {
+            if !path.is_absolute() {
+                return Err(Error::refused(
+                    "brief-relative",
+                    &[("path", &path.display().to_string())],
+                ));
+            }
+            match h {
+                Harness::Copilot => {
+                    args.push("-i".to_owned());
+                }
+                Harness::Claude | Harness::Codex | Harness::Pi => {}
+            }
+            brief_arg = Some(args.len());
+            args.push("{brief}".to_owned());
+            brief_path = Some(path.clone());
+        }
+    }
+    Ok(LaunchCommand {
+        program: h.binary().to_owned(),
+        args,
+        env,
+        env_remove,
+        cwd: intent.cwd.clone(),
+        brief_arg,
+        brief_path,
+    })
+}
+
+/// Quote one word for a POSIX shell.
+pub fn shell_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '=' | ':' | ',')
+        })
+    {
+        return word.to_owned();
+    }
+    let mut out = String::from("'");
+    for c in word.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+impl LaunchCommand {
+    /// The one-line shell form a pane runs: `cd DIR && env -u ... NAME=VALUE
+    /// ... exec PROGRAM ARGS`, with the brief read from its file at run time.
+    pub fn shell_line(&self) -> String {
+        let mut line = String::new();
+        line.push_str("cd ");
+        line.push_str(&shell_quote(&self.cwd.display().to_string()));
+        line.push_str(" && ");
+        if !self.env_remove.is_empty() || !self.env.is_empty() {
+            line.push_str("env");
+            for name in &self.env_remove {
+                line.push_str(" -u ");
+                line.push_str(&shell_quote(name));
+            }
+            for (name, value) in &self.env {
+                line.push(' ');
+                line.push_str(&shell_quote(&format!("{name}={value}")));
+            }
+            line.push(' ');
+        } else {
+            line.push_str("exec ");
+        }
+        line.push_str(&shell_quote(&self.program));
+        for (index, arg) in self.args.iter().enumerate() {
+            line.push(' ');
+            if Some(index) == self.brief_arg {
+                let path = self
+                    .brief_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                line.push_str(&format!("\"$(cat {})\"", shell_quote(&path)));
+            } else {
+                line.push_str(&shell_quote(arg));
+            }
+        }
+        line
+    }
+
+    /// Whether this command needs the brief file to stand when it runs.
+    pub fn reads_brief(&self, path: &Path) -> bool {
+        self.brief_path.as_deref() == Some(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn intent(h: Harness) -> LaunchIntent {
+        LaunchIntent {
+            harness: h,
+            home: Some(PathBuf::from("/home/x/.1claude")),
+            cwd: PathBuf::from("/work/tree"),
+            model: Some("opus".into()),
+            effort: Some("high".into()),
+            permission: Permission::Bypass,
+            question_tool: QuestionTool::Off,
+            compaction: Compaction::Native,
+            brief: Brief::File {
+                path: PathBuf::from("/work/tree/tmp/brief.md"),
+            },
+            resume: None,
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
+            extra_args: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_claude_bypass_launch_carries_its_home_posture_and_brief() {
+        let cmd = build(&intent(Harness::Claude)).unwrap();
+        assert_eq!(cmd.program, "claude");
+        assert_eq!(
+            cmd.env.get("CLAUDE_CONFIG_DIR").unwrap(),
+            "/home/x/.1claude"
+        );
+        assert!(
+            cmd.args
+                .contains(&"--disallowedTools=AskUserQuestion,EnterPlanMode".to_owned())
+        );
+        assert_eq!(cmd.args.last().unwrap(), "{brief}");
+        let line = cmd.shell_line();
+        assert!(line.starts_with(
+            "cd /work/tree && env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE"
+        ));
+        assert!(line.ends_with("\"$(cat /work/tree/tmp/brief.md)\""));
+    }
+
+    #[test]
+    fn copilot_puts_the_brief_behind_i_and_clears_its_token() {
+        let mut i = intent(Harness::Copilot);
+        i.home = Some(PathBuf::from("/home/x/.1copilot"));
+        let cmd = build(&i).unwrap();
+        let brief = cmd.brief_arg.unwrap();
+        assert_eq!(cmd.args[brief - 1], "-i");
+        assert!(cmd.env_remove.contains(&"COPILOT_GITHUB_TOKEN".to_owned()));
+        assert_eq!(cmd.env.get("COPILOT_ALLOW_ALL").unwrap(), "true");
+    }
+
+    #[test]
+    fn compaction_off_refuses_where_the_harness_has_no_word() {
+        let mut i = intent(Harness::Pi);
+        i.compaction = Compaction::Off;
+        i.home = Some(PathBuf::from("/home/x/.1pi"));
+        assert!(matches!(build(&i), Err(Error::Unsupported { .. })));
+        let mut c = intent(Harness::Codex);
+        c.compaction = Compaction::Off;
+        c.home = Some(PathBuf::from("/home/x/.1codex"));
+        let cmd = build(&c).unwrap();
+        assert!(
+            cmd.args
+                .iter()
+                .any(|a| a.starts_with("model_auto_compact_token_limit="))
+        );
+    }
+
+    #[test]
+    fn a_relative_home_or_brief_is_refused_before_anything_runs() {
+        let mut i = intent(Harness::Claude);
+        i.home = Some(PathBuf::from(".1claude"));
+        assert!(matches!(
+            build(&i),
+            Err(Error::Refused {
+                key: "home-relative",
+                ..
+            })
+        ));
+        let mut i = intent(Harness::Claude);
+        i.brief = Brief::File {
+            path: PathBuf::from("tmp/brief.md"),
+        };
+        assert!(matches!(
+            build(&i),
+            Err(Error::Refused {
+                key: "brief-relative",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn shell_quoting_keeps_an_apostrophe_and_a_dollar_literal() {
+        assert_eq!(shell_quote("it's $x"), "'it'\\''s $x'");
+        assert_eq!(shell_quote("plain-word.v1"), "plain-word.v1");
+        assert_eq!(shell_quote(""), "''");
+    }
+}

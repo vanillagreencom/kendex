@@ -241,6 +241,71 @@ fn a_nested_skill_excludes_tool_caches_but_keeps_authored_build_dirs() {
     }
 }
 
+/// A skill that ships a crate built in place is read without the build
+/// tool's output, found by the tag the tool left at its top, wherever in
+/// the tree it sits: a binary past the file bound there no longer makes
+/// the skill unreadable. The rule reads the tag, not the name: a sibling
+/// directory without one is content, and so is one whose `CACHEDIR.TAG`
+/// lacks the specification's signature, that file included.
+#[test]
+fn a_nested_skill_leaves_out_tagged_build_output_and_keeps_untagged_siblings() {
+    let (_tmp, sealed) = fixture();
+    let dir = sealed.root().join("skills/gh");
+    for rel in [
+        "x/target/debug",
+        "x/notes/target",
+        "x/out",
+        "x/target/debug/deps",
+    ] {
+        std::fs::create_dir_all(dir.join(rel)).expect("mkdir");
+    }
+    std::fs::write(dir.join("SKILL.md"), "# gh").expect("write");
+    std::fs::write(dir.join("x/notes/target/plan.md"), "authored").expect("write");
+    std::fs::write(dir.join("x/out/CACHEDIR.TAG"), "a file by that name").expect("write");
+    std::fs::write(dir.join("x/out/data.txt"), "kept").expect("write");
+    std::fs::write(dir.join("x/target/debug/deps/lib.rlib"), "built").expect("write");
+    std::fs::File::create(dir.join("x/target/debug/gh"))
+        .expect("create")
+        .set_len(MAX_FILE_BYTES + 1)
+        .expect("oversized build output");
+    let content = |files: Vec<(PathBuf, Vec<u8>)>| -> Vec<String> {
+        files
+            .into_iter()
+            .map(|(p, _)| crate::paths::slashed(&p))
+            .collect()
+    };
+
+    // The bound the untagged tree reaches: the oversized binary refuses
+    // the whole skill.
+    assert!(matches!(
+        sealed.collect_skill_tree(&dir),
+        Err(CoreError::SourceEscape { path, .. }) if path == dir.join("x/target/debug/gh")
+    ));
+
+    std::fs::write(
+        dir.join("x/target").join(CACHE_TAG),
+        format!(
+            "{}\n# This file is a cache directory tag created by cargo.\n",
+            String::from_utf8_lossy(CACHE_TAG_SIGNATURE)
+        ),
+    )
+    .expect("write");
+    let whole = content(sealed.collect_skill_tree(&dir).expect("tree"));
+    assert_eq!(
+        whole,
+        [
+            "SKILL.md",
+            "x/notes/target/plan.md",
+            "x/out/CACHEDIR.TAG",
+            "x/out/data.txt",
+        ]
+    );
+    match sealed.rendered_item(ItemKind::Skill, &dir).expect("render") {
+        ItemBytes::Tree(files) => assert_eq!(content(files), whole),
+        ItemBytes::File(_) => panic!("a directory read as one file"),
+    }
+}
+
 /// A render leaves out the package's own tests, evaluation sets and
 /// maintainer notes, and only at the skill's top level: a template or an
 /// example that carries one of those names deeper in the tree is content.

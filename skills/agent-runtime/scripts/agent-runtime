@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Run the agent-runtime binary that matches the shipped sources beside this
+# script. Every argument goes to the binary; its --help is the contract.
+#
+# The binary is <cache>/bin/agent-runtime-<key>, the one scripts/setup placed
+# for these sources (lib/key.sh; <cache> as setup resolves it). When it is
+# absent this wrapper builds nothing: it prints
+#   agent-runtime: setup-required key=<key> run=<path to scripts/setup>
+# on stderr and exits 69, so a hook or status read never compiles.
+set -euo pipefail
+
+here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+
+refuse() { # KEY FIELD=VALUE...
+  local key="$1"
+  shift
+  printf 'agent-runtime: %s%s\n' "$key" "${*:+ $*}" >&2
+  exit 1
+}
+
+# shellcheck source=lib/key.sh
+. "$here/lib/key.sh"
+
+runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse inputs-missing "runtime=$here/../runtime"
+cache="${AGENT_RUNTIME_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/kendex/agent-runtime}"
+key="$(agent_runtime_key "$runtime")"
+binary="$cache/bin/agent-runtime-$key"
+if [ ! -x "$binary" ]; then
+  printf 'agent-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2
+  exit 69
+fi
+exec "$binary" "$@"

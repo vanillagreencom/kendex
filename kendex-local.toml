@@ -369,6 +369,15 @@ harnesses = [
 ]
 enabled = true
 
+[skills.agent-runtime]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+    "copilot",
+]
+
 [skills.app-deploy]
 source = "in-place"
 harnesses = [

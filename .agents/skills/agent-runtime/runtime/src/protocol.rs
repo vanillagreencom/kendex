@@ -1,0 +1,214 @@
+//! The versioned JSON boundary other languages and hosts speak to this
+//! runtime through. Inside the process the typed values are used directly;
+//! this module is only their wire shape.
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::Error;
+
+/// The protocol name every reply carries. A reader that does not know it
+/// refuses the reply rather than guessing at its fields.
+pub const PROTOCOL: &str = "agent-runtime-v1";
+
+/// How far an external effect got. An effect that was asked for and whose
+/// outcome could not be read stays `Unconfirmed`: a caller reconciles it
+/// before asking for the same effect again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Outcome {
+    NotStarted,
+    Confirmed,
+    Failed,
+    Unconfirmed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Refusal {
+    pub key: String,
+    pub fields: Vec<(String, String)>,
+    pub text: String,
+}
+
+impl From<&Error> for Refusal {
+    /// Every variant renders the values it acted on; a cause or a source
+    /// error is the human explanation and stays in `text`.
+    fn from(error: &Error) -> Self {
+        let pair = |k: &str, v: String| (k.to_owned(), v);
+        let fields = match error {
+            Error::Refused { fields, .. } => fields.clone(),
+            Error::Io {
+                operation, path, ..
+            } => vec![
+                pair("operation", (*operation).to_owned()),
+                pair("path", path.display().to_string()),
+            ],
+            Error::Json { path, .. } => vec![pair("path", path.display().to_string())],
+            Error::RecordVersion {
+                path,
+                found,
+                supported,
+            } => vec![
+                pair("path", path.display().to_string()),
+                pair("found", found.to_string()),
+                pair(
+                    "supported",
+                    supported
+                        .iter()
+                        .map(u64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+            ],
+            Error::RevisionMismatch {
+                expected, found, ..
+            } => vec![
+                pair("expected", expected.to_string()),
+                pair("found", found.to_string()),
+            ],
+            Error::RecordShape { path, reason } => vec![
+                pair("path", path.display().to_string()),
+                pair("reason", reason.clone()),
+            ],
+            Error::Process { pid, operation, .. } => vec![
+                pair("pid", pid.to_string()),
+                pair("operation", (*operation).to_owned()),
+            ],
+            Error::External {
+                program, operation, ..
+            } => vec![
+                pair("program", (*program).to_owned()),
+                pair("operation", (*operation).to_owned()),
+            ],
+            Error::Unsupported {
+                operation, subject, ..
+            } => vec![
+                pair("operation", (*operation).to_owned()),
+                pair("subject", subject.clone()),
+            ],
+        };
+        Refusal {
+            key: error.key().to_owned(),
+            fields,
+            text: error.to_string(),
+        }
+    }
+}
+
+/// One reply on the executable boundary: the protocol, then either a
+/// result or a refusal, never both.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Reply<T> {
+    pub protocol: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<Refusal>,
+}
+
+impl<T> Reply<T> {
+    pub fn ok(result: T) -> Self {
+        Reply {
+            protocol: PROTOCOL.to_owned(),
+            ok: true,
+            result: Some(result),
+            refusal: None,
+        }
+    }
+
+    pub fn refused(error: &Error) -> Self {
+        Reply {
+            protocol: PROTOCOL.to_owned(),
+            ok: false,
+            result: None,
+            refusal: Some(Refusal::from(error)),
+        }
+    }
+}
+
+/// The one keyed diagnostic line a refusal opens with on stderr:
+/// `agent-runtime: <key> field=value ...`.
+pub fn diagnostic_line(error: &Error) -> String {
+    let refusal = Refusal::from(error);
+    let mut line = format!("agent-runtime: {}", refusal.key);
+    for (field, value) in &refusal.fields {
+        line.push(' ');
+        line.push_str(field);
+        line.push('=');
+        line.push_str(value);
+    }
+    line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_opens_with_its_key_and_fields() {
+        let error = Error::refused("pane-missing", &[("pane", "%7")]);
+        assert_eq!(
+            diagnostic_line(&error),
+            "agent-runtime: pane-missing pane=%7"
+        );
+        let reply: Reply<()> = Reply::refused(&error);
+        assert!(!reply.ok);
+        assert_eq!(reply.protocol, PROTOCOL);
+        assert_eq!(reply.refusal.unwrap().key, "pane-missing");
+    }
+
+    /// The record errors carry the path and the value the reader refused,
+    /// so a caller can act on the line without parsing the text.
+    #[test]
+    fn record_and_io_refusals_carry_their_path_and_value() {
+        let io = std::io::Error::other("denied");
+        let json = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let rows: [(Error, &[(&str, &str)]); 4] = [
+            (
+                Error::io("open", "/r/s.json", io),
+                &[("operation", "open"), ("path", "/r/s.json")],
+            ),
+            (
+                Error::Json {
+                    path: "/r/s.json".into(),
+                    source: json,
+                },
+                &[("path", "/r/s.json")],
+            ),
+            (
+                Error::RecordVersion {
+                    path: "/r/s.json".into(),
+                    found: 9,
+                    supported: &[1, 2],
+                },
+                &[("path", "/r/s.json"), ("found", "9"), ("supported", "1,2")],
+            ),
+            (
+                Error::RecordShape {
+                    path: "/r/s.json".into(),
+                    reason: "no numeric revision".into(),
+                },
+                &[("path", "/r/s.json"), ("reason", "no numeric revision")],
+            ),
+        ];
+        for (error, expected) in &rows {
+            let expected: Vec<(String, String)> = expected
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect();
+            assert_eq!(Refusal::from(error).fields, expected, "{}", error.key());
+        }
+    }
+
+    #[test]
+    fn outcomes_serialize_as_kebab_case_words() {
+        assert_eq!(
+            serde_json::to_string(&Outcome::NotStarted).unwrap(),
+            "\"not-started\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Outcome::Unconfirmed).unwrap(),
+            "\"unconfirmed\""
+        );
+    }
+}

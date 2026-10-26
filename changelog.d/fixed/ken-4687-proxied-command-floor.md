@@ -1,0 +1,1 @@
+- The `dependencies.commands` floor check runs a command at the path it was found on PATH instead of resolving its symlink first, so a toolchain proxy such as rustup's `cargo` reports the proxied tool's version and `kendex check` no longer warns that `cargo` is below its floor on a rustup install.
