@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Failed instruction updates from older packages that print `append-system.mjs` notices keep toggles and uninstall settings unchanged. A removal that leaves instructions untouched no longer tries to restore them or warns that they may be missing.
+
 ### 3.0.6
 
 - Escape exits inline editing and closes quick settings when terminals encode it as a Kitty key event.

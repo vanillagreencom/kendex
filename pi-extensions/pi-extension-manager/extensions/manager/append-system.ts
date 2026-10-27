@@ -25,7 +25,7 @@ export const APPEND_SYSTEM_DEADLINE_MS = 10_000;
 export type AppendSystemOutcome =
 	| { kind: "ran" }
 	| { kind: "absent" }
-	| { kind: "failed"; message: string };
+	| { kind: "failed"; cause: "notice" | "run"; message: string };
 
 /** The package's script, or `undefined` when it ships none. */
 function appendSystemScript(packageDir: string | undefined): string | undefined {
@@ -36,8 +36,8 @@ function appendSystemScript(packageDir: string | undefined): string | undefined 
 
 /**
  * The one reader of the script's result. For the install and remove actions
- * passed here, the vendored script exits 0 after each `append-system:
- * <key>=<value>` notice it prints, and prints one on every path that could
+ * passed here, the vendored script exits 0 after each `append-system:` or
+ * older `append-system.mjs` notice it prints, and prints one on every path that could
  * not write or remove the block, so an exit 0 with a notice is a failure. The
  * notice is the script's own result; reading APPEND_SYSTEM.md instead would
  * need a second copy of its scope resolution.
@@ -47,10 +47,10 @@ async function runAppendSystemScript(packageDir: string | undefined, action: "in
 	if (!script) return { kind: "absent" };
 	const result = await runCommand("node", [script, action], { cwd: dirname(dirname(script)), deadlineMs: APPEND_SYSTEM_DEADLINE_MS, signal });
 	const failure = commandFailure(result);
-	if (failure) return { kind: "failed", message: managerNotice(`append-system-${failure.reason}`, `${action}:${script}`, failure.detail) };
+	if (failure) return { kind: "failed", cause: "run", message: managerNotice(`append-system-${failure.reason}`, `${action}:${script}`, failure.detail) };
 	if (result.kind !== "exited") throw new Error(`append-system: a run with no failure ended as ${result.kind}`);
 	const notices = result.output.stderr.trim();
-	if (notices.split("\n").some((line) => line.startsWith("append-system: "))) return { kind: "failed", message: managerNotice("append-system-notice", `${action}:${script}`, notices) };
+	if (notices.split("\n").some((line) => line.startsWith("append-system: ") || line.startsWith("append-system.mjs"))) return { kind: "failed", cause: "notice", message: managerNotice("append-system-notice", `${action}:${script}`, notices) };
 	return { kind: "ran" };
 }
 

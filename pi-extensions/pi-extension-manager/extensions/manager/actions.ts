@@ -137,11 +137,13 @@ function itemDisabled(item: InventoryItem, inventory: Inventory): boolean {
  * A failed uninstall's notice once the APPEND_SYSTEM.md block it may have
  * removed is put back. Only a block that was live before the uninstall goes
  * back: a disabled package's block went when it was disabled, and a package
- * whose removal found no script has none. The notice says when the restore
+ * whose removal found no script has none. A notice-only removal failure left
+ * the block untouched. The notice says when the restore
  * did not write the block.
  */
 async function failedUninstall(item: InventoryItem, inventory: Inventory, removal: AppendSystemOutcome, message: string): Promise<ActionResult> {
 	if (removal.kind === "absent" || itemDisabled(item, inventory)) return { ok: false, message };
+	if (removal.kind === "failed" && removal.cause === "notice") return { ok: false, message };
 	const restore = await restoreAppendSystemBlockAfterUninstall(item);
 	switch (restore.kind) {
 		case "restored":
