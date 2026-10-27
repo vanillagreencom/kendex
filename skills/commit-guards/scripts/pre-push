@@ -239,11 +239,11 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 # scopes apart. Trying the boundary first limits these size refusals for
 # repositories that adopted the check with existing oversized binaries.
 local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
-  local __v="$1" local_oid="$2" status=0 line=""
-  # What this branch adds over what those refs last recorded. The boundary
-  # commits of that range are the newest commits they carry, and any of them
-  # is a base the branch's own changes hang off — locally, on the terms set
-  # out above.
+  local __v="$1" local_oid="$2" status=0 line="" selected="" count=0
+  local boundaries=()
+  eval "$__v=''"
+  # One baseline must descend from every reached boundary. Traversal order
+  # cannot establish that: a merge can also reach an older donor boundary.
   #
   # A remote spelled as a URL rather than as a name (`git push https://... main`)
   # matches no tracking refs, so nothing is excluded, the walk reaches the
@@ -256,14 +256,26 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
     || gg_fail_cause boundary-collect "$status" "$GG_TMP/boundary.err" "git rev-list could not resolve what $(gg_shown "$local_oid") adds over the refs this remote is known to have (exit $status)"
   while IFS= read -r line; do
     case "$line" in
-      -?*)
-        eval "$__v=\${line#-}"
-        return 0
-        ;;
+      -?*) boundaries+=("${line#-}") ;;
     esac
   done <"$GG_TMP/boundary"
-  eval "$__v=''"
-  return 1
+  [ "${#boundaries[@]}" -gt 0 ] || return 1
+  # Independent removes supplied ancestors. A sole survivor therefore bounds
+  # all the reached history; incomparable survivors have no single baseline.
+  git merge-base --independent "${boundaries[@]}" \
+    >"$GG_TMP/independent" 2>"$GG_TMP/boundary.err" || status=$?
+  [ "$status" -eq 0 ] \
+    || gg_fail_cause boundary-select "$status" "$GG_TMP/boundary.err" "git merge-base could not compare the reached boundaries of $(gg_shown "$local_oid") (exit $status)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    selected="$line"
+    count=$((count + 1))
+  done <"$GG_TMP/independent"
+  case "$count" in
+    0) gg_fail boundary-empty "$local_oid" "git merge-base returned no independent boundary from a nonempty set." ;;
+    1) eval "$__v=\$selected" ;;
+    *) gg_fail boundary-ambiguous "$local_oid" "The reached remote boundaries are incomparable, so no single branch baseline can be established." ;;
+  esac
 }
 
 # The baseline for the lanes that ask what the branch changed over its base
