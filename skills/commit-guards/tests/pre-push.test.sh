@@ -115,6 +115,127 @@ push_ref() { # REPO REFSPEC [PUSH-FLAG] -> the run's one line on stdout
 
 printf '%s\n' "$gg_suite"
 
+# ------------------------------------------------ first-push merge boundaries
+#
+# A donor branch starts at O, while prerequisite P descends from O and carries
+# an unjudged release bump. The topic preserves the donor as its second parent.
+# Both O and P bound the unpublished history; traversal order is not ancestry.
+first_push_merge() { # VAR NAME MODE(clean|own-major|incomparable|disconnected) [SKILL-SOURCE]
+  local __v="$1" r="" donor=""
+  new_repo r "$2" "${4:-}"
+  q git -C "$r" config gc.auto 0
+  q git -C "$r" config maintenance.auto false
+  q git -C "$TMP/$2.git" config gc.auto 0
+  q git -C "$TMP/$2.git" config maintenance.auto false
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "changelog-entries"\nCOMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "app.json lib.json"\n' \
+    >"$r/kendex.settings.toml"
+  printf '{"version":"1.0.0"}\n' >"$r/app.json"
+  printf '{"version":"1.0.0"}\n' >"$r/lib.json"
+  q git -C "$r" add kendex.settings.toml app.json lib.json
+  GIT_COMMITTER_DATE='2030-01-01T00:00:00Z' q git -C "$r" commit -q -m "feat: seed"
+  q git -C "$r" push -q origin main
+  if [ "$3" = disconnected ]; then
+    q git -C "$r" checkout -q --orphan topic
+    q git -C "$r" rm -q --cached app.json lib.json
+    q git -C "$r" commit -q -m "feat: unrelated history"
+    eval "$__v=\$r"
+    return 0
+  fi
+  if [ "$3" = incomparable ]; then
+    q git -C "$r" checkout -q -b side
+    printf 'side base\n' >"$r/side.txt"
+    q git -C "$r" add side.txt
+    GIT_COMMITTER_DATE='2030-01-02T00:00:00Z' q git -C "$r" commit -q -m "feat: side base"
+    q git -C "$r" push -q origin side
+  fi
+  q git -C "$r" checkout -q -b donor
+  mkdir -p "$r/changelog.d/fixed"
+  printf -- '- A fix.\n' >"$r/changelog.d/fixed/donor.md"
+  q git -C "$r" add changelog.d/fixed/donor.md
+  GIT_COMMITTER_DATE='2030-01-04T00:00:00Z' q git -C "$r" commit -q -m "fix: donor change"
+  donor="$(git -C "$r" rev-parse HEAD)" || exit 2
+  q git -C "$r" checkout -q main
+  # The prerequisite advances through an excluded commit between O and P.
+  printf 'prerequisite\n' >"$r/base.txt"
+  q git -C "$r" add base.txt
+  GIT_COMMITTER_DATE='2030-01-02T00:00:00Z' q git -C "$r" commit -q -m "feat: prerequisite change"
+  printf '{"version":"2.0.0"}\n' >"$r/app.json"
+  q git -C "$r" add app.json
+  # This invalid release belongs to the prerequisite, not to the topic.
+  GIT_COMMITTER_DATE='2030-01-03T00:00:00Z' q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: prerequisite major"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" checkout -q -b topic
+  GIT_COMMITTER_DATE='2030-01-05T00:00:00Z' q git -C "$r" merge -q --no-ff "$donor" -m "fix: preserve donor ancestry"
+  if [ "$3" = own-major ]; then
+    printf '{"version":"2.0.0"}\n' >"$r/lib.json"
+    q git -C "$r" add lib.json
+    q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: topic major"
+  fi
+  eval "$__v=\$r"
+}
+
+first_push_judgment() { # REPO MODE -> status and machine-readable scope/finding fields
+  local r="$1" mode="$2" rc=0 out="" scope="" major="" ambiguous=0 tip=""
+  if [ "$mode" = incomparable ]; then
+    tip="$(git -C "$r" rev-parse HEAD)" || exit 2
+    out="$(cd -- "$r" && printf 'HEAD %s refs/heads/topic %s\n' "$tip" "$ZERO" \
+      | "$r/.agents/skills/commit-guards/scripts/pre-push" origin "$TMP/${r##*/}.git" 2>&1)" || rc=$?
+  else
+    out="$(git -C "$r" push --dry-run origin HEAD:refs/heads/topic 2>&1)" || rc=$?
+  fi
+  scope="$(printf '%s\n' "$out" | sed -n 's/^pre-push: step=//p')" || exit 2
+  major="$(printf '%s\n' "$out" | sed -n 's/^changelog-entries: major-breaking=//p')" || exit 2
+  case "$out" in *"pre-push: boundary-ambiguous="*) ambiguous=1 ;; esac
+  printf 'rc=%s scope=%s major=%s ambiguous=%s' "$rc" "$scope" "$major" "$ambiguous"
+}
+
+for FIRST_MODE in clean own-major incomparable disconnected; do
+  FIRST=""
+  first_push_merge FIRST "first-$FIRST_MODE" "$FIRST_MODE"
+  FIRST_BASE="$(git -C "$FIRST" rev-parse origin/main)" || exit 2
+  FIRST_BOUNDARIES="$(git -C "$FIRST" rev-list --boundary HEAD --not --remotes=origin \
+    | sed -n 's/^-//p')" || exit 2
+  if [ "$FIRST_MODE" = incomparable ]; then
+    FIRST_SIDE="$(git -C "$FIRST" rev-parse origin/side)" || exit 2
+    assert_eq "first-push incomparable reaches both remote boundaries" \
+      "$(printf '%s\n%s' "$FIRST_SIDE" "$FIRST_BASE" | LC_ALL=C sort)" \
+      "$(printf '%s\n' "$FIRST_BOUNDARIES" | LC_ALL=C sort)"
+    for FIRST_PAIR in "$FIRST_SIDE $FIRST_BASE" "$FIRST_BASE $FIRST_SIDE"; do
+      read -r FIRST_LEFT FIRST_RIGHT <<<"$FIRST_PAIR"
+      FIRST_ANCESTRY=0
+      git -C "$FIRST" merge-base --is-ancestor "$FIRST_LEFT" "$FIRST_RIGHT" || FIRST_ANCESTRY=$?
+      assert_eq "first-push fixture has incomparable boundaries: $FIRST_PAIR" 1 "$FIRST_ANCESTRY"
+    done
+    FIRST_EXPECT='rc=2 scope= major= ambiguous=1'
+  elif [ "$FIRST_MODE" = disconnected ]; then
+    assert_eq "first-push disconnected history reaches no boundary" "" "$FIRST_BOUNDARIES"
+    FIRST_EXPECT='rc=0 scope=all major= ambiguous=0'
+  else
+    FIRST_SEED="$(git -C "$FIRST" rev-parse origin/main^^)" || exit 2
+    assert_eq "first-push $FIRST_MODE reaches the older boundary first" \
+      "$(printf '%s\n%s' "$FIRST_SEED" "$FIRST_BASE")" "$FIRST_BOUNDARIES"
+    q git -C "$FIRST" merge-base --is-ancestor "$FIRST_SEED" "$FIRST_BASE"
+    case "$FIRST_MODE" in
+      clean) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major= ambiguous=0" ;;
+      own-major) FIRST_EXPECT="rc=1 scope=base:$FIRST_BASE major=lib.json:1.0.0:2.0.0 ambiguous=0" ;;
+    esac
+  fi
+  assert_eq "first-push boundary judgment: $FIRST_MODE" "$FIRST_EXPECT" "$(first_push_judgment "$FIRST" "$FIRST_MODE")"
+done
+
+# Advancing the selected baseline to HEAD hides a real branch version bump.
+# Keep the batch and changelog lane intact, and run only the own-major row.
+UNSAFE_BOUNDARY="$TMP/.unsafe-boundary/commit-guards"
+mkdir -p "$(dirname "$UNSAFE_BOUNDARY")"
+cp -R "$SKILL_TEMPLATE" "$UNSAFE_BOUNDARY"
+gg_mutant UNSAFE_LANE pre-push 'eval "$__v=\$selected"' 'eval "$__v=\$local_oid"'
+cp -- "$UNSAFE_LANE" "$UNSAFE_BOUNDARY/scripts/pre-push"
+UNSAFE_FIRST=""
+first_push_merge UNSAFE_FIRST unsafe-first own-major "$UNSAFE_BOUNDARY"
+UNSAFE_TIP="$(git -C "$UNSAFE_FIRST" rev-parse HEAD)" || exit 2
+assert_eq "must-fail: a HEAD baseline hides the branch's own major" \
+  "rc=0 scope=base:$UNSAFE_TIP major= ambiguous=0" "$(first_push_judgment "$UNSAFE_FIRST" own-major)"
+
 # --------------------------------------------------------------- the ref lines
 #
 # One repository, one branch left standing somewhere this checkout is not, and
