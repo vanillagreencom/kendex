@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.5.1
+
+- Restore elapsed time on hidden thinking labels wrapped in Pi's mouse controls.
+
 ### 2.5.0
 
 - Add an optional gateway privacy setting for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. It requires zero data retention and no prompt training while keeping other routing options. On a gateway session model, QOL uses Pi's documented session hooks to write compaction and branch summaries with these fields. A failed protected summary reports the provider error and cancels instead of falling back to Pi's unprotected summary. Error reports remain available when compaction notices are off and in headless sessions.
