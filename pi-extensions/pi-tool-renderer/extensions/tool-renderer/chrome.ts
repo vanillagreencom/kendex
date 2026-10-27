@@ -7,6 +7,7 @@ import {
 	stripLeadingBackgroundLayer,
 	trimOuterBlankLines,
 	trimTrailingWhitespaceBeforeAnsi,
+	visibleWidth,
 	wrapTextWithAnsi,
 } from "./ansi.js";
 import { captureDiffBackgroundTheme } from "./diff.js";
@@ -154,7 +155,11 @@ function renderedToolCore(rendered: string[], width: number, cwd?: string): stri
 		// Plain trimEnd() cannot see those spaces when ANSI comes after them;
 		// if they survive, the right-margin guard wraps each padded row into a
 		// blank continuation line. Trim visually trailing spaces before wrapping.
-		const wrapped = wrapTextWithAnsi(trimTrailingWhitespaceBeforeAnsi(stripLeadingBackgroundLayer(line)), renderWidth);
+		const trimmed = trimTrailingWhitespaceBeforeAnsi(stripLeadingBackgroundLayer(line));
+		// wrapTextWithAnsi returns a single line that fits as it is; most rows already fit,
+		// and skipping the wrap keeps a long transcript's first render cheap.
+		if (!/[\r\n]/.test(trimmed) && visibleWidth(trimmed) <= renderWidth) return [trimmed];
+		const wrapped = wrapTextWithAnsi(trimmed, renderWidth);
 		return wrapped.length > 0 ? wrapped : [""];
 	});
 }

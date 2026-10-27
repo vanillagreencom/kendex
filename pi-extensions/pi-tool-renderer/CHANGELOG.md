@@ -11,6 +11,8 @@
 
   You do: update Pi to 1.0.1 or later before installing this update; enable `grep`, `find` and `ls` in Pi's tool selection if you need them, because drawing no longer activates search tools. Enabled `tool_batch` remains available immediately, including embedded sessions without extension binding.
 
+- Tool chrome skips redundant wrapping for rows that already fit, reducing renderer work on a transcript's first draw while preserving the drawn rows. Thanks to @eaxeax.
+
 ### 2.0.10
 
 - With `pendingStatusAnimation` on, a running tool row stops blinking when the run is interrupted or the session ends, even when Pi drops the row before its result, and does not blink again when Pi redraws it.
