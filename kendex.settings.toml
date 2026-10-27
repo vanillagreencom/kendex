@@ -133,7 +133,7 @@ ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # Owner ruling 1791748311 caps lanes while unblocked work exists.
-ORCH_OVERSEER_LANES = "18"
+ORCH_OVERSEER_LANES = "6"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
 # OWNER/REPO; open-terminal refuses a fleet launch from any other.
