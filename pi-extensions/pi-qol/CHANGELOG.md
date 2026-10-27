@@ -2,10 +2,11 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.5.1
 
 - Session auto-rename on a GitHub Copilot enterprise login sends its request to the enterprise API host, as Pi's own requests do. It used the individual host, which refused the request, so the session kept its fallback name.
 - The session auto-rename request asks for the lowest reasoning effort the naming model accepts, and turns reasoning off where the model allows it. A reasoning model previously reasoned at its default effort and could spend all of `sessionAutoRename.maxTokens` before it wrote a title.
+- The thinking timer shows the elapsed time on the hidden-thinking line again. Pi 1.0.1 wraps that label in a mouse region, and the timer looked only for a bare label, so it showed no time.
 
 ### 2.5.0
 

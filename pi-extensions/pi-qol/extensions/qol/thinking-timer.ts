@@ -71,11 +71,15 @@ export function installThinkingTimerPatch(): void {
 			const labelComponents: Text[] = [];
 			for (const child of this.contentContainer.children as any[]) {
 				if (!child || typeof child !== "object") continue;
-				if (typeof child.setText !== "function") continue;
-				if (typeof child.text !== "string") continue;
+				// Pi's SDK setHiddenThinkingLabel applies one label globally, not per block.
+				// Until it supports per-block labels, depend on the private contentContainer
+				// and MouseRegion.child (verified at Pi 0.86.0 and 1.0.1).
+				const label = child.child ?? child;
+				if (typeof label.setText !== "function") continue;
+				if (typeof label.text !== "string") continue;
 				const expectedLabel = thinkingLabel(store.cwd);
-				if (!child.text.includes(expectedLabel) && !child.text.includes("Thinking...")) continue;
-				labelComponents.push(child as Text);
+				if (!label.text.includes(expectedLabel) && !label.text.includes("Thinking...")) continue;
+				labelComponents.push(label as Text);
 			}
 			if (labelComponents.length === 0) return;
 
