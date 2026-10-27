@@ -1,0 +1,1 @@
+- Remove a Pi package's leftover instructions during apply after Pi has already removed its registration and package directory.

@@ -848,9 +848,6 @@ fn pi_removal(
         Some(_) => Pre::tree_as_is(&package)?,
         None => Pre::Absent,
     };
-    if !registered && pre.binds_nothing() {
-        return Ok(None);
-    }
     let append = crate::pi_ext::append_system_target(env, &scope_root)?;
     let current = crate::fs::read_if_exists(&append)?.unwrap_or_default();
     if crate::configedit::marker_block(&current, &entry.name).is_some() {
@@ -861,6 +858,10 @@ fn pi_removal(
                 name: entry.name.clone(),
             },
         );
+    }
+    // Pi can remove the package and registration while leaving its instructions.
+    if !registered && pre.binds_nothing() {
+        return Ok(None);
     }
     Ok(Some(PlannedOp {
         description: format!(

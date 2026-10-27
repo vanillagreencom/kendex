@@ -935,12 +935,15 @@ fn changing_pi_source_refuses_before_package_mutation() {
 }
 
 /// Nothing of the package is left behind: no settings entry, no package
-/// directory, no record.
+/// directory, no instructions, no record.
 #[allow(clippy::unwrap_used)]
 fn assert_pi_widgets_gone(project: &Path) {
     assert!(!project.join(".pi/packages/pi-widgets").exists());
     let settings = fs::read_to_string(project.join(".pi/settings.json")).unwrap();
     assert!(!settings.contains("pi-widgets"), "{settings}");
+    let append = fs::read_to_string(project.join(".pi/APPEND_SYSTEM.md")).unwrap_or_default();
+    assert!(!append.contains("<!-- kendex:append-system pi-widgets begin -->"));
+    assert!(!append.contains("Widget instructions."));
     let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
     assert!(
         !lock
@@ -952,33 +955,69 @@ fn assert_pi_widgets_gone(project: &Path) {
 
 #[test]
 fn orphan_cleanup_takes_the_pi_package_its_registration_and_its_record_together() {
-    let tmp = fixture();
-    let project = tmp.path().join("dev/app");
-    assert!(
-        kendex(tmp.path(), &project, &["update-pi"])
-            .status
-            .success()
-    );
-    fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
-    // Refresh keeps and reports orphaned Pi packages without refusing
-    // the scope over them.
-    let refresh = kendex(
-        tmp.path(),
-        &project,
-        &["refresh", "--scope", "project", "--yes", "--leave"],
-    );
-    assert!(refresh.status.success(), "{refresh:?}");
-    let env = kendex_core::env::Env::host_rooted(tmp.path());
-    let scope = kendex_core::model::Scope::Project {
-        root: project.clone(),
-    };
-    let options = kendex_core::engine::PlanOptions {
-        remove_orphans: true,
-        ..kendex_core::engine::PlanOptions::current()
-    };
-    let report = kendex_core::engine::plan_apply(&env, &scope, &options).unwrap();
-    kendex_core::apply::execute(&env, &report.plan).unwrap();
-    assert_pi_widgets_gone(&project);
+    for externally_removed in [false, true] {
+        let tmp = fixture();
+        let root = rooted(&tmp);
+        let project = root.join("dev/app");
+        let source = project.join("catalog/pi-extensions/pi-widgets");
+        write(
+            &source.join("package.json"),
+            r#"{"name":"pi-widgets","version":"2.0.0","pi":{"extensions":["index.js"],"appendSystem":"system.md"}}"#,
+        );
+        write(&source.join("system.md"), "Widget instructions.\n");
+        let installed = kendex(&root, &project, &["update-pi"]);
+        assert!(installed.status.success(), "{installed:?}");
+        let append = project.join(".pi/APPEND_SYSTEM.md");
+        let instructions = fs::read_to_string(&append).unwrap();
+        assert!(instructions.contains("<!-- kendex:append-system pi-widgets begin -->"));
+        assert!(instructions.contains("Widget instructions."));
+        write(&append, &format!("Personal instructions.\n{instructions}"));
+        let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+        assert!(
+            lock.entries
+                .values()
+                .any(|entry| entry.name == "pi-widgets")
+        );
+        fs::write(project.join("kendex.toml"), "schema = 7\n").unwrap();
+        if externally_removed {
+            // Pi's own removal drops these but leaves the append block.
+            fs::write(project.join(".pi/settings.json"), "{}\n").unwrap();
+            fs::remove_dir_all(project.join(".pi/packages/pi-widgets")).unwrap();
+        }
+        // Refresh keeps and reports orphaned Pi packages without refusing
+        // the scope over them. Fixture writes also work inside a marked lane.
+        let refresh = kendex(
+            &root,
+            &project,
+            &[
+                "refresh",
+                "--scope",
+                "project",
+                "--yes",
+                "--leave",
+                "--lane-refresh",
+            ],
+        );
+        assert!(refresh.status.success(), "{refresh:?}");
+        let applied = kendex(
+            &root,
+            &project,
+            &[
+                "apply",
+                "--scope",
+                "project",
+                "--yes",
+                "--leave",
+                "--lane-refresh",
+            ],
+        );
+        assert!(applied.status.success(), "{applied:?}");
+        assert_pi_widgets_gone(&project);
+        assert_eq!(
+            fs::read_to_string(&append).unwrap(),
+            "Personal instructions.\n"
+        );
+    }
 }
 
 #[test]
