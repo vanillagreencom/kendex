@@ -98,6 +98,17 @@ text=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_LOG="$TMP/gh-text.lo
 assert_eq "${text%%$'\n'*}" \
   "ci-wait: none-configured base=main repo=owner/repo" "the plain none-configured line names its base and repository"
 
+# Decision 52: submit-pr passes --required-only. With no required contexts the
+# required-set read answers ready and the same probe runs on the first empty
+# poll, so the no-CI route reaches the none verdict under that flag too, and
+# the four absence probes are the reads behind it.
+out_required=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_LOG="$TMP/gh-required.log" \
+  CI_WAIT_NO_CHECKS_GRACE=1 GH_TOKEN=stub "$SCRIPTS/ci-wait" 1 1 5 --required-only --json 2>/dev/null || true)
+assert_eq "$(jq -r '.status + " " + .verdict + " " + .repo' <<<"$out_required")" "complete none owner/repo" \
+  "--required-only with no required contexts reaches the none verdict"
+assert_eq "$(grep -c -E 'actions/workflows|branches/main --jq \.protected|rules/branches/main --jq |/status --jq \.total_count' "$TMP/gh-required.log")" 4 \
+  "--required-only none rests on the four absence probes"
+
 # Teeth: with active workflows present the shortcut must NOT fire — the run
 # falls through to the grace path and, at grace 1s with no checks, errors out.
 out2=$(cd "$WT" && PATH="$BIN:$PATH" env -u GH_REPO GH_STUB_WORKFLOWS=3 \

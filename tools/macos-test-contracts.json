@@ -259,6 +259,7 @@
     "skills/orch/tests/lanes.sh": "linux-duplicate",
     "skills/orch/tests/lanes_context.sh": "linux-duplicate",
     "skills/orch/tests/merge-pr-restack-wiring.test.sh": "mixed",
+    "skills/orch/tests/one_job.sh": "linux-duplicate",
     "skills/orch/tests/open-terminal-brief-file.sh": "linux-duplicate",
     "skills/orch/tests/open-terminal-brief-startup.sh": "native",
     "skills/orch/tests/open-terminal-cap.sh": "linux-duplicate",
