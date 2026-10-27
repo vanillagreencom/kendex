@@ -11,7 +11,7 @@ A command and Rust library that starts one AI coding-agent session, watches it, 
 - Finds the session file each harness writes for a working directory.
 - Keeps launch records as locked, revisioned JSON that preserves fields it does not know.
 - Answers every command with one versioned JSON reply, `agent-runtime-v1`.
-- Builds itself once into a user cache keyed by its own sources, and refuses to run until that build exists.
+- Builds itself once into a user cache keyed by its own sources, and refuses to run until that build exists. The same build route serves a package whose runtime depends on this one, such as orch.
 
 ## Install
 

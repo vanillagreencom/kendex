@@ -21,8 +21,8 @@ refuse() { # KEY FIELD=VALUE...
 # shellcheck source=lib/key.sh
 . "$here/lib/key.sh"
 
-runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse inputs-missing "runtime=$here/../runtime"
-cache="${AGENT_RUNTIME_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/kendex/agent-runtime}"
+runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse runtime-missing "runtime=$here/../runtime"
+cache="$(agent_runtime_cache)"
 key="$(agent_runtime_key "$runtime")"
 binary="$cache/bin/agent-runtime-$key"
 if [ ! -x "$binary" ]; then

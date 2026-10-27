@@ -47,7 +47,7 @@
     "window": "@3",
     "session_rows": "tmp/lane-mail/overseer/session-41020-7.jsonl",
     "session_id": "0f3d2c1b-9a8e-4d7c-b6a5-443322110000",
-    "harness_pid": 41388,
+    "harness_pid": "41388",
     "harness_start": "ticks:9912345",
     "harness": "claude",
     "account": "/home/u/.claude-lanes/a1",

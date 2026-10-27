@@ -1063,10 +1063,8 @@ for recovery_case in implement-pass implement-failed implement-foreground implem
   fi
   assert_eq "$("$STATE" --state-dir "$RW/tmp" findings query issue-4503 | jq -c '.classes[] | select(.class.check == "scoped") | [.observed_count, (.sources | map(.receipt))]')" \
     "[$scoped_count,$scoped_receipts]" "$recovery_case counts failed original and recovery by their distinct receipt sources"
-  expected_stages="[[\"${original##*/}\",$started,$((started + 1))],[\"${companion##*/}\",$((started + 2)),$((started + 3))]]"
   expected_durations="[[\"recovery\",\"${original##*/}\",1],[\"recovery\",\"${companion##*/}\",1]]"
   if [[ "$recovery_result" == no-run ]]; then
-    expected_stages="[[\"${companion##*/}\",$((started + 2)),$((started + 3))]]"
     expected_durations="[[\"recovery\",\"${companion##*/}\",1]]"
   fi
   if [[ "$recovery_result" == interrupted ]]; then
@@ -1074,11 +1072,10 @@ for recovery_case in implement-pass implement-failed implement-foreground implem
       '[null,null,false]' "$recovery_case preserves unavailable proof without inventing mode, base or timing"
     cmp -s "$fg_recovery" "$RW/tmp/unfinished-record-bytes" && unchanged=true || unchanged=false
     assert_eq "$unchanged" true "$recovery_case preserves its unfinished foreground record"
-    expected_stages="[[\"${original##*/}\",$started,$((started + 1))]]"
     expected_durations="[[\"recovery\",\"${original##*/}\",1]]"
   fi
-  assert_eq "$(jq -c '[.stages[] | select(.kind == "validate" and .round_id == "recovery") | [.receipt,.start,.end]]' "$state_file")" \
-    "$expected_stages" "$recovery_case retains each receipt validation stage"
+  assert_eq "$(jq -c '[.stages[] | select(.kind == "validate")]' "$state_file")" \
+    '[]' "$recovery_case writes no validate stage: the runtime admission owns it"
   assert_eq "$(jq -c '[.validate_rounds[] | [.round_id,.receipt,.seconds]]' "$state_file")" \
     "$expected_durations" "$recovery_case retains each receipt duration"
   first_timing="$(jq -c '{stages,validate_rounds,finding_occurrences}' "$state_file")"

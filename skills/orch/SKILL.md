@@ -5,8 +5,8 @@ summary: "Work-item orchestration for Linear or GitHub issues: prepare, delegate
 license: MIT
 user-invocable: true
 dependencies:
-  required: [communication, mailbox, github, worktree, dev, project-management, decider, reviewer, review-gate, change-scope]
-  optional: [harness-ci, linear, second-opinion, commit-guards, jarvis]
+  required: [communication, mailbox, github, worktree, dev, decider, reviewer, change-scope, agent-runtime]
+  optional: [project-management, review-gate, harness-ci, linear, second-opinion, commit-guards, jarvis]
 metadata:
   author: vanillagreen
   source: kendex
@@ -19,22 +19,22 @@ tags: [automation]
 
 Load `mailbox` for [takeover](workflows/oversee-takeover.md); `github`, `worktree` and `linear` before use. Dev and reviewer skills call orch scripts.
 
-> **MODE SWITCH**: you are the orchestrator. Delegate every implementation, review, and QA task to a specialist sub-agent. Never edit code unless the user explicitly asks, or the item runs the `micro` tier ([workflows/micro.md](workflows/micro.md)), whose runner makes the edit itself.
+> **MODE SWITCH**: you are the orchestrator. Delegate every implementation, review, and QA task to a specialist sub-agent. Never edit code unless the user explicitly asks, or the item runs the [`micro`](workflows/micro.md) tier, whose runner makes the edit itself.
 
 ## The Cycle
 
 Get the issue → dev implements → publication, review and fixes in the order from `pr-order --help` → required CI and review gate → merge.
 
-- **Bounded loops.** A fix round addresses blockers only, and the same pass declines or tracks every `fix` suggestion ([workflows/review-pr.md](workflows/review-pr.md) § 4); re-review narrows to the fix diff, the domains it touched, and the class of every defect it fixed ([reviewer/SKILL.md](../reviewer/SKILL.md) § Re-Review Rounds); two consecutive rounds with no new blocker end the review; [workflows/review-pr.md § At The Cap](workflows/review-pr.md#at-the-cap) sets the cap, cap 0 and a fix round's own regression.
+- **Bounded loops.** A fix round addresses blockers only, and the same pass declines or tracks every `fix` suggestion ([review-pr](workflows/review-pr.md) § 4); re-review narrows to the fix diff, the domains it touched, and the class of every defect it fixed ([reviewer](../reviewer/SKILL.md) § Re-Review Rounds); two consecutive rounds with no new blocker end the review; [At The Cap](workflows/review-pr.md#at-the-cap) sets the cap, cap 0 and a fix round's own regression.
 - **Finding conduct.** Apply reviewer's [decision flow](../reviewer/references/finding-disposition.md#decision-flow), [recurrence rule](../reviewer/references/finding-disposition.md#recurrence) and [filing bar](../reviewer/references/finding-disposition.md#filing-bar).
 - **Scope cuts.** A reviewer or orchestrator can choose a cut round. A round whose only findings are scope or wording asks ends the review: reply, resolve, push nothing, merge through the gate.
-- **Ask gates.** Which questions reach the user is [references/communication-modes.md](references/communication-modes.md); nothing outside that file narrows or widens the set. Use [communication](../communication/SKILL.md) for prose under the mode `ORCH_USER_MODE` names. That ask set holds whatever `ORCH_DECISION_MODE` says. Merge asks unless `ORCH_MERGE_AUTONOMY=auto`, which merges without asking only when every merge gate is green. In a lane every ask gate is `lane-mail`, never the harness question tool: [references/skill-rules.md](references/skill-rules.md) § Coordination.
+- **Ask gates.** Which questions reach the user is [communication-modes](references/communication-modes.md); nothing outside that file narrows or widens the set. Use [communication](../communication/SKILL.md) for prose under the mode `ORCH_USER_MODE` names. That ask set holds whatever `ORCH_DECISION_MODE` says. Merge asks unless `ORCH_MERGE_AUTONOMY=auto`, which merges without asking only when every merge gate is green. In a lane every ask gate is `lane-mail`, never the harness question tool: [skill-rules](references/skill-rules.md) § Coordination.
 - **Post-PR autonomy.** After a PR exists, `ORCH_DECISION_MODE=auto-recommended` takes and logs the continuing option while a bounded wait, retry, or triage round remains. `ask` presents the listed choice. `workflow-state head-budget take` owns automatic retry spending, starting the count over on a changed head for review-wait only. At a cap, `workflow-state post-pr-stop record` atomically persists the named stop and renders its matching Markdown comment; the workflow posts that file to the PR and returns the stored stop. A nested caller uses `record-if-empty` so a precise upstream stop wins. Every continuing action clears the stop with `workflow-state update`. Initialize the resolved state key before these transitions. `ORCH_MERGE_AUTONOMY` controls merge consent only.
 - **The overseer reads results.** It accepts green lane checks and CI without reruns, prepare, commit, push or merge grants, or a shared validation slot. Only local [micro](workflows/micro.md) runs here; its commit chain validates it. Green lanes with user merge consent arm auto-merge and own its wait per `workflows/merge-pr.md`. Dev test-only validation-ceiling reports end validation. Lanes tick branch boxes with proving artifacts. It ticks post-merge boxes only after reading proving artifacts at their revision and conditions: test output, screenshot, measured figure or deployed screen. Lane summaries are no proof. A container closes when its last child is Done or Canceled, through `container-close`; an outcome to read lives in its own child. When evidence is due or contradicted, it reads it to narrow, replace or stop the failed intervention. A fix item is not the default. It gives no model or account instructions. Lanes keep launch models and launch no lanes.
 - **Item work stays in lanes.** A fleet is hosted when `lane-host resolve` prints anything except `local`. Overseers share its control VM for coordination. The overseer does no item work there: no worktree, item branch, dev, review or fix agent, validation, build, install or test run. Every item round goes to its branch's lane. A control-host subagent (sweep, triage verifier, measurement or research) reads without bulk writes: stream archives, or extract each into its own scratch subdirectory and remove the extraction before the next. Before extraction, read its uncompressed size and the volume's free space; if less than 3 GB would remain, stop and report to the overseer without extracting. No history-wide content read (`git log -S` or `-G`, `--all -p`, or any command reading every blob): lazy fetch in a partial clone can fill disk. Search via `gh search code`, the GitHub API, or a lane. No busy waits (`/dev/zero`, `/dev/urandom`, spin polls) on the shared host. Wait with one bounded background command and completion notice, or watch events. Every control-host subagent brief includes this rule. Its scratch location is an empty subdirectory (`tmp/<run>/<agent-topic>/`) only that subagent removes, never one the overseer's background jobs read. Fleet guards read [command blocks](references/control-host-toolchain.conf). Refresh follows the [consumer's owner](references/oversee-events.md). No `--refresh-only` exception.
 - **Acceptance is artifact-based.** A round closes on a validated on-disk artifact plus git/tracker state, never on a return message.
-- **Rules reload after a rebase.** Before a step that can rebase the branch (`worktree-push`, `worktree create --reuse`, a restack), bind `git -C [WT_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`. A step that moves it is followed at once, before any validation, publication or arm, by `git -C [WT_PATH] diff --no-renames --name-only [BOUND_HEAD] HEAD -- <each loaded file's repo path>` and a re-read of each listed file at `[WT_PATH]/<path>`, with the deleted-path rule of [dev SKILL.md § Round Contract](../dev/SKILL.md#round-contract).
-- **A lane is quiet.** `ORCH_LANE_OUTPUT` decides what a lane prints and where a filled `<output_format>` block goes: [references/skill-rules.md](references/skill-rules.md) § Lane Output.
+- **Rules reload after a rebase.** Before a step that can rebase the branch (`worktree-push`, `worktree create --reuse`, a restack), bind `git -C [WT_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`. A step that moves it is followed at once, before any validation, publication or arm, by `git -C [WT_PATH] diff --no-renames --name-only [BOUND_HEAD] HEAD -- <each loaded file's repo path>` and a re-read of each listed file at `[WT_PATH]/<path>`, with the deleted-path rule of dev's [Round Contract](../dev/SKILL.md#round-contract).
+- **A lane is quiet.** `ORCH_LANE_OUTPUT` decides what a lane prints and where a filled `<output_format>` block goes: [skill-rules](references/skill-rules.md) § Lane Output.
 
 ## Commands
 
@@ -72,6 +72,8 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | Script | Intent |
 |--------|--------|
 | `workflow-state` | Persistent state read/write/append. See below |
+| `orch-runtime` | Typed workflow-record runtime, `--help`; runs the binary `setup` built for the sources beside it, else prints `orch-runtime: setup-required key=<key> run=<path to setup>` on stderr, exits 69 and builds nothing |
+| `setup` | Build `orch-runtime` into the user cache through the agent-runtime skill's `scripts/setup`, keyed on this runtime's sources and agent-runtime's; once per source revision, never on a hook path |
 | `git-context` | Git-derived values (branch, head, issue id, roots, timestamps) |
 | `pr-view-json` | PR view JSON; `status=no_pr` exits 0 and routes to PR creation, not an error |
 | `resolve-base-branch` | Print a worktree's base branch; exits 1 rather than guess |
@@ -80,15 +82,15 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `base-freshness` | Gate the review cycle on a current base, or on a clean merge onto a merge-queue base; unverifiable = stale |
 | `review-artifact-check` | Validate a reviewer's JSON artifact, the sole reviewer completion condition |
 | `dev-return-write` | Write a dev agent's round-scoped completion artifact; never hand-author the JSON |
-| `worktree-push` | Push an issue worktree via `worktree push`, reconciling rebased SHAs in workflow state in the same call; `--check-live-round` answers whether a fix round is in flight and pushes nothing |
+| `worktree-push` | Push an issue worktree via `worktree push` and reconcile rebased SHAs in workflow state in one call; `--check-live-round` says whether a fix round is in flight and pushes nothing |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time; `--cut` records a reviewer or orchestrator scope choice |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round id |
 | `round-prune` | Consumer-selected Cargo cleanup at round start; [Round Closure](references/skill-rules.md#round-closure) owns its policy and contract |
 | `round-recover` | Close a stalled dev round from the idle agent's transcript: write the report as the artifact, or mint one re-delegation's round id |
 | `dev-validate-run` | Run configured validation; contract: `--help`. Harness routes: dev SKILL.md § Long-Running Validation |
 | `restack-skip` | Say whether a restacked head skips its range re-test: no conflict, or only version fields and changelog entries conflicted, per `--help` |
-| `item-tier` | Assign an item's tier, `micro`, `small` or `standard`, from the launch estimate, Expected delta and the shared rules for its Location and changed paths; the widest input wins. Measured branch line counts do not select a tier. `--help` |
-| `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the gate mode: it reads the consumer's `REVIEW_GATE_MODE` from the base checkout first, then native GitHub requirements where that policy permits it |
+| `item-tier` | Assign an item's tier, `micro`, `small` or `standard`, from the launch estimate, Expected delta and the shared Location and changed-path rules; the widest input wins, and measured branch line counts never select a tier. `--help` |
+| `approval-wait` | Poll the reviewer gate; `--resolve-mode` prints the gate mode, read from the consumer's `REVIEW_GATE_MODE` in the base checkout first, then native GitHub requirements where that policy permits |
 | `ci-wait` | Block until CI completes on a PR |
 | `copilot-wait` | Wait for Copilot work |
 | `queue-wait` | Blocking merge-queue / auto-merge waiter and verdict producer |
@@ -97,24 +99,24 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags` |
 | `pane-write` | Writes lane input after target and process checks; `pane=verb` uses the provider |
-| `lane-close` | Stop one finished recorded lane's harness by signal, unless a hosted stop answers the item's worktree is gone, close its hosted sandbox (`--merged` for a merged, completed item) and tmux window, remove a finished item's state files on a full close, and update its fleet record. With `--park --pr N`, end a hosted lane's clean merge wait instead: stop the harness and the sandbox with its disk kept and record the lane `parked`, once the checks of [references/oversee-lanes.md § Parking a merge wait](references/oversee-lanes.md#parking-a-merge-wait) admit it |
+| `lane-close` | Stop one finished recorded lane's harness by signal, unless a hosted stop answers the item's worktree is gone, close its hosted sandbox (`--merged` for a merged, completed item) and tmux window, remove a finished item's state files on a full close, and update its fleet record. With `--park --pr N`, end a hosted lane's clean merge wait instead: stop the harness and the sandbox with its disk kept and record the lane `parked`, once the checks of [Parking a merge wait](references/oversee-lanes.md#parking-a-merge-wait) admit it |
 | `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix per `lanes --help`, exit 3 when none qualifies; `context` reports each live lane's context use; `state <item>` prints one lane's state from the pane, by the same judge `oversee-watch` and `open-terminal --wake` ask |
-| `lane-host` | Resolve or call the configured host provider; protocol: [schemas/lane-host.md](schemas/lane-host.md). Static SSH reference: `lane-host-ssh --help` |
-| `overseer-host` | Resolve or call the runtime the overseer's own session runs in, `ORCH_OVERSEER_HOST`; protocol: [schemas/overseer-host.md](schemas/overseer-host.md). tmux provider: `overseer-host-tmux --help` |
-| `oversee` | `launch` opens a fleet's first overseer on the `ORCH_OVERSEER_PREFERENCE` account, from outside tmux with `ORCH_TMUX_SESSION` set, or with `--predecessor` its successor, and refuses `overseer-live` while one runs otherwise; `register` records a hand-opened one. Both write the `overseer` record [schemas/workflow-state.md § Oversee state](schemas/workflow-state.md#oversee-state) states |
+| `lane-host` | Resolve or call the configured host provider; protocol: [lane-host.md](schemas/lane-host.md). Static SSH reference: `lane-host-ssh --help` |
+| `overseer-host` | Resolve or call the runtime the overseer's own session runs in, `ORCH_OVERSEER_HOST`; protocol: [overseer-host.md](schemas/overseer-host.md). tmux provider: `overseer-host-tmux --help` |
+| `oversee` | `launch` opens a fleet's first overseer on the `ORCH_OVERSEER_PREFERENCE` account, from outside tmux with `ORCH_TMUX_SESSION` set, or with `--predecessor` its successor, and refuses `overseer-live` while one runs otherwise; `register` records a hand-opened one. Both write the `overseer` record states of [§ Oversee state](schemas/workflow-state.md#oversee-state) |
 | `lane-mail` | The lane-to-overseer mailbox and the owner channel. A lane runs `ask`, `notice`, `wait`, `inbox` and its mailbox monitor `watch`; the overseer runs `send`, `drain`, `pending` and `events`, adding `--root` and `--host` for a lane on another host, and on its own mailbox asks and reports to the owner with `--to owner` and closes an owner ask once with `resolve` |
-| `lane-marker` | Write a lane's launch record, the marker under the common git directory and the lane's own mailbox; `open-terminal` and `lane-host create` both call it, and `lane-mail-check` hands a lane its mail only where it stands |
+| `lane-marker` | Write a lane's launch record, the marker under the common git directory and the lane's own mailbox; `open-terminal` and `lane-host create` call it, and `lane-mail-check` hands a lane its mail only where it stands |
 | `reconcile-work-items` | Read-only tracker sweep (parked containers, items stale past `RECONCILE_STALE_HOURS`, Done items with unchecked boxes). Exit 1 on findings |
-| `oversee-watch` | Block until the fleet needs the overseer, then print one wake carrying every event the pass found. Also reads the overseer's own session, from its recorded exit status, its session rows and its account, with its pane as the named fallback: `overseer-mark` reports its own account mark reached, and `overseer-dead` and `overseer-walled` relaunch an overseer that ended or whose account is spent, in its window through `oversee-succeed`, where exit 3 says a successor holds it. `--repeat` is started through the orch job runner, `scripts/lib/job-unit.sh`, by [references/waiter-launch.md](references/waiter-launch.md) |
+| `oversee-watch` | Block until the fleet needs the overseer, then print one wake with every event the pass found. Also reads the overseer's own session, from its recorded exit status, its session rows and its account, with its pane as the named fallback: `overseer-mark` reports its own account mark reached, and `overseer-dead` and `overseer-walled` relaunch an overseer that ended or whose account is spent, in its window through `oversee-succeed`, where exit 3 says a successor holds it. [Waiter launch](references/waiter-launch.md) starts `--repeat` through the orch job runner, `scripts/lib/job-unit.sh` |
 | `oversee-cycle` | Record a merged lane's cycle or report per-class totals; fields, targets and repeated-miss rules: `--help` |
 | `oversee-succeed` | Replace an overseer and restart its fleet watch through the orch job runner. Triggers, refusals, check-only mode and launch/recovery flags: `--help`; the turn-end hook and `oversee-watch` use its `--check-marks` answer |
-| `overseer-approve` | Approve one exact pull request head as the overseer's GitHub App from the token file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names, refusing `head-moved` when the live head does not start with the given one: [references/copilot-head-notices.md](references/copilot-head-notices.md), `--help` |
+| `overseer-approve` | Approve one exact PR head as the overseer's GitHub App from the token file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names, refusing `head-moved` when the live head does not start with the given one: [Copilot head notices](references/copilot-head-notices.md), `--help` |
 
-Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path. Waiter and gate semantics, including the `3` exit on hard auth failure and reading the effective gate mode (`approval`, `off`) only through `approval-wait --resolve-mode`: [references/gates.md](references/gates.md). Artifact checks: [references/artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) (review/QA findings).
+Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path. Waiter and gate semantics, including the `3` exit on hard auth failure and reading the effective gate mode (`approval`, `off`) only through `approval-wait --resolve-mode`: [gates.md](references/gates.md). Artifact checks: [artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [review-finding.md](../reviewer/schemas/review-finding.md) (review/QA findings).
 
 **Multi-PR watching.** Never hand-roll a monitor. When `.agents/skills/github/scripts/pr-watch.sh` exists, run it (oversee: through `oversee-watch`); otherwise per-PR `approval-wait`/`queue-wait`.
 
-**`workflow-state`.** Run it with no arguments for the action reference, and read `workflow-state --help` § Keys for the state-key forms.
+**`workflow-state`.** Run it with no arguments for the action reference; `workflow-state --help` § Keys gives the state-key forms.
 
 **A queued merge is waited out in the lane**: `merge-pr.md` § 5 step 1 uses [Waiter launch](references/waiter-launch.md) and routes the recorded verdict (`queue-wait --help` § Verdicts). The lane stays active until it can finish the post-merge work.
 
@@ -122,17 +124,17 @@ Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose 
 
 Requires kendex 1.20.0 or newer for managed Claude model overrides.
 
-Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Keys: [README.md](README.md) § Setup; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`. Dependencies: `jq`; `bash` 3.2; `python3` 3.8+: Claude GUI, SSH, configured archives; `flock` and `setsid` (util-linux); `timeout` or `gtimeout` (coreutils) for `dev-validate-run`, and `perl` for its `--attached`. Optional: `systemd-run` with a lingering user manager, which contains the orch job runner's jobs ([references/job-units.md](references/job-units.md)); `setsid` stays the fallback where the manager does not linger, its Linger cannot be read, or it cannot start a unit.
+Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Keys: [README.md](README.md) § Setup; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`. Dependencies: `jq`; `bash` 3.2; `python3` 3.8+: Claude GUI, SSH, configured archives; `flock` and `setsid` (util-linux); `timeout` or `gtimeout` (coreutils) for `dev-validate-run`, and `perl` for its `--attached`. Optional: `systemd-run` with a lingering user manager, which contains the orch job runner's jobs ([job-units](references/job-units.md)); `setsid` stays the fallback where the manager does not linger, its Linger cannot be read, or it cannot start a unit.
 
 ---
 
 ## Runtime Notes
 
-> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` means an execpolicy rule matched the command, not its shell form. Never retry it, never wait for approval; act per [references/codex-runtime.md](references/codex-runtime.md). Run long waiters through [Waiter launch](references/waiter-launch.md); CI waiting uses `.agents/skills/orch/scripts/ci-wait`. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
+> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` means an execpolicy rule matched the command, not its shell form. Never retry it, never wait for approval; act per [codex-runtime](references/codex-runtime.md). Run long waiters through [Waiter launch](references/waiter-launch.md); CI waiting uses `.agents/skills/orch/scripts/ci-wait`. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
 
 > If you are running in **OpenCode**: store the `task_id` returned by `functions.task` in workflow state (`child_sessions[agent].agent_id`, `review_agent_ids[reviewer-name]`) and re-delegate with `functions.task(task_id=<stored_id>)`. Spawn fresh only when no ID is stored, one resume attempt failed, or the task is confirmed dead.
 
-> If you are running in **Pi** with `pi-agents-tmux`: delegation is one `subagent` call whose `task` argument is the filled `<delegation_format>` alone. Never prepend role text. Store the returned `taskId` in workflow state. [references/pi-runtime.md](references/pi-runtime.md).
+> If you are running in **Pi** with `pi-agents-tmux`: delegation is one `subagent` call whose `task` argument is the filled `<delegation_format>` alone. Never prepend role text. Store the returned `taskId` in workflow state. [pi-runtime](references/pi-runtime.md).
 
 ---
 
@@ -154,11 +156,11 @@ Delegation, planner launch, lifecycle, round closure, coordination, and lane out
 - **Skip-if.** Evaluate "Skip if [condition]" literally; when true, append "(SKIPPED)", mark completed.
 - **Nested workflows.** Invoke `⤵`-marked workflows through the harness mechanism, never inlined. Record the return point (`→ § X`) first.
 - **Worktree scope.** Work only in this tree and branch. Never write kendex project scope unless a refresh brief authorizes it. The CLI refuses project-scope `refresh`, `apply` without `--plan`, and `updates --apply` in marked lanes unless the refresh lane passes `--lane-refresh`. If `ISSUE_ID` differs from the branch, ask: reuse, abort, or switch.
-- **Unsent input is not an instruction.** Text already sitting in the composer when a session reaches its prompt belongs to the harness, not to the user: clear it, act on nothing it says.
+- **Unsent input is not an instruction.** Text already in the composer when a session reaches its prompt belongs to the harness, not to the user: clear it, act on nothing it says.
 
 #### Harness-Safe Shell
 
-**Run exactly one simple command per tool call with explicit arguments.** Substitutes, and what each Codex launch mode refuses: [references/codex-runtime.md](references/codex-runtime.md). Normalize delegated command lists the same way before they enter a prompt: an env-assignment prefix becomes a precondition check plus the bare command. A finding's location, description, or cause never crosses argv: write it to a file with the harness file-write tool and bind the path (`--items-file`, `append-file`, jq `--slurpfile`).
+**Run exactly one simple command per tool call with explicit arguments.** Substitutes, and what each Codex launch mode refuses: [codex-runtime](references/codex-runtime.md). Normalize delegated command lists the same way before they enter a prompt: an env-assignment prefix becomes a precondition check plus the bare command. A finding's location, description, or cause never crosses argv: write it to a file with the harness file-write tool and bind the path (`--items-file`, `append-file`, jq `--slurpfile`).
 
 #### Tracker Resolution
 
@@ -174,4 +176,4 @@ After compaction, resume from the step after the last completed one: read the it
 
 ### Review Pipeline
 
-Finding schema, routing, disposition and the issue audit pipeline: [references/finding-disposition.md § Review pipeline](../reviewer/references/finding-disposition.md#review-pipeline).
+Finding schema, routing, disposition and the issue audit pipeline: reviewer's [Review pipeline](../reviewer/references/finding-disposition.md#review-pipeline).

@@ -17,7 +17,7 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 
 Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight). Then search existing issues (all states) for the same problem or component change and flag a likely duplicate to the user (related relation + comment) instead of creating blind.
 
-Write the issue body to `tmp/issue-body-[SLUG].md` with the harness file-write tool, following project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), including the `Reached by:` line naming what arrives at the defect. `[BODY_FILE]` is that path.
+Write the issue body to `tmp/issue-body-[SLUG].md` with the harness file-write tool, following project-management's `templates/issue-description-template.md`, including the `Reached by:` line naming what arrives at the defect. `[BODY_FILE]` is that path.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[LABELS]" --format=ids

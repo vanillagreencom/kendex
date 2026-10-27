@@ -1,0 +1,7 @@
+#!/bin/bash
+# A stub whose process stands but never draws a composer marker, so the
+# launch's judge never settles and the bound passes (`unconfirmed`). Named
+# `claude` and run by bash directly so the kernel records the harness's
+# process name for it.
+printf 'starting up, no composer yet\n'
+while IFS= read -r _line; do :; done

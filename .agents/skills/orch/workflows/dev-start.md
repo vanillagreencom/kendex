@@ -237,7 +237,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 
 ### Validation status
 
-`dev-artifact-check` records each schema-valid round's end and validation time before its verdict routes the round. `worktree-push` records a restack's validation after a successful push. The scripts write `validate_rounds` and `stages` together.
+`dev-artifact-check` records each schema-valid round's end and its validation minutes in `validate_rounds` before its verdict routes the round; the round's `validate` stage is the runtime's, per `schemas/workflow-state.md` `stages`. `worktree-push` records a restack's validation after a successful push, in `validate_rounds` and `stages` together.
 
 A lane under an overseer rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive). It then lists each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes.
 

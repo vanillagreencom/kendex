@@ -5,13 +5,15 @@
 pub mod tmux;
 
 use std::ffi::OsStr;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 use crate::error::{Error, Result};
 
 /// Every external program this crate drives starts here: prompts closed,
-/// a bound on every call.
+/// a bound on every call. `program` is the executable as found on `PATH`
+/// and the name a failure reports.
 pub(crate) fn run_with(
     program: &'static str,
     operation: &'static str,
@@ -20,7 +22,49 @@ pub(crate) fn run_with(
     stdin: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<Output> {
-    let mut command = Command::new(program);
+    run_executable(
+        program,
+        OsStr::new(program),
+        operation,
+        args,
+        env,
+        stdin,
+        timeout,
+    )
+}
+
+/// The same runner for an executable named by path, for a consumer crate
+/// that drives a program at a configured location: `program` is the name
+/// a failure reports, `executable` what runs. The child inherits the
+/// caller's environment plus `env`.
+pub fn run(
+    program: &'static str,
+    executable: &Path,
+    operation: &'static str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output> {
+    run_executable(
+        program,
+        executable.as_os_str(),
+        operation,
+        args,
+        &[],
+        None,
+        timeout,
+    )
+}
+
+fn run_executable(
+    program: &'static str,
+    executable: &OsStr,
+    operation: &'static str,
+    args: &[&str],
+    env: &[(&str, &OsStr)],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<Output> {
+    let mut command = Command::new(executable);
     command.args(args);
     for (name, value) in env {
         command.env(name, value);
@@ -75,12 +119,12 @@ pub(crate) fn run_with(
     })
 }
 
-pub(crate) fn stdout_text(output: &Output) -> String {
+pub fn stdout_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout)
         .trim_end_matches('\n')
         .to_owned()
 }
 
-pub(crate) fn stderr_text(output: &Output) -> String {
+pub fn stderr_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().to_owned()
 }

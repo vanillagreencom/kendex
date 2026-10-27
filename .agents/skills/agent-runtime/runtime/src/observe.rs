@@ -1,14 +1,23 @@
-//! The one judge of what a session's screen says. Every reader that must
+//! The one judge of what a session's pane says. Every reader that must
 //! tell a working session from an idle, asking, walled or exited one asks
 //! here. The patterns are the installed harness drawings orch measured;
 //! each is read over the slice below the last user turn, so a banner the
 //! session has since taken another turn past is scrollback, not state.
+//!
+//! `idle` is the one reading that authorizes a delivery, so it needs two
+//! facts, not one: the process holding the pane's terminal is the harness
+//! (its identity read, and equal to the recorded one when the caller has
+//! one), and the harness's own composer is drawn. A shell at its prompt
+//! draws lines a marker rule can match, before the harness has started or
+//! after it has gone, and never reads idle whatever it draws.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
+use crate::error::Result;
 use crate::harness::Harness;
+use crate::process::{self, Identity};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "state")]
@@ -36,17 +45,101 @@ pub enum WallKind {
     Auth,
 }
 
-/// What a process read says about the pane's harness, supplied by the
-/// caller that holds the process table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+/// What the process table says about the pane: who holds its terminal.
+/// [`foreground`] reads it from a live pane; the `judge` verb takes one of
+/// the two readings a screen file cannot supply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reading", rename_all = "kebab-case")]
 pub enum ProcessReading {
-    /// Nothing but shells: the harness is gone.
+    /// Nothing but shells run under the pane: the harness is gone.
     ShellsOnly,
-    /// A harness process runs; the screen decides its turn state.
+    /// The caller asserts the harness holds the pane and the screen alone
+    /// decides: the `judge` verb's reading of a captured screen. A live
+    /// pane is read with [`foreground`] instead.
     HarnessUp,
+    /// The harness holds the pane's terminal, under this identity.
+    Harness { identity: Identity },
+    /// A shell holds the terminal: the harness has not replaced it yet, or
+    /// a shell it started is in the foreground.
+    ForegroundShell { name: String },
+    /// Another process holds the terminal: not a shell and not the harness,
+    /// or the harness under an identity other than the recorded one.
+    ForegroundOther { name: String, pid: u32 },
     /// The table could not be read.
     Unread,
+}
+
+/// Read who holds the terminal of the pane whose process is `pane_pid`: the
+/// members of the foreground process group. The harness holds the pane when
+/// one of its own processes under the pane is a member, the exec'd harness
+/// itself or a harness a non-interactive shell wrapper waits on; `owns`
+/// names the harness's processes (`Harness::owns_process_of`). With
+/// `recorded`, only that exact identity is the harness; without one, the
+/// nearest harness-named member is, and its identity is read for the caller
+/// to record. A group of shells alone is `ShellsOnly` when no harness
+/// process runs under the pane at all, else `ForegroundShell`.
+pub fn foreground(
+    pane_pid: u32,
+    owns: &dyn Fn(&str) -> bool,
+    recorded: Option<&Identity>,
+) -> Result<ProcessReading> {
+    let Some(group) = process::foreground_group(pane_pid)? else {
+        return Ok(ProcessReading::Unread);
+    };
+    let rows = process::table()?;
+    let members: Vec<&process::Row> = rows.iter().filter(|r| r.pgrp == group).collect();
+    if members.is_empty() {
+        return Ok(ProcessReading::Unread);
+    }
+    let below = process::below(&rows, pane_pid, owns);
+    let held: Vec<u32> = below
+        .iter()
+        .map(|(_, pid)| *pid)
+        .filter(|pid| members.iter().any(|m| m.pid == *pid))
+        .collect();
+    if let Some(&pid) = held.first() {
+        return Ok(match recorded {
+            Some(recorded) => {
+                if held.contains(&recorded.pid)
+                    && process::identity(recorded.pid)?.as_ref() == Some(recorded)
+                {
+                    ProcessReading::Harness {
+                        identity: recorded.clone(),
+                    }
+                } else {
+                    let name = members
+                        .iter()
+                        .find(|m| m.pid == pid)
+                        .map(|m| m.name.clone())
+                        .unwrap_or_default();
+                    ProcessReading::ForegroundOther { name, pid }
+                }
+            }
+            None => match process::identity(pid)? {
+                Some(identity) => ProcessReading::Harness { identity },
+                None => ProcessReading::Unread,
+            },
+        });
+    }
+    // The group's leader names it; a leader that exited leaves the first
+    // member to.
+    let leader = members
+        .iter()
+        .find(|m| m.pid == group)
+        .unwrap_or(&members[0]);
+    if members.iter().all(|m| process::is_shell(&m.name)) {
+        return Ok(if below.is_empty() {
+            ProcessReading::ShellsOnly
+        } else {
+            ProcessReading::ForegroundShell {
+                name: leader.name.clone(),
+            }
+        });
+    }
+    Ok(ProcessReading::ForegroundOther {
+        name: leader.name.clone(),
+        pid: leader.pid,
+    })
 }
 
 static WORKING: LazyLock<Regex> = LazyLock::new(|| {
@@ -64,9 +157,15 @@ static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
 static AUTH_FAILURE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[\s\u{a0}]*(⎿[\s\u{a0}]*|■\s*|✗\s*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages\. Please run /login)").unwrap()
 });
+/// A user-turn marker: Claude's and Copilot's `❯`, Codex's `›`. A submitted
+/// turn is echoed as the marker, a space and the text; the live composer is
+/// the harness's own drawing below.
 static MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^❯|^›").unwrap());
-/// Claude Code's composer: the marker then U+00A0.
+/// Claude Code's composer: the marker then U+00A0, the padding it gives the
+/// input line and no shell prompt or echoed turn carries (measured over
+/// 146 captures by the legacy `open-terminal`).
 static CLAUDE_COMPOSER: LazyLock<Regex> = LazyLock::new(|| Regex::new("^❯\u{a0}").unwrap());
+/// Codex's composer line, `› ` then its placeholder or the draft.
 static CODEX_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^› ").unwrap());
 /// Copilot's composer is the marker line with a rule drawn under it.
 static FRAME_RULE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[─━]{10,}\s*$").unwrap());
@@ -150,6 +249,25 @@ pub fn pi_composer_drawn(slice: &str) -> bool {
         && PI_FOOTER.is_match(drawn[n - 1])
 }
 
+/// Whether the harness's own composer is drawn in the slice. Each rule is
+/// the harness's live input line as the native probe captured it at rest
+/// (`tmp/orch-rebuild/native/run2/<harness>/inspect-idle.json`): Claude's
+/// marker padded with U+00A0, Codex's `› ` line, Copilot's marker line
+/// framed by a rule under it, Pi's rule, prompt and footer. A shell prompt
+/// that happens to start with the marker, `❯ cd … && exec claude …` as the
+/// pane's shell echoes the launch line, matches none of them.
+pub fn composer_drawn(slice: &str, harness: Harness) -> bool {
+    let lines: Vec<&str> = slice.lines().collect();
+    match harness {
+        Harness::Claude => lines.iter().any(|l| CLAUDE_COMPOSER.is_match(l)),
+        Harness::Codex => lines.iter().any(|l| CODEX_MARKER.is_match(l)),
+        Harness::Copilot => lines
+            .windows(2)
+            .any(|w| MARKER.is_match(w[0]) && FRAME_RULE.is_match(w[1])),
+        Harness::Pi => pi_composer_drawn(slice),
+    }
+}
+
 pub fn trust_dialog(screen: &str) -> Option<&str> {
     screen.lines().find(|l| TRUST_DIALOG.is_match(l))
 }
@@ -180,18 +298,26 @@ pub fn is_auth_failure(banner: &str, error_kind: Option<&str>) -> bool {
     banner.lines().any(|l| AUTH_FAILURE.is_match(l))
 }
 
-/// Judge one captured pane drawn by `harness`. `process` is the caller's
-/// process reading, and `account_room` whether the account the session
+/// Judge one captured pane drawn by `harness`. `process` is who holds the
+/// pane's terminal, and `account_room` whether the account the session
 /// spends was read as having room (`Some(true)`), walled (`Some(false)`) or
-/// unread (`None`).
+/// unread (`None`). Only a pane the harness holds, or that the caller
+/// asserts it holds, can read `idle`; a shell or another process in the
+/// foreground settles nothing, whatever the screen shows.
 pub fn judge(
     screen: &str,
     harness: Harness,
-    process: ProcessReading,
+    process: &ProcessReading,
     account_room: Option<bool>,
 ) -> State {
-    if process == ProcessReading::ShellsOnly {
-        return State::Exited;
+    match process {
+        ProcessReading::ShellsOnly => return State::Exited,
+        ProcessReading::ForegroundShell { .. } | ProcessReading::ForegroundOther { .. } => {
+            return State::Unjudged {
+                cause: "foreground-not-harness".to_owned(),
+            };
+        }
+        ProcessReading::HarnessUp | ProcessReading::Harness { .. } | ProcessReading::Unread => {}
     }
     let slice = below_last_turn(screen);
     if let Some(banner) = limit_banner(&slice) {
@@ -219,22 +345,21 @@ pub fn judge(
         }
         return State::Asking;
     }
-    if is_working(&slice) {
+    if is_working(&slice) || (harness == Harness::Pi && pi_working(&slice)) {
         return State::Working;
     }
-    let idle = match harness {
-        Harness::Pi => {
-            if pi_working(&slice) {
-                return State::Working;
-            }
-            pi_composer_drawn(&slice)
-        }
-        Harness::Claude | Harness::Codex | Harness::Copilot => {
-            slice.lines().any(|l| MARKER.is_match(l))
-        }
-    };
-    if idle {
-        return State::Idle;
+    if composer_drawn(&slice, harness) {
+        return match process {
+            ProcessReading::HarnessUp | ProcessReading::Harness { .. } => State::Idle,
+            // A drawn composer with the process table unread: the second
+            // fact idle needs is missing.
+            ProcessReading::Unread
+            | ProcessReading::ShellsOnly
+            | ProcessReading::ForegroundShell { .. }
+            | ProcessReading::ForegroundOther { .. } => State::Unjudged {
+                cause: "process-unread".to_owned(),
+            },
+        };
     }
     State::Unjudged {
         cause: match (process, harness) {
@@ -253,7 +378,7 @@ mod tests {
     fn a_claude_screen_at_its_composer_is_idle() {
         let screen = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts";
         assert_eq!(
-            judge(screen, Harness::Claude, ProcessReading::HarnessUp, None),
+            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Idle
         );
     }
@@ -262,7 +387,7 @@ mod tests {
     fn a_streaming_token_counter_is_working() {
         let screen = "❯ do the thing\n✻ Thinking… (esc to interrupt · ↓ 1.2k tokens)";
         assert_eq!(
-            judge(screen, Harness::Claude, ProcessReading::HarnessUp, None),
+            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Working
         );
     }
@@ -271,7 +396,7 @@ mod tests {
     fn a_numbered_dialog_row_is_asking() {
         let screen = "❯ run tests\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select";
         assert_eq!(
-            judge(screen, Harness::Claude, ProcessReading::HarnessUp, None),
+            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Asking
         );
     }
@@ -280,7 +405,7 @@ mod tests {
     fn a_usage_banner_below_the_last_turn_is_a_usage_wall_unless_the_account_has_room() {
         let screen = "❯ work\nYou've hit your session limit · resets 9:50am\n❯\u{a0}";
         assert!(matches!(
-            judge(screen, Harness::Claude, ProcessReading::HarnessUp, None),
+            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Walled {
                 kind: WallKind::Usage,
                 ..
@@ -290,7 +415,7 @@ mod tests {
             judge(
                 screen,
                 Harness::Claude,
-                ProcessReading::HarnessUp,
+                &ProcessReading::HarnessUp,
                 Some(true)
             ),
             State::Idle
@@ -304,7 +429,7 @@ mod tests {
             judge(
                 screen,
                 Harness::Claude,
-                ProcessReading::HarnessUp,
+                &ProcessReading::HarnessUp,
                 Some(true)
             ),
             State::Walled {
@@ -318,7 +443,7 @@ mod tests {
     fn a_banner_the_session_took_another_turn_past_is_scrollback() {
         let screen = "❯ first\nYou've hit your session limit\n❯ second\n● ok\n❯\u{a0}";
         assert_eq!(
-            judge(screen, Harness::Claude, ProcessReading::HarnessUp, None),
+            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Idle
         );
     }
@@ -329,7 +454,7 @@ mod tests {
             judge(
                 "anything",
                 Harness::Claude,
-                ProcessReading::ShellsOnly,
+                &ProcessReading::ShellsOnly,
                 None
             ),
             State::Exited
@@ -338,18 +463,90 @@ mod tests {
             judge(
                 "no markers here",
                 Harness::Claude,
-                ProcessReading::HarnessUp,
+                &ProcessReading::HarnessUp,
                 None
             ),
             State::Unjudged { .. }
         ));
     }
 
+    /// Decision 60: a shell at its prompt, or any other process, in the
+    /// pane's foreground never reads idle, whatever the screen draws; a
+    /// drawn composer with the process table unread is not idle either.
+    #[test]
+    fn a_foreground_that_is_not_the_harness_never_reads_idle_whatever_it_draws() {
+        let screen = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts";
+        let rows = [
+            ProcessReading::ForegroundShell {
+                name: "fish".to_owned(),
+            },
+            ProcessReading::ForegroundOther {
+                name: "less".to_owned(),
+                pid: 7,
+            },
+        ];
+        for reading in &rows {
+            assert_eq!(
+                judge(screen, Harness::Claude, reading, None),
+                State::Unjudged {
+                    cause: "foreground-not-harness".to_owned()
+                },
+                "{reading:?}"
+            );
+        }
+        assert_eq!(
+            judge(screen, Harness::Claude, &ProcessReading::Unread, None),
+            State::Unjudged {
+                cause: "process-unread".to_owned()
+            }
+        );
+        let held = ProcessReading::Harness {
+            identity: Identity {
+                pid: 7,
+                start: "ticks:1".to_owned(),
+            },
+        };
+        assert_eq!(judge(screen, Harness::Claude, &held, None), State::Idle);
+    }
+
+    /// The pane's shell echoing the launch line starts with the marker and
+    /// is none of the three composers; each harness's own composer is.
+    #[test]
+    fn a_shell_prompt_echoing_the_launch_line_is_no_composer_and_each_harness_s_own_is() {
+        let echo = "❯ cd /work && exec env CLAUDE_CONFIG_DIR=/h claude --model opus\n";
+        for harness in [Harness::Claude, Harness::Codex, Harness::Copilot] {
+            assert!(!composer_drawn(echo, harness), "{harness:?}");
+            assert!(matches!(
+                judge(echo, harness, &ProcessReading::HarnessUp, None),
+                State::Unjudged { .. }
+            ));
+        }
+        assert!(composer_drawn("❯\u{a0}\n", Harness::Claude));
+        assert!(!composer_drawn("❯\u{a0}\n", Harness::Codex));
+        assert!(composer_drawn(
+            "› Ask Codex to do anything\n",
+            Harness::Codex
+        ));
+        assert!(!composer_drawn(
+            "› Ask Codex to do anything\n",
+            Harness::Claude
+        ));
+        let rule = "─".repeat(40);
+        let copilot = format!(" ~/work [⎇ main]\n{rule}\n❯ \n{rule}\n");
+        assert!(composer_drawn(&copilot, Harness::Copilot));
+        assert!(!composer_drawn("❯ \n", Harness::Copilot), "unframed");
+        assert!(!composer_drawn(&copilot, Harness::Claude));
+        assert_eq!(
+            judge(&copilot, Harness::Copilot, &ProcessReading::HarnessUp, None),
+            State::Idle
+        );
+    }
+
     #[test]
     fn a_codex_composer_line_is_idle_and_its_slice_excludes_the_live_marker() {
         let screen = "› first turn\nsome answer\n› ";
         assert_eq!(
-            judge(screen, Harness::Codex, ProcessReading::HarnessUp, None),
+            judge(screen, Harness::Codex, &ProcessReading::HarnessUp, None),
             State::Idle
         );
         assert_eq!(below_last_turn(screen), "some answer\n› ");
@@ -364,13 +561,13 @@ mod tests {
             " Create the file\n done\n{PI_RULE}\n{PI_RULE}\n{PI_PROMPT_LINE}\n↑3.9k ↓115 R11k CH99.0% $0.011 0.4%/1.0M        (vercel-ai-gateway) zai/glm-5.3-fast • medium\n\n"
         );
         assert_eq!(
-            judge(&screen, Harness::Pi, ProcessReading::HarnessUp, None),
+            judge(&screen, Harness::Pi, &ProcessReading::HarnessUp, None),
             State::Idle
         );
         // The same footer before any turn, with only the context token.
         let fresh = format!("{PI_RULE}\n{PI_RULE}\n{PI_PROMPT_LINE}\n0.4%/1.0M\n");
         assert_eq!(
-            judge(&fresh, Harness::Pi, ProcessReading::HarnessUp, None),
+            judge(&fresh, Harness::Pi, &ProcessReading::HarnessUp, None),
             State::Idle
         );
     }
@@ -381,7 +578,7 @@ mod tests {
             " Create the file\n── ⠹ Working {PI_RULE}\n{PI_RULE}\n{PI_PROMPT_LINE}\n0.4%/1.0M\n"
         );
         assert_eq!(
-            judge(&screen, Harness::Pi, ProcessReading::HarnessUp, None),
+            judge(&screen, Harness::Pi, &ProcessReading::HarnessUp, None),
             State::Working
         );
     }
@@ -390,7 +587,7 @@ mod tests {
     fn a_pi_screen_without_the_composer_is_unjudged_and_the_marker_rule_stays_off_pi() {
         let screen = format!("{PI_RULE}\n{PI_PROMPT_LINE}\n some output\n");
         assert_eq!(
-            judge(&screen, Harness::Pi, ProcessReading::HarnessUp, None),
+            judge(&screen, Harness::Pi, &ProcessReading::HarnessUp, None),
             State::Unjudged {
                 cause: "composer-undrawn".to_owned()
             }
@@ -400,7 +597,7 @@ mod tests {
             judge(
                 "❯ work\n❯\u{a0}",
                 Harness::Pi,
-                ProcessReading::HarnessUp,
+                &ProcessReading::HarnessUp,
                 None
             ),
             State::Unjudged { .. }
@@ -408,7 +605,7 @@ mod tests {
         // And Pi's composer settles nothing for a harness that draws markers.
         let pi = format!("{PI_RULE}\n{PI_PROMPT_LINE}\n0.4%/1.0M\n");
         assert!(matches!(
-            judge(&pi, Harness::Claude, ProcessReading::HarnessUp, None),
+            judge(&pi, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Unjudged { .. }
         ));
     }

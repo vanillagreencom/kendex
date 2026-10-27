@@ -7,13 +7,14 @@
 //! needs the setting refuses rather than guessing.
 
 use std::fmt;
+use std::path::Path;
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Harness {
     Claude,
@@ -72,6 +73,37 @@ impl Harness {
             Harness::Copilot => name == "copilot" || name == "MainThread",
             other => name == other.name(),
         }
+    }
+
+    /// Whether a process name is this harness's session process when it
+    /// runs as `program`, an executable at a configured path: the harness's
+    /// own names, or the program's basename as the kernel records a command
+    /// name, which is its first 15 bytes.
+    pub fn owns_process_of(self, program: Option<&Path>, name: &str) -> bool {
+        if self.owns_process(name) {
+            return true;
+        }
+        let Some(base) = program.and_then(Path::file_name).and_then(|n| n.to_str()) else {
+            return false;
+        };
+        name == base || (name.len() == COMM_LEN && base.starts_with(name))
+    }
+
+    /// The words that fix the session id a fresh launch records under, so
+    /// the session's own native file is known before it is written. Only
+    /// Claude Code takes one (`--session-id <uuid>`); Codex, Copilot and Pi
+    /// mint their own, and a launch of those binds the file that appears
+    /// instead (decision 65).
+    pub fn session_id_words(self, id: &str) -> Option<Vec<String>> {
+        match self {
+            Harness::Claude => Some(vec!["--session-id".to_owned(), id.to_owned()]),
+            Harness::Codex | Harness::Copilot | Harness::Pi => None,
+        }
+    }
+
+    /// Whether a launch of this harness can fix its session id.
+    pub fn fixes_session_id(self) -> bool {
+        self.session_id_words("").is_some()
     }
 
     /// The word before a model id, with the model as the next argument.
@@ -219,9 +251,27 @@ pub fn probe(harness: Harness) -> Result<Installed> {
     }
 }
 
+/// The bytes the kernel keeps of a command name (`TASK_COMM_LEN` less the
+/// terminator).
+const COMM_LEN: usize = 15;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The harness's own names, and the configured program's basename as the
+    /// kernel records it, whole or cut to its first 15 bytes.
+    #[test]
+    fn a_configured_program_s_basename_is_the_harness_s_process_too() {
+        let program = Path::new("/opt/stubs/stub-unconfirmed-build");
+        assert!(Harness::Claude.owns_process_of(Some(program), "claude"));
+        assert!(Harness::Claude.owns_process_of(Some(program), "stub-unconfirmed-build"));
+        assert!(Harness::Claude.owns_process_of(Some(program), "stub-unconfirme"));
+        assert!(!Harness::Claude.owns_process_of(Some(program), "stub-unconfirm"));
+        assert!(!Harness::Claude.owns_process_of(Some(program), "bash"));
+        assert!(!Harness::Claude.owns_process_of(None, "stub-unconfirmed-build"));
+        assert!(Harness::Copilot.owns_process_of(None, "MainThread"));
+    }
 
     #[test]
     fn model_and_effort_words_follow_each_harness_spelling() {
@@ -241,6 +291,19 @@ mod tests {
             Harness::Pi.model_words("github-copilot/claude-opus-5.5", Some("high")),
             vec!["--model", "github-copilot/claude-opus-5.5:high"]
         );
+    }
+
+    #[test]
+    fn only_claude_takes_a_fixed_session_id() {
+        assert_eq!(
+            Harness::Claude.session_id_words("5c3b"),
+            Some(vec!["--session-id".to_owned(), "5c3b".to_owned()])
+        );
+        assert!(Harness::Claude.fixes_session_id());
+        for h in [Harness::Codex, Harness::Copilot, Harness::Pi] {
+            assert_eq!(h.session_id_words("5c3b"), None, "{h}");
+            assert!(!h.fixes_session_id(), "{h}");
+        }
     }
 
     #[test]

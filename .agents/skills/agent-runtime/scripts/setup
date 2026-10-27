@@ -1,50 +1,58 @@
 #!/usr/bin/env bash
-# Build the agent-runtime binary from the shipped sources into a user-owned
-# cache, keyed by those sources, and make it visible in one rename. usage()
+# Build a shipped runtime crate from its sources into a user-owned cache,
+# keyed by those sources, and make the binary visible in one rename. usage()
 # is the contract. Nothing here runs on a hook path: a caller that finds no
-# binary refuses and names this script (scripts/agent-runtime).
+# binary refuses and names this script (scripts/agent-runtime, or the wrapper
+# of a crate that depends on this one, such as orch's scripts/orch-runtime).
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: setup [--offline]
-  --offline   pass --offline to cargo: no network, so every locked
-              dependency must already sit in the cargo cache
+Usage: setup [--runtime DIR] [--name NAME] [--offline]
+  --runtime DIR  the crate to build: its Cargo.toml, Cargo.lock and src/
+                 (default: the runtime beside this script)
+  --name NAME    the binary the crate builds, and the cache entry's name
+                 (default: agent-runtime)
+  --offline      pass --offline to cargo: no network, so every locked
+                 dependency must already sit in the cargo cache
 
-Reads the runtime beside this script, computes its build key (lib/key.sh:
-one sha256 over Cargo.toml, Cargo.lock and every file under src/), builds
-with `cargo build --release --locked` into <cache>/build/<key> and places
-the binary at <cache>/bin/agent-runtime-<key>. <cache> is
-$AGENT_RUNTIME_CACHE, else $XDG_CACHE_HOME/kendex/agent-runtime, else
-~/.cache/kendex/agent-runtime. A binary already at that path is kept and
-nothing is built. The build's own stderr passes through.
+Computes the crate's build key (lib/key.sh: one sha256 over Cargo.toml,
+Cargo.lock, every file under src/, and the same inputs of every path
+dependency the manifest declares), builds with `cargo build --release
+--locked` into <cache>/build/<name>/<key> and places the binary at
+<cache>/bin/<name>-<key>. <cache> is $AGENT_RUNTIME_CACHE, else
+$XDG_CACHE_HOME/kendex/agent-runtime, else ~/.cache/kendex/agent-runtime.
+A binary already at that path is kept and nothing is built. The build's
+own stderr passes through.
 
 Prints one line on success:
-  agent-runtime-setup: key=<key> binary=<path>
+  <name>-setup: key=<key> binary=<path>
 A failure prints one keyed line on stderr and exits 1:
-  agent-runtime-setup: <key> field=value ...
-Keys: usage, cargo-missing, digest-tool-missing, inputs-missing,
-inputs-unreadable, digest-failed, cache-unwritable, build-failed,
-binary-missing, place-failed. bin/ never holds a partial binary: the copy
-lands in an exclusively created temporary file beside the target and is
-renamed over it only once whole.
+  <name>-setup: <key> field=value ...
+Keys: usage, runtime-missing, cargo-missing, digest-tool-missing,
+inputs-missing, inputs-unreadable, manifest-unreadable, digest-failed,
+cache-unwritable, build-failed, binary-missing, place-failed. bin/ never
+holds a partial binary: the copy lands in an exclusively created temporary
+file beside the target and is renamed over it only once whole.
 USAGE
 }
 
 here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+name=agent-runtime
+runtime_arg="$here/../runtime"
 
 refuse() { # KEY FIELD=VALUE...
   local key="$1"
   shift
-  printf 'agent-runtime-setup: %s%s\n' "$key" "${*:+ $*}" >&2
+  printf '%s-setup: %s%s\n' "$name" "$key" "${*:+ $*}" >&2
   exit 1
 }
-
-runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse inputs-missing "runtime=$here/../runtime"
 
 cargo_args=(build --release --locked)
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --runtime) [ "$#" -ge 2 ] || refuse usage "argument=$1 wanted=DIR"; runtime_arg="$2"; shift ;;
+    --name) [ "$#" -ge 2 ] && [ -n "$2" ] || refuse usage "argument=$1 wanted=NAME"; name="$2"; shift ;;
     --offline) cargo_args+=(--offline) ;;
     -h | --help) usage; exit 0 ;;
     *) refuse usage "argument=$1" ;;
@@ -52,35 +60,37 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+runtime="$(cd -- "$runtime_arg" 2>/dev/null && pwd -P)" || refuse runtime-missing "runtime=$runtime_arg"
+
 # shellcheck source=lib/key.sh
 . "$here/lib/key.sh"
 
-cache="${AGENT_RUNTIME_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/kendex/agent-runtime}"
+cache="$(agent_runtime_cache)"
 key="$(agent_runtime_key "$runtime")"
-binary="$cache/bin/agent-runtime-$key"
+binary="$cache/bin/$name-$key"
 
 if [ -x "$binary" ]; then
-  printf 'agent-runtime-setup: key=%s binary=%s\n' "$key" "$binary"
+  printf '%s-setup: key=%s binary=%s\n' "$name" "$key" "$binary"
   exit 0
 fi
 
 command -v cargo >/dev/null 2>&1 || refuse cargo-missing "key=$key"
-mkdir -p -- "$cache/build/$key" "$cache/bin" || refuse cache-unwritable "path=$cache"
+mkdir -p -- "$cache/build/$name/$key" "$cache/bin" || refuse cache-unwritable "path=$cache"
 
 status=0
-CARGO_TARGET_DIR="$cache/build/$key" cargo "${cargo_args[@]}" \
+CARGO_TARGET_DIR="$cache/build/$name/$key" cargo "${cargo_args[@]}" \
   --manifest-path "$runtime/Cargo.toml" >/dev/null || status=$?
 [ "$status" -eq 0 ] || refuse build-failed "status=$status key=$key"
-built="$cache/build/$key/release/agent-runtime"
+built="$cache/build/$name/$key/release/$name"
 [ -f "$built" ] || refuse binary-missing "path=$built"
 
 # Exclusive creation under noclobber, so a concurrent setup of the same key
 # cannot share the temporary file; the rename is the one moment the binary
 # becomes visible, whole.
-tmp="$cache/bin/.agent-runtime-$key.$$"
+tmp="$cache/bin/.$name-$key.$$"
 trap 'rm -f -- "$tmp"' EXIT
 ( set -o noclobber && cat -- "$built" >"$tmp" ) || refuse place-failed "path=$tmp"
 chmod 755 -- "$tmp" || refuse place-failed "path=$tmp"
 mv -f -- "$tmp" "$binary" || refuse place-failed "path=$binary"
 trap - EXIT
-printf 'agent-runtime-setup: key=%s binary=%s\n' "$key" "$binary"
+printf '%s-setup: key=%s binary=%s\n' "$name" "$key" "$binary"

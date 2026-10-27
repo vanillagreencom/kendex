@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Build the orch-runtime binary from the shipped sources into the user cache,
+# through agent-runtime's setup route: the one builder of a shipped runtime
+# crate, keyed on this crate's inputs and on agent-runtime's, which the
+# runtime's Cargo.toml declares by path. Every argument passes through;
+# `setup --help` there is the contract. agent-runtime is the required sibling
+# beside this package (<skills>/agent-runtime); a copy outside that layout is
+# refused here, exit 2, before anything is read or built:
+#   orch-runtime-setup: dependency-absent skill=agent-runtime path=<setup>
+set -euo pipefail
+
+here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+builder="$here/../../agent-runtime/scripts/setup"
+if [ ! -x "$builder" ]; then
+  printf 'orch-runtime-setup: dependency-absent skill=agent-runtime path=%s\n' "$builder" >&2
+  exit 2
+fi
+exec "$builder" --runtime "$here/../runtime" --name orch-runtime "$@"

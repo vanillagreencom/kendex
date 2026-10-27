@@ -47,6 +47,22 @@ WORKTREE_CLI = ""
 # § Host kinds). Credentials alone never send a lane to another machine.
 ORCH_LANE_HOST = "local"
 
+# The permission posture every launched lane and overseer runs under.
+# "bypass" pre-records each harness's first-run and trust prompts and runs
+# the session without permission prompts, so nothing at the pane blocks the
+# work; "native" keeps the harness's own prompts. Bypass is the default so an
+# unattended fleet is never wedged at a dialog nobody answers; set "native"
+# to turn it off for this repository.
+# values: bypass | native
+# ORCH_LAUNCH_PERMISSION = "bypass"
+
+# Where a harness executable is installed when it is not on PATH, as
+# harness=/absolute/path pairs separated by commas, the harness one of
+# claude, codex, copilot or pi. A launch of a named harness runs its path in
+# place of the name on PATH; an unnamed harness runs the name. Each path is
+# absolute, and a harness is named at most once.
+# ORCH_HARNESS_BINARIES = "claude=/opt/claude/bin/claude,pi=/opt/pi/bin/pi"
+
 # Runtime the overseer's own session runs in, which oversee launch and
 # oversee-succeed open sessions through: "tmux", the included provider, or an
 # executable script path speaking schemas/overseer-host.md. Both launchers
@@ -204,8 +220,20 @@ ORCH_VERIFY_SCHEDULE = ""
 
 # --- Fleet ---------------------------------------------------------------------
 
-# Seconds allowed for each check that a lane received its instructions.
+# Seconds allowed for each check that a lane received its instructions, and
+# the bound the orch-runtime launch waits for a harness to come up at its
+# composer before recording the launch unconfirmed.
 ORCH_TMUX_VERIFY_SECS = "15"
+
+# Seconds the orch-runtime stop waits after SIGTERM before SIGKILL when it
+# ends a lane's recorded process tree, applied again after SIGKILL, so a stop
+# can take up to twice this before it gives up. This is not the legacy
+# lane-close meaning: lane-close reads this key as the bound on the pane-exit
+# wait after its stop signals once. The legacy meaning cannot apply to the
+# runtime stop, which has no separate pane-exit wait: it signals the recorded
+# process tree directly and waits for it to die. During coexistence both
+# readers share the key; set it to the grace you want each signal to allow.
+# ORCH_LANE_CLOSE_SECS = "15"
 
 # The tmux session every lane window opens in. Unset, a fleet launch uses the
 # session its oversee state records as tmux.session, else the launching pane's.

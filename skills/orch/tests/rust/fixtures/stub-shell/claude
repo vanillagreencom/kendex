@@ -1,0 +1,8 @@
+#!/bin/bash
+# A stub that draws Claude Code's composer marker and then hands its
+# terminal to an interactive shell at its prompt: a pane whose screen says
+# idle while a shell holds it, which must never read idle whatever it draws
+# (decision 60). Named `claude` and run by bash directly so the kernel
+# records the harness's process name for it until the shell replaces it.
+printf '\xe2\x9d\xaf\xc2\xa0\n'
+exec bash --noprofile --norc -i

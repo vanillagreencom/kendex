@@ -5,11 +5,21 @@
 //! sent here is sent only while the live process still carries that start.
 //! On Linux the start is the `starttime` field of `/proc/<pid>/stat`, in
 //! clock ticks since boot, read as a file; elsewhere it is the `lstart`
-//! column of `ps`, which is the one portable spelling. The two never meet,
-//! since an identity is compared only on the host that recorded it.
+//! column of `ps`, which is the one portable spelling. A recorded start is
+//! read back in its own form, so the legacy shell writers' bare `lstart`
+//! text and this crate's `ticks:` form each match the process they name.
+//!
+//! The same table answers which processes hold a pane's terminal: the
+//! members of the foreground process group the kernel records for the
+//! pane's own process (`tpgid`), each named by its command. tmux's
+//! `pane_current_command` is that group's `argv[0]` basename, an
+//! interpreter's name for a script, and carries no pid, so the identity
+//! reader reads the group's members itself.
 
 use std::collections::HashMap;
 use std::fs;
+#[cfg(not(target_os = "linux"))]
+use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -34,11 +44,13 @@ pub enum Liveness {
     Gone,
 }
 
-/// The one process table read: pid, parent pid and command name per row.
+/// The one process table read: pid, parent pid, process group and command
+/// name per row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub pid: u32,
     pub ppid: u32,
+    pub pgrp: u32,
     pub name: String,
 }
 
@@ -58,32 +70,64 @@ fn proc_stat(pid: u32) -> Result<Option<String>> {
     }
 }
 
-/// The fields after the parenthesised command name of a `/proc/<pid>/stat`
-/// line: state is the first, starttime the twentieth.
+/// The fields of one `/proc/<pid>/stat` line this crate reads: the command
+/// name inside the parentheses, then, counted after them, the state (field
+/// 3), the parent pid (4), the process group (5), the foreground process
+/// group of the controlling terminal (8, `-1` without one) and the start in
+/// clock ticks since boot (22).
 #[cfg(target_os = "linux")]
-fn stat_fields(stat: &str) -> Option<(char, String)> {
-    let after = stat.rsplit_once(')')?.1.trim_start();
-    let mut fields = after.split_whitespace();
-    let state = fields.next()?.chars().next()?;
-    let start = fields.nth(18)?;
-    Some((state, format!("ticks:{start}")))
+struct Stat {
+    name: String,
+    state: char,
+    ppid: u32,
+    pgrp: u32,
+    tpgid: i64,
+    start: String,
+}
+
+#[cfg(target_os = "linux")]
+fn parse_stat(stat: &str) -> Option<Stat> {
+    let open = stat.find('(')?;
+    let close = stat.rfind(')')?;
+    let name = stat[open + 1..close].to_owned();
+    let fields: Vec<&str> = stat[close + 1..].split_whitespace().collect();
+    let state = fields.first()?.chars().next()?;
+    let ppid = fields.get(1)?.parse().ok()?;
+    let pgrp = fields.get(2)?.parse().ok()?;
+    let tpgid = fields.get(5)?.parse().ok()?;
+    let start = fields.get(19)?;
+    Some(Stat {
+        name,
+        state,
+        ppid,
+        pgrp,
+        tpgid,
+        start: format!("ticks:{start}"),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn stat_of(pid: u32) -> Result<Option<Stat>> {
+    match proc_stat(pid)? {
+        None => Ok(None),
+        Some(stat) => parse_stat(&stat).map(Some).ok_or_else(|| Error::Process {
+            operation: "parse-stat",
+            pid,
+            cause: "unreadable stat line".to_owned(),
+        }),
+    }
 }
 
 /// Read a pid's liveness.
 pub fn liveness(pid: u32) -> Result<Liveness> {
     #[cfg(target_os = "linux")]
     {
-        match proc_stat(pid)? {
+        match stat_of(pid)? {
             None => Ok(Liveness::Gone),
-            Some(stat) => match stat_fields(&stat) {
-                Some(('Z', _)) | Some(('X', _)) => Ok(Liveness::Zombie),
-                Some(_) => Ok(Liveness::Live),
-                None => Err(Error::Process {
-                    operation: "parse-stat",
-                    pid,
-                    cause: "unreadable stat line".to_owned(),
-                }),
-            },
+            Some(Stat {
+                state: 'Z' | 'X', ..
+            }) => Ok(Liveness::Zombie),
+            Some(_) => Ok(Liveness::Live),
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -108,42 +152,93 @@ pub fn liveness(pid: u32) -> Result<Liveness> {
     }
 }
 
-/// Read the start the kernel reports for a pid, `None` for a pid no process
-/// holds.
+/// Read the start the kernel reports for a pid in this host's recording
+/// form, `None` for a pid no process holds: `ticks:<n>` on Linux, the
+/// `lstart:<text>` of `ps` elsewhere.
 pub fn start(pid: u32) -> Result<Option<String>> {
     #[cfg(target_os = "linux")]
     {
-        match proc_stat(pid)? {
-            None => Ok(None),
-            Some(stat) => stat_fields(&stat)
-                .map(|(_, s)| Some(s))
-                .ok_or_else(|| Error::Process {
-                    operation: "parse-stat",
-                    pid,
-                    cause: "unreadable stat line".to_owned(),
-                }),
-        }
+        start_ticks(pid)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let output = Command::new("ps")
-            .env("LC_ALL", "C")
-            .env("TZ", "UTC")
-            .args(["-o", "lstart=", "-p", &pid.to_string()])
-            .output()
-            .map_err(|e| Error::Process {
-                operation: "ps-lstart",
-                pid,
-                cause: e.to_string(),
-            })?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        Ok(if joined.is_empty() {
-            None
-        } else {
-            Some(format!("lstart:{joined}"))
-        })
+        start_lstart(pid)
     }
+}
+
+/// The `/proc` starttime of a pid as `ticks:<n>`; `None` where no process
+/// holds the pid, and on a host without `/proc`.
+#[cfg(target_os = "linux")]
+fn start_ticks(pid: u32) -> Result<Option<String>> {
+    Ok(stat_of(pid)?.map(|s| s.start))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_ticks(_pid: u32) -> Result<Option<String>> {
+    Ok(None)
+}
+
+/// The `ps -o lstart` start of a pid as `lstart:<squeezed text>`, in the C
+/// locale and UTC so a reader elsewhere prints the same line; `None` where
+/// no process holds the pid. Available on every host, so a legacy
+/// `lstart`-form identity can be matched on Linux too.
+fn start_lstart(pid: u32) -> Result<Option<String>> {
+    let output = Command::new("ps")
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .output()
+        .map_err(|e| Error::Process {
+            operation: "ps-lstart",
+            pid,
+            cause: e.to_string(),
+        })?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    Ok(if joined.is_empty() {
+        None
+    } else {
+        Some(format!("lstart:{joined}"))
+    })
+}
+
+/// The form a recorded start is written in, so a reader matches a live pid's
+/// start in the same form. The runtime writes [`start`]'s host form; a
+/// legacy shell writer records the bare `ps -o lstart` text; the non-Linux
+/// reader records `lstart:`. All three are admitted (decision 55).
+enum StartForm {
+    Ticks,
+    Lstart,
+}
+
+fn start_form(recorded: &str) -> StartForm {
+    if recorded.starts_with("ticks:") {
+        StartForm::Ticks
+    } else {
+        StartForm::Lstart
+    }
+}
+
+/// The comparable body of a recorded start: the digits after `ticks:`, or
+/// the `lstart` text with any `lstart:` prefix dropped and its blanks
+/// squeezed, as `ps -o lstart` and the legacy `lane_process_start` squeeze
+/// it. Two spellings of one process's start compare equal here.
+fn normalize_start(recorded: &str) -> String {
+    if let Some(ticks) = recorded.strip_prefix("ticks:") {
+        return ticks.trim().to_owned();
+    }
+    let body = recorded.strip_prefix("lstart:").unwrap_or(recorded);
+    body.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A live pid's start read in `form` and normalized; `None` for a pid no
+/// process holds.
+fn start_in_form(pid: u32, form: StartForm) -> Result<Option<String>> {
+    let read = match form {
+        StartForm::Ticks => start_ticks(pid)?,
+        StartForm::Lstart => start_lstart(pid)?,
+    };
+    Ok(read.map(|s| normalize_start(&s)))
 }
 
 /// The identity of a live pid, `None` when no live process holds it.
@@ -151,14 +246,48 @@ pub fn identity(pid: u32) -> Result<Option<Identity>> {
     Ok(start(pid)?.map(|start| Identity { pid, start }))
 }
 
+/// The process group holding the terminal of `pane_pid`'s process: the
+/// group whose members read the pane's keystrokes. `None` for a pid no
+/// process holds, or one with no controlling terminal.
+pub fn foreground_group(pane_pid: u32) -> Result<Option<u32>> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(stat_of(pane_pid)?.and_then(|s| u32::try_from(s.tpgid).ok()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let text = ps_column(pane_pid, "tpgid")?;
+        Ok(text
+            .and_then(|t| t.parse::<i64>().ok())
+            .and_then(|t| u32::try_from(t).ok()))
+    }
+}
+
+/// One `ps` column of one pid, trimmed; `None` where no process holds it.
+#[cfg(not(target_os = "linux"))]
+fn ps_column(pid: u32, column: &str) -> Result<Option<String>> {
+    let output = Command::new("ps")
+        .args(["-o", &format!("{column}="), "-p", &pid.to_string()])
+        .output()
+        .map_err(|e| Error::Process {
+            operation: "ps-column",
+            pid,
+            cause: e.to_string(),
+        })?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok(if text.is_empty() { None } else { Some(text) })
+}
+
 /// Whether the process this identity names still runs: live, with the same
-/// start. A zombie or a pid now carrying another start is `Gone`.
+/// start. A zombie or a pid now carrying another start is `Gone`. The
+/// recorded start is read in its own form, so a `ticks:`, an `lstart:` and a
+/// bare legacy start each match the live pid they name (decision 55).
 pub fn still_runs(id: &Identity) -> Result<Liveness> {
     match liveness(id.pid)? {
         Liveness::Gone => Ok(Liveness::Gone),
         Liveness::Zombie => Ok(Liveness::Zombie),
-        Liveness::Live => match start(id.pid)? {
-            Some(s) if s == id.start => Ok(Liveness::Live),
+        Liveness::Live => match start_in_form(id.pid, start_form(&id.start))? {
+            Some(s) if s == normalize_start(&id.start) => Ok(Liveness::Live),
             _ => Ok(Liveness::Gone),
         },
     }
@@ -182,27 +311,26 @@ pub fn table() -> Result<Vec<Row>> {
             else {
                 continue;
             };
-            let Ok(Some(stat)) = proc_stat(pid) else {
+            // A process that exits during the listing, or a line this
+            // reader cannot parse, is left out of the table.
+            let Ok(Some(stat)) = stat_of(pid) else {
                 continue;
             };
-            let Some(open) = stat.find('(') else { continue };
-            let Some(close) = stat.rfind(')') else {
-                continue;
-            };
-            let name = stat[open + 1..close].to_owned();
-            let mut fields = stat[close + 1..].split_whitespace();
-            let _state = fields.next();
-            let Some(ppid) = fields.next().and_then(|p| p.parse::<u32>().ok()) else {
-                continue;
-            };
-            rows.push(Row { pid, ppid, name });
+            rows.push(Row {
+                pid,
+                ppid: stat.ppid,
+                pgrp: stat.pgrp,
+                name: stat.name,
+            });
         }
         Ok(rows)
     }
     #[cfg(not(target_os = "linux"))]
     {
         let output = Command::new("ps")
-            .args(["-A", "-o", "pid=", "-o", "ppid=", "-o", "comm="])
+            .args([
+                "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "comm=",
+            ])
             .output()
             .map_err(|e| Error::Process {
                 operation: "ps-table",
@@ -213,7 +341,8 @@ pub fn table() -> Result<Vec<Row>> {
         let mut rows = Vec::new();
         for line in text.lines() {
             let mut parts = line.split_whitespace();
-            let (Some(pid), Some(ppid)) = (
+            let (Some(pid), Some(ppid), Some(pgrp)) = (
+                parts.next().and_then(|p| p.parse().ok()),
                 parts.next().and_then(|p| p.parse().ok()),
                 parts.next().and_then(|p| p.parse().ok()),
             ) else {
@@ -225,7 +354,12 @@ pub fn table() -> Result<Vec<Row>> {
                 .and_then(|n| n.to_str())
                 .unwrap_or(&name)
                 .to_owned();
-            rows.push(Row { pid, ppid, name });
+            rows.push(Row {
+                pid,
+                ppid,
+                pgrp,
+                name,
+            });
         }
         Ok(rows)
     }
@@ -391,6 +525,7 @@ mod tests {
             .map(|(pid, ppid, name)| Row {
                 pid: *pid,
                 ppid: *ppid,
+                pgrp: *pid,
                 name: (*name).to_owned(),
             })
             .collect()
@@ -413,6 +548,55 @@ mod tests {
         assert!(below(&t, 20, &|n| n == "codex").is_empty());
     }
 
+    /// A synthetic `/proc/<pid>/stat` line with a space in its command name
+    /// and the fields this crate reads at their documented positions.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_stat_reads_the_name_state_parent_foreground_group_and_start() {
+        let mut fields: Vec<String> = (3..=52).map(|n| n.to_string()).collect();
+        fields[0] = "S".to_owned(); // 3: state
+        fields[1] = "41".to_owned(); // 4: ppid
+        fields[2] = "42".to_owned(); // 5: pgrp
+        fields[5] = "4567".to_owned(); // 8: tpgid
+        fields[19] = "9912345".to_owned(); // 22: starttime
+        let line = format!("42 (my script) {}", fields.join(" "));
+        let stat = parse_stat(&line).expect("parsed");
+        assert_eq!(stat.name, "my script");
+        assert_eq!(stat.state, 'S');
+        assert_eq!(stat.ppid, 41);
+        assert_eq!(stat.pgrp, 42);
+        assert_eq!(stat.tpgid, 4567);
+        assert_eq!(stat.start, "ticks:9912345");
+        // No controlling terminal: the kernel writes -1, read as no group.
+        fields[5] = "-1".to_owned();
+        let line = format!("42 (x) {}", fields.join(" "));
+        assert_eq!(parse_stat(&line).unwrap().tpgid, -1);
+        assert!(
+            parse_stat("42 (x) S 1").is_none(),
+            "a short line parses to nothing"
+        );
+    }
+
+    #[test]
+    fn the_table_names_a_child_this_test_owns_in_its_own_group() {
+        use std::os::unix::process::CommandExt;
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let rows = table().unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r.pid == child.id())
+            .expect("the child's row");
+        assert_eq!(row.name, "sleep");
+        assert_eq!(row.ppid, std::process::id());
+        assert_eq!(row.pgrp, child.id(), "a new group led by the child");
+        let _ = child.kill();
+        child.wait().unwrap();
+    }
+
     #[test]
     fn only_shells_below_reads_an_exited_harness_pane_as_shells() {
         let t = rows(&[(20, 1, "bash"), (21, 20, "zsh"), (22, 21, "sh")]);
@@ -432,6 +616,44 @@ mod tests {
             start: "ticks:0".to_owned(),
         };
         assert_eq!(still_runs(&stale).unwrap(), Liveness::Gone);
+    }
+
+    /// Decision 55: one reader admits every start form a shipped writer
+    /// produced. A `ticks:`, an `lstart:` and a bare `ps -o lstart` start
+    /// each match the live process they name, and any other value is `Gone`.
+    #[test]
+    fn still_runs_matches_every_shipped_start_form_and_rejects_a_mismatch() {
+        let me = std::process::id();
+        // The lstart text a legacy shell writer records bare, and the
+        // non-Linux reader records with an `lstart:` prefix.
+        let prefixed = start_lstart(me).unwrap().expect("own lstart");
+        let bare = prefixed
+            .strip_prefix("lstart:")
+            .expect("lstart prefix")
+            .to_owned();
+        // The host form the runtime itself records (ticks on Linux).
+        let native = start(me).unwrap().expect("own start");
+        for form in [native, prefixed.clone(), bare.clone()] {
+            let id = Identity {
+                pid: me,
+                start: form.clone(),
+            };
+            assert_eq!(still_runs(&id).unwrap(), Liveness::Live, "form {form:?}");
+        }
+        // A legacy fixture value copied from
+        // `skills/orch/tests/rust/fixtures/workflow-state-oversee.json`: a
+        // ticks start no live process here holds.
+        let fixture = Identity {
+            pid: me,
+            start: "ticks:9912345".to_owned(),
+        };
+        assert_eq!(still_runs(&fixture).unwrap(), Liveness::Gone);
+        // A mismatch in the lstart form is `Gone` too.
+        let wrong = Identity {
+            pid: me,
+            start: "lstart:Thu Jan  1 00:00:00 1970".to_owned(),
+        };
+        assert_eq!(still_runs(&wrong).unwrap(), Liveness::Gone);
     }
 
     #[test]

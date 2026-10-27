@@ -41,6 +41,17 @@ pub const PRE_MIGRATION_SUFFIX: &str = ".pre-migration";
 /// A record as the file holds it: one JSON object in its own key order.
 pub type Document = Map<String, Value>;
 
+/// The item state file for `item` under `dir`:
+/// `workflow-state-<ITEM>.json`, the legacy `get_state_file`.
+pub fn item_path(dir: &Path, item: &str) -> PathBuf {
+    dir.join(format!("workflow-state-{item}.json"))
+}
+
+/// The fleet state file under `dir`.
+pub fn fleet_path(dir: &Path) -> PathBuf {
+    dir.join(FLEET_FILE_NAME)
+}
+
 /// Which state file a path names. The fleet state has one fixed name; every
 /// other `workflow-state-*.json` is an item's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -523,6 +534,99 @@ pub struct Selection {
     pub effort: Option<String>,
 }
 
+/// The pane an effect opened and the floor its native session is read
+/// above: the data every phase after `window-opened` carries. The server is
+/// named by its socket, pid and start, so a reconcile observes the pane on
+/// the recorded server whatever socket its own `$TMUX` names. Another
+/// server answering on that socket, or no server with the recorded server
+/// process gone, proves the pane gone; only an unanswering socket whose
+/// server process still runs is unobservable (decision 66).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenedPane {
+    pub pane: String,
+    pub server: u64,
+    pub server_start: u64,
+    /// The server process's start as the one identity reader records it,
+    /// read when the window opened, so a socket that stops answering can be
+    /// told from a server that is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_process_start: Option<String>,
+    pub socket: String,
+    /// Milliseconds since the epoch just before the window opened: the
+    /// floor a native session must be created above to be this launch's.
+    pub since_ms: u64,
+    /// The handoff a succession holds for the runner, delivered after
+    /// retirement; a launch spells its brief into the command and holds
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
+    /// The session id the launch fixed on the command line, for a harness
+    /// that takes one: the runner's own native file is then known by name
+    /// (decision 65).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// The lead sessions for the runner's cwd that stood before the window
+    /// opened, for a harness whose launch fixes no id: the runner's own
+    /// file is the one lead that appears and is absent here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub baseline: Vec<String>,
+}
+
+/// The runner's own native session file, bound once before the brief is
+/// pasted: the effect and every reconcile count that file alone, never a
+/// neighbour in the same home and directory (decision 65).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundSession {
+    pub session_id: String,
+    pub file: String,
+}
+
+/// How far an effect got, written into its intent before each wait so a
+/// `reconcile` completes the effect from the recorded step (decision 62).
+/// A launch reaches `window-opened` and then its outcome; a succession
+/// passes `retired` (the predecessor confirmed terminal), `delivered` (the
+/// brief pasted, with the runner's own session file and its user-turn count
+/// before the paste) and
+/// `identity-read` (the runner's own process identity, the last read before
+/// publication).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "kebab-case")]
+pub enum Phase {
+    WindowOpened {
+        #[serde(flatten)]
+        opened: OpenedPane,
+    },
+    Retired {
+        #[serde(flatten)]
+        opened: OpenedPane,
+    },
+    Delivered {
+        #[serde(flatten)]
+        opened: OpenedPane,
+        /// The user turns the bound file held before the paste.
+        turns_before: u64,
+        session: BoundSession,
+    },
+    IdentityRead {
+        #[serde(flatten)]
+        opened: OpenedPane,
+        pid: u64,
+        start: String,
+    },
+}
+
+impl Phase {
+    /// The pane every phase names.
+    pub fn opened(&self) -> &OpenedPane {
+        match self {
+            Phase::WindowOpened { opened }
+            | Phase::Retired { opened }
+            | Phase::Delivered { opened, .. }
+            | Phase::IdentityRead { opened, .. } => opened,
+        }
+    }
+}
+
 /// The persisted intent of one external effect: written before the effect
 /// starts, its `outcome` written after. The id is
 /// `<op>:<target>:<nanos>-<nonce>`, the operation's word, its target and
@@ -551,11 +655,44 @@ pub struct Intent {
     /// the transfer fails, as the legacy succession restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_pending: Option<Value>,
+    /// How far the effect got, written before each wait (decision 62); a
+    /// reconciliation completes the effect from it. Absent until the effect
+    /// has opened something.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<Phase>,
+    /// What the effect last observed of its target: the pane it opened or
+    /// found, the process and screen it read, and for a succession whether
+    /// the predecessor was retired. A reconciliation re-observes from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<Value>,
+    /// Set when the intent was closed because its target's record moved
+    /// under it, with the status or generation the record then read; the
+    /// outcome word stays what the effect reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciled: Option<Reconciled>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_status: Option<LaneStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_generation: Option<u64>,
+}
+
+/// Why an intent was closed apart from its effect's own outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Reconciled {
+    /// The target's record moved under the open intent: a lane relaunched,
+    /// closed or removed since, or an overseer whose generation moved past
+    /// the one the intent names. The record is left as found.
+    IntentStale,
 }
 
 impl Intent {
-    /// Whether the effect may still be in flight.
+    /// Whether the effect may still be in flight: its outcome is not final
+    /// and no reconciliation closed it.
     pub fn open(&self) -> bool {
+        if self.reconciled.is_some() {
+            return false;
+        }
         match self.outcome {
             Outcome::NotStarted | Outcome::Unconfirmed => true,
             Outcome::Confirmed | Outcome::Failed => false,
@@ -758,8 +895,121 @@ pub fn store(path: &Path, snapshot: &Snapshot, doc: &Document, locking: Locking)
 }
 
 // ---------------------------------------------------------------------------
-// Inspection and migration
+// Initialization, inspection and migration
 // ---------------------------------------------------------------------------
+
+/// What `workflow-state init` takes beside the item: the fields a caller
+/// knows at creation, each written empty where it names none.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InitFields {
+    pub agent: String,
+    pub worktree: String,
+    pub branch: String,
+    /// JSON, `[]` when unnamed.
+    pub qa_labels: Option<Value>,
+    /// JSON, `[]` when unnamed.
+    pub sub_issues: Option<Value>,
+}
+
+/// The object `workflow-state init` writes (`cmd_init`), key for key and in
+/// its order. `issue_id` is the item, or `oversee` for the fleet state.
+pub fn init_document(issue_id: &str, fields: &InitFields) -> Document {
+    let value = serde_json::json!({
+        "issue_id": issue_id,
+        "sub_issues": fields.sub_issues.clone().unwrap_or_else(|| Value::Array(Vec::new())),
+        "agent": fields.agent,
+        "worktree": fields.worktree,
+        "branch": fields.branch,
+        "qa_labels": fields.qa_labels.clone().unwrap_or_else(|| Value::Array(Vec::new())),
+        "near_ceiling": [],
+        "finding_occurrences": {"prior": "none", "records": []},
+        "child_sessions": {},
+        "review_agents": [],
+        "review_agent_ids": {},
+        "review_agent_runtime_types": {},
+        "pre_delegate_sha": Value::Null,
+        "skip_qa": false,
+        "cycles": 0,
+        "rereview_cycles": 0,
+        "json_paths": [],
+        "fixed_items": [],
+        "escalated_items": [],
+        "audit_issues_created": [],
+        "pr_review_baseline": Value::Null,
+        "pr_comment_review": {
+            "iterations": 0,
+            "fixes": [],
+            "issues_created": [],
+            "skipped": []
+        },
+        "post_pr_budgets": {
+            "review_wait": Value::Null,
+            "ci_fix": Value::Null
+        },
+        "post_pr_stop": Value::Null
+    });
+    match value {
+        Value::Object(doc) => doc,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+            unreachable!("the literal above is an object")
+        }
+    }
+}
+
+/// A state file created.
+#[derive(Debug, Clone, Serialize)]
+pub struct Initialized {
+    pub path: PathBuf,
+    pub kind: Kind,
+}
+
+/// Create the state file at `path` with the init object, as `cmd_init`
+/// writes it: the directory made, the file created exclusively and refused
+/// `state-exists` where one already stands, the object pretty-printed with
+/// jq's two-space indent and final newline. Unstamped, like every file the
+/// legacy writers still read; `migrate` stamps it.
+pub fn init(path: &Path, fields: &InitFields) -> Result<Initialized> {
+    let kind = Kind::of_path(path);
+    let issue_id = match kind {
+        Kind::Fleet => "oversee".to_owned(),
+        Kind::Item => path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix("workflow-state-"))
+            .and_then(|n| n.strip_suffix(".json"))
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                agent_runtime::Error::refused(
+                    "state-path-invalid",
+                    &[("path", &path.display().to_string())],
+                )
+            })?,
+    };
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| agent_runtime::Error::io("mkdir", dir, e))?;
+    }
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(agent_runtime::Error::refused(
+                "state-exists",
+                &[("path", &path.display().to_string())],
+            )
+            .into());
+        }
+        Err(e) => return Err(agent_runtime::Error::io("create", path, e).into()),
+    };
+    let mut text = serde_json::to_string_pretty(&Value::Object(init_document(&issue_id, fields)))
+        .map_err(|e| json(path, e))?;
+    text.push('\n');
+    file.write_all(text.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|e| agent_runtime::Error::io("write", path, e))?;
+    Ok(Initialized {
+        path: path.to_path_buf(),
+        kind,
+    })
+}
 
 /// A read-only view of a state file for diagnostics and compatibility.
 #[derive(Debug, Clone, Serialize)]

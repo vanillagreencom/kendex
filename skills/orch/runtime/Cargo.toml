@@ -39,6 +39,10 @@ tempfile = "3"
 name = "integration"
 path = "../tests/rust/main.rs"
 
+[[test]]
+name = "effects"
+path = "../tests/rust/effects.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

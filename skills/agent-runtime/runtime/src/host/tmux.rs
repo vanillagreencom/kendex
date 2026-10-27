@@ -223,6 +223,39 @@ pub fn new_window(
     Ok(pane)
 }
 
+/// The pane `id` names on the server, with its window and session, or
+/// `None` when the server lists no such pane. The server is confirmed
+/// first, since a pane id repeats on every server.
+pub fn pane_by_id(server: &Server, id: &str) -> Result<Option<Pane>> {
+    confirm(server)?;
+    let list = tmux(
+        Some(&server.socket),
+        "list-panes",
+        &[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id} #{window_id} #{session_name}",
+        ],
+    )?;
+    for line in list.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(pane), Some(window), Some(session)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        if pane == id {
+            return Ok(Some(Pane {
+                server: server.clone(),
+                id: pane.to_owned(),
+                window: window.to_owned(),
+                session: session.to_owned(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
 /// Whether the pane still exists on its server, confirmed first.
 pub fn pane_present(pane: &Pane) -> Result<bool> {
     confirm(&pane.server)?;

@@ -34,7 +34,7 @@ For each batch, launch one fresh one-shot canonical `tpm` subagent, the catalog'
 
 A proposal sweep creates no carrier item and starts no `open-terminal` or hosted lane, and its TPM analysis never runs in the overseer.
 
-Send it the [proposal-sweep](../../project-management/workflows/proposal-sweep.md) workflow with a brief that supplies a checkout of the source repository on this host as its worktree, the batch tracker, tracker repository, source repository, fleet issue IDs, and authorized and resolved comment bindings.
+Send it project-management's `workflows/proposal-sweep.md` workflow with a brief that supplies a checkout of the source repository on this host as its worktree, the batch tracker, tracker repository, source repository, fleet issue IDs, and authorized and resolved comment bindings.
 
 Accept the return only when it contains no other text and parses as one issue-mode audit object whose `tracker` type, and for GitHub its `repository`, equal the batch's.
 
@@ -46,7 +46,7 @@ Stop without a reply or fleet-log outcome on a launch, capture, parse, or valida
 
 Write the accepted object with the harness file-write tool to `tmp/proposal-audit-[UTC_EPOCH].json` in the overseer's checkout, `[UTC_EPOCH]` fresh per batch.
 
-Check its rows against live fleet work, then invoke [audit-issues](../../project-management/workflows/audit-issues.md) from `oversee.md` § 1 as `audit-issues --analyzed tmp/proposal-audit-[UTC_EPOCH].json` under `PM_CREATE_AUTONOMY`.
+Check its rows against live fleet work, then invoke project-management's `workflows/audit-issues.md` from `oversee.md` § 1 as `audit-issues --analyzed tmp/proposal-audit-[UTC_EPOCH].json` under `PM_CREATE_AUTONOMY`.
 
 Its normal route parses the tracker, runs its tracker preflight and label inventory, skips TPM analysis, and continues through §§ 5-7.
 
@@ -104,7 +104,7 @@ A package or workflow gap is never a harness memory or a local note: a lane's is
 
 Before filing, read [Design review](design-review.md).
 
-One item the overseer files itself, a class under Fix the source above or an issue an `owner-note` asks for, goes through [audit-issues](../../project-management/workflows/audit-issues.md) as `audit-issues --single [FILE_PATH]`, the file holding that one item per [audit-issues-input.md](../../project-management/schemas/audit-issues-input.md) with `source: "oversee"`, `parent_issue: null` and the fleet's `tracker`.
+One item the overseer files itself, a class under Fix the source above or an issue an `owner-note` asks for, goes through project-management's `workflows/audit-issues.md` as `audit-issues --single [FILE_PATH]`, the file holding that one item per project-management's `schemas/audit-issues-input.md` with `source: "oversee"`, `parent_issue: null` and the fleet's `tracker`.
 
 After filing, append one fleet-log `ruling` whose text starts `filed ` and names the filed item, its Location file(s) and its defect-class rule, stated as the rule every site breaks. `--issues` is for a batch: its TPM run sweeps the whole backlog for cancellations.
 
@@ -132,7 +132,7 @@ The overseer runs no normal merge for a lane.
 
 Its own GitHub App acts for the head approvals [copilot-head-notices.md](copilot-head-notices.md) sets, and for nothing else except an emergency merge in a consumer whose ruleset lists that app as a bypass actor, which that step's "Who acts" names.
 
-A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in [review-gate SKILL.md § 4. Operations](../../review-gate/SKILL.md#4-operations).
+A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in review-gate's `SKILL.md` § 4. Operations.
 
 ### Hand off a lane before it runs out
 
@@ -303,7 +303,7 @@ Keep refresh and verification with the declared owner outside the control host, 
 
 Report a failed owner workflow.
 
-Consumer refresh stays in each consumer's own Actions through the [refresh workflow](../../review-gate/references/adoption.md).
+Consumer refresh stays in each consumer's own Actions through the refresh workflow review-gate's `references/adoption.md` describes.
 
 On a local fleet, run `.agents/skills/orch/scripts/post-merge --command-only` in the overseer's base checkout when a declared workflow owns refresh.
 

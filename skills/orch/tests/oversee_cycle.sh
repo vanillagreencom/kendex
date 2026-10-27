@@ -1462,7 +1462,7 @@ review_stage
 open_round="$("$WS" --state-dir "$REPO/tmp" new-round-id KEN-1 dev_round_id)"
 rows="$(stage_command KEN-1)"
 assert_eq "$(jq -c '[.stages[] | .kind] | sort' "$SF")" \
-  '["dev","fix","fix","fix","implement","review","review","validate","validate","validate","validate"]' 'all resumed rounds and each validate run exist'
+  '["dev","fix","fix","fix","implement","review","review"]' 'all resumed rounds exist and the check adds no validate stage'
 assert_eq "$(jq -r '[.stages[] | select(.round_id != $round) | .end != null] | all' --arg round "$open_round" "$SF")" true 'completed rounds have ends'
 assert_eq "$(grep -c '^stage item=KEN-1 ' <<<"$rows")" "$(jq '.stages | length' "$SF")" 'running command prints each discovered stage'
 assert_contains "$rows" "kind=dev round_id=$open_round" 'running command includes open round'

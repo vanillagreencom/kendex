@@ -82,6 +82,11 @@ pub struct LaunchIntent {
     pub brief: Brief,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<Resume>,
+    /// The session id a fresh launch records under, for a harness that
+    /// takes one (`Harness::session_id_words`); refused on one that does
+    /// not, since the caller then binds the session file by appearance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     /// Environment the child must see beyond the inherited one.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
@@ -91,6 +96,10 @@ pub struct LaunchIntent {
     /// Extra words appended as given, for a caller that knows the harness.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
+    /// The executable to run in place of the harness's name on `PATH`, for
+    /// an install at a configured location. Absolute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<PathBuf>,
 }
 
 fn brief_none() -> Brief {
@@ -130,6 +139,17 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         if !env_remove.iter().any(|n| n == name) {
             env_remove.push(name.to_owned());
         }
+    }
+    if let Some(program) = &intent.program
+        && !program.is_absolute()
+    {
+        return Err(Error::refused(
+            "program-relative",
+            &[
+                ("harness", h.name()),
+                ("program", &program.display().to_string()),
+            ],
+        ));
     }
     if let Some(home) = &intent.home {
         if !home.is_absolute() {
@@ -213,6 +233,18 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
             }
         }
     }
+    if let Some(id) = &intent.session_id {
+        match h.session_id_words(id) {
+            Some(words) => args.extend(words),
+            None => {
+                return Err(Error::Unsupported {
+                    operation: "session-id",
+                    subject: h.name().to_owned(),
+                    cause: "the harness has no launch word that fixes its session id".to_owned(),
+                });
+            }
+        }
+    }
     args.extend(intent.extra_args.iter().cloned());
     let mut brief_arg = None;
     let mut brief_path = None;
@@ -237,7 +269,11 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         }
     }
     Ok(LaunchCommand {
-        program: h.binary().to_owned(),
+        program: intent
+            .program
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| h.binary().to_owned()),
         args,
         env,
         env_remove,
@@ -269,15 +305,18 @@ pub fn shell_quote(word: &str) -> String {
 }
 
 impl LaunchCommand {
-    /// The one-line shell form a pane runs: `cd DIR && env -u ... NAME=VALUE
-    /// ... exec PROGRAM ARGS`, with the brief read from its file at run time.
+    /// The one-line shell form a pane runs: `cd DIR && exec env -u ...
+    /// NAME=VALUE ... PROGRAM ARGS`, with the brief read from its file at
+    /// run time. The shell is replaced, so the pane lives exactly as long
+    /// as the harness: a pane gone is a harness exited, which is the one
+    /// positive reading of an exit a launcher can take from the host.
     pub fn shell_line(&self) -> String {
         let mut line = String::new();
         line.push_str("cd ");
         line.push_str(&shell_quote(&self.cwd.display().to_string()));
         line.push_str(" && ");
         if !self.env_remove.is_empty() || !self.env.is_empty() {
-            line.push_str("env");
+            line.push_str("exec env");
             for name in &self.env_remove {
                 line.push_str(" -u ");
                 line.push_str(&shell_quote(name));
@@ -331,9 +370,40 @@ mod tests {
                 path: PathBuf::from("/work/tree/tmp/brief.md"),
             },
             resume: None,
+            session_id: None,
             env: BTreeMap::new(),
             env_remove: Vec::new(),
             extra_args: Vec::new(),
+            program: None,
+        }
+    }
+
+    /// The fixed session id goes before the brief, so a harness that reads
+    /// its last word as the opening instruction still does; a harness with
+    /// no such word refuses the intent before anything runs.
+    #[test]
+    fn a_fixed_session_id_precedes_the_brief_and_is_refused_where_unspelled() {
+        let mut i = intent(Harness::Claude);
+        i.session_id = Some("0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c".into());
+        let cmd = build(&i).unwrap();
+        let at = cmd.args.iter().position(|a| a == "--session-id").unwrap();
+        assert_eq!(cmd.args[at + 1], "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c");
+        assert_eq!(cmd.args.last().unwrap(), "{brief}");
+        assert!(at + 1 < cmd.brief_arg.unwrap());
+        for h in [Harness::Codex, Harness::Copilot, Harness::Pi] {
+            let mut i = intent(h);
+            i.home = None;
+            i.session_id = Some("0f6e".into());
+            assert!(
+                matches!(
+                    build(&i),
+                    Err(Error::Unsupported {
+                        operation: "session-id",
+                        ..
+                    })
+                ),
+                "{h}"
+            );
         }
     }
 
@@ -352,9 +422,28 @@ mod tests {
         assert_eq!(cmd.args.last().unwrap(), "{brief}");
         let line = cmd.shell_line();
         assert!(line.starts_with(
-            "cd /work/tree && env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE"
+            "cd /work/tree && exec env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE"
         ));
         assert!(line.ends_with("\"$(cat /work/tree/tmp/brief.md)\""));
+    }
+
+    /// A configured executable replaces the name on `PATH` and nothing
+    /// else about the command; a relative one is refused before any run.
+    #[test]
+    fn a_configured_program_path_runs_in_place_of_the_name() {
+        let mut i = intent(Harness::Claude);
+        i.program = Some(PathBuf::from("/opt/claude/bin/claude"));
+        let cmd = build(&i).unwrap();
+        assert_eq!(cmd.program, "/opt/claude/bin/claude");
+        assert!(cmd.shell_line().contains(" /opt/claude/bin/claude "));
+        i.program = Some(PathBuf::from("bin/claude"));
+        assert!(matches!(
+            build(&i),
+            Err(Error::Refused {
+                key: "program-relative",
+                ..
+            })
+        ));
     }
 
     #[test]

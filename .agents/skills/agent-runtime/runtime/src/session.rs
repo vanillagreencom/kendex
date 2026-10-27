@@ -13,9 +13,20 @@
 //!   `id:` and `cwd:` lines, and `events.jsonl` beside it.
 //! - Pi: `<sessions root>/<cwd slug>/<stamp>_<id>.jsonl`, whose first row
 //!   is `{"type":"session","id":...,"cwd":...}`.
+//!
+//! The same files record each user turn, which is how a delivery is
+//! confirmed: a turn the harness itself wrote down arrived, whatever the
+//! pane paste returned. The shapes are the native probe's
+//! (`tmp/orch-rebuild/native/run2/<harness>/home`):
+//!
+//! - Claude Code: a `user` row whose `message.content` is a string; a tool
+//!   result is a `user` row too, with an array.
+//! - Codex: an `event_msg` row completing a `UserMessage` item.
+//! - Copilot CLI: a `user.message` row in `events.jsonl`.
+//! - Pi: a `message` row whose `message.role` is `user`.
 
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -42,6 +53,48 @@ pub fn default_home(harness: Harness) -> Option<PathBuf> {
         Harness::Copilot => home.join(".copilot"),
         Harness::Pi => home.join(".pi").join("agent"),
     })
+}
+
+/// A fresh version 4 UUID for a launch that fixes its session id
+/// (`Harness::session_id_words`), from the host's random device; a device
+/// that cannot be read is an error, never a predictable id.
+pub fn fresh_session_id() -> Result<String> {
+    let device = Path::new("/dev/urandom");
+    let mut bytes = [0u8; 16];
+    fs::File::open(device)
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .map_err(|e| Error::io("read", device, e))?;
+    Ok(uuid_v4(bytes))
+}
+
+/// The RFC 9562 version 4 spelling of sixteen random bytes.
+fn uuid_v4(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        hex[0..4].concat(),
+        hex[4..6].concat(),
+        hex[6..8].concat(),
+        hex[8..10].concat(),
+        hex[10..16].concat()
+    )
+}
+
+/// The file a harness writes for a session whose id the launch fixed, under
+/// `home` for `cwd`, knowable before the harness writes it; `None` for a
+/// harness whose launch fixes no id. Claude Code names the file by the id
+/// in the project's directory.
+pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option<PathBuf> {
+    match harness {
+        Harness::Claude => Some(
+            home.join("projects")
+                .join(claude_slug(cwd))
+                .join(format!("{id}.jsonl")),
+        ),
+        Harness::Codex | Harness::Copilot | Harness::Pi => None,
+    }
 }
 
 /// Claude Code and Pi name a project directory by its path with every `/`
@@ -221,6 +274,66 @@ pub fn identify(harness: Harness, file: &Path, cwd: Option<&Path>) -> Result<Opt
     }
 }
 
+/// The user turns a session file records, counted the way its harness
+/// writes them (module doc). `file` is the session's own file, the one
+/// [`SessionRef::file`] names: Copilot's workspace.yaml, whose events sit
+/// beside it.
+pub fn user_turns(harness: Harness, file: &Path) -> Result<usize> {
+    let rows_file = match harness {
+        Harness::Copilot => file.with_file_name("events.jsonl"),
+        Harness::Claude | Harness::Codex | Harness::Pi => file.to_path_buf(),
+    };
+    let f = match fs::File::open(&rows_file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(Error::io("open", &rows_file, e)),
+    };
+    let mut turns = 0;
+    for line in BufReader::new(f).lines() {
+        let line = line.map_err(|e| Error::io("read", &rows_file, e))?;
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if is_user_turn(harness, &row) {
+            turns += 1;
+        }
+    }
+    Ok(turns)
+}
+
+fn is_user_turn(harness: Harness, row: &Value) -> bool {
+    let kind = row.get("type").and_then(Value::as_str);
+    match harness {
+        Harness::Claude => {
+            kind == Some("user")
+                && row.get("isSidechain").and_then(Value::as_bool) != Some(true)
+                && row
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .is_some_and(Value::is_string)
+        }
+        Harness::Codex => {
+            kind == Some("event_msg")
+                && row.get("payload").is_some_and(|p| {
+                    p.get("type").and_then(Value::as_str) == Some("item_completed")
+                        && p.get("item")
+                            .and_then(|i| i.get("type"))
+                            .and_then(Value::as_str)
+                            == Some("UserMessage")
+                })
+        }
+        Harness::Copilot => kind == Some("user.message"),
+        Harness::Pi => {
+            kind == Some("message")
+                && row
+                    .get("message")
+                    .and_then(|m| m.get("role"))
+                    .and_then(Value::as_str)
+                    == Some("user")
+        }
+    }
+}
+
 fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     match harness {
@@ -289,15 +402,65 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) -> Result<()> {
     Ok(())
 }
 
-/// The newest lead session the harness recorded for `cwd` under `home`.
-pub fn find_lead(harness: Harness, home: &Path, cwd: &Path) -> Result<Option<SessionRef>> {
-    let mut best: Option<(SystemTime, SessionRef)> = None;
+/// Every lead session the harness recorded for `cwd` under `home`, oldest
+/// or newest alike: the baseline a launch reads before its window opens, so
+/// the session that appears after it can be told from every neighbour that
+/// stood before (decision 65).
+pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
     for file in candidates(harness, home, cwd)? {
         if let Some(found) = identify(harness, &file, Some(cwd))? {
-            let at = mtime(&file);
-            if best.as_ref().is_none_or(|(t, _)| at > *t) {
-                best = Some((at, found));
-            }
+            ids.push(found.id);
+        }
+    }
+    Ok(ids)
+}
+
+/// The lead sessions for `cwd` under `home` that appeared since a launch's
+/// window opened: modified at or after `since` and absent from the
+/// `baseline` read before the window opened. One is the launch's own; two
+/// or more cannot be told apart, and none has appeared yet.
+pub fn new_leads(
+    harness: Harness,
+    home: &Path,
+    cwd: &Path,
+    since: SystemTime,
+    baseline: &[String],
+) -> Result<Vec<SessionRef>> {
+    let mut found = Vec::new();
+    for file in candidates(harness, home, cwd)? {
+        if mtime(&file) < since {
+            continue;
+        }
+        if let Some(lead) = identify(harness, &file, Some(cwd))?
+            && !baseline.contains(&lead.id)
+        {
+            found.push(lead);
+        }
+    }
+    Ok(found)
+}
+
+/// The newest lead session the harness recorded for `cwd` under `home`.
+/// With `since`, only a session file modified at or after that stamp counts,
+/// so a relaunch never binds to a session an earlier run retired; `None`
+/// where no such session exists.
+pub fn find_lead(
+    harness: Harness,
+    home: &Path,
+    cwd: &Path,
+    since: Option<SystemTime>,
+) -> Result<Option<SessionRef>> {
+    let mut best: Option<(SystemTime, SessionRef)> = None;
+    for file in candidates(harness, home, cwd)? {
+        let at = mtime(&file);
+        if since.is_some_and(|floor| at < floor) {
+            continue;
+        }
+        if let Some(found) = identify(harness, &file, Some(cwd))?
+            && best.as_ref().is_none_or(|(t, _)| at > *t)
+        {
+            best = Some((at, found));
         }
     }
     Ok(best.map(|(_, s)| s))
@@ -361,18 +524,211 @@ mod tests {
         fs::write(s.join("workspace.yaml"), "id: S1\ncwd: /w\n").unwrap();
         let home = dir.path();
         assert!(
-            find_lead(Harness::Copilot, home, Path::new("/w"))
+            find_lead(Harness::Copilot, home, Path::new("/w"), None)
                 .unwrap()
                 .is_none()
         );
         fs::write(s.join("events.jsonl"), "{\"type\":\"x\"}\n").unwrap();
         assert_eq!(
-            find_lead(Harness::Copilot, home, Path::new("/w"))
+            find_lead(Harness::Copilot, home, Path::new("/w"), None)
                 .unwrap()
                 .unwrap()
                 .id,
             "S1"
         );
+    }
+
+    /// One row per harness, each a cut of the native probe's own session
+    /// file: the rows that are user turns and the neighbours that are not.
+    #[test]
+    fn user_turns_counts_each_harness_s_own_user_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows: [(Harness, &str, &str, usize); 4] = [
+            (
+                Harness::Claude,
+                "s.jsonl",
+                concat!(
+                    r#"{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"fe7d"}"#,
+                    "
+",
+                    r#"{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Create probe-1.txt"},"uuid":"4944","timestamp":"2026-10-26T02:06:34.777Z","sessionId":"fe7d","cwd":"/w"}"#,
+                    "
+",
+                    r#"{"parentUuid":"4944","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"sessionId":"fe7d"}"#,
+                    "
+",
+                    r#"{"parentUuid":"4e00","isSidechain":false,"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01","type":"tool_result","content":"0000004"}]},"sessionId":"fe7d"}"#,
+                    "
+",
+                    r#"{"parentUuid":"1a32","isSidechain":true,"type":"user","message":{"role":"user","content":"a subagent's prompt"},"sessionId":"fe7d"}"#,
+                    "
+",
+                    r#"{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Now create probe-2.txt"},"sessionId":"fe7d","cwd":"/w"}"#,
+                    "
+",
+                ),
+                2,
+            ),
+            (
+                Harness::Codex,
+                "rollout-a.jsonl",
+                concat!(
+                    r#"{"timestamp":"2026-10-26T02:07:04.408Z","ordinal":0,"type":"session_meta","payload":{"id":"01a1","cwd":"/w","parent_thread_id":null,"source":"cli"}}"#,
+                    "
+",
+                    r#"{"timestamp":"2026-10-26T02:07:06.076Z","ordinal":7,"type":"response_item","payload":{"type":"message","id":"msg_1","role":"user","content":[{"type":"input_text","text":"<environment_context>…</environment_context>"}]}}"#,
+                    "
+",
+                    r#"{"timestamp":"2026-10-26T02:07:06.079Z","ordinal":11,"type":"response_item","payload":{"type":"message","id":"msg_2","role":"user","content":[{"type":"input_text","text":"Create probe-1.txt"}]}}"#,
+                    "
+",
+                    r#"{"timestamp":"2026-10-26T02:07:06.080Z","ordinal":12,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a1","item":{"type":"UserMessage","id":"01a1-um","content":[{"type":"text","text":"Create probe-1.txt"}]}}}"#,
+                    "
+",
+                    r#"{"timestamp":"2026-10-26T02:07:11.069Z","ordinal":13,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a1","item":{"type":"Reasoning","id":"rs_1","summary_text":[]}}}"#,
+                    "
+",
+                ),
+                1,
+            ),
+            (
+                Harness::Copilot,
+                "workspace.yaml",
+                concat!(
+                    r#"{"type":"session.start","data":{"sessionId":"76c3","version":1},"id":"ac01","timestamp":"2026-10-26T02:07:49.923Z"}"#,
+                    "
+",
+                    r#"{"type":"user.message","data":{"content":"Create probe-1.txt"},"id":"5440","timestamp":"2026-10-26T02:07:52.504Z","parentId":"1709"}"#,
+                    "
+",
+                    r#"{"type":"assistant.turn_start","data":{"turnId":"0"},"id":"bacd","timestamp":"2026-10-26T02:07:52.507Z","parentId":"5440"}"#,
+                    "
+",
+                    r#"{"type":"assistant.message","data":{"messageId":"cc98","content":"done"},"id":"d6cf","timestamp":"2026-10-26T02:07:55.000Z"}"#,
+                    "
+",
+                    r#"{"type":"user.message","data":{"content":"Now create probe-2.txt"},"id":"7777","timestamp":"2026-10-26T02:08:10.000Z","parentId":"d6cf"}"#,
+                    "
+",
+                ),
+                2,
+            ),
+            (
+                Harness::Pi,
+                "2026-10-26T02-08-44-396Z_01a1.jsonl",
+                concat!(
+                    r#"{"type":"session","version":3,"id":"01a1","timestamp":"2026-10-26T02:08:44.396Z","cwd":"/w"}"#,
+                    "
+",
+                    r#"{"type":"message","id":"5ad7","parentId":"49d7","timestamp":"2026-10-26T02:08:44.463Z","message":{"role":"system","content":""}}"#,
+                    "
+",
+                    r#"{"type":"message","id":"0859","parentId":"5ad7","timestamp":"2026-10-26T02:08:44.463Z","message":{"role":"user","content":[{"type":"text","text":"Create probe-1.txt"}],"timestamp":1792980524461}}"#,
+                    "
+",
+                    r#"{"type":"message","id":"315d","parentId":"0859","timestamp":"2026-10-26T02:08:47.317Z","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}"#,
+                    "
+",
+                    r#"{"type":"message","id":"b0e7","parentId":"315d","timestamp":"2026-10-26T02:08:47.322Z","message":{"role":"toolResult","toolCallId":"c1","content":[{"type":"text","text":"(no output)"}]}}"#,
+                    "
+",
+                ),
+                1,
+            ),
+        ];
+        for (harness, name, text, expected) in rows {
+            let file = dir.path().join(harness.name()).join(name);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            // Copilot's turns sit in events.jsonl beside the named file.
+            let rows_file = match harness {
+                Harness::Copilot => file.with_file_name("events.jsonl"),
+                _ => file.clone(),
+            };
+            fs::write(&rows_file, text).unwrap();
+            assert_eq!(user_turns(harness, &file).unwrap(), expected, "{harness:?}");
+        }
+        // A session whose file is not written yet has no turns.
+        assert_eq!(
+            user_turns(Harness::Claude, &dir.path().join("none.jsonl")).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_fresh_session_id_is_a_version_4_uuid() {
+        let id = fresh_session_id().unwrap();
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            vec![8, 4, 4, 4, 12]
+        );
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+        assert!(parts[2].starts_with('4'));
+        assert!(matches!(
+            parts[3].chars().next(),
+            Some('8' | '9' | 'a' | 'b')
+        ));
+        assert_ne!(fresh_session_id().unwrap(), id);
+        assert_eq!(uuid_v4([0xff; 16]), "ffffffff-ffff-4fff-bfff-ffffffffffff");
+        assert_eq!(
+            fixed_file(Harness::Claude, Path::new("/h"), Path::new("/w/x"), &id),
+            Some(PathBuf::from(format!("/h/projects/-w-x/{id}.jsonl")))
+        );
+        assert_eq!(
+            fixed_file(Harness::Codex, Path::new("/h"), Path::new("/w"), &id),
+            None
+        );
+    }
+
+    /// Decision 65: the sessions that appeared since the window opened are
+    /// the leads for the cwd modified since then and absent from the
+    /// baseline; a neighbour that stood before is excluded however recently
+    /// it was written, and another cwd's session never counts.
+    #[test]
+    fn new_leads_are_those_absent_from_the_baseline_and_written_since() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let day = home.join("sessions").join("2026").join("10").join("26");
+        fs::create_dir_all(&day).unwrap();
+        let meta = |id: &str, cwd: &str| {
+            format!(
+                r#"{{"type":"session_meta","payload":{{"id":"{id}","cwd":"{cwd}","parent_thread_id":null,"source":"cli"}}}}"#
+            )
+        };
+        let neighbour = day.join("rollout-a-N.jsonl");
+        fs::write(&neighbour, meta("N", "/w")).unwrap();
+        let baseline = lead_ids(Harness::Codex, home, Path::new("/w")).unwrap();
+        assert_eq!(baseline, vec!["N".to_owned()]);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let since = SystemTime::now();
+        // File stamps come from the kernel's coarse clock, which can trail
+        // the precise one by a tick, so the writes follow a pause.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        // The neighbour takes a row after the window opened, so it is the
+        // newest file; the runner's own file and another cwd's appear.
+        let grown = format!("{}\n{}\n", meta("N", "/w"), r#"{"type":"x"}"#);
+        fs::write(&neighbour, grown).unwrap();
+        fs::write(day.join("rollout-b-R.jsonl"), meta("R", "/w")).unwrap();
+        fs::write(day.join("rollout-c-O.jsonl"), meta("O", "/other")).unwrap();
+        let found = new_leads(Harness::Codex, home, Path::new("/w"), since, &baseline).unwrap();
+        assert_eq!(
+            found.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["R"]
+        );
+        // With no baseline the neighbour counts too, and nothing tells them
+        // apart.
+        let all = new_leads(Harness::Codex, home, Path::new("/w"), since, &[]).unwrap();
+        assert_eq!(all.len(), 2);
+        // Nothing has appeared when every lead stood in the baseline.
+        let none = new_leads(
+            Harness::Codex,
+            home,
+            Path::new("/w"),
+            since,
+            &["N".to_owned(), "R".to_owned()],
+        )
+        .unwrap();
+        assert!(none.is_empty());
     }
 
     #[test]
@@ -390,7 +746,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let new = project.join("bbbb.jsonl");
         fs::write(&new, r#"{"type":"user","sessionId":"bbbb","cwd":"/w"}"#).unwrap();
-        let found = find_lead(Harness::Claude, dir.path(), Path::new("/w"))
+        let found = find_lead(Harness::Claude, dir.path(), Path::new("/w"), None)
             .unwrap()
             .unwrap();
         assert_eq!(found.id, "bbbb");

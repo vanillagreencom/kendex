@@ -332,55 +332,58 @@ fn op_applies_a_request_and_prints_the_committed_transition() {
     assert_eq!(reply(&out)["refusal"]["key"], "op-kind");
 }
 
-/// Two launches of one lane through the binary, a failed outcome between
-/// them, on an unstamped file: each process mints its own stamp, so the
-/// second intent gets its own id and its confirmation runs the lane. The
-/// revision-based id R-U10 found would have given both the same id.
+/// Decision 52: `record-verification` through the binary writes
+/// `.verification` and reports it; a word that is no verdict refuses on the
+/// keyed line with the word, and the file keeps its bytes.
 #[test]
-fn op_mints_a_distinct_intent_id_per_process_on_an_unstamped_file() {
+fn op_records_a_verification_verdict_and_refuses_a_word_that_is_none() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "workflow-state-oversee.json", FLEET);
-    let launch = write(
+    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
+    let head = "f".repeat(40);
+    let request = write(
         dir.path(),
-        "launch.json",
-        r#"{"op": "launch-lane", "item": "KEN-4468", "harness": "claude", "mail_root": "/w/KEN-4468"}"#,
+        "verify.json",
+        &format!(
+            r#"{{"op": "record-verification", "head": "{head}", "verdict": "none", "reason": "no CI configured: no active workflows and no required checks on main", "source": "ci-wait --required-only"}}"#
+        ),
     );
-    let op = |request: &Path| {
-        let out = run(&["op", "--file"], &[&path, Path::new("--request"), request]);
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        reply(&out)["result"]["report"].clone()
-    };
-    let first = op(&launch)["effect"]["intent"]["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    assert!(first.starts_with("launch-lane:KEN-4468:"), "{first}");
-    let outcome = |id: &str, word: &str| {
-        write(
-            dir.path(),
-            &format!("{word}.json"),
-            &format!(r#"{{"op": "record-outcome", "intent_id": "{id}", "outcome": "{word}"}}"#),
-        )
-    };
-    assert_eq!(op(&outcome(&first, "failed"))["lane"]["status"], "stopped");
-    let second = op(&launch)["effect"]["intent"]["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    assert_ne!(second, first);
-    assert_eq!(
-        op(&outcome(&second, "confirmed"))["lane"]["status"],
-        "running"
+    let out = run(
+        &["op", "--file"],
+        &[&path, Path::new("--request"), &request],
     );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = &reply(&out)["result"]["report"];
+    assert_eq!(report["op"], "record-verification");
+    assert_eq!(report["verdict"], "none");
+    assert_eq!(report["replaced"], false);
     let state: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert!(state.get("record_version").is_none(), "still unstamped");
-    let intents = state["intents"].as_array().unwrap();
-    assert_eq!(intents.len(), 2);
-    assert_eq!(intents[0]["outcome"], "failed");
-    assert_eq!(intents[1]["outcome"], "confirmed");
+    assert_eq!(state["verification"]["head"], head);
+    assert_eq!(state["verification"]["verdict"], "none");
+    assert_eq!(state["verification"]["source"], "ci-wait --required-only");
+    assert!(state["verification"]["at"].as_str().is_some());
+
+    let text = fs::read_to_string(&path).unwrap();
+    let pending = write(
+        dir.path(),
+        "pending.json",
+        &format!(
+            r#"{{"op": "record-verification", "head": "{head}", "verdict": "pending", "reason": "checks still running", "source": "ci-wait --required-only"}}"#
+        ),
+    );
+    let out = run(
+        &["op", "--file"],
+        &[&path, Path::new("--request"), &pending],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        first_stderr_line(&out),
+        "orch-runtime: verdict-invalid verdict=pending"
+    );
+    assert_eq!(reply(&out)["refusal"]["key"], "verdict-invalid");
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
 }

@@ -9,7 +9,7 @@ cargo build                # a development binary at runtime/target/debug/agent-
 ../scripts/setup           # the shipped route: a release build in the user cache, never in the tree
 ```
 
-`cargo build` and `cargo test` here write to `runtime/target/`, which `.gitignore` excludes and no render carries. The shipped route never writes there: `scripts/setup` builds into `$AGENT_RUNTIME_CACHE`, else `$XDG_CACHE_HOME/kendex/agent-runtime`, else `~/.cache/kendex/agent-runtime`, keyed by `scripts/lib/key.sh`. Point `AGENT_RUNTIME_CACHE` at a scratch directory to try setup without touching the real cache; `../tests/setup/setup.sh` runs it against a fake cargo.
+`cargo build` and `cargo test` here write to `runtime/target/`, which `.gitignore` excludes and no render carries. The shipped route never writes there: `scripts/setup` builds into `$AGENT_RUNTIME_CACHE`, else `$XDG_CACHE_HOME/kendex/agent-runtime`, else `~/.cache/kendex/agent-runtime`, keyed by `scripts/lib/key.sh`. Point `AGENT_RUNTIME_CACHE` at a scratch directory to try setup without touching the real cache; `../tests/setup/setup.sh` runs it against a fake cargo. `../scripts/setup --runtime DIR --name NAME` builds a dependent crate the same way, at `<cache>/bin/NAME-<key>` with the key covering the dependency's inputs too; orch's `scripts/setup` is that caller, and its suite is `skills/orch/tests/setup.sh`.
 
 ## Test
 

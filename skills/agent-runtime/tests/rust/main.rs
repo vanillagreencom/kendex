@@ -112,9 +112,11 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
         compaction: Compaction::Native,
         brief: Brief::None,
         resume: None,
+        session_id: None,
         env: Default::default(),
         env_remove: Vec::new(),
         extra_args: Vec::new(),
+        program: None,
     };
     let flag = "--dangerously-skip-permissions".to_owned();
     let bypass = build(&intent(Permission::Bypass)).unwrap();
@@ -135,18 +137,74 @@ fn pi_captures_judge_idle_at_rest_and_working_mid_turn() {
     use agent_runtime::Harness;
     use agent_runtime::observe::{ProcessReading, State, judge};
     assert_eq!(
-        judge(PI_IDLE, Harness::Pi, ProcessReading::HarnessUp, None),
+        judge(PI_IDLE, Harness::Pi, &ProcessReading::HarnessUp, None),
         State::Idle
     );
     assert_eq!(
-        judge(PI_WORKING, Harness::Pi, ProcessReading::HarnessUp, None),
+        judge(PI_WORKING, Harness::Pi, &ProcessReading::HarnessUp, None),
         State::Working
     );
     // The same idle capture settles nothing for a marker-drawing harness.
     assert!(matches!(
-        judge(PI_IDLE, Harness::Claude, ProcessReading::HarnessUp, None),
+        judge(PI_IDLE, Harness::Claude, &ProcessReading::HarnessUp, None),
         State::Unjudged { .. }
     ));
+}
+
+/// The three marker-drawing harnesses at rest, as the native probe's
+/// `inspect` captured them after the first turn
+/// (`tmp/orch-rebuild/native/run2/<harness>/inspect-idle.json`): each reads
+/// idle under its own composer rule. Codex's `›` line is no other
+/// harness's composer, and neither Claude's nor Copilot's is Codex's;
+/// Copilot's unpadded `❯` is not Claude's. Claude frames its padded marker
+/// with rules as Copilot does, so Copilot's rule reads it idle too.
+#[test]
+fn each_harness_s_real_idle_capture_reads_idle_under_its_own_rule() {
+    use agent_runtime::Harness;
+    use agent_runtime::observe::{ProcessReading, State, judge};
+    let claude = include_str!("fixtures/claude-idle.txt");
+    let codex = include_str!("fixtures/codex-idle.txt");
+    let copilot = include_str!("fixtures/copilot-idle.txt");
+    let rows = [
+        (Harness::Claude, claude),
+        (Harness::Codex, codex),
+        (Harness::Copilot, copilot),
+    ];
+    for (harness, screen) in rows {
+        assert_eq!(
+            judge(screen, harness, &ProcessReading::HarnessUp, None),
+            State::Idle,
+            "{harness:?}"
+        );
+        // The same screen with a shell in the foreground is not idle.
+        assert!(matches!(
+            judge(
+                screen,
+                harness,
+                &ProcessReading::ForegroundShell {
+                    name: "fish".to_owned()
+                },
+                None
+            ),
+            State::Unjudged { .. }
+        ));
+    }
+    let foreign = [
+        (claude, Harness::Codex),
+        (codex, Harness::Claude),
+        (codex, Harness::Copilot),
+        (copilot, Harness::Claude),
+        (copilot, Harness::Codex),
+    ];
+    for (screen, other) in foreign {
+        assert!(
+            matches!(
+                judge(screen, other, &ProcessReading::HarnessUp, None),
+                State::Unjudged { .. }
+            ),
+            "under {other:?}"
+        );
+    }
 }
 
 #[test]

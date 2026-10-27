@@ -65,6 +65,10 @@ pub enum Error {
     LaneLive { item: String, status: LaneStatus },
     #[error("the lane for {item} is done")]
     LaneDone { item: String },
+    /// A lane launch names a `kind` or `surface` the one local tmux route
+    /// cannot run; refused before any intent persists (decision 57).
+    #[error("a {kind:?} {surface:?} lane is not a local tmux window")]
+    HostUnsupported { kind: String, surface: String },
     /// Another operation's intent on the target has not ended; the request
     /// waits for its outcome instead of racing it.
     #[error("intent {intent} ({}) is open on {target}", op.word())]
@@ -73,10 +77,6 @@ pub enum Error {
         op: EffectOp,
         target: String,
     },
-    /// The lane was relaunched after the intent was written, so the outcome
-    /// describes a session the record no longer holds.
-    #[error("intent {intent} predates the relaunch of {target}")]
-    IntentStale { intent: String, target: String },
     #[error("no round stage carries {round_id}")]
     RoundUnknown { round_id: String },
     /// No validation stage of the round names the run directory.
@@ -114,6 +114,11 @@ pub enum Error {
     /// an effect reports.
     #[error("{outcome:?} is not an outcome an effect can report")]
     OutcomeInvalid { outcome: Outcome },
+    /// The word is none a verification record carries (`pass`, `fail`,
+    /// `none`). ci-wait's `pending` is a wait that ended without a result,
+    /// no verdict about the head, so it is refused rather than recorded.
+    #[error("{verdict:?} is not a verification verdict")]
+    VerdictInvalid { verdict: String },
 }
 
 fn word(outcome: Outcome) -> String {
@@ -135,8 +140,8 @@ impl Error {
             Error::LaneMissing { .. } => "lane-missing",
             Error::LaneLive { .. } => "lane-live",
             Error::LaneDone { .. } => "lane-done",
+            Error::HostUnsupported { .. } => "host-unsupported",
             Error::IntentOpen { .. } => "intent-open",
-            Error::IntentStale { .. } => "intent-stale",
             Error::RoundUnknown { .. } => "round-unknown",
             Error::RunUnknown { .. } => "run-unknown",
             Error::RoundSuperseded { .. } => "round-superseded",
@@ -148,6 +153,7 @@ impl Error {
             Error::IntentDuplicate { .. } => "intent-duplicate",
             Error::IntentComplete { .. } => "intent-complete",
             Error::OutcomeInvalid { .. } => "outcome-invalid",
+            Error::VerdictInvalid { .. } => "verdict-invalid",
         }
     }
 
@@ -185,6 +191,9 @@ impl Error {
             Error::LaneMissing { item } | Error::LaneDone { item } => {
                 vec![pair("item", item.clone())]
             }
+            Error::HostUnsupported { kind, surface } => {
+                vec![pair("kind", kind.clone()), pair("surface", surface.clone())]
+            }
             Error::LaneLive { item, status } => vec![
                 pair("item", item.clone()),
                 pair("status", status.word().to_owned()),
@@ -192,10 +201,6 @@ impl Error {
             Error::IntentOpen { intent, op, target } => vec![
                 pair("intent", intent.clone()),
                 pair("op", op.word().to_owned()),
-                pair("target", target.clone()),
-            ],
-            Error::IntentStale { intent, target } => vec![
-                pair("intent", intent.clone()),
                 pair("target", target.clone()),
             ],
             Error::LaunchMissing { intent, field } => vec![
@@ -221,6 +226,7 @@ impl Error {
                 pair("outcome", word(*outcome)),
             ],
             Error::OutcomeInvalid { outcome } => vec![pair("outcome", word(*outcome))],
+            Error::VerdictInvalid { verdict } => vec![pair("verdict", verdict.clone())],
         }
     }
 }

@@ -911,7 +911,9 @@ stage_rows=(
 for row in "${stage_rows[@]}"; do
   IFS='^' read -r label base filter want_rc kind timed <<<"$row"
   "$STATE" --state-dir "$STAGE_SD" init "$ISSUE" >/dev/null
-  "$STATE" --state-dir "$STAGE_SD" update "$ISSUE" --arg round "$R" '.stages=[{kind:"dev",round_id:$round,start:1,end:null}]'
+  # The open validate row is the runtime admission's (`orch-runtime
+  # record-validation-admission`); the check leaves it as it stands.
+  "$STATE" --state-dir "$STAGE_SD" update "$ISSUE" --arg round "$R" '.stages=[{kind:"dev",round_id:$round,start:1,end:null},{kind:"validate",round_id:$round,run_dir:"tmp/validation-runs/r1",start:2,end:null}]'
   rm -f "$ARTIFACT"
   case "$base" in impl) printf '%s' "$VALID_IMPL" | jq "$filter" > "$ARTIFACT" ;;
     fix) printf '%s' "$VALID_FIX" | jq "$filter" > "$ARTIFACT" ;;
@@ -925,7 +927,7 @@ for row in "${stage_rows[@]}"; do
   SHIM_PATH="$TMP_ROOT/clock-bin" ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
   assert_eq "$RC" "$want_rc" "$label preserves artifact status" "$ERR"
   if [[ "$kind" == dev ]]; then
-    assert_eq "$(jq -c '.stages' "$STAGE_FILE")" "[{\"kind\":\"dev\",\"round_id\":\"$R\",\"start\":1,\"end\":null}]" "$label writes no stage"
+    assert_eq "$(jq -c '.stages' "$STAGE_FILE")" "[{\"kind\":\"dev\",\"round_id\":\"$R\",\"start\":1,\"end\":null},{\"kind\":\"validate\",\"round_id\":\"$R\",\"run_dir\":\"tmp/validation-runs/r1\",\"start\":2,\"end\":null}]" "$label writes no stage"
   else
     assert_eq "$(stage_closed "$kind")" true "$label closes with artifact kind at the injected time"
     first="$(stage_observed)"
@@ -939,12 +941,12 @@ for row in "${stage_rows[@]}"; do
     else
       assert_eq "$(jq '.finding_occurrences.records | length' "$STAGE_FILE")" 0 "$label supplies no failed check"
     fi
+    assert_eq "$(jq -c '[.stages[1:][] | {kind,round_id,run_dir,start,end}]' "$STAGE_FILE")" \
+      "[{\"kind\":\"validate\",\"round_id\":\"$R\",\"run_dir\":\"tmp/validation-runs/r1\",\"start\":2,\"end\":null}]" "$label appends no validate stage and leaves the admission's row as it stands"
     if [[ "$timed" == true ]]; then
-      assert_eq "$(jq -c '[.stages[1] | {kind,round_id,start,end}]' "$STAGE_FILE")" \
-        "[{\"kind\":\"validate\",\"round_id\":\"$R\",\"start\":1767225600,\"end\":1767228900}]" "$label validation uses run times"
       assert_eq "$(jq -c '.validate_rounds' "$STAGE_FILE")" "[{\"round_id\":\"$R\",\"receipt\":\"${ARTIFACT##*/}\",\"kind\":\"$kind\",\"mode\":\"full\",\"seconds\":3300}]" "$label records validation minutes"
     else
-      assert_eq "$(jq -c '[.stages[] | select(.kind == "validate")]' "$STAGE_FILE")" '[]' 'no run creates no validate stage'
+      assert_eq "$(jq -c '.validate_rounds // []' "$STAGE_FILE")" '[]' "$label records no validation minutes without a run"
     fi
   fi
 done

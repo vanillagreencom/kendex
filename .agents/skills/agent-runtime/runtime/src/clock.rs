@@ -27,6 +27,46 @@ pub fn iso_utc(secs: u64) -> String {
     )
 }
 
+/// The seconds since the Unix epoch a `YYYY-MM-DDTHH:MM:SSZ` stamp names,
+/// `None` for any other text. The inverse of [`iso_utc`].
+pub fn epoch_secs(stamp: &str) -> Option<u64> {
+    let bytes = stamp.as_bytes();
+    if bytes.len() != 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || bytes[19] != b'Z'
+    {
+        return None;
+    }
+    let num = |range: std::ops::Range<usize>| -> Option<i64> {
+        let text = stamp.get(range)?;
+        if !text.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        text.parse().ok()
+    };
+    let (y, m, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (h, mi, s) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 59 {
+        return None;
+    }
+    let days = days_from_civil(y, m, d);
+    u64::try_from(days * 86_400 + h * 3600 + mi * 60 + s).ok()
+}
+
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
@@ -54,6 +94,15 @@ mod tests {
         ];
         for (secs, text) in rows {
             assert_eq!(iso_utc(secs), text);
+            assert_eq!(epoch_secs(text), Some(secs));
+        }
+        for bad in [
+            "2026-01-29 15:20:00Z",
+            "2026-13-01T00:00:00Z",
+            "",
+            "2026-01-29T15:20:00",
+        ] {
+            assert_eq!(epoch_secs(bad), None, "{bad}");
         }
     }
 }

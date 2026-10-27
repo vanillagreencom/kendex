@@ -96,7 +96,10 @@ enum Verb {
         home: Option<PathBuf>,
     },
     /// Judge a captured screen held in a file (fixtures and probes), drawn
-    /// by the named harness.
+    /// by the named harness. The screen alone is judged: `--process` is the
+    /// caller's own reading of the pane (`harness-up` asserts the harness
+    /// holds it), which a live `inspect` reads from the pane's foreground
+    /// process instead.
     Judge {
         #[arg(long)]
         screen: PathBuf,
@@ -168,11 +171,19 @@ fn read_record(path: &Path) -> Result<(LaunchRecord, u64, Map<String, serde_json
     Ok((loaded.body, loaded.revision, loaded.extra))
 }
 
+/// The harness's process names for this record: its own, and the configured
+/// program's where the intent names one.
+fn owns(rec: &LaunchRecord) -> impl Fn(&str) -> bool + '_ {
+    move |name| {
+        rec.harness
+            .owns_process_of(rec.intent.program.as_deref(), name)
+    }
+}
+
 fn harness_identity(rec: &LaunchRecord) -> Result<Option<Identity>> {
     let (_, pane_pid) = tmux::pane_process(&rec.pane)?;
     let rows = process::table()?;
-    let h = rec.harness;
-    let below = process::below(&rows, pane_pid, &|n| h.owns_process(n));
+    let below = process::below(&rows, pane_pid, &owns(rec));
     let Some((_, pid)) = below.first() else {
         return Ok(None);
     };
@@ -196,26 +207,26 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
         });
     }
     let (foreground, pane_pid) = tmux::pane_process(&rec.pane)?;
-    let rows = process::table()?;
-    let h = rec.harness;
-    let found = process::below(&rows, pane_pid, &|n| h.owns_process(n));
+    // Who holds the pane's terminal, read against the recorded identity
+    // while that one still runs; a record with none, or whose process has
+    // ended, takes the harness-named process now in the foreground.
     let harness_live = match &rec.harness_process {
         Some(id) => Some(process::still_runs(id)?),
         None => None,
     };
-    if (rec.harness_process.is_none() || harness_live != Some(process::Liveness::Live))
-        && let Some((_, pid)) = found.first()
+    let recorded = rec
+        .harness_process
+        .as_ref()
+        .filter(|_| harness_live == Some(process::Liveness::Live));
+    let reading = observe::foreground(pane_pid, &owns(rec), recorded)?;
+    if let ProcessReading::Harness { identity } = &reading
+        && recorded.is_none()
     {
-        rec.harness_process = process::identity(*pid)?;
+        rec.harness_process = Some(identity.clone());
     }
     let harness_live = match &rec.harness_process {
         Some(id) => Some(process::still_runs(id)?),
         None => None,
-    };
-    let reading = if found.is_empty() && process::only_shells_below(&rows, pane_pid) {
-        ProcessReading::ShellsOnly
-    } else {
-        ProcessReading::HarnessUp
     };
     if rec.native_session.is_none() {
         let home = rec
@@ -224,11 +235,11 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
             .clone()
             .or_else(|| session::default_home(rec.harness));
         if let Some(home) = home {
-            rec.native_session = session::find_lead(rec.harness, &home, &rec.intent.cwd)?;
+            rec.native_session = session::find_lead(rec.harness, &home, &rec.intent.cwd, None)?;
         }
     }
     let screen = tmux::capture(&rec.pane)?;
-    let state = observe::judge(&screen, rec.harness, reading, None);
+    let state = observe::judge(&screen, rec.harness, &reading, None);
     let tail: Vec<String> = screen
         .lines()
         .rev()
@@ -397,9 +408,8 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 Some(id) => Some(id),
                 None => harness_identity(&rec).unwrap_or(None),
             };
-            let h = rec.harness;
             let outcome = match identity {
-                Some(id) => process::stop_tree(&id, &|n| h.owns_process(n), grace)?,
+                Some(id) => process::stop_tree(&id, &owns(&rec), grace)?,
                 None => process::Stop::AlreadyGone,
             };
             let window_closed = tmux::kill_window(&rec.pane).unwrap_or(false);
@@ -430,7 +440,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let home = home
                 .or_else(|| session::default_home(h))
                 .ok_or_else(|| Error::refused("home-unresolved", &[("harness", h.name())]))?;
-            let found = session::find_lead(h, &home, &cwd)?;
+            let found = session::find_lead(h, &home, &cwd, None)?;
             Ok(serde_json::to_value(found).unwrap_or_default())
         }
         Verb::Judge {
@@ -453,7 +463,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     ));
                 }
             };
-            Ok(serde_json::to_value(observe::judge(&text, h, reading, None)).unwrap_or_default())
+            Ok(serde_json::to_value(observe::judge(&text, h, &reading, None)).unwrap_or_default())
         }
         Verb::Process { op } => match op {
             ProcessOp::Identity { pid } => {

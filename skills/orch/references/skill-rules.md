@@ -256,7 +256,7 @@ The overseer's queue order holds that dependent through verification.
 
 A selected issue whose live read reports `in_pr_bundle` is the work item, delegated with its children.
 
-For it, also read the complete descendant tree through [project-management § Reading a Full Subtree](../../project-management/references/dependencies.md#reading-a-full-subtree).
+For it, also read the complete descendant tree through project-management's `references/dependencies.md` § Reading a Full Subtree.
 
 Read each non-terminal descendant whose work the session will implement with `issues get --format=safe`.
 
@@ -409,7 +409,7 @@ Handoff checks cannot guarantee that Codex never compacts.
 
 A delegated orchestration session (lane) never creates a tracked issue.
 
-TPM analysis from [audit-issues](../../project-management/workflows/audit-issues.md) § 2.1 / § 4.1 runs in a lane or delegated subagent, never in the overseer session.
+TPM analysis from project-management's `workflows/audit-issues.md` § 2.1 / § 4.1 runs in a lane or delegated subagent, never in the overseer session.
 
 Defer a proposal until its source PR has merged or its source commit has landed on the base branch.
 
@@ -437,11 +437,11 @@ A gap a lane finds in a package or a workflow is a proposal through lane mail an
 
 The lane status file carries no proposal.
 
-Project-management's [proposal-sweep](../../project-management/workflows/proposal-sweep.md) workflow owns tracker-specific fleet analysis.
+Project-management's `workflows/proposal-sweep.md` workflow owns tracker-specific fleet analysis.
 
 It runs in a subagent the overseer launches, returns issue-mode audit JSON and files nothing.
 
-The overseer checks that output against live fleet work before it invokes [audit-issues](../../project-management/workflows/audit-issues.md) with `--analyzed`; project-order resumes at § 2.2.
+The overseer checks that output against live fleet work before it invokes project-management's `workflows/audit-issues.md` with `--analyzed`; project-order resumes at § 2.2.
 
 It records the created issue ID or one-line decline against the source comment through the same tracker.
 

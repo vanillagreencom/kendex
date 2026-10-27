@@ -1,0 +1,37 @@
+#!/bin/bash
+# A stub harness for the orch-runtime live-effect tests, named `claude` so
+# the kernel records the harness's own process name for it; the `#!` line
+# names bash directly, since `env` would exec bash under its own name. It
+# takes the session id Claude Code takes (`--session-id <uuid>`) and ignores
+# every other launch flag, draws Claude Code's composer marker (❯ then
+# U+00A0) so the judge reads the pane idle, and records each line it reads
+# as a user turn in a session file of Claude Code's shape named by that id
+# under CLAUDE_CONFIG_DIR (`tmp/orch-rebuild/native/run2/claude/home`: a
+# `user` row with a string `content`, `sessionId` and `cwd`), so a delivery
+# to it is confirmed the way the runtime confirms one to the real harness.
+# It launches no model and reaches no account; it stands in for a harness on
+# a private server until its stdin closes, which a kill-server or a window
+# kill does.
+printf '\xe2\x9d\xaf\xc2\xa0\n'
+printf '  ? for shortcuts\n'
+session="stub-$$"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) session="${2:-$session}"; shift ;;
+  esac
+  shift
+done
+rows=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  slug="${PWD//[\/.]/-}"
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
+  rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
+  printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+fi
+while IFS= read -r line; do
+  [ -n "$rows" ] || continue
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s"}\n' \
+    "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" >> "$rows"
+done

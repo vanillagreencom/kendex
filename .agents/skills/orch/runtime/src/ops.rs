@@ -10,10 +10,12 @@
 //! transition and reports how far the effect got as agent-runtime's
 //! `Outcome`. One intent per target may be open: a repeated request of the
 //! same operation reconciles it, another operation on the target refuses.
-//! In this build the live effects are not wired: a result says so as
-//! [`Effect::NotWired`], and the record shows an intent that has not started.
+//! A transition never runs the effect itself: it returns the persisted
+//! intent as [`Effect::Persisted`], the `effects` module runs the effect
+//! against the host and records what it observed through `record-outcome`,
+//! and a reconciliation re-observes an open intent the same way.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
 use agent_runtime::protocol::Outcome;
@@ -23,7 +25,7 @@ use serde_json::{Map, Value, json};
 use crate::error::{Error, Result};
 use crate::state::{
     self, Document, EffectOp, Intent, ItemState, Kind, Lane, LaneStatus, LaunchIdentity, Locking,
-    OVERSEER_COMPARE_KEYS, Overseer, PREDECESSOR_SESSION_KEYS, Pending, Record,
+    OVERSEER_COMPARE_KEYS, Overseer, PREDECESSOR_SESSION_KEYS, Pending, Phase, Reconciled, Record,
     SUCCESSOR_BINDING_KEYS, SUCCESSOR_IDENTITY_KEYS, Selection, Snapshot, Stage, StageKind, Stamp,
 };
 
@@ -108,6 +110,10 @@ pub struct LaunchLane {
     pub surface: Option<String>,
     #[serde(default)]
     pub over_cap: Option<String>,
+    /// The opening instruction, read by the harness at its start. Not a
+    /// record field: the effect carries it to the launch.
+    #[serde(default)]
+    pub brief_file: Option<PathBuf>,
 }
 
 impl LaunchLane {
@@ -205,6 +211,10 @@ impl OverseerExpected {
 pub struct RequestTransfer {
     pub expected: OverseerExpected,
     pub successor: Pending,
+    /// The successor's opening instruction, the handoff. Not a record
+    /// field: the effect carries it to the launch.
+    #[serde(default)]
+    pub brief_file: Option<PathBuf>,
 }
 
 /// Close a round's stage: its result is accepted. With `run_dir` the open
@@ -214,6 +224,57 @@ pub struct AcceptResult {
     pub round_id: String,
     #[serde(default)]
     pub run_dir: Option<String>,
+}
+
+/// Record the verification verdict of a published head as `.verification`,
+/// `{head, verdict, reason, source, at}`, written over an earlier record: a
+/// newer head's verdict replaces the one before it. `round_id`, when given,
+/// must name a stage the item ran.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordVerification {
+    #[serde(default)]
+    pub round_id: Option<String>,
+    pub head: String,
+    /// One of [`Verdict`]'s words, read as the request wrote it so the
+    /// refusal names the word.
+    pub verdict: String,
+    /// What the reader read: for `none`, the affirmative absence evidence.
+    pub reason: String,
+    /// The reader, such as `ci-wait --required-only`.
+    pub source: String,
+}
+
+/// The verdicts a verification record carries: ci-wait's terminal words.
+/// ci-wait's fourth word, `pending`, is a wait that ended without a result
+/// and so no verdict about the head; it is refused, never recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Pass,
+    Fail,
+    /// The repository runs no CI for the head, on affirmative absence
+    /// evidence.
+    None,
+}
+
+impl Verdict {
+    /// The verdict a word names, `None` for a word that is no verdict.
+    pub fn parse(word: &str) -> Option<Verdict> {
+        match word {
+            "pass" => Some(Verdict::Pass),
+            "fail" => Some(Verdict::Fail),
+            "none" => Some(Verdict::None),
+            _ => Option::None,
+        }
+    }
+
+    /// The word the record holds.
+    pub fn word(self) -> &'static str {
+        match self {
+            Verdict::Pass => "pass",
+            Verdict::Fail => "fail",
+            Verdict::None => "none",
+        }
+    }
 }
 
 /// Ask for a lane's owned processes and window to be closed.
@@ -242,6 +303,34 @@ pub struct RecordOutcome {
     /// `oversee register` from that pane writes the next generation.
     #[serde(default)]
     pub server_start: Option<u64>,
+    /// The socket of the server `launch` names, recorded as the successor's
+    /// `server_socket` and on the kept runner, so a later observation
+    /// reaches that server by name (decision 64).
+    #[serde(default)]
+    pub server_socket: Option<String>,
+    /// The record's `window`: `<session>:<title>` on a lane, the tmux
+    /// window id on the overseer, as the legacy launchers write them.
+    #[serde(default)]
+    pub window: Option<String>,
+    /// The tmux session a confirmed lane launch opened in; the fleet
+    /// records the first as `tmux.session`, as the first legacy launch does.
+    #[serde(default)]
+    pub tmux_session: Option<String>,
+    /// The line a confirmed successor ran, written over the pending one.
+    #[serde(default)]
+    pub launch_line: Option<String>,
+    /// What the effect observed, kept on the intent for a reconciliation.
+    #[serde(default)]
+    pub observation: Option<Value>,
+}
+
+/// Record how far an open effect has got: its phase and the pane it holds,
+/// written before the effect waits on its next step (decision 62). Refused
+/// on an intent that has ended.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordPhase {
+    pub intent_id: String,
+    pub phase: Phase,
 }
 
 /// One operation request, tagged by `op`.
@@ -254,8 +343,10 @@ pub enum Request {
     RecordValidationAdmission(RecordValidationAdmission),
     RequestTransfer(Box<RequestTransfer>),
     AcceptResult(AcceptResult),
+    RecordVerification(RecordVerification),
     CloseOwnedResources(CloseOwnedResources),
     RecordOutcome(Box<RecordOutcome>),
+    RecordPhase(RecordPhase),
 }
 
 impl Request {
@@ -268,8 +359,10 @@ impl Request {
             Request::RecordValidationAdmission(_) => "record-validation-admission",
             Request::RequestTransfer(_) => "request-transfer",
             Request::AcceptResult(_) => "accept-result",
+            Request::RecordVerification(_) => "record-verification",
             Request::CloseOwnedResources(_) => "close-owned-resources",
             Request::RecordOutcome(_) => "record-outcome",
+            Request::RecordPhase(_) => "record-phase",
         }
     }
 
@@ -278,12 +371,14 @@ impl Request {
         match self {
             Request::BeginRound(_)
             | Request::RecordValidationAdmission(_)
-            | Request::AcceptResult(_) => Kind::Item,
+            | Request::AcceptResult(_)
+            | Request::RecordVerification(_) => Kind::Item,
             Request::LaunchLane(_)
             | Request::AdoptSession(_)
             | Request::RequestTransfer(_)
             | Request::CloseOwnedResources(_)
-            | Request::RecordOutcome(_) => Kind::Fleet,
+            | Request::RecordOutcome(_)
+            | Request::RecordPhase(_) => Kind::Fleet,
         }
     }
 }
@@ -297,11 +392,16 @@ impl Request {
 #[serde(tag = "effect", rename_all = "kebab-case")]
 pub enum Effect {
     /// An intent for the target already stood unfinished; nothing new was
-    /// created and the record did not move.
+    /// created and the record did not move. The caller reconciles it.
     Reconciled { intent: Intent },
-    /// The intent is persisted and has not started: the live effect it names
-    /// is not wired in this build.
-    NotWired { intent: Intent, needs: String },
+    /// The intent is persisted and has not started; the caller runs the
+    /// effect and records its outcome.
+    Persisted { intent: Intent },
+    /// A launch intent for the target stands open; nothing was created. The
+    /// caller reconciles it and, when it stays unconfirmed with a recorded
+    /// pane, closes it `superseded-by-close` and asks again, so the close
+    /// stops what the pane holds (decision 67).
+    Supersedes { intent: Intent },
 }
 
 /// A lane written `preparing` with its launch intent.
@@ -360,11 +460,29 @@ pub struct ResultAccepted {
     pub closed_now: bool,
 }
 
+/// A verification verdict written for a head.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationRecorded {
+    pub head: String,
+    pub verdict: String,
+    pub reason: String,
+    pub source: String,
+    pub at: String,
+    /// True when a record stood before and this write replaced it.
+    pub replaced: bool,
+}
+
 /// A close asked for, with the lane as it stands until the stop confirms.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CloseRequested {
     pub lane: Lane,
     pub effect: Effect,
+}
+
+/// A phase written onto its open intent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PhaseRecorded {
+    pub intent: Intent,
 }
 
 /// An outcome written onto its intent and the record it moved.
@@ -377,6 +495,10 @@ pub struct OutcomeRecorded {
     pub lane: Option<Box<Lane>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<u64>,
+    /// Set when the outcome closed the intent without moving its target,
+    /// because the target's record had moved under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciled: Option<Reconciled>,
 }
 
 /// The typed result of one committed transition, tagged like its request.
@@ -389,8 +511,10 @@ pub enum Report {
     RecordValidationAdmission(ValidationAdmitted),
     RequestTransfer(Box<TransferRequested>),
     AcceptResult(ResultAccepted),
+    RecordVerification(VerificationRecorded),
     CloseOwnedResources(Box<CloseRequested>),
     RecordOutcome(Box<OutcomeRecorded>),
+    RecordPhase(Box<PhaseRecorded>),
 }
 
 /// What `apply` returns: the stamp the file now holds and the report of the
@@ -463,11 +587,15 @@ pub fn item_transition(
             record_validation_admission(path, doc, r, env)?,
         )),
         Request::AcceptResult(r) => Ok(Report::AcceptResult(accept_result(path, doc, r, env)?)),
+        Request::RecordVerification(r) => Ok(Report::RecordVerification(record_verification(
+            path, doc, r, env,
+        )?)),
         Request::LaunchLane(_)
         | Request::AdoptSession(_)
         | Request::RequestTransfer(_)
         | Request::CloseOwnedResources(_)
-        | Request::RecordOutcome(_) => Err(kind_error(request, path, Kind::Item)),
+        | Request::RecordOutcome(_)
+        | Request::RecordPhase(_) => Err(kind_error(request, path, Kind::Item)),
     }
 }
 
@@ -496,9 +624,11 @@ pub fn fleet_transition(
         Request::RecordOutcome(r) => Ok(Report::RecordOutcome(Box::new(record_outcome(
             path, doc, r, env,
         )?))),
+        Request::RecordPhase(r) => Ok(Report::RecordPhase(Box::new(record_phase(path, doc, r)?))),
         Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
-        | Request::AcceptResult(_) => Err(kind_error(request, path, Kind::Fleet)),
+        | Request::AcceptResult(_)
+        | Request::RecordVerification(_) => Err(kind_error(request, path, Kind::Fleet)),
     }
 }
 
@@ -635,6 +765,51 @@ fn accept_result(
     })
 }
 
+/// The key `.verification` is written under.
+const VERIFICATION_KEY: &str = "verification";
+
+fn record_verification(
+    path: &Path,
+    doc: &mut Document,
+    r: &RecordVerification,
+    env: &Env,
+) -> Result<VerificationRecorded> {
+    let verdict = Verdict::parse(&r.verdict).ok_or_else(|| Error::VerdictInvalid {
+        verdict: r.verdict.clone(),
+    })?;
+    if let Some(round_id) = &r.round_id {
+        let bound = stages(path, doc)?
+            .iter()
+            .any(|s| s.round_id.as_deref() == Some(round_id));
+        if !bound {
+            return Err(Error::RoundUnknown {
+                round_id: round_id.clone(),
+            });
+        }
+    }
+    let replaced = !matches!(doc.get(VERIFICATION_KEY), None | Some(Value::Null));
+    let at = env.iso();
+    state::set(
+        doc,
+        VERIFICATION_KEY,
+        json!({
+            "head": r.head,
+            "verdict": verdict.word(),
+            "reason": r.reason,
+            "source": r.source,
+            "at": at,
+        }),
+    );
+    Ok(VerificationRecorded {
+        head: r.head.clone(),
+        verdict: verdict.word().to_owned(),
+        reason: r.reason.clone(),
+        source: r.source.clone(),
+        at,
+        replaced,
+    })
+}
+
 // ---- fleet -----------------------------------------------------------------
 
 fn lanes(path: &Path, doc: &Document) -> Result<Vec<Lane>> {
@@ -660,17 +835,57 @@ fn lane_doc_mut<'a>(path: &Path, doc: &'a mut Document, index: usize) -> Result<
     state::element_mut(path, rows, index, "lanes")
 }
 
-/// The standing open intent on `target`: the same operation's to
-/// reconcile, another operation's to refuse.
-fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Option<Intent>> {
-    match intents.iter().find(|i| i.target == target && i.open()) {
-        Some(intent) if intent.op == op => Ok(Some(intent.clone())),
-        Some(intent) => Err(Error::IntentOpen {
+/// What stands open on a target when an operation arrives.
+enum Standing {
+    /// No open intent: the operation persists its own.
+    Clear,
+    /// The same operation's intent: the caller reconciles it.
+    Same(Intent),
+    /// A launch intent a close may supersede once its reconcile reads it
+    /// still unconfirmed with a recorded pane (decision 67).
+    Supersedable(Intent),
+}
+
+/// The standing open intent on `target` against the operation `op` asks
+/// for. Every pair of operations refuses `intent-open`, except a close over
+/// an open launch, which supersedes it: a hung launch would otherwise have
+/// neither a close nor a relaunch (decision 67).
+fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Standing> {
+    let Some(intent) = intents.iter().find(|i| i.target == target && i.open()) else {
+        return Ok(Standing::Clear);
+    };
+    match (intent.op, op) {
+        (EffectOp::LaunchLane, EffectOp::LaunchLane)
+        | (EffectOp::CloseOwnedResources, EffectOp::CloseOwnedResources)
+        | (EffectOp::RequestTransfer, EffectOp::RequestTransfer) => {
+            Ok(Standing::Same(intent.clone()))
+        }
+        (EffectOp::LaunchLane, EffectOp::CloseOwnedResources) => {
+            Ok(Standing::Supersedable(intent.clone()))
+        }
+        (EffectOp::CloseOwnedResources, EffectOp::LaunchLane)
+        | (EffectOp::LaunchLane | EffectOp::CloseOwnedResources, EffectOp::RequestTransfer)
+        | (EffectOp::RequestTransfer, EffectOp::LaunchLane | EffectOp::CloseOwnedResources) => {
+            Err(Error::IntentOpen {
+                intent: intent.id.clone(),
+                op: intent.op,
+                target: target.to_owned(),
+            })
+        }
+    }
+}
+
+/// The same operation's open intent on `target`, to reconcile; any other
+/// operation's refuses.
+fn same_open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Option<Intent>> {
+    match open_intent(intents, op, target)? {
+        Standing::Clear => Ok(None),
+        Standing::Same(intent) => Ok(Some(intent)),
+        Standing::Supersedable(intent) => Err(Error::IntentOpen {
             intent: intent.id.clone(),
             op: intent.op,
             target: target.to_owned(),
         }),
-        None => Ok(None),
     }
 }
 
@@ -717,6 +932,11 @@ fn new_intent(op: EffectOp, target: &str, env: &Env, revision: u64) -> Intent {
         lane_since: None,
         selection: None,
         original_pending: None,
+        phase: None,
+        observation: None,
+        reconciled: None,
+        observed_status: None,
+        observed_generation: None,
     }
 }
 
@@ -825,10 +1045,24 @@ fn launch_lane(
     env: &Env,
     revision: u64,
 ) -> Result<LaneLaunched> {
+    // The one launch route is a local tmux window; a non-local kind or a
+    // non-tmux surface is refused before any intent persists (decision 57).
+    if let Some(kind) = r.kind.as_deref().filter(|k| *k != "local") {
+        return Err(Error::HostUnsupported {
+            kind: kind.to_owned(),
+            surface: r.surface.clone().unwrap_or_else(|| "tmux".to_owned()),
+        });
+    }
+    if let Some(surface) = r.surface.as_deref().filter(|s| *s != "tmux") {
+        return Err(Error::HostUnsupported {
+            kind: r.kind.clone().unwrap_or_else(|| "local".to_owned()),
+            surface: surface.to_owned(),
+        });
+    }
     let lanes = lanes(path, doc)?;
     let intents = intents(path, doc)?;
     let position = lanes.iter().position(|l| l.item == r.item);
-    if let Some(intent) = open_intent(&intents, EffectOp::LaunchLane, &r.item)? {
+    if let Some(intent) = same_open_intent(&intents, EffectOp::LaunchLane, &r.item)? {
         let index = position.ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
         })?;
@@ -882,12 +1116,7 @@ fn launch_lane(
     push_intent(path, doc, &intent)?;
     Ok(LaneLaunched {
         lane: lane_at(path, doc, index)?,
-        effect: Effect::NotWired {
-            intent,
-            needs: "agent-runtime launch: host::tmux::new_window of launch::LaunchIntent, \
-                    then the launch record's identity"
-                .to_owned(),
-        },
+        effect: Effect::Persisted { intent },
     })
 }
 
@@ -959,12 +1188,25 @@ fn request_transfer(
 ) -> Result<TransferRequested> {
     let current = overseer(path, doc)?;
     let generation = current.generation.unwrap_or(0);
-    let target = format!("overseer:{generation}");
-    if let Some(intent) = open_intent(&intents(path, doc)?, EffectOp::RequestTransfer, &target)? {
+    let target = overseer_target(generation);
+    let intents = intents(path, doc)?;
+    if let Some(intent) = same_open_intent(&intents, EffectOp::RequestTransfer, &target)? {
         return Ok(TransferRequested {
             generation,
             pending: current.pending.unwrap_or_else(|| r.successor.clone()),
             effect: Effect::Reconciled { intent },
+        });
+    }
+    // One open succession per overseer, not per generation string: a
+    // transfer still open on an earlier generation is reconciled first.
+    if let Some(intent) = intents
+        .iter()
+        .find(|i| i.op == EffectOp::RequestTransfer && i.open() && i.target != target)
+    {
+        return Err(Error::IntentOpen {
+            intent: intent.id.clone(),
+            op: intent.op,
+            target: intent.target.clone(),
         });
     }
     // The legacy compare-and-swap, `ol_succession_owned`: the six identity
@@ -997,12 +1239,7 @@ fn request_transfer(
     Ok(TransferRequested {
         generation,
         pending: r.successor.clone(),
-        effect: Effect::NotWired {
-            intent,
-            needs: "oversee succession: retire the predecessor exactly, open the pending \
-                    line through agent-runtime, confirm its native identity"
-                .to_owned(),
-        },
+        effect: Effect::Persisted { intent },
     })
 }
 
@@ -1026,49 +1263,109 @@ fn close_owned_resources(
             item: r.item.clone(),
         });
     }
-    if let Some(intent) = open_intent(&intents(path, doc)?, EffectOp::CloseOwnedResources, &r.item)?
-    {
-        return Ok(CloseRequested {
-            lane,
-            effect: Effect::Reconciled { intent },
-        });
+    match open_intent(&intents(path, doc)?, EffectOp::CloseOwnedResources, &r.item)? {
+        Standing::Clear => {}
+        Standing::Same(intent) => {
+            return Ok(CloseRequested {
+                lane,
+                effect: Effect::Reconciled { intent },
+            });
+        }
+        Standing::Supersedable(intent) => {
+            return Ok(CloseRequested {
+                lane,
+                effect: Effect::Supersedes { intent },
+            });
+        }
     }
     let mut intent = new_intent(EffectOp::CloseOwnedResources, &r.item, env, revision);
     intent.lane_since = lane.session_since.clone();
     push_intent(path, doc, &intent)?;
     Ok(CloseRequested {
         lane,
-        effect: Effect::NotWired {
-            intent,
-            needs: "agent-runtime stop of the recorded launch identity, then the window".to_owned(),
-        },
+        effect: Effect::Persisted { intent },
     })
 }
 
-/// The lane an intent targets, as it stands: `lane-done` when a launch
-/// outcome finds it done, `intent-stale` when it was relaunched since the
-/// intent was written.
-fn intent_lane(path: &Path, doc: &Document, intent: &Intent) -> Result<(usize, Lane)> {
+/// The target of a transfer intent at `generation`.
+pub fn overseer_target(generation: u64) -> String {
+    format!("overseer:{generation}")
+}
+
+/// The generation a transfer intent's target names.
+fn target_generation(target: &str) -> Option<u64> {
+    target.strip_prefix("overseer:")?.parse().ok()
+}
+
+/// The lane an intent targets, as it stands, or the reading that its record
+/// moved under the intent: the lane is gone, relaunched since (its
+/// `session_since` differs), or closed under a launch intent, which a
+/// legacy `lane-close` does from any status.
+enum IntentTarget {
+    Current { index: usize },
+    Moved { observed: Option<LaneStatus> },
+}
+
+fn intent_lane(path: &Path, doc: &Document, intent: &Intent) -> Result<IntentTarget> {
     let lanes = lanes(path, doc)?;
-    let index = lanes
+    let Some(index) = lanes.iter().position(|l| l.item == intent.target) else {
+        return Ok(IntentTarget::Moved { observed: None });
+    };
+    let lane = &lanes[index];
+    let moved = lane.session_since != intent.lane_since
+        || (intent.op == EffectOp::LaunchLane && lane.status == LaneStatus::Done);
+    if moved {
+        return Ok(IntentTarget::Moved {
+            observed: Some(lane.status),
+        });
+    }
+    Ok(IntentTarget::Current { index })
+}
+
+/// Record the fleet's tmux session where none is recorded yet, the legacy
+/// first launch's `.tmux.session //= $s`.
+fn record_tmux_session(path: &Path, doc: &mut Document, session: &str) -> Result<()> {
+    if matches!(doc.get("tmux"), None | Some(Value::Null)) {
+        state::set(doc, "tmux", json!({"session": session}));
+        return Ok(());
+    }
+    let tmux = state::object_mut(path, doc, "tmux")?;
+    if matches!(tmux.get("session"), None | Some(Value::Null)) {
+        state::set(tmux, "session", session);
+    }
+    Ok(())
+}
+
+/// Whether an observation says the succession's predecessor was retired.
+fn retired(observation: Option<&Value>) -> bool {
+    observation
+        .and_then(|o| o.get("retired"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Write an open intent's phase. A closed intent refuses `intent-complete`:
+/// its effect has no next step to wait on.
+fn record_phase(path: &Path, doc: &mut Document, r: &RecordPhase) -> Result<PhaseRecorded> {
+    let intents = intents(path, doc)?;
+    let index = intents
         .iter()
-        .position(|l| l.item == intent.target)
-        .ok_or_else(|| Error::LaneMissing {
-            item: intent.target.clone(),
+        .position(|i| i.id == r.intent_id)
+        .ok_or_else(|| Error::IntentUnknown {
+            id: r.intent_id.clone(),
         })?;
-    let lane = lanes[index].clone();
-    if lane.session_since != intent.lane_since {
-        return Err(Error::IntentStale {
-            intent: intent.id.clone(),
-            target: intent.target.clone(),
+    let mut intent = intents[index].clone();
+    if !intent.open() {
+        return Err(Error::IntentComplete {
+            id: intent.id.clone(),
+            outcome: intent.outcome,
         });
     }
-    if intent.op == EffectOp::LaunchLane && lane.status == LaneStatus::Done {
-        return Err(Error::LaneDone {
-            item: intent.target.clone(),
-        });
-    }
-    Ok((index, lane))
+    intent.phase = Some(r.phase.clone());
+    let rows = state::array_mut(path, doc, "intents")?;
+    let row = state::element_mut(path, rows, index, "intents")?;
+    state::set(row, "phase", serde_json::to_value(&r.phase)?);
+    Ok(PhaseRecorded { intent })
 }
 
 fn record_outcome(
@@ -1096,6 +1393,7 @@ fn record_outcome(
                 recorded_now: false,
                 lane: None,
                 generation: None,
+                reconciled: None,
             });
         }
         return Err(Error::IntentComplete {
@@ -1108,10 +1406,40 @@ fn record_outcome(
         recorded_now: true,
         lane: None,
         generation: None,
+        reconciled: None,
     };
-    match (intent.op, r.outcome) {
-        (EffectOp::LaunchLane, Outcome::Confirmed) => {
-            let (lane_index, _) = intent_lane(path, doc, &intent)?;
+    // Whether the target's record moved under the intent: then the outcome
+    // closes the intent and moves nothing, whatever it reports.
+    let stale = match intent.op {
+        EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
+            match intent_lane(path, doc, &intent)? {
+                IntentTarget::Current { .. } => None,
+                IntentTarget::Moved { observed } => {
+                    intent.observed_status = observed;
+                    Some(Reconciled::IntentStale)
+                }
+            }
+        }
+        EffectOp::RequestTransfer => {
+            let generation = overseer(path, doc)?.generation.unwrap_or(0);
+            if target_generation(&intent.target) == Some(generation) {
+                None
+            } else {
+                intent.observed_generation = Some(generation);
+                Some(Reconciled::IntentStale)
+            }
+        }
+    };
+    match (stale, intent.op, r.outcome) {
+        (Some(_), _, _) => {}
+        (None, EffectOp::LaunchLane, Outcome::Confirmed) => {
+            let IntentTarget::Current { index: lane_index } = intent_lane(path, doc, &intent)?
+            else {
+                unreachable!("judged current above")
+            };
+            if let Some(session) = &r.tmux_session {
+                record_tmux_session(path, doc, session)?;
+            }
             let lane = lane_doc_mut(path, doc, lane_index)?;
             // The whole selection, null where the request named none, as
             // the legacy `running` write records it (`open-terminal`,
@@ -1128,20 +1456,29 @@ fn record_outcome(
                     state::set(lane, key, string_or_null(value));
                 }
             }
+            if let Some(window) = &r.window {
+                state::set(lane, "window", window.as_str());
+            }
             state::set(lane, "status", LaneStatus::Running.word());
             state::set(lane, "running_at", at.as_str());
             state::set(lane, "launch", serde_json::to_value(&r.launch)?);
             state::set(lane, "session_id", string_or_null(&r.session_id));
             recorded.lane = Some(Box::new(lane_at(path, doc, lane_index)?));
         }
-        (EffectOp::LaunchLane, Outcome::Failed) => {
-            let (lane_index, _) = intent_lane(path, doc, &intent)?;
+        (None, EffectOp::LaunchLane, Outcome::Failed) => {
+            let IntentTarget::Current { index: lane_index } = intent_lane(path, doc, &intent)?
+            else {
+                unreachable!("judged current above")
+            };
             let lane = lane_doc_mut(path, doc, lane_index)?;
             state::set(lane, "status", LaneStatus::Stopped.word());
             recorded.lane = Some(Box::new(lane_at(path, doc, lane_index)?));
         }
-        (EffectOp::CloseOwnedResources, Outcome::Confirmed) => {
-            let (lane_index, _) = intent_lane(path, doc, &intent)?;
+        (None, EffectOp::CloseOwnedResources, Outcome::Confirmed) => {
+            let IntentTarget::Current { index: lane_index } = intent_lane(path, doc, &intent)?
+            else {
+                unreachable!("judged current above")
+            };
             let lane = lane_doc_mut(path, doc, lane_index)?;
             state::set(lane, "status", LaneStatus::Done.word());
             state::delete(lane, "pending_pr");
@@ -1154,7 +1491,7 @@ fn record_outcome(
             }));
             recorded.lane = Some(Box::new(lane_at(path, doc, lane_index)?));
         }
-        (EffectOp::RequestTransfer, Outcome::Confirmed) => {
+        (None, EffectOp::RequestTransfer, Outcome::Confirmed) => {
             let (pane, server) = successor_binding(&intent.id, r)?;
             let generation = overseer(path, doc)?.generation.unwrap_or(0);
             let record = state::object_mut(path, doc, "overseer")?;
@@ -1168,14 +1505,18 @@ fn record_outcome(
             // `class` only where the pending carries one, the next
             // generation, the successor's own pane on its server, the
             // server start where the confirmation knows it, the binding its
-            // watch start reads afresh nulled, and the fields of the session
-            // that ended dropped. Every other key keeps its value and place.
+            // watch start reads afresh nulled unless the confirmation
+            // carries it, and the fields of the session that ended dropped.
+            // Every other key keeps its value and place.
             for key in SUCCESSOR_IDENTITY_KEYS {
                 state::set(
                     record,
                     key,
                     pending.get(*key).cloned().unwrap_or(Value::Null),
                 );
+            }
+            if let Some(line) = &r.launch_line {
+                state::set(record, "launch_line", line.as_str());
             }
             match pending.get("class").filter(|v| !v.is_null()) {
                 Some(class) => state::set(record, "class", class.clone()),
@@ -1193,33 +1534,111 @@ fn record_outcome(
                 Some(start) => state::set(record, "server_start", start),
                 None => null_held(record, "server_start"),
             }
+            if let Some(socket) = &r.server_socket {
+                state::set(record, "server_socket", socket.as_str());
+            }
             for key in SUCCESSOR_BINDING_KEYS {
-                null_held(record, key);
+                match (*key, &r.window) {
+                    ("window", Some(window)) => state::set(record, key, window.as_str()),
+                    (_, _) => null_held(record, key),
+                }
             }
             for key in PREDECESSOR_SESSION_KEYS {
                 state::delete(record, key);
             }
+            // The runtime launched the successor and read its process
+            // identity, so it writes `harness_pid`/`harness_start` now,
+            // appended as `ol_record_start` appends them. The next
+            // succession then has a predecessor identity to retire by
+            // (decision 58). A confirmation always carries them, since a
+            // launch with no readable identity records `unconfirmed`.
+            if let (Some(pid), Some(start)) = (
+                r.launch.as_ref().and_then(|l| l.pid),
+                r.launch.as_ref().and_then(|l| l.start.clone()),
+            ) {
+                state::set(record, "harness_pid", pid);
+                state::set(record, "harness_start", start.as_str());
+            }
             recorded.generation = Some(generation + 1);
         }
-        (EffectOp::RequestTransfer, Outcome::Failed) => {
+        (None, EffectOp::RequestTransfer, Outcome::Failed) => {
             // Failure before retirement leaves the predecessor in control
-            // and puts back the pending this request overwrote, if any.
+            // and puts back the pending this request overwrote, if any. A
+            // failure after it leaves no controller: the pending line stays
+            // as the recovery route's own, and the record names nothing
+            // else.
             let generation = overseer(path, doc)?.generation;
-            let record = state::object_mut(path, doc, "overseer")?;
-            match &intent.original_pending {
-                Some(original) => state::set(record, "pending", original.clone()),
-                None => {
-                    state::delete(record, "pending");
+            // Read retirement from this outcome's observation, not the
+            // intent's stored one, which a reconcile overwrites (finding 15).
+            if !retired(r.observation.as_ref()) {
+                let record = state::object_mut(path, doc, "overseer")?;
+                match &intent.original_pending {
+                    Some(original) => state::set(record, "pending", original.clone()),
+                    None => {
+                        state::delete(record, "pending");
+                    }
                 }
             }
             recorded.generation = generation;
         }
-        (EffectOp::CloseOwnedResources, Outcome::Failed)
-        | (_, Outcome::Unconfirmed)
-        | (_, Outcome::NotStarted) => {}
+        (None, EffectOp::LaunchLane, Outcome::Unconfirmed) => {
+            // The window opened but the composer was not read in the bound.
+            // Persist the pane the effect holds on the lane's `launch` so a
+            // reconcile can re-observe it; the lane stays `preparing` (task
+            // 3). A relaunch that wrote `launch: null` keeps that until the
+            // effect names a pane.
+            if r.launch.is_some() {
+                let IntentTarget::Current { index: lane_index } = intent_lane(path, doc, &intent)?
+                else {
+                    unreachable!("judged current above")
+                };
+                let lane = lane_doc_mut(path, doc, lane_index)?;
+                state::set(lane, "launch", serde_json::to_value(&r.launch)?);
+                recorded.lane = Some(Box::new(lane_at(path, doc, lane_index)?));
+            }
+        }
+        (None, EffectOp::RequestTransfer, Outcome::Unconfirmed) => {
+            // A failure after retirement: the predecessor is gone and a
+            // waiting runner stands. Keep the runner's identity under
+            // `overseer.pending.runner` so a reconcile completes from it, and
+            // leave the generation unmoved (decision 58). Before retirement
+            // the effect records `failed`, not this.
+            if retired(r.observation.as_ref())
+                && let Some(runner) = &r.launch
+            {
+                let record = state::object_mut(path, doc, "overseer")?;
+                if let Some(Value::Object(pending)) = record.get_mut("pending") {
+                    let mut runner_obj = serde_json::Map::new();
+                    runner_obj.insert("pane".to_owned(), string_or_null(&runner.pane));
+                    runner_obj.insert(
+                        "server".to_owned(),
+                        runner.server.map(Value::from).unwrap_or(Value::Null),
+                    );
+                    runner_obj.insert(
+                        "pid".to_owned(),
+                        runner.pid.map(Value::from).unwrap_or(Value::Null),
+                    );
+                    runner_obj.insert("start".to_owned(), string_or_null(&runner.start));
+                    runner_obj.insert(
+                        "server_start".to_owned(),
+                        r.server_start.map(Value::from).unwrap_or(Value::Null),
+                    );
+                    runner_obj.insert("socket".to_owned(), string_or_null(&r.server_socket));
+                    runner_obj.insert("session_id".to_owned(), string_or_null(&r.session_id));
+                    pending.insert("runner".to_owned(), Value::Object(runner_obj));
+                }
+            }
+        }
+        (None, EffectOp::CloseOwnedResources, Outcome::Failed)
+        | (None, EffectOp::CloseOwnedResources, Outcome::Unconfirmed)
+        | (None, _, Outcome::NotStarted) => {}
     }
     intent.outcome = r.outcome;
-    if let Outcome::Confirmed | Outcome::Failed = r.outcome {
+    intent.reconciled = stale;
+    if let Some(observation) = &r.observation {
+        intent.observation = Some(observation.clone());
+    }
+    if !intent.open() {
         intent.completed_at = Some(at);
     }
     let rows = state::array_mut(path, doc, "intents")?;
@@ -1228,6 +1647,19 @@ fn record_outcome(
     if let Some(completed_at) = &intent.completed_at {
         state::set(row, "completed_at", completed_at.as_str());
     }
+    if let Some(observation) = &r.observation {
+        state::set(row, "observation", observation.clone());
+    }
+    if let Some(reconciled) = stale {
+        state::set(row, "reconciled", serde_json::to_value(reconciled)?);
+        if let Some(status) = intent.observed_status {
+            state::set(row, "observed_status", status.word());
+        }
+        if let Some(generation) = intent.observed_generation {
+            state::set(row, "observed_generation", generation);
+        }
+    }
+    recorded.reconciled = stale;
     recorded.intent = intent;
     Ok(recorded)
 }
@@ -1303,7 +1735,9 @@ mod tests {
             other => panic!("no intent on {other:?}"),
         };
         match effect {
-            Effect::Reconciled { intent } | Effect::NotWired { intent, .. } => intent.id.clone(),
+            Effect::Reconciled { intent }
+            | Effect::Persisted { intent }
+            | Effect::Supersedes { intent } => intent.id.clone(),
         }
     }
 
@@ -1367,6 +1801,7 @@ mod tests {
             kind: None,
             surface: None,
             over_cap: None,
+            brief_file: None,
         }))
     }
 
@@ -1383,6 +1818,7 @@ mod tests {
             kind: None,
             surface: None,
             over_cap: None,
+            brief_file: None,
         }))
     }
 
@@ -1415,6 +1851,11 @@ mod tests {
             launch: Some(identity("%12", 6000)),
             session_id: Some("native-1".into()),
             server_start: None,
+            server_socket: None,
+            window: None,
+            tmux_session: None,
+            launch_line: None,
+            observation: None,
         }))
     }
 
@@ -1431,6 +1872,11 @@ mod tests {
             launch,
             session_id: None,
             server_start,
+            server_socket: None,
+            window: None,
+            tmux_session: None,
+            launch_line: None,
+            observation: None,
         }))
     }
 
@@ -1503,6 +1949,7 @@ mod tests {
         Request::RequestTransfer(Box::new(RequestTransfer {
             expected,
             successor: successor(),
+            brief_file: None,
         }))
     }
 
@@ -1749,6 +2196,113 @@ mod tests {
         assert_eq!(b.end, later.now_secs);
     }
 
+    /// Decision 52: `.verification` is `{head, verdict, reason, source, at}`,
+    /// appended on the first write and replaced in place by a later one; a
+    /// word that is no verdict, ci-wait's `pending` among them, writes
+    /// nothing.
+    #[test]
+    fn record_verification_writes_the_record_once_and_a_later_write_replaces_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = item_file(dir.path());
+        let before = object(&path);
+        let verify = |round: Option<&str>, head: &str, verdict: &str| {
+            Request::RecordVerification(RecordVerification {
+                round_id: round.map(str::to_owned),
+                head: head.into(),
+                verdict: verdict.into(),
+                reason: format!(
+                    "no CI configured: no active workflows and no required checks on main ({verdict})"
+                ),
+                source: "ci-wait --required-only".into(),
+            })
+        };
+        let first = apply(
+            &path,
+            &verify(None, "a".repeat(40).as_str(), "none"),
+            &ENV,
+            LOCK,
+        )
+        .unwrap();
+        let Report::RecordVerification(a) = first.report else {
+            panic!("{:?}", first.report)
+        };
+        assert!(!a.replaced);
+        assert_eq!(a.verdict, "none");
+        assert_eq!(a.at, ENV.iso());
+        let after = object(&path);
+        let mut expected_keys = keys(&before);
+        expected_keys.push("verification".to_owned());
+        assert_eq!(keys(&after), expected_keys, "the record is appended once");
+        for (key, value) in &before {
+            assert_eq!(&after[key], value, "{key}");
+        }
+        let record = after["verification"].as_object().unwrap();
+        assert_eq!(keys(record), ["head", "verdict", "reason", "source", "at"]);
+        assert_eq!(record["head"], "a".repeat(40));
+        assert_eq!(record["verdict"], "none");
+        assert_eq!(record["source"], "ci-wait --required-only");
+        assert_eq!(record["at"], ENV.iso());
+
+        // A later head's verdict replaces the record where it stands.
+        let later = Env {
+            now_secs: ENV.now_secs + 90,
+            ..ENV
+        };
+        let second = apply(
+            &path,
+            &verify(None, "b".repeat(40).as_str(), "pass"),
+            &later,
+            LOCK,
+        )
+        .unwrap();
+        let Report::RecordVerification(b) = second.report else {
+            panic!("{:?}", second.report)
+        };
+        assert!(b.replaced);
+        assert_eq!(b.at, later.iso());
+        let again = object(&path);
+        assert_eq!(keys(&again), keys(&after), "one record, in its place");
+        assert_eq!(again["verification"]["head"], "b".repeat(40));
+        assert_eq!(again["verification"]["verdict"], "pass");
+        assert_eq!(again["verification"]["at"], later.iso());
+
+        // A word that is no verdict is refused and writes nothing: ci-wait's
+        // `pending` names a wait that ended without a result.
+        let text = fs::read_to_string(&path).unwrap();
+        for word in ["pending", "green", "PASS", ""] {
+            let err = run(&path, &verify(None, "c".repeat(40).as_str(), word)).unwrap_err();
+            assert_eq!(err.key(), "verdict-invalid", "{word:?}");
+            assert_eq!(
+                err.fields(),
+                vec![("verdict".to_owned(), word.to_owned())],
+                "{word:?}"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), text, "{word:?}");
+        }
+        // A round named must be one the item ran.
+        let err = run(
+            &path,
+            &verify(Some("no-such-round"), "d".repeat(40).as_str(), "fail"),
+        )
+        .unwrap_err();
+        assert_eq!(err.key(), "round-unknown");
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        let bound = run(
+            &path,
+            &verify(
+                Some("1769600000123456789-1837"),
+                "d".repeat(40).as_str(),
+                "fail",
+            ),
+        )
+        .unwrap();
+        let Report::RecordVerification(c) = bound.report else {
+            panic!("{:?}", bound.report)
+        };
+        assert!(c.replaced);
+        assert_eq!(object(&path)["verification"]["verdict"], "fail");
+    }
+
     #[test]
     fn launch_lane_writes_the_legacy_record_and_the_intent_then_reconciles() {
         let dir = tempfile::tempdir().unwrap();
@@ -1767,7 +2321,7 @@ mod tests {
             "a first launch records it"
         );
         assert_eq!(l.lane.account.as_deref(), Some("/a/a1"));
-        let Effect::NotWired { intent, .. } = &l.effect else {
+        let Effect::Persisted { intent } = &l.effect else {
             panic!("{:?}", l.effect)
         };
         // The id is the op, the target and the call's own stamp, so it does
@@ -1864,6 +2418,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Decision 57: a lane launch naming a non-local `kind` or a non-tmux
+    /// `surface` is refused before any intent persists; the one launch route
+    /// is a local tmux window.
+    #[test]
+    fn launch_lane_refuses_a_non_local_kind_or_surface() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let before = fs::read_to_string(&path).unwrap();
+        let rows: [(Option<&str>, Option<&str>); 3] = [
+            (Some("ssh"), None),
+            (None, Some("gui")),
+            (Some("managed-cloud"), Some("gui")),
+        ];
+        for (kind, surface) in rows {
+            let req = Request::LaunchLane(Box::new(LaunchLane {
+                item: "KEN-9".into(),
+                harness: "claude".into(),
+                mail_root: "/w/KEN-9".into(),
+                tracker: None,
+                repo: None,
+                account: None,
+                model: None,
+                effort: None,
+                kind: kind.map(str::to_owned),
+                surface: surface.map(str::to_owned),
+                over_cap: None,
+                brief_file: None,
+            }));
+            let err = run(&path, &req).unwrap_err();
+            assert_eq!(err.key(), "host-unsupported", "{kind:?} {surface:?}");
+        }
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            before,
+            "no intent persisted on a refused host"
+        );
+        // `local`/`tmux` named explicitly is admitted.
+        let req = Request::LaunchLane(Box::new(LaunchLane {
+            item: "KEN-9".into(),
+            harness: "claude".into(),
+            mail_root: "/w/KEN-9".into(),
+            tracker: None,
+            repo: None,
+            account: None,
+            model: None,
+            effort: None,
+            kind: Some("local".into()),
+            surface: Some("tmux".into()),
+            over_cap: None,
+            brief_file: None,
+        }));
+        assert!(run(&path, &req).is_ok());
     }
 
     /// Finding 5, probe P13, and decision 37: a relaunch keeps every field
@@ -2085,7 +2693,7 @@ mod tests {
             panic!()
         };
         assert_eq!(t.generation, 3);
-        let Effect::NotWired { intent, .. } = &t.effect else {
+        let Effect::Persisted { intent } = &t.effect else {
             panic!()
         };
         assert_eq!(intent.target, "overseer:3");
@@ -2124,7 +2732,7 @@ mod tests {
         let Report::RequestTransfer(t) = &applied.report else {
             panic!()
         };
-        let Effect::NotWired { intent, .. } = &t.effect else {
+        let Effect::Persisted { intent } = &t.effect else {
             panic!()
         };
         assert_eq!(intent.original_pending, Some(json!({"harness": "codex"})));
@@ -2156,6 +2764,90 @@ mod tests {
     /// transfer writes the record `ol_record_write` writes for a session
     /// other than the prior, field by field. The expected object is that
     /// writer's result for the fixture's predecessor and the test successor:
+    /// Decision 62: an effect's phase is written onto its open intent before
+    /// the effect waits, a later phase replaces it, and a closed intent
+    /// takes none.
+    #[test]
+    fn record_phase_writes_the_open_intent_s_phase_and_refuses_a_closed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        fs::write(&path, fixtures::FLEET).unwrap();
+        let id = intend(&path, &transfer(expected()));
+        let opened = state::OpenedPane {
+            pane: "%12".into(),
+            server: 41020,
+            server_start: 1_769_590_000,
+            server_process_start: Some("ticks:7".into()),
+            socket: "/tmp/tmux-1000/default".into(),
+            since_ms: 1,
+            brief: Some("/h/handoff.md".into()),
+            session_id: Some("0f6e".into()),
+            baseline: Vec::new(),
+        };
+        let session = state::BoundSession {
+            session_id: "0f6e".into(),
+            file: "/h/projects/-w/0f6e.jsonl".into(),
+        };
+        let phase = |phase: Phase| {
+            Request::RecordPhase(RecordPhase {
+                intent_id: id.clone(),
+                phase,
+            })
+        };
+        let applied = run(
+            &path,
+            &phase(Phase::WindowOpened {
+                opened: opened.clone(),
+            }),
+        )
+        .unwrap();
+        let Report::RecordPhase(p) = &applied.report else {
+            panic!()
+        };
+        let window_opened = Some(Phase::WindowOpened {
+            opened: opened.clone(),
+        });
+        assert_eq!(p.intent.phase, window_opened);
+        let stored = fleet(&path)
+            .intents
+            .into_iter()
+            .find(|i| i.id == id)
+            .unwrap();
+        assert_eq!(stored.phase, window_opened);
+        let row = object(&path)["intents"][0]["phase"].clone();
+        assert_eq!(row["phase"], json!("window-opened"));
+        assert_eq!(row["pane"], json!("%12"));
+        assert_eq!(row["brief"], json!("/h/handoff.md"));
+        run(
+            &path,
+            &phase(Phase::Delivered {
+                opened: opened.clone(),
+                turns_before: 2,
+                session: session.clone(),
+            }),
+        )
+        .unwrap();
+        let stored = fleet(&path)
+            .intents
+            .into_iter()
+            .find(|i| i.id == id)
+            .unwrap();
+        assert_eq!(
+            stored.phase,
+            Some(Phase::Delivered {
+                opened: opened.clone(),
+                turns_before: 2,
+                session,
+            })
+        );
+        let row = object(&path)["intents"][0]["phase"].clone();
+        assert_eq!(row["session"]["file"], json!("/h/projects/-w/0f6e.jsonl"));
+        assert_eq!(row["server_process_start"], json!("ticks:7"));
+        run(&path, &outcome(&id, Outcome::Failed)).unwrap();
+        let err = run(&path, &phase(Phase::Retired { opened })).unwrap_err();
+        assert!(matches!(err, Error::IntentComplete { .. }), "{err:?}");
+    }
+
     /// its identity (nulls where the pending names none), `class` only where
     /// the pending carries one, the next generation, the successor's own
     /// `pane` and `server` from the confirmation (the server as the string
@@ -2196,6 +2888,11 @@ mod tests {
             "effort": "high",
             "cwd": "/r",
             "launch_line": "cd /r && codex",
+            // The runtime launched the successor and read its process
+            // identity, so it writes these now, appended as `ol_record_start`
+            // appends them (task 1, decision 58). `outcome` carries pid 6000.
+            "harness_pid": 6000,
+            "harness_start": "ticks:6000",
         });
         let legacy = legacy.as_object().unwrap();
         assert_eq!(keys(&after), keys(legacy), "key sequence");
@@ -2228,6 +2925,7 @@ mod tests {
             &Request::RequestTransfer(Box::new(RequestTransfer {
                 expected: expected(),
                 successor: classed,
+                brief_file: None,
             })),
         );
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
@@ -2374,7 +3072,7 @@ mod tests {
             panic!()
         };
         assert_eq!(c.lane.status, LaneStatus::Running);
-        let Effect::NotWired { intent, .. } = &c.effect else {
+        let Effect::Persisted { intent } = &c.effect else {
             panic!()
         };
         assert_eq!(intent.op, EffectOp::CloseOwnedResources);
@@ -2715,14 +3413,26 @@ mod tests {
                 },
             },
             Row {
+                // Decision 67: the close supersedes the launch rather than
+                // refusing; no second intent is written until the launch
+                // intent is closed.
                 name: "a close while a launch intent is open",
                 steps: |p| {
                     run(p, &launch("KEN-4468"))?;
-                    run(p, &close("KEN-4468"))?;
+                    let applied = run(p, &close("KEN-4468"))?;
+                    let Report::CloseOwnedResources(c) = &applied.report else {
+                        panic!("{applied:?}")
+                    };
+                    assert!(
+                        matches!(&c.effect, Effect::Supersedes { intent } if intent.op == EffectOp::LaunchLane)
+                    );
                     Ok(())
                 },
-                refusal: Some("intent-open"),
-                check: |p| assert_eq!(fleet(p).intents.len(), 1),
+                refusal: None,
+                check: |p| {
+                    assert_eq!(fleet(p).intents.len(), 1);
+                    assert_eq!(lane(p, "KEN-4468").status, LaneStatus::Preparing);
+                },
             },
             Row {
                 name: "an adoption while a launch intent is open",
@@ -2779,22 +3489,33 @@ mod tests {
                     assert_eq!(intents[1].outcome, Outcome::Confirmed);
                 },
             },
+            // Decision 44, sequence 1: a legacy `lane-close` moved the lane
+            // to done under an open launch intent. The launch's outcome no
+            // longer wedges the lane (R-U13 finding 2): it reconciles the
+            // intent as `intent-stale` with the observed status and leaves
+            // the lane as the legacy writer left it.
             Row {
-                name: "probe B: a launch confirmed on a lane closed since",
+                name: "probe B: a launch confirmed on a lane closed since reconciles stale",
                 steps: |p| {
                     let id = intent_id(&run(p, &launch("KEN-4468"))?);
                     legacy_edit(p, "KEN-4468", "status", Value::from("done"));
                     run(p, &outcome(&id, Outcome::Confirmed))?;
                     Ok(())
                 },
-                refusal: Some("lane-done"),
+                refusal: None,
                 check: |p| {
                     assert_eq!(lane(p, "KEN-4468").status, LaneStatus::Done);
-                    assert!(fleet(p).intents[0].open(), "the intent stays open");
+                    let intent = &fleet(p).intents[0];
+                    assert!(!intent.open(), "the intent is closed, not wedged");
+                    assert_eq!(intent.reconciled, Some(state::Reconciled::IntentStale));
+                    assert_eq!(intent.observed_status, Some(LaneStatus::Done));
                 },
             },
+            // Decision 44, sequence: a lane relaunched under an open close
+            // intent. The close's outcome reconciles the intent as stale and
+            // leaves the running lane alone, no longer refusing.
             Row {
-                name: "a close confirmed on a lane relaunched since",
+                name: "a close confirmed on a lane relaunched since reconciles stale",
                 steps: |p| {
                     let id = intent_id(&run(p, &launch("KEN-4468"))?);
                     run(p, &outcome(&id, Outcome::Confirmed))?;
@@ -2808,8 +3529,17 @@ mod tests {
                     run(p, &outcome(&id, Outcome::Confirmed))?;
                     Ok(())
                 },
-                refusal: Some("intent-stale"),
-                check: |p| assert_eq!(lane(p, "KEN-4468").status, LaneStatus::Running),
+                refusal: None,
+                check: |p| {
+                    assert_eq!(lane(p, "KEN-4468").status, LaneStatus::Running);
+                    let close = fleet(p)
+                        .intents
+                        .into_iter()
+                        .find(|i| i.op == EffectOp::CloseOwnedResources)
+                        .unwrap();
+                    assert!(!close.open());
+                    assert_eq!(close.reconciled, Some(state::Reconciled::IntentStale));
+                },
             },
         ];
         for row in rows {
@@ -2940,12 +3670,27 @@ mod tests {
             ),
             (transfer(expected()), "request-transfer"),
             (
+                Request::RecordVerification(RecordVerification {
+                    round_id: None,
+                    head: "e".repeat(40),
+                    verdict: "none".into(),
+                    reason: "no CI configured".into(),
+                    source: "ci-wait --required-only".into(),
+                }),
+                "record-verification",
+            ),
+            (
                 Request::RecordOutcome(Box::new(RecordOutcome {
                     intent_id: "x".into(),
                     outcome: Outcome::Unconfirmed,
                     launch: None,
                     session_id: None,
                     server_start: None,
+                    server_socket: None,
+                    window: None,
+                    tmux_session: None,
+                    launch_line: None,
+                    observation: None,
                 })),
                 "record-outcome",
             ),

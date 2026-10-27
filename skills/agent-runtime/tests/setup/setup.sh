@@ -27,7 +27,8 @@ SETUP="$PKG/scripts/setup"
 WRAPPER="$PKG/scripts/agent-runtime"
 
 # The fake cargo: one argv line per call into FAKE_CARGO_LOG, then the
-# binary a release build leaves, or FAKE_CARGO_EXIT and nothing.
+# binary a release build leaves, named as the manifest's [[bin]] names it,
+# or FAKE_CARGO_EXIT and nothing.
 cat >"$TMP_ROOT/bin/cargo" <<'CARGO'
 #!/usr/bin/env bash
 set -eu
@@ -36,9 +37,16 @@ if [ "${FAKE_CARGO_EXIT:-0}" -ne 0 ]; then
   echo 'fake cargo: build failed' >&2
   exit "$FAKE_CARGO_EXIT"
 fi
+manifest=""
+while [ "$#" -gt 0 ]; do
+  [ "$1" != --manifest-path ] || manifest="$2"
+  shift
+done
+bin="$(awk '/^\[\[bin\]\]/ { in_bin = 1; next } /^\[/ { in_bin = 0 } in_bin && /^name = / { gsub(/^name = "|"$/, ""); print; exit }' "$manifest")"
+[ -n "$bin" ] || { echo "fake cargo: no [[bin]] name in $manifest" >&2; exit 101; }
 mkdir -p "$CARGO_TARGET_DIR/release"
-printf '#!/bin/sh\necho "fake-binary argv=$*"\n' >"$CARGO_TARGET_DIR/release/agent-runtime"
-chmod 755 "$CARGO_TARGET_DIR/release/agent-runtime"
+printf '#!/bin/sh\necho "fake-binary argv=$*"\n' >"$CARGO_TARGET_DIR/release/$bin"
+chmod 755 "$CARGO_TARGET_DIR/release/$bin"
 CARGO
 chmod 755 "$TMP_ROOT/bin/cargo"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -116,6 +124,78 @@ assert_contains "$ERR" "agent-runtime-setup: build-failed status=1 key=$KEY" 'fa
 assert_contains "$ERR" 'fake cargo: build failed' "cargo's stderr passes through"
 assert_eq "$OUT" '' 'failed build prints no success line'
 assert_eq "$(ls -A "$TMP_ROOT/cache-failed/bin")" '' 'bin/ holds nothing after a failed build'
+
+# --- a dependent crate is keyed on its inputs and its dependency's ----------
+# A crate that declares this runtime by path, laid out as orch's runtime is
+# beside agent-runtime's: dep/runtime beside runtime, the dependency two
+# levels up. The dev-dependency path points nowhere: a key that read it
+# would refuse inputs-missing.
+DEP="$PKG/dep/runtime"
+mkdir -p "$DEP/src"
+cat >"$DEP/Cargo.toml" <<'TOML'
+[package]
+name = "dep-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "dep-runtime"
+path = "src/main.rs"
+
+[dependencies]
+agent-runtime = { path = "../../runtime" }
+serde = "1"
+
+[dev-dependencies]
+fixture = { path = "../nowhere" }
+TOML
+printf 'fn main() {}\n' >"$DEP/src/main.rs"
+printf '# fake lock\n' >"$DEP/Cargo.lock"
+DEP_CACHE="$TMP_ROOT/cache-dep"
+run "$DEP_CACHE" "$SETUP" --runtime "$DEP" --name dep-runtime
+assert_eq "$RC" 0 'setup of a dependent crate exits 0' "$TMP_ROOT/err"
+DEP_KEY="$(key_of "$OUT")"
+assert_eq "${#DEP_KEY}" 64 'the dependent key is one sha256 hex'
+if [ "$DEP_KEY" != "$KEY" ]; then pass 'the dependent crate has its own key'; else fail 'the dependent crate has its own key' "$DEP_KEY"; fi
+assert_eq "$OUT" "dep-runtime-setup: key=$DEP_KEY binary=$DEP_CACHE/bin/dep-runtime-$DEP_KEY" 'the line and the binary carry the name'
+assert_contains "$(tail -n 1 "$FAKE_CARGO_LOG")" "--manifest-path $DEP/Cargo.toml" 'cargo builds the named crate'
+if [ -x "$DEP_CACHE/bin/dep-runtime-$DEP_KEY" ]; then pass 'the named binary is executable'; else fail 'the named binary is executable'; fi
+if [ -d "$DEP_CACHE/build/dep-runtime/$DEP_KEY" ]; then pass 'the build lands under the name and the key'; else fail 'the build lands under the name and the key'; fi
+before="$(calls)"
+run "$DEP_CACHE" "$SETUP" --runtime "$DEP" --name dep-runtime
+assert_eq "$(key_of "$OUT")|$(calls)" "$DEP_KEY|$before" 'the same inputs give the same key and no build'
+
+printf '\n' >>"$PKG/runtime/src/lib.rs"
+run "$TMP_ROOT/cache-dep-changed" "$SETUP" --runtime "$DEP" --name dep-runtime
+assert_eq "$RC" 0 'setup after a dependency change exits 0' "$TMP_ROOT/err"
+if [ "$(key_of "$OUT")" != "$DEP_KEY" ]; then pass 'a changed byte in the dependency changes the dependent key'; else fail 'a changed byte in the dependency changes the dependent key' "$DEP_KEY"; fi
+cp -p "$SRC/runtime/src/lib.rs" "$PKG/runtime/src/lib.rs"
+
+printf '\n' >>"$DEP/src/main.rs"
+run "$TMP_ROOT/cache-dep-own" "$SETUP" --runtime "$DEP" --name dep-runtime
+assert_eq "$RC" 0 'setup after an own-source change exits 0' "$TMP_ROOT/err"
+if [ "$(key_of "$OUT")" != "$DEP_KEY" ]; then pass 'a changed byte in the dependent crate changes its key'; else fail 'a changed byte in the dependent crate changes its key' "$DEP_KEY"; fi
+printf 'fn main() {}\n' >"$DEP/src/main.rs"
+
+run "$DEP_CACHE" "$SETUP" --runtime "$DEP" --name dep-runtime
+assert_eq "$(key_of "$OUT")" "$DEP_KEY" 'the restored inputs give the first key again'
+
+# --- a runtime that is not there, and a manifest that cannot be read -------
+before="$(calls)"
+run "$TMP_ROOT/cache-missing" "$SETUP" --runtime "$PKG/nowhere" --name dep-runtime
+assert_eq "$RC" 1 'a missing runtime exits 1'
+assert_eq "$ERR" "dep-runtime-setup: runtime-missing runtime=$PKG/nowhere" 'a missing runtime refuses by name'
+assert_eq "$OUT|$(calls)" "|$before" 'a missing runtime prints no line and builds nothing'
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$DEP/Cargo.toml"
+  run "$TMP_ROOT/cache-unreadable" "$SETUP" --runtime "$DEP" --name dep-runtime
+  chmod 644 "$DEP/Cargo.toml"
+  assert_eq "$RC" 1 'an unreadable manifest exits 1'
+  assert_eq "$ERR" "dep-runtime-setup: manifest-unreadable path=$DEP/Cargo.toml" 'an unreadable manifest refuses by path'
+  assert_eq "$OUT|$(calls)" "|$before" 'an unreadable manifest prints no line and builds nothing'
+else
+  echo 'note: running as root, so no file is unreadable; the manifest-unreadable rows did not run'
+fi
 
 # --- the default cache root is XDG --------------------------------------
 RC=0
