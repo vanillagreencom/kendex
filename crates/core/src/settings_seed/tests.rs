@@ -31,6 +31,53 @@ fn seeded(template: &str, owner: &str) -> Vec<SeededEnv> {
 }
 
 #[test]
+fn orphan_comments_require_a_complete_maximal_byte_match() {
+    let entries = seeded(
+        "[env]\n# Seeded.\n# Detail.\nKEY = \"\" # required\n",
+        "skill",
+    );
+    let block = "# Seeded.\n# Detail.\n";
+    let cases = [
+        (format!("[env]\n{block}\n"), "[env]\n\n".to_owned(), true),
+        (
+            format!("[env]\r\n{}\r\n", block.replace('\n', "\r\n")),
+            "[env]\r\n\r\n".to_owned(),
+            true,
+        ),
+        (
+            format!("[env]\n{block}[other]\n"),
+            "[env]\n[other]\n".to_owned(),
+            true,
+        ),
+        (format!("[env]\n{block}"), "[env]\n".to_owned(), true),
+    ];
+    for (text, expected, removes) in cases {
+        let (after, removed) = remove_orphan_comments(&text, &entries);
+        assert_eq!(after, expected);
+        assert_eq!(!removed.is_empty(), removes);
+        assert_eq!(removed, ["KEY"]);
+    }
+    let kept = [
+        format!("[env]\n{}\n", block.replace("Detail", "detail")),
+        format!("[env]\n# Mine.\n{block}\n"),
+        format!("[env]\n{block}# Mine.\n\n"),
+        format!("[env]\n{block}KEY = \"mine\"\n"),
+        format!("[env]\n{block}'OTHER' = \"mine\"\n"),
+        format!("[env]\nVALUE = \"\"\"\n{block}\n\"\"\"\n"),
+        format!("[env]\nVALUE = [\n{block}\n]\n"),
+        format!("[other]\n{block}\n"),
+        format!("[env]\n{}", block.trim_end_matches('\n')),
+        "[env]\r\n# Seeded.\r\n# Detail.\n\n".to_owned(),
+        "[env]\n# Unknown.\n\n".to_owned(),
+    ];
+    for text in kept {
+        let (after, removed) = remove_orphan_comments(&text, &entries);
+        assert_eq!(after, text);
+        assert!(removed.is_empty());
+    }
+}
+
+#[test]
 fn entries_carry_their_comment_blocks() {
     let entries = extract_env_entries(TEMPLATE);
     assert_eq!(entries.len(), 2);

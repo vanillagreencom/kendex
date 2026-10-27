@@ -329,6 +329,9 @@ pub struct EngineReport {
     pub pinned_hooks: Vec<PinnedHook>,
     /// What this plan would add to or drop from the installed set.
     pub set_changes: Vec<SetChange>,
+    /// Proven orphan blocks this plan removes, named by their template key.
+    /// Refresh consumes these for its consent and removal report.
+    pub removed_settings_comments: Vec<String>,
     /// Installations this plan leaves alone that nothing needs anymore —
     /// what a removal offers to take with it.
     pub sweepable: Vec<SetChange>,
@@ -593,6 +596,7 @@ impl EngineReport {
             excluded_hooks: Vec::new(),
             pinned_hooks: Vec::new(),
             set_changes: Vec::new(),
+            removed_settings_comments: Vec::new(),
             sweepable: Vec::new(),
             kept: Vec::new(),
             safety: Vec::new(),
@@ -884,6 +888,9 @@ pub struct PlanOptions {
     /// plan rather than a second write after it: one `WriteFile` carries
     /// the seeds and these edits together, under one precondition.
     pub settings_draft: Option<crate::settings_file::SettingsDraft>,
+    /// Refresh's optional removal of byte-proven orphan template comments.
+    /// Other callers, including verification, leave this off.
+    pub remove_orphan_settings_comments: bool,
     /// Values an install supplies for declared keys, by key. Planned with
     /// the seeds and edits as the same one write, and only for a key the
     /// file assigns nowhere: an assigned value is the consumer's.
@@ -900,9 +907,8 @@ pub struct PlanOptions {
     /// the manifest gaining the declaration — committed state, in the
     /// consumer's own `kendex.toml`. Only `add` puts a name here, because
     /// only `add` declares one; every other pass leaves this empty and
-    /// writes nothing into the consumer's settings file, so a refresh in a
-    /// fresh clone re-arrives nothing and a key they deleted stays
-    /// deleted.
+    /// seeds no key, so a refresh in a fresh clone re-arrives nothing and
+    /// a key they deleted stays deleted.
     pub arriving_skills: BTreeSet<String>,
     /// Judge each hook's `harnesses` pin against what the hook would get
     /// with no pin, into `EngineReport::pinned_hooks`. Off, that list is
@@ -960,6 +966,7 @@ impl PlanOptions {
             keep_source_records: false,
             manifest_base: None,
             settings_draft: None,
+            remove_orphan_settings_comments: false,
             supplied_settings: Vec::new(),
             secrets_draft: None,
             arriving_skills: BTreeSet::new(),

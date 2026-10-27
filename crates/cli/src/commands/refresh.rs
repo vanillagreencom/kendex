@@ -145,7 +145,19 @@ fn print_changes_needing_consent(
     report: &EngineReport,
     pending: &[Pending],
 ) {
-    print_set_changes(scope, report);
+    if !report.set_changes.is_empty() || !pending.is_empty() {
+        print_set_changes(scope, report);
+    }
+    for key in &report.removed_settings_comments {
+        ui::stderr(&ui::style().report_row(
+            ui::Status::Decision,
+            &[Span::Prose(&format!(
+                "remove orphan settings comment for {key}; {}",
+                consent_scope(scope)
+            ))],
+            "  - ",
+        ));
+    }
     for pending in pending {
         let name = &pending.name;
         let change = match &pending.change {
@@ -312,7 +324,11 @@ struct PreparedScope {
 impl PreparedScope {
     fn needs_consent(&self) -> bool {
         match &self.planned {
-            Ok((report, pending)) => !report.set_changes.is_empty() || !pending.is_empty(),
+            Ok((report, pending)) => {
+                !report.set_changes.is_empty()
+                    || !report.removed_settings_comments.is_empty()
+                    || !pending.is_empty()
+            }
             Err(_) => false,
         }
     }
@@ -336,6 +352,7 @@ fn prepare_scope(
     takes: Takes,
 ) -> Result<PreparedScope, Box<dyn std::error::Error>> {
     let options = PlanOptions {
+        remove_orphan_settings_comments: true,
         sweep_unneeded: true,
         overwrite_edited: takes.discard_edits,
         prune_retired: takes.prune,
@@ -483,7 +500,8 @@ fn write_scope(
     report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport) -> CliResult,
 ) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
     if pending.is_empty() {
-        let needs_consent = !report.set_changes.is_empty();
+        let needs_consent =
+            !report.set_changes.is_empty() || !report.removed_settings_comments.is_empty();
         if needs_consent && !report.plan.is_empty() {
             print_changes_needing_consent(scope, &report, pending);
         }

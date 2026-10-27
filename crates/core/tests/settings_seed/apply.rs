@@ -2,7 +2,7 @@
 //! ships `kendex.settings.toml.example` writes its `# required` keys when
 //! the skill arrives, write-if-absent per key and user edits win. Its
 //! other keys ship values their own code already reads and never reach the
-//! file, and no later pass writes anything at all.
+//! file. Refresh may separately remove proven orphan comments.
 
 use std::fs;
 
@@ -10,6 +10,85 @@ use kendex_core::apply;
 use kendex_core::engine::audit;
 
 use super::scope::{TEMPLATE, arrive, fixture, refresh_now, without_key};
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn refresh_drops_only_proven_orphans_from_the_outgoing_installed_template() {
+    use kendex_core::engine::{PlanOptions, plan_apply};
+    const OLD: &str =
+        "[env]\n# Old choice.\nOLD = \"\" # required\n\n# Live choice.\nLIVE = \"\" # required\n";
+    for edited_install in [false, true] {
+        let f = fixture(true);
+        let manifest = f.project.join("kendex.toml");
+        fs::write(
+            &manifest,
+            fs::read_to_string(&manifest)
+                .unwrap()
+                .replace("symlink", "copy"),
+        )
+        .unwrap();
+        let template = f
+            .project
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("catalog/skills/review/kendex.settings.toml.example");
+        fs::write(&template, OLD).unwrap();
+        arrive(&f, &["review"]);
+        let path = f.project.join("kendex.settings.toml");
+        let seeded = fs::read_to_string(&path).unwrap();
+        let before = format!(
+            "{}\n# Consumer prose.\n\n# Old choice!\n\n",
+            without_key(&seeded, "OLD")
+        );
+        fs::write(&path, &before).unwrap();
+        if edited_install {
+            // The record's actual positions, rather than today's source, own the proof.
+            let lock =
+                kendex_core::lock::load(&kendex_core::lock::lock_path(&f.env, &f.scope)).unwrap();
+            let entry = lock
+                .entries
+                .values()
+                .find(|one| one.name == "review")
+                .unwrap();
+            let rendered = &entry.emitted.as_ref().unwrap().paths[0];
+            fs::write(rendered.join("SKILL.md"), "edited installation\n").unwrap();
+        }
+        fs::write(&template, "[env]\n# Live choice.\nLIVE = \"\" # required\n").unwrap();
+        let audit = audit(&f.env, &f.scope).unwrap();
+        assert!(audit.removed_settings_comments.is_empty());
+        assert!(!audit.plan.ops.iter().any(|op| matches!(&op.op, kendex_core::apply::Op::WriteFile { path: target, .. } if target == &path)));
+        let report = plan_apply(
+            &f.env,
+            &f.scope,
+            &PlanOptions {
+                remove_orphan_settings_comments: true,
+                ..PlanOptions::current()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            report.removed_settings_comments,
+            if edited_install {
+                vec![]
+            } else {
+                vec!["OLD".to_owned()]
+            }
+        );
+        let writes = report.plan.ops.iter().filter(|op| matches!(&op.op, kendex_core::apply::Op::WriteFile { path: target, .. } if target == &path)).count();
+        assert_eq!(writes, usize::from(!edited_install));
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            if edited_install {
+                before
+            } else {
+                before.replacen("# Old choice.\n", "", 1)
+            }
+        );
+    }
+}
 
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -51,12 +130,12 @@ fn seeds_env_defaults_and_never_overwrites_user_values() {
 }
 
 /// The template applies once, when the skill arrives. Every later pass
-/// over the same project writes nothing into the settings file — so a
-/// refresh leaves it byte-identical, and a key the consumer decided to
+/// over the same project seeds nothing into the settings file. An audit
+/// leaves it byte-identical, and a key the consumer decided to
 /// delete stays deleted instead of coming back on the next run.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_refresh_writes_nothing_the_arrival_already_settled() {
+fn an_audit_writes_nothing_the_arrival_already_settled() {
     let f = fixture(true);
     arrive(&f, &["review"]);
     let settings_path = f.project.join("kendex.settings.toml");
@@ -66,7 +145,7 @@ fn a_refresh_writes_nothing_the_arrival_already_settled() {
         "the arrival seeded: {arrived}"
     );
 
-    // Byte-identical across a refresh that changes nothing else.
+    // Byte-identical across an audit that changes nothing else.
     refresh_now(&f);
     assert_eq!(fs::read_to_string(&settings_path).unwrap(), arrived);
 

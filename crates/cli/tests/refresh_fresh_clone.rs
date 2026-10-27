@@ -159,6 +159,108 @@ fn committed_consumer(home: &Path, package: &str) -> PathBuf {
     origin
 }
 
+/// A recorded copied skill supplies outgoing bytes after a local template
+/// drops a key. The settings text is the old seed with its assignment removed.
+#[allow(clippy::unwrap_used)]
+fn orphan_consumer(home: &Path, drops_key: bool, pending_pi: bool) -> PathBuf {
+    let project = declared_consumer(home, NO_DEPENDENCIES);
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    write(
+        &manifest,
+        &text.replace(
+            "harnesses = [\"claude\"]",
+            "harnesses = [\"claude\"]\nmethod = \"copy\"",
+        ),
+    );
+    let template = project.join("catalog/skills/deploy/kendex.settings.toml.example");
+    write(
+        &template,
+        "[env]\n# Old choice.\nOLD = \"\" # required\n\n# Live choice.\nLIVE = \"\" # required\n",
+    );
+    let installed = kendex(
+        home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    write(
+        &project.join("kendex.settings.toml"),
+        "[env]\n# Old choice.\n\n# Live choice.\nLIVE = \"mine\"\n\n# Consumer prose.\n\n# Old choice!\n\n",
+    );
+    if drops_key {
+        write(&template, "[env]\n# Live choice.\nLIVE = \"\" # required\n");
+    }
+    if pending_pi {
+        write(
+            &project.join("catalog/pi-extensions/pi-widgets/index.js"),
+            "export const version = 2;\n",
+        );
+    }
+    project
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn orphan_settings_cleanup_needs_yes_before_any_scope_writes() {
+    for (drops_key, pending_pi) in [(false, false), (true, false), (true, true)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = orphan_consumer(&home, drops_key, pending_pi);
+        let settings = project.join("kendex.settings.toml");
+        let lock = project.join(".kendex-lock.json");
+        let before = fs::read_to_string(&settings).unwrap();
+        let lock_before = fs::read(&lock).unwrap();
+        let verified_before = kendex(&home, &project, &["verify", "--scope", "project"]);
+        let refused = kendex(&home, &project, &["refresh", "--leave"]);
+        assert!(!refused.status.success());
+        assert_eq!(fs::read_to_string(&settings).unwrap(), before);
+        assert_eq!(fs::read(&lock).unwrap(), lock_before);
+        let accepted = kendex(&home, &project, &["refresh", "--yes", "--leave"]);
+        assert!(accepted.status.success(), "{}", said(&accepted));
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            before.replacen("# Old choice.\n", "", 1)
+        );
+        if !drops_key && !pending_pi {
+            let verified_after = kendex(&home, &project, &["verify", "--scope", "project"]);
+            assert_eq!(verified_before.status.code(), verified_after.status.code());
+            assert_eq!(verified_before.stdout, verified_after.stdout);
+            assert_eq!(verified_before.stderr, verified_after.stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn orphan_settings_cleanup_uses_the_existing_refresh_choice() {
+    for (answer, removes) in [("n", false), ("y", true)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = orphan_consumer(&home, true, false);
+        let settings = project.join("kendex.settings.toml");
+        let before = fs::read_to_string(&settings).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+        command
+            .args(["refresh", "--scope", "project", "--leave"])
+            .current_dir(&project)
+            .env_clear()
+            .envs(test_util::fixture_env(&home))
+            .env("PATH", std::env::var("PATH").unwrap_or_default());
+        let output = pty::conversation(command, &[("[y]", answer)], pty::Stderr::Terminal);
+        assert!(output.status.success(), "{}", said(&output));
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            if removes {
+                before.replacen("# Old choice.\n", "", 1)
+            } else {
+                before
+            }
+        );
+    }
+}
+
 /// The consumer cloned into a directory nothing named before, carrying
 /// no install record.
 #[allow(clippy::unwrap_used)]

@@ -1,0 +1,1 @@
+- Refresh offers to remove orphan settings comments only when their complete bytes match a current or proven outgoing installed template. Live comments and consumer prose stay untouched.

@@ -39,6 +39,28 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
     }
 }
 
+/// No global template declares a settings key. An edit there gets the
+/// same undeclared-key refusal as a project with no declaration for it.
+fn refuse_global_edits(
+    edits: &[crate::settings_file::SettingsEdit],
+    supplied: &[crate::settings_file::SuppliedSetting],
+) -> Result<()> {
+    if let Some(edit) = edits.first() {
+        return Err(crate::settings_file::SettingsRefusal::Undeclared {
+            skill: edit.skill.clone(),
+            key: edit.key.clone(),
+        }
+        .into());
+    }
+    if let Some(supplied) = supplied.first() {
+        return Err(crate::settings_file::SettingsRefusal::NotDeclaredHere {
+            key: supplied.key.clone(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 /// What this pass writes into the project's kendex.settings.toml: the
 /// keys [`crate::settings_seed::Seeding`] admits, and the legacy labels
 /// the shared agent resolver replaces. Seeding never overwrites an
@@ -53,31 +75,18 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
 /// defaults, and a required key this file still does not answer, are worth
 /// saying whether or not this pass has a write to plan.
 pub(super) fn plan_settings_seed(
+    env: &crate::env::Env,
     scope: &Scope,
+    lock: &crate::lock::Lock,
     state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
-) -> Result<(Vec<String>, Vec<DriftRow>)> {
+) -> Result<(Vec<String>, Vec<DriftRow>, Vec<String>)> {
     let draft = options.settings_draft.as_ref();
     let edits = draft.map_or(&[][..], |draft| draft.edits.as_slice());
     let Scope::Project { root } = scope else {
-        // Nothing global ships settings, so an edit here names a key no
-        // template at this place declares — which is what it is refused
-        // for, in the same words a project would refuse it.
-        if let Some(edit) = edits.first() {
-            return Err(crate::settings_file::SettingsRefusal::Undeclared {
-                skill: edit.skill.clone(),
-                key: edit.key.clone(),
-            }
-            .into());
-        }
-        if let Some(supplied) = options.supplied_settings.first() {
-            return Err(crate::settings_file::SettingsRefusal::NotDeclaredHere {
-                key: supplied.key.clone(),
-            }
-            .into());
-        }
-        return Ok((Vec::new(), Vec::new()));
+        refuse_global_edits(edits, &options.supplied_settings)?;
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
     };
     let Declarations {
         declared,
@@ -106,7 +115,7 @@ pub(super) fn plan_settings_seed(
         .unwrap_or_else(|| crate::settings_seed::SETTINGS_FILE.to_owned());
     if path.is_symlink() || (path.exists() && !path.is_file()) {
         if declared.is_empty() && edits.is_empty() {
-            return Ok((notes, Vec::new()));
+            return Ok((notes, Vec::new(), Vec::new()));
         }
         // Seeding reports this and carries on with the rest of the scope.
         // An edit or a supplied value cannot: the person asked for exactly
@@ -122,15 +131,19 @@ pub(super) fn plan_settings_seed(
         notes.extend(crate::settings_seed::seed_notes(
             &declared, &unread, &giving_up,
         ));
-        return Ok((notes, vec![row]));
+        return Ok((notes, vec![row], Vec::new()));
     }
     let current = crate::fs::read_if_exists(&path)?;
     let compatible = current
         .as_deref()
         .map(|text| state.agent_names.settings(text, &path))
         .transpose()?;
-    if declared.is_empty() && edits.is_empty() && compatible == current {
-        return Ok((notes, Vec::new()));
+    if declared.is_empty()
+        && edits.is_empty()
+        && compatible == current
+        && !options.remove_orphan_settings_comments
+    {
+        return Ok((notes, Vec::new(), Vec::new()));
     }
     // Where every declared key stands in the text this pass writes on,
     // which is the file after the label rename: the notes and the values
@@ -158,18 +171,10 @@ pub(super) fn plan_settings_seed(
         notes.extend(crate::settings_seed::seed_notes(
             &declared, &answered, &giving_up,
         ));
-        return Ok((notes, vec![cannot_write(scope, file, problem)]));
+        return Ok((notes, vec![cannot_write(scope, file, problem)], Vec::new()));
     }
-    let (kept, said) = kept_values(&answered, &options.supplied_settings);
+    let (edits, said) = effective_edits(&answered, &options.supplied_settings, edits, supplied);
     notes.extend(said);
-    let edits: Vec<_> = edits
-        .into_iter()
-        .chain(
-            supplied
-                .into_iter()
-                .filter(|edit| !kept.contains(&edit.key)),
-        )
-        .collect();
     // What this pass may put in the file: a template's required keys where
     // its skill is arriving, plus the keys a save names or an install
     // supplies — a value has to have an assignment to land on, and most
@@ -181,16 +186,81 @@ pub(super) fn plan_settings_seed(
     notes.extend(crate::settings_seed::seed_notes(
         &declared, &answered, &seeding,
     ));
-    let settled = settle(compatible.as_deref(), &declared, &seeding, &edits, &path)?;
+    let proof = options.remove_orphan_settings_comments.then(|| {
+        let mut proof = declared.clone();
+        proof.extend(outgoing_settings(env, scope, lock));
+        proof
+    });
+    let settled = settle(
+        compatible.as_deref(),
+        &declared,
+        &seeding,
+        &edits,
+        &path,
+        proof.as_deref(),
+    )?;
     // Nothing to write when the finished text is what the file already
     // holds — and, where there was no file, when there is nothing to make.
     match &current {
-        Some(original) if *original == settled.text => return Ok((notes, Vec::new())),
-        None if settled.text.is_empty() => return Ok((notes, Vec::new())),
+        Some(original) if *original == settled.text => return Ok((notes, Vec::new(), Vec::new())),
+        None if settled.text.is_empty() => return Ok((notes, Vec::new(), Vec::new())),
         _ => {}
     }
+    let removed = settled.removed.clone();
     plan_settings_write(path, file, draft, settled, compatible != current, ops)?;
-    Ok((notes, Vec::new()))
+    Ok((notes, Vec::new(), removed))
+}
+
+/// An unavailable or edited installed tree proves nothing and grants no
+/// deletion. Read the template from the same sealed bytes whose identity
+/// matches the record; never substitute today's local source for them.
+fn outgoing_settings(
+    env: &crate::env::Env,
+    scope: &Scope,
+    lock: &crate::lock::Lock,
+) -> Vec<crate::settings_seed::SeededEnv> {
+    let mut entries = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Skill)
+    {
+        let Some(recorded) = &entry.rendered_hash else {
+            continue;
+        };
+        for path in super::owned::installed(env, scope, entry).files {
+            if path.is_symlink() || !path.is_dir() || !seen.insert(path.clone()) {
+                continue;
+            }
+            let Ok(files) = crate::source_read::SealedSource::open(&path)
+                .and_then(|sealed| sealed.collect_tree(&path, &crate::source_read::TOOL_CACHES))
+            else {
+                continue;
+            };
+            if !crate::hash::RenderedIdentity::observed_files(&path, &files, true).matches(recorded)
+            {
+                continue;
+            }
+            let Some((_, bytes)) = files.iter().find(|(name, _)| {
+                name == std::path::Path::new(crate::settings_seed::SETTINGS_TEMPLATE)
+            }) else {
+                continue;
+            };
+            let Ok(text) = std::str::from_utf8(bytes) else {
+                continue;
+            };
+            entries.extend(
+                crate::settings_seed::extract_env_entries(text)
+                    .into_iter()
+                    .map(|one| crate::settings_seed::SeededEnv {
+                        entry: one,
+                        owner: entry.name.clone(),
+                    }),
+            );
+        }
+    }
+    entries
 }
 
 /// Bind the combined seed, edit and label rename to the original file bytes.
@@ -206,6 +276,7 @@ fn plan_settings_write(
         text,
         added,
         edited,
+        removed,
     } = settled;
     let mut said = Vec::new();
     if renamed {
@@ -216,6 +287,9 @@ fn plan_settings_write(
     }
     if !edited.is_empty() {
         said.push(format!("set {}", edited.join(", ")));
+    }
+    for key in removed {
+        said.push(format!("remove orphan comment for {key}"));
     }
     ops.push(PlannedOp {
         description: format!("Update {file} ({})", said.join("; ")).into(),
@@ -241,6 +315,8 @@ struct Settled {
     added: Vec<String>,
     /// Keys whose value this pass changed.
     edited: Vec<String>,
+    /// Proven orphan blocks removed before seeding and edits.
+    removed: Vec<String>,
 }
 
 /// Seed and edit, in that order, into one finished text.
@@ -249,24 +325,33 @@ struct Settled {
 /// file as it was: a key this pass just inserted is one the same pass can
 /// then set, and the two are one write.
 ///
-/// Template revisions never revisit an existing block. Agent-label
-/// compatibility is applied to the input before this seed-and-edit pass.
+/// Live comments stay untouched. Optional proven-orphan removal comes
+/// first; agent-label compatibility already applies to the input.
 fn settle(
     current: Option<&str>,
     declared: &[crate::settings_seed::SeededEnv],
     seeding: &crate::settings_seed::Seeding,
     edits: &[crate::settings_file::SettingsEdit],
     path: &std::path::Path,
+    proof: Option<&[crate::settings_seed::SeededEnv]>,
 ) -> Result<Settled> {
-    let (seeded, added) = match crate::settings_seed::merge(current, declared, seeding) {
+    let (cleaned, removed) = match (current, proof) {
+        (Some(text), Some(proof)) => {
+            let (text, removed) = crate::settings_seed::remove_orphan_comments(text, proof);
+            (Some(text), removed)
+        }
+        _ => (current.map(str::to_owned), Vec::new()),
+    };
+    let (seeded, added) = match crate::settings_seed::merge(cleaned.as_deref(), declared, seeding) {
         Some((text, added)) => (text, added),
-        None => (current.unwrap_or_default().to_owned(), Vec::new()),
+        None => (cleaned.unwrap_or_default(), Vec::new()),
     };
     let (text, edited) = crate::settings_file::apply_edits(&seeded, edits, declared, path)?;
     Ok(Settled {
         text,
         added,
         edited,
+        removed,
     })
 }
 
@@ -371,20 +456,22 @@ fn supplied_edit(
     })
 }
 
-/// The supplied keys the file already assigns, which keep their value,
-/// and one note for each whose value the supply would have changed. A key
+/// Keep assigned values out of the supplied edits, with one note for each
+/// whose value the supply would have changed. A key
 /// assigned anywhere in the file is the consumer's, by the same file-wide
 /// reading seeding takes; the note is owed where the value the loaders
 /// read differs from the one supplied, or where they read none. Both
 /// questions go to `answered`, the reading the notes take too.
-fn kept_values(
+fn effective_edits(
     answered: &crate::settings_seed::Answered,
-    supplied: &[crate::settings_file::SuppliedSetting],
-) -> (Vec<String>, Vec<String>) {
+    values: &[crate::settings_file::SuppliedSetting],
+    edits: Vec<crate::settings_file::SettingsEdit>,
+    supplied: Vec<crate::settings_file::SettingsEdit>,
+) -> (Vec<crate::settings_file::SettingsEdit>, Vec<String>) {
     use crate::settings_file::Current;
     let mut kept = Vec::new();
     let mut notes = Vec::new();
-    for one in supplied.iter().filter(|one| answered.occupies(&one.key)) {
+    for one in values.iter().filter(|one| answered.occupies(&one.key)) {
         let same = match answered.of(&one.key) {
             Some(Current::Value { value, .. }) => *value == one.value,
             Some(Current::Absent | Current::Ambiguous { .. }) => false,
@@ -400,7 +487,15 @@ fn kept_values(
         }
         kept.push(one.key.clone());
     }
-    (kept, notes)
+    let edits = edits
+        .into_iter()
+        .chain(
+            supplied
+                .into_iter()
+                .filter(|edit| !kept.contains(&edit.key)),
+        )
+        .collect();
+    (edits, notes)
 }
 
 /// Both halves of what a save writes into a project's own configuration:
@@ -424,11 +519,13 @@ fn kept_values(
 /// that write is planned before the private one — and the destination is
 /// resolved once, at the top, because all three steps read it.
 pub(super) fn plan_project_files(
+    env: &crate::env::Env,
     scope: &Scope,
+    lock: &crate::lock::Lock,
     state: &mut DesiredState,
     options: &crate::engine::PlanOptions,
     ops: &mut Vec<PlannedOp>,
-) -> Result<(Vec<String>, Vec<DriftRow>)> {
+) -> Result<(Vec<String>, Vec<DriftRow>, Vec<String>)> {
     let target = super::secrets_write::target(scope, options)?;
     let mut notes = Vec::new();
     super::posture::plan_posture(
@@ -437,7 +534,8 @@ pub(super) fn plan_project_files(
         ops,
         &mut notes,
     )?;
-    let (settings_notes, drift) = plan_settings_seed(scope, state, options, ops)?;
+    let (settings_notes, drift, removed) =
+        plan_settings_seed(env, scope, lock, state, options, ops)?;
     notes.extend(settings_notes);
     notes.extend(super::secrets_write::plan_secrets(
         scope,
@@ -446,7 +544,7 @@ pub(super) fn plan_project_files(
         target.as_ref(),
         ops,
     )?);
-    Ok((notes, drift))
+    Ok((notes, drift, removed))
 }
 
 /// The private file a save is recording as this project's, where it is
