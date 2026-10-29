@@ -315,7 +315,8 @@ exec git "$@"
     def test_source_commits_keep_objects_available_to_local_clones(self):
         """A commit must not repack objects a local clone already enumerated."""
         pressure = self.root / "maintenance.gitconfig"
-        pressure.write_text("[gc]\n\tauto = 1\n\tautoDetach = false\n[maintenance]\n\tauto = true\n")
+        pressure.write_text("[gc]\n\tauto = 1\n\tautoDetach = false\n[maintenance]\n\tauto = true\n"
+                            '[maintenance "geometric-repack"]\n\tauto = 1\n')
         objects = []
         # Git's automatic loose-object threshold samples the 17 directory.
         for number in range(4096):

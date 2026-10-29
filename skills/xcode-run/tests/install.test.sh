@@ -41,36 +41,33 @@ class InstallTest(unittest.TestCase):
                 self.assertEqual(workflow.read_bytes(), expected, f"{row}: workflow bytes differ")
 
 
-runner = unittest.TextTestRunner(verbosity=2)
-result = runner.run(unittest.defaultTestLoader.loadTestsFromTestCase(InstallTest))
-if not result.wasSuccessful():
-    sys.exit(1)
-
-# Each isolated mutant keeps the matched text and disables only its behavior.
-source = InstallTest.installer.read_text()
-copy = 'cat -- "$SCRIPT_DIR/../templates/mac-run.yml" > "$workflow"'
-assertions = unittest.TestCase()
-for rule, old, new, failure_assertion in (
-    ("copy", copy, ": " + copy, "fresh: workflow bytes differ"),
-    ("preservation", "  exit 0", "  : exit 0", "configured: installer failed"),
-):
-    with tempfile.TemporaryDirectory(prefix="xcode-run-control-") as directory:
-        mutant_skill = Path(directory).resolve()
-        (mutant_skill / "scripts").mkdir()
-        (mutant_skill / "templates").mkdir()
-        (mutant_skill / "templates/mac-run.yml").write_bytes(template)
-        assertions.assertEqual(source.count(old), 1)
-        mutated = source.replace(old, new)
-        assertions.assertNotEqual(source, mutated)
-        mutant = mutant_skill / "scripts/install.sh"
-        mutant.write_text(mutated)
-        mutant.chmod(0o755)
-        InstallTest.installer = mutant
-        result = runner.run(unittest.defaultTestLoader.loadTestsFromTestCase(InstallTest))
-        assertions.assertEqual(len(result.failures), 1)
-        assertions.assertEqual(len(result.errors), 0)
-        assertions.assertIn(failure_assertion, result.failures[0][1])
-        print(f"must-fail control: {rule} behavior removed, assertion turned red: {failure_assertion}")
+    def test_install_controls(self):
+        # Each isolated mutant keeps the matched text and disables only its behavior.
+        source = self.installer.read_text()
+        copy = 'cat -- "$SCRIPT_DIR/../templates/mac-run.yml" > "$workflow"'
+        for rule, old, new, failure_assertion in (
+            ("copy", copy, ": " + copy, "fresh: workflow bytes differ"),
+            ("preservation", "  exit 0", "  : exit 0", "configured: installer failed"),
+        ):
+            with self.subTest(rule=rule), tempfile.TemporaryDirectory(prefix="xcode-run-control-") as directory:
+                mutant_skill = Path(directory).resolve()
+                (mutant_skill / "scripts").mkdir()
+                (mutant_skill / "templates").mkdir()
+                (mutant_skill / "templates/mac-run.yml").write_bytes(template)
+                self.assertEqual(source.count(old), 1)
+                mutated = source.replace(old, new)
+                self.assertNotEqual(source, mutated)
+                mutant = mutant_skill / "scripts/install.sh"
+                mutant.write_text(mutated)
+                mutant.chmod(0o755)
+                case = InstallTest("test_install")
+                case.installer = mutant
+                result = unittest.TestResult()
+                case.run(result)
+                self.assertEqual(len(result.failures), 1)
+                self.assertEqual(len(result.errors), 0)
+                self.assertIn(failure_assertion, result.failures[0][1])
+                print(f"must-fail control: {rule} behavior removed, assertion turned red: {failure_assertion}")
 
 
 # Install, launch and capture name one device; `booted` can pick another booted simulator.
@@ -87,19 +84,25 @@ class DeviceTest(unittest.TestCase):
             self.assertEqual(device, '"$simulator"', f"simctl {operation} device differs")
 
 
-result = runner.run(unittest.defaultTestLoader.loadTestsFromTestCase(DeviceTest))
-if not result.wasSuccessful():
-    sys.exit(1)
-workflow = DeviceTest.workflow
-capture = 'xcrun simctl io "$simulator" screenshot'
-for rule, new, failure_assertion in (
-    ("capture device", "xcrun simctl io booted screenshot", "simctl io device differs"),
-    ("capture presence", ": " + capture, "simctl io missing"),
-):
-    assertions.assertEqual(workflow.count(capture), 1)
-    DeviceTest.workflow = workflow.replace(capture, new)
-    result = runner.run(unittest.defaultTestLoader.loadTestsFromTestCase(DeviceTest))
-    assertions.assertEqual(len(result.failures), 1)
-    assertions.assertIn(failure_assertion, result.failures[0][1])
-    print(f"must-fail control: {rule} removed, assertion turned red: {failure_assertion}")
+    def test_device_controls(self):
+        workflow = self.workflow
+        capture = 'xcrun simctl io "$simulator" screenshot'
+        for rule, new, failure_assertion in (
+            ("capture device", "xcrun simctl io booted screenshot", "simctl io device differs"),
+            ("capture presence", ": " + capture, "simctl io missing"),
+        ):
+            with self.subTest(rule=rule):
+                self.assertEqual(workflow.count(capture), 1)
+                case = DeviceTest("test_device")
+                case.workflow = workflow.replace(capture, new)
+                result = unittest.TestResult()
+                case.run(result)
+                self.assertEqual(len(result.failures), 1)
+                self.assertEqual(len(result.errors), 0)
+                self.assertIn(failure_assertion, result.failures[0][1])
+                print(f"must-fail control: {rule} removed, assertion turned red: {failure_assertion}")
+
+
+# run-all.sh reads the outer unittest summary; rejected mutants are passing controls.
+unittest.main(argv=[sys.argv[0]], verbosity=2)
 PY
