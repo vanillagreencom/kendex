@@ -40,46 +40,34 @@ split_worktree_config_words() {
   read -r -a WORKTREE_CONFIG_WORDS <<<"$value"
 }
 
-# Idempotently append a root-anchored path to the COMMON git-dir's
-# info/exclude so git treats the symlink we lay down as ignored content.
-# Required because .gitignore patterns with a trailing slash (e.g. `.agents/`)
-# match only real directories, not symlinks pointing at directories — without
-# the exclude entry, `git status` lists the symlink as untracked and
-# `worktree remove` refuses without --force. Git does NOT consult the
-# per-worktree git-dir's info/exclude; only the common dir's is read
-# (https://git-scm.com/docs/gitignore#_pattern_format), so we must write
-# there.
-#
-# That shared file is the problem this function has to work around. The
-# entry is meant for a SYMLINK in a worktree, but it lands in a file every
-# checkout of the repo reads — including main, where the same path is a REAL
-# directory. A `/harness` entry therefore marks that whole directory ignored
-# in main, and `git add harness/tracked-file` starts refusing with "The
-# following paths are ignored by one of your .gitignore files" while `git
-# status` still lists the file as modified. It outlives the worktree, too.
-#
-# The fix uses the very asymmetry documented above: a TRAILING-SLASH pattern
-# matches a real directory but NOT a symlink pointing at one. So when the path
-# has tracked content, follow the entry with `!/<path>/`, which re-includes
-# the real directory in main while leaving the worktree's symlink ignored. Order
-# matters — gitignore takes the LAST matching pattern — so the negation is
-# always rewritten after the entry. A leading slash keeps a root link's rule
-# from hiding new files under a nested directory with the same name.
-#
-# The negation is written ONLY when the path actually holds tracked files.
-# Runtime-only paths (the common case — kendex's own `.agents` mirror is hidden
-# in main by this entry alone, with no .gitignore rule behind it) must keep the
-# plain blanket entry, or main fills with untracked noise. The condition is
-# re-evaluated on every call, so a path that gains or loses tracked content
-# self-heals in both directions.
-#
-# Other tools write to this file too (Claude Code writes its own `**/.claude/*`
-# entries), so only our own exact lines are ever written or removed.
+# Only the common info/exclude is read by every checkout. Runtime links need
+# root-anchored exclusions because directory-only .gitignore rules miss links.
+# A tracked path must not hide new output in another checkout. Its blanket
+# exclusion is removed; the old negation spelling remains only as a record of
+# a managed tracked-file link, consumed by setup's dropped-link pass. Other
+# tools share this file, so only the writer's exact path forms are changed.
 exclude_from_worktree_index() (
-  local wt="$1" path="$2" has_tracked="${3:-false}"
+  local wt="$1" path="$2" has_tracked="${3:-false}" link_target=""
   [[ -z "$path" ]] && return 0
+  if [[ "$has_tracked" == migrate ]]; then
+    classify_index_entry "$wt" "$path" "$PROJECT_ROOT" || return 1
+    if [[ -n "$CIE_EXACT$CIE_DESCENDANTS" ]]; then
+      has_tracked=tracked
+      # Only a managed link needs a record for the later dropped-link pass.
+      if [[ -L "$wt/$path" ]]; then
+        link_target="$(readlink "$wt/$path")" || return 1
+        [[ "$link_target" != "$PROJECT_ROOT/$path" ]] || has_tracked=true
+      fi
+    fi
+  fi
   local common_dir info_exclude entry negation tmp="" candidate="" filtered="" rc=0 exists=false
   local original="" line="" ending=""
+  local -a removed=("!/$path/")
+  if [[ "$has_tracked" == true ]]; then
+    removed=("/$path" "$path" "!$path/")
+  elif [[ "$has_tracked" == tracked ]]; then
+    removed+=("/$path" "$path" "!$path/")
+  fi
   local failure=read operation=git-common-directory result=0
   trap '
     result=$?
@@ -118,19 +106,25 @@ exclude_from_worktree_index() (
     else
       # The sentinel retains final newlines; grep's empty result is successful.
       filtered="$(
-        grep -vxF -e "$negation" -- "$info_exclude" 2>/dev/null || rc=$?
+        local -a patterns=()
+        for line in "${removed[@]}"; do patterns+=(-e "$line"); done
+        grep -vxF "${patterns[@]}" -- "$info_exclude" 2>/dev/null || rc=$?
         [[ "$rc" -le 1 ]] || exit 1
         printf '.' 2>/dev/null
       )" || return 1
       filtered="${filtered%.}"
       # grep terminates an unterminated final user line. Keep its original bytes.
-      if [[ -n "$original" && "$original" != *$'\n' && "${original##*$'\n'}" != "$negation" ]]; then
-        filtered="${filtered%$'\n'}"
+      if [[ -n "$original" && "$original" != *$'\n' ]]; then
+        local removed_last=false
+        for line in "${removed[@]}"; do
+          [[ "${original##*$'\n'}" != "$line" ]] || removed_last=true
+        done
+        [[ "$removed_last" == true ]] || filtered="${filtered%$'\n'}"
       fi
     fi
   fi
 
-  if [[ "$has_tracked" != migrate ]]; then
+  if [[ "$has_tracked" == false ]]; then
     operation=entry-inspection
     grep -qxF -- "$entry" <<<"$filtered" 2>/dev/null || rc=$?
     [[ "$rc" -le 1 ]] || return 1
@@ -138,10 +132,11 @@ exclude_from_worktree_index() (
       [[ -z "$filtered" || "$filtered" == *$'\n' ]] || filtered+=$'\n'
       filtered+="$entry"$'\n'
     fi
-    if [[ "$has_tracked" == true ]]; then
-      [[ -z "$filtered" || "$filtered" == *$'\n' ]] || filtered+=$'\n'
-      filtered+="$negation"$'\n'
-    fi
+  elif [[ "$has_tracked" == true ]]; then
+    rc=0
+    grep -qxF -- "$negation" <<<"$filtered" 2>/dev/null || rc=$?
+    [[ "$rc" -le 1 ]] || return 1
+    [[ "$rc" -eq 0 ]] || filtered="$negation"$'\n'"$filtered"
   elif [[ "$exists" == false ]]; then
     return 0
   fi
@@ -254,7 +249,9 @@ copy_ignore_file_into_worktree() {
 
 # Sets $CIE_EXACT and $CIE_DESCENDANTS (non-empty = true) for whether $rel is
 # tracked as an exact leaf entry (file, symlink, or gitlink), or has tracked
-# descendants beneath it, in $repo's index.
+# descendants beneath it, in the supplied indexes. CIE_ENTRIES carries the
+# same NUL-read paths for unshadow's checked worktree-index read; CIE_ASSUMED
+# carries the subset Git marks assume-unchanged, for read-only admission.
 #
 # NUL-delimited throughout: git's default `ls-files` output quotes
 # names containing quotes, backslashes, tabs, or non-ASCII bytes (e.g. prints
@@ -264,28 +261,37 @@ copy_ignore_file_into_worktree() {
 # `-z` output is never quoted, so the NUL-split entries can be compared
 # byte-for-byte against $rel.
 classify_index_entry() {
-  local repo="$1" rel="$2" hit="" entries=""
+  local repo="$1" rel="$2" hit="" entries="" flag="" LC_ALL=C
+  shift 2
   CIE_EXACT=""
   CIE_DESCENDANTS=""
+  CIE_ENTRIES=()
+  CIE_ASSUMED=()
 
   if ! entries="$(mktemp "${TMPDIR:-/tmp}/worktree-index-entries.XXXXXX")"; then
     worktree_message index-read-failed "$repo:$rel" "Error: could not create a scratch file to read the Git index in '$repo' for '$rel'; refusing worktree setup." >&2
     return 1
   fi
-  if git -C "$repo" ls-files -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then
-    :
-  else
-    rm -f -- "$entries" 2>/dev/null || true
-    worktree_message index-read-failed "$repo:$rel" "Error: could not read the Git index in '$repo' for '$rel'; refusing worktree setup." >&2
-    return 1
-  fi
-  while IFS= read -r -d '' hit; do
-    if [[ "$hit" == "$rel" ]]; then
-      CIE_EXACT=1
+  for repo in "$repo" ${1+"$@"}; do
+    if git -C "$repo" ls-files -v -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then
+      :
     else
-      CIE_DESCENDANTS=1
+      rm -f -- "$entries" 2>/dev/null || true
+      worktree_message index-read-failed "$repo:$rel" "Error: could not read the Git index in '$repo' for '$rel'; refusing worktree setup." >&2
+      return 1
     fi
-  done <"$entries"
+    while IFS= read -r -d '' hit; do
+      flag="${hit:0:1}"
+      hit="${hit:2}"
+      CIE_ENTRIES[${#CIE_ENTRIES[@]}]="$hit"
+      if [[ "$flag" == [[:lower:]] ]]; then CIE_ASSUMED[${#CIE_ASSUMED[@]}]="$hit"; fi
+      if [[ "$hit" == "$rel" ]]; then
+        CIE_EXACT=1
+      else
+        CIE_DESCENDANTS=1
+      fi
+    done <"$entries"
+  done
   rm -f -- "$entries" 2>/dev/null || true
   return 0
 }
@@ -311,11 +317,8 @@ walk_symlink_entry_children() {
     [[ -e "$child" || -L "$child" ]] || continue
     name="${child##*/}"
     rel="$path/$name"
-    classify_index_entry "$wt" "$rel" || return 1
+    classify_index_entry "$wt" "$rel" "$PROJECT_ROOT" || return 1
     exact="$CIE_EXACT"; descendants="$CIE_DESCENDANTS"
-    classify_index_entry "$PROJECT_ROOT" "$rel" || return 1
-    [[ -n "$CIE_EXACT" ]] && exact=1
-    [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
     "$visitor" "$wt" "$rel" "$name" "$child" "$exact" "$descendants" "$depth" || return 1
   done
   return 0
@@ -329,6 +332,9 @@ walk_symlink_entry_children() {
 # recursive call would replace that tracked symlink with a real one.
 link_untracked_child() {
   local wt="$1" rel="$2" name="$3" child="$4" exact="$5" descendants="$6" depth="$7"
+  if [[ -n "$exact$descendants" ]]; then
+    exclude_from_worktree_index "$wt" "$rel" tracked || return 1
+  fi
   if [[ -z "$exact" && -z "$descendants" ]] && is_copied_ignore_child "$name" "$child"; then
     copy_ignore_file_into_worktree "$wt" "$rel" || LUC_UNRESOLVED="$LUC_UNRESOLVED  - $rel (copy failed — see warning above)"$'\n'
   elif [[ -z "$exact" && -z "$descendants" ]]; then
@@ -441,29 +447,21 @@ symlink_into_worktree() {
   local src="$PROJECT_ROOT/$path"
   local dst="$wt/$path"
 
-  # Every worktree-local symlink we create should be invisible to git status
-  # in this worktree, regardless of whether the source dir has tracked files.
+  # Runtime links are hidden, but tracked ownership in either checkout must
+  # leave new output visible in the checkout where it is untracked.
   ensure_worktree_path_safe "$wt" "$path" false || return 1
   if [[ -f "$src" && -e "$dst" && ! -L "$dst" && ! -f "$dst" ]]; then
     worktree_message file-link-nonfile "$wt/$path" "Error: refusing to replace non-file worktree path '$path' with a file symlink." >&2
     return 1
   fi
-  # Whether this path holds tracked content decides the SHAPE of the exclude
-  # entry: a path with tracked files needs the `!/<path>/` negation so the
-  # real directory in the main checkout stays stageable. Covers both the file
-  # entry and the directory's contents, so it is computed once here rather than
-  # separately in each branch below.
-  #
-  # Ask BOTH indexes. The damage this guards against lands in the main checkout,
-  # so main is the authority — a worktree branch that predates the commit which
-  # started tracking the path would otherwise report "untracked" and leave main
-  # broken. Either index seeing tracked content is enough: the negation only
-  # re-includes a REAL directory, so it is inert in a worktree where the path is
-  # a symlink.
-  local tracked_here=false
-  if [[ -n "$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null || true)" ]] ||
-     [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- "$path" "$path/" 2>/dev/null || true)" ]]; then
-    tracked_here=true
+  # Either index can reserve this path for tracked output. Only a file link
+  # needs a retained dropped-link record; tracked directories remain real.
+  local tracked_here=false shadowed=false
+  classify_index_entry "$wt" "$path" "$PROJECT_ROOT" || return 1
+  [[ -z "$CIE_DESCENDANTS" ]] || shadowed=true
+  if [[ -n "$CIE_EXACT$CIE_DESCENDANTS" ]]; then
+    tracked_here=tracked
+    if [[ -f "$src" || ( -d "$src" && "$shadowed" != true ) ]]; then tracked_here=true; fi
   fi
   exclude_from_worktree_index "$wt" "$path" "$tracked_here" || return 1
 
@@ -502,11 +500,6 @@ symlink_into_worktree() {
     # brings the tracked content into this branch lands. Restoring files below
     # still reads only the worktree's own index — main's content isn't checked
     # out here yet.
-    local shadowed=false
-    if [[ -n "$(git -C "$wt" ls-files -- ":(literal)$path/" 2>/dev/null)" ]] ||
-       [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- ":(literal)$path/" 2>/dev/null || true)" ]]; then
-      shadowed=true
-    fi
     if [[ "$shadowed" == true ]]; then
       link_untracked_children "$path" "$wt"
       return $?
@@ -1014,9 +1007,9 @@ repair_worktree_links() {
 # No-op unless a selected entry actually shadows tracked files, so the
 # ordinary runtime-only symlink case is left completely alone.
 unshadow_tracked_symlink_paths() {
-  local wt="$1" path="" f="" checkout_err="" clear_rc=0
+  local wt="$1" operation="$2" path="" f="" checkout_err="" clear_rc=0 mismatch=""
   local -a shadowed=() tracked=()
-  shift
+  shift 2
   [[ -n "$wt" && -d "$wt" ]] || return 0
   validate_worktree_setup_config >/dev/null 2>&1 || return 0
 
@@ -1030,11 +1023,21 @@ unshadow_tracked_symlink_paths() {
     # NUL-delimited: a line-oriented list piped through xargs breaks on
     # filenames with spaces, tabs, or quotes, silently leaving their
     # assume-unchanged bit set; `xargs -r` is also GNU-only.
-    tracked=()
-    while IFS= read -r -d '' f; do
-      tracked[${#tracked[@]}]="$f"
-    done < <(git -C "$wt" ls-files -z -- "$path" "$path/" 2>/dev/null)
+    classify_index_entry "$wt" "$path" || return 1
+    tracked=(${CIE_ENTRIES[@]+"${CIE_ENTRIES[@]}"})
     [[ ${#tracked[@]} -gt 0 ]] || continue
+
+    if [[ "$operation" == check && ! -L "$wt/$path" ]]; then
+      for f in ${CIE_ASSUMED[@]+"${CIE_ASSUMED[@]}"}; do
+        mismatch="$(worktree_tracked_entry_mismatch "$wt" "$f" "$f" "$wt/$f")" || return 1
+        if [[ -n "$mismatch" ]]; then
+          worktree_message restack-dirty "$wt" "Error: tracked content differs from the index; refusing to restack over it." >&2
+          return 1
+        fi
+      done
+    fi
+    [[ "$operation" != check ]] || continue
+    [[ -L "$wt/$path" ]] || continue
 
     # Clear the bit first: while it is set, git will not write these paths even
     # once the link is gone. The checkout at the end is what the bit actually
@@ -1046,10 +1049,9 @@ unshadow_tracked_symlink_paths() {
     [[ "$clear_rc" -eq 0 ]] ||
       worktree_message assume-unchanged-clear-failed "$wt/$path" "Warning: git update-index --no-assume-unchanged exited $clear_rc for the tracked files under '$path'; the restore below fails if the bit is still set." >&2
 
-    # Only a symlink needs removing. A real directory here means a rebase
-    # already materialized it; its tracked content is genuine and
-    # a checkout can write straight through it.
-    if [[ -L "$wt/$path" ]] && ! rm -f "$wt/$path" 2>/dev/null; then
+    # The actual-link guard above excludes real paths from both flag changes
+    # and restoration, so existing edits and deletions stay with the user.
+    if ! rm -f "$wt/$path" 2>/dev/null; then
       worktree_message link-remove-failed "$wt/$path" "Error: Could not remove the '$path' symlink in $wt to restore the tracked files it shadows." >&2
       return 1
     fi
@@ -1113,8 +1115,13 @@ setup_worktree_links() {
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
   if [[ -f "$exclude" ]]; then
     while IFS= read -r path || [[ -n "$path" ]]; do
-      # Earlier releases wrote bare paths instead of root-anchored records.
-      path="${path#/}"
+      # Only the managed negation with a trailing slash is a link record.
+      # The other !/path spelling belongs to the user.
+      case "$path" in
+        '!/'*'/') path="${path#!/}" ;;
+        '!/'*) continue ;;
+        *) path="${path#/}" ;;
+      esac
       path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
       keep=false
       for configured in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
@@ -1126,9 +1133,13 @@ setup_worktree_links() {
       target="${target%.}"; target="${target%$'\n'}"
       [[ "$target" == "$PROJECT_ROOT/$path" ]] || continue
       ensure_worktree_path_safe "$wt" "$path" false || return 1
-      rm -- "$wt/$path" || return 1
-      # Validation in the restore uses the shared config-word scratch array.
-      (unshadow_tracked_symlink_paths "$wt" "$path") || return 1
+      classify_index_entry "$wt" "$path" || return 1
+      if [[ -n "$CIE_EXACT$CIE_DESCENDANTS" ]]; then
+        # Validation in the restore uses the shared config-word scratch array.
+        (unshadow_tracked_symlink_paths "$wt" restore "$path") || return 1
+      else
+        rm -- "$wt/$path" || return 1
+      fi
     done <"$exclude"
   fi
 

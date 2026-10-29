@@ -11,6 +11,7 @@ set -euo pipefail
 # The fixtures' origin is a local path that names no GitHub repository, so
 # the suite names the default branch.
 export WORKTREE_DEFAULT_BRANCH=main
+export MSYS=winsymlinks:nativestrict
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -103,10 +104,14 @@ make_repo() {
   git -C "$MAIN" config user.email test@example.com
   git -C "$MAIN" config user.name Test
   git -C "$MAIN" config commit.gpgsign false
+  git -C "$MAIN" config gc.auto 0
+  git -C "$MAIN" config maintenance.auto false
   printf 'base\n' >"$MAIN/base.txt"
   git -C "$MAIN" add base.txt
   git -C "$MAIN" commit -q -m base
   git init -q --bare "$ROOT/origin.git"
+  git -C "$ROOT/origin.git" config gc.auto 0
+  git -C "$ROOT/origin.git" config maintenance.auto false
   git -C "$MAIN" remote add origin "$ROOT/origin.git"
   git -C "$MAIN" push -q -u origin main
 }
@@ -250,12 +255,40 @@ step() {
       rm -rf -- "${WT:?}/$ENTRY"
       ln -s "$MAIN/$ENTRY" "$WT/$ENTRY"
       git -C "$WT" update-index --assume-unchanged "$(git -C "$WT" ls-files -- "$ENTRY" | head -n 1)"
+      # The old producer wrote this record with the whole-directory link.
+      printf '/%s\n!/%s/\n' "$ENTRY" "$ENTRY" >>"$MAIN/.git/info/exclude"
       ;;
+    unrecorded-link)
+      printf 'WORKTREE_SYMLINKS=""\n' >>"$MAIN/.env.local"
+      printf '!/runtime\n' >"$MAIN/.git/info/exclude"
+      ;;
+    tracked-directory-link)
+      mkdir -p "$MAIN/dir-target"
+      printf 'payload\n' >"$MAIN/dir-target/file"
+      ln -s dir-target "$MAIN/harnessdirrc"
+      [[ -L "$MAIN/harnessdirrc" ]] || { echo 'fixture: directory link was not created' >&2; exit 2; }
+      entry harnessdirrc
+      commit_main harnessdirrc dir-target
+      ;;
+    drop-entry) printf 'WORKTREE_SYMLINKS=""\n' >>"$MAIN/.env.local" ;;
     edit-ignore) printf 'node_modules/\nbun.lock\n' >"$MAIN/.opencode/.gitignore" ;;
     # The older skill linked the .gitignore too.
     legacy-ignore-link) rm -f "$WT/.opencode/.gitignore"; ln -s "$MAIN/.opencode/.gitignore" "$WT/.opencode/.gitignore" ;;
     edit-copy) printf 'edited\n' >"$WT/.opencode/.gitignore" ;;
     index-lock) : >"$(git -C "$WT" rev-parse --git-path index.lock)" ;;
+    failed-repair-edit)
+      # Use the shipped failure producer: repair removes the legacy link,
+      # then its locked index prevents clearing the flag/restoring the file.
+      local repair_rc=0
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" >"$ROOT/blocked.out" 2>"$ROOT/blocked.err") || repair_rc=$?
+      [[ "$repair_rc" == 1 && ! -L "$WT/.agents" ]] || { echo 'fixture: legacy repair did not fail' >&2; exit 2; }
+      [[ "$(git -C "$WT" ls-files -v -- .agents/engine.md)" == 'h .agents/engine.md' ]] || exit 2
+      rm -- "$(git -C "$WT" rev-parse --git-path index.lock)"
+      printf 'hidden user edit\n' >"$WT/.agents/engine.md"
+      cp -- "$(git -C "$WT" rev-parse --git-path index)" "$ROOT/hidden-index"
+      git -C "$WT" rev-parse HEAD >"$ROOT/hidden-head"
+      ;;
+    advance-base) printf 'advanced\n' >"$MAIN/base.txt"; commit_main base.txt ;;
     # A tracked file entry: linking it marks the path assume-unchanged so the
     # symlink does not stand in git status as a typechange.
     tracked-file)
@@ -329,6 +362,10 @@ run() {
     WORKTREE_TEST_GIT_FAIL="$GIT_FAIL" \
     WORKTREE_TEST_GIT_FAIL_ONCE="$ROOT/git-failed-once" \
     "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  if [[ -f "$ROOT/hidden-index" ]]; then
+    cmp -s -- "$ROOT/hidden-index" "$(git -C "$WT" rev-parse --git-path index)" || { echo 'hidden index changed' >&2; exit 2; }
+    [[ "$(git -C "$WT" rev-parse HEAD)" == "$(cat "$ROOT/hidden-head")" ]] || { echo 'hidden head changed' >&2; exit 2; }
+  fi
   printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(layout)"
 }
 
@@ -355,6 +392,7 @@ err_text() {
     map-unreadable) printf 'worktree-restack-map-unreadable: <wt>' ;;
     remote-moved) printf 'worktree-restack-remote-moved: origin/topic;worktree-restack-unauthorized: <wt>' ;;
     unrebased) printf 'worktree-reuse-unrebased: <wt>' ;;
+    dirty) printf 'worktree-restack-dirty: <wt>' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -380,6 +418,8 @@ the reuse refresh restores links the rebase dropped when main starts tracking a 
 fix-links on the per-child layout is idempotent and quiet|shadow create advance merge|fix-links @wt|0|restored|-|$SHADOW_V2
 a legacy parent link over tracked files heals to the per-child layout and clears the stale bit|shadow create advance merge legacy-link|fix-links @wt|0|restored|-|$SHADOW_V2
 a fully untracked entry keeps the plain parent symlink|untracked|create topic|0|wt|-|runtime=link(<main>/runtime) assume=- status=-
+a user negation without the managed trailing slash authorizes no dropped-link removal|untracked create unrecorded-link|fix-links @wt|0|restored|-|runtime=link(<main>/runtime) assume=- status=?? runtime
+a tracked symlink to a directory keeps its record until the dropped link restores the index target|tracked-directory-link create drop-entry|fix-links @wt|0|restored|-|harnessdirrc=link(dir-target) assume=- status=-
 a tracked leaf whose name git would quote stays a real file|quoted|create topic|0|wt|-|.agents=dir .agents/normal.md=file:a .agents/weird\"quote.md=file:q assume=- status=-
 a child tracked only on main is left absent, not linked over|anchored create late|repair-links @wt|0|-|-|.agents=dir .agents/skills=dir .agents/skills/anchor.md=file:anchor assume=- status=-
 the merge that introduces that child writes it as a real file|anchored create late|@merge|0|-|-|.agents=dir .agents/skills=dir .agents/skills/anchor.md=file:anchor .agents/skills/late.md=file:late assume=- status=-
@@ -392,6 +432,7 @@ a legacy linked .gitignore heals to a copy|ignoring create legacy-ignore-link|fi
 a worktree edit to the copy is overwritten by main's file|ignoring create edit-copy|fix-links @wt|0|restored|-|$IGNORING
 a failed index read refuses child linking and leaves the existing links in place|shadow create fail-index-read|fix-links @wt|1|-|index-read-failed|$SHADOW_V1
 a locked index during the legacy heal reports failure, not a swallowed success|engine create legacy-link index-lock|repair-links @wt|1|-|index-locked|.agents=dir assume=.agents/engine.md status=-
+a failed legacy heal's real directory keeps hidden edits and flags through restack refusal|engine create feature advance-base legacy-link index-lock failed-repair-edit|create topic --restack|1|-|dirty|.agents=dir .agents/engine.md=file:hidden user edit assume=.agents/engine.md status=-
 a failing assume-unchanged bit warns and still links the tracked file entry|tracked-file fail-set-bit|create topic|0|wt|set-bit-failed|harnessrc=link(<main>/harnessrc) assume=- status= T harnessrc
 a failing bit clear at the reuse unshadow warns and the checkout below still restores the tracked file|shadow create feature advance legacy-link fail-clear-bit|create topic --reuse|0|wt|clear-bit-failed+map:1|$SHADOW_V2
 "
