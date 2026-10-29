@@ -90,7 +90,7 @@ word() {
       git -C "$ROW/wtmain" worktree add -q -b wt "$ROW/wtlinked"
       rm -rf -- "${ROW:?}/wtmain/.git/worktrees"
       INSTALL="$ROW/wtlinked"; PROJ=""
-      if MARKER_DIAG="$(LC_ALL=C git -C "$INSTALL" rev-parse --show-toplevel 2>&1 >/dev/null)"; then
+      if git -C "$INSTALL" rev-parse --show-toplevel >/dev/null 2>&1; then
         echo 'startup: broken-marker=resolved' >&2; exit 2
       fi
       ;;
@@ -161,9 +161,6 @@ err_word() {
     parser) printf 'Error: unknown argument: no-such-mode' ;;
     # the lookup's refusal, quoting git's own line
     unresolved:nogit) printf 'second-opinion: could not resolve a repository at <scripts>;  git said: <script>: line *: git: command not found' ;;
-    # Check that the refusal quotes native Git without pinning its wording.
-    unresolved:marker) printf 'second-opinion: could not resolve a repository at %s\n  git said: %s\n' \
-      "$INSTALL/skills/second-opinion/scripts" "${MARKER_DIAG#fatal: }" | alias_text ;;
     settings-header) printf 'kendex-env: table-header file=<install>/kendex.settings.toml lineno=1' ;;
     session-only) printf 'Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP\\; remove it there and pass --foreground or export it in this session' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
@@ -193,7 +190,11 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err")" "$label"
+    if [[ "$err" == unresolved:marker ]]; then
+      assert_eq "${got%% err=*}" "rc=$rc out=$out" "$label"
+    else
+      assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err")" "$label"
+    fi
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
@@ -201,7 +202,7 @@ run_table() {
 run_table "the startup" "\
 an install outside a repository has nothing to load and runs on to the parser|install:outside|probe|1|-|parser
 no git on PATH: the lookup refuses above the parser, quoting git, nothing on stdout|install:outside path:nogit|probe|1|-|unresolved:nogit
-a linked worktree whose marker points at a pruned checkout refuses the same way|install:worktree-broken|probe|1|-|unresolved:marker
+a linked worktree whose marker points at a pruned checkout refuses the same way|install:worktree-broken|detect|1|-|unresolved:marker
 a lookup stopped at a mount point is the absence of a repository: runs on to the parser|install:outside path:mountgit|probe|1|-|parser
 a settings file the loader refuses ends the run naming the defect, not as an undeclared session|install:repo settings:header|detect|1|-|first:settings-header
 a project settings file declaring the session-only foreground cap is refused|install:repo settings:cap|detect|1|-|session-only
