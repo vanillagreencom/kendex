@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Update the bridge's MCP dependency graph to @hono/node-server 2.1.5, which includes the fix for GHSA-rmxm-3fg6-px4f.
+
 ### 5.0.3
 
 - Update the HTTP body parsing and JSON-schema URI dependencies to body-parser 2.4.0 and fast-uri 3.1.9, which fix the reported denial-of-service and URI-handling advisories.
