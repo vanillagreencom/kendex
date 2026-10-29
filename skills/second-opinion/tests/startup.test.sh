@@ -168,7 +168,7 @@ err_word() {
 }
 
 run_table() {
-  local title="$1" rows="$2" n=0 label world argv rc out err got row field
+  local title="$1" rows="$2" n=0 label world argv rc out err got row field control_rc
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
@@ -192,6 +192,28 @@ run_table() {
     fi
     if [[ "$err" == unresolved:marker ]]; then
       assert_eq "${got%% err=*}" "rc=$rc out=$out" "$label"
+      # Keep Git's failing lookup, but let this disposable install continue
+      # without project settings. Only this row must reject that behavior.
+      python3 - "$INSTALL/skills/second-opinion/scripts/second-opinion" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert p.is_file() and not p.is_symlink()
+s = p.read_text()
+old = '      exit 1\n      ;;\n  esac\n  unset _git_diag'
+assert s.count(old) == 1
+changed = s.replace(old, old.replace('exit 1', ': "exit 1"; PROJECT_ROOT=""'))
+assert changed != s
+p.write_text(changed)
+PY
+      got="$(run "$argv")"
+      control_rc=0
+      (
+        PASS=0 FAIL=0
+        assert_eq "${got%% err=*}" "rc=$rc out=$out" "$label"
+        [[ "$FAIL" -eq 0 ]]
+      ) >"$ROW/control.log" 2>&1 || control_rc=$?
+      assert_eq "$control_rc" 1 "control: ignoring the broken marker rejects the same status/stdout assertion"
     else
       assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err")" "$label"
     fi
