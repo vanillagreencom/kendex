@@ -551,6 +551,7 @@ jobs:
           started="$(date +%s)"
           echo "RUN_ALL_JOB_STARTED_EPOCH=$started" >>"$GITHUB_ENV"
           echo "RUN_ALL_JOB_SECS=$((CEILING_MINUTES * 60))" >>"$GITHUB_ENV"
+          echo "RUN_ALL_SUITE_SECS=$((CEILING_MINUTES * 60))" >>"$GITHUB_ENV"
           echo "RUN_ALL_DEADLINE_EPOCH=$((started + CEILING_MINUTES * 60 - 60))" >>"$GITHUB_ENV"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
