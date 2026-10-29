@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 5.0.4
 
 - Update the bridge's MCP dependency graph to @hono/node-server 2.1.5, which includes the fix for GHSA-rmxm-3fg6-px4f.
 
