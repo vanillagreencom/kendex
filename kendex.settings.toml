@@ -132,7 +132,7 @@ ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/
 # slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
-# Owner ruling 1791748311 caps lanes while unblocked work exists.
+# Owner ruling 1793068865.521199 (2026-10-26) caps remote Kendex lanes at six.
 ORCH_OVERSEER_LANES = "6"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
