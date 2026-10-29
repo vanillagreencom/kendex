@@ -19,6 +19,9 @@ NC='\033[0m'
 # Global state
 VERIFY_DIR=""
 TEMP_BRANCH=""
+VERIFY_ROOT=""
+BRANCH_OWNED=false
+WORKTREE_ADD_ATTEMPTED=false
 START_TIME=""
 STEP=0
 TOTAL_STEPS=4
@@ -64,15 +67,47 @@ update_result() {
 }
 
 cleanup() {
-    local exit_code=$?
-    cd "$PROJECT_ROOT" 2>/dev/null || true
-    if [ -n "$VERIFY_DIR" ] && [ -d "$VERIFY_DIR" ]; then
-        git worktree remove "$VERIFY_DIR" --force 2>/dev/null || rm -rf "$VERIFY_DIR"
+    local exit_code="${1:-$?}" registered=false record
+    trap - EXIT INT TERM
+    # Leave the checkout before Git removes it: Windows holds a process's cwd.
+    if ! cd -- "$PROJECT_ROOT"; then
+        echo "verify-cleanup: operation=project-directory root=[$VERIFY_ROOT] branch=[$TEMP_BRANCH] worktree=[$VERIFY_DIR]" >&2
+        [ "$exit_code" -ne 0 ] || exit_code=1
+        exit "$exit_code"
     fi
-    if [ -n "$TEMP_BRANCH" ]; then
-        git branch -D "$TEMP_BRANCH" 2>/dev/null || true
+    # A failed add can still register the checkout. Git's documented NUL
+    # inventory (available before our Git 2.41 minimum) decides its teardown;
+    # an unread inventory or failed removal grants no raw-deletion fallback.
+    if [ "$WORKTREE_ADD_ATTEMPTED" = true ]; then
+        if ! git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$VERIFY_ROOT/worktrees"; then
+            echo "verify-cleanup: operation=inventory root=[$VERIFY_ROOT] branch=[$TEMP_BRANCH] worktree=[$VERIFY_DIR]" >&2
+            [ "$exit_code" -ne 0 ] || exit_code=1
+            exit "$exit_code"
+        fi
+        while IFS= read -r -d '' record; do
+            [ "$record" != "worktree $VERIFY_DIR" ] || registered=true
+        done <"$VERIFY_ROOT/worktrees"
+        if [ "$registered" = true ]; then
+            if ! git -C "$PROJECT_ROOT" worktree remove --force "$VERIFY_DIR"; then
+                echo "verify-cleanup: operation=worktree-remove root=[$VERIFY_ROOT] branch=[$TEMP_BRANCH] worktree=[$VERIFY_DIR]" >&2
+                [ "$exit_code" -ne 0 ] || exit_code=1
+                exit "$exit_code"
+            fi
+        fi
     fi
-    exit $exit_code
+    if [ "$BRANCH_OWNED" = true ]; then
+        if ! git -C "$PROJECT_ROOT" branch -D "$TEMP_BRANCH" >&2; then
+            echo "verify-cleanup: operation=branch-delete branch=[$TEMP_BRANCH]" >&2
+            [ "$exit_code" -ne 0 ] || exit_code=1
+        fi
+    fi
+    if [ -n "$VERIFY_ROOT" ]; then
+        if ! rm -rf -- "$VERIFY_ROOT"; then
+            echo "verify-cleanup: operation=scratch-remove root=[$VERIFY_ROOT]" >&2
+            [ "$exit_code" -ne 0 ] || exit_code=1
+        fi
+    fi
+    exit "$exit_code"
 }
 
 output_results() {
@@ -270,17 +305,6 @@ run_stack() {
     fi
 }
 
-# ── Stale Worktree Cleanup ───────────────────────────────────────────
-
-cleanup_stale_verifications() {
-    for wt in /tmp/gh-verify-*; do
-        [ -d "$wt" ] || continue
-        if [ "$(find "$wt" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
-            git worktree remove "$wt" --force 2>/dev/null || rm -rf "$wt"
-        fi
-    done
-}
-
 # ── Main: Merge Simulation + Build/Test ──────────────────────────────
 
 verify_prs() {
@@ -291,13 +315,7 @@ verify_prs() {
         exit 1
     fi
 
-    cleanup_stale_verifications
-
     START_TIME=$(date +%s)
-    TEMP_BRANCH="verify/cross-check-$$"
-    VERIFY_DIR="/tmp/gh-verify-$$"
-
-    trap cleanup EXIT INT TERM
     init_results
 
     RESULTS_JSON=$(echo "$RESULTS_JSON" | jq --argjson order \
@@ -313,7 +331,38 @@ verify_prs() {
 
     git fetch origin "$default_branch" --quiet 2>/dev/null || true
 
-    if ! git worktree add "$VERIFY_DIR" -b "$TEMP_BRANCH" "origin/$default_branch" --quiet 2>/dev/null; then
+    local candidate
+    if ! candidate=$(mktemp -d "${TMPDIR:-/tmp}/gh-verify-XXXXXXXX"); then
+        add_issue "high" "worktree_failed" "Failed to acquire verification scratch"
+        output_results
+        exit 1
+    fi
+    VERIFY_ROOT="$candidate"
+    trap cleanup EXIT
+    trap 'cleanup 130' INT
+    trap 'cleanup 143' TERM
+    if [ ! -d "$VERIFY_ROOT" ] || [ -L "$VERIFY_ROOT" ]; then
+        add_issue "high" "worktree_failed" "Invalid verification scratch directory"
+        output_results
+        exit 1
+    fi
+    if ! VERIFY_ROOT=$(cd -- "$candidate" && pwd -P); then
+        VERIFY_ROOT="$candidate"
+        add_issue "high" "worktree_failed" "Failed to resolve verification scratch"
+        output_results
+        exit 1
+    fi
+    VERIFY_DIR="$VERIFY_ROOT/worktree"
+    TEMP_BRANCH="verify/cross-check-${VERIFY_ROOT##*/}"
+    # Non-forcing creation proves ref ownership separately from a partial add.
+    if ! git branch "$TEMP_BRANCH" "origin/$default_branch" --quiet 2>/dev/null; then
+        add_issue "high" "worktree_failed" "Failed to acquire verification branch"
+        output_results
+        exit 1
+    fi
+    BRANCH_OWNED=true
+    WORKTREE_ADD_ATTEMPTED=true
+    if ! git worktree add "$VERIFY_DIR" "$TEMP_BRANCH" --quiet 2>/dev/null; then
         add_issue "high" "worktree_failed" "Failed to create verification worktree"
         output_results
         exit 1
@@ -329,13 +378,13 @@ verify_prs() {
     for pr_num in "${pr_nums[@]}"; do
         echo -e "  Merging PR #$pr_num..." >&2
 
-        if ! gh pr checkout "$pr_num" --detach 2>/dev/null; then
-            add_issue "high" "checkout_failed" "Failed to checkout PR #$pr_num"
+        if ! git fetch --quiet origin "refs/pull/$pr_num/head" 2>/dev/null; then
+            add_issue "high" "pr_fetch_failed" "Failed to fetch PR #$pr_num"
             all_merged=false
             break
         fi
 
-        if ! git merge FETCH_HEAD --no-edit -m "Merge PR #$pr_num for verification" 2>/dev/null; then
+        if ! git merge FETCH_HEAD --no-edit -m "Merge PR #$pr_num for verification" >&2; then
             # Captured whole, then windowed in-shell, for the reason the two
             # summary branches above carry: `| head -10` closing on
             # git leaves a 141 on an assignment errexit takes the branch down
@@ -469,7 +518,8 @@ verify_prs() {
 #
 # The sourcing contract: this file sets `errexit`, `nounset` and `pipefail` on
 # the sourcing shell, and at source time resolves PROJECT_ROOT through git and
-# assigns RESULTS_JSON, VERIFY_DIR, TEMP_BRANCH, START_TIME, STEP, TOTAL_STEPS
+# assigns RESULTS_JSON, VERIFY_DIR, VERIFY_ROOT, TEMP_BRANCH, BRANCH_OWNED,
+# WORKTREE_ADD_ATTEMPTED, START_TIME, STEP, TOTAL_STEPS
 # and RED/GREEN/YELLOW/BLUE/NC. Beyond those, the functions keep no `local`
 # discipline, so a sourcer must not rely on ANY unprefixed name surviving a
 # call to one — including ordinary lowercase names a driver reaches for.
