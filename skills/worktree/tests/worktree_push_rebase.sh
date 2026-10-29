@@ -454,6 +454,7 @@ EOF
       ;;
     fix2) commit_wt fix2.txt fix2 ;;
     lock-fix) commit_wt .kendex-lock.json branch-lock ;;
+    main-lock-untracked) git -C "$MAIN" rm -q --cached .kendex-lock.json ;;
     setup-fails)
       printf 'WORKTREE_COPIES="copy-parent/copied.txt"\n' >>"$MAIN/.env.local"
       mkdir -p "$MAIN/copy-parent"
@@ -633,16 +634,18 @@ EOF
     unfixed-index-read)
       step standalone
       mutant="$ROOT/pkg/worktree/scripts/lib/links.sh"
-      [[ "$(grep -cF 'if git -C "$repo" ls-files -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then' "$mutant")" == 1 ]] || {
+      before='    if git -C "$repo" ls-files -v -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then'
+      after='    if git -C "$repo" ls-files -v -z -- ":(literal)$rel" >"$entries" 2>/dev/null || :; then'
+      [[ -f "$mutant" && ! -L "$mutant" && "$(grep -cFx -- "$before" "$mutant")" == 1 ]] || {
         echo "FIXTURE: the checked index read was not unique in $mutant" >&2
         exit 2
       }
-      sed -i.bak 's|if git -C "$repo" ls-files -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then|if :; then|' "$mutant"
-      rm -f "$mutant.bak"
-      grep -qF 'if :; then' "$mutant" || {
-        echo "FIXTURE: the index-read edit matched nothing in $mutant" >&2
+      F="$before" T="$after" awk '{ if ($0 == ENVIRON["F"]) print ENVIRON["T"]; else print }' "$mutant" >"$ROOT/index-read-mutant"
+      if cmp -s -- "$mutant" "$ROOT/index-read-mutant"; then
+        echo "FIXTURE: the index-read edit changed nothing in $mutant" >&2
         exit 2
-      }
+      fi
+      cat -- "$ROOT/index-read-mutant" >"$mutant"
       ;;
     # The detector's same-checkout return removed, the statement kept: the
     # false materialization warning and its unreachable remedy come back.
@@ -1132,9 +1135,9 @@ ROWS='a branch that already contains origin/main is pushed unrebased, with no ma
 a behind branch is rebased onto the advanced base and the map pairs each rewritten commit by position|pair advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- auth=- map=hop:map2
 a configured copy leaves a linked worktree branch lock under Git ownership|pair-lock advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean auth=- map=hop:map2
 must-fail: without the ownership arm, setup overwrites the linked worktree branch lock|pair-lock advance fix lock-fix unfixed-copy-ownership|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty auth=- map=hop:map2
-a failed worktree index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-wt|push @wt --set-upstream|1|map2|map:2+index-read-wt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean auth=- map=hop:map2
+a failed worktree index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix main-lock-untracked index-unreadable-wt|push @wt --set-upstream|1|map2|map:2+index-read-wt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean auth=- map=hop:map2
 a failed main index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-main|push @wt --set-upstream|1|map2|map:2+index-read-main|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean auth=- map=hop:map2
-must-fail: without the checked index read, the failed probe overwrites the branch lock|pair-lock advance fix lock-fix index-unreadable-wt unfixed-index-read|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty auth=- map=hop:map2
+must-fail: without the checked index read, the failed probe overwrites the branch lock|pair-lock advance fix lock-fix main-lock-untracked index-unreadable-wt unfixed-index-read|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty auth=- map=hop:map2
 a true standalone clone ignores its stale committed-lock copy setting and pushes after rebase|standalone-clone clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean auth=- map=hop:map2
 must-fail: without the same-checkout no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-same-checkout|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean auth=- map=hop:map2
 a main-checkout push that rebases leaves its configured local settings file a regular file|standalone-clone-link clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean local=file:local-settings auth=- map=hop:map2

@@ -304,7 +304,13 @@ Options:
                   target must be registered to this repository; incomplete
                   directories are preserved (exit 75).
   --restack       When reusing, stop in the conflict state for resolution
-                  instead of aborting the rebase
+                  instead of aborting the rebase. A materialized checkout
+                  with uncommitted work refuses before lease refresh, fetch
+                  or rewrite/setup changes. The admission read does not
+                  refresh the index. Legacy real tracked paths are also
+                  compared with the index, because assume-unchanged can
+                  hide edits from status. A no-checkout claim first follows
+                  its separate materialization contract, then this admission.
   --replay        With --reuse/--restack: run the same restack as an ordered
                   cherry-pick replay with no rebase porcelain, for execution
                   policies that reject 'git rebase'
@@ -822,15 +828,17 @@ Symlink entries that shadow tracked content:
   un-shadowed; the links return when the restack finishes or aborts.
 
 info/exclude entries:
-  The ignore entry setup writes for each symlinked path goes into the COMMON
-  git dir's info/exclude, which every checkout reads. Entries use '/<path>'.
-  The leading slash limits the entry to the repository root. When the path
-  holds tracked content, setup follows the entry with '!/<path>/' (a trailing-slash
-  pattern matches a real directory but NOT a symlink pointing at one).
-  Runtime-only paths keep the plain entry. The shape is re-evaluated on every
-  create/fix-links against both indexes, either one enough. Exact bare rules
-  and bare negations for configured WORKTREE_SYMLINKS entries are anchored
-  before a missing source or a healthy link can skip setup. Other rules stay.
+  Runtime links use '/<path>' in the COMMON git dir's info/exclude, which
+  every checkout reads. The leading slash limits the rule to the root.
+  When either index owns a configured path or linked child, the writer
+  removes its exact blanket exclusion so new output stays visible. A managed
+  tracked-file link retains '!/<path>/' only as its dropped-link record.
+  Never-linked tracked children get no record. Unrelated user rules keep
+  their bytes and permissions. Reconciliation precedes healthy-link and
+  missing-source skips, which still preserve their existing layout.
+  Visibility follows an existing linked-worktree create, fix-links or
+  repair-links pass. A change made only in main has no automatic cleanup;
+  same-checkout setup and read-only commands remain no-ops for exclusions.
 
 Git-hook auto-repair:
   create and fix-links install shared post-checkout, post-merge, and

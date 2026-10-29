@@ -125,13 +125,17 @@ step() {
       cp -R "$PACKAGE_DIR" "$TMP_ROOT/packages/${ROOT##*/}/worktree"
       ROW_SCRIPT="$TMP_ROOT/packages/${ROOT##*/}/worktree/scripts/worktree"
       mutant="$TMP_ROOT/packages/${ROOT##*/}/worktree/scripts/lib/links.sh"
-      [[ "$(grep -cF '$CIE_EXACT$CIE_DESCENDANTS' "$mutant")" == 2 ]] || {
+      ownership_block="$(sed -n '/^[[:space:]]*copy_tracked=/,/if \[\[ -n "$copy_tracked" \]\]; then/p' "$mutant")" || exit 2
+      ownership_matches="$(awk -v needle='$CIE_EXACT$CIE_DESCENDANTS' 'index($0, needle) { n++ } END { print n+0 }' <<<"$ownership_block")" || exit 2
+      [[ "$ownership_matches" == 2 ]] || {
         echo "FIXTURE: the combined copy ownership checks were not unique in $mutant" >&2
         exit 2
       }
       sed -i.bak '/copy_tracked="$CIE_EXACT$CIE_DESCENDANTS"/,/if \[\[ -n "$copy_tracked" \]\]; then/ s/\$CIE_DESCENDANTS//g' "$mutant"
       rm -f "$mutant.bak"
-      [[ "$(grep -cF '$CIE_EXACT$CIE_DESCENDANTS' "$mutant")" == 0 ]] || {
+      ownership_block="$(sed -n '/^[[:space:]]*copy_tracked=/,/if \[\[ -n "$copy_tracked" \]\]; then/p' "$mutant")" || exit 2
+      ownership_matches="$(awk -v needle='$CIE_EXACT$CIE_DESCENDANTS' 'index($0, needle) { n++ } END { print n+0 }' <<<"$ownership_block")" || exit 2
+      [[ "$ownership_matches" == 0 ]] || {
         echo "FIXTURE: the descendant ownership edit did not remove both reads in $mutant" >&2
         exit 2
       }
@@ -249,7 +253,7 @@ a copy over a leaf that is already a symlink is refused naming the symlink, and 
 a configured copy leaves a branch-owned tracked child unchanged|repo wt:issue-copy-descendants wt-config-child main-config-copy copies-config|fix-links <root>/trees/issue-copy-descendants|0|restored:<root>/trees/issue-copy-descendants|-|files=main/base.txt:base,main/config:main-copy,trees/issue-copy-descendants/base.txt:base,trees/issue-copy-descendants/config/config:branch-owned branches=issue-copy-descendants,main index=H base.txt,H config/config exclude=- tracked-copy=branch-owned:branch-owned:clean
 must-fail: an exact-only ownership guard overwrites the branch-owned tracked child|repo wt:issue-copy-descendants wt-config-child main-config-copy copies-config unfixed-copy-descendants|fix-links <root>/trees/issue-copy-descendants|0|restored:<root>/trees/issue-copy-descendants|-|files=main/base.txt:base,main/config:main-copy,trees/issue-copy-descendants/base.txt:base,trees/issue-copy-descendants/config/config:main-copy branches=issue-copy-descendants,main index=H base.txt,H config/config exclude=/config tracked-copy=branch-owned:main-copy:dirty
 a glob metacharacter in a setup path is refused before pathname expansion|repo glob-dir wt:issue-glob mkdirs-glob|fix-links <root>/trees/issue-glob|1|-|invalid-mkdirs:tmp/*+not-restored:<root>/trees/issue-glob|files=main/base.txt:base,main/tmp/expanded/,trees/issue-glob/base.txt:base branches=issue-glob,main index=H base.txt exclude=-
-a file symlink replaces a leaf that is a symlink to a directory without dereferencing it|repo tool-file wt:issue-file-link wt-tool-links-outside symlinks-tool|fix-links <root>/trees/issue-file-link|0|restored:<root>/trees/issue-file-link|-|files=main/base.txt:base,main/tool:main-tool,outside-dir/,trees/issue-file-link/base.txt:base,trees/issue-file-link/tool-><main>/tool branches=issue-file-link,main index=H base.txt,h tool exclude=/tool,!/tool/
+a file symlink replaces a leaf that is a symlink to a directory without dereferencing it|repo tool-file wt:issue-file-link wt-tool-links-outside symlinks-tool|fix-links <root>/trees/issue-file-link|0|restored:<root>/trees/issue-file-link|-|files=main/base.txt:base,main/tool:main-tool,outside-dir/,trees/issue-file-link/base.txt:base,trees/issue-file-link/tool-><main>/tool branches=issue-file-link,main index=H base.txt,h tool exclude=!/tool/
 a file symlink refuses to delete a leaf that is a directory, leaving the index flags and the shared excludes alone|repo tool-file wt:issue-file-dir wt-tool-is-dir symlinks-tool|fix-links <root>/trees/issue-file-dir|1|-|non-file:tool:file+unhealthy:<root>/trees/issue-file-dir:tool|files=main/base.txt:base,main/tool:main-tool,trees/issue-file-dir/base.txt:base,trees/issue-file-dir/tool/preserved.txt:keep branches=issue-file-dir,main index=H base.txt,H tool exclude=-
 a relative symlink refuses to delete a leaf that is a directory|repo wt:issue-relative-dir wt-local-link-is-dir relative-local-link|fix-links <root>/trees/issue-relative-dir|1|-|non-file:local-link:relative+unhealthy:<root>/trees/issue-relative-dir:local-link|files=main/base.txt:base,trees/issue-relative-dir/base.txt:base,trees/issue-relative-dir/local-link/preserved.txt:keep-relative branches=issue-relative-dir,main index=H base.txt exclude=-
 fix-links refuses another repository'"'"'s worktree|repo other-repo|fix-links <root>/foreign/issue-foreign|1|-|unregistered:<root>/foreign/issue-foreign:restore links in it|files=foreign/issue-foreign/base.txt:base,main/base.txt:base,other/main/base.txt:base branches=main index=- exclude=- foreign=issue-foreign

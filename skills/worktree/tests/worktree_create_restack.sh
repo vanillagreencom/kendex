@@ -13,6 +13,7 @@ set -euo pipefail
 # The fixtures' origin is a local path that names no GitHub repository, so
 # the suite names the default branch.
 export WORKTREE_DEFAULT_BRANCH=main
+export MSYS=winsymlinks:nativestrict
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -115,6 +116,8 @@ make_repo() {
 make_pair() {
   make_repo "$MAIN"
   git init -q --bare "$ROOT/origin.git"
+  git -C "$ROOT/origin.git" config gc.auto 0
+  git -C "$ROOT/origin.git" config maintenance.auto false
   git -C "$MAIN" remote add origin "$ROOT/origin.git"
   git -C "$MAIN" push -q -u origin main
   (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
@@ -644,6 +647,78 @@ while IFS='|' read -r label fixture command rc out err want_state; do
   want_state="${want_state% map=*} map=$(map_file_text "${want_state##* map=}")"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+
+# HEAD blobs cannot detect an unstaged edit discarded by unshadow. Compare the
+# disk, raw index, flags, refs and standing rewrite state independently.
+configured_restack_case() {
+  local kind="$1" name="$2" rc=0 index_path="" map_path="" before="" after=""
+  local -a command=(--restack)
+  build "$name" plain
+  mkdir -p "$MAIN/.agents" "$WT/.agents"
+  commit_main .agents/engine.md original
+  commit_wt .agents/engine.md original
+  printf 'WORKTREE_SYMLINKS=".agents"\n' >>"$MAIN/.env.local"
+  if [[ "$kind" == contained ]]; then git -C "$WT" merge -q --no-edit origin/main; fi
+  if [[ "$kind" == fast-forward ]]; then step publish; step cloud-push; fi
+  if [[ "$kind" == staged ]]; then
+    printf 'staged\n' >"$WT/.agents/engine.md"
+    git -C "$WT" add .agents/engine.md
+  fi
+  if [[ "$kind" == deleted ]]; then rm -- "${WT:?}/.agents/engine.md"
+  else printf 'unstaged user bytes\n' >"$WT/.agents/engine.md"; fi
+  if [[ "$kind" == replay ]]; then command=(--restack --replay); fi
+  index_path="$(git -C "$WT" rev-parse --git-path index)"
+  map_path="$(git -C "$WT" rev-parse --git-path kendex-rebase-map)"
+  cp -- "$index_path" "$ROOT/index-before"
+  git -C "$WT" config --worktree kendex-restack.pending false
+  printf 'rebase-unmapped: %s\n' "$(git -C "$WT" rev-parse HEAD)" >"$map_path"
+  cp -- "$map_path" "$ROOT/map-before"
+  before="$(git -C "$WT" ls-files -v --stage; git -C "$WT" rev-parse HEAD; git -C "$WT" branch --show-current; git -C "$WT" config --worktree --get-regexp '^kendex-restack\.')"
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" "${command[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  assert_eq "$rc" 1 "$kind: explicit dirty restack refuses"
+  if [[ "$kind" == deleted ]]; then
+    assert_eq "$([[ ! -e "$WT/.agents/engine.md" ]] && printf absent)" absent "$kind: deletion stays absent"
+  else
+    assert_eq "$(cat "$WT/.agents/engine.md")" 'unstaged user bytes' "$kind: unstaged disk bytes stay"
+  fi
+  after="$(git -C "$WT" ls-files -v --stage; git -C "$WT" rev-parse HEAD; git -C "$WT" branch --show-current; git -C "$WT" config --worktree --get-regexp '^kendex-restack\.')"
+  assert_eq "$after" "$before" "$kind: index entries, flags, head, branch and restack keys stay"
+  assert_eq "$(cmp -s -- "$index_path" "$ROOT/index-before" && printf same)" same "$kind: raw index bytes stay"
+  assert_eq "$(cmp -s -- "$map_path" "$ROOT/map-before" && printf same)" same "$kind: standing rewrite map stays"
+}
+
+for configured_kind in edit staged deleted contained fast-forward replay; do
+  configured_restack_case "$configured_kind" "configured-$configured_kind"
+done
+
+# Only the edit row runs against this copy. Its assertion must see the index
+# bytes actually replace the planted user edit, not merely another refusal.
+configured_control="$TMP_ROOT/configured-control"
+cp -R -- "$PACKAGE_DIR" "$configured_control"
+configured_mutant="$configured_control/scripts/worktree"
+configured_links="$configured_control/scripts/lib/links.sh"
+for mutation in dirty comparison symlink unlink; do
+  case "$mutation" in
+    dirty) file="$configured_mutant"; from='  if [[ -n "$status" ]]; then'; to='  if false && [[ -n "$status" ]]; then' ;;
+    comparison) file="$configured_links"; from='    if [[ "$operation" == check && ! -L "$wt/$path" ]]; then'; to='    if false && [[ "$operation" == check && ! -L "$wt/$path" ]]; then' ;;
+    symlink) file="$configured_links"; from='    [[ -L "$wt/$path" ]] || continue'; to='    [[ -L "$wt/$path" ]] || :' ;;
+    unlink) file="$configured_links"; from='    if ! rm -f "$wt/$path" 2>/dev/null; then'; to='    if [[ -L "$wt/$path" ]] && ! rm -f "$wt/$path" 2>/dev/null; then' ;;
+  esac
+  [[ ! -L "$file" && "$(grep -cFx -- "$from" "$file")" == 1 ]] || { echo 'configured control: match is not unique' >&2; exit 2; }
+  F="$from" T="$to" awk '{ if ($0 == ENVIRON["F"]) print ENVIRON["T"]; else print }' "$file" >"$file.edit"
+  ! cmp -s -- "$file" "$file.edit" || { echo 'configured control: no change' >&2; exit 2; }
+  cat -- "$file.edit" >"$file"
+  rm -- "${file:?}.edit"
+done
+saved_configured_script="$WORKTREE_SCRIPT"
+WORKTREE_SCRIPT="$configured_mutant"
+if (FAIL=0; configured_restack_case edit configured-lost-work; [[ "$FAIL" -gt 0 ]]); then
+  PASS=$((PASS + 1)); echo '  ok    configured row rejects destructive restack'
+else
+  FAIL=$((FAIL + 1)); echo '  FAIL  configured row accepted destructive restack'
+fi
+assert_eq "$(cat "$TMP_ROOT/configured-lost-work/trees/topic/.agents/engine.md")" original 'control reaches actual loss of unstaged bytes'
+WORKTREE_SCRIPT="$saved_configured_script"
 
 # A pushed handoff is prepared before main changes the shared file. The next
 # preparation aborts; guarded restack must retain the original remote lease.

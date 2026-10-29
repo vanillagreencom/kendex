@@ -69,6 +69,8 @@ reuse_row() {
     rmdir -- "$wt/$path"
     ln -s "$main/$path" "$wt/$path"
     git -C "$wt" update-index --assume-unchanged -- "$path/original"
+    exclude="$(git -C "$wt" rev-parse --git-path info/exclude)"
+    printf '/%s\n!/%s/\n' "$path" "$path" >>"$exclude"
   fi
   [[ -L "$wt/$path" ]] || { echo 'fixture: creation did not create a link' >&2; exit 2; }
   if [[ "$record" == bare ]]; then
