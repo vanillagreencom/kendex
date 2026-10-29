@@ -79,8 +79,7 @@ word() {
     install:outside) INSTALL="$ROW/install"; PROJ="" ;;
     # the copy inside a repository of its own
     install:repo) INSTALL="$ROW/proj"; PROJ="$ROW/proj"; git init -q "$PROJ" ;;
-    # a linked worktree whose marker points at a pruned main checkout: git
-    # says "not a git repository" for a checkout that does carry settings
+    # Keep the broken marker so repository discovery must refuse.
     install:worktree-broken)
       git init -q "$ROW/wtmain"
       git -C "$ROW/wtmain" config user.email test@example.com
@@ -91,6 +90,9 @@ word() {
       git -C "$ROW/wtmain" worktree add -q -b wt "$ROW/wtlinked"
       rm -rf -- "${ROW:?}/wtmain/.git/worktrees"
       INSTALL="$ROW/wtlinked"; PROJ=""
+      if MARKER_DIAG="$(LC_ALL=C git -C "$INSTALL" rev-parse --show-toplevel 2>&1 >/dev/null)"; then
+        echo 'startup: broken-marker=resolved' >&2; exit 2
+      fi
       ;;
     path:nogit) W_PATH="$TMP_ROOT/nogit" ;;
     path:mountgit) W_PATH="$TMP_ROOT/mountgit" ;;
@@ -125,7 +127,7 @@ build() {
 alias_text() {
   sed -e "s|$INSTALL/skills/second-opinion/scripts/second-opinion|<script>|g" -e "s|$INSTALL/skills/second-opinion/scripts|<scripts>|g" \
     -e "s|$INSTALL|<install>|g" -e "s|$TMP_ROOT|<root>|g" -e 's/<script>: line [0-9]*:/<script>: line *:/' \
-    -e 's|git said: not a git repository: .*|git said: not a git repository: <gitdir>|' -e 's/;/\\;/g' | paste -s -d ';' -
+    -e 's/;/\\;/g' | paste -s -d ';' -
 }
 
 run() {
@@ -159,8 +161,9 @@ err_word() {
     parser) printf 'Error: unknown argument: no-such-mode' ;;
     # the lookup's refusal, quoting git's own line
     unresolved:nogit) printf 'second-opinion: could not resolve a repository at <scripts>;  git said: <script>: line *: git: command not found' ;;
-    # git spells the unreadable gitdir by version ((null), or its path)
-    unresolved:marker) printf 'second-opinion: could not resolve a repository at <scripts>;  git said: not a git repository: <gitdir>' ;;
+    # Check that the refusal quotes native Git without pinning its wording.
+    unresolved:marker) printf 'second-opinion: could not resolve a repository at %s\n  git said: %s\n' \
+      "$INSTALL/skills/second-opinion/scripts" "${MARKER_DIAG#fatal: }" | alias_text ;;
     settings-header) printf 'kendex-env: table-header file=<install>/kendex.settings.toml lineno=1' ;;
     session-only) printf 'Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP\\; remove it there and pass --foreground or export it in this session' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
