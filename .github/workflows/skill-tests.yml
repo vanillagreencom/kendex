@@ -719,7 +719,16 @@ jobs:
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
-        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
+        run: |
+          # Keep the image's suites and signing key, without its slow Azure mirror
+          # or unrelated third-party sources. Leave the image's sources untouched.
+          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+          trap 'rm -- "$apt_sources"' EXIT
+          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev
       - name: kendex from this checkout
         if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         run: |
@@ -835,7 +844,15 @@ jobs:
             if [[ "$RUNNER_OS" == macOS ]]; then
               command -v fish >/dev/null || brew install fish
             else
-              command -v fish >/dev/null || { sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y fish; }
+              if ! command -v fish >/dev/null; then
+                apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+                trap 'rm -- "$apt_sources"' EXIT
+                sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+                  -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+                  /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+                apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+                sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y fish
+              fi
             fi
           fi
 
@@ -1752,7 +1769,13 @@ jobs:
           set -u
           pkgs=(libdbus-1-dev)
           [ "$CRATE" != kendex-app ] || pkgs+=(libwebkit2gtk-4.1-dev libgtk-3-dev)
-          sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y "${pkgs[@]}"
+          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+          trap 'rm -- "$apt_sources"' EXIT
+          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y "${pkgs[@]}"
       # pi_carrier.rs runs the `pi-hooks` carrier for its end-to-end case — a
       # hook declared in kendex.toml firing under Pi — and skips without bun.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -2016,7 +2039,14 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
       - name: System dependencies for the keychain store and the app shell
-        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
+        run: |
+          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+          trap 'rm -- "$apt_sources"' EXIT
+          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev
       - name: cargo clippy
         timeout-minutes: 20
         run: |
@@ -2145,7 +2175,16 @@ jobs:
         tmux -V;
         orch_paths=$(git diff --name-only "$CATALOG_BASE" -- skills/orch .agents/skills/orch);
         if [ -n "$orch_paths" ]; then
-          if ! command -v fish >/dev/null; then sudo apt-get update; sudo apt-get install -y fish; fi;
+          if ! command -v fish >/dev/null; then
+            apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")";
+            trap ''rm -- "$apt_sources"'' EXIT;
+            sed -e ''s|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g'' \
+              -e ''s|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g'' \
+              /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources";
+            apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null);
+            sudo apt-get "${{apt_options[@]}}" update;
+            sudo apt-get "${{apt_options[@]}}" install -y fish;
+          fi;
           if ! command -v claude >/dev/null; then
             npm install --prefix "$RUNNER_TEMP/release-suite-tools" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code;
             export PATH="$RUNNER_TEMP/release-suite-tools/node_modules/.bin:$PATH";
@@ -2173,7 +2212,14 @@ jobs:
         with:
           save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       - name: System dependencies for the keychain store
-        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
+        run: |
+          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+          trap 'rm -- "$apt_sources"' EXIT
+          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
