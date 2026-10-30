@@ -126,6 +126,95 @@ fn move_the_registration(f: &Fixture) -> PathBuf {
     settings
 }
 
+/// Plan descriptions are the approval text both CLI preview and apply report
+/// render. The hook declaration produces both states; applying the real plan
+/// must leave the script and registration in the state those lines describe.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hook_plan_and_apply_report_describe_the_declared_switch() {
+    for (installed, enabled, file_actions, registration_action) in [
+        (
+            false,
+            true,
+            &["Install hook guard for Claude Code"][..],
+            "register guard",
+        ),
+        (
+            false,
+            false,
+            &["Install disabled hook guard for Claude Code"][..],
+            "unregister guard",
+        ),
+        (
+            true,
+            false,
+            &[
+                "Turn guard off",
+                "Install disabled hook guard for Claude Code",
+            ][..],
+            "unregister guard",
+        ),
+    ] {
+        let f = fixture();
+        let settings = f.project.join(".claude/settings.json");
+        let user_settings = json!({"permissions": {"allow": ["Read"]}});
+        fs::write(&settings, user_settings.to_string()).unwrap();
+        if installed {
+            apply_now(&f);
+        }
+        let manifest = f.project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        fs::write(&manifest, format!("{declared}enabled = {enabled}\n")).unwrap();
+
+        let preview = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
+        let report = audit(&f.env, &f.scope).unwrap();
+        let lines = |plan: &apply::Plan| plan.ops.iter().map(|op| op.line()).collect::<Vec<_>>();
+        assert_eq!(lines(&preview.plan), lines(&report.plan));
+
+        let script = f.project.join(".claude/hooks/guard.sh");
+        let disabled = f.project.join(".claude/hooks/guard.sh.disabled");
+        let file_ops: Vec<_> = preview.plan.ops.iter().filter(|planned| {
+            matches!(&planned.op, Op::WriteFile { path, .. } if path == &script || path == &disabled)
+                || matches!(&planned.op, Op::Rename { from, to, .. } if from == &script && to == &disabled)
+        }).collect();
+        assert_eq!(
+            file_ops.iter().map(|op| op.line()).collect::<Vec<_>>(),
+            file_actions
+        );
+        for planned in &file_ops {
+            match &planned.op {
+                Op::WriteFile { path, .. } => {
+                    assert_eq!(path, if enabled { &script } else { &disabled })
+                }
+                Op::Rename { from, to, .. } => {
+                    assert_eq!(from, &script);
+                    assert_eq!(to, &disabled);
+                }
+                _ => panic!("only hook file writes and toggles were selected"),
+            }
+        }
+        let registration =
+            preview.plan.ops.iter().find(
+                |planned| matches!(&planned.op, Op::EditFile { path, .. } if path == &settings),
+            );
+        assert!(
+            registration
+                .unwrap()
+                .line()
+                .contains(&format!("({registration_action}"))
+        );
+
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(script.is_file(), enabled);
+        assert_eq!(disabled.is_file(), !enabled);
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(written["permissions"], user_settings["permissions"]);
+        assert_eq!(written["hooks"]["PreToolUse"].is_array(), enabled);
+        assert!(audit(&f.env, &f.scope).unwrap().plan.is_empty());
+    }
+}
+
 /// Removal takes the registration wherever it has got to, because the
 /// script goes with it. Named by the event the record kept, the edit
 /// would find nothing and leave the entry running a file that is no
