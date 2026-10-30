@@ -80,6 +80,8 @@ Place an item with no parent by the first rule that admits it; a child follows i
 3. The standing concern whose `admits` rule takes the item.
 4. None: the item is `project_needed`.
 
+Judge the item's Location against each project's `admits` sentence in that order, using the map text the route already read. The sentence must name the work at that Location; a project name, label or current assignment alone does not establish a fit. When no sentence admits it, return `project_needed` rather than choosing a listed project by name.
+
 No default project exists. Under a declared map, `linear.sh issues create` refuses a create with no `--project`, naming the map file and the legal projects. `issues create`, `issues update --project` and `issues bulk-update --project` refuse a project the map does not list, naming the map file and the legal projects, and a map project with no single live Linear project in the issue's team, naming the map file and that project. A project Linear holds only as canceled counts as none. An issue already outside the map keeps its project until a write moves it; the audit lists it.
 
 A `project_needed` item is held, not created. Its producer returns the project it needs: `name`, `kind`, `initiative`, `ends_when` for a deliverable or `role` for a standing project, and `reason`. Propose a deliverable only with a stated `ends_when`, and an area only when a subsystem has no owner; otherwise the item fits a concern or fails the creation bar. The overseer creates the project per [initiative-project-template](../templates/initiative-project-template.md) and adds it to the map; the held create then proceeds.

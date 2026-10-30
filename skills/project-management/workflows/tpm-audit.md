@@ -434,7 +434,7 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
 
 1. **Input.** Read the file as § 1.1 reads `issues` mode. It holds exactly one `items[]` entry and no `hierarchy_contract`; any other shape halts naming the item count, and the caller runs `--issues`.
 2. **Scope and labels.** § 1.1.1, then § 1.2.
-3. **Placement.** Linear: the § 1.3 command, then the project whose name and description fit the item's `location`; in a map repository, the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing), with `project_needed` when it routes to none. GitHub: § 1.3's degradation.
+3. **Placement.** Linear: the § 1.3 command; with no map, choose the project whose name and description fit the item's `location`. In a map repository, use the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing). Quote the matching `admits` sentence in the `issues[]` row's `reason` and name the Location it admits. When no sentence admits that Location, return `project_needed` and explain the missing fit in `reason`. Reuse that map read. GitHub: § 1.3's degradation.
 4. **Duplicates by title and explicit supersession.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 
    ```bash
