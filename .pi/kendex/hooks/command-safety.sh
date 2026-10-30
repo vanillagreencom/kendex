@@ -485,14 +485,15 @@ environment_program_text() {
   fi
   environment_queue "$source" "$source_kind"
   [ "$program" = eval ] || return 0
-  # A non-literal eval word can expand to nothing, so the literal and
-  # dollar-quoted words after it can form the whole source. That join holds
-  # an ANSI-C escape when any word it joins does.
+  # A non-literal eval word can expand to nothing, so the words after it can
+  # form the whole source. Only that word is assumed empty: each later
+  # expanding word stays in place, as the full join spells it, and the join
+  # started after it covers its own empty case. That join holds an ANSI-C
+  # escape when any word it joins does.
   for ((cursor=source_pos; cursor<${#args[@]}; cursor++)); do
     [ "${arg_kinds[$cursor]}" != literal ] || continue
     source=""; text=""; source_kind=literal
     for ((later=cursor+1; later<${#args[@]}; later++)); do
-      case "${arg_kinds[$later]}" in literal | dollar-literal | ansi-escaped) ;; *) continue ;; esac
       # eval then takes a leading -- as its own separator.
       [ -n "$source" ] || [ "${args[$later]}" != -- ] || continue
       [ "${arg_kinds[$later]}" != ansi-escaped ] || source_kind=ansi-escaped
