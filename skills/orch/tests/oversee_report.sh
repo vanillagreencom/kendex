@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # oversee-report: when the overseer's status report is due, and the rows
 # it renders from the fleet state, GitHub and the tracker.
+# Inputs: skills/communication/references/reports.md
 #
 # Every case runs the real script against a fleet state under TMP_ROOT, with
 # gh, the Linear CLI and the clock stubbed, and asserts its exit status, its
@@ -1146,7 +1147,7 @@ while IFS='~' read -r name mode setting want replacement; do
 > *What's not going well:* Two reports arrived late.
 
 ```
-Readings
+Numbers
 ```
 
 - Reports arrive on time.
@@ -1214,7 +1215,7 @@ REPORT
 > **What's not going well:** Two reports arrived late; **[\[KEN-41\]](https://linear.app/vanillagreen/issue/KEN-41)** sends them earlier.
 
 ```
-Readings
+Numbers
 ```
 
 - Reports arrive on time.

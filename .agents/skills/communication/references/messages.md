@@ -11,12 +11,21 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 | `ceo` | Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person must act on it. Name a tool, script, session or folder the person must act on with its job in the same sentence. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
 | `engineer` | Use the session's technical vocabulary for the same outcomes and costs. |
 
-For CEO prose, retain technical source notes as evidence. Before drafting, extract what work is running or stopped, its effect on the person's goal, and the action taken or still needed. Mark an unread fact as unknown. Compose from those facts, not by shortening the source notes. Keep a necessary owner decision explicit.
+For CEO prose, retain technical source notes as evidence. Before drafting, extract what work is running or stopped, its effect on the person's goal, and the action taken or still needed.
+
+When explaining a problem and its solution, derive these facts from the evidence before composing:
+
+1. The problem and its effect on the person. Distinguish an observed failure from an unknown cause.
+2. The proposed solution as a whole: who owns the job and how the parts together remove the problem.
+3. The work actually completed and the work still needed, with its owner. Distinguish a proposal or implementation from verified use.
+4. The final story for the person and the agent: what starts the job, what each does during work, why work may wait, who resolves the wait and what resumes work, what makes the result finished, and who closes the job. Explain each transition's cause and its effect on the person's goal, including what happens to unfinished work and needed results.
+
+Mark an unread fact as unknown. Keep intended behavior distinct from observed behavior throughout the draft. Compose from the derived facts, not by shortening the source notes. Keep a necessary owner decision explicit.
 
 Fictitious drafting example:
 
-- Evidence: The only test job stopped after a disk-write failure; acceptance is unfinished; the build team owns storage repair; no retry has started; the failure's cause is unread.
-- CEO draft: No tests are running, so the change still awaits acceptance. The build team owns the storage repair. The retry has not started, and the disk-write failure's cause is unknown.
+- Evidence: The only test job stopped after a disk-write failure; acceptance is unfinished; the build team owns storage repair; no retry has started; the failure's cause is unread. The proposed test service would own each requested test through closure, show storage waits, save progress, retry after the build team confirms repair, publish the result for acceptance, then release temporary storage while retaining the result. The build team has saved the failed result; storage repair and the proposed service changes remain unfinished.
+- CEO draft: No tests are running, so you cannot yet accept the change. The disk-write failure's cause is unknown. The build team saved the failed result, but storage repair and the proposed test service changes are unfinished. No retry has started. The proposed service would carry each test from your request through acceptance and cleanup. You would request a test, and the service would start and run it. If storage failed, the service would save progress and show that work is waiting for the build team. The build team's repair confirmation would let the service resume testing without losing that progress. The service would publish the result so you could decide acceptance. Once acceptance finished, the service would close the job and release temporary storage, keeping the result for you.
 
 ## Plain language
 
