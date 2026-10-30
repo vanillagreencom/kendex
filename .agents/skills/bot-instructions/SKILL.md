@@ -150,7 +150,7 @@ Read approval from GitHub's formal review state under the repository's rulesets.
 
 ## Adding a repo
 
-[references/checklist.md](references/checklist.md) § Adding a repo.
+When adding a repository, follow [workflows/add-repository.md](workflows/add-repository.md).
 
 ## Default surfaces
 
