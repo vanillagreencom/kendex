@@ -1380,9 +1380,17 @@ environment_rows() {
 [2,"typeset --","typeset-options-end"]
 [2,"builtin declare --","builtin-declare-options-end"]
 [2,"builtin declare \"$@\"","builtin-declare-expanded-operand"]
+[2,"typeset $NAME","typeset-unquoted-expansion"]
+[0,"declare FOO=\"$x\"","declare-assignment-quoted-expansion"]
+[0,"typeset FOO=\"$1\"","typeset-assignment-quoted-expansion"]
+[0,"declare -g \"$name\"","declare-global-quoted-name"]
+[0,"export PATH=\"$HOME/bin:$PATH\"","export-assignment-quoted-expansion"]
 [0,"declare -g NAME=1","declare-global-named"]
 [2,"cat <<'EOF' | exec python3\nimport os; print(os.environ)\nEOF","opaque-piped-input-interpreter-dump"]
 [2,"env -S 'sh -c \"$0\"' printenv","env-split-string-positional-dump"]
+[2,"sh -c '$0' 'export -p'","shell-string-zero-operand-dump"]
+[2,"sh -c 'eval \"$0\"' 'env | cat'","shell-string-eval-zero-operand-dump"]
+[2,"env -S 'sh -c' 'export -p'","env-split-string-operand-dump"]
 [2,"bash -c $'echo hi\\n'","ansi-shell-string-escape","project","environment-dump","undecoded-ansi-escape"]
 [2,"eval $'echo\\thi'","ansi-eval-escape","project","environment-dump","undecoded-ansi-escape"]
 [2,"bash wrapper.sh $'\\x6cs'","ansi-forwarded-escape","project","environment-dump","undecoded-ansi-escape"]
@@ -1543,7 +1551,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
       defect == "exec-context" { swap("program=opaque; compound=1", "program=exec") }
       defect == "quoted-data-cut" { swap("if [ \"$1\" = shell ] && [ -z \"${2:-}$incoming_sources\" ] &&", "if false &&") }
-      defect == "quoted-launcher-cut" { swap("[ \"$candidate\" -gt \"$((script_pos + 1))\" ] && [ -z \"$output\" ]", "false") }
+      defect == "quoted-launcher-cut" { swap("{ [ -n \"$script_string\" ] || [ \"$candidate\" -gt \"$((script_pos + 1))\" ]; } && [ -z \"$output\" ]", "false") }
       defect == "file-body-retained" { swap("[ \"$data_source\" = \" $doc\" ]; then continue; fi", "[ \"$data_source\" = \" $doc\" ]; then :; fi") }
       defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
         block = $0; getline; block = block "\n" $0; getline; block = block "\n" $0; changed++; next
@@ -1617,6 +1625,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "expanded-option-string" { swap("environment_queue \"${args[$((cursor + 1))]}\"", ":") }
       defect == "declaration-listing" { swap("[[ $value =~ ^(--|-[gI]+)$ ]] || listing=\"\"", "listing=\"\"") }
       defect == "escape-reason" { swap("\"$dump_reason\"", "-") }
+      defect == "string-zero-operand" { swap("{ [ -n \"$script_string\" ] ||", "{ false ||") }
+      defect == "declaration-naming" { swap("[[ ! $value =~ $declared_re ]] && [[ $value =~ $array_re ]] || named=1", ":") }
+      defect == "declaration-split" { swap("kind=split; word=$word$c", "kind=unknown; word=$word$c") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -1777,6 +1788,11 @@ expanded-option-string|FAIL environment: shell-expanded-option-string-dump: exit
 declaration-listing|FAIL environment: declare-options-end: exit=0 expected=2
 declaration-listing|FAIL environment: builtin-declare-options-end: exit=0 expected=2
 escape-reason|FAIL environment: ansi-shell-string-escape: exit=2 expected=2
+string-zero-operand|FAIL environment: shell-string-zero-operand-dump: exit=0 expected=2
+string-zero-operand|FAIL environment: shell-string-eval-zero-operand-dump: exit=0 expected=2
+string-zero-operand|FAIL environment: env-split-string-operand-dump: exit=0 expected=2
+declaration-naming|FAIL environment: declare-global-quoted-name: exit=2 expected=0
+declaration-split|FAIL environment: typeset-unquoted-expansion: exit=0 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
