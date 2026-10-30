@@ -736,8 +736,9 @@ the normal SSH path.
 Settings: git push and its hooks do not inherit the values of the main
 checkout's tracked kendex.settings.toml or .kendex/settings.toml, so a
 pre-push lane reads the pushed branch's own settings. A value the caller
-exported, one .env.local sets, or one from an untracked settings file still
-reaches them.
+exported, one .env.local exports or assigns to an already-exported variable,
+or one from an untracked settings file still reaches them. A plain assignment
+to a new variable in .env.local stays shell-local unless exported.
 
 Options:
   -u, --set-upstream    Set upstream tracking branch
