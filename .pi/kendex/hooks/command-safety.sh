@@ -415,7 +415,9 @@ environment_program_text() {
       stdin_program=1
       while [ "$cursor" -lt "${#args[@]}" ]; do
         value=${args[$cursor]}
-        if [ -z "$options_ended" ]; then
+        # Only a literal word is a known option; an expanding one such as
+        # -"$FLAGS" takes the non-literal option-word check below.
+        if [ -z "$options_ended" ] && [ "${arg_kinds[$cursor]}" = literal ]; then
           case "$value" in
             --) options_ended=1; cursor=$((cursor + 1)); continue ;;
             --rcfile | --init-file) cursor=$((cursor + 2)); continue ;;
@@ -487,6 +489,8 @@ environment_program_text() {
     source=""; text=""
     for ((later=cursor+1; later<${#args[@]}; later++)); do
       [ "${arg_kinds[$later]}" = literal ] || continue
+      # eval then takes a leading -- as its own separator.
+      [ -n "$source" ] || [ "${args[$later]}" != -- ] || continue
       source=$source$text${args[$later]}; text=' '
     done
     [ -z "$source" ] || environment_queue "$source"
