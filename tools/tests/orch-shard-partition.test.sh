@@ -303,7 +303,6 @@ chmod +x "$SHIM/bash"
 export PARTITION_POOL="$POOL" PARTITION_POOL_CLAIMS="$TMP/pool-claims" PARTITION_HOST_PATH="$PATH"
 
 # Serial blocks carry the path marker. Pooled blocks invoke a battery runner.
-# Orch's name-filter calls remain accounted for by section 2.
 ROSTER_MARK='=== $t'
 roster_block() { # FILE ; a serial roster or a pooled battery invocation
   grep -qF -e "$ROSTER_MARK" -e 'bash tools/tests/run-all.sh' "$1" ||

@@ -57,11 +57,7 @@ name: Skill Tests
 # ceiling: TEN MINUTES, past which a shard is split even where its Linux leg
 # sits inside five. Run 36195213656, the first with every split below in
 # place, has legs past their figure on both runners, and none is split here.
-# The orch legs among them ran their suites one at a time;
-# skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
-# and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
-# run re-measures them, and the comment above the orch shard steps holds
-# run 36195213656's figures. `worktree` on macOS, `linear` and `rest` on
+# `worktree` on macOS, `linear` and `rest` on
 # Linux, and `guards-tools` and `guards-tools-tail` on both runners do not
 # run through run-all.sh and stand past their figure pending a split.
 #
@@ -78,12 +74,9 @@ name: Skill Tests
 # which is what keeps a shard set a partition. Where the next cut would have
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
-# steps says so. Two legs are that case. `orch-terminal` is the first: its
-# suite open-terminal-lane, which races a real process tree, is on
-# run-all.sh's ALONE list and runs after the others, so the leg's wall time is that suite's seconds plus the
-# pooled rest, and the orch shard comment gives the figures. The macOS
+# steps says so. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
-# `rest`, and `render-lint` is the second: a target whose cost is one
+# `rest`, and `render-lint` is that case: a target whose cost is one
 # expensive test, so no target seam reaches inside it. After its comments
 # pass split across scopes, its macOS test step measured 277s in run
 # 37597618670. `rest`
@@ -495,14 +488,11 @@ jobs:
         shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    # The macOS legs on the same suites, first green run: orch 10m45s
-    # against 4m45s on Linux, guards 9m09s against 3m13s, rest 7m39s against
+    # The macOS legs on the same suites, first green run: guards 9m09s
+    # against 3m13s on Linux, rest 7m39s against
     # 3m07s, review-gate 3m45s against 1m05s, linear 2m47s against 3m30s. The
-    # undivided orch battery later reached 21m45s here against the 15m16s on
-    # Linux that the ceiling cancelled; the split below answers it, and each
-    # third runs this leg in roughly a third of that time. The three shards
-    # this leg later held past ten minutes of every merge — guards to 1061s,
-    # rest to 845s, orch-rest to 675s — are split again below.
+    # shards this leg later held past ten minutes of every merge — guards to
+    # 1061s, rest to 845s — are split again below.
     # The Linux legs the `if:` of the `kendex from this checkout` step names
     # build kendex-cli (debug) from the checkout ahead of their suites, and a
     # cold cargo cache — the first run after a merge, and after each rustc
