@@ -479,10 +479,10 @@ jobs:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
     # Merge groups run Linux shards when classification is missing or
-    # selects shell work with a remaining Linux runner. Every other event
-    # and cancelled runs stand this job down. The status function lifts the
-    # implicit `success()` when classification fails.
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
+    # selects shell work with a remaining Linux runner. Main pushes run the
+    # full fallback roster. The status function also permits skipped main
+    # classification and lifts implicit success after a classifier failure.
+    if: ${{ !cancelled() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -536,6 +536,10 @@ jobs:
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # REVISIT(D027): KEN-4718 restores each entry after its fixing owner's proof.
+      # This workflow owns the temporary roster; evidence tables are never inputs.
+      TEMPORARY_SUITE: ${{ matrix.suite || '' }}
+      MAIN_ONLY_FILTERS: ${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push') && '!=workflow-state-flockless !=critical-path-deny.test !=orch-shard-partition.test !=adopt-refresh.test !=oversee_launch_watch' || '' }}
     steps: &skill-suite-steps
       # run-all.sh stops every suite still running at this Unix time and names
       # each in the log, so a hang fails by name before the job ceiling cancels
@@ -766,7 +770,8 @@ jobs:
             base="${t##*/}"
             refresh+=("=${base%.sh}")
           done
-          bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" || fail=1
+          [[ -z "${TEMPORARY_SUITE:-}" ]] || refresh=("=$TEMPORARY_SUITE")
+          bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
       # ---- shards: orch-terminal, orch-oversee, orch-oversee-watch,
       # orch-oversee-succeed, orch-dev, orch-state, orch-rest -----------------
@@ -880,11 +885,11 @@ jobs:
 
       - name: 'orch suites: the dev and review round-artifact suites, oversee launch and owed work'
         if: matrix.shard == 'orch-dev'
-        run: bash skills/orch/tests/run-all.sh --shard orch-dev
+        run: bash skills/orch/tests/run-all.sh --shard orch-dev ${TEMPORARY_SUITE:+"=$TEMPORARY_SUITE"} ${MAIN_ONLY_FILTERS:-}
 
       - name: 'orch suites: the lane and workflow-state suites'
         if: matrix.shard == 'orch-state'
-        run: bash skills/orch/tests/run-all.sh --shard orch-state
+        run: bash skills/orch/tests/run-all.sh --shard orch-state ${TEMPORARY_SUITE:+"=$TEMPORARY_SUITE"} ${MAIN_ONLY_FILTERS:-}
 
       # claude-model-classes.sh runs the orch Claude plugin under Claude Code
       # and fails under CI where no claude is on PATH. The pin is at or above
@@ -1046,6 +1051,9 @@ jobs:
           failed=""
           for t in tools/tests/harness-smoke.test.sh \
             tools/tests/orch-shard-partition.test.sh; do
+            base="${t##*/}"
+            [[ -z "${TEMPORARY_SUITE:-}" || "$base" == "$TEMPORARY_SUITE.sh" ]] || continue
+            case " ${MAIN_ONLY_FILTERS:-} " in *" !=${base%.sh} "*) continue ;; esac
             echo "=== $t"
             set --
             case "$t" in
@@ -1099,14 +1107,18 @@ jobs:
               skills/*) guards+=("=${base%.sh}") ;;
             esac
           done
+          if [[ -n "${TEMPORARY_SUITE:-}" ]]; then
+            hooks=("=$TEMPORARY_SUITE")
+            guards=()
+          fi
           fail=0
           # If the tail is removed, its pending-reading timer keeps its isolation here.
           # Both batteries use one pool. Filters apply to both roots.
           batteries=(--battery hooks/tests --alone lane-mail-usage.test)
-          if [ "${#guards[@]}" -gt 0 ]; then
+          if [ -z "${TEMPORARY_SUITE:-}" ] && [ "${#guards[@]}" -gt 0 ]; then
             batteries+=(--battery skills/commit-guards/tests)
           fi
-          bash skills/orch/tests/run-all.sh "${batteries[@]}" "${hooks[@]}" ${guards[@]+"${guards[@]}"} || fail=1
+          bash skills/orch/tests/run-all.sh "${batteries[@]}" "${hooks[@]}" ${guards[@]+"${guards[@]}"} ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
 
       - name: lane-mail and reviewer suites
@@ -1345,11 +1357,11 @@ jobs:
           node-version: 22.19.0
 
       - name: deep-research node suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         run: node --test skills/deep-research/tests/deep-research.test.mjs
 
       - name: pi-extension package policy suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         run: node --test pi-extensions/package-policy.test.mjs
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -1361,7 +1373,7 @@ jobs:
       # reads PI_QOL_PEER_VERSION, and tests/runtime-copy-peers.test.ts refuses
       # a peer installed at any other version.
       - name: pi-qol regression suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-qol
         env:
           PI_QOL_PEER_VERSION: 0.86.0
@@ -1370,21 +1382,21 @@ jobs:
           npm test
 
       - name: pi-output-policy suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-output-policy
         run: npm test
 
       # The pi-hooks lane wake suite runs a whole Pi session in process, and
       # the package's own test script installs the Pi its devDependencies pin.
       - name: pi-hooks suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-hooks
         run: npm test
 
       # pi-nested-agents-md imports only types from pi-coding-agent, which
       # bun erases, so its suite runs with no install.
       - name: pi-nested-agents-md suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-nested-agents-md
         run: npm test
 
@@ -1394,7 +1406,7 @@ jobs:
       # GitHub image does not carry it. The whole directory is globbed, so
       # all test files run here without editing this step.
       - name: pi-agents-tmux suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && (matrix.suite == 'pi-agents-tmux' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         working-directory: pi-extensions/pi-agents-tmux
         run: |
           git fetch --no-tags --depth=1 origin "$(sed -n 's/^export const BENCHMARK_BASELINE = "\([0-9a-f]*\)";.*/\1/p' tests/browser-fixture.ts)"
@@ -1405,7 +1417,7 @@ jobs:
       # transport test would validate a different major than consumers
       # actually install.
       - name: pi-codex-minimal-tools suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1 typebox 'undici@^7.29.1'
@@ -1416,7 +1428,7 @@ jobs:
       # and rpc-fallback import nothing outside the package), so unlike the
       # suites above no npm install is needed.
       - name: pi-questions suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-questions
         run: npm test
 
@@ -1425,7 +1437,7 @@ jobs:
       # pi-coding-agent pulls them transitively and an unpinned resolution
       # mismatches its exports.
       - name: pi-tool-renderer suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-tool-renderer
         run: |
           npm install --no-save --include=dev --include=peer --include=optional --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@1.0.1 @earendil-works/pi-ai@1.0.1 @earendil-works/pi-coding-agent@1.0.1 @earendil-works/pi-tui@1.0.1 @earendil-works/pi-codemode@1.0.1 @earendil-works/pi-mcp@1.0.1 @earendil-works/pi-telemetry@1.0.1
@@ -1434,14 +1446,14 @@ jobs:
       # Prompt stash mocks its Pi TUI value imports, so its suite needs no
       # package install.
       - name: pi-prompt-stash suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-prompt-stash
         run: npm test
 
       # pi-session-bridge imports nothing from Pi outside type positions, the
       # same case as pi-nested-agents-md above, so its suite runs with no install.
       - name: pi-session-bridge suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-session-bridge
         run: npm test
 
@@ -1449,7 +1461,7 @@ jobs:
       # imports only the package's leaf modules, so the Pi value imports
       # elsewhere in the package are never loaded and no install is needed.
       - name: pi-session-manager suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-session-manager
         run: npm test
 
@@ -1459,7 +1471,7 @@ jobs:
       # alongside it because the package value-imports them too and an
       # unpinned resolution mismatches pi-coding-agent's exports.
       - name: pi-skills-manager suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-skills-manager
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
@@ -1472,7 +1484,7 @@ jobs:
       # because their suites need Pi packages declared as peer dependencies,
       # which a lockfile of theirs never resolves.
       - name: pi-caveman suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-caveman
         run: |
           npm ci --no-audit --no-fund
@@ -1485,7 +1497,7 @@ jobs:
       # on the paths the suite exercises, and tsx is what the test script runs
       # the suite under.
       - name: pi-web-tools suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-web-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox tsx 'youtube-transcript-plus@^2.0.1'
@@ -1494,7 +1506,7 @@ jobs:
       # The suite mocks every Pi module and typebox it imports with bun's
       # mock.module, so like pi-session-manager it needs no install.
       - name: pi-background-tasks suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-background-tasks
         run: npm test
 
@@ -1503,7 +1515,7 @@ jobs:
       # what keeps a test file that does reach it failing as a test rather
       # than as an unresolved module.
       - name: pi-extension-manager suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-extension-manager
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
@@ -1513,7 +1525,7 @@ jobs:
       # Two of its three files are node:test and one is bun:test; bun's runner
       # executes both, which is why one `npm test` covers the directory.
       - name: pi-task-panel suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-task-panel
         run: npm test
 
@@ -1549,13 +1561,14 @@ jobs:
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
 
-  # THE NIGHTLY macOS ROSTER, on the daily schedule or a manual dispatch.
+  # Full main and nightly macOS rosters. Main shell execution is additional
+  # work versus the pre-KEN-4718 cargo-only main route; its cost is unmeasured.
   # changes is skipped there, so the shared matrix expression uses its
   # full-roster fallback. The suite steps and budgets have one owner.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1602,6 +1615,42 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: *skill-suite-timeout
+    env: *skill-suite-env
+    steps: *skill-suite-steps
+
+  # REVISIT(D026): KEN-4718's temporary exceptions retain their original
+  # shard setup, native eligibility and bounds through the shared steps.
+  # Real failures stay red here. This family is deliberately absent from CI's needs.
+  skill-suites-main-only:
+    name: Temporary main suite (${{ matrix.suite }}, ${{ matrix.os }})
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: workflow-state-flockless
+            shard: orch-state
+            os: ubuntu-latest
+          - suite: critical-path-deny.test
+            shard: guards-hooks
+            os: ubuntu-latest
+          - suite: orch-shard-partition.test
+            shard: guards-tools-tail
+            os: ubuntu-latest
+          - suite: pi-agents-tmux
+            shard: node
+            os: ubuntu-latest
+          - suite: adopt-refresh.test
+            shard: refresh
+            os: ubuntu-latest
+          - suite: oversee_launch_watch
+            shard: orch-dev
+            os: ubuntu-latest
+          - suite: oversee_launch_watch
+            shard: orch-dev
+            os: macos-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env

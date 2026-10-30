@@ -92,6 +92,9 @@ PARTITION_SUITE=tools/tests/orch-shard-partition.test.sh
 # GIT_WORK_TREE and GIT_INDEX_FILE, which would resolve ROOT to the hook's
 # repository instead of this one.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# Fixture calls define their own event roster. The enclosing dedicated job
+# cannot supply its single-suite selection to those baseline calls.
+unset TEMPORARY_SUITE MAIN_ONLY_FILTERS
 
 ROOT="$(git rev-parse --show-toplevel)"
 TEST_DIR="$ROOT/skills/orch/tests"
@@ -232,6 +235,29 @@ check "an empty argument refuses instead of running everything" \
   "1" "$(status_of '')"
 check "a filter matching no suite exits non-zero" \
   "1" "$(status_of no-suite-carries-this-name)"
+check "a shard and exact selector intersect" \
+  "oversee_launch_watch" "$(selected --shard orch-dev =oversee_launch_watch)"
+check "a shard and exact rejector intersect" \
+  "$(selected --shard orch-dev | grep -vxF oversee_launch_watch)" \
+  "$(selected --shard orch-dev '!=oversee_launch_watch')"
+for args in '--shard' '--shard unknown' '--shard orch-state =oversee_launch_watch'; do
+  # These words are the argument contract under test, with no shell quoting.
+  # shellcheck disable=SC2086
+  check "invalid or empty shard selection refuses: $args" "1" "$(status_of $args)"
+done
+check "an empty shard filter refuses" "1" "$(status_of --shard orch-dev '')"
+# Remove only composition from the disposable runner. The suite still exists
+# and belongs to the same shard, so this control detects a status-blind shard.
+cp "$SANDBOX/run-all.sh" "$TMP/composition-runner"
+sed 's/\[ "$OWNING_SHARD" = "$SHARD" \] || return 1/[ "$OWNING_SHARD" = "$SHARD" ]; return/' \
+  "$TMP/composition-runner" > "$SANDBOX/run-all.sh"
+cmp -s "$TMP/composition-runner" "$SANDBOX/run-all.sh" && { bad "composition control matched nothing"; exit 1; }
+if [[ "$(selected --shard orch-dev =oversee_launch_watch)" != oversee_launch_watch ]]; then
+  ok "must-fail: a shard that ignores its exact filter violates composition"
+else
+  bad "must-fail: the exact filter accepted a shard that ignores filters"
+fi
+cp "$TMP/composition-runner" "$SANDBOX/run-all.sh"
 
 # --- 2. The routing partition before native eligibility --------------------
 # Each shard's arguments are read from the workflow, so a shard whose filter
@@ -283,6 +309,8 @@ mkdir -p "$UNION_RUNS"
 union_of() { # union_of <argument string>... ; names selected, duplicates kept
   local args kept
   for args in "$@"; do
+    args=${args//'${TEMPORARY_SUITE:+"=$TEMPORARY_SUITE"}'/${TEMPORARY_SUITE:+=$TEMPORARY_SUITE}}
+    args=${args//'${MAIN_ONLY_FILTERS:-}'/${MAIN_ONLY_FILTERS:-}}
     kept="$UNION_RUNS/${PARTITION_RUNNER_OS:-Linux}-${PARTITION_NATIVE:-false}-$(printf '%s' "$args" | cksum | tr ' ' '-')"
     if [[ ! -f "$kept" || "$(head -n 1 "$kept")" != "|$args" ]]; then
       (
@@ -362,7 +390,7 @@ for profile in orch-dev orch-state; do
   family_calls=0
   for args in "${shard_args[@]}"; do
     case "$args" in
-      *"--shard $profile") family_args="$args"; family_calls=$((family_calls + 1)) ;;
+      *"--shard $profile"*) family_args="$args"; family_calls=$((family_calls + 1)) ;;
       *) remaining+=("$args") ;;
     esac
   done
@@ -376,6 +404,46 @@ for profile in orch-dev orch-state; do
 done
 done
 PARTITION_RUNNER_OS=Linux
+
+# Exercise the actual baseline rows with the dedicated job's inherited input.
+# Only their fixture setup and routing rows are copied, not the whole suite.
+if (
+  mkdir -p "$HOME/tmp" || exit 1
+  control="$(mktemp -d "$HOME/tmp/partition-inherited.XXXXXX")" || exit 1
+  [[ -d "$control" && ! -L "$control" ]] || exit 1
+  control="$(cd -- "$control" && pwd -P)" || exit 1
+  trap 'rm -rf -- "${control:?}"' EXIT
+  awk '
+    /^# --- 1\./ { skip = 1 }
+    /^# --- 2\./ { skip = 0 }
+    /^# --- 2b\./ { found++; exit }
+    !skip { print }
+    END { exit found != 1 }
+  ' "$ROOT/$PARTITION_SUITE" > "$control/clean.sh" || exit 1
+  printf '%s\n' 'missing_from "${shard_args[@]}" > "$PARTITION_INHERITED_MISSING"' \
+    'done' 'fi' '[[ "$FAIL" -eq 0 ]]' >> "$control/clean.sh" || exit 1
+  awk '$0 == "unset TEMPORARY_SUITE MAIN_ONLY_FILTERS" { n++; next }
+       { print } END { exit n != 1 }' "$control/clean.sh" > "$control/mutant.sh" || exit 1
+  clean_rc=0
+  TEMPORARY_SUITE=orch-shard-partition.test MAIN_ONLY_FILTERS='' \
+    PARTITION_INHERITED_MISSING="$control/clean-missing" \
+    "$BASH" "$control/clean.sh" > "$control/clean.log" 2>&1 || clean_rc=$?
+  mutant_rc=0
+  TEMPORARY_SUITE=orch-shard-partition.test MAIN_ONLY_FILTERS='' \
+    PARTITION_INHERITED_MISSING="$control/mutant-missing" \
+    "$BASH" "$control/mutant.sh" > "$control/mutant.log" 2>&1 || mutant_rc=$?
+  printf 'partition-inherited: clean-exit=%s mutant-exit=%s\n' "$clean_rc" "$mutant_rc"
+  if [[ "$clean_rc" == 0 && -f "$control/clean-missing" && ! -s "$control/clean-missing" && "$mutant_rc" != 0 ]] &&
+    grep -qxF oversee_launch_watch "$control/mutant-missing"; then
+    exit 0
+  fi
+  cat "$control/clean.log" "$control/mutant.log"
+  exit 1
+); then
+  ok "must-fail: inherited dedicated routing cannot narrow fixture baseline claims"
+else
+  bad "inherited routing control did not retain the baseline and reject its mutant"
+fi
 
 # CI produces these profiles. Future suite names follow their family once,
 # and dev/review owns an overlap with lane/workflow-state. The real runner
@@ -1298,6 +1366,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       roster_block "$f" || continue
       shard="$(one_shard "$(cat "${f%.sh}.cond")")"
       [[ -n "$shard" ]] || continue
+      [[ -z "${PARTITION_ONLY_SHARD:-}" || "$shard" == "$PARTITION_ONLY_SHARD" ]] || continue
       ( cd "$PART" && RUN_ALL_NATIVE_CONTRACTS="$native" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
         sed -n "s%^suite-invoked: %$shard	%p"
     done
@@ -1306,6 +1375,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
     one_line_steps "$wf" | while IFS=$'\037' read -r _ cond wd run; do
       shard="$(one_shard "$cond")"
       [[ -n "$shard" ]] || continue
+      [[ -z "${PARTITION_ONLY_SHARD:-}" || "$shard" == "$PARTITION_ONLY_SHARD" ]] || continue
       grep -qxF "$shard" <<< "$excluded" && continue
       [[ "$run" != "bash $runner --battery "* ]] || continue
       if [[ "$mode" == files && "$run" == "bash $runner"* ]]; then
@@ -1646,6 +1716,43 @@ os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   ' "$TMP/os-universe" "$owners" | sort
 }
 
+# The shared steps execute the matrix's actual suite, with the real shard
+# and native eligibility owners. This reads policy from the workflow only.
+main_only_filters() { # WORKFLOW ; the ordinary run's exact rejection filters
+  sed -n "s/^      MAIN_ONLY_FILTERS: .* \&\& '\([^']*\)' || '' }}$/\1/p" "$1"
+}
+dedicated_rows() { # WORKFLOW ; suite|shard|os from the dedicated include matrix
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { active = ($1 == "skill-suites-main-only:") }
+    active && /^          - suite: / { suite = $3 }
+    active && /^            shard: / { shard = $2 }
+    active && /^            os: / { print suite "|" shard "|" $2 }
+  ' "$1"
+}
+dedicated_claims() { # WORKFLOW OS MAJOR
+  local suite shard os claims="$TMP/dedicated-row"
+  while IFS='|' read -r suite shard os; do
+    [[ "$os" == "$2" ]] || continue
+    TEMPORARY_SUITE="$suite" MAIN_ONLY_FILTERS='' PARTITION_ONLY_SHARD="$shard" \
+      suite_owners "$1" files "$3" > "$claims" || return
+    # Package-entry membership belongs to package-policy.test.mjs. Every
+    # shell declaration must select real eligible work, not a native-empty pass.
+    if [[ ! -f "$ROOT/pi-extensions/$suite/package.json" ]] && [[ ! -s "$claims" ]]; then
+      printf 'partition-dedicated: suite=%s os=%s selection=empty\n' "$suite" "$os" >&2
+      return 1
+    fi
+    cat "$claims"
+  done < <(dedicated_rows "$1")
+}
+event_claims() { # WORKFLOW OS MAJOR ; ordinary plus dedicated shell claims
+  local wf="$1" filters
+  filters="$(main_only_filters "$wf")" || return
+  [[ -n "$filters" ]] || return 1
+  MAIN_ONLY_FILTERS="$filters" os_claims "$wf" "$2" "$3" || return
+  dedicated_claims "$wf" "$2" "$3" |
+    awk -F '\t' 'NR == FNR { universe[$0] = 1; next } $2 in universe { print $2 }' "$TMP/os-universe" -
+}
+
 awk '$0 == "            case \"$t\" in skills/linear/tests/must-fail-controls.sh) continue ;; esac" {
        sub(/continue/, ":"); n++
      }
@@ -1669,6 +1776,54 @@ for os in ubuntu-latest macos-latest; do
   check "every eligible suite runs exactly once on $os" \
     "$(cat "$TMP/os-universe")" "$(cat "$TMP/os-claims")"
   printf 'coverage: os=%s suites=%s\n' "$os" "$(wc -l < "$TMP/os-universe" | tr -d ' ')"
+  # Schedule/manual keep the original claims above. Merge-group ordinary
+  # plus the explicit exceptions, and main ordinary plus dedicated, must
+  # each account for the same native universe without omissions or repeats.
+  event_claims "$WORKFLOW" "$os" "$major" | sort > "$TMP/event-claims"
+  check "group plus exceptions and full main cover every eligible suite once on $os" \
+    "$(cat "$TMP/os-universe")" "$(cat "$TMP/event-claims")"
+  filters="$(main_only_filters "$WORKFLOW")"
+  MAIN_ONLY_FILTERS="$filters" os_claims "$WORKFLOW" "$os" "$major" > "$TMP/gate-claims"
+  expected_exceptions="$(comm -12 "$TMP/os-universe" <(printf '%s\n' \
+    skills/orch/tests/workflow-state-flockless.sh hooks/tests/critical-path-deny.test.sh \
+    tools/tests/orch-shard-partition.test.sh refresh/tests/adopt-refresh.test.sh \
+    skills/orch/tests/oversee_launch_watch.sh | sort))"
+  check "only the declared shell exceptions leave the required roster on $os" \
+    "$expected_exceptions" "$(comm -23 "$TMP/os-universe" "$TMP/gate-claims")"
+  check "the required roster retains no duplicate on $os" "" "$(uniq -d "$TMP/gate-claims")"
+  for fault in omitted duplicated wrong-shard native-empty; do
+    [[ "$fault" != native-empty || "$os" == macos-latest ]] || continue
+    mutant="$TMP/event-$fault.yml"
+    awk -v fault="$fault" '
+      /^  [A-Za-z0-9_-]+:/ { active = ($1 == "skill-suites-main-only:") }
+      active && ((fault != "native-empty" && /^          - suite: oversee_launch_watch$/) ||
+                 (fault == "native-empty" && /^          - suite: critical-path-deny.test$/)) { row = 3; hits++ }
+      row {
+        if (fault == "native-empty") {
+          held = held $0 "\n"; print; row--
+          if (!row) { sub(/os: ubuntu-latest/, "os: macos-latest", held); printf "%s", held; held = "" }
+          next
+        }
+        if (fault == "duplicated") held = held $0 "\n"
+        if (fault == "wrong-shard" && /shard: orch-dev$/) sub(/orch-dev$/, "orch-state")
+        if (fault != "omitted") print
+        row--
+        if (!row && fault == "duplicated") { printf "%s", held; held = "" }
+        next
+      }
+      { print }
+      END { exit hits == 0 }
+    ' "$WORKFLOW" > "$mutant" || { bad "event control matched no dedicated entry"; continue; }
+    edited "$WORKFLOW" "$mutant" "event-$fault"
+    rc=0
+    event_claims "$mutant" "$os" "$major" > "$TMP/event-control" || rc=$?
+    sort -o "$TMP/event-control" "$TMP/event-control"
+    if [[ "$rc" -ne 0 ]] || ! cmp -s "$TMP/os-universe" "$TMP/event-control"; then
+      ok "must-fail: $fault dedicated coverage refuses on $os"
+    else
+      bad "must-fail: $fault dedicated coverage passed on $os"
+    fi
+  done
   os_claims "$wf_drop" "$os" "$major" > "$TMP/os-drop"
   [[ -n "$(comm -23 "$TMP/os-universe" <(sort -u "$TMP/os-drop"))" ]] &&
     ok "must-fail: an omitted roster leaves suites missing on $os" || bad "omission control named no suite on $os"
