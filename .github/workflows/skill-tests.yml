@@ -1094,9 +1094,7 @@ jobs:
       # prefix: the hooks shards also name commit-guards paths. That prefix
       # would keep this step skipping the package's other suites after the
       # step that runs them was deleted. Each glob below appears
-      # once and disappears with its step. `orch` is claimed by a path to
-      # run-all.sh rather than by a glob. Its one-line run prefix excludes
-      # this step's pooled call. Package variables keep declarations from
+      # once and disappears with its step. Package variables keep declarations from
       # answering their own claims search.
       # `claims` drops comment lines for the reason the `guards-commit` step
       # above gives. -------------------------------------------------------
