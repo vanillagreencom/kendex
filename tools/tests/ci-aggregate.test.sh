@@ -26,8 +26,8 @@
 #      and CI passes there without its aggregate, whatever the diff. A merge
 #      group runs the job set its class selects, the two diff checks and
 #      the macOS legs its queue_macos_shards list names. A push to main runs
-#      the cargo compile legs, catalog and smoke; the nightly run, schedule
-#      or dispatch, runs those and the full macOS roster, and the macOS and
+#      the cargo compile legs, catalog, smoke and full eligible shell roster;
+#      the nightly run, schedule or dispatch, runs the native macOS roster, and the macOS and
 #      Windows cargo test steps run there and in the group, never on the
 #      push. The queue's legs expand to that list, or to the macOS-capable
 #      roster where nothing classified, and CI's lane for them is true
@@ -198,23 +198,6 @@ must-fail: subject installer|$TMP/wf-subject-installer.yml|no
 must-fail: subject then trusted installer|$TMP/wf-subject-then-trusted.yml|no
 ROWS
 
-# A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
-matrix_expr() { # WORKFLOW KEY [JOB]
-  local raw
-  raw="$(awk -v job="${3:-skill-suites-shard}:" -v key="$2:" '
-    /^  [A-Za-z0-9_-]+:/ { active = ($1 == job) }
-    active && /^        [^[:space:]]/ && $1 == key { sub(/^        [^:]+: /, ""); print }
-  ' "$1")"
-  case "$raw" in
-    '&'*) raw="${raw#* }" ;;
-    '*'*) raw="$(sed -n "s/^        $2: &${raw#\*} //p" "$1")" ;;
-  esac
-  case "$raw" in
-    '${{'*) printf '%s' "${raw:4:${#raw}-7}" ;;
-    \[*) printf "fromJSON('%s')" "$(printf '%s' "$raw" | sed 's/\([a-z][a-z-]*\)/"\1"/g')" ;;
-  esac
-}
-
 # `LANE:JOB` for every job whose own condition reads a lane.
 gate_pairs() { # WORKFLOW
   job_ifs "$1" | while IFS="$(printf '\t')" read -r job expr; do
@@ -228,21 +211,6 @@ lanes_read() { # WORKFLOW
   { gate_pairs "$1" | sed 's/:.*//'
     { matrix_expr "$1" os; matrix_expr "$1" shard; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
   } | LC_ALL=C sort -u
-}
-
-# `NAME SOURCE` for every changes-job output the select step publishes.
-published_map() { # WORKFLOW
-  awk '
-    /^  changes:/ { in_job = 1; next }
-    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
-    in_job && /^    outputs:/ { in_outputs = 1; next }
-    in_outputs && !/^      / { in_outputs = 0 }
-    in_outputs && match($0, /^      [a-z_]+: \$\{\{ steps\.select\.outputs\.[a-z_]+ \}\}$/) {
-      name = $1; sub(/:$/, "", name)
-      source = $0; sub(/.*steps\.select\.outputs\./, "", source); sub(/ .*/, "", source)
-      print name " " source
-    }
-  ' "$1"
 }
 
 # `AGGREGATE<tab>JOB<tab>EXPR` for every `--lane "$VAR:JOB"` an aggregate
@@ -356,22 +324,6 @@ check "CI holds no job it needs to an event" "" "$EVENT_HELD"
 # gh-eval.py's header names the expression forms it covers and refuses the
 # rest.
 
-# The context a gated job's condition reads: the event, and the changes job's
-# result with the outputs its published map names out of a selection, or none
-# where it did not succeed.
-context_json() { # EVENT RESULT SELECTION MAP_FILE
-  local outputs='{}'
-  if [ "$2" = success ]; then
-    outputs="$(printf '%s\n' $3 | jq -Rn --rawfile map "$4" '
-      ([inputs | select(length > 0) | split("=") | {key: .[0], value: .[1]}] | from_entries) as $chosen
-      | [$map | split("\n")[] | select(length > 0) | split(" ")
-         | select($chosen[.[1]] != null) | {key: .[0], value: $chosen[.[1]]}] | from_entries')" ||
-      { echo "could not build the outputs of '$3'" >&2; exit 1; }
-  fi
-  jq -cn --arg event "$1" --arg result "$2" --argjson outputs "$outputs" \
-    '{github: {event_name: $event}, needs: {changes: {result: $result, outputs: $outputs}}}'
-}
-
 # The jobs a class or an event stands down or runs: every job whose own
 # condition reads a lane, and every job an aggregate holds, since a job an
 # aggregate holds whose condition reads nothing runs on every class.
@@ -451,7 +403,7 @@ event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted
     printf '%s\t%s\t%s\n' "$job" "$needs" "${expr:-success()}"
   done | gh_eval jobs "$ctx" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
 }
-MAIN_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog smoke"
+MAIN_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos skill-suites-main-only skill-suites-shard smoke"
 NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos smoke"
 # EVENT|RESULT|SELECTION|EXPECTED. A pull request runs `CI` alone for a
 # Rust-only diff, a docs-only diff and a dead classifier alike.
@@ -512,7 +464,7 @@ done <<'ROWS'
 pull_request|skipped|false
 merge_group|success|false
 merge_group|failure|false
-push|skipped|false
+push|skipped|true
 schedule|skipped|true
 workflow_dispatch|skipped|true
 ROWS
@@ -520,9 +472,9 @@ check "the nightly macOS matrix uses macOS alone" '["macos-latest"]' \
   "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
 check "the nightly run runs the full shard roster through the alias" "$ROSTER" \
   "$(gh_eval value "$(context_json schedule skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
-plant "$WORKFLOW" "github.event_name == 'schedule'" "github.event_name == 'push'" "$TMP/wf-macos-push.yml" skill-suites-macos
-check "must-fail: macOS skill suites moved back onto the main push run there" true \
-  "$(gh_eval value "$(context_json push skipped "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$TMP/wf-macos-push.yml")")"
+plant "$WORKFLOW" "github.event_name == 'schedule'" "github.event_name == 'pull_request'" "$TMP/wf-macos-pr.yml" skill-suites-macos
+check "must-fail: macOS skill suites moved onto pull requests run there" true \
+  "$(gh_eval value "$(context_json pull_request skipped "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$TMP/wf-macos-pr.yml")")"
 
 # The queue's macOS legs: the job's condition, then its shard key evaluated,
 # as GitHub expands the matrix; `none` where the condition stands the job

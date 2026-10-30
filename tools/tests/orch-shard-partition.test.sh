@@ -1716,10 +1716,15 @@ os_claims() { # <workflow> <os> <major> ; suite files the expanded matrix runs
   ' "$TMP/os-universe" "$owners" | sort
 }
 
-# The shared steps execute the matrix's actual suite, with the real shard
-# and native eligibility owners. This reads policy from the workflow only.
-main_only_filters() { # WORKFLOW ; the ordinary run's exact rejection filters
-  sed -n "s/^      MAIN_ONLY_FILTERS: .* \&\& '\([^']*\)' || '' }}$/\1/p" "$1"
+# Use the aggregate suite's workflow readers and expression context, then
+# execute the resolved inputs through the same real-runner claim reader.
+# shellcheck source=../../skills/harness-ci/tests/lib/workflow.sh
+. "$ROOT/skills/harness-ci/tests/lib/workflow.sh"
+main_only_filters() { # WORKFLOW CONTEXT [FIELD] ; a resolved shared suite input
+  local expr
+  expr="$(sed -n "/^      ${3:-MAIN_ONLY_FILTERS}: / { s/^      ${3:-MAIN_ONLY_FILTERS}: //; s/^[$]{{ //; s/ }}$//; p; }" "$1")" || return
+  [[ -n "$expr" ]] || return 1
+  gh_eval value "$2" "$expr" | jq -er 'select(type == "string")'
 }
 dedicated_rows() { # WORKFLOW ; suite|shard|os from the dedicated include matrix
   awk '
@@ -1729,11 +1734,16 @@ dedicated_rows() { # WORKFLOW ; suite|shard|os from the dedicated include matrix
     active && /^            os: / { print suite "|" shard "|" $2 }
   ' "$1"
 }
-dedicated_claims() { # WORKFLOW OS MAJOR
-  local suite shard os claims="$TMP/dedicated-row"
+dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
+  local suite shard os ctx temporary filters rows="$TMP/dedicated-rows" claims="$TMP/dedicated-row"
+  dedicated_rows "$1" > "$rows" || return
   while IFS='|' read -r suite shard os; do
     [[ "$os" == "$2" ]] || continue
-    TEMPORARY_SUITE="$suite" MAIN_ONLY_FILTERS='' PARTITION_ONLY_SHARD="$shard" \
+    ctx="$(jq -c --arg suite "$suite" --arg shard "$shard" --arg os "$os" \
+      '.matrix = {suite: $suite, shard: $shard, os: $os}' <<< "$4")" || return
+    temporary="$(main_only_filters "$1" "$ctx" TEMPORARY_SUITE)" || return
+    filters="$(main_only_filters "$1" "$ctx")" || return
+    TEMPORARY_SUITE="$temporary" MAIN_ONLY_FILTERS="$filters" PARTITION_ONLY_SHARD="$shard" \
       suite_owners "$1" files "$3" > "$claims" || return
     # Package-entry membership belongs to package-policy.test.mjs. Every
     # shell declaration must select real eligible work, not a native-empty pass.
@@ -1742,15 +1752,49 @@ dedicated_claims() { # WORKFLOW OS MAJOR
       return 1
     fi
     cat "$claims"
-  done < <(dedicated_rows "$1")
+  done < "$rows"
 }
-event_claims() { # WORKFLOW OS MAJOR ; ordinary plus dedicated shell claims
-  local wf="$1" filters
-  filters="$(main_only_filters "$wf")" || return
-  [[ -n "$filters" ]] || return 1
-  MAIN_ONLY_FILTERS="$filters" os_claims "$wf" "$2" "$3" || return
-  dedicated_claims "$wf" "$2" "$3" |
-    awk -F '\t' 'NR == FNR { universe[$0] = 1; next } $2 in universe { print $2 }' "$TMP/os-universe" -
+event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claims
+  local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards shard row_ctx temporary filters excluded
+  [[ "$event" != merge_group ]] || { result=failure; ref=refs/heads/gh-readonly-queue/main/fixture; }
+  # A failed classifier exercises the workflow's full required fallback.
+  published_map "$wf" > "$TMP/event-map" || return
+  ctx="$(context_json "$event" "$result" '' "$TMP/event-map" "$ref")" || return
+  job_ifs "$wf" > "$TMP/event-job-ifs" || return
+  job_needs "$wf" > "$TMP/event-job-needs" || return
+  {
+    while IFS=$'\t' read -r job expr; do
+      case "$job" in skill-suites-shard|skill-suites-macos|skill-suites-macos-queue|skill-suites-main-only) ;; *) continue ;; esac
+      needs="$(awk -F '\t' -v job="$job" '$1 == job { print $2 }' "$TMP/event-job-needs")" || return
+      running="$(printf '%s\t%s\t%s\n' "$job" "$needs" "$expr" | gh_eval jobs "$ctx")" || return
+      case "$running" in '') continue ;; "$job") ;; *) return 1 ;; esac
+      if [[ "$job" == skill-suites-main-only ]]; then
+        dedicated_claims "$wf" "$os" "$major" "$ctx" || return
+        continue
+      fi
+      expr="$(matrix_expr "$wf" os "$job")" || return
+      [[ -n "$expr" ]] || return 1
+      axes="$(gh_eval value "$ctx" "$expr" | jq -r --arg os "$os" 'if type == "array" then index($os) != null else error("matrix-os-not-array") end')" || return
+      [[ "$axes" == true ]] || continue
+      expr="$(matrix_expr "$wf" shard "$job")" || return
+      [[ -n "$expr" ]] || return 1
+      shards="$(gh_eval value "$ctx" "$expr" | jq -er 'select(type == "array" and length > 0) | .[]')" || return
+      excluded="$(excluded_shards "$wf" "$os")" || return
+      while IFS= read -r shard; do
+        grep -qxF -- "$shard" <<< "$excluded" && continue
+        row_ctx="$(jq -c --arg shard "$shard" --arg os "$os" '.matrix = {shard: $shard, os: $os}' <<< "$ctx")" || return
+        temporary="$(main_only_filters "$wf" "$row_ctx" TEMPORARY_SUITE)" || return
+        filters="$(main_only_filters "$wf" "$row_ctx")" || return
+        TEMPORARY_SUITE="$temporary" MAIN_ONLY_FILTERS="$filters" PARTITION_ONLY_SHARD="$shard" \
+          suite_owners "$wf" files "$major" || return
+      done <<< "$shards"
+    done < "$TMP/event-job-ifs"
+  } | awk -F '\t' '
+    NR == FNR { universe[$0] = 1; next }
+    ($1 == "linear-controls-a" || $1 == "linear-controls-b") &&
+      $2 == "skills/linear/tests/must-fail-controls.sh" && driver_seen[$2]++ { next }
+    $2 in universe { print $2 }
+  ' "$TMP/os-universe" - | sort
 }
 
 awk '$0 == "            case \"$t\" in skills/linear/tests/must-fail-controls.sh) continue ;; esac" {
@@ -1776,21 +1820,24 @@ for os in ubuntu-latest macos-latest; do
   check "every eligible suite runs exactly once on $os" \
     "$(cat "$TMP/os-universe")" "$(cat "$TMP/os-claims")"
   printf 'coverage: os=%s suites=%s\n' "$os" "$(wc -l < "$TMP/os-universe" | tr -d ' ')"
-  # Schedule/manual keep the original claims above. Merge-group ordinary
-  # plus the explicit exceptions, and main ordinary plus dedicated, must
-  # each account for the same native universe without omissions or repeats.
-  event_claims "$WORKFLOW" "$os" "$major" | sort > "$TMP/event-claims"
-  check "group plus exceptions and full main cover every eligible suite once on $os" \
-    "$(cat "$TMP/os-universe")" "$(cat "$TMP/event-claims")"
-  filters="$(main_only_filters "$WORKFLOW")"
-  MAIN_ONLY_FILTERS="$filters" os_claims "$WORKFLOW" "$os" "$major" > "$TMP/gate-claims"
   expected_exceptions="$(comm -12 "$TMP/os-universe" <(printf '%s\n' \
     skills/orch/tests/workflow-state-flockless.sh hooks/tests/critical-path-deny.test.sh \
     tools/tests/orch-shard-partition.test.sh refresh/tests/adopt-refresh.test.sh \
     skills/orch/tests/oversee_launch_watch.sh | sort))"
-  check "only the declared shell exceptions leave the required roster on $os" \
-    "$expected_exceptions" "$(comm -23 "$TMP/os-universe" "$TMP/gate-claims")"
-  check "the required roster retains no duplicate on $os" "" "$(uniq -d "$TMP/gate-claims")"
+  for event in merge_group push schedule workflow_dispatch; do
+    event_claims "$WORKFLOW" "$event" "$os" "$major" > "$TMP/event-claims" || { bad "event claims could not evaluate $event on $os"; continue; }
+    expected="$(cat "$TMP/os-universe")"
+    if [[ "$event" == merge_group ]]; then
+      check "only the declared shell exceptions leave the required roster on $os" \
+        "$expected_exceptions" "$(comm -23 "$TMP/os-universe" "$TMP/event-claims")"
+      printf '%s\n' "$expected_exceptions" >> "$TMP/event-claims"
+      sort -o "$TMP/event-claims" "$TMP/event-claims"
+    elif [[ "$os" == ubuntu-latest && "$event" != push ]]; then
+      expected=''
+    fi
+    check "$event covers its eligible shell roster exactly once on $os" \
+      "$expected" "$(cat "$TMP/event-claims")"
+  done
   for fault in omitted duplicated wrong-shard native-empty; do
     [[ "$fault" != native-empty || "$os" == macos-latest ]] || continue
     mutant="$TMP/event-$fault.yml"
@@ -1816,7 +1863,7 @@ for os in ubuntu-latest macos-latest; do
     ' "$WORKFLOW" > "$mutant" || { bad "event control matched no dedicated entry"; continue; }
     edited "$WORKFLOW" "$mutant" "event-$fault"
     rc=0
-    event_claims "$mutant" "$os" "$major" > "$TMP/event-control" || rc=$?
+    event_claims "$mutant" push "$os" "$major" > "$TMP/event-control" || rc=$?
     sort -o "$TMP/event-control" "$TMP/event-control"
     if [[ "$rc" -ne 0 ]] || ! cmp -s "$TMP/os-universe" "$TMP/event-control"; then
       ok "must-fail: $fault dedicated coverage refuses on $os"
@@ -1824,6 +1871,30 @@ for os in ubuntu-latest macos-latest; do
       bad "must-fail: $fault dedicated coverage passed on $os"
     fi
   done
+  # Mutate only the shared environment's event condition. The real push
+  # now duplicates launch/watch, and the native schedule loses it entirely.
+  if (
+    mkdir -p "$HOME/tmp" || exit 1
+    control="$(mktemp -d "$HOME/tmp/partition-event.XXXXXX")" || exit 1
+    [[ -d "$control" && ! -L "$control" ]] || exit 1
+    control="$(cd -- "$control" && pwd -P)" || exit 1
+    trap 'rm -rf -- "${control:?}"' EXIT
+    plant "$WORKFLOW" "github.event_name == 'merge_group' || github.event_name == 'push'" \
+      "github.event_name == 'merge_group' || github.event_name == 'schedule'" "$control/workflow.yml" skill-suites-shard
+    event_claims "$control/workflow.yml" push "$os" "$major" > "$control/push-claims" || exit 1
+    ! cmp -s "$TMP/os-universe" "$control/push-claims" || exit 1
+    duplicates="$(uniq -d "$control/push-claims")" || exit 1
+    grep -qxF skills/orch/tests/oversee_launch_watch.sh <<< "$duplicates" || exit 1
+    if [[ "$os" == macos-latest ]]; then
+      event_claims "$control/workflow.yml" schedule "$os" "$major" > "$control/schedule-claims" || exit 1
+      missing="$(comm -23 "$TMP/os-universe" "$control/schedule-claims")" || exit 1
+      grep -qxF skills/orch/tests/oversee_launch_watch.sh <<< "$missing" || exit 1
+    fi
+  ); then
+    ok "must-fail: push-to-schedule environment condition breaks event coverage on $os"
+  else
+    bad "push-to-schedule environment control did not reach the coverage failure on $os"
+  fi
   os_claims "$wf_drop" "$os" "$major" > "$TMP/os-drop"
   [[ -n "$(comm -23 "$TMP/os-universe" <(sort -u "$TMP/os-drop"))" ]] &&
     ok "must-fail: an omitted roster leaves suites missing on $os" || bad "omission control named no suite on $os"
