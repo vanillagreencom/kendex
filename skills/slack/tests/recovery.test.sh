@@ -58,7 +58,7 @@ for mode in normal control replay-control; do
   sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text "kill-$mode" "Kill $mode.")" >/dev/null
   ID="$(jq -r .id "$(sk_box "$ROOT")/to-overseer.jsonl")"
   if [ "$mode" = control ]; then
-    sk_mutant post-first relay.py '        self._out\(envelope, kind, "inflight"\)\n        try:\n            if data is not None:\n                return self.api.upload\(Path\(attach\).name, data, self.channel, text, thread_ts\)\n            return str\(self.api.post\("chat.postMessage", channel=self.channel, thread_ts=thread_ts,\n                                     \*\*\{body_arg: text\}\)\["ts"\]\)' '        try:\n            if data is not None:\n                return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)\n            ts = str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts,\n                                     **{body_arg: text})["ts"])\n            self._out(envelope, kind, "inflight")\n            return ts'
+    sk_mutant post-first relay.py '(                self\._out\(envelope, kind, "inflight"\)\n)(                ts = str\(self\.api\.post\("chat\.postMessage",[^\n]*\n[^\n]*\["ts"\]\)\n)' '\2\1'
   fi
   sk_recovery "$ROOT" kill
   assert_eq "$RC|$(asks "$CH" "Kill $mode.")" '9|1' "$mode: Slack accepts before the process stops"
