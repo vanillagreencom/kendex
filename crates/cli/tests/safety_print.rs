@@ -600,7 +600,7 @@ fn the_catalog_check_prints_the_score_and_the_findings() {
             "skills/deploy/SKILL.md",
             RISKY,
             "safety: skill deploy at skills/deploy scores 75/100",
-            Some("(skills/deploy/SKILL.md:"),
+            Some("(skills/deploy/SKILL.md:5)"),
         ),
         (
             "a clean skill",
@@ -614,9 +614,7 @@ fn the_catalog_check_prints_the_score_and_the_findings() {
             "SKILL.md",
             RISKY,
             "safety: skill deploy scores 75/100",
-            // Pinned as it prints: the citation of a root skill joins an empty
-            // path onto the file, so it opens with a slash.
-            Some("(/SKILL.md:"),
+            Some("(SKILL.md:5)"),
         ),
     ];
     for (what, file, body, score, finding_cites) in rows {
