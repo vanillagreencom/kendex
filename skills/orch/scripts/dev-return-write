@@ -93,7 +93,8 @@
 # nothing leaves the next round's base at the HEAD its own run started at, but
 # that run started before the next round was delegated. Accepting either would
 # record a pass for a commit it never judged, and submit would reuse a full one
-# whose class covered the branch as the whole battery. An implement round has no round record and no binding.
+# whose class covered the branch as the whole battery. Policy-bearing implementation
+# rounds use the same base/time binding; legacy implementations remain supported.
 #
 # The Apple gate. Where the base branch holds the configured Apple workflow, which
 # GitHub dispatches only from there, the receipt declares the item's labels
@@ -292,7 +293,8 @@ SHA from the worktree-private kendex-rebase-map. The run must start no earlier
 than delegated_at, so a run from an earlier round is refused.
 --validate-record FILE takes the place of --validate-run-dir, never beside it,
 for a project whose own policy runs its validation entry point in the
-foreground and forbids dev-validate-run. FILE records that run, one KEY=VALUE
+foreground under its bound native declaration, or its legacy forbids-runner
+policy. FILE records that run, one KEY=VALUE
 per line, each key once:
   validate-mode=full|range  the mode the run stands for, as validate_mode
   head=SHA                  the worktree HEAD the run started at, 40 hex
@@ -302,8 +304,11 @@ per line, each key once:
   verdict=no-verdict        optional; the runner's timeout or host-check marker
   selection=all|subset|battery|unreported
   lanes=NAMES               comma-separated, beside all, subset or battery only
+  workload=TEXT             required for a bound native declaration; exact workload
+  timeout-secs=N            required there; unchanged effective hard bound
 selection and lanes are the validate: line of the validation command output
-contract (references/artifact-checks.md). Every key but lanes and verdict is required.
+contract (references/artifact-checks.md). The six legacy fields remain required; lanes pairs with selection. workload
+and timeout-secs are required only by a bound native declaration.
 The writer derives the wall time from the two times and the verdict from the
 runner's marker rule. Without the marker, exit 0 is pass and any other exit is
 FAILING. The marker preserves the raw exit and needs the same --validate-note
@@ -352,7 +357,7 @@ EOF
 # a legal value for free-form fields like --summary.
 is_own_flag() {
   case "$1" in
-    --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
+    --required-ci|--worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
     --validate-note|--validate-run-dir|--validate-record|--summary|--summary-file|--recovered-text|--qa-label|\
     --near-ceiling-base|--label|--no-labels|--bundled|\
     --no-summary|--item|--recovery|-h|--help) return 0 ;;
@@ -392,6 +397,8 @@ kind=""
 issue=""
 round_id=""
 recovery=false
+required_ci=false
+validation_evidence=null
 recovery_of=""
 branch=""
 commit=""
@@ -445,6 +452,7 @@ near_ceiling_base_given=false
 
 while (( $# > 0 )); do
   case "$1" in
+    --required-ci) no_dup "$1" "$required_ci"; required_ci=true; shift ;;
     --worktree)     need "$1" $# "${2:-}"; no_dup "$1" "$worktree_given";     worktree_given=true;     worktree="$2"; shift 2 ;;
     --kind)         need "$1" $# "${2:-}"; no_dup "$1" "$kind_given";         kind_given=true;         kind="$2"; shift 2 ;;
     --issue)        need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";        issue_given=true;        issue="$2"; shift 2 ;;
@@ -524,6 +532,8 @@ read_validate_record() {
       selection) record_value "$path" "$key" "$value" '^(all|subset|battery|unreported)$'; validate_selection="$value" ;;
       # The lane grammar is the validation command output contract's.
       lanes) record_value "$path" "$key" "$value" '^[[:alnum:]_.-]+(,[[:alnum:]_.-]+)*$'; validate_lanes="$value" ;;
+      workload) record_value "$path" "$key" "$value" '^[^[:cntrl:]]+$'; run_workload="$value" ;;
+      timeout-secs) record_value "$path" "$key" "$value" '^[1-9][0-9]*$'; run_bound="$value" ;;
       *) die validate-record-line "path=$path" "line=$line_no" ;;
     esac
   done <"$path"
@@ -560,8 +570,14 @@ check_id_token --round-id "$round_id"
 [[ -n "$branch" ]]   || die required option=--branch
 [[ -n "$commit" ]]   || die required option=--commit
 [[ -n "$validate" ]] || die required option=--validate
-[[ "$validate" == "pass" || "$validate" == "no-verdict" || "$validate" == FAILING:* ]] \
+[[ "$validate" == "pass" || "$validate" == "no-verdict" || "$validate" == FAILING:* || ( "$validate" == pending && "$required_ci" == true ) ]] \
   || die invalid-validate "value=$validate"
+if [[ "$required_ci" == true ]]; then
+  [[ "$validate" == pending && "$recovery" == false && "$validate_run_dir_given" == false && "$validate_record_given" == false ]] \
+    || die required-ci-source "issue=$issue" "round-id=$round_id"
+  [[ ! -e "$worktree/tmp/dev-return-$issue-$round_id.json" && ! -L "$worktree/tmp/dev-return-$issue-$round_id.json" ]] \
+    || die receipt-exists "path=$worktree/tmp/dev-return-$issue-$round_id.json"
+fi
 # One source names the run, so neither can silently win.
 if [[ "$validate_run_dir_given" == "true" && "$validate_record_given" == "true" ]]; then
   die validate-source-conflict options=--validate-run-dir,--validate-record
@@ -593,13 +609,17 @@ if [[ "$validate_run_dir_given" == "true" ]]; then
       seconds=*) validate_seconds="${field#*=}" ;;
       started-at=*) validate_started_at="${field#*=}" ;;
       ended-at=*) validate_ended_at="${field#*=}" ;;
+      source-run=*) source_run="${field#*=}" ;;
+      policy-id=*) run_policy_id="${field#*=}" ;;
+      requested-mode=*) run_requested_mode="${field#*=}" ;;
+      input-base=*) run_input_base="${field#*=}" ;;
     esac
   done
 elif [[ "$validate_record_given" == "true" ]]; then
   [[ -n "$validate_record" ]] || die required option=--validate-record
   run_ref="validate-record=$validate_record"
   read_validate_record "$validate_record"
-elif [[ "$validate" != FAILING:* ]]; then
+elif [[ "$validate" != FAILING:* && "$validate" != pending ]]; then
   die required options=--validate-run-dir,--validate-record "validate=$validate"
 fi
 [[ -z "$run_ref" || "$validate" == FAILING:* || "$validate" == "$run_verdict" \
@@ -669,8 +689,87 @@ fi
 
 # A fix round's run must have started on the round's base, or from it once a
 # rebase left it off the branch, and once the round was delegated.
-if [[ "$kind" == "fix" && -n "$run_ref" ]]; then
-  round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
+round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
+validation_policy=null
+if [[ -e "$round_record" || -L "$round_record" ]]; then
+  [[ -f "$round_record" && ! -L "$round_record" ]] || die round-record-unreadable "path=$round_record"
+  jq -e --arg kind "$kind" --arg issue "$issue" --arg round "$round_id" '
+    .issue == $issue and .round_id == $round and (.kind // "fix") == $kind' "$round_record" >/dev/null \
+    || die round-record-unreadable "path=$round_record"
+  validation_policy="$("$SCRIPT_DIR/dev-validate-run" --check-policy --worktree "$worktree" --round-record "$round_record")" \
+    || die round-record-unreadable "path=$round_record"
+  if [[ "$validation_policy" != null && -n "$run_ref" ]]; then
+    policy_route="$(jq -r .route <<<"$validation_policy")"
+    if [[ "$policy_route" == native ]]; then
+      [[ "$validate_record_given" == true \
+        && "${run_workload:-}" == "$(jq -r .workload <<<"$validation_policy")" \
+        && "${run_bound:-}" == "$(jq -r .settings.DEV_VALIDATE_TIMEOUT_SECS <<<"$validation_policy")" \
+        && "$validate_mode" == "$(jq -r .mode <<<"$validation_policy")" \
+        && "$run_head" == "$(git -C "$worktree" rev-parse --verify "$commit^{commit}")" ]] \
+        || die policy-evidence-mismatch "path=$round_record"
+    else
+      [[ "$validate_run_dir_given" == true && "${run_policy_id:-}" == "$(printf '%s\n' "$validation_policy" | git -C "$worktree" hash-object --stdin)" \
+        && "${run_requested_mode:-}" == "$(jq -r .mode <<<"$validation_policy")" ]] \
+        || die policy-evidence-mismatch "path=$round_record"
+      if [[ "$run_requested_mode" != full && "${run_input_base:-}" != "$(jq -r .base_sha "$round_record")" ]]; then
+        die policy-input-mismatch "path=$round_record"
+      fi
+      if [[ "$validate" == pass ]]; then
+        validated_tree="$(git -C "$worktree" rev-parse --verify "$commit^{tree}")" || die policy-contents-mismatch "commit=$commit"
+        [[ -n "$run_tree" && "$run_tree" == "$validated_tree" ]] || die policy-contents-mismatch "commit=$commit"
+      fi
+    fi
+  fi
+fi
+
+# This producer reads the existing exact-head CI owner. It creates neither a
+# validation run nor local time, and cannot bind an unread legacy policy.
+if [[ "$required_ci" == true ]]; then
+  jq -e '.route == "configured" and .ci_pending_without_local == true' <<<"$validation_policy" >/dev/null \
+    || die required-ci-policy-unbound "path=$round_record"
+  commit="$(git -C "$worktree" rev-parse --verify "$commit^{commit}")" || die required-ci-head "commit=$commit"
+  proof="$("$SCRIPT_DIR/dev-validate-run" --resolve-action --worktree "$worktree" --round-record "$round_record" \
+    --require-proof "$commit" --expected-head "$commit")" || die required-ci-unproved "commit=$commit"
+  validation_evidence="$(jq -ce --arg head "$commit" 'select(.action == "required-ci" and .evidence.head == $head) | .evidence' <<<"$proof")" \
+    || die required-ci-unproved "commit=$commit"
+  validate_mode=ci
+fi
+
+# Keep the physical invocation's identity and time when another request reused
+# its verdict. Acceptance still binds the current request to its own round.
+validation_invocation=null
+if [[ -n "$run_ref" && "$run_start" =~ ^[0-9]+$ ]]; then
+  invocation_path="${validate_run_dir:-${validate_record:-}}"
+  invocation_start="$run_start"
+  invocation_mode="$validate_mode"
+  invocation_time="$(jq -cn --arg s "$validate_started_at" --arg e "$validate_ended_at" --arg seconds "$validate_seconds" \
+    'if $seconds == "" then null else {started_at:$s, ended_at:$e, seconds:($seconds|tonumber)} end')"
+  if [[ -n "${source_run:-}" ]]; then
+    source_record="$("$SCRIPT_DIR/dev-validate-run" --record --run-dir "$source_run")" \
+      || die run-record-unreadable "path=$source_run"
+    source_start="" source_seconds="" source_started="" source_ended=""
+    for field in $source_record; do
+      case "$field" in
+        validate-mode=*) invocation_mode="${field#*=}" ;;
+        start=*) source_start="${field#*=}" ;;
+        seconds=*) source_seconds="${field#*=}" ;;
+        started-at=*) source_started="${field#*=}" ;;
+        ended-at=*) source_ended="${field#*=}" ;;
+      esac
+    done
+    invocation_path="$source_run" invocation_start="$source_start"
+    invocation_time="$(jq -cn --arg s "$source_started" --arg e "$source_ended" --arg seconds "$source_seconds" \
+      'if $seconds == "" then null else {started_at:$s, ended_at:$e, seconds:($seconds|tonumber)} end')"
+  fi
+  if [[ "$validate_run_dir_given" == true ]]; then
+    invocation_path="$(cd -- "$invocation_path" && pwd -P)"
+  else
+    invocation_path="$(cd -- "$(dirname -- "$invocation_path")" && pwd -P)/$(basename -- "$invocation_path")"
+  fi
+  validation_invocation="$(jq -cn --arg path "$invocation_path" --arg start "$invocation_start" --arg mode "$invocation_mode" --argjson time "$invocation_time" \
+    '{path:$path, start:$start, mode:$mode, time:$time}')"
+fi
+if [[ ( "$kind" == "fix" || "$validation_policy" != null ) && -n "$run_ref" ]]; then
   round_fields="$(jq -r '[(if (.base_sha? | type) == "string" then .base_sha else "" end),
       (if (.delegated_at? | type) == "number" then .delegated_at | tostring else "" end)] | join(" ")' \
     "$round_record" 2>/dev/null)" || round_fields=""
@@ -694,18 +793,15 @@ if [[ "$kind" == "fix" && -n "$run_ref" ]]; then
           || die rebase-map-unreadable "worktree=$worktree"
         [[ "$rebase_map" == /* ]] || rebase_map="$worktree/$rebase_map"
         mapped_base=""
-        if [[ -e "$rebase_map" || -L "$rebase_map" ]]; then
+        if rebase_map_project_bound "$worktree" "$issue" "$round_base" "$run_head"; then
           # The shared owner projects the round base without consuming the
           # file. Only a complete map can bind a run after the restack.
-          if rebase_map_load "$rebase_map" && rebase_map_project "$round_base"; then
-            mapped_base="$REBASE_MAP_PROJECTED"
-          else
-            case "${REBASE_MAP_FAIL_ARGS[0]}" in
-              rebase-unmapped|restack-map-grammar|map-sha) mapped_base="" ;;
-              map-read|map-build) die rebase-map-unreadable "path=$rebase_map" ;;
-              *) die rebase-map-unreadable "path=$rebase_map" "cause=${REBASE_MAP_FAIL_ARGS[0]}" ;;
-            esac
-          fi
+          mapped_base="$REBASE_MAP_PROJECTED"
+        else
+          case "${REBASE_MAP_FAIL_ARGS[0]}" in
+            map-read|map-build|provenance-unreadable) die rebase-map-unreadable "path=$REBASE_MAP_SOURCE" "cause=${REBASE_MAP_FAIL_ARGS[0]}" ;;
+            *) mapped_base="" ;;
+          esac
         fi
         [[ "$mapped_base" =~ ^[0-9a-f]+$ ]] \
           || die run-off-round "$run_ref" "head=$run_head" "base-sha=$round_base"
@@ -1031,6 +1127,9 @@ jq -n \
   --arg validate_started_at "$validate_started_at" \
   --arg validate_ended_at "$validate_ended_at" \
   --arg validate_note "$validate_note" \
+  --argjson validation_policy "$validation_policy" \
+  --argjson validation_invocation "$validation_invocation" \
+  --argjson validation_evidence "$validation_evidence" \
   --argjson qa_labels "$qa_json" \
   --argjson near_ceiling "$near_json" \
   --arg near_ceiling_error "$near_error" \
@@ -1060,15 +1159,20 @@ jq -n \
      bundled: $bundled,
      items: $items
    } + (if $recovery_of == "" then {} else {recovery_of: $recovery_of} end)
+     + (if $validation_policy == null then {} else {validation_policy:$validation_policy} end)
+     + (if $validation_invocation == null then {} else {validation_invocation:$validation_invocation} end)
+     + (if $validation_evidence == null then {} else {validation_evidence:$validation_evidence} end)
      + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
      + (if $validate_lanes == "" then {} else {validate_lanes: $validate_lanes} end)
      + (if $validate_class_base == "" then {} else {validate_class_base: $validate_class_base} end)
      + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 
-if [[ "$recovery" == true ]]; then
-  # The checker owns parent validity; the link publishes without replacement.
-  "$SCRIPT_DIR/dev-artifact-check" --file "$tmp" --round-id "$round_id" >/dev/null \
-    || die recovery-invalid "path=$parent"
+if [[ "$recovery" == true || "$required_ci" == true ]]; then
+  # The checker owns evidence validity; the link publishes without replacement.
+  if ! "$SCRIPT_DIR/dev-artifact-check" --file "$tmp" --round-id "$round_id" >/dev/null; then
+    if [[ "$recovery" == true ]]; then die recovery-invalid "path=$parent"
+    else die required-ci-unproved "commit=$commit"; fi
+  fi
   ln "$tmp" "$out" 2>/dev/null || die receipt-exists "path=$out"
   rm -f -- "${tmp:?}"
 else

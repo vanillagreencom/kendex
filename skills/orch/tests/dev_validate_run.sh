@@ -2846,6 +2846,52 @@ SECONDS_ROWS=(
   'ci within|19|rules|0||scoped|created|subset|absent'
   'ci above|21|rules|2|over-bound expected-secs=21 bound=20|absent|absent|absent|absent'
 )
+
+# The round input selects the declared execution route. Resolution reports an
+# unknown duration without an invented estimate; a native route starts no
+# configured command, including when its old CI fallback would be local.
+policy_row() { # SCRIPT ROUTE OPERATION [CHANGED]
+  local script="$1" route="$2" operation="$3" changed="${4:-false}" proj record result
+  proj="$(ci_proj "policy-$route-$operation-$changed-${script##*/}" CI)"
+  mkdir -p "$proj/tmp"
+  printf '{"route":"%s","mode":"full","authority":"fixture consumer declaration at delegation","workload":"declared full workload"}\n' "$route" > "$proj/tmp/policy.json"
+  run_script "$SCRIPTS_DIR/dev-round-write" --kind implement --worktree "$proj" --issue policy --round-id 1 \
+    --validation-input "$proj/tmp/policy.json"
+  [[ "$RC" == 0 ]] || { cat "$ERR" >&2; return 1; }
+  record="$OUT"
+  [[ "$changed" == false ]] || sed -i.bak 's/^DEV_VALIDATE_RANGE_CMD = .*/DEV_VALIDATE_RANGE_CMD = "echo changed"/' "$proj/kendex.settings.toml"
+  ci_world unrequired
+  if [[ "$operation" == resolve ]]; then
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=standard STUB_DOCS=false STUB_MEASURED=true \
+      run_script "$script" --resolve-action --worktree "$proj" --round-record "$record"
+  else
+    RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=standard STUB_DOCS=false STUB_MEASURED=true \
+      run_script "$script" --worktree "$proj" --round-record "$record" --poll 1
+  fi
+  if [[ "$RC" == 0 && "$operation" == resolve ]]; then
+    result="$(jq -r '[.action, (.expected_secs|tostring), (.timeout_secs|tostring)] | join("|")' <<<"$OUT")"
+  elif [[ "$RC" == 0 ]]; then
+    result="$(verdict_of "$OUT")"
+  else
+    read -r _ result _ < "$ERR" || true
+  fi
+  printf '%s|%s\n' "$RC" "$result"
+  rm -rf -- "$proj"
+}
+for row in \
+  'configured|resolve|false|0|execute-configured|null|20' \
+  'native|resolve|false|0|execute-native|null|20' \
+  'native|start|false|2|native-execution-required' \
+  'configured|resolve|true|2|policy-changed'; do
+  IFS='|' read -r route operation changed expected <<<"$row"
+  assert_eq "$(policy_row "$CI_SCRIPT" "$route" "$operation" "$changed")" "$expected" "declared route $route $operation changed=$changed"
+done
+cp -p -- "$CI_SCRIPT" "$CI_SCRIPT.policy-mutant"
+mutate_file "$CI_SCRIPT.policy-mutant" \
+  '[[ "$policy_route" == native && -z "$proof_head" ]]' '[[ false == true ]]'
+assert_eq "$(policy_row "$CI_SCRIPT.policy-mutant" native start)" \
+  '0|state=done guard-exit=0 validate=pass' 'control: dropping the native route guard launches configured validation'
+
 for row in "${SECONDS_ROWS[@]}"; do
   IFS='|' read -r label estimate world expected <<<"$row"
   assert_eq "$(selection_seconds_row "$CI_SCRIPT" "$estimate" "$world")" "$expected" \
@@ -3118,8 +3164,8 @@ RUN_PATH="$GH_STUB_BIN:$PATH" STUB_ANSWER=change_class=micro STUB_DOCS=false STU
   run_script "$CI_SCRIPT" --worktree "$proj_bound_rec" --poll 1
 bound_rec_dir="$(run_dir_of "$OUT")"
 run_script "$CI_SCRIPT" --record --run-dir "$bound_rec_dir"
-assert_eq "$(sed -E 's/ head=[^ ]* start=[0-9]+ / /; s/started-at=[^ ]+ ended-at=[^ ]+$/T/' <<<"$OUT")" \
-  "validate-mode=full selection=unreported verdict=no-verdict tree=$bound_rec_tree seconds=0 T" \
+assert_eq "$(sed -E 's/ head=[^ ]* start=[0-9]+ / /; s/started-at=[^ ]+ ended-at=[^ ]+/T/' <<<"$OUT")" \
+  "validate-mode=full selection=unreported verdict=no-verdict tree=$bound_rec_tree seconds=0 T source-run=$proj_bound_rec/tmp/dev-validate-20000101T000000Z-1" \
   "a run an earlier run's bound ended records no verdict and no wall time" "$ERR"
 
 # --- A pass over the same tree answers a later run of the same command -------

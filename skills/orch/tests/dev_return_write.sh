@@ -215,7 +215,7 @@ assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect
 assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round | jq -r '.reason')" "valid" "the full-ID CI receipt passes round acceptance"
 WRITE_LIVE="$WRITE"
 WRITE="$(mutant_scripts short-commit-mutant dev-return-write)/dev-return-write" || exit 1
-mutate_file "$WRITE" 'rev-parse --verify "$commit^{commit}"' 'rev-parse --verify --short=7 "$commit^{commit}"'
+mutate_file "$WRITE" 'commit="$(git -C "$worktree" rev-parse --verify "$commit^{commit}"' 'commit="$(git -C "$worktree" rev-parse --verify --short=7 "$commit^{commit}"'
 table "control: storing the short commit refuses the CI receipt|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit ${FIX_HEAD:0:7} --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=0 .commit=${FIX_HEAD:0:7}"
 CHECK_RC=0
 CHECK_OUT="$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round 2>/dev/null)" || CHECK_RC=$?
@@ -830,6 +830,29 @@ FG_TIME="$(foreground_record bad-time started-at=2026-01-01)"
 FG_HOUR="$(foreground_record bad-hour started-at=2026-01-01T25:00:00Z)"
 FG_EXIT="$(foreground_record bad-exit exit=x)"
 FG_LANES="$(foreground_record bad-lanes lanes=lint,)"
+
+NW="$(new_repo native-contract)"
+printf 'tmp/\n' >> "$(git -C "$NW" rev-parse --git-path info/exclude)"
+mkdir -p "$NW/tmp"
+printf '%s\n' '{"route":"native","mode":"full","authority":"consumer entry point and explicit full-battery directive","workload":"native-battery"}' > "$NW/tmp/input.json"
+env -i PATH="$PATH" HOME="$TMP_ROOT" "$ROUND_WRITE" --kind implement --worktree "$NW" --issue native --round-id native \
+  --validation-input "$NW/tmp/input.json" >/dev/null
+NHEAD="$(git -C "$NW" rev-parse HEAD)"
+NAT="$(jq -r .delegated_at "$NW/tmp/dev-round-native-native.json")"
+NATIVE_RECORD="$(foreground_record native "head=$NHEAD" "started-at=$(utc_at "$NAT")" "ended-at=$(utc_at "$((NAT + 1))")" \
+  selection=battery +workload=native-battery +timeout-secs=3600)"
+WRONG_WORKLOAD="$(foreground_record native-wrong "head=$NHEAD" "started-at=$(utc_at "$NAT")" "ended-at=$(utc_at "$((NAT + 1))")" \
+  selection=battery +workload=other +timeout-secs=3600)"
+NATIVE_ARGS="--worktree $NW --kind implement --issue native --round-id native --branch main --commit $NHEAD --validate pass"
+table \
+  "declared native execution round-trips without a configured-command override|$NATIVE_ARGS --validate-record $NATIVE_RECORD|rc=0 .validation_policy.route=native .validate_selection=battery roundtrip=valid" \
+  "a different native workload cannot satisfy the declared contract|$NATIVE_ARGS --validate-record $WRONG_WORKLOAD|rc=2 written=no stderr~dev-return-write:+policy-evidence-mismatch=true"
+NATIVE_WRITE="$WRITE"
+WRITE="$(mutant_scripts native-workload-mutant dev-return-write)/dev-return-write" || exit 1
+mutate_file "$WRITE" '&& "${run_workload:-}" == "$(jq -r .workload <<<"$validation_policy")"' '&& true'
+table "control: dropping workload correspondence accepts another native workload|$NATIVE_ARGS --validate-record $WRONG_WORKLOAD|rc=0 written=yes"
+WRITE="$NATIVE_WRITE"
+
 FG_ARGS="--worktree $WT --kind implement --issue issue-fg --round-id 40-40 --branch b --commit $IMPL_HEAD"
 FG_FAIL="--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c"
 FOREGROUND_ROWS=(

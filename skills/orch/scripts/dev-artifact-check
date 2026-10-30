@@ -436,6 +436,8 @@ check_id_token() {
 # it with an empty one.
 emit() {
   local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" files="${6:-[]}" validate=null validate_mode=null validate_time=null validate_note=null validate_lanes=null validate_selection=null validate_class_base=null near_ceiling='[]' near_ceiling_error=null surfaced=""
+  local proof=null
+  local evidence=null
   if [[ -n "$path" && -f "$path" ]]; then
     # One read for every surfaced field, so the process count stays flat as
     # fields are added: one line of tab-separated compact JSON values, in this
@@ -457,6 +459,12 @@ emit() {
     if [[ -n "$surfaced" ]]; then
       IFS=$'\t' read -r validate validate_mode validate_time validate_note validate_lanes validate_selection validate_class_base near_ceiling near_ceiling_error <<<"$surfaced"
     fi
+    if [[ "$ok" == true ]]; then
+      proof="$(jq -c 'if .validate == "pass" and .validation_policy.route == "native"
+          and .validate_mode == "full" and .validate_selection == "battery"
+        then {kind:"invocation", head:.commit, workload:.validation_policy.workload} else null end' "$path")" || proof=null
+    fi
+    evidence="$(jq -c '.validation_evidence // null' "$path" 2>/dev/null)" || evidence=null
   fi
   # verdict is the one-word acceptance answer the orchestrator acts on:
   #   accept — artifact valid for this round (warnings ride along)
@@ -470,7 +478,7 @@ emit() {
   if [[ "$ok" == "true" ]]; then
     verdict="accept"
     case "$validate" in
-      null | '"pass"' | '"no-verdict"') ;;
+      null | '"pass"' | '"no-verdict"' | '"pending"') ;;
       *) verdict="retry" ;;
     esac
   elif [[ "$reason" == "missing" ]]; then
@@ -488,6 +496,8 @@ emit() {
     --argjson near_ceiling "${near_ceiling:-[]}" --argjson near_ceiling_error "${near_ceiling_error:-null}" \
     --argjson validate_lanes "$validate_lanes" --argjson validate_selection "$validate_selection" \
     --argjson validate_class_base "$validate_class_base" \
+    --argjson proof "$proof" \
+    --argjson evidence "$evidence" \
     '{ok: $ok, verdict: $verdict, path: (if $path == "" then null else $path end), reason: $reason,
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
@@ -495,7 +505,9 @@ emit() {
       validate: $validate, validate_mode: $validate_mode, validate_time: $validate_time, validate_note: $validate_note,
       validate_lanes: $validate_lanes, validate_selection: $validate_selection,
       validate_class_base: $validate_class_base,
-      near_ceiling: $near_ceiling, near_ceiling_error: $near_ceiling_error}' 2>/dev/null
+      near_ceiling: $near_ceiling, near_ceiling_error: $near_ceiling_error}
+      + (if $proof == null then {} else {validation_proof:$proof} end)
+      + (if $evidence == null then {} else {validation_evidence:$evidence} end)' 2>/dev/null
 }
 
 # The artifact's internal round_id must equal the expected token. Guards against
@@ -531,6 +543,7 @@ has_required_fields() {
            or .validate_mode == "ci")
       and has("validate_time")
       and (if .validate_time == null then (.validate | startswith("FAILING:"))
+             or (.validate == "pending" and .validate_mode == "ci" and .validation_evidence.kind == "required-ci")
            else .validate_mode != null
              and (.validate_time as $t
                | try ($t.seconds >= 0
@@ -657,8 +670,7 @@ collect_unapproved_additions() {
   if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then
     rebase_map="$(git -C "$repo" rev-parse --git-path kendex-rebase-map 2>/dev/null)" || return 2
     [[ "$rebase_map" == /* ]] || rebase_map="$repo/$rebase_map"
-    if [[ -e "$rebase_map" || -L "$rebase_map" ]] \
-      && rebase_map_load "$rebase_map" && rebase_map_project "$base_sha"; then
+    if rebase_map_project_bound "$repo" "$(jq -r .issue "$round_record")" "$base_sha" "$(git -C "$repo" rev-parse HEAD)"; then
       mapped_base="$REBASE_MAP_PROJECTED"
     fi
     if [[ "$mapped_base" =~ ^[0-9a-f]{40}$ ]] \
@@ -750,7 +762,21 @@ validate_artifact() {
   # A fix receipt's mode is the one its round runs. It is judged before the
   # commit gate, whose warning would otherwise precede this gate's status 2
   # refusal on stderr.
-  if [[ -n "$round_record" ]] && jq -e '.kind == "fix" and .validate_mode != null' "$file" >/dev/null 2>&1; then
+  if jq -e 'has("validation_policy")' "$file" >/dev/null 2>&1; then
+    local policy_record="$round_record" current_policy
+    if [[ -z "$policy_record" ]]; then
+      policy_record="$(jq -r --arg repo "$repo" '$repo + "/tmp/dev-round-" + .issue + "-" + .round_id + ".json"' "$file")"
+    fi
+    current_policy="$("$SCRIPT_DIR/dev-validate-run" --check-policy --worktree "$repo" --round-record "$policy_record" 2>/dev/null)" \
+      || { emit false "$file" policy_mismatch; return 1; }
+    if [[ "$current_policy" == null ]] || ! jq -e --argjson policy "$current_policy" \
+        '.validation_policy == $policy and
+         (if $policy.route == "native" then .validate_mode == null or .validate_mode == $policy.mode else true end)' "$file" >/dev/null; then
+      emit false "$file" policy_mismatch; return 1
+    fi
+  elif [[ -n "$round_record" ]] && jq -e 'has("validation_policy")' "$round_record" >/dev/null 2>&1; then
+    emit false "$file" policy_mismatch; return 1
+  elif [[ -n "$round_record" ]] && jq -e '.kind == "fix" and .validate_mode != null' "$file" >/dev/null 2>&1; then
     local recorded_mode round_mode
     recorded_mode="$(jq -r '.validate_mode' "$file")"
     # The mode is read from stdout alone: the resolver loads the project env,
@@ -779,6 +805,24 @@ validate_artifact() {
       message mode-mismatch >&2
       emit false "$file" "mode_mismatch"
       return 1
+    fi
+  fi
+  if jq -e '.validate == "pending" or has("validation_evidence")' "$file" >/dev/null; then
+    local pending_head pending_proof
+    if ! jq -e '.validate == "pending" and .validate_mode == "ci" and .validate_time == null
+        and (has("validation_invocation") | not)
+        and .validation_policy.route == "configured" and .validation_policy.ci_pending_without_local == true
+        and (.validation_evidence | type == "object" and (keys|sort) == ["base","context","event","head","kind"]
+          and .kind == "required-ci" and (.event == "pull_request" or .event == "merge_group")
+          and ([.base,.context] | all(.[]; type == "string" and length > 0)))
+        and .validation_evidence.head == .commit' "$file" >/dev/null; then
+      emit false "$file" required_ci_unproved; return 1
+    fi
+    pending_head="$(jq -r .commit "$file")"
+    if ! pending_proof="$("$SCRIPT_DIR/dev-validate-run" --resolve-action --worktree "$repo" --round-record "$policy_record" \
+        --require-proof "$pending_head" --expected-head "$pending_head" 2>/dev/null)" \
+      || ! jq -e --argjson proof "$pending_proof" '$proof.action == "required-ci" and .validation_evidence == $proof.evidence' "$file" >/dev/null; then
+      emit false "$file" required_ci_unproved; return 1
     fi
   fi
   # A `.commit` that passed the scalar gate must name a real commit
@@ -993,7 +1037,9 @@ elif [[ "${1:-}" == --* ]]; then
       and ((.adds | length) == (.adds | unique | length))
       and ((.cut? | type) as $t | $t == "null" or $t == "boolean")
       and ((has("pr_open") | not) or ((.pr_open | type) == "boolean"))
-      and ((.items? | type) == "array") and ((.items | length) > 0)
+      and ((has("kind") | not) or .kind == "fix" or .kind == "implement")
+      and ((.items? | type) == "array")
+      and (if .kind == "implement" then .items == [] else (.items | length) > 0 end)
       and all(.items[];
             (type == "object")
             and ((.n? | type) == "number") and (.n == (.n | floor)) and (.n >= 0)
@@ -1020,7 +1066,8 @@ fi
 # silently upgrade the invocation: refusing keeps the caller's command honest.
 require_round_record_flag() {
   [[ "$round_mode" == "true" && "$expect_from_round" != "true" && -f "$file" ]] || return 0
-  if jq -e '(.kind? // "") == "fix"' "$file" >/dev/null 2>&1; then
+  if [[ -e "$worktree/tmp/dev-round-$issue-$round_id.json" || -L "$worktree/tmp/dev-round-$issue-$round_id.json" ]] \
+      || jq -e '(.kind? // "") == "fix"' "$file" >/dev/null 2>&1; then
     die expected-round-required
   fi
 }
@@ -1038,6 +1085,11 @@ check_once() {
     fi
   fi
   require_round_record_flag
+  if [[ -n "$round_record" && -f "$file" ]] && ! jq -e --slurpfile round "$round_record" \
+      '.kind == ($round[0] | if has("kind") then .kind else "fix" end)' "$file" >/dev/null 2>&1; then
+    emit false "$file" invalid
+    return 1
+  fi
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
   if (( rc == 0 )); then
     verdict="$(jq -r '.verdict' <<<"$out" 2>/dev/null)" || {
@@ -1070,12 +1122,16 @@ record_stage() {
       | $artifact[0].kind as $kind
       | .stages = ((.stages // []) | map(if .round_id == $round and .kind != "validate"
           then .kind = $kind | .end //= $end else . end))
-      | if $result.validate_time == null then . else
-          $result.validate_time as $time
+      | ($artifact[0].validation_invocation // null) as $invocation
+      | if $result.validate_time == null then .
+        elif $invocation != null and any(.stages[]?; .invocation == $invocation.path and .invocation_start == $invocation.start) then .
+        else
+          ($invocation.time // $result.validate_time) as $time
+          | (if $invocation == null then {} else {invocation:$invocation.path, invocation_start:$invocation.start, run_dir:$invocation.path} end) as $identity
           | .stages = ([(.stages // [])[] | select(.round_id != $round or .kind != "validate" or (.receipt // $original) != $receipt)]
-              + [{kind: "validate", round_id: $round, receipt: $receipt, start: ($time.started_at | fromdateiso8601), end: ($time.ended_at | fromdateiso8601)}])
+              + [({kind: "validate", round_id: $round, receipt: $receipt, start: ($time.started_at | fromdateiso8601), end: ($time.ended_at | fromdateiso8601)} + $identity)])
           | .validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round or (.receipt // $original) != $receipt)]
-              + [({round_id: $round, receipt: $receipt, kind: $kind, mode: $result.validate_mode, seconds: $time.seconds}
+              + [({round_id: $round, receipt: $receipt, kind: $kind, mode: ($invocation.mode // $result.validate_mode), seconds: $time.seconds} + $identity
                 + (if $result.validate_lanes == null then {} else {lanes: $result.validate_lanes} end)
                 + (if $result.validate_selection == null then {} else {selection: $result.validate_selection} end))])
         end' >/dev/null 2>&1

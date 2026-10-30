@@ -333,6 +333,7 @@ field Validate; validate="$FIELD"
 validate_note=""
 case "$validate" in
   pass | FAILING:*) ;;
+  pending) ;;
   no-verdict:*)
     validate_note="${validate#no-verdict:}"
     validate_note="${validate_note#"${validate_note%%[![:space:]]*}"}"
@@ -344,8 +345,16 @@ case "$validate" in
 esac
 
 args=()
-if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
-  kind=fix
+kind=implement
+record="$worktree/tmp/dev-round-$issue-$round_id.json"
+if [[ -e "$record" || -L "$record" ]]; then
+  [[ -f "$record" && ! -L "$record" ]] || die record-unreadable "path=$record"
+  kind="$(jq -er --arg issue "$issue" --arg round "$round_id" '
+    select(.issue == $issue and .round_id == $round and .schema_version == 2)
+    | if has("kind") then .kind else "fix" end
+    | select(. == "implement" or . == "fix")' "$record")" || die record-unreadable "path=$record"
+fi
+if [[ "$kind" == fix ]]; then
   if ! branch="$(git -C "$worktree" branch --show-current)"; then
     die git-failed "path=$worktree"
   fi
@@ -357,7 +366,6 @@ if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
   (( ${#args[@]} > 0 )) || no_report unparsed
   # Every commit claim is bound to the round record's base_sha: none means HEAD
   # never moved past it, and each reported commit lies after it and up to HEAD.
-  record="$worktree/tmp/dev-round-$issue-$round_id.json"
   if ! base_sha="$(jq -r '.base_sha // empty' "$record")"; then
     die record-unreadable "path=$record"
   fi
@@ -378,7 +386,6 @@ if [[ -f "$worktree/tmp/dev-round-$issue-$round_id.json" ]]; then
     [[ "$at_head" == true ]] || no_report commit-mismatch
   fi
 else
-  kind=implement
   field Branch; branch="$FIELD"
   field Commit; commit="$FIELD"
   [[ -n "$branch" && -n "$commit" ]] || no_report unparsed
@@ -394,10 +401,11 @@ else
   fi
 fi
 args+=(--no-summary)
-[[ -z "$run" ]] || args+=(--validate-run-dir "$run")
+if [[ "$validate" == pending ]]; then args+=(--required-ci)
+elif [[ -n "$run" ]]; then args+=(--validate-run-dir "$run"); fi
 [[ -z "$validate_note" ]] || args+=(--validate-note "$validate_note")
 
-if [[ "$validate" != FAILING:* && "$validate" != "$run_verdict" ]]; then
+if [[ "$validate" != FAILING:* && "$validate" != pending && "$validate" != "$run_verdict" ]]; then
   no_report validate-unproven
 fi
 
@@ -430,7 +438,7 @@ fi
 # removed and the round re-delegates; every other gate's retry row belongs to
 # the delegating workflow, so its artifact stays for that row to read.
 check=("$SCRIPT_DIR/dev-artifact-check" --worktree "$worktree" --issue "$issue" --round-id "$round_id")
-[[ "$kind" == implement ]] || check+=(--expect-items-from-round)
+[[ ! -f "$record" ]] || check+=(--expect-items-from-round)
 status=0
 verdict="$("${check[@]}" 2>/dev/null)" || status=$?
 case "$status" in

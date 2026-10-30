@@ -177,6 +177,14 @@ Persistent state file for orch workflows. Survives context compaction.
 
 The hook's emitted handoff record also carries `context`: `{decision, source}`. `decision` is the shared native judge's reading: `tokens`, effective `window`, absolute `cap`, effective `mark_pct`, `cap_mark` and `window_mark` after any reserve, plus `reserve_applied` and `reserve_tokens`. It is null when no context decision was available. A missing window mark stays null. `source` binds the reading to the actual `harness`, `session_id`, `transcript`, `pane_key`, `capacity_source` and observed `compacted` state; unknown fields stay null. The native checkpoint command's `--reading` output carries the same fields beside its `verdict`. Preserve these fields when recording a handoff rather than reconstructing a decision from a `due` result.
 
+## Retained rebase correspondence
+
+`worktree-push` appends `rebase_provenance` before removing the private native map. Each entry retains the ordered `hops` text, its owning canonical `worktree`, `before_head`, `after_head`, and `source` with the native map `path`, producer `kind`, operation `phase` and raw `status`. `scripts/lib/rebase-map.sh` owns exhaustive reading and projection. The flat `rebase_map` remains the publication index and supplies no retained identity proof.
+
+For `prepare` and `push`, the heads and status belong to the actual native operation. For `pending`, both heads bind the snapshot read and status is null. A pending snapshot has no historical operation-head proof. The shared reader refuses it when the requested correspondence needs that operation. It may start at a later actual operation only when that operation's before head still contains the original input. It refuses malformed, ambiguous, cyclic, dropped or incomplete correspondence. An actual identity projection establishes neither tree equivalence nor validation coverage.
+
+The producer keeps the private evidence after any failed persistence. A failure after transport reports that transport's actual exit. Idempotent consumption retains the original source entry rather than changing its operation facts. This field follows the existing state lifetime: close-out archives the whole state before removing it. The shared reader uses active bound state; it does not discover or import archives, and absent evidence remains unproved.
+
 ## Oversee state
 
 `open-terminal` also records private `recovery` choices for automatic account and model recovery. [lib/lane-relaunch.sh](../scripts/lib/lane-relaunch.sh) owns their reader. A record without these choices remains valid and requires a manual recovery launch. Model recovery stops the predecessor before it prepares the replacement. It restores the recorded launch model and retains the recorded permissions, effort, account, host and worktree.

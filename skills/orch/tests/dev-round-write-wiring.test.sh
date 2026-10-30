@@ -115,7 +115,9 @@ printf '[{"identifier":"issue-826","description":"**Expected delta**: 1000000 li
 printf '.cache/\n' >> "$(git -C "$WT" rev-parse --path-format=absolute --git-path info/exclude)"
 ADDS_PATHS="tools/future-helper.sh skills/x/scripts/future-check"
 run_workflow_round_command() { # WORKFLOW ROUND [PR_OPEN]
-  local block line
+  local block line validation_mode=range
+  [[ "${3:-true}" != true ]] || validation_mode=ci
+  printf '{"route":"configured","mode":"%s","authority":"fixture workflow consumer instructions","workload":"configured round validation"}\n' "$validation_mode" > "$WT/tmp/dev-validation-input-$2.json"
   block="$(fenced_block_with "$1" "dev-round-write --worktree")"
   line="$(awk '/dev-round-write --worktree/ { print; exit }' <<<"$block")"
   [[ -n "$line" ]] || return 1
@@ -147,6 +149,10 @@ for row in dev-fix:pr-review:true dev-fix:pr-review:false \
     "$workflow: the live command records the round's source"
   assert_eq "$(jq -r '.pr_open' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" "$pr_open" \
     "$workflow: the live command records pr_open=$pr_open"
+  if [[ "$workflow" == dev-fix ]]; then
+    assert_eq "$(jq -r '.validation_policy.route' "$WT/tmp/dev-round-issue-826-$rid-$rid.json")" configured \
+      'the live fix delegation binds the consumer validation input'
+  fi
   rid=$((rid + 1))
 done
 STATE_MUTANT="$TMP_ROOT/hard-coded-pr-open-workflow.md"

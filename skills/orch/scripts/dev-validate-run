@@ -129,6 +129,33 @@
 #       wait or queue proves it), or an applicable full local pass counts.
 #       Empty, unrequired or unreadable CI supplies no proof. A missing proof
 #       exits 1. Timeout and host no-verdict records never count as passes.
+#   dev-validate-run --resolve-action --worktree PATH [--round-record FILE]
+#       [--validate-mode full|range|ci] [--base REF] [--restack]
+#       Resolve the same request as start and print JSON: action is
+#       execute-configured, execute-native, required-ci, reuse or no-verdict,
+#       beside validate_mode,
+#       original input_base, policy, selection, timeout_secs and expected_secs.
+#       Unknown duration is null. A known over-bound estimate refuses.
+#       This read starts no validation. The workflow owns whether an original,
+#       recovery or transition execution grant is still unspent; resolution
+#       creates no grant. --restack retains its no-selector/no-scoped CI route.
+#       A native declaration returns its existing native workload and never
+#       runs the configured selector or a local CI fallback. The consumer's
+#       permitted native lifetime owner executes it; an unsupported proof
+#       producer remains unproved. No command override or composite is added.
+#   dev-validate-run --check-policy --worktree PATH --round-record FILE
+#       Read the bound consumer declaration through this owner, starting
+#       nothing. Refuse changed effective command, selector or bound identities.
+#       A legacy record without a declaration returns null. Every policy-bearing
+#       start, resolution and proof request carries --round-record FILE.
+#       Starts record requested-mode and original input-base separately from
+#       classification/projected bases. An unproved orphaned policy input
+#       refuses rather than substituting a smaller base. The native receipt
+#       checker selects exact-head full-battery proof; --require-proof reports
+#       validation-proof=native-pass artifact=PATH when that proof applies.
+#       Record output also carries policy-id on a bound run and source-run
+#       on a reused result. The latter names the physical invocation; reuse
+#       adds no execution duration at the receipt and restack writers.
 #   dev-validate-run --last-pass --worktree PATH
 #       Print the newest run in that worktree that ran a full or range command
 #       to a pass or a finding-free no-verdict and whose start records the HEAD and tree it
@@ -747,6 +774,9 @@ proof_head=""
 proof_given=false
 expected_head=""
 expected_head_given=false
+round_record=""
+round_record_given=false
+detailed=false
 
 set_mode() { # FLAG NEW
   [[ -z "$mode" ]] || die mode-conflict "option=$1" "mode=$mode"
@@ -765,6 +795,9 @@ while (( $# > 0 )); do
     --child)    set_mode "$1" child; shift ;;
     --record)   set_mode "$1" record; shift ;;
     --resolve-mode) set_mode "$1" resolve; shift ;;
+    --resolve-action) set_mode "$1" resolve; detailed=true; shift ;;
+    --check-policy) set_mode "$1" policy; shift ;;
+    --round-record) need "$1" $# "${2:-}"; once "$1" "$round_record_given"; round_record_given=true; round_record="$2"; shift 2 ;;
     --require-proof) need "$1" $# "${2:-}"; once "$1" "$proof_given"; proof_given=true; proof_head="$2"; shift 2 ;;
     --expected-head) need "$1" $# "${2:-}"; once "$1" "$expected_head_given"; expected_head_given=true; expected_head="$2"; shift 2 ;;
     --last-pass) set_mode "$1" last-pass; shift ;;
@@ -796,13 +829,14 @@ done
 [[ "$reproduce" == false || "$validate_mode" != ci ]] || die reproduce-ci "option=--reproduce" "validate-mode=$validate_mode"
 # A reproduction proves the fix by running the failed command on its tree.
 [[ "$reproduce" == false ]] || fresh=true
-[[ "$restack" == false || -z "$mode" || ( "$mode" == start && "$validate_mode" == ci ) ]] \
+[[ "$restack" == false || -z "$mode" || ( ( "$mode" == start || ( "$mode" == resolve && "$detailed" == true ) ) && "$validate_mode" == ci ) ]] \
   || die option-unused "option=--restack" "mode=$mode" "validate-mode=$validate_mode"
 [[ -z "$proof_head" || "$mode" == resolve ]] || die option-unused option=--require-proof "mode=$mode"
 [[ "$expected_head_given" == false || -n "$proof_head" ]] || die option-unused option=--expected-head "mode=$mode"
 [[ -z "$proof_head" || "$expected_head_given" == true ]] || die required option=--expected-head
+[[ "$round_record_given" == false || "$mode" == start || "$mode" == resolve || "$mode" == policy ]] || die option-unused option=--round-record "mode=$mode"
 case "$mode" in
-  start|stop|resolve|last-pass|live)
+  start|stop|resolve|last-pass|live|policy)
     [[ "$run_dir_given" == false ]] || die option-unused "option=--run-dir" "mode=$mode"
     [[ "$budget_given" == false ]] || die option-unused "option=--budget" "mode=$mode"
     [[ "$mode" == start || "$poll_given" == false ]] || die option-unused "option=--poll" "mode=$mode"
@@ -810,7 +844,7 @@ case "$mode" in
     [[ -d "$worktree" ]] || die not-directory "path=$worktree"
     check_seconds option=--poll "$poll"
     if [[ "$mode" != start ]]; then
-      [[ "$validate_mode_given" == false ]] || die option-unused "option=--validate-mode" "mode=$mode"
+      [[ "$validate_mode_given" == false || ( "$mode" == resolve && "$detailed" == true ) ]] || die option-unused "option=--validate-mode" "mode=$mode"
       [[ "$base_given" == false || "$mode" == resolve ]] || die option-unused "option=--base" "mode=$mode"
     else
       case "$validate_mode" in
@@ -836,6 +870,63 @@ case "$mode" in
     ;;
   *) die required options=--worktree,--wait,--stop,--record,--resolve-mode,--last-pass,--live,--child ;;
 esac
+
+# The round writer binds trusted consumer intent. This owner checks its
+# effective command/bound identities for every reached execution consumer.
+policy=null
+policy_route=configured
+load_policy() {
+  local setting value recorded
+  [[ "$round_record_given" == true ]] || return 0
+  [[ -f "$round_record" && ! -L "$round_record" ]] || die policy-unreadable "path=$round_record"
+  policy="$(jq -ce '.validation_policy // null' "$round_record")" || {
+    # Legacy rounds carry no declaration and retain their configured route.
+    if jq -e 'has("validation_policy") | not' "$round_record" >/dev/null 2>&1; then policy=null; return 0; fi
+    die policy-unreadable "path=$round_record"
+  }
+  jq -e '(.route == "configured" or .route == "native")
+    and (.mode == "full" or .mode == "range" or .mode == "ci")
+    and ([.authority, .workload, .source_head] | all(.[]; type == "string" and test("\\S")))
+    and (.route != "native" or .mode != "ci")
+    and ((has("ci_pending_without_local") | not) or (.ci_pending_without_local | type == "boolean"))
+    and (.settings | type == "object")' <<<"$policy" >/dev/null \
+    || die policy-unreadable "path=$round_record"
+  for setting in DEV_VALIDATE_CMD DEV_VALIDATE_RANGE_CMD DEV_VALIDATE_SELECTION_CMD DEV_VALIDATE_TIMEOUT_SECS DEV_VALIDATE_CI_CONTEXT; do
+    value="$("$SCRIPT_DIR/orch-env" "$setting" "")" || die unreadable-setting "setting=$setting"
+    if [[ "$setting" == DEV_VALIDATE_TIMEOUT_SECS && -z "$value" ]]; then value=3600; fi
+    recorded="$(jq -er --arg key "$setting" '.settings[$key] | select(type == "string")' <<<"$policy")" \
+      || die policy-unreadable "setting=$setting"
+    [[ "$recorded" == "$value" ]] || die policy-changed "setting=$setting"
+  done
+  policy_route="$(jq -r .route <<<"$policy")"
+}
+
+# Detailed resolution is additive: legacy --resolve-mode keeps its scalar
+# output. An unknown duration stays null; it is never made a zero estimate.
+emit_action() {
+  local action="$1" bound estimate=null
+  bound="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS "")" || die unreadable-setting setting=DEV_VALIDATE_TIMEOUT_SECS
+  [[ -n "$bound" ]] || bound=3600
+  check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$bound"
+  [[ ! "${expected_secs:-}" =~ ^[0-9]+$ ]] || estimate="$((10#$expected_secs))"
+  if [[ "$estimate" != null && ( "$action" == execute-configured || ( "$action" == required-ci && "${scoped:-false}" == true ) ) ]] \
+      && (( estimate > 10#$bound )); then
+    die over-bound "expected-secs=$estimate" "bound=$bound"
+  fi
+  jq -cn --arg action "$action" --arg mode "$validate_mode" --argjson policy "$policy" --arg selection "${selection:-unreported}" \
+    --arg run "${PASS_RUN_DIR:-${BOUND_RUN_DIR:-}}" \
+    --argjson expected "$estimate" --argjson bound "$((10#$bound))" --arg base "${input_base:-$base}" \
+    '{action:$action, validate_mode:$mode, policy:$policy, input_base:$base, selection:$selection,
+      expected_secs:$expected, timeout_secs:$bound}
+      + (if $run == "" then {} else {run_dir:$run} end)'
+}
+
+if [[ "$mode" == policy ]]; then
+  cd -- "$worktree"
+  load_policy
+  printf '%s\n' "$policy"
+  exit 0
+fi
 
 # Sets validate_mode, and cmd for a range run, to what a range request runs
 # under in the current directory's project. Unset is a project with no range
@@ -914,6 +1005,8 @@ ci_class_covered() {
 # keeps.
 ci_fallback=""
 ci_event=pull_request
+ci_context=''
+ci_base=''
 ci_runs_validation() {
   local context base_branch uri rules classic pr_json pr_state queue=false unread=false log="$class_scratch/ci.log"
   # Direct publication has no required PR or merge-group run after its push.
@@ -970,6 +1063,7 @@ ci_runs_validation() {
   if [[ "$unread" == false ]] && grep -Fxq -- "$context" <<<"$rules"$'\n'"$classic"; then
     ci_class_covered "$queue" || { ci_fallback=class-uncovered; return 1; }
     [[ "$CHANGE_CLASS_QUEUE_ONLY" == false ]] || ci_event=merge_group
+    ci_context="$context" ci_base="$base_branch"
     ci_fallback=""
     return 0
   fi
@@ -983,7 +1077,7 @@ ci_runs_validation() {
 }
 
 # --- Resolve: the mode a range run records here, read-only -------------------
-if [[ "$mode" == resolve && "$base_given" == false && -z "$proof_head" ]]; then
+if [[ "$mode" == resolve && "$detailed" == false && "$round_record_given" == false && "$base_given" == false && -z "$proof_head" ]]; then
   cd "$worktree"
   resolve_range_mode
   printf 'validate-mode=%s\n' "$validate_mode"
@@ -992,11 +1086,42 @@ fi
 
 # --- Start: resolve the bound, record it, launch the run detached ------------
 if [[ "$mode" == start || "$mode" == resolve ]]; then
-  [[ "$mode" != resolve ]] || validate_mode=range
+  [[ "$mode" != resolve || "$detailed" == true ]] || validate_mode=range
   worktree="$(cd "$worktree" && pwd)"
   # orch-env resolves the project from the working directory, so the settings
   # read is the worktree's own.
   cd "$worktree"
+  load_policy
+  if [[ "$policy" != null && "$validate_mode_given" == false ]]; then
+    validate_mode="$(jq -r .mode <<<"$policy")"
+    if [[ "$validate_mode" != full && "$base_given" == false ]]; then
+      base="$(jq -r .base_sha "$round_record")"
+      base_given=true
+    fi
+  fi
+  if [[ "$policy_route" == native && -z "$proof_head" ]]; then
+    validate_mode="$(jq -r .mode <<<"$policy")"
+    if [[ "$mode" == resolve && "$detailed" == true ]]; then emit_action execute-native; exit 0; fi
+    die native-execution-required "round-record=$round_record"
+  fi
+  if [[ "$policy_route" == native && -n "$proof_head" ]]; then
+    # The checker selects the receipt, including a terminal companion. Native
+    # records have no dependency closure, so reuse is limited to a declared
+    # whole battery at this exact commit, never a composite or another tree.
+    policy_issue="$(jq -r .issue "$round_record")"
+    policy_round="$(jq -r .round_id "$round_record")"
+    if accepted="$("$SCRIPT_DIR/dev-artifact-check" --worktree "$worktree" --issue "$policy_issue" --round-id "$policy_round" --expect-items-from-round)" \
+      && jq -e --arg head "$expected_head" '.ok and .validation_proof.head == $head' <<<"$accepted" >/dev/null; then
+      accepted_path="$(jq -r .path <<<"$accepted")"
+      if jq -e --arg head "$expected_head" '.commit == $head' "$accepted_path" >/dev/null \
+        && [[ "$(git rev-parse HEAD)" == "$expected_head" && -z "$(git status --porcelain)" ]]; then
+        printf 'validation-proof=native-pass artifact=%s\n' "$accepted_path"
+        exit 0
+      fi
+    fi
+    printf 'validation-proof=missing cause=native-proof-unproved\n'
+    exit 1
+  fi
   delivery="$("$SCRIPT_DIR/orch-env" ORCH_DELIVERY pr)" \
     || die unreadable-setting setting=ORCH_DELIVERY
   if [[ -n "$proof_head" ]]; then
@@ -1010,6 +1135,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   # A range run takes its base as one commit, fixed when it starts, so a
   # branch name that moves while the run goes cannot change what it judged.
   base_sha=""
+  input_base="$base"
   orphaned_sha=""
   cmd=""
   requested_mode="$validate_mode"
@@ -1033,7 +1159,18 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     base_sha="$(git rev-parse --verify -q "$base^{commit}")" || die invalid-base "base=$base"
     rebase_map="$(git rev-parse --git-path kendex-rebase-map)" \
       || die rebase-map-unreadable "worktree=$worktree"
-    if [[ -e "$rebase_map" || -L "$rebase_map" ]]; then
+    if [[ "$policy" != null ]]; then
+      if ! git merge-base --is-ancestor "$base_sha" HEAD || [[ -e "$rebase_map" || -L "$rebase_map" ]]; then
+        if rebase_map_project_bound "$worktree" "$(jq -r .issue "$round_record")" "$base_sha" "$(git rev-parse HEAD)"; then
+          base_sha="$REBASE_MAP_PROJECTED"
+        else
+          case "${REBASE_MAP_FAIL_ARGS[0]}" in
+            provenance-unavailable) ;;
+            *) die rebase-map-unreadable "path=$REBASE_MAP_SOURCE" "${REBASE_MAP_FAIL_ARGS[@]}" ;;
+          esac
+        fi
+      fi
+    elif [[ -e "$rebase_map" || -L "$rebase_map" ]]; then
       rebase_map_load "$rebase_map" && rebase_map_project "$base_sha" \
         || die rebase-map-unreadable "path=$rebase_map" "${REBASE_MAP_FAIL_ARGS[@]}"
       # A dropped commit has no replacement. Keep its original orphan route.
@@ -1075,7 +1212,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     ci_fallback=class-uncovered
     if ci_class_covered true && ci_runs_validation; then
       # A restack has no scoped execution to preview.
-      if [[ "$restack" == true || -z "${selection_cmd//[[:space:]]/}" ]]; then
+      if [[ "$restack" == true || -z "${selection_cmd//[[:space:]]/}" ]] \
+        || jq -e '.ci_pending_without_local == true' <<<"$policy" >/dev/null; then
         validate_mode=ci
       else
         selection_previewed=true
@@ -1102,6 +1240,7 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     if [[ "$validate_mode" == full ]]; then
       base_sha=""
     elif [[ "$validate_mode" == range && -n "$orphaned_sha" ]]; then
+      [[ "$policy" == null ]] || die policy-input-unresolved "base=$input_base"
       # A range from the orphaned base spans every commit the base branch
       # gained; the branch's fork point holds only its own changes.
       base_branch="$("$SCRIPT_DIR/resolve-base-branch" "$worktree")" \
@@ -1136,8 +1275,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
       fi
     fi
   fi
-  if [[ "$mode" == resolve ]]; then
-    printf 'validate-mode=%s\n' "$validate_mode"
+  if [[ "$mode" == resolve && ( "$detailed" == false || -n "$proof_head" ) ]]; then
+    [[ "$detailed" == true ]] || printf 'validate-mode=%s\n' "$validate_mode"
     [[ -n "$proof_head" ]] || exit 0
     # restack-skip owns equivalence; its genuine pass remains sufficient.
     candidate=""
@@ -1148,6 +1287,13 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
       exit 0
     fi
     if [[ "$validate_mode" == ci ]]; then
+      if [[ "$detailed" == true ]]; then
+        jq -e '.route == "configured" and .ci_pending_without_local == true' <<<"$policy" >/dev/null \
+          || die required-ci-local-work "round-record=$round_record"
+        jq -cn --arg head "$expected_head" --arg context "$ci_context" --arg base "$ci_base" --arg event "$ci_event" \
+          '{action:"required-ci",validate_mode:"ci",evidence:{kind:"required-ci",head:$head,context:$context,base:$base,event:$event}}'
+        exit 0
+      fi
       printf 'validation-proof=ci verdict=pending head=%s ci-event=%s\n' "$expected_head" "$ci_event"
       exit 0
     fi
@@ -1180,7 +1326,8 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   # scoped, over the classification admission kept, so a defect they catch
   # fails the round before the head reaches that run. A restack is no round.
   if [[ "$validate_mode" == ci ]]; then
-    if [[ "$restack" == false && -n "${selection_cmd//[[:space:]]/}" ]]; then
+    if [[ "$restack" == false && -n "${selection_cmd//[[:space:]]/}" ]] \
+      && ! jq -e '.ci_pending_without_local == true' <<<"$policy" >/dev/null; then
       start_scoped
       # As for a range run, an orphaned base gives way to the branch's fork point.
       [[ -z "$orphaned_sha" ]] || base_sha="$class_base"
@@ -1212,6 +1359,16 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     && [[ "${expected_secs:-}" =~ ^[0-9]+$ ]] \
     && (( 10#$expected_secs > 10#$timeout_secs )); then
     die over-bound "expected-secs=$expected_secs" "bound=$timeout_secs"
+  fi
+
+  if [[ "$mode" == resolve && "$detailed" == true ]]; then
+    action=execute-configured
+    if [[ "$validate_mode" == ci ]]; then action=required-ci
+    elif [[ "$passed_before" == true ]]; then action=reuse
+    elif [[ "$bound_ended" == true ]]; then action=no-verdict
+    fi
+    emit_action "$action"
+    exit 0
   fi
 
   # Without a timeout command the run carries no bound, which is the unbounded
@@ -1255,6 +1412,11 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
     printf 'class=%s\n' "$class"
     printf 'docs-only=%s\n' "$docs_only"
     printf 'validate-mode=%s\n' "$validate_mode"
+    printf 'requested-mode=%s\ninput-base=%s\n' "$requested_mode" "$input_base"
+    if [[ "$policy" != null ]]; then
+      printf 'policy-round=%s\n' "$(jq -r .round_id "$round_record")"
+      printf 'policy-id=%s\n' "$(printf '%s\n' "$policy" | git hash-object --stdin)"
+    fi
     case "${selection:-}" in selection=all|selection=subset) printf '%s\n' "$selection" ;; esac
     [[ "$scoped" == false ]] || printf 'scoped=true\n'
     printf 'validate-base=%s\n' "$base_sha"
@@ -1554,10 +1716,17 @@ if [[ "$mode" == record ]]; then
     die record-unreadable "path=$run_dir/start"
   fi
   [[ "$record_ci_event" == merge_group ]] || record_ci_event=""
-  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
+  record_source="$(start_field "$run_dir/start" pass-run)"
+  [[ -n "$record_source" ]] || record_source="$(start_field "$run_dir/start" bound-run)"
+  record_policy="$(start_field "$run_dir/start" policy-id)"
+  record_policy_input=""
+  if [[ -n "$record_policy" ]]; then
+    record_policy_input=" requested-mode=$(start_field "$run_dir/start" requested-mode) input-base=$(start_field "$run_dir/start" input-base)"
+  fi
+  printf 'validate-mode=%s %s verdict=%s head=%s start=%s%s%s%s%s%s%s%s%s\n' "$record_mode" "$record_selection" "$record_verdict" \
     "$(start_field "$run_dir/start" head)" "$(start_field "$run_dir/start" start)" \
     "${record_orphaned:+ validate-base-orphaned=$record_orphaned}" "${record_class_base:+ class-base=$record_class_base}" "$record_timing" \
-    "${record_scoped:+ scoped=$record_scoped}" "${record_ci_fallback:+ ci-fallback=$record_ci_fallback}" "${record_ci_event:+ ci-event=$record_ci_event}"
+    "${record_scoped:+ scoped=$record_scoped}" "${record_ci_fallback:+ ci-fallback=$record_ci_fallback}" "${record_ci_event:+ ci-event=$record_ci_event}" "${record_source:+ source-run=$record_source}" "${record_policy:+ policy-id=$record_policy}$record_policy_input"
   exit 0
 fi
 

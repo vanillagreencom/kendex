@@ -93,6 +93,7 @@ checks_of() {
 req_of() {
   case "$1" in
     none) printf '[]' ;;
+    ready-empty) printf '{"state":"ready","head":"h","contexts":[],"workflows":[],"all_checks":false}' ;;
     ready-200) printf '{"state":"ready","contexts":[],"workflows":[{"definition":{"repository_id":1,"path":".github/workflows/request.yml"},"consumer":{"repository_id":1,"head":"h"},"runs":[{"id":200,"suite_id":2,"checks":[{"name":"request","link":"%s/200/job/2"}]}]}],"all_checks":false}' "$R" ;;
     ready-200-all) req_of ready-200 | jq -c '.all_checks = true' ;;
     failed-200) printf '{"state":"failed","contexts":[],"failed_runs":[200]}' ;;
@@ -158,6 +159,13 @@ classify() { # CHECKS REQ
     | jq -r '"pending=\(.pending) failed=\(.failed) optional=\(.optional_failed) request_runs=\([.checks[] | select(.name == "request") | .link | capture("/runs/(?<r>[0-9]+)").r] | join(","))"'
 }
 echo "=== the rollup classification ==="
+assert_eq "$(classify two-runs-later-failed ready-empty)" \
+  'pending= failed= optional=request request_runs=100' 'affirmative empty requirements retain optional failure as a warning'
+for row in 'ready-empty|h|true' 'ready-empty|other|false' 'none|h|false' 'unreadable|h|false' 'ready-200|h|false'; do
+  IFS='|' read -r requirement head expected <<<"$row"
+  got="$(jq -nr --argjson req "$(req_of "$requirement")" --arg head "$head" "$CI_RUN_JQ_DEFS"'no_required_obligation($req; $head)')"
+  assert_eq "$got" "$expected" "no-required evidence $requirement at $head"
+done
 assert_eq "$(classify two-runs ready-200)" "pending= failed= optional= request_runs=200,100" \
   "the bound job satisfies its requirement though another run of it executed later"
 assert_eq "$(classify two-runs-later-failed ready-200-all)" "pending= failed=request (FAILURE) optional= request_runs=200,100" \

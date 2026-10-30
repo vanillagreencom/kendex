@@ -105,6 +105,11 @@ CI_RUN_JQ_DEFS='
     if ($req | type) == "array" then
       {contexts: $req, workflows: [], all_checks: (($req | length) == 0)}
     else {contexts: [], workflows: [], all_checks: false, failed_runs: []} + $req end;
+  def no_required_obligation($req; $head):
+    requirement_set($req) as $requirements
+    | $head != "" and $requirements.head == $head
+      and $requirements.state == "ready" and $requirements.all_checks == false
+      and $requirements.contexts == [] and $requirements.workflows == [];
   def required_only($req):
     . as $check | requirement_set($req) as $requirements
     | $requirements.all_checks == true
@@ -507,10 +512,16 @@ required_contexts() {
                 --argjson repository_id "$repo_id" --arg head "$head" '$bindings + [{definition: $definition.rule, consumer: {repository_id: $repository_id, head: $head}, runs: $runs}]') || return 1
         done <<<"$definitions"
     fi
-    printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c --argjson workflows "$bindings" --argjson fallback "$fallback" '
+    # Empty protection is affirmative only when both reads succeeded. Bind it
+    # to the same head the waiter rechecks before accepting the result.
+    if [ -z "$head" ] && [ "$bindings" = '[]' ] && ! grep -q '^ctx:' <<<"$rules"$'\n'"$classic"; then
+        head=$(gh pr view "$pr_num" ${repo_arg[@]+"${repo_arg[@]}"} --json headRefOid --jq '.headRefOid' 2>/dev/null) || fallback=true
+        [ -n "$head" ] || fallback=true
+    fi
+    printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c --argjson workflows "$bindings" --argjson fallback "$fallback" --arg head "$head" '
         (split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique) as $contexts
         | {state: "ready", contexts: $contexts, workflows: $workflows,
-           all_checks: ($fallback or (($contexts | length) == 0 and ($workflows | length) == 0))}'
+           all_checks: $fallback, head: $head}'
 }
 
 # The `head-run: <ids>` line for a --check JSON (stdin): the run ids the CI

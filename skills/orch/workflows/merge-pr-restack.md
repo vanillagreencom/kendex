@@ -26,7 +26,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
 
    No issue worktree means hand back. On conflicts, resolve every listed file, stage it, and run `worktree restack continue [ISSUE]` until complete. Never force-push over an unresolved base.
 
-   Then resolve validation for the restacked head before step 3 pushes it. Under `push-first`, a covered `ci` route records completed local edits with required CI pending and starts no local range command. Step 4's existing exact-head CI wait proves the published head. Required CI supplies the full record. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
+   For a policy-bearing accepted round, retain its existing record after the rules reload. Resolve this transition through `dev-validate-run --resolve-action --worktree [WT_PATH] --round-record [ROUND_RECORD] --validate-mode ci --base origin/[BASE_BRANCH] --restack`. Carry `--round-record [ROUND_RECORD]` on every start and proof request below. Use its returned action and mode; do not run the legacy scalar mode resolution. `execute-native` requires the consumer's existing supported native proof producer for this transition; if it cannot supply checker-accepted proof, stop with that exact limitation before starting work. A restack grants no retry of a failed round and no new recovery allowance. With no bound declaration, use the legacy resolution below. Then resolve validation for the restacked head before step 3 pushes it. Under `push-first`, a covered `ci` route records completed local edits with required CI pending and starts no local range command. Step 4's existing exact-head CI wait proves the published head. Required CI supplies the full record. Bind the base branch the restack rebased onto as `[BASE_BRANCH]`, and read the mode a range run in the worktree records:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [WT_PATH]
@@ -49,7 +49,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack
    ```
 
-   `validate-mode=ci` runs that command with `--validate-mode ci`. Its `--restack` flag skips selector preview and scoped suites. Successful CI admission records CI pending without a local command and returns at once. A refusal runs the range command and records its cause on start's `ci-fallback=` line; `dev-validate-run --help` lists those causes. Read the result through the existing `--record` owner before step 3. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`. Both `full` and `range` first ask whether the restacked head can skip its range re-test. `dev-validate-run --help` owns candidate selection under `--last-pass`:
+   `validate-mode=ci` runs that command with `--validate-mode ci`. Its `--restack` flag skips selector preview and scoped suites. Successful CI admission records CI pending without a local command and returns at once. A refusal on an authorized configured route runs the range command and records its cause on start's `ci-fallback=` line; `dev-validate-run --help` lists those causes. Read the result through the existing `--record` owner before step 3. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`. Both `full` and `range` first ask whether the restacked head can skip its range re-test. `dev-validate-run --help` owns candidate selection under `--last-pass`:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
@@ -73,7 +73,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --record --run-dir [RUN_DIR]
    ```
 
-   `worktree-push` reads the newest finished run for the pre-push restacked head through `dev-validate-run --record` after a successful push. It records the restack stage and validation minutes once per run directory. A skipped re-test adds no stage for an earlier head's run. A failed range run reaches no push and records no restack stage.
+   `worktree-push` reads the newest finished run for the pre-push restacked head through `dev-validate-run --record` after a successful push. It records the physical invocation once across round receipts and restacks. A reused result adds no execution duration. Missing legacy identity stays unknown. A skipped re-test adds no stage for an earlier head's run. A failed range run reaches no push and records no restack stage.
 
    A start refused as `run-live` ran nothing and is no result: take [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate)'s route for that refusal, then start the range run again.
 

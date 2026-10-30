@@ -87,7 +87,13 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 
-Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
+Read the consumer's actual validation instructions and explicit task authority. Prepare the transient validation input under [dev-round.md § Validation input](../schemas/dev-round.md#validation-input), then bind it before delegation:
+
+```bash
+.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --kind implement --validation-input [WORKTREE_PATH]/tmp/dev-validation-input-[DEV_ROUND_ID].json
+```
+
+Carry the record path in the delegation. A missing or changed declaration stops this stamp; never substitute a policy merely to enable execution. Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
@@ -165,7 +171,11 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 ```
 
 ```bash
-.agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
+ROUND_CHECK_ARGS=()
+if [[ -f [WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID_FROM_PREVIOUS_COMMAND].json ]]; then
+  ROUND_CHECK_ARGS=(--expect-items-from-round)
+fi
+.agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] ${ROUND_CHECK_ARGS[@]+"${ROUND_CHECK_ARGS[@]}"}
 ```
 
 `A` is the `verdict` field — `accept`, `wait`, or `retry`. The checker selects the round receipt under [dev-return.md § Identity](../schemas/dev-return.md#identity-the-round-id) and matches its internal `round_id`. Read its returned `path` for every artifact field below and carry that path to submit.

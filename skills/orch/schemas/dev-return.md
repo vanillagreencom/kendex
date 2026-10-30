@@ -73,6 +73,14 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 
 `items[]` elements are `{n: number, decision: "Applied"|"Skipped"|"Blocked", reasoning: string}`, with `n` the review item's `#N` or the sub-issue index and `reasoning` non-empty — citing the decision id or rule when `Skipped`.
 
+## Bound validation evidence
+
+A policy-bearing receipt carries the round's unchanged `validation_policy` from [dev-round.md § Validation input](dev-round.md#validation-input). The writer and checker read it through `dev-validate-run --check-policy`. A native record must name the declared mode, workload and effective hard bound. A configured run must carry the runner's matching `policy-id`. Policy-bearing implementation evidence takes the same base/time binding as fix evidence. Legacy records keep their existing conservative meaning.
+
+`validation_invocation` retains the original invocation's canonical `path`, recorded epoch `start`, actual `mode` and `time`. A runner request answered by `source-run` names that original execution; its current request still supplies round acceptance binding. A native foreground record keeps its own record identity. Accounting writers use this identity once across receipts and restacks. Absent legacy identity remains unknown; equal durations establish no correspondence. This field supplies no scope or composite proof and changes no raw verdict.
+
+For accepted native `full` evidence reporting `selection=battery`, the checker returns `validation_proof` for that receipt's exact commit and workload. The runner's proof request consumes that answer, checks the current clean head, and returns `validation-proof=native-pass`. A native subset, a changed head, a failed result and `no-verdict` provide no such proof. Required CI remains pending separately.
+
 ## Kind rules
 
 | Case | `items` |
@@ -97,6 +105,6 @@ The Apple gate reads `ORCH_APPLE_WORKFLOW` and the space-separated `ORCH_APPLE_L
 
 ## Foreground validation record
 
-A project whose own policy runs its validation entry point in the foreground and forbids `dev-validate-run` names that run with `--validate-record FILE` in place of `--validate-run-dir`; the writer refuses the two together. FILE holds one `KEY=VALUE` per line: the mode, the HEAD the run started at, its UTC start and end, its exit status, and its lane selection with any lanes. `dev-return-write --help` gives the grammar, and the writer refuses a record that names no head, no time or no exit status.
+A bound native declaration, or a legacy policy that requires foreground validation and forbids `dev-validate-run`, names its run with `--validate-record FILE` in place of `--validate-run-dir`; the writer refuses the two together. FILE holds one `KEY=VALUE` per line: mode, starting HEAD, UTC start and end, exit status and lane selection. A bound native record also carries its declared workload and hard bound. `dev-return-write --help` owns the grammar. Missing head, time or exit refuses.
 
 The writer reads the record into the fields a run directory fills, so the receipt has the same shape on either route. It derives the wall time from the two times and reads the verdict through the runner's marker rule. An optional `verdict=no-verdict` carries that outcome with the same note and evidence requirements. Without the marker, exit 0 is `pass` and any other exit is `FAILING`. A `fix` receipt binds the record's head and start time to its round as it binds a run directory's. The record file stays where the project wrote it; the receipt does not copy its head or exit status.

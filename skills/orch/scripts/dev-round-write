@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev-round-write — persist a fix round's delegated item set to a round-scoped
+# dev-round-write — persist round kind, validation input and fix items to a round-scoped
 # on-disk record at delegation time, so the set survives the orchestrator's
 # context.
 #
@@ -245,6 +245,11 @@ Done-when. The item set, reach and protected additions still apply.
 --source records the delegation's Source: value.
 --finding-occurrences-file takes the pre-stamp findings query's JSON result.
 It stores that optional context unchanged; it grants no admission or retry.
+--kind implement|fix records the authoritative round kind, default fix. An
+implementation has no fix items. Legacy records without kind remain fix.
+--validation-input FILE reads the consumer declaration described in
+skills/orch/schemas/dev-round.md, then binds effective commands and the hard
+bound from orch-env. It records intent, starts nothing and overrides no command.
 --pr-open records whether the pull request is open at delegation, default false.
 dev-artifact-check uses it to accept receipts that leave validation to CI.
 --issue / --round-id must match
@@ -257,7 +262,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--finding-occurrences-file|--adds|--cut|--source|--pr-open|-h|--help) return 0 ;;
+    --kind|--validation-input|--worktree|--issue|--round-id|--item|--items-file|--finding-occurrences-file|--adds|--cut|--source|--pr-open|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -309,6 +314,10 @@ check_reach() {
   done
 }
 
+kind=fix
+kind_given=false
+validation_policy_file=""
+validation_policy_given=false
 worktree=""
 issue=""
 round_id=""
@@ -333,6 +342,8 @@ finding_occurrences_file=/dev/null
 finding_occurrences_given=false
 while (( $# > 0 )); do
   case "$1" in
+    --kind) need "$1" $# "${2:-}"; no_dup "$1" "$kind_given"; kind_given=true; kind="$2"; shift 2 ;;
+    --validation-input) need "$1" $# "${2:-}"; no_dup "$1" "$validation_policy_given"; validation_policy_given=true; validation_policy_file="$2"; shift 2 ;;
     --worktree) need "$1" $# "${2:-}"; no_dup "$1" "$worktree_given"; worktree_given=true; worktree="$2"; shift 2 ;;
     --issue)    need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";    issue_given=true;    issue="$2"; shift 2 ;;
     --round-id) need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given"; round_id_given=true; round_id="$2"; shift 2 ;;
@@ -380,6 +391,10 @@ done
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
 [[ "$pr_open" == true || "$pr_open" == false ]] || die invalid-pr-open
+case "$kind" in
+  implement|fix) ;;
+  *) printf 'dev-round-write: invalid-kind value=%s\n' "$kind" >&2; exit 2 ;;
+esac
 source_json=null
 if [[ "$source_given" == true ]]; then
   check_id_token --source "$source_name"
@@ -391,6 +406,35 @@ fi
 delegated_at="$(date +%s)"
 base_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
   || die missing-head "$@"
+
+# The orchestrator supplies the consumer's authority and actual workload. The
+# existing settings reader supplies command identity and the effective bound.
+# No command from this declaration is executed by the configured runner.
+validation_policy=null
+if [[ "$validation_policy_given" == true ]]; then
+  [[ -f "$validation_policy_file" && ! -L "$validation_policy_file" ]] \
+    && jq -se 'length == 1 and (.[0] |
+      (.route == "configured" or .route == "native")
+      and (.mode == "full" or .mode == "range" or .mode == "ci")
+      and ([.authority, .workload] | all(.[]; type == "string" and test("\\S")))
+      and ((has("ci_pending_without_local") | not) or (.ci_pending_without_local | type == "boolean"))
+      and (.route != "native" or .mode != "ci"))' "$validation_policy_file" >/dev/null \
+    || { printf 'dev-round-write: invalid-validation-policy path=%s\n' "$validation_policy_file" >&2; exit 2; }
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  policy_settings='{}'
+  for setting in DEV_VALIDATE_CMD DEV_VALIDATE_RANGE_CMD DEV_VALIDATE_SELECTION_CMD DEV_VALIDATE_TIMEOUT_SECS DEV_VALIDATE_CI_CONTEXT; do
+    value="$(cd -- "$worktree" && "$script_dir/orch-env" "$setting" "")" \
+      || { printf 'dev-round-write: unreadable-setting setting=%s\n' "$setting" >&2; exit 2; }
+    if [[ "$setting" == DEV_VALIDATE_TIMEOUT_SECS ]]; then
+      [[ -n "$value" ]] || value=3600
+      [[ "$value" =~ ^[0-9]+$ ]] && (( 10#$value > 0 )) \
+        || { printf 'dev-round-write: invalid-bound value=%s\n' "$value" >&2; exit 2; }
+    fi
+    policy_settings="$(jq -cn --argjson settings "$policy_settings" --arg key "$setting" --arg value "$value" '$settings + {($key): $value}')"
+  done
+  validation_policy="$(jq -c --arg head "$base_sha" --argjson settings "$policy_settings" \
+    '{route, mode, authority, workload, ci_pending_without_local:(.ci_pending_without_local // false), source_head:$head, settings:$settings}' "$validation_policy_file")"
+fi
 
 # --- Exactly one item source: inline --item xor --items-file ---
 if [[ "$items_file_given" == "true" ]] && (( ${#item_n[@]} > 0 )); then
@@ -424,7 +468,7 @@ if [[ "$items_file_given" == "true" ]]; then
   done
   items_json="$(jq 'map({n, text, reach})' "$items_file")"
 else
-  (( ${#item_n[@]} > 0 )) \
+  [[ "$kind" == implement ]] || (( ${#item_n[@]} > 0 )) \
     || die missing-items "$@"
   # --- Build the items array deterministically with jq ---
   items_json="$(
@@ -436,6 +480,10 @@ else
         '{n: $n, text: $text, reach: $reach}'
     done | jq -s '.'
   )"
+fi
+if [[ "$kind" == implement && "$items_json" != '[]' ]]; then
+  printf 'dev-round-write: implement-items issue=%s round-id=%s\n' "$issue" "$round_id" >&2
+  exit 2
 fi
 
 # --- Protected additions: one blank-separated path list ---
@@ -486,6 +534,8 @@ trap 'rm -f "$tmp"' EXIT
 jq -n \
   --argjson schema_version 2 \
   --arg round_id "$round_id" \
+  --arg kind "$kind" \
+  --argjson validation_policy "$validation_policy" \
   --arg issue "$issue" \
   --arg base_sha "$base_sha" \
   --argjson delegated_at "$delegated_at" \
@@ -498,6 +548,7 @@ jq -n \
   '{
      schema_version: $schema_version,
      round_id: $round_id,
+     kind: $kind,
      issue: $issue,
      base_sha: $base_sha,
      delegated_at: $delegated_at,
@@ -506,7 +557,8 @@ jq -n \
      source: $source,
      pr_open: $pr_open,
      items: $items
-   } + (if ($findings | length) == 0 then {} else {finding_occurrences: $findings[0]} end)' > "$tmp"
+   } + (if $validation_policy == null then {} else {validation_policy:$validation_policy} end)
+     + (if ($findings | length) == 0 then {} else {finding_occurrences: $findings[0]} end)' > "$tmp"
 
 # --- Same-round records are immutable ---
 # The record is the authoritative delegated set for exactly one delegation.
@@ -520,8 +572,8 @@ jq -n \
 # A record jq cannot read is never the same.
 same_record() {
   local a b
-  a="$(jq -c 'del(.delegated_at)' "$1" 2>/dev/null)" || return 1
-  b="$(jq -c 'del(.delegated_at)' "$2" 2>/dev/null)" || return 1
+  a="$(jq -c 'del(.delegated_at) | .kind //= "fix"' "$1" 2>/dev/null)" || return 1
+  b="$(jq -c 'del(.delegated_at) | .kind //= "fix"' "$2" 2>/dev/null)" || return 1
   [[ "$a" == "$b" ]]
 }
 # Placement is ATOMIC create-if-absent, not check-then-move: a bare

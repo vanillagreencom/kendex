@@ -210,6 +210,7 @@ message() {
 	restack-map-grammar) printf 'The restack rebase-map file is not a hop record this can apply: each hop opens with its own boundary line and holds at least one mapping. hops_applied is how many complete hops before it reached workflow state, and the whole file was kept. Apply the rebase-map lines after those hops with workflow-state update, then remove the file.\n' ;;
 	restack-map-nostate) printf 'No workflow state records this issue, so it holds no SHA a restack could have made stale and nothing can hold the map. Init the record and re-run, or remove the map file.\n' ;;
 	restack-map-write) printf 'A restack hop was not recorded. hops_applied is how many hops before it reached workflow state, and the whole file was kept. Repair workflow state, then apply the rebase-map lines after those hops with workflow-state update before publishing recorded SHAs.\n' ;;
+	restack-provenance-write) printf 'Ordered native correspondence was not retained. The private evidence was kept. phase and operation-exit describe the operation already attempted; push-exit=0 means transport already succeeded.\n' ;;
 	restack-map-clear) printf 'The reconciled restack rebase-map file could not be removed, so a later run would read it again. Remove it, then re-run.\n' ;;
 	state-resolve) printf 'Workflow state could not be resolved. No push ran.\n' ;;
 	state-answer) printf 'The workflow-state existence result is invalid. No push ran.\n' ;;
@@ -458,6 +459,11 @@ select_restack_validation() {
 			($record | split(" ") | map(select(contains("=")) | split("=") | {key: .[0], value: .[1]}) | from_entries)
 			| select(.verdict != "unfinished" and .seconds != null and .head == $head)')" || return 1
 		[[ -n "$candidate" ]] || continue
+		# A reused result starts no restack command. Its original invocation is
+		# accounted by the round writer, and CI without scoped work is pending.
+		if jq -e 'has("source-run") or (."validate-mode" == "ci" and .scoped != "true")' <<<"$candidate" >/dev/null; then
+			continue
+		fi
 		candidate_start="$(jq -r '.start' <<<"$candidate")" || return 1
 		if (( candidate_start > start )); then
 			start="$candidate_start" latest="$candidate" latest_dir="$dir"
@@ -473,7 +479,7 @@ record_restack_validation() {
 	select_restack_validation || return 1
 	[[ -n "$latest" ]] || return 0
 	"$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update "$issue" --arg dir "$latest_dir" --argjson run "$latest" '
-		if any(.stages[]?; .run_dir == $dir) then . else
+		if any(.stages[]?; .run_dir == $dir or (.invocation == $dir and .invocation_start == $run.start)) then . else
 			.stages = ((.stages // []) + [{kind: "validate", reason: "restack", round_id: null, run_dir: $dir,
 				start: ($run["started-at"] | fromdateiso8601), end: ($run["ended-at"] | fromdateiso8601)}])
 			| .validate_rounds = ((.validate_rounds // []) + [({round_id: ("restack-" + ($dir | split("/") | last | ltrimstr("dev-validate-"))),
@@ -526,6 +532,9 @@ save_pending_validation() {
 
 restack_summary_key=restack-reconcile
 restack_pushed=false
+provenance_phase=pending
+provenance_before=''
+provenance_status=null
 
 # A refusal before the push means nothing was pushed and the arguments or the
 # state are the repair; one after it means the push landed and its own exit
@@ -548,6 +557,24 @@ reconcile_restack_hop() {
 	fi
 }
 
+# Persist the actual native snapshot before its only private copy is removed.
+# Flat reply indexes cannot recover ordered parallel mappings after a checkpoint.
+retain_rebase_provenance() {
+	local after before entry
+	after="$(git -C "$worktree_abs" rev-parse --verify HEAD)" || return 1
+	before="${provenance_before:-$after}"
+	rebase_map_validate_snapshot || return 1
+	entry="$(jq -cn --arg worktree "$worktree_abs" --arg path "$restack_map_file" \
+		--arg phase "$provenance_phase" --argjson status "$provenance_status" --arg before "$before" --arg after "$after" \
+		--arg hops "$REBASE_MAP_TEXT" \
+		'{worktree:$worktree, source:{kind:"worktree-push",path:$path,phase:$phase,status:$status},before_head:$before,after_head:$after,hops:$hops}')" || return 1
+	"$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} update "$issue" --argjson entry "$entry" '
+		(.rebase_provenance // []) as $records
+		| if ($records | type) != "array" then error("provenance unreadable")
+		  elif any($records[]; .hops == $entry.hops and .after_head == $entry.after_head) then .
+		  else .rebase_provenance = ($records + [$entry]) end' >/dev/null
+}
+
 # Apply every hop the file holds, in order, then delete it. Reports each hop
 # under the caller's summary key: the hops standing before the push are other
 # rewrites' and the one written during it is this push's own.
@@ -563,6 +590,8 @@ consume_rebase_map_file() {
 		|| consume_fail restack-map-nostate "issue=$issue" "state=$state_file" "file=$restack_map_file"
 	rebase_map_each_hop reconcile_restack_hop \
 		|| consume_fail "${REBASE_MAP_FAIL_ARGS[@]}" "file=$restack_map_file" "hops_applied=$REBASE_MAP_HOPS"
+	retain_rebase_provenance \
+		|| consume_fail restack-provenance-write "file=$restack_map_file" "phase=$provenance_phase" "operation-exit=$provenance_status"
 	if [[ "$restack_pushed" == false ]]; then
 		save_pending_validation || message stage-unrecorded "issue=$issue" >&2
 	fi
@@ -599,9 +628,12 @@ prepare | publish) [[ "$delivery" == push-base ]] || fail delivery-phase "delive
 *) fail delivery-phase "phase=$publication_phase" ;;
 esac
 if [[ "$publication_phase" == prepare ]]; then
+	provenance_phase=prepare
+	provenance_before="$(git -C "$worktree_abs" rev-parse --verify HEAD)" || fail not-worktree "path=$worktree_abs"
 	prepare_rc=0
 	(cd -- "$worktree_abs" && "$WORKTREE_BIN" push "$worktree_abs" --prepare-base) >"$push_out" || prepare_rc=$?
 	cat "$push_out"
+	provenance_status="$prepare_rc"
 	consume_rebase_map_file restack-reconcile
 	[[ "$prepare_rc" == 0 ]] || exit "$prepare_rc"
 	prepared="$(sed -n 's/^prepared-base: //p' "$push_out")" || fail delivery-prepare "worktree=$worktree_abs"
@@ -626,7 +658,18 @@ if [[ "$publication_phase" == publish ]]; then
 			|| fail delivery-tier "issue=$issue"
 		[[ "$tier_line" == tier=micro* ]] || fail delivery-tier "issue=$issue" "result=$tier_line"
 	else
-		"$SCRIPT_DIR/dev-validate-run" --worktree "$worktree_abs" --validate-mode range --base "$prepared_before" --attached || fail delivery-validate "commit=$prepared_head"
+		policy_args=()
+		if [[ -n "${active_round:-}" && -f "$worktree_abs/tmp/dev-round-$issue-$active_round.json" ]]; then
+			policy_args=(--round-record "$worktree_abs/tmp/dev-round-$issue-$active_round.json")
+		fi
+		proof=''
+		if proof="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$worktree_abs" \
+			--base "$prepared_before" --require-proof "$prepared_head" --expected-head "$prepared_head" ${policy_args[@]+"${policy_args[@]}"})" \
+			&& [[ "$proof" == *validation-proof=local-pass* || "$proof" == *validation-proof=native-pass* ]]; then
+			printf '%s\n' "$proof"
+		else
+			"$SCRIPT_DIR/dev-validate-run" --worktree "$worktree_abs" --validate-mode range --base "$prepared_before" --attached ${policy_args[@]+"${policy_args[@]}"} || fail delivery-validate "commit=$prepared_head"
+		fi
 	fi
 	current_head="$(git -C "$worktree_abs" rev-parse HEAD)" || fail delivery-validate "commit=$prepared_head"
 	[[ "$current_head" == "$prepared_head" ]] || fail delivery-validate "commit=$prepared_head" "head=$current_head"
@@ -636,6 +679,8 @@ fi
 # Push stderr streams through live; stdout is captured and replayed below,
 # where the reason it is captured rather than passed through is written down.
 push_rc=0
+provenance_phase=push
+provenance_before="$(git -C "$worktree_abs" rev-parse --verify HEAD)" || fail not-worktree "path=$worktree_abs"
 if [[ "$publication_phase" == publish ]]; then
 	(cd -- "$worktree_abs" && "$WORKTREE_BIN" push "$worktree_abs" "${base_transport_args[@]}") >"$push_out" || push_rc=$?
 else
@@ -662,6 +707,7 @@ fail_post_push() {
 cat "$push_out" || true
 
 restack_pushed=true
+provenance_status="$push_rc"
 consume_rebase_map_file sha-reconcile
 
 if [[ "$push_rc" == 0 && -n "$restack_validation_head" ]]; then

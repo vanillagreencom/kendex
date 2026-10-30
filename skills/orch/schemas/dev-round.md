@@ -1,6 +1,6 @@
 # Dev round schema
 
-The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
+The on-disk record of a round's kind, consumer validation declaration, starting commit, and allowed protected additions. Fix rounds also carry their delegated items. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
 For a chosen cut, see [§ Declared cuts](#declared-cuts).
 
@@ -20,6 +20,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 {
   "schema_version": 2,
   "round_id": "1769600000123456789-1837",
+  "kind": "fix",
   "issue": "issue-1230",
   "base_sha": "0123456789abcdef0123456789abcdef01234567",
   "delegated_at": 1769600000,
@@ -35,6 +36,8 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 
 | Field | Required | Writer flag | Description |
 |-------|----------|-------------|-------------|
+| `kind` | New records | `--kind` | `implement` or `fix`; default `fix` preserves existing callers |
+| `validation_policy` | Optional | `--validation-input` | Bound consumer declaration under [Validation input](#validation-input) |
 | `schema_version` | Yes | constant `2` | Record schema version |
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
@@ -44,9 +47,19 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
 | `source` | Yes | `--source NAME` | The delegation's `Source:` value; null when the flag is absent |
 | `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation. Defaults to `false`; readers treat an absent field as `false` and refuse a non-boolean value. A fix round requests `ci` when this is `true` or `pr-order` resolves `push-first`, regardless of `source`; otherwise it requests `range`. The runner may fall back to local validation. `dev-artifact-check` accepts a `ci` receipt under the same rule, only for the current HEAD. Acceptance completes the local edits; required CI remains pending until submit's exact-head wait |
-| `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
+| `items` | Yes (empty for `implement`, >=1 for `fix`) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
+
+## Validation input
+
+Read before stamping or consuming a policy-bearing round. `dev-round-write --kind implement|fix --validation-input FILE` reads one transient JSON request with `route`, `mode`, `authority` and `workload`. The orchestrator writes the request from the consumer's actual instructions and task authority. `authority` names the exact instruction path, blob/source revision and any durable task directive. `workload` names the actual entry point, native arguments, wrapper, environment and slot constraints. These strings are trusted delegation input, not commands to execute or evidence that work ran.
+
+The writer stores this declaration as `validation_policy` in the existing immutable round record. It adds `source_head` and effective command, selector and timeout identities from `orch-env`. It adds no policy registry or command override. `configured` uses those unchanged settings. `native` uses the declared consumer entry point through its existing permitted lifetime owner and requires a `full` or `range` workload; a mode label alone proves no battery. `dev-validate-run --check-policy --round-record FILE --worktree PATH` is the shared reader. It refuses changed effective identities. Callers keep the original record and actual input/base; a restack or publication does not mint a new round or replenish execution.
+
+`dev-validate-run --resolve-action --round-record FILE --worktree PATH` returns the permitted action, actual mode, effective bound and optional estimate. `reuse` names supported existing invocation proof; `no-verdict` names the earlier bound result and starts nothing. Consumers use that action and the receipt checker. They do not infer native permission from the absence of a range command. Missing complete dependency evidence keeps proof conservative. This form supplies no composite proof.
+
+New records carry `kind`. An absent `kind` on a legacy record means `fix`; an absent record retains the legacy implementation route. An implementation has `items: []`. Fix items and protected-addition gates retain their existing meaning. Acceptance of either stamped kind uses `--expect-items-from-round`. `round-recover` uses that same kind for its report parser and checker flags, so a completed implementation keeps its original round.
 
 ## Item text
 

@@ -189,6 +189,31 @@ for harness in claude-send claude-text pi codex codex-item; do
     "$harness: dev-artifact-check accepts the recovered round"
 done
 
+# The existing round writer now stamps implementation input too. Recovery
+# must consume its kind before parsing either return format.
+policy_implementation() {
+  new_round "policy-implementation-${1:-live}" KEN-policy 1-policy 0
+  printf '%s\n' '{"route":"configured","mode":"full","authority":"fixture consumer instructions at its delegation","workload":"configured command"}' > "$WT/tmp/policy.json"
+  "$ROUND_WRITE" --kind implement --worktree "$WT" --issue KEN-policy --round-id 1-policy \
+    --validation-input "$WT/tmp/policy.json" >/dev/null
+  record="$WT/tmp/dev-round-KEN-policy-1-policy.json"
+  jq --argjson at "$((NOW - 50))" '.delegated_at = $at' "$record" > "$WT/tmp/round.next"
+  mv "$WT/tmp/round.next" "$record"
+  printf 'policy-id=%s\n' "$(jq -c .validation_policy "$record" | git -C "$WT" hash-object --stdin)" >> "$WT/tmp/dev-validate-1/start"
+  printf 'requested-mode=full\ninput-base=\n' >> "$WT/tmp/dev-validate-1/start"
+  transcript "$TMP_ROOT/policy.jsonl" codex 1-policy "$(implement_report "$HEAD_SHA" pass none)"
+  run --worktree "$WT" --issue KEN-policy --round-id 1-policy --transcript "$TMP_ROOT/policy.jsonl"
+}
+policy_implementation
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-policy-1-policy.json" '.kind') $(state_get KEN-policy dev_round_id)" \
+  'rc=0 implement 1-policy' 'a policy-bearing implementation closes its original round' "$TMP_ROOT/stderr"
+SHIPPED_RECOVER="$RECOVER"
+RECOVER="$(mutant_scripts recover-kind-mutant round-recover)/round-recover" || exit 1
+mutate_file "$RECOVER" '| if has("kind") then .kind else "fix" end' '| "fix"'
+policy_implementation control
+assert_eq "rc=$RC ${OUT##* }" 'rc=3 reason=unparsed' 'control: treating implementation input as a fix loses the implementation return' "$TMP_ROOT/stderr"
+RECOVER="$SHIPPED_RECOVER"
+
 # A run the bound ended proves a no-verdict report naming its cause, which is
 # accepted, since it is neither a pass nor a failure, and the cause becomes the
 # receipt's note verbatim.

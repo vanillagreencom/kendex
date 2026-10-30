@@ -164,7 +164,7 @@ case "${1:-}" in
       echo 123
       exit 0
     fi
-    if [[ -n "${STUB_REQUIRED_CONTEXT:-}${STUB_REQUIRED_WORKFLOW:-}" ]]; then
+    if [[ -n "${STUB_REQUIRED_CONTEXT:-}${STUB_REQUIRED_WORKFLOW:-}${STUB_REQUIRED_EMPTY:-}" ]]; then
       if [[ "${2:-}" == repos/*/rules/branches/* ]]; then
         [[ "${STUB_REQUIRED_READ_EXIT:-0}" == 0 ]] || exit "$STUB_REQUIRED_READ_EXIT"
         [[ -z "${STUB_REQUIRED_CONTEXT:-}" ]] || printf 'ctx:%s\n' "$STUB_REQUIRED_CONTEXT"
@@ -237,7 +237,7 @@ case "${1:-}" in
           echo "${STUB_HEAD_SHA:-737bce791577e140436490e0fed5751bb5144a61}"
           exit 0
         fi
-        if [[ "$_a" == "baseRefName" && -n "${STUB_REQUIRED_CONTEXT:-}${STUB_REQUIRED_WORKFLOW:-}" ]]; then
+        if [[ "$_a" == "baseRefName" && -n "${STUB_REQUIRED_CONTEXT:-}${STUB_REQUIRED_WORKFLOW:-}${STUB_REQUIRED_EMPTY:-}" ]]; then
           echo main
           exit 0
         fi
@@ -741,6 +741,11 @@ table "$JSON" \
   "the new head can register and finish during confirmation|||STUB_PR_CHECKS_SEQUENCE=pending:request:pending:green,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_NEXT_HEAD_SHA=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=90" \
   "same-head progress still completes immediately|||STUB_PR_CHECKS_SEQUENCE=pending:green|rc=0 status=complete verdict=pass elapsed_seconds=30" \
   "a push during the check request discards the unbound snapshot|||STUB_PR_CHECKS_SEQUENCE=green,STUB_HEAD_DURING_CHECKS=$NEXT_HEAD|rc=0 status=complete verdict=pass elapsed_seconds=120" \
+  "no required obligation settles optional checks and active workflows||$JSON --required-only|STUB_REQUIRED_EMPTY=1,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=0 status=complete verdict=none passed=0 failed=0 pending=0 elapsed_seconds=0" \
+  "no required obligation settles an empty rollup with active optional workflows||$JSON --required-only|STUB_REQUIRED_EMPTY=1,STUB_PR_CHECKS_MODE=empty,$OPTIONAL|rc=0 status=complete verdict=none passed=0 failed=0 pending=0 elapsed_seconds=0" \
+  "unread protection cannot prove no obligation||$JSON --required-only|STUB_REQUIRED_EMPTY=1,STUB_REQUIRED_READ_EXIT=1,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=1 status=timeout verdict=pending" \
+  "an unread head cannot prove no obligation||$JSON --required-only|STUB_REQUIRED_EMPTY=1,STUB_HEAD_EXIT=1,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=1 status=timeout verdict=pending" \
+  "all-check mode still waits for optional work||$JSON|STUB_REQUIRED_EMPTY=1,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=1 status=timeout verdict=pending" \
   "a known required build passes while optional docs is active||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL|rc=0 status=complete verdict=pass check.build=SUCCESS check.docs=absent check.current-head+Actions=absent pending=0 rollup.build=true rollup.docs=false elapsed_seconds=90" \
   "a known required build still needs a readable head||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL,STUB_HEAD_EXIT=1|rc=1 status=timeout verdict=pending check.build=absent check.docs=absent check.current-head+Actions=EXPECTED runs_head=none lookup_http_status=403" \
   "an unreadable required set keeps the Actions hold||$JSON --required-only|STUB_REQUIRED_CONTEXT=build,STUB_REQUIRED_READ_EXIT=1,$OPTIONAL|rc=1 status=timeout verdict=pending check.build=SUCCESS check.current-head+Actions=EXPECTED runs_head=$NEXT_HEAD elapsed_seconds=300" \
@@ -908,6 +913,7 @@ workflow_failed_bypass='elif any(.[]; (.conclusion | IN("success", "neutral", "s
 workflow_unreadable_match="then \$runs else error(\"incomplete workflow runs\") end' <<<\"\$runs\" 2>/dev/null); then\\n            echo '{\"state\":\"unreadable\",\"contexts\":[]}'"
 workflow_unreadable_bypass="then \$runs else error(\"incomplete workflow runs\") end' <<<\"\$runs\" 2>/dev/null); then\\n            echo '{\"state\":\"ready\",\"contexts\":[\"build\",\"request\"]}'"
 control_rows=(
+  "no-obligation terminal~\"\$CI_RUN_JQ_DEFS\"'no_required_obligation(\$req; \$head)'~\"\$CI_RUN_JQ_DEFS\"'false'~STUB_REQUIRED_EMPTY=1,STUB_PR_CHECKS_FIXTURE=$TMP_ROOT/required-build-optional-docs.json,$OPTIONAL~rc=0 status=complete verdict=none passed=0 pending=0 elapsed_seconds=0~$JSON --required-only~rc=1 status=timeout verdict=pending passed=0 pending=0"
   'configured wait budget~MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" CI_WAIT_MAX_SECS 600)}"~MAX_WAIT="${POSITIONAL[2]:-600}"~CI_WAIT_MAX_SECS=5,STUB_PR_CHECKS_MODE=pending_always~rc=1 status=timeout verdict=pending elapsed_seconds=5 check.build=IN_PROGRESS~1 5 --json~rc=1 status=timeout verdict=pending elapsed_seconds=600 check.build=IN_PROGRESS'
   "head progress~$head_reset~if false; then~STUB_PR_CHECKS_SEQUENCE=pending:request,STUB_REQUEST_CHECK_FIXTURE=$FX/request-only-checks.json,STUB_NEXT_HEAD_SHA=$NEXT_HEAD~rc=0 verdict=pass elapsed_seconds=120"
   "head window~$head_reset~if false; then~STUB_PR_CHECKS_SEQUENCE=green,STUB_NEXT_HEAD_SHA=$NEXT_HEAD~rc=0 verdict=pass elapsed_seconds=120"

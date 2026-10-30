@@ -118,6 +118,15 @@ table() {
 
 WT="$(new_repo wt issue-1230 i)"
 BASE_SHA="$(git -C "$WT" rev-parse HEAD)"
+
+run_write --kind implement --worktree "$WT" --issue i --round-id implement-input
+assert_eq "$RC $(rec '.kind') $(rec '.items | length')" '0 implement 0' 'implementation input needs no fabricated fix items' "$ERR"
+run_write --kind implement --worktree "$WT" --issue i --round-id implement-items --item 1 finding 'tools/guard'
+assert_eq "$RC" 2 'implementation input refuses fix items' "$ERR"
+printf '%s\n' '{"route":"native","mode":"full","authority":"consumer instructions and explicit task directive","workload":"native release battery"}' > "$TMP_ROOT/policy.json"
+run_write --kind implement --worktree "$WT" --issue i --round-id policy-input --validation-input "$TMP_ROOT/policy.json"
+assert_eq "$RC $(rec '.validation_policy.route') $(rec '.validation_policy.workload') $(rec '.validation_policy.source_head')" \
+  "0 native native release battery $BASE_SHA" 'the round binds declared native workload and authority to its starting head' "$ERR"
 RID="1750000000-77"
 # A reach the writer accepts: a command a person runs.
 OK_REACH="tools/guard on a staged .agents render"

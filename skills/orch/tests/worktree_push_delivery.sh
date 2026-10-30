@@ -12,6 +12,7 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/shared-skill-libs.sh"
+source "$REPO_ROOT/skills/orch/scripts/lib/rebase-map.sh"
 TMP_ROOT="$(mktemp -d)" || { echo 'worktree_push_delivery: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || exit 1
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || exit 1
@@ -208,6 +209,17 @@ publish_step() { # PUSH_SCRIPT
 checkpoint_case() { # NAME SCRIPT MODE STATE PHASE
   local script="$2" mode="$3" state="$4" phase="$5" map head base_now command rc=0 output
   new_fixture "$1" "$mode"
+  if [[ "${RETENTION_ROUND:-false}" == true ]]; then
+    (cd "$wt" && "$STATE" set KEN-1 dev_round_id retained >/dev/null)
+    "$REPO_ROOT/skills/orch/scripts/dev-round-write" --worktree "$wt" --issue KEN-1 --round-id retained \
+      --item 1 'preserve original validation' 'the native checkpoint fixture' >/dev/null
+    delegated="$(jq -r .delegated_at "$wt/tmp/dev-round-KEN-1-retained.json")"
+    original_run="$(validate_run_dir "$wt/tmp/dev-validate-original" full 1 "$item_head" "$delegated")"
+    printf 'started-at=%s\nended-at=%s\nseconds=1\n' "$(jq -nr --argjson at "$delegated" '$at|todateiso8601')" \
+      "$(jq -nr --argjson at "$((delegated+1))" '$at|todateiso8601')" > "$original_run/timing"
+    "$REPO_ROOT/skills/orch/scripts/dev-return-write" --worktree "$wt" --kind fix --issue KEN-1 --round-id retained \
+      --branch ken-1 --commit "$item_head" --validate 'FAILING: fixture' --validate-run-dir "$original_run" --no-summary --item 1 Applied fixture >/dev/null
+  fi
   if [[ "$state" == restack || "$state" == push-rebase ]]; then
     (cd "$wt" && ORCH_WORKTREE_BIN="$WORKTREE" "$LIVE" --checkpoint --worktree "$wt" --issue KEN-1 --set-upstream) >"$root/initial.out" 2>"$root/publish.err"
   fi
@@ -263,6 +275,78 @@ while IFS='|' read -r name mode state phase want_rc published rewritten map; do
     '{rc:$rc,published:$published,base_unchanged:true,reconciled:true,rewritten:$rewritten,map:$map,validated:false,delivery:false}')"
   assert_eq "$observed" "$expected" "$name keeps the checkpoint at guarded branch publication"
 done <<<"$CHECKPOINT_CASES"
+
+echo '=== retained identity follows the real native operation, not a flat index ==='
+RETENTION_ROUND=true
+for route in push-rebase restack; do
+  checkpoint_case "retained-$route" "$LIVE" push-base "$route" checkpoint > "$TMP_ROOT/retained-$route.json"
+  retained_head="$(git -C "$wt" rev-parse HEAD)"
+  retained_state="$(cd "$wt" && "$STATE" path KEN-1)"
+  original_receipt="$(cat "$wt/tmp/dev-return-KEN-1-retained.json")"
+  projection_rc=0
+  rebase_map_project_bound "$wt" KEN-1 "$item_head" "$retained_head" "$retained_state" || projection_rc=$?
+  if [[ "$route" == push-rebase ]]; then
+    assert_eq "$projection_rc $REBASE_MAP_PROJECTED" "0 $retained_head" 'actual transport correspondence remains usable after private consumption'
+    repaired_run="$(validate_run_dir "$wt/tmp/dev-validate-repaired" full 0 "$retained_head" "$((delegated+2))")"
+    printf 'tree=%s\n' "$(git -C "$wt" rev-parse HEAD^{tree})" >> "$repaired_run/start"
+    printf 'started-at=%s\nended-at=%s\nseconds=1\n' "$(jq -nr --argjson at "$((delegated+2))" '$at|todateiso8601')" \
+      "$(jq -nr --argjson at "$((delegated+3))" '$at|todateiso8601')" > "$repaired_run/timing"
+    "$REPO_ROOT/skills/orch/scripts/dev-return-write" --worktree "$wt" --kind fix --issue KEN-1 --round-id retained \
+      --branch ken-1 --commit "$retained_head" --validate pass --validate-run-dir "$repaired_run" --recovery --no-summary --item 1 Applied fixture >/dev/null
+    checked="$(cd "$wt" && "$REPO_ROOT/skills/orch/scripts/dev-artifact-check" --worktree "$wt" --issue KEN-1 --round-id retained --expect-items-from-round)"
+    assert_eq "$(jq -r '.verdict' <<<"$checked")" accept 'writer and checker share retained native projection for the original round'
+    cp "$retained_state" "$root/retained-good.json"
+    for mutation in \
+      '.rebase_provenance=[]' \
+      '.rebase_provenance[0].source.phase="unknown"' \
+      '.rebase_provenance[0].source.status="0"' \
+      '.rebase_provenance[0].source.path="relative"' \
+      '.rebase_provenance[0].source.kind="unknown"' \
+      '.rebase_provenance[0].worktree="/wrong"' \
+      '.rebase_provenance[0].before_head="bad"' \
+      '.rebase_provenance[0].after_head="bad"' \
+      '.rebase_provenance[0].hops += "\n"' \
+      '.rebase_provenance[0].hops="rebase-hop:\nrebase-map: invalid dropped"' \
+      '.rebase_provenance[0].extra=true'; do
+      jq "$mutation" "$root/retained-good.json" > "$retained_state"
+      bad_projection=0
+      rebase_map_project_bound "$wt" KEN-1 "$item_head" "$retained_head" "$retained_state" || bad_projection=$?
+      assert_eq "$bad_projection" 1 "retained correspondence refuses $mutation"
+    done
+    for shape in dropped ambiguous cycle; do
+      jq --arg shape "$shape" --arg old "$item_head" --arg new "$retained_head" '
+        .rebase_provenance[0].hops =
+          (if $shape == "dropped" then "rebase-hop:\nrebase-map: " + $old + " dropped"
+           elif $shape == "ambiguous" then "rebase-hop:\nrebase-map: " + $old + " " + $new + "\nrebase-map: " + $old + " " + $new
+           else "rebase-hop:\nrebase-map: " + $old + " " + $new + "\nrebase-hop:\nrebase-map: " + $new + " " + $old end)
+      ' "$root/retained-good.json" > "$retained_state"
+      bad_projection=0
+      rebase_map_project_bound "$wt" KEN-1 "$item_head" "$retained_head" "$retained_state" || bad_projection=$?
+      assert_eq "$bad_projection" 1 "retained correspondence refuses $shape identity"
+    done
+    cp "$root/retained-good.json" "$retained_state"
+  else
+    assert_eq "$projection_rc ${REBASE_MAP_FAIL_ARGS[0]}" '1 provenance-operation-unbound' 'a pending snapshot has no historical operation-head proof'
+  fi
+  assert_eq "$(cat "$wt/tmp/dev-return-KEN-1-retained.json")" "$original_receipt" 'identity projection preserves the original failed receipt bytes'
+  assert_eq "$([[ -e "$(git -C "$wt" rev-parse --git-path kendex-rebase-map)" ]] && echo present || echo absent)" absent 'successful retention consumes the private copy'
+done
+RETENTION_ROUND=false
+RETENTION_CONTROL="$(mutant_scripts retained-correspondence-control worktree-push)"
+mutate_file "$RETENTION_CONTROL/worktree-push" $'\tretain_rebase_provenance \\' $'\ttrue \\'
+RETENTION_ROUND=true
+checkpoint_case retained-control "$RETENTION_CONTROL/worktree-push" push-base push-rebase checkpoint > "$TMP_ROOT/retained-control.json"
+retained_state="$(cd "$wt" && "$STATE" path KEN-1)"
+control_projection=0
+rebase_map_project_bound "$wt" KEN-1 "$item_head" "$(git -C "$wt" rev-parse HEAD)" "$retained_state" || control_projection=$?
+assert_eq "$control_projection" 1 'control: consuming without retention loses the real native correspondence'
+RETENTION_FAILURE="$(mutant_scripts retained-persistence-failure worktree-push)"
+mutate_file "$RETENTION_FAILURE/worktree-push" $'\tretain_rebase_provenance \\' $'\tfalse \\'
+checkpoint_case retained-failure "$RETENTION_FAILURE/worktree-push" push-base push-rebase checkpoint > "$TMP_ROOT/retained-failure.json"
+assert_eq "$(jq -r '[.rc,.published,.map]|map(tostring)|join(" ")' "$TMP_ROOT/retained-failure.json")" '1 true true' \
+  'failed persistence keeps the private evidence after actual transport succeeds'
+assert_contains "$(cat "$root/publish.err")" 'operation-exit=0 push-exit=0' 'the refusal keeps the real post-transport outcome'
+RETENTION_ROUND=false
 
 # Disable the guarded transport on a disposable source copy. The same real
 # published restack must then fail its published-head contract.

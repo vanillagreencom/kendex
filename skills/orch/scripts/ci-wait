@@ -122,6 +122,10 @@ ci_message() {
       printf 'ci-wait: none-configured base=%s repo=%s\n' "$base_branch" "$REPO"
       printf '%s\n' "CI: none configured (no active workflows, no required checks on $base_branch)"
       ;;
+    none-required)
+      printf 'ci-wait: none-required head=%s repo=%s\n' "$checks_head" "$REPO"
+      printf '%s\n' 'CI: no required checks on this head'
+      ;;
     no-checks)
       printf 'ci-wait: no-checks pr=%s elapsed=%s grace=%s\n' "$PR_NUM" "$elapsed" "$NO_CHECKS_GRACE"
       printf '%s\n' "No CI checks after ${elapsed}s (grace ${NO_CHECKS_GRACE}s)"
@@ -912,6 +916,21 @@ while [ "$elapsed" -lt "$MAX_WAIT" ] || [ "$no_checks_due" = true ]; do
         ;;
       *) echo "ci-wait: required-state=$required_state" >&2; exit 1 ;;
     esac
+  fi
+
+  # The shared protection reader proves absence for this checked head. Raw
+  # optional checks and optional workflows cannot create a required obligation.
+  if $REQUIRED_ONLY && jq -en --argjson req "$REQUIREMENTS" --arg head "$checks_head" \
+      "$CI_RUN_JQ_DEFS"'no_required_obligation($req; $head)' >/dev/null; then
+    update_elapsed
+    if $JSON_OUTPUT; then
+      jq -n --arg repo "$REPO" --arg head "$checks_head" --argjson elapsed "$elapsed" \
+        '{status:"complete", verdict:"none", repo:$repo, head:$head, elapsed_seconds:$elapsed,
+          reason:"no required checks", pending_checks:[], failed_checks:[], passed_checks:[]}'
+    else
+      ci_message none-required "$@"
+    fi
+    exit 0
   fi
 
   # Handle no checks / empty response (only reached when gh succeeded)
