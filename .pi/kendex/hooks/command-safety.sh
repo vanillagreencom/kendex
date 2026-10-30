@@ -132,7 +132,8 @@ environment_producer() { # command kind
       export | declare | typeset)
         # Only a word that starts with a literal name, alone or before = or
         # +=, names a variable. Any other expanding word, such as "$x", can
-        # be an option or no word at all, so it keeps the listing judgment.
+        # be an option or no word at all; beside listing flags alone, it
+        # keeps the listing judgment.
         named=""; flags=""; listing=1
         for ((j=pos; j<${#args[@]}; j++)); do
           value=${args[$j]}
@@ -146,8 +147,8 @@ environment_producer() { # command kind
         done
         if [ -z "$named" ]; then
           # With no name, declare and typeset print every variable: bare,
-          # after --, with only the g and I scope flags, or with expanding
-          # words that name none.
+          # after --, with only the g and I scope flags, or with only those
+          # flags and expanding words that name none.
           case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump-lines ;; esac
           [ -z "$listing" ] || mode=dump-lines
           if [ "$mode" = dump-lines ]; then
