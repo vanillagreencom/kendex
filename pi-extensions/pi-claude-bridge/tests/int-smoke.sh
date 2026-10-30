@@ -9,6 +9,8 @@ test_notice test smoke-test
 setup_test_env "smoke-test"
 
 TIMEOUT=60
+SMOKE_MODEL="claude-sonnet-5"
+SMOKE_PROMPT="Is two plus two equal to four? Reply with just the word 'yes'."
 PASS=0
 FAIL=0
 
@@ -44,13 +46,13 @@ run() {
 
 run "provider: print mode responds" "^[Yy][Ee][Ss][.!]?$" \
   pi --no-session -ne -e "$DIR" \
-  --model "pi-claude/claude-sonnet-5" \
-  -p "Reply with just the word 'yes'"
+  --model "pi-claude/$SMOKE_MODEL" \
+  -p "$SMOKE_PROMPT"
 
 run "provider: --provider flag works" "^[Yy][Ee][Ss][.!]?$" \
   pi --no-session -ne -e "$DIR" \
-  --provider pi-claude \
-  -p "Reply with just the word 'yes'"
+  --provider pi-claude --model "$SMOKE_MODEL" \
+  -p "$SMOKE_PROMPT"
 
 run "provider: model list includes provider" "pi-claude" \
   pi --no-session -ne -e "$DIR" --list-models
