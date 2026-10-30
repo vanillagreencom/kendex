@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Line readers for a GitHub Actions workflow file, shared by the suites that
 # ask which of a workflow's jobs run: this package's ci-template suite and
-# kendex's own tools/tests/ci-aggregate.test.sh. gh-eval.py beside this
-# file evaluates what they read.
+# kendex's aggregate and partition suites. gh-eval.py beside this file
+# evaluates what they read.
 #
 # Sourced, never run. Each reader takes the workflow path and reads only the
 # lines at a job's own indent under `jobs:`, the two-space job keys and the
@@ -57,6 +57,53 @@ job_needs() { # WORKFLOW
     }
     END { if (job != "") print job "\t" needs }
   ' "$1"
+}
+
+# A shard matrix key's expression, `os` or `shard`, the `${{ }}` stripped.
+matrix_expr() { # WORKFLOW KEY [JOB]
+  local raw
+  raw="$(awk -v job="${3:-skill-suites-shard}:" -v key="$2:" '
+    /^  [A-Za-z0-9_-]+:/ { active = ($1 == job) }
+    active && /^        [^[:space:]]/ && $1 == key { sub(/^        [^:]+: /, ""); print }
+  ' "$1")"
+  case "$raw" in
+    '&'*) raw="${raw#* }" ;;
+    '*'*) raw="$(sed -n "s/^        $2: &${raw#\*} //p" "$1")" ;;
+  esac
+  case "$raw" in
+    '${{'*) printf '%s' "${raw:4:${#raw}-7}" ;;
+    \[*) printf "fromJSON('%s')" "$(printf '%s' "$raw" | sed 's/\([a-z][a-z-]*\)/"\1"/g')" ;;
+  esac
+}
+
+# `NAME SOURCE` for every changes-job output the select step publishes.
+published_map() { # WORKFLOW
+  awk '
+    /^  changes:/ { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && /^    outputs:/ { in_outputs = 1; next }
+    in_outputs && !/^      / { in_outputs = 0 }
+    in_outputs && match($0, /^      [a-z_]+: \$\{\{ steps\.select\.outputs\.[a-z_]+ \}\}$/) {
+      name = $1; sub(/:$/, "", name)
+      source = $0; sub(/.*steps\.select\.outputs\./, "", source); sub(/ .*/, "", source)
+      print name " " source
+    }
+  ' "$1"
+}
+
+# The changes job publishes its mapped selection only after success. These
+# fixtures model default-branch events, including the normal push-main ref.
+context_json() { # EVENT RESULT SELECTION MAP_FILE [REF]
+  local outputs='{}'
+  if [ "$2" = success ]; then
+    outputs="$(printf '%s\n' $3 | jq -Rn --rawfile map "$4" '
+      ([inputs | select(length > 0) | split("=") | {key: .[0], value: .[1]}] | from_entries) as $chosen
+      | [$map | split("\n")[] | select(length > 0) | split(" ")
+         | select($chosen[.[1]] != null) | {key: .[0], value: $chosen[.[1]]}] | from_entries')" ||
+      { echo "could not build the outputs of '$3'" >&2; exit 1; }
+  fi
+  jq -cn --arg event "$1" --arg result "$2" --argjson outputs "$outputs" --arg ref "${5:-refs/heads/main}" \
+    '{github: {event_name: $event, ref: $ref}, needs: {changes: {result: $result, outputs: $outputs}}}'
 }
 
 # The key of each job whose `name:` is exactly NAME.

@@ -1,6 +1,7 @@
 name: Skill Tests
 
-# Runs every skill's, hook's and pi-extension's own test suite — the same
+# Runs the surviving skill, hook and pi-extension suites under D026/D027's
+# explicit temporary orch-corpus exception — the same
 # suites fix cycles run locally — plus the workspace's cargo tests. Upstream
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
@@ -56,11 +57,7 @@ name: Skill Tests
 # ceiling: TEN MINUTES, past which a shard is split even where its Linux leg
 # sits inside five. Run 36195213656, the first with every split below in
 # place, has legs past their figure on both runners, and none is split here.
-# The orch legs among them ran their suites one at a time;
-# skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
-# and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
-# run re-measures them, and the comment above the orch shard steps holds
-# run 36195213656's figures. `worktree` on macOS, `linear` and `rest` on
+# `worktree` on macOS, `linear` and `rest` on
 # Linux, and `guards-tools` and `guards-tools-tail` on both runners do not
 # run through run-all.sh and stand past their figure pending a split.
 #
@@ -77,12 +74,9 @@ name: Skill Tests
 # which is what keeps a shard set a partition. Where the next cut would have
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
-# steps says so. Two legs are that case. `orch-terminal` is the first: its
-# suite open-terminal-lane, which races a real process tree, is on
-# run-all.sh's ALONE list and runs after the others, so the leg's wall time is that suite's seconds plus the
-# pooled rest, and the orch shard comment gives the figures. The macOS
+# steps says so. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
-# `rest`, and `render-lint` is the second: a target whose cost is one
+# `rest`, and `render-lint` is that case: a target whose cost is one
 # expensive test, so no target seam reaches inside it. After its comments
 # pass split across scopes, its macOS test step measured 277s in run
 # 37597618670. `rest`
@@ -479,10 +473,10 @@ jobs:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
     # Merge groups run Linux shards when classification is missing or
-    # selects shell work with a remaining Linux runner. Every other event
-    # and cancelled runs stand this job down. The status function lifts the
-    # implicit `success()` when classification fails.
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
+    # selects shell work with a remaining Linux runner. Main pushes run the
+    # full fallback roster. The status function also permits skipped main
+    # classification and lifts implicit success after a classifier failure.
+    if: ${{ !cancelled() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -491,17 +485,14 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    # The macOS legs on the same suites, first green run: orch 10m45s
-    # against 4m45s on Linux, guards 9m09s against 3m13s, rest 7m39s against
+    # The macOS legs on the same suites, first green run: guards 9m09s
+    # against 3m13s on Linux, rest 7m39s against
     # 3m07s, review-gate 3m45s against 1m05s, linear 2m47s against 3m30s. The
-    # undivided orch battery later reached 21m45s here against the 15m16s on
-    # Linux that the ceiling cancelled; the split below answers it, and each
-    # third runs this leg in roughly a third of that time. The three shards
-    # this leg later held past ten minutes of every merge — guards to 1061s,
-    # rest to 845s, orch-rest to 675s — are split again below.
+    # shards this leg later held past ten minutes of every merge — guards to
+    # 1061s, rest to 845s — are split again below.
     # The Linux legs the `if:` of the `kendex from this checkout` step names
     # build kendex-cli (debug) from the checkout ahead of their suites, and a
     # cold cargo cache — the first run after a merge, and after each rustc
@@ -515,18 +506,13 @@ jobs:
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
     # Slack retains the budget of the rest shard it splits from on both OSes.
-    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || (matrix.os == 'ubuntu-latest' && matrix.shard == 'orch-dev')) && 30 || 15 }}
+    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
     # shard that runs those suites must be one that installed a kendex
     # whatever the roster looks like later. The macOS legs keep the skip, for
     # the reason the install step gives.
-    # ORCH_REQUIRE_KENDEX does the same for three orch suites:
-    # open-terminal-copilot-context.sh, whose disableAllHooks rows ask a real
-    # kendex hooks-off and which the `orch-terminal` shard runs, and
-    # claude-model-classes.sh and tier-model-fixture.sh, whose rows ask a
-    # real kendex tier-model and which the `orch-rest` shard runs.
     env: &skill-suite-env
       # REVISIT(D026): one profile serves every real macOS battery invocation.
       RUN_ALL_NATIVE_CONTRACTS: ${{ matrix.os == 'macos-latest' && format('{0}/tools/macos-test-contracts', github.workspace) || '' }}
@@ -534,8 +520,11 @@ jobs:
       RUN_ALL_MARGIN_PERCENT: '125'
       RUN_ALL_SHARD: ${{ matrix.shard }}
       HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-      ORCH_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
       REVIEW_GATE_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # REVISIT(D027): KEN-4733 owns the final restoration contract.
+      # This workflow owns the temporary roster; evidence tables are never inputs.
+      TEMPORARY_SUITE: ${{ matrix.suite || '' }}
+      MAIN_ONLY_FILTERS: ${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push') && '!=critical-path-deny.test !=orch-shard-partition.test !=adopt-refresh.test' || '' }}
     steps: &skill-suite-steps
       # run-all.sh stops every suite still running at this Unix time and names
       # each in the log, so a hang fails by name before the job ceiling cancels
@@ -701,24 +690,15 @@ jobs:
           diff <(printf '%s\n' "$declared") <(printf '%s\n' "$used") || { echo "shard names disagree: '<' the matrix declares and no step names; '>' a step names and the matrix does not run"; exit 1; }
           printf '%s\n' "$declared" | grep -qxF "$SHARD" || { echo "this leg's shard '$SHARD' is not in the matrix"; exit 1; }
 
-      # kendex-cli, built from this checkout and put on PATH, for the
-      # shards whose suites run a real kendex: `rest`, for harness-ci's
-      # change-class rows, whose comment at the `rest` shard's verify-document
-      # step says why the build is this checkout's and why Linux alone, and
-      # `orch-terminal`, for the disableAllHooks rows of
-      # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
-      # checkout ships, `orch-rest`, for claude-model-classes.sh, whose core
-      # contract rows hold the Claude plugin's fixtures to this checkout's
-      # `tier-model`, and tier-model-fixture.sh, which holds the orch suites'
-      # class table fixture to it, and `refresh`, for refresh-consumer's held-render
-      # rows. The macOS legs keep the binary-dependent skips.
+      # The surviving rest and refresh consumers need this checkout's kendex.
+      # macOS retains the binary-dependent skips.
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         run: |
           # Keep the image's suites and signing key, without its slow Azure mirror
           # or unrelated third-party sources. Leave the image's sources untouched.
@@ -730,7 +710,7 @@ jobs:
           apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
           sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev
       - name: kendex from this checkout
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         run: |
           set -euo pipefail
           cargo build -p kendex-cli --locked
@@ -766,62 +746,11 @@ jobs:
             base="${t##*/}"
             refresh+=("=${base%.sh}")
           done
-          bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" || fail=1
+          [[ -z "${TEMPORARY_SUITE:-}" ]] || refresh=("=$TEMPORARY_SUITE")
+          bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
-      # ---- shards: orch-terminal, orch-oversee, orch-oversee-watch,
-      # orch-oversee-succeed, orch-dev, orch-state, orch-rest -----------------
-      # Source reductions retained all 72 orch-state suites, but run
-      # 38164401517 still took 1383s on macOS. run-all.sh owns the family
-      # profiles and their complement. Dev/review names enter `orch-dev`,
-      # including names that also carry lane or workflow-state, and so does
-      # the oversee launch family; the owed-work family joins it on Linux.
-      # On Linux, the account-reader `lanes*` family joins `orch-dev`;
-      # `orch-state` keeps the other lane/workflow-state names. `orch-rest`
-      # takes the remaining suites after these families. The macOS
-      # profiles spread watch contracts across these same jobs. New suites
-      # join one family by name. orch-shard-partition.test.sh reads the actual
-      # workflow calls and proves complete, unique ownership on both OSes.
-      #
-      # Measured suite by suite, one at a time, on the Linux leg of run
-      # 36195213656. A shard's figure is the sum of its suites' seconds, read
-      # from the log timestamps; the step time the jobs API reports is within
-      # a second of it. orch-terminal 597s over 10 files (open-terminal-lane
-      # 229s, open-terminal-record 124s, open-terminal-claude-handoff 90s,
-      # open-terminal-owned-skip 76s), orch-oversee 516s over 13
-      # (oversee_watch_lifecycle 128s, oversee_watch 118s,
-      # oversee_watch_overseer 81s, oversee_watch_lanes 62s),
-      # orch-oversee-succeed 462s over 4 (oversee_succeed 191s,
-      # oversee_watch_mail 163s, oversee_succeed_watch 79s, oversee_report
-      # 29s), orch-state 702s over 42 (dev_validate_run 206s, lanes 189s,
-      # lane-host-ssh 50s, lane_close 49s) and orch-rest 221s over 37
-      # (approval_wait 51s, round_recover 37s, queue_wait 26s). The macOS
-      # legs of that run spent 781s, 1087s, 597s, 1021s and 339s of step
-      # time on the same five. run-all.sh runs those suites `nproc` at a
-      # time, save the ones on its ALONE list, which run one at a time after
-      # the rest, and prints each one's `suite=<name> seconds=<n>` line, so a
-      # step's wall time is now below its sum and its log carries these
-      # figures fresh. Splitting
-      # orch-terminal in turn would have to name individual suites rather
-      # than a name prefix, since open-terminal-lane alone was 229s of its
-      # 597s on that run, so that is where a name partition stops.
-      #
-      # `orch-oversee` then ran 14m37s-14m47s on main's own orch pull requests
-      # and was cancelled at 15m16s on PR #2902, inside
-      # oversee_watch_receipts, having spent oversee_succeed 191s,
-      # oversee_watch_mail 165s, oversee_watch_lifecycle 126s, oversee_watch
-      # 112s, oversee_watch_overseer 78s, oversee_succeed_watch 78s,
-      # oversee_watch_lanes 60s and oversee_report 29s. `orch-oversee-succeed`
-      # takes the succession, mailbox and report suites by name
-      # (oversee_succeed, oversee_succeed_watch, oversee_watch_mail,
-      # oversee_report: 463s on that run), and `orch-oversee` keeps every
-      # other oversee suite by rejecting exactly those names, the watch loop,
-      # its lanes, receipts and usage limits. Its rejectors are the other
-      # shard's selectors, so a new oversee suite lands in `orch-oversee` and
-      # never in neither. Run 36195213656, PR #2902's own run with the split
-      # in place, confirms it: both shards finished inside each leg's job
-      # ceiling, by the per-suite paragraph above.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-watch' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
+        if: matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -839,79 +768,6 @@ jobs:
             export PATH="$tmux_dir:$PATH"
           fi
           tmux -V
-
-          if [[ '${{ matrix.shard }}' == orch-terminal ]]; then
-            if [[ "$RUNNER_OS" == macOS ]]; then
-              command -v fish >/dev/null || brew install fish
-            else
-              if ! command -v fish >/dev/null; then
-                apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
-                trap 'rm -- "$apt_sources"' EXIT
-                sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
-                  -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
-                  /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
-                apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
-                sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y fish
-              fi
-            fi
-          fi
-
-      # run-all.sh prints its own `orch tests: N/M file(s) FAILED:` block
-      # naming every red suite, which is this shard's FAILED SUITES report.
-      - name: orch suites — the open-terminal launch path
-        if: matrix.shard == 'orch-terminal'
-        run: bash skills/orch/tests/run-all.sh --shard orch-terminal
-
-      - name: orch suites — the oversee watch loop
-        if: matrix.shard == 'orch-oversee'
-        run: bash skills/orch/tests/run-all.sh --shard orch-oversee
-
-      # Run 37769037887 stopped oversee_watch at the deadline and never
-      # started its lifecycle suite. Its terminal and overseer suites took
-      # 537s and 535s. Linux run 37792683384 also stopped lifecycle at the
-      # deadline. run-all.sh owns both platforms' partition and complement.
-      - name: 'orch suites: the watch, terminal, overseer and lanes'
-        if: matrix.shard == 'orch-oversee-watch'
-        run: bash skills/orch/tests/run-all.sh --shard orch-oversee-watch
-
-      - name: orch suites — the overseer succession, mailbox and report
-        if: matrix.shard == 'orch-oversee-succeed'
-        run: bash skills/orch/tests/run-all.sh --shard orch-oversee-succeed
-
-      - name: 'orch suites: the dev and review round-artifact suites, oversee launch and owed work'
-        if: matrix.shard == 'orch-dev'
-        run: bash skills/orch/tests/run-all.sh --shard orch-dev
-
-      - name: 'orch suites: the lane and workflow-state suites'
-        if: matrix.shard == 'orch-state'
-        run: bash skills/orch/tests/run-all.sh --shard orch-state
-
-      # claude-model-classes.sh runs the orch Claude plugin under Claude Code
-      # and fails under CI where no claude is on PATH. The pin is at or above
-      # 2.1.287, the first release with the callbacks the plugin uses, and the
-      # npm package fetches its platform binary at install, so install scripts
-      # run; the version check fails here on a launcher without one.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: matrix.shard == 'orch-rest'
-        with:
-          node-version: 22.19.0
-      - name: Claude Code for the orch plugin suite
-        if: matrix.shard == 'orch-rest'
-        run: |
-          set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/claude-code" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code@2.1.292
-          "$RUNNER_TEMP/claude-code/node_modules/.bin/claude" --version
-          echo "$RUNNER_TEMP/claude-code/node_modules/.bin" >> "$GITHUB_PATH"
-
-      # The runner owns the complement, so this shard needs no suite roster.
-      - name: orch suites — every suite the shards above do not run
-        if: matrix.shard == 'orch-rest'
-        run: bash skills/orch/tests/run-all.sh --shard orch-rest
-
-      - name: GitHub suites
-        if: matrix.shard == 'orch-rest'
-        run: bash skills/orch/tests/run-all.sh --battery skills/github/tests --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test --alone native-contracts.test
-
 
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the
@@ -1046,6 +902,9 @@ jobs:
           failed=""
           for t in tools/tests/harness-smoke.test.sh \
             tools/tests/orch-shard-partition.test.sh; do
+            base="${t##*/}"
+            [[ -z "${TEMPORARY_SUITE:-}" || "$base" == "$TEMPORARY_SUITE.sh" ]] || continue
+            case " ${MAIN_ONLY_FILTERS:-} " in *" !=${base%.sh} "*) continue ;; esac
             echo "=== $t"
             set --
             case "$t" in
@@ -1099,14 +958,18 @@ jobs:
               skills/*) guards+=("=${base%.sh}") ;;
             esac
           done
+          if [[ -n "${TEMPORARY_SUITE:-}" ]]; then
+            hooks=("=$TEMPORARY_SUITE")
+            guards=()
+          fi
           fail=0
           # If the tail is removed, its pending-reading timer keeps its isolation here.
           # Both batteries use one pool. Filters apply to both roots.
           batteries=(--battery hooks/tests --alone lane-mail-usage.test)
-          if [ "${#guards[@]}" -gt 0 ]; then
+          if [ -z "${TEMPORARY_SUITE:-}" ] && [ "${#guards[@]}" -gt 0 ]; then
             batteries+=(--battery skills/commit-guards/tests)
           fi
-          bash skills/orch/tests/run-all.sh "${batteries[@]}" "${hooks[@]}" ${guards[@]+"${guards[@]}"} || fail=1
+          bash skills/orch/tests/run-all.sh "${batteries[@]}" "${hooks[@]}" ${guards[@]+"${guards[@]}"} ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
 
       - name: lane-mail and reviewer suites
@@ -1231,9 +1094,7 @@ jobs:
       # prefix: the hooks shards also name commit-guards paths. That prefix
       # would keep this step skipping the package's other suites after the
       # step that runs them was deleted. Each glob below appears
-      # once and disappears with its step. `orch` is claimed by a path to
-      # run-all.sh rather than by a glob. Its one-line run prefix excludes
-      # this step's pooled call. Package variables keep declarations from
+      # once and disappears with its step. Package variables keep declarations from
       # answering their own claims search.
       # `claims` drops comment lines for the reason the `guards-commit` step
       # above gives. -------------------------------------------------------
@@ -1306,7 +1167,8 @@ jobs:
             x="${dir#skills/}"
             x="${x%%/*}"
             case "$x" in
-              orch) needle="run: bash skills/$x/tests/run-all.sh" ;;
+              # REVISIT(D026): KEN-4733 owns restoration of orch CI coverage.
+              orch) continue ;;
               review-gate) needle="skills/$x/tests/*.test.sh" ;;
               github | slack | mailbox) needle="--battery skills/$x/tests" ;;
               commit-guards | linear | bot-instructions | preflight | worktree)
@@ -1323,7 +1185,6 @@ jobs:
             case "$x" in
               github) set -- --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test --alone native-contracts.test ;;
               harness-ci) set -- --alone wiring-errors.test ;;
-              orch) set -- --alone open-terminal-lane --alone oversee_watch_lifecycle ;;
               reviewer) set -- --alone mutation-stability.test ;;
               second-opinion)
                 set -- --alone cli-failure-gate.test --alone detached-run.test \
@@ -1345,11 +1206,11 @@ jobs:
           node-version: 22.19.0
 
       - name: deep-research node suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         run: node --test skills/deep-research/tests/deep-research.test.mjs
 
       - name: pi-extension package policy suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         run: node --test pi-extensions/package-policy.test.mjs
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -1361,7 +1222,7 @@ jobs:
       # reads PI_QOL_PEER_VERSION, and tests/runtime-copy-peers.test.ts refuses
       # a peer installed at any other version.
       - name: pi-qol regression suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-qol
         env:
           PI_QOL_PEER_VERSION: 0.86.0
@@ -1370,21 +1231,21 @@ jobs:
           npm test
 
       - name: pi-output-policy suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-output-policy
         run: npm test
 
       # The pi-hooks lane wake suite runs a whole Pi session in process, and
       # the package's own test script installs the Pi its devDependencies pin.
       - name: pi-hooks suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-hooks
         run: npm test
 
       # pi-nested-agents-md imports only types from pi-coding-agent, which
       # bun erases, so its suite runs with no install.
       - name: pi-nested-agents-md suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-nested-agents-md
         run: npm test
 
@@ -1394,7 +1255,7 @@ jobs:
       # GitHub image does not carry it. The whole directory is globbed, so
       # all test files run here without editing this step.
       - name: pi-agents-tmux suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && (matrix.suite == 'pi-agents-tmux' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         working-directory: pi-extensions/pi-agents-tmux
         run: |
           git fetch --no-tags --depth=1 origin "$(sed -n 's/^export const BENCHMARK_BASELINE = "\([0-9a-f]*\)";.*/\1/p' tests/browser-fixture.ts)"
@@ -1405,7 +1266,7 @@ jobs:
       # transport test would validate a different major than consumers
       # actually install.
       - name: pi-codex-minimal-tools suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1 typebox 'undici@^7.29.1'
@@ -1416,7 +1277,7 @@ jobs:
       # and rpc-fallback import nothing outside the package), so unlike the
       # suites above no npm install is needed.
       - name: pi-questions suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-questions
         run: npm test
 
@@ -1425,7 +1286,7 @@ jobs:
       # pi-coding-agent pulls them transitively and an unpinned resolution
       # mismatches its exports.
       - name: pi-tool-renderer suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-tool-renderer
         run: |
           npm install --no-save --include=dev --include=peer --include=optional --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@1.0.1 @earendil-works/pi-ai@1.0.1 @earendil-works/pi-coding-agent@1.0.1 @earendil-works/pi-tui@1.0.1 @earendil-works/pi-codemode@1.0.1 @earendil-works/pi-mcp@1.0.1 @earendil-works/pi-telemetry@1.0.1
@@ -1434,14 +1295,14 @@ jobs:
       # Prompt stash mocks its Pi TUI value imports, so its suite needs no
       # package install.
       - name: pi-prompt-stash suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-prompt-stash
         run: npm test
 
       # pi-session-bridge imports nothing from Pi outside type positions, the
       # same case as pi-nested-agents-md above, so its suite runs with no install.
       - name: pi-session-bridge suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-session-bridge
         run: npm test
 
@@ -1449,7 +1310,7 @@ jobs:
       # imports only the package's leaf modules, so the Pi value imports
       # elsewhere in the package are never loaded and no install is needed.
       - name: pi-session-manager suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-session-manager
         run: npm test
 
@@ -1459,7 +1320,7 @@ jobs:
       # alongside it because the package value-imports them too and an
       # unpinned resolution mismatches pi-coding-agent's exports.
       - name: pi-skills-manager suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-skills-manager
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
@@ -1472,7 +1333,7 @@ jobs:
       # because their suites need Pi packages declared as peer dependencies,
       # which a lockfile of theirs never resolves.
       - name: pi-caveman suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-caveman
         run: |
           npm ci --no-audit --no-fund
@@ -1485,7 +1346,7 @@ jobs:
       # on the paths the suite exercises, and tsx is what the test script runs
       # the suite under.
       - name: pi-web-tools suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-web-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox tsx 'youtube-transcript-plus@^2.0.1'
@@ -1494,7 +1355,7 @@ jobs:
       # The suite mocks every Pi module and typebox it imports with bun's
       # mock.module, so like pi-session-manager it needs no install.
       - name: pi-background-tasks suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-background-tasks
         run: npm test
 
@@ -1503,7 +1364,7 @@ jobs:
       # what keeps a test file that does reach it failing as a test rather
       # than as an unresolved module.
       - name: pi-extension-manager suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-extension-manager
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
@@ -1513,7 +1374,7 @@ jobs:
       # Two of its three files are node:test and one is bun:test; bun's runner
       # executes both, which is why one `npm test` covers the directory.
       - name: pi-task-panel suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-task-panel
         run: npm test
 
@@ -1549,13 +1410,14 @@ jobs:
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
 
-  # THE NIGHTLY macOS ROSTER, on the daily schedule or a manual dispatch.
+  # Full main and nightly macOS rosters. Main shell execution is additional
+  # work versus the pre-KEN-4718 cargo-only main route; its cost is unmeasured.
   # changes is skipped there, so the shared matrix expression uses its
   # full-roster fallback. The suite steps and budgets have one owner.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1572,8 +1434,6 @@ jobs:
             shard: linear-controls-a
           - os: macos-latest
             shard: linear-controls-b
-          - os: macos-latest
-            shard: orch-oversee-watch
           - os: macos-latest
             shard: worktree-restack
           - os: macos-latest
@@ -1600,8 +1460,35 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: *skill-suite-timeout
+    env: *skill-suite-env
+    steps: *skill-suite-steps
+
+  # REVISIT(D026): KEN-4718's temporary exceptions retain their original
+  # shard setup, native eligibility and bounds through the shared steps.
+  # Real failures stay red here. This family is deliberately absent from CI's needs.
+  skill-suites-main-only:
+    name: Temporary main suite (${{ matrix.suite }}, ${{ matrix.os }})
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: critical-path-deny.test
+            shard: guards-hooks
+            os: ubuntu-latest
+          - suite: orch-shard-partition.test
+            shard: guards-tools-tail
+            os: ubuntu-latest
+          - suite: pi-agents-tmux
+            shard: node
+            os: ubuntu-latest
+          - suite: adopt-refresh.test
+            shard: refresh
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
@@ -2145,11 +2032,8 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
     permissions:
       contents: read
-    # The package-suites leg runs the suites a Linux shard gives a kendex.
-    # For orch those are the orch-terminal and orch-rest shards, 800s and 436s
-    # of suites in merge-group run 39197875058, together past that run's
-    # slowest other job, 1204s. A merge group splits them over two jobs, each
-    # rendering the catalog again; other events run one.
+    # Each merge-group part renders the catalog and runs its share of the
+    # surviving released-package suites; other events run one render.
     strategy:
       fail-fast: false
       matrix:
@@ -2173,23 +2057,6 @@ jobs:
         tmux_dir="$("$brew" --prefix tmux)/bin";
         export PATH="$tmux_dir:$PATH";
         tmux -V;
-        orch_paths=$(git diff --name-only "$CATALOG_BASE" -- skills/orch .agents/skills/orch);
-        if [ -n "$orch_paths" ]; then
-          if ! command -v fish >/dev/null; then
-            apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")";
-            trap ''rm -- "$apt_sources"'' EXIT;
-            sed -e ''s|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g'' \
-              -e ''s|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g'' \
-              /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources";
-            apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null);
-            sudo apt-get "${{apt_options[@]}}" update;
-            sudo apt-get "${{apt_options[@]}}" install -y fish;
-          fi;
-          if ! command -v claude >/dev/null; then
-            npm install --prefix "$RUNNER_TEMP/release-suite-tools" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code;
-            export PATH="$RUNNER_TEMP/release-suite-tools/node_modules/.bin:$PATH";
-          fi;
-        fi;
         tools/guard --released-packages "$HOME/.local/bin/kendex" --part {0} --range "$CATALOG_BASE"', matrix.part) || '' }}
 
   # Each installed harness CLI reads the sample catalog emitted by this

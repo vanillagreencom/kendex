@@ -12,7 +12,7 @@
 #                            key; SELECT_IN, SELECT_WITH, SELECT_EVENT
 #                            and SELECT_ARG steer it (see below)
 #   lanes / measured         a measured row's lanes, and with its shards
-#   ROSTER, ORCH             the whole shard roster, and orch's shards
+#   ROSTER                   the surviving CI shard roster
 #   QUEUE_ALL                the whole macOS-capable roster, in order
 #   macos_shards SHARDS       SHARDS less the selector's Linux-only shards
 #   LINUX, BOTH              the runner lists, as ci-job-set spells them
@@ -78,8 +78,7 @@ queue_only_of() { # PATH
 }
 
 # The whole shard roster, in the matrix's order.
-ROSTER='["review-gate","refresh","orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-dev","orch-state","orch-rest","guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls-a","linear-controls-b","worktree","worktree-restack","rest","slack","mailbox","node","pi-claude-bridge"]'
-ORCH='"orch-terminal","orch-oversee","orch-oversee-watch","orch-oversee-succeed","orch-dev","orch-state","orch-rest"'
+ROSTER='["review-gate","refresh","guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls-a","linear-controls-b","worktree","worktree-restack","rest","slack","mailbox","node","pi-claude-bridge"]'
 # The expected queue list comes from each row's shards, with the platform
 # exclusions held to the workflow by orch-shard-partition.test.sh.
 macos_shards() { # SHARDS: the macOS-capable members in the same order
@@ -119,5 +118,5 @@ measured() { # LEGS UI PLATFORM BUILD SHARDS QUEUE [CATALOG] — one measured ro
 PROSE_ROW="$(measured none false false false '[]' '[]')"
 CODE_ROW="$(measured none false true false '[]' '[]')"
 UI_ROW="$(measured none true true false '[]' '[]')"
-ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
+ORCH_SHARDS="[\"guards-scans\",\"rest\"]"
 ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" "$(macos_shards "$ORCH_SHARDS")" true)"

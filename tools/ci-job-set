@@ -59,7 +59,7 @@
 #     `guards-tools-tail`, whose orch-shard-partition suite holds every
 #     citation to the roster.
 #   - `guards-scans` runs where a path under skills/, hooks/ or tools/
-#     changed, the trees its scans read. `rest`, `refresh` and `orch-rest`
+#     changed, the trees its scans read. `rest` and `refresh`
 #     also run where a build input changed, because their consumer rows use
 #     kendex-cli built from the checkout. A diff that reaches no package selects no shard, and
 #     shell_shards is false exactly where the list is empty.
@@ -163,7 +163,7 @@ LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate refresh orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest slack mailbox node pi-claude-bridge"
+SHARDS="review-gate refresh guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest slack mailbox node pi-claude-bridge"
 # The native eligibility owner declares empty and unsupported macOS shards.
 # The ownership proof compares those declarations with actual suite coverage
 # and the workflow matrix. Linux keeps the complete SHARDS roster.
@@ -375,10 +375,9 @@ want_shard() { # SHARD...
 want_package() { # PACKAGE
   local suite
   case "$1" in
-    skills/orch)
-      if [ -n "$suite_path" ]; then want_shard "$suite_shard"
-      else want_shard orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest; fi ;;
-    skills/github) want_shard orch-rest ;;
+    # REVISIT(D026): orch coverage is removed from CI until KEN-4733.
+    skills/orch) ;;
+    skills/github) want_shard rest ;;
     skills/review-gate | refresh)
       if [ -n "$suite_path" ]; then want_shard "${1#skills/}"
       else want_shard review-gate refresh; fi ;;
@@ -413,8 +412,12 @@ if [ -n "$suite_path" ]; then
   kendex=none
   if [ "$suite_os" = Linux ]; then
     for shard in $want; do
-      case "$shard" in rest | orch-terminal | orch-rest | refresh) kendex=checkout ;; esac
+      case "$shard" in rest | refresh) kendex=checkout ;; esac
     done
+  fi
+  # Offline orch runs retain their existing checkout environment.
+  if [ "$suite_os" = Linux ] && [ "${package% *}" = skills/orch ]; then
+    case "$suite_shard" in orch-terminal | orch-rest) kendex=checkout ;; esac
   fi
   printf '%s\n' "$kendex"
   exit 0
@@ -518,9 +521,9 @@ $path" ;;
       esac
     done <<<"$found"
   done
-  # `rest`, `refresh` and `orch-rest` build kendex-cli for their real
-  # consumer rows, so a build input runs all three.
-  [ "$build" = false ] || { want_shard rest; want_shard refresh; want_shard orch-rest; }
+  # `rest` and `refresh` build kendex-cli for their real
+  # consumer rows, so a build input runs both.
+  [ "$build" = false ] || { want_shard rest; want_shard refresh; }
   # shellcheck disable=SC2086 # the roster is a word list
   ! any "$ALL_SHARDS" || want_shard $SHARDS
   for shard in $SHARDS; do

@@ -6,9 +6,9 @@ cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$
 cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
-# build input runs `rest`, `refresh` and `orch-rest` for real kendex
+# build input runs `rest` and `refresh` for real kendex
 # rows, and a tools/ path its suites' two shards and the scans.
-BUILD_ROW="$(measured both false true true '["refresh","orch-rest","rest"]' '["refresh","orch-rest","rest"]')"
+BUILD_ROW="$(measured both false true true '["refresh","rest"]' '["refresh","rest"]')"
 TOOL_SHARDS='["guards-scans","guards-tools","guards-tools-tail"]'
 TOOL_ROW="$(measured both false true false "$TOOL_SHARDS" "$(macos_shards "$TOOL_SHARDS")")"
 # Where a shard runs, and where none does. A shard runs on both runners
@@ -18,8 +18,7 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -refresh -orch-terminal -orch-oversee -orch-oversee-watch -orch-oversee-succeed -orch-dev -orch-state -orch-rest -guards-commit -guards-commit-tail -linear -linear-controls-a -linear-controls-b -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
-ORCH_ALL="+orch-terminal +orch-oversee +orch-oversee-watch +orch-oversee-succeed +orch-dev +orch-state +orch-rest"
+NO_SKILL="-review-gate -refresh -guards-commit -guards-commit-tail -linear -linear-controls-a -linear-controls-b -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
 # `+shard` members it must hold and `-shard` members it must not. Empty
