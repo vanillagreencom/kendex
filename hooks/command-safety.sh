@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell script, exec or builtin, in selected shell, eval or env -S source, and in literal input a shell, exec, builtin or unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
-# summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words used as data pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell script, exec or builtin, selected shell, eval and env -S source, and each literal body a shell, exec, builtin or unknown receiver gets, judged alone as shell source. Known interpreters use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; and the same command inside a body an unknown receiver gets. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# description: On harnesses that execute hooks, refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, a shell or env -S command string, exec or builtin, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
+# summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument or in a quoted cat heredoc pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
+# safety: Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, a shell or env -S command string, exec or builtin, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to an unknown receiver, such as ssh host <<< env; and an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -39,7 +39,7 @@ environment_producer() { # command kind
     while [ "$program" != opaque ] && [ "$pos" -lt "${#args[@]}" ]; do
       # ANSI-C escapes in a head have no decoder in this input contract.
       # Refuse rather than permit an encoded environment producer.
-      [ "${arg_kinds[$pos]}" != ansi-escaped ] || { mode=dump-unknown; return; }
+      [ "${arg_kinds[$pos]}" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
       [ "${arg_kinds[$pos]}" != dollar-literal ] || arg_kinds[pos]=literal
       [ "${arg_kinds[$pos]}" = literal ] || break
       program_pos=$pos; program=${args[$pos]##*/}; pos=$((pos + 1))
@@ -90,7 +90,9 @@ environment_producer() { # command kind
           if [ "$program" = env ] && [ "$pos" -ge "${#args[@]}" ]; then
             mode=dump-lines; [ -z "$null_output" ] || mode=dump-nul
           fi
-          if [ "$program" = env ] && [ "${arg_kinds[$pos]:-literal}" != literal ]; then mode=dump-unknown; fi
+          if [ "$program" = env ] && [ "${arg_kinds[$pos]:-literal}" != literal ]; then
+            mode=dump-unknown; [ "${arg_kinds[$pos]}" != ansi-escaped ] || dump_reason=undecoded-ansi-escape
+          fi
           [ "$program" = env ] && [ "$mode" = other ] || break
           continue ;;
         *) break ;;
@@ -102,11 +104,11 @@ environment_producer() { # command kind
     case "${program:-}" in
       printenv | export | declare | typeset | set | systemctl | cat | tr | strings | xargs)
         for ((j=pos; j<${#args[@]}; j++)); do
-          [ "${arg_kinds[$j]}" != ansi-escaped ] || { mode=dump-unknown; return; }
+          [ "${arg_kinds[$j]}" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
         done ;;
     esac
     case "${program:-}" in
-      cat | tr | strings | xargs) [ -z "$input_escaped" ] || { mode=dump-unknown; return; } ;;
+      cat | tr | strings | xargs) [ -z "$input_escaped" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; } ;;
     esac
     case "${program:-}" in
       printenv)
@@ -128,17 +130,20 @@ environment_producer() { # command kind
           if [ -n "$named" ]; then mode=clean; elif [ -n "$null_output" ]; then mode=dump-nul; fi
         fi ;;
       export | declare | typeset)
-        named=""; flags=""
+        named=""; flags=""; listing=1
         for ((j=pos; j<${#args[@]}; j++)); do
           value=${args[$j]}
           case "$value" in -*) flags=$flags$value ;; *)
             [ "${arg_kinds[$j]}" != literal ] || [[ ! $value =~ $name_re ]] || named=1 ;;
           esac
+          [ "${arg_kinds[$j]}" != literal ] || [[ $value =~ ^(--|-[gI]+)$ ]] || listing=""
         done
         if [ -z "$named" ]; then
-          # With no word at all, declare and typeset print every variable.
+          # With no name, declare and typeset print every variable: bare,
+          # after --, with only the g and I scope flags, or with a non-literal
+          # word such as "$@", which can expand to no word.
           case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump-lines ;; esac
-          [ "$pos" -lt "${#args[@]}" ] || mode=dump-lines
+          [ -z "$listing" ] || mode=dump-lines
           if [ "$mode" = dump-lines ]; then
             for ((j=pos; j<${#args[@]}; j++)); do
               value=${args[$j]}
@@ -267,9 +272,9 @@ environment_main_evidence() {
 
 # Receiving language is a local classification, not an exemption from the
 # independent shell expansion and unsupported forwarding checks.
-environment_receiver() {
+environment_receiver() { # language
   receiver=unknown; receiver_pattern=""; receiver_option=""; receiver_named=""
-  case "$program" in
+  case "$1" in
     cat) receiver=data ;;
     bash | sh | dash | zsh | ksh | eval | source | .) receiver=shell ;;
     python | python3)
@@ -289,11 +294,12 @@ environment_receiver() {
   esac
 }
 
-environment_receiver_evidence() {
-  local remaining=$1 matched
-  case "$program" in
+environment_receiver_evidence() { # language text
+  local remaining=$2 matched receiver receiver_pattern receiver_option receiver_named
+  environment_receiver "$1"
+  case "$1" in
     python | python3)
-      local source=$1 executable="" span quote c i=0 end found uncertain=""
+      local source=$2 executable="" span quote c i=0 end found uncertain=""
       local dynamic_re='(^|[^A-Za-z0-9_])(exec|eval|compile)([^A-Za-z0-9_]|$)'
       local span_re="^[^\"'#]+"
       local unsafe_re='(^|[^A-Za-z0-9_])(os|__import__|importlib|getattr|globals|vars|exec|eval|compile)([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])sys[[:space:]]*\.[[:space:]]*modules([^A-Za-z0-9_]|$)'
@@ -384,13 +390,13 @@ environment_queue() { # source text
 environment_program_text() {
   local cursor=$pos source="" options_ended="" wants_string="" value text="" source_end input later
   stdin_program=""; source_pos=""; script_operand=""
-  environment_receiver
+  environment_receiver "$program"
   if [ "$receiver" = interpreter ]; then
     for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
       if [[ ${args[$cursor]} =~ $receiver_option ]]; then
         cursor=$((cursor + 1))
         if [ "${arg_kinds[$cursor]:-}" = literal ] &&
-           environment_receiver_evidence "${args[$cursor]:-}"; then mode=dump-unknown; fi
+           environment_receiver_evidence "$program" "${args[$cursor]:-}"; then mode=dump-unknown; fi
         break
       fi
       case "${args[$cursor]}" in - | --) break ;; -*) ;; *) break ;; esac
@@ -423,7 +429,16 @@ environment_program_text() {
             -*) cursor=$((cursor + 1)); continue ;;
           esac
         fi
-        if [ -n "$wants_string" ]; then source=$value; source_pos=$cursor; else script_operand=$cursor; fi
+        # Words after the command string reach it as $0 and "$@", which it
+        # can run, so they are forwarded operands like a script's.
+        script_operand=$cursor
+        if [ -n "$wants_string" ]; then source=$value; source_pos=$cursor
+        # A non-literal option word such as "$MODE" can expand to -c, and
+        # the next word is then the command string.
+        elif [ -z "$options_ended" ] && [ "${arg_kinds[$cursor]}" != literal ] &&
+             [ "$((cursor + 1))" -lt "${#args[@]}" ]; then
+          environment_queue "${args[$((cursor + 1))]}"
+        fi
         break
       done ;;
     eval)
@@ -435,27 +450,26 @@ environment_program_text() {
       for ((; cursor<${#args[@]}; cursor++)); do
         source=$source$text${args[$cursor]}; text=' '
       done ;;
-    source | .) stdin_program=1 ;;
+    source | .)
+      stdin_program=1
+      # The script runs its operands as "$@", like a shell script's.
+      [ "$pos" -ge "${#args[@]}" ] || script_operand=$pos ;;
     opaque)
-      # Literal input to exec, builtin or a syntax-only stage can run as shell
-      # text or reach an interpreter: judge each body as both.
-      for input in $data_source; do
-        for program in python node ruby perl; do
-          environment_receiver
-          ! environment_receiver_evidence "${literal_inputs[$input]}" || { program=opaque; environment_receiver; mode=dump-unknown; return; }
-        done
-        program=opaque; environment_receiver; stdin_program=1
-      done
+      # Literal input to exec, builtin or a syntax-only stage runs as shell
+      # text; environment_dump also judges it with the interpreter patterns.
+      [ -z "$data_source" ] || stdin_program=1
       case "${args[$pos]:-}" in
         -S | --split-string) source_pos=$((pos + 1)); source=${args[$source_pos]:-} ;;
         --split-string=*) source_pos=$pos; source=${args[$pos]#*=} ;;
-      esac ;;
+      esac
+      # The split string's program gets the later words, which it can run.
+      script_operand=$source_pos ;;
   esac
   [ -n "$source_pos" ] || return 0
   # An encoded source has no decoder in this input contract.
   source_end=$((source_pos + 1)); [ "$program" != eval ] || source_end=${#args[@]}
   for ((cursor=source_pos; cursor<source_end; cursor++)); do
-    [ "${arg_kinds[$cursor]:-}" != ansi-escaped ] || { mode=dump-unknown; return; }
+    [ "${arg_kinds[$cursor]:-}" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }
   done
   environment_queue "$source"
   [ "$program" = eval ] || return 0
@@ -476,7 +490,7 @@ environment_program_text() {
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" fallback_sources
+  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target=""
@@ -586,7 +600,7 @@ environment_dump() { # command kind; arguments are already decoded data
         ' ' | $'\t' | $'\r' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>')
           redirection_kind=operator
           if [ -n "$heredoc_op" ] && [ -n "$active" ]; then
-            [ "$kind" != ansi-escaped ] || return 0
+            [ "$kind" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
             doc=${#heredocs[@]}
             heredocs[doc]=$word; heredoc_tabs[doc]=$heredoc_op
             heredoc_expand[doc]=""; [ -n "$quoted" ] || heredoc_expand[doc]=1
@@ -758,9 +772,17 @@ environment_dump() { # command kind; arguments are already decoded data
     if [ "$stage" -gt 0 ] && [ "${separators[$((stage - 1))]}" = '|' ]; then
       data_source="$data_source$piped_source"
     fi
-    # The approved data and file-writing classes are data. Every other body
-    # an unknown receiver gets is judged alone as shell source below.
+    # The approved data and file-writing classes are data. Every other
+    # heredoc body an unknown receiver gets is judged alone as shell source
+    # below; a here-string it gets is not.
     for doc in $data_source; do
+      # Input to exec, builtin or a syntax-only stage, piped input included,
+      # can reach an interpreter as well as run as shell text.
+      if [ "$program" = opaque ]; then
+        for language in python node ruby perl; do
+          if environment_receiver_evidence "$language" "${literal_inputs[$doc]}"; then return 0; fi
+        done
+      fi
       [ "$doc" -lt "${#heredocs[@]}" ] || continue
       if [ -z "${2:-}$incoming_sources" ] && [ "$1" = shell ] &&
          [ "$receiver" = data ] && [ "$mode" = other ] && [ "${#args[@]}" -eq 1 ] &&
@@ -771,7 +793,7 @@ environment_dump() { # command kind; arguments are already decoded data
          [ "$mode" = other ] && [ -z "$stdin_program" ]; then
         case "$receiver" in
           interpreter)
-            if environment_receiver_evidence "${literal_inputs[$doc]}"; then return 0; fi
+            if environment_receiver_evidence "$program" "${literal_inputs[$doc]}"; then return 0; fi
             continue ;;
           data)
             if [ "${#heredocs[@]}" -eq 1 ] && [ "$data_source" = " 0" ] &&
@@ -806,9 +828,13 @@ environment_dump() { # command kind; arguments are already decoded data
         environment_program_text
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
         case "$mode" in dump-*) return 0 ;; esac
-        # A quoted operand past the program can be a whole command string.
+        # A quoted operand past the program can be a whole command string,
+        # and so can an expanding one, whose producer selection stops at 0.
+        # A legitimate forwarded launcher form refused twice after landing is
+        # a design question for this forwarded-form rule, not a case patch
+        # (Jarvis ruling, KEN-4728).
         if [ "$candidate" -gt "$((script_pos + 1))" ] && [ -z "$output" ] &&
-           [ -z "${stage_unquoted[$candidate]}" ] && [ "$producer_end" -eq 1 ]; then
+           [ -z "${stage_unquoted[$candidate]}" ] && [ "$producer_end" -le 1 ]; then
           code=${#executable_texts[@]}
           executable_texts[code]=${stage_args[$candidate]}; executable_stages[code]=$stage
           executable_contexts[code]=forwarded
@@ -888,10 +914,18 @@ refuse() { # KEY VALUE [CAUSE]
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
       refused=environment-dump)
-        echo "the command contains a recognized private-file read or a whole-environment read without a proven direct named-variable filter"
-        echo "for named non-secret settings, use orch-env NAME DEFAULT; do not read or filter the private file"
-        echo "for actual environment producers, read named variables, for example: systemctl --user show-environment | grep '^NAME='"
-        echo "nested or unsupported environment routing can refuse conservatively; use the direct filtered form for environment producers" ;;
+        # An undecoded escape is refused as unknown, not as a recognized read,
+        # so it gets its own reason and remedy.
+        if [ -n "${dump_reason:-}" ]; then
+          printf 'command-safety: reason=%s\n' "$dump_reason"
+          echo "the shell runs a word holding an ANSI-C escape, a backslash inside \$'...', and this check does not decode those escapes"
+          echo "decode the escape in the command text, or pass the value as a literal argument"
+        else
+          echo "the command contains a recognized private-file read or a whole-environment read without a proven direct named-variable filter"
+          echo "for named non-secret settings, use orch-env NAME DEFAULT; do not read or filter the private file"
+          echo "for actual environment producers, read named variables, for example: systemctl --user show-environment | grep '^NAME='"
+          echo "nested or unsupported environment routing can refuse conservatively; use the direct filtered form for environment producers"
+        fi ;;
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
         echo "run it with no memory cap, or with a cap in gigabytes; text that only mentions such a cap goes in a file, because matching reads the command text"
@@ -981,6 +1015,8 @@ fields="$(jq -er '
     command_argv[argument_index]=$argument
   done
 } <<<"$fields"$'\t'
+# Set by the escape arms, which refuse what they cannot decode.
+dump_reason=""
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi

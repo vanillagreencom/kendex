@@ -227,7 +227,7 @@ fi
 # pathlib and environment text are submitted data, never executed here.
 environment_rows() {
   local rows expected command_json label world payload payload_cwd status output
-  local want first_key invalid shape_kind diagnostics_safe refusal before=$((passed + failed))
+  local want first_key keyed want_keyed invalid shape_kind diagnostics_safe refusal reason before=$((passed + failed))
   local selected_rows=("$@") selected_seen=()
   mkdir -p "$scratch/policy-tools"
   for tool in jq cat; do ln -sf "$(command -v "$tool")" "$scratch/policy-tools/$tool"; done
@@ -235,7 +235,7 @@ environment_rows() {
     .[] | select(($ARGS.positional | length) == 0 or
       (.[2] as $label | $ARGS.positional | index($label))) |
     .[1] |= (if type == "array" then map(gsub("@PRIVATE_HOME@"; $fixture_home)) else gsub("@PRIVATE_HOME@"; $fixture_home) end) |
-    [.[0], (.[1] | tojson), .[2], (.[3] // "project"), (.[4] // "environment-dump")] | @tsv
+    [.[0], (.[1] | tojson), .[2], (.[3] // "project"), (.[4] // "environment-dump"), (.[5] // "-")] | @tsv
   ' "$@" <<'ENVIRONMENT_ROWS'
 [2,"env","bare-env"]
 [0,"vgs_selected_rows=\"$(sed -n 's|^scripts/qml-smoke.sh --rows ||p' tmp/evidence-VGS-1998/final/selection.log)\"; [[ -n $vgs_selected_rows && $vgs_selected_rows != *$'\\n'* ]] || exit 2; bash /home/method/dev/vgshell/tmp/nested-slot.sh scripts/qml-smoke.sh --keep --rows \"$vgs_selected_rows\" > tmp/evidence-VGS-1998/final/qml.log 2>&1; vgs_check_status=$?; printf '%s\\n' \"$vgs_check_status\" > tmp/evidence-VGS-1998/final/qml.exit; exit \"$vgs_check_status\"","reported-public-selection-log"]
@@ -304,8 +304,8 @@ environment_rows() {
 [2,"cat <<<'ordinary'\nprintenv","dump-after-adjacent-here-string"]
 [2,"printf '%s' $((1 << \"$n\"))\nenv","dump-after-arithmetic-shift"]
 [0,"printf '%s' $((1 << \"$n\"))","arithmetic-shift-data"]
-[2,"cat <<$'E\\x4fF'\ndata\nEOF\nenv","encoded-heredoc-delimiter"]
-[2,"cat <<$'E\\117F'\ndata\nEOF\nprintenv","octal-heredoc-delimiter"]
+[2,"cat <<$'E\\x4fF'\ndata\nEOF\nenv","encoded-heredoc-delimiter","project","environment-dump","undecoded-ansi-escape"]
+[2,"cat <<$'E\\117F'\ndata\nEOF\nprintenv","octal-heredoc-delimiter","project","environment-dump","undecoded-ansi-escape"]
 [2,"bash <<'EOF'\nenv\nEOF","bash-quoted-heredoc-program"]
 [2,"exec bash <<'EOF'\nenv\nEOF","exec-stdin-heredoc-program"]
 [2,"time bash <<'EOF'\nenv\nEOF","time-stdin-heredoc-program"]
@@ -381,7 +381,7 @@ environment_rows() {
 [2,"NAME=value exec 3<<<'env'; bash /dev/fd/3","carried-assignment-descriptor-program"]
 [0,"exec 3<<'EOF'\nprintenv NAME\nEOF\nbash /dev/fd/3","carried-named-read-retains-main-refusal"]
 [0,"exec 3<<'EOF'\nenv NAME=value command-name\nEOF\nbash /dev/fd/3","carried-launcher-retains-main-refusal"]
-[2,"exec 3<<'EOF'\n$'en\\166'\nEOF\nbash /dev/fd/3","carried-encoded-producer-retains-main-refusal"]
+[2,"exec 3<<'EOF'\n$'en\\166'\nEOF\nbash /dev/fd/3","carried-encoded-producer-retains-main-refusal","project","environment-dump","undecoded-ansi-escape"]
 [2,"bash -c 'bash 0<&0' <<'EOF'\nenv\nEOF","command-string-stdin-self-duplicate"]
 [2,"bash -c 'bash < /dev/stdin' <<'EOF'\nenv\nEOF","command-string-stdin-alias"]
 [2,"bash -c 'bash < /proc/self/fd/0' <<'EOF'\nenv\nEOF","command-string-proc-stdin-alias"]
@@ -443,7 +443,7 @@ environment_rows() {
 [2,"bash -c 'set -e; env'","literal-source-setup-then-env"]
 [2,"bash -c 'set -e; printenv'","literal-source-setup-then-printenv"]
 [0,"bash \"$MODE\" -c 'set -e'","unproved-shell-option-before-setup"]
-[2,["bash","-c","$'s\\x65t' -e"],"literal-source-encoded-setup-head"]
+[2,["bash","-c","$'s\\x65t' -e"],"literal-source-encoded-setup-head","project","environment-dump","undecoded-ansi-escape"]
 [2,"command bash -c -- 'env'","forwarded-command-string-options-end"]
 [2,"env NAME=value bash -c -- 'env'","env-command-string-options-end"]
 [2,"{ sudo -u NAME command bash -c -- 'env'; }","nested-forwarded-command-string"]
@@ -604,7 +604,7 @@ environment_rows() {
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A -u B VAR=1'","waiter-quoted-unset-without-program"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u \"$@\" bash test.sh'","waiter-quoted-unproved-unset-operand"]
 [0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A bash test.sh' > out","waiter-quoted-redirect-retains-refusal"]
-[0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test \"env -u $NAME bash test.sh\"","waiter-expanded-command-retains-refusal"]
+[2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test \"env -u $NAME bash test.sh\"","waiter-expanded-command-retains-refusal"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'bash -c \"env\"'","waiter-quoted-nested-shell-dump"]
 [2,"bash wrap.sh step cat \"/proc/self/environ\"","waiter-forwarded-cat-quoted-path"]
 [2,"bash wrap.sh step systemctl --user 'show-environment'","waiter-forwarded-systemctl-quoted-verb"]
@@ -817,7 +817,7 @@ environment_rows() {
 [2,"strings /proc/self/environ 2&\u003e> dump | grep NAME","numeric-before-both-stream-append"]
 [2,"strings /proc/self/environ 2<> file | grep NAME","stderr-read-write-input"]
 [2,"cat <> /proc/self/environ","read-write-proc-input"]
-[2,"cat <> $'\\x2fproc/self/environ'","read-write-escaped-input"]
+[2,"cat <> $'\\x2fproc/self/environ'","read-write-escaped-input","project","environment-dump","undecoded-ansi-escape"]
 [2,"env | grep NAME <> other-file","read-write-filter-input"]
 [0,"env NAME=value git status &\u003e> dump","launcher-both-stream-append"]
 [0,"env NAME=value git status <> file","launcher-read-write-input"]
@@ -943,66 +943,66 @@ environment_rows() {
 [2,"e$\"n\"v","locale-dollar-fragment-producer"]
 [2,"$'e'$\"n\"$'v'","adjacent-dollar-producer"]
 [2,"e$''n$\"\"'v'","empty-dollar-fragment-producer"]
-[2,"$'\\145\\156\\166'","ansi-octal-producer"]
-[2,"$'\\x65\\x6e\\x76'","ansi-hex-producer"]
-[2,"$'\\u0065\\u006e\\u0076'","ansi-unicode-producer"]
-[2,"$'\\U00000065\\U0000006e\\U00000076'","ansi-long-unicode-producer"]
-[2,"$'\\545'nv","ansi-byte-wrap-producer"]
-[2,"$'env\\0ignored'","ansi-nul-producer"]
-[2,"e$'\\0ignored'nv","ansi-nul-fragment-producer"]
-[2,"$'\\x65'nv","ansi-encoded-fragment-producer"]
-[2,"$'\\x65nv'","ansi-escaped-head"]
-[2,"$'\\cE'nv","ansi-control-head"]
-[2,"$'en\\\\v'","ansi-backslash-head"]
-[2,"$'g\\x69t' status","ansi-ordinary-escaped-head"]
-[2,"$'e\\'nv'","ansi-escaped-quote-head"]
-[2,"command $'\\x65nv'","ansi-forwarded-escaped-head"]
-[2,"{ $'\\x65nv'; }","ansi-brace-escaped-head"]
-[2,"! $'\\x65nv'","ansi-negated-escaped-head"]
-[2,"time $'\\x65nv'","ansi-timed-escaped-head"]
-[2,"if true; then $'\\x65nv'; fi","ansi-conditional-escaped-head"]
-[2,"while true; do $'\\x65nv'; done","ansi-loop-escaped-head"]
-[2,"exec $'\\x65nv'","ansi-exec-escaped-head"]
-[2,"builtin $'\\x65nv'","ansi-builtin-escaped-head"]
-[2,"$'exec' $'\\x65nv'","ansi-dollar-exec-escaped-head"]
-[2,"command exec $'\\x65nv'","ansi-command-exec-escaped-head"]
+[2,"$'\\145\\156\\166'","ansi-octal-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'\\x65\\x6e\\x76'","ansi-hex-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'\\u0065\\u006e\\u0076'","ansi-unicode-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'\\U00000065\\U0000006e\\U00000076'","ansi-long-unicode-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'\\545'nv","ansi-byte-wrap-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'env\\0ignored'","ansi-nul-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"e$'\\0ignored'nv","ansi-nul-fragment-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'\\x65'nv","ansi-encoded-fragment-producer","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'\\x65nv'","ansi-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'\\cE'nv","ansi-control-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'en\\\\v'","ansi-backslash-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'g\\x69t' status","ansi-ordinary-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'e\\'nv'","ansi-escaped-quote-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"command $'\\x65nv'","ansi-forwarded-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"{ $'\\x65nv'; }","ansi-brace-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"! $'\\x65nv'","ansi-negated-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"time $'\\x65nv'","ansi-timed-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"if true; then $'\\x65nv'; fi","ansi-conditional-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"while true; do $'\\x65nv'; done","ansi-loop-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"exec $'\\x65nv'","ansi-exec-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"builtin $'\\x65nv'","ansi-builtin-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"$'exec' $'\\x65nv'","ansi-dollar-exec-escaped-head","project","environment-dump","undecoded-ansi-escape"]
+[2,"command exec $'\\x65nv'","ansi-command-exec-escaped-head","project","environment-dump","undecoded-ansi-escape"]
 [0,"{ printf '%s' $'\\x65nv'; }","ansi-escaped-data-in-opaque-suffix"]
 [0,"$'printenv' NAME","ansi-named-read"]
 [0,"$\"printenv\" NAME","locale-named-read"]
 [2,"printenv $'NAME'","ansi-named-argument-stays-unproved"]
 [2,"systemctl $'show-environment'","ansi-systemctl-producer-argument"]
 [2,"systemctl $\"show-environment\"","locale-systemctl-producer-argument"]
-[2,"systemctl --user $'show-\\x65nvironment'","ansi-systemctl-encoded-argument"]
-[2,"cat $'/proc/self/\\x65nviron'","ansi-cat-encoded-argument"]
-[2,"declare $'-\\160'","ansi-declare-encoded-argument"]
-[2,"typeset $'-\\x78'","ansi-typeset-encoded-argument"]
-[2,"printenv $'N\\x41ME'","ansi-printenv-encoded-argument"]
-[2,"export $'-\\160'","ansi-export-encoded-argument"]
-[2,"set $'\\x2de'","ansi-set-encoded-argument"]
-[2,"tr $'\\0' $'\\n'","ansi-tr-encoded-arguments"]
-[2,"strings $'/proc/self/\\u0065nviron'","ansi-strings-encoded-argument"]
-[2,"xargs $'-\\060'","ansi-xargs-encoded-argument"]
-[2,"env $'N\\x41ME=value' git status","ansi-env-encoded-operand"]
-[2,"systemctl $'show-\\U00000065nvironment'","ansi-long-unicode-argument"]
-[2,"systemctl $'show-\\545nvironment'","ansi-octal-wrap-argument"]
-[2,"systemctl $'show-environment\\0ignored'","ansi-nul-argument"]
-[2,"systemctl show-$'env\\0ignored'ironment","ansi-nul-fragment-argument"]
-[2,"systemctl $'\\cE'","ansi-control-argument"]
-[2,"systemctl $'\\q'","ansi-unknown-escape-argument"]
-[2,"systemctl $'\\x'","ansi-incomplete-escape-argument"]
-[2,"systemctl $'a\\tb'","ansi-simple-escape-argument"]
-[2,"systemctl $'show-\\x65'n\"viron\"'ment'","ansi-mixed-fragment-argument"]
-[2,"systemctl $'show-\\x65'\"$NAME\"","ansi-escape-before-variable-fragment"]
-[2,"systemctl $'show-\\x65'$'nvironment'","ansi-escape-before-dollar-fragment"]
-[2,"systemctl $'show-\\'environment'","ansi-escaped-apostrophe-argument"]
-[2,"command -p -- systemctl $'show-\\x65nvironment'","ansi-command-producer-argument"]
-[2,"sudo -u root -- cat $'/proc/self/\\x65nviron'","ansi-sudo-producer-argument"]
-[2,"env NAME=value declare $'-\\160'","ansi-env-producer-argument"]
-[2,"systemctl $'show-\\x65nvironment' | grep NAME","ansi-argument-filter-stays-unproved"]
-[2,"cat < $'/proc/self/\\x65nviron'","ansi-cat-encoded-input"]
-[2,"tr '\\0' '\\n' < $'/proc/self/\\x65nviron' | grep NAME","ansi-tr-encoded-input"]
-[2,"strings < $'/proc/self/\\x65nviron' | grep NAME","ansi-strings-encoded-input"]
-[2,"xargs -0 < $'/proc/self/\\x65nviron'","ansi-xargs-encoded-input"]
+[2,"systemctl --user $'show-\\x65nvironment'","ansi-systemctl-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"cat $'/proc/self/\\x65nviron'","ansi-cat-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"declare $'-\\160'","ansi-declare-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"typeset $'-\\x78'","ansi-typeset-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"printenv $'N\\x41ME'","ansi-printenv-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"export $'-\\160'","ansi-export-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"set $'\\x2de'","ansi-set-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"tr $'\\0' $'\\n'","ansi-tr-encoded-arguments","project","environment-dump","undecoded-ansi-escape"]
+[2,"strings $'/proc/self/\\u0065nviron'","ansi-strings-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"xargs $'-\\060'","ansi-xargs-encoded-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"env $'N\\x41ME=value' git status","ansi-env-encoded-operand","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-\\U00000065nvironment'","ansi-long-unicode-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-\\545nvironment'","ansi-octal-wrap-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-environment\\0ignored'","ansi-nul-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl show-$'env\\0ignored'ironment","ansi-nul-fragment-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'\\cE'","ansi-control-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'\\q'","ansi-unknown-escape-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'\\x'","ansi-incomplete-escape-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'a\\tb'","ansi-simple-escape-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-\\x65'n\"viron\"'ment'","ansi-mixed-fragment-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-\\x65'\"$NAME\"","ansi-escape-before-variable-fragment","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-\\x65'$'nvironment'","ansi-escape-before-dollar-fragment","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-\\'environment'","ansi-escaped-apostrophe-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"command -p -- systemctl $'show-\\x65nvironment'","ansi-command-producer-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"sudo -u root -- cat $'/proc/self/\\x65nviron'","ansi-sudo-producer-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"env NAME=value declare $'-\\160'","ansi-env-producer-argument","project","environment-dump","undecoded-ansi-escape"]
+[2,"systemctl $'show-\\x65nvironment' | grep NAME","ansi-argument-filter-stays-unproved","project","environment-dump","undecoded-ansi-escape"]
+[2,"cat < $'/proc/self/\\x65nviron'","ansi-cat-encoded-input","project","environment-dump","undecoded-ansi-escape"]
+[2,"tr '\\0' '\\n' < $'/proc/self/\\x65nviron' | grep NAME","ansi-tr-encoded-input","project","environment-dump","undecoded-ansi-escape"]
+[2,"strings < $'/proc/self/\\x65nviron' | grep NAME","ansi-strings-encoded-input","project","environment-dump","undecoded-ansi-escape"]
+[2,"xargs -0 < $'/proc/self/\\x65nviron'","ansi-xargs-encoded-input","project","environment-dump","undecoded-ansi-escape"]
 [0,"printf $'a\\tb'","ansi-benign-printf-argument"]
 [0,"printf '%s' < $'a\\tb'","ansi-ordinary-command-input"]
 [0,"sudo -u $'r\\x6fot' git status","ansi-wrapper-option-is-not-producer-argument"]
@@ -1367,9 +1367,28 @@ environment_rows() {
 [0,"for f in hooks/*.sh; do wc -l \"$f\"; done; grep -n 'export' hooks/command-safety.sh","for-loop-then-export-pattern"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'tool env.sh'","waiter-quoted-env-path-data"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'tool --set-upstream'","waiter-quoted-set-option-data"]
+[2,"sh LAUNCH.sh WAIT TOOL --test \"cd $DIR && env\"","waiter-expanded-string-dump"]
+[2,"bash wrapper.sh TOOL --test \"cd $DIR && cat ~/.fleet/env\"","private-waiter-expanded-string-read"]
+[2,"sh -c '\"$@\"' _ env","shell-string-positional-dump"]
+[2,"sh -c 'exec \"$@\"' _ cat ~/.fleet/env","private-shell-string-positional-read"]
+[2,"source wrapper.sh env","source-operand-dump"]
+[0,"bash -c '\"$@\"' _ npm test","shell-string-positional-launch"]
+[0,". ./wrapper.sh env -i A=b cmd","source-operand-empty-launcher"]
+[2,"bash \"$MODE\" 'printenv; true'","shell-expanded-option-string-dump"]
+[2,"declare --","declare-options-end"]
+[2,"declare -g","declare-global-scope"]
+[2,"typeset --","typeset-options-end"]
+[2,"builtin declare --","builtin-declare-options-end"]
+[2,"builtin declare \"$@\"","builtin-declare-expanded-operand"]
+[0,"declare -g NAME=1","declare-global-named"]
+[2,"cat <<'EOF' | exec python3\nimport os; print(os.environ)\nEOF","opaque-piped-input-interpreter-dump"]
+[2,"env -S 'sh -c \"$0\"' printenv","env-split-string-positional-dump"]
+[2,"bash -c $'echo hi\\n'","ansi-shell-string-escape","project","environment-dump","undecoded-ansi-escape"]
+[2,"eval $'echo\\thi'","ansi-eval-escape","project","environment-dump","undecoded-ansi-escape"]
+[2,"bash wrapper.sh $'\\x6cs'","ansi-forwarded-escape","project","environment-dump","undecoded-ansi-escape"]
 ENVIRONMENT_ROWS
   ) || exit 1
-  while IFS=$'\t' read -r expected command_json label world refusal; do
+  while IFS=$'\t' read -r expected command_json label world refusal reason; do
     [ -n "$expected" ] || continue
     printf -v command_json '%b' "$command_json"
     row_selected "$label" || continue
@@ -1453,13 +1472,19 @@ PY
     diagnostics_safe=1
     if grep -F -- fixture-private-value-4519 "$scratch/stderr" >/dev/null; then diagnostics_safe=""; fi
     want=-; [ "$expected" -ne 2 ] || want="command-safety: refused=$refusal"
-    if [ "$status" -eq "$expected" ] && [ "$first_key" = "$want" ] && [ -z "$output" ] && [ -n "$diagnostics_safe" ]; then
+    # A row's reason is the keyed line under the refusal; a row without one
+    # holds the refusal line alone.
+    keyed=$(keyed_block "$scratch/stderr" command-safety)
+    want_keyed=""; [ "$expected" -ne 2 ] || want_keyed="refused=$refusal"
+    [ "$reason" = - ] || want_keyed="$want_keyed;reason=$reason"
+    if [ "$status" -eq "$expected" ] && [ "$first_key" = "$want" ] && [ "$keyed" = "$want_keyed" ] &&
+       [ -z "$output" ] && [ -n "$diagnostics_safe" ]; then
       printf 'PASS %s\n' "$label"; passed=$((passed + 1))
     else
-      printf 'FAIL %s: exit=%s expected=%s first=%s expected-first=%s stdout=[%s]\n' "$label" "$status" "$expected" "$first_key" "$want" "$output"
+      printf 'FAIL %s: exit=%s expected=%s first=%s expected-first=%s keyed=%s expected-keyed=%s stdout=[%s]\n' "$label" "$status" "$expected" "$first_key" "$want" "$keyed" "$want_keyed" "$output"
       failed=$((failed + 1))
     fi
-    if [ "$expected" -eq 2 ] && [ "$refusal" = environment-dump ]; then
+    if [ "$expected" -eq 2 ] && [ "$refusal" = environment-dump ] && [ "$reason" = - ]; then
       if grep -F -- "systemctl --user show-environment | grep '^NAME='" "$scratch/stderr" >/dev/null; then
         passed=$((passed + 1))
       else
@@ -1547,7 +1572,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       }
       defect == "array-head" { swap("if [ \"$1\" = argv ]; then pos=0; return; fi", "if [ \"$1\" = argv ]; then for ((cursor=0; cursor<${#args[@]}; cursor++)); do arg_unquoted[cursor]=1; done; fi") }
       defect == "here-string" { swap("then c=\047<<<\047", "then c=\047<<\047") }
-      defect == "delimiter-proof" { swap("[ \"$kind\" != ansi-escaped ] || return 0", "[ \"$kind\" != ansi-escaped ] || return 1") }
+      defect == "delimiter-proof" { swap("[ \"$kind\" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }", "[ \"$kind\" != ansi-escaped ] || return 1") }
       defect == "heredoc-program" { swap("[ -n \"${stage_stdin[$stage]}\" ] || data_source=", "data_source=") }
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
       defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
@@ -1564,14 +1589,14 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         print; getline
         swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)")
       }
-      defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
+      defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
       defect == "env-literal-operands" { swap("case \"${arg_kinds[$pos]}\" in dollar-literal | ansi-escaped) break ;; esac", "[ \"${arg_kinds[$pos]}\" = literal ] || break") }
       defect == "systemctl-literal-argument" { swap("[ \"${args[$j]}\" != show-environment ] || mode=dump-lines", "[ \"${arg_kinds[$j]}\" != literal ] || [ \"${args[$j]}\" != show-environment ] || mode=dump-lines") }
-      defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || { mode=dump-unknown; return; }", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
-      defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || { mode=dump-unknown; return; }", "[ -z \"$input_escaped\" ] || :") }
-      defect == "receiver-classification" && $0 == "  environment_receiver" { swap("  environment_receiver", "  receiver=unknown; receiver_pattern=; receiver_option=") }
+      defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
+      defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }", "[ -z \"$input_escaped\" ] || :") }
+      defect == "receiver-classification" && $0 == "  environment_receiver \"$program\"" { swap("  environment_receiver \"$program\"", "  receiver=unknown; receiver_pattern=; receiver_option=") }
       defect == "receiver-evidence" { swap("while [[ $remaining =~ $receiver_pattern ]]; do", "while [[ $remaining =~ a^ ]]; do") }
-      defect == "receiver-python-quoted-source" { swap("if [ -z \"$uncertain\" ]; then remaining=$executable; fi", "if [ -z \"$uncertain\" ]; then remaining=$1; fi") }
+      defect == "receiver-python-quoted-source" { swap("if [ -z \"$uncertain\" ]; then remaining=$executable; fi", "if [ -z \"$uncertain\" ]; then remaining=$2; fi") }
       defect == "receiver-named-method" { swap("(get|pop|setdefault|__getitem__|__contains__)", "(get-disabled|pop|setdefault|__getitem__|__contains__)") }
       defect == "receiver-line-boundary" { swap("if [[ $remaining =~ ^[A-Za-z0-9_]+ ]]; then", "if [[ $remaining =~ ^[[:space:]]*[A-Za-z0-9_]+ ]]; then") }
       defect == "receiver-body-forwarding" { swap("fallback_sources=\"$fallback_sources $doc\"", ":") }
@@ -1584,8 +1609,14 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "eval-separator" { swap("!= --:literal ] || cursor=$((cursor + 1))", "!= --:literal ] || :") }
       defect == "unset-expanded-operand" { swap("[ \"${arg_kinds[$((pos + 1))]:-}\" = literal ] || { mode=dump-unknown; return; }", ":") }
       defect == "proc-input-reader" { swap("*) [ -z \"$proc\" ] || mode=dump-unknown ;;", "*) ;;") }
-      defect == "bare-declaration" { swap("[ \"$pos\" -lt \"${#args[@]}\" ] || mode=dump-lines", ":") }
-      defect == "opaque-input-interpreter" { swap("for program in python node ruby perl; do", "for program in; do") }
+      defect == "bare-declaration" { swap("[ -z \"$listing\" ] || mode=dump-lines", ":") }
+      defect == "opaque-input-interpreter" { swap("for language in python node ruby perl; do", "for language in; do") }
+      defect == "expanded-command-string" { swap("[ \"$producer_end\" -le 1 ]; then", "[ \"$producer_end\" -eq 1 ]; then") }
+      defect == "string-positional-operands" && $0 == "        script_operand=$cursor" { swap("script_operand=$cursor", "[ -n \"$wants_string\" ] || script_operand=$cursor") }
+      defect == "source-operands" { swap("[ \"$pos\" -ge \"${#args[@]}\" ] || script_operand=$pos", ":") }
+      defect == "expanded-option-string" { swap("environment_queue \"${args[$((cursor + 1))]}\"", ":") }
+      defect == "declaration-listing" { swap("[[ $value =~ ^(--|-[gI]+)$ ]] || listing=\"\"", "listing=\"\"") }
+      defect == "escape-reason" { swap("\"$dump_reason\"", "-") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -1737,6 +1768,15 @@ unset-expanded-operand|FAIL environment: nested-unset-unproved-option-operand: e
 proc-input-reader|FAIL environment: inner_source_candidate: exit=0 expected=2
 bare-declaration|FAIL environment: ken-3998-compound-bare-declare: exit=0 expected=2
 opaque-input-interpreter|FAIL environment: opaque-input-interpreter-dump: exit=0 expected=2
+opaque-input-interpreter|FAIL environment: opaque-piped-input-interpreter-dump: exit=0 expected=2
+expanded-command-string|FAIL environment: waiter-expanded-command-retains-refusal: exit=0 expected=2
+expanded-command-string|FAIL environment: waiter-expanded-string-dump: exit=0 expected=2
+string-positional-operands|FAIL environment: shell-string-positional-dump: exit=0 expected=2
+source-operands|FAIL environment: source-operand-dump: exit=0 expected=2
+expanded-option-string|FAIL environment: shell-expanded-option-string-dump: exit=0 expected=2
+declaration-listing|FAIL environment: declare-options-end: exit=0 expected=2
+declaration-listing|FAIL environment: builtin-declare-options-end: exit=0 expected=2
+escape-reason|FAIL environment: ansi-shell-string-escape: exit=2 expected=2
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
