@@ -94,7 +94,7 @@ assert "the issueCreate payload carries the markdown description verbatim" \
 update_log="$TMP_ROOT/update-payloads.jsonl"
 : >"$update_log"
 update_rc=0
-update_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ CURL_PAYLOAD_LOG="$update_log" \
+update_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ LINEAR_REQUIRE_REACH= CURL_PAYLOAD_LOG="$update_log" \
   bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file" 2>&1)" || update_rc=$?
 assert_eq "issues update --description-file exits zero" "$update_rc" 0
 
@@ -133,7 +133,7 @@ assert_fails "update refuses an unreadable --description-file" "not readable" \
   issues update PROJ-1 --description-file "$TMP_ROOT/does-not-exist.md"
 
 # An owner close supplies an empty inline description when no body remains.
-# A user can also clear it with an empty file; an omitted option keeps it.
+# With the filing guard off, an empty file clears it; an omitted option keeps it.
 empty_file="$TMP_ROOT/empty.md"
 : >"$empty_file"
 printf 'PNGDATA' >"$TMP_ROOT/shot.png"
@@ -153,7 +153,7 @@ for form in absent inline equals file file-equals nonempty empty-image absent-im
   : >"$log"
   rc=0
   (cd "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ CURL_PAYLOAD_LOG="$log" \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ LINEAR_REQUIRE_REACH= CURL_PAYLOAD_LOG="$log" \
     bash "$LINEAR" issues update PROJ-1 "${args[@]}") >"$TMP_ROOT/$form.out" 2>"$TMP_ROOT/$form.err" || rc=$?
   assert_eq "$form description update succeeds" "$rc" 0
   case "$form" in
@@ -170,7 +170,7 @@ log="$TMP_ROOT/empty-conflict.jsonl"
 : >"$log"
 rc=0
 (cd "$TMP_ROOT" && env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
-  LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ CURL_PAYLOAD_LOG="$log" \
+  LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=PROJ LINEAR_REQUIRE_REACH= CURL_PAYLOAD_LOG="$log" \
   bash "$LINEAR" issues update PROJ-1 --description "" --description-file "$desc_file") \
   >"$TMP_ROOT/empty-conflict.out" 2>"$TMP_ROOT/empty-conflict.err" || rc=$?
 assert_ne "update refuses empty --description with --description-file: exits nonzero" "$rc" 0

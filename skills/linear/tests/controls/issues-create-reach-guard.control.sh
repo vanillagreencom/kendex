@@ -32,7 +32,7 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 # 3. The presence check — without it an issue naming nothing it reaches gets
 #    filed, which is the disposition the reply grammar already makes cheap.
-control_expect "a create with no description is refused"
+control_expect "a create with an opening but no reach is refused"
 control_expect "a whole-line bold [REACH] placeholder body is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	if [ -z "$reach" ]; then' \
@@ -40,7 +40,7 @@ control_replace scripts/lib/issue-validation.sh 1 \
 
 # 4. The default. Read as off when unset, every project that never set the key
 #    files issues naming nothing they reach.
-control_expect "a bare create with no LINEAR_REQUIRE_REACH key is refused"
+control_expect "a missing-reach create with no LINEAR_REQUIRE_REACH key is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'	[ -n "${LINEAR_REQUIRE_REACH-1}" ] || return 0' \
 	'	[ -n "${LINEAR_REQUIRE_REACH:-}" ] || return 0'
