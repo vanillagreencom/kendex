@@ -1262,11 +1262,10 @@ lane_base() {
 	[[ "$LANE_BASE" == / ]] || LANE_BASE="${LANE_BASE##*/}"
 }
 
-# Whether setting key KEY names the lane at DIR: its directory name, with or
+# Whether setting key KEY names the raw BASE: its directory name, with or
 # without the leading dot.
-lane_named() {
-	local base
-	lane_base "$2"; base="$LANE_BASE"
+lane_named() { # KEY BASE
+	local base="$2"
 	[[ "$1" == "$base" || "$1" == "${base#.}" ]]
 }
 
@@ -1290,19 +1289,18 @@ lane_canon() { # DIR: result in LANE_CANON
 	LANE_CANON_DIRS+=("$1"); LANE_CANON_IDS+=("$LANE_CANON")
 }
 
-# Whether exclusion or retirement key KEY names the lane at DIR: a directory
-# name lane_named accepts, or the alias lane_alias_for gives it. Neither reads
-# inside DIR.
-lane_matches() {
+# Whether exclusion or retirement key KEY names the raw BASE or ALIAS.
+lane_matches() { # KEY BASE ALIAS
 	lane_named "$1" "$2" && return 0
-	lane_alias_for "$2" silent
-	[[ "$1" == "$LANE_ALIAS" ]]
+	[[ "$1" == "$3" ]]
 }
 
 lane_excluded() {
-	local name
+	local name base alias
+	[[ ${#LANE_EXCLUDES[@]} -gt 0 ]] || return 1
+	lane_alias_for "$1" silent; base="$LANE_BASE" alias="$LANE_ALIAS"
 	for name in ${LANE_EXCLUDES[@]+"${LANE_EXCLUDES[@]}"}; do
-		lane_matches "$name" "$1" && return 0
+		lane_matches "$name" "$base" "$alias" && return 0
 	done
 	return 1
 }
@@ -1310,10 +1308,13 @@ lane_excluded() {
 # The UTC date ORCH_LANE_RETIRE sets for DIR, empty when none. Entries were
 # validated at startup (validate_lane_settings).
 lane_retire_date() {
-	local i
+	local i base alias
 	LANE_RETIRE_DATE=""
+	if [[ ${#LANE_RETIRE_KEYS[@]} -gt 0 ]]; then
+		lane_alias_for "$1" silent; base="$LANE_BASE" alias="$LANE_ALIAS"
+	fi
 	for ((i=0; i<${#LANE_RETIRE_KEYS[@]}; i++)); do
-		lane_matches "${LANE_RETIRE_KEYS[i]}" "$1" || continue
+		lane_matches "${LANE_RETIRE_KEYS[i]}" "$base" "$alias" || continue
 		LANE_RETIRE_DATE="${LANE_RETIRE_VALUES[i]}"
 		break
 	done
@@ -1439,10 +1440,10 @@ lane_dirs() {
 # the discovered name, so the inventory stays automatic while the labels stay
 # the operator's. An entry naming a directory that does not exist is inert.
 lane_alias_for() {
-	local i
-	lane_base "$1"; LANE_ALIAS="${LANE_BASE#.}"
+	local i base
+	lane_base "$1"; base="$LANE_BASE"; LANE_ALIAS="${base#.}"
 	for ((i=0; i<${#LANE_ALIAS_KEYS[@]}; i++)); do
-		lane_named "${LANE_ALIAS_KEYS[i]}" "$1" || continue
+		lane_named "${LANE_ALIAS_KEYS[i]}" "$base" || continue
 		LANE_ALIAS="${LANE_ALIAS_VALUES[i]}"
 		break
 	done
@@ -2183,6 +2184,7 @@ usage_serve_max_age() {
 # half a record.
 write_usage_cache() { # HARNESS DIR [USAGE [MODE]]
 	local file tmp prior=null sample_claims=1 normalized=null parsed bound_fields sample_at="" retained_body=""
+	local canon base alias account_name
 	local ems="${expires_ms:-0}" rms="${refresh_expiry:-0}" write_mode="${4:-refresh}" body="${3:-}" existing_record=null
 	lane_now; USAGE_WRITTEN_AT="$LANE_NOW"
 	USAGE_PRIOR_AT=""; USAGE_PRIOR_RAW=""
@@ -2212,7 +2214,10 @@ write_usage_cache() { # HARNESS DIR [USAGE [MODE]]
 	else
 		sample_claims=1
 		if [[ "$1" != host-accounts && "$LANE_CLAIMS_RC" == 0 ]]; then
-			account_claims "$2" "$1" '' silent || return 1
+			lane_canon "$2" || return 1; canon="$LANE_CANON"
+			lane_alias_for "$2" silent; base="$LANE_BASE" alias="$LANE_ALIAS"
+			lane_account_name "$base" "$alias" silent; account_name="$LANE_ACCOUNT_NAME"
+			account_claims "$canon" "$account_name" "$1" '' silent || return 1
 			sample_claims="$ACCOUNT_CLAIMS"
 		fi
 	fi
@@ -2758,13 +2763,17 @@ emit_lane() {
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
+	local canon base account_alias account_name
+	lane_canon "$dir" || return 1; canon="$LANE_CANON"
 	if [[ "$LANE_CLAIMS_RC" == 0 ]]; then
-		account_claims "$dir" "$harness" "$buckets" silent || return 1
+		# The display alias can be a path; raw DIR owns the account join name.
+		lane_alias_for "$dir" silent; base="$LANE_BASE" account_alias="$LANE_ALIAS"
+		lane_account_name "$base" "$account_alias" silent; account_name="$LANE_ACCOUNT_NAME"
+		account_claims "$canon" "$account_name" "$harness" "$buckets" silent || return 1
 		claims="$ACCOUNT_CLAIMS"
 	fi
-	lane_canon "$dir" || return 1
 	jq -nc \
-		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" --arg id "$LANE_CANON" \
+		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" --arg id "$canon" \
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" --arg retire "$LANE_RETIRE_DATE" \
 		--argjson claims "$claims" --argjson age "$age" \
 		--argjson refreshable "$refreshable" \
@@ -2776,7 +2785,7 @@ emit_lane() {
 # command substitution, and a read failure recorded there would die with the
 # subshell instead of reaching the decision.
 load_lane_claims() {
-	local line cfg named pool rest h d own=$'\n' key
+	local line cfg named pool rest h d own=$'\n' key base alias
 	LANE_CLAIMS_RC=0
 	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" fleet)" || LANE_CLAIMS_RC=$?
 	LANE_CLAIM_ACCOUNTS=""
@@ -2802,7 +2811,11 @@ load_lane_claims() {
 		rest="${line%$'\t'*}"
 		named="${rest##*$'\t'}"
 		key=""
-		case "$own" in *$'\n'"$cfg"$'\n'*) ;; *) lane_account_name "${named:-$cfg}" silent; key="$LANE_ACCOUNT_NAME" ;; esac
+		case "$own" in *$'\n'"$cfg"$'\n'*) ;; *)
+			lane_alias_for "${named:-$cfg}" silent; base="$LANE_BASE" alias="$LANE_ALIAS"
+			lane_account_name "$base" "$alias" silent; key="$LANE_ACCOUNT_NAME"
+			;;
+		esac
 		LANE_CLAIM_ACCOUNTS+="$cfg"$'\t'"$key"$'\t'"$pool"$'\n'
 	done <<<"$LANE_CLAIMS_LIVE"
 	load_normalized "${1:-}" || return 1
@@ -2813,14 +2826,12 @@ load_lane_claims() {
 # harness word (`~/.claude`, `~/.codex`, `~/.copilot`) is the login that
 # harness falls back to in whatever home it sits, so two users' `~/.claude` are
 # two accounts, and only an ORCH_LANE_ALIASES name joins it to another home's.
-lane_account_name() { # DIR [SILENT]
-	local alias base
-	lane_alias_for "$1" silent; alias="$LANE_ALIAS"
-	lane_base "$1"; base="$LANE_BASE"
+lane_account_name() { # BASE ALIAS [SILENT]
+	local base="$1" alias="$2"
 	base="${base#.}"
 	LANE_ACCOUNT_NAME=""
 	[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || LANE_ACCOUNT_NAME="$alias"
-	[[ "${2:-}" == silent ]] || printf '%s' "$LANE_ACCOUNT_NAME"
+	[[ "${3:-}" == silent ]] || printf '%s' "$LANE_ACCOUNT_NAME"
 }
 
 # Live claims against DIR's account. A store several homes share names one
@@ -2831,28 +2842,25 @@ lane_account_name() { # DIR [SILENT]
 # claim. Plan windows count only plan claims; Copilot counts its monthly
 # pool claims. Pi USD grants have no in-flight charge. Reads
 # LANE_CLAIM_ACCOUNTS, which load_lane_claims names.
-account_claims() { # DIR [HARNESS [BUCKETS [SILENT]]]
-	local pool=plan unit="" line cfg named claim_pool key
-	case "${2:-claude}" in
+account_claims() { # CANON ACCOUNT_NAME HARNESS BUCKETS [SILENT]
+	local key="$1" account_name="$2" harness="$3" buckets="$4" pool=plan unit="" line cfg named claim_pool
+	case "$harness" in
 		copilot | pi) pool=copilot ;;
 	esac
-	if [[ "${2:-}" == pi && -n "${3:-}" ]]; then
-		unit="$(jq -r '.credits.unit // empty' <<<"$3")" || return 1
-		[[ "$unit" != usd ]] || { ACCOUNT_CLAIMS=0; [[ "${4:-}" == silent ]] || printf '0\n'; return 0; }
+	if [[ "$harness" == pi && -n "$buckets" ]]; then
+		unit="$(jq -r '.credits.unit // empty' <<<"$buckets")" || return 1
+		[[ "$unit" != usd ]] || { ACCOUNT_CLAIMS=0; [[ "${5:-}" == silent ]] || printf '0\n'; return 0; }
 	fi
-	lane_canon "$1" || return 1
-	key="$LANE_CANON"
-	lane_account_name "$1" silent
 	ACCOUNT_CLAIMS=0
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		cfg="${line%%$'\t'*}"; named="${line#*$'\t'}"
 		claim_pool="${named##*$'\t'}"; named="${named%%$'\t'*}"
 		[[ "$claim_pool" == "$pool" ]] || continue
-		[[ "$cfg" == "$key" || ( -n "$named" && "$named" == "$LANE_ACCOUNT_NAME" ) ]] || continue
+		[[ "$cfg" == "$key" || ( -n "$named" && "$named" == "$account_name" ) ]] || continue
 		ACCOUNT_CLAIMS=$((ACCOUNT_CLAIMS + 1))
 	done <<<"$LANE_CLAIM_ACCOUNTS"
-	[[ "${4:-}" == silent ]] || printf '%s\n' "$ACCOUNT_CLAIMS"
+	[[ "${5:-}" == silent ]] || printf '%s\n' "$ACCOUNT_CLAIMS"
 }
 
 # EXCLUDE is the config dirs, one a line, that `pick` omits before the chooser
@@ -3066,7 +3074,7 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 # stamped with every setting the retirement was matched through, the alias
 # map included, and the day, and is a miss under any other.
 host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVERY] [SAMPLE_AT]
-	local rows="$1" want="$2" mode="${3:-}" sample_at="${4:-null}" line field key value bad retire said rest alias
+	local rows="$1" want="$2" mode="${3:-}" sample_at="${4:-null}" line field key value bad retire said rest alias base account_name
 	local batch_args=() selected id claims wall wall_file kind payload normalized_result=""
 	local account harness status detail seat s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets credit_limit credit_spent credit_remaining credit_expires credit_fields monthly_field retired
@@ -3147,7 +3155,7 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		fi
 		[[ "$mode" != readings || -n "$said" ]] || selected=false
 		if [[ "$mode" != discovery ]] && lane_excluded "$account"; then selected=false; fi
-		lane_alias_for "$account" silent; alias="$LANE_ALIAS"
+		lane_alias_for "$account" silent; base="$LANE_BASE" alias="$LANE_ALIAS"
 		# The decoder below reduces a retired row unless it is an API grant.
 		retired=""
 		if lane_retired "$account" silent && [[ "$mode" != seats && "$mode" != canon && "$mode" != discovery ]]; then
@@ -3157,7 +3165,10 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		if [[ "$selected" != false && "$mode" != cache && "$mode" != discovery ]]; then
 			lane_canon "$account" || return 1; id="$LANE_CANON"
 			if [[ "$mode" == readings || -z "$mode" ]]; then
-				[[ "$LANE_CLAIMS_RC" != 0 ]] || { account_claims "$account" "$harness" '' silent || return 1; claims="$ACCOUNT_CLAIMS"; }
+				if [[ "$LANE_CLAIMS_RC" == 0 ]]; then
+					lane_account_name "$base" "$alias" silent; account_name="$LANE_ACCOUNT_NAME"
+					account_claims "$id" "$account_name" "$harness" '' silent || return 1; claims="$ACCOUNT_CLAIMS"
+				fi
 				if [[ -d "$ACCOUNT_WALL_DIR" && "$status" != retired ]]; then
 					account_wall_file "$PROJECT_ROOT" "$account" || return 1
 					wall_file="$ACCOUNT_WALL_FILE"
@@ -4299,7 +4310,7 @@ load_normalized() { # [NAMED_DIR]
 	NORMALIZED_AT="$now" NORMALIZED_TARGET="$target"
 }
 decode_normalized() { # [NAMED_DIR]
-	local h d file creds target="${1:-}" at row kind id alias retire wall json err
+	local h d file creds target="${1:-}" at row kind id alias base account_name retire wall json err
 	local files=() fields=() rows=() index=0 decoded decode_rc
 	local host_ready=false host_usage="" host_status=0 host_api=false
 	NORMALIZED_DIRS=() NORMALIZED_HARNESSES=() NORMALIZED_ROWS=() NORMALIZED_THROUGHS=() NORMALIZED_READINGS=()
@@ -4368,10 +4379,13 @@ decode_normalized() { # [NAMED_DIR]
 		[[ -n "$d" ]] || continue
 		lane_canon "$d" || return 1; id="$LANE_CANON"
 		[[ -z "$target" || "$target" == "$id" ]] || continue
-		lane_alias_for "$d" silent; alias="$LANE_ALIAS"
+		lane_alias_for "$d" silent; base="$LANE_BASE" alias="$LANE_ALIAS"
 		lane_retire_date "$d" silent; retire="$LANE_RETIRE_DATE"
 		ACCOUNT_CLAIMS=null
-		[[ "$LANE_CLAIMS_RC" != 0 ]] || account_claims "$d" "$h" '' silent || return 1
+		if [[ "$LANE_CLAIMS_RC" == 0 ]]; then
+			lane_account_name "$base" "$alias" silent; account_name="$LANE_ACCOUNT_NAME"
+			account_claims "$id" "$account_name" "$h" '' silent || return 1
+		fi
 		wall=""
 		if [[ -d "$ACCOUNT_WALL_DIR" ]]; then
 			account_wall_file "$PROJECT_ROOT" "$d" || return 1

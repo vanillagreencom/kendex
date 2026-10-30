@@ -1698,11 +1698,11 @@ ORCH_LANE_ALIASES="$WORK_ALIASES" claims_table \
 # by the canonical target's name, or written with no named spelling, the
 # aliased claim misses `work` the same way.
 claims_scripts="$(mutant_scripts mutant-claims-path-key lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" ' || ( -n "$named" && "$named" == "$LANE_ACCOUNT_NAME" )' ''
+mutate_file "$claims_scripts/lanes" ' || ( -n "$named" && "$named" == "$account_name" )' ''
 LANES="$claims_scripts/lanes" claims_table \
   "control: a path key counts two homes' claims on one account as two accounts|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:away||$LIST|eclaude.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-canon-alias lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" 'lane_account_name "${named:-$cfg}" silent' 'lane_account_name "$cfg" silent'
+mutate_file "$claims_scripts/lanes" 'lane_alias_for "${named:-$cfg}" silent' 'lane_alias_for "$cfg" silent'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-unnamed lib/lane-claims.sh)" || exit 1
@@ -1714,7 +1714,7 @@ mutate_file "$claims_scripts/lanes" '[[ "$alias" == "$base" && "$base" =~ ^(clau
 LANES="$claims_scripts/lanes" claims_table \
   "control: keying a home's default .claude by its bare name charges every home's default to it|live:%1,live:%2|mine:live:%1:claude;theirs:live:%2:awaydefault||$LIST|claude.claims=2"
 claims_scripts="$(mutant_scripts mutant-claims-own-named lanes)" || exit 1
-mutate_file "$claims_scripts/lanes" 'case "$own" in *$'"'"'\n'"'"'"$cfg"$'"'"'\n'"'"'*) ;; *) lane_account_name "${named:-$cfg}" silent; key="$LANE_ACCOUNT_NAME" ;; esac' 'lane_account_name "${named:-$cfg}" silent; key="$LANE_ACCOUNT_NAME"'
+mutate_file "$claims_scripts/lanes" 'case "$own" in' 'case "" in'
 ORCH_LANE_DIRS="$H/.eclaude:$TMP_ROOT/srv/.eclaude" LANES="$claims_scripts/lanes" claims_table \
   "control: naming a claim a listed lane holds charges it to the other lane sharing its alias|live:%1|theirs:live:%1:srv||pick --lane $H/.eclaude --harness claude --json|rc=0 claims=1"
 claims_scripts="$(mutant_scripts mutant-claims-own-unexcluded lanes)" || exit 1

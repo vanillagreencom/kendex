@@ -415,8 +415,8 @@ policy_control() { # NAME MATCH REPLACEMENT POLICY HARNESS ACCOUNT
     "control: disabling $name makes the $harness refusal assertion fail"
   LANES="$ORIGINAL_LANES"
 }
-policy_control exclude 'lane_matches "$name" "$1" && return 0' \
-  'lane_matches "$name" "$1" && return 1' ORCH_LANE_EXCLUDE=claude claude "$H/.claude"
+policy_control exclude 'lane_matches "$name" "$base" "$alias" && return 0' \
+  'lane_matches "$name" "$base" "$alias" && return 1' ORCH_LANE_EXCLUDE=claude claude "$H/.claude"
 policy_control retire '[[ -n "$LANE_RETIRE_DATE" && ! "$TODAY" < "$LANE_RETIRE_DATE" ]] || return 1' \
   '[[ -n "$LANE_RETIRE_DATE" && ! "$TODAY" < "$LANE_RETIRE_DATE" ]]; return 1' ORCH_LANE_RETIRE=claude=2000-01-01 claude "$H/.claude"
 STAMP_MATCH='.policy == $policy'

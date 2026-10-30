@@ -172,7 +172,7 @@ assert_eq "${err%%$'\n'*}" "lanes: lane-retired dir=$TMP_ROOT/home/.cclaude date
 # changes the pinned public record's qualifying_count.
 ORIGINAL_LANES="$LANES"
 CONTROL="$(mutant_scripts policy-cost lanes)"
-mutate_file "$CONTROL/lanes" 'lane_base "$2"; base="$LANE_BASE"' 'lane_base "$2"; base="$(basename -- "$2")"'
+mutate_file "$CONTROL/lanes" 'local base="$2"' 'local base; base="$(basename -- "$2")"'
 LANES="$CONTROL/lanes"
 run_lanes 4 "$RETIRE_ONE" local pick json; one="$COUNT"
 run_lanes 4 "$RETIRE_TEN" local pick json
@@ -188,7 +188,7 @@ for format in table json; do
   assert_eq "$rc" 1 "cost assertion rejects list $format entry-dependent command starts"
 done
 CONTROL="$(mutant_scripts policy-parity lanes)"
-mutate_file "$CONTROL/lanes" 'lane_matches "$name" "$1" && return 0' 'lane_matches "$name" "$1" && :'
+mutate_file "$CONTROL/lanes" 'lane_matches "$name" "$base" "$alias" && return 0' 'lane_matches "$name" "$base" "$alias" && :'
 LANES="$CONTROL/lanes"
 run_lanes 4 ' work = 2099-01-01 , cclaude = 2000-01-01 ' "$TMP_ROOT/provider" pick json
 assert_eq "$RC" 0 'parity control reaches a successful pick'
