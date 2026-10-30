@@ -1,0 +1,1 @@
+- `verify` accepts `--project-path PATH` to check an unregistered checkout, using the same project target as `apply` and leaving the projects list unchanged.

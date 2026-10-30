@@ -174,8 +174,8 @@ impl ReportFlags {
 }
 
 /// The explicit project a whole-scope run works on, shared by `refresh`,
-/// `apply` and `updates` — written by the first two and by
-/// `updates --apply`, and read by the `updates` listing.
+/// `apply`, `updates` and `verify` — written by the first two and by
+/// `updates --apply`, and read by the `updates` listing and `verify`.
 ///
 /// Without it those verbs take the project the command was typed in,
 /// which is the behaviour every release before this one had. With it the
@@ -189,7 +189,7 @@ impl ReportFlags {
 /// does.
 #[derive(Args, Clone, Default)]
 pub struct ProjectTargetFlag {
-    /// The project this run reads and writes, by path, instead of the one it was typed in
+    /// The project this run targets, by path, instead of the one it was typed in
     #[arg(long, value_name = "PATH")]
     project_path: Option<std::path::PathBuf>,
     /// Permit project writes in a marked lane or to another checkout
@@ -201,7 +201,7 @@ pub struct ProjectTargetFlag {
 }
 
 impl ProjectTargetFlag {
-    /// The project this run was told to write, where it was told one.
+    /// The project this run was told to target, where it was told one.
     pub fn path(&self) -> Option<&std::path::Path> {
         self.project_path.as_deref()
     }

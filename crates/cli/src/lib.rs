@@ -118,6 +118,8 @@ enum Command {
         scope: Option<String>,
         #[command(flatten)]
         output: commands::verify::Output,
+        #[command(flatten)]
+        target: flags::ProjectTargetFlag,
         /// Also fail on warnings: a path an installed agent declares as tracked output that the project ignores
         #[arg(long)]
         strict: bool,
@@ -590,6 +592,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             global,
             scope,
             output,
+            target,
             strict,
         } => {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
@@ -597,6 +600,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 &env,
                 names,
                 filter,
+                target.path(),
                 output,
                 commands::verify::Warnings::strict(strict),
             );

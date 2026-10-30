@@ -1,4 +1,4 @@
-//! `--project-path`: the project a whole-scope write lands in, named in
+//! `--project-path`: the project a whole-scope run targets, named in
 //! the command rather than walked up to from the working directory.
 //!
 //! These run the real binary with parsed project targets and then read
@@ -1106,4 +1106,95 @@ fn a_listing_reads_the_named_project_and_registers_nothing() {
         "and registers nothing: {:?}",
         registered(&home)
     );
+}
+
+/// Verification reads an unregistered target even when the caller and
+/// personal scope have drift. Scope filters still select rows.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_reads_an_unregistered_project_without_listing_it() {
+    use kendex_core::{apply, attest, engine, env::Env, model::Scope};
+
+    let (_tmp, home, catalog, _) = world();
+    let project = home.join("dev/target");
+    let caller = home.join("dev/caller");
+    declare(&project, &catalog);
+    declare(&caller, &catalog);
+    declare_globally(&home, &catalog);
+    let target = Scope::Project {
+        root: project.clone(),
+    };
+    let walked = Scope::Project {
+        root: caller.clone(),
+    };
+    let env = Env::host_rooted(&home);
+    for scope in [&target, &walked, &Scope::Global] {
+        let report = engine::plan_apply(&env, scope, &engine::PlanOptions::current()).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+    }
+    assert!(registered(&home).is_empty());
+    write(&installed(&caller), "Personal caller edit.\n");
+    write(&installed(&home), "Personal global edit.\n");
+
+    let path = project.to_str().unwrap();
+    for (flags, all) in [
+        (vec![], true),
+        (vec!["--scope", "all"], true),
+        (vec!["--scope", "project"], false),
+        (vec!["--scope", "project", "--strict"], false),
+    ] {
+        let mut args = vec!["verify", "deploy", "--project-path", path, "--json"];
+        args.extend(flags);
+        let output = kendex(&home, &caller, &args);
+        let document: attest::Document = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.success(), !all, "{args:?}: {}", said(&output));
+        assert_eq!(document.clean, !all, "{args:?}");
+        let row = document
+            .rows
+            .iter()
+            .find(|row| row.kind == "skill" && row.name == "deploy" && row.scope == target)
+            .unwrap();
+        assert_eq!(row.state, attest::State::Ok);
+        assert!(document.rows.iter().all(|row| row.scope != walked));
+        assert_eq!(
+            document.rows.iter().any(|row| {
+                row.kind == "skill"
+                    && row.name == "deploy"
+                    && row.scope == Scope::Global
+                    && row.state == attest::State::Failed
+            }),
+            all
+        );
+        assert!(registered(&home).is_empty());
+    }
+
+    // Omitting the target checks the caller's edited installation.
+    let output = kendex(
+        &home,
+        &caller,
+        &["verify", "deploy", "--scope", "project", "--json"],
+    );
+    let document: attest::Document = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!output.status.success());
+    assert!(document.rows.iter().any(|row| {
+        row.kind == "skill"
+            && row.name == "deploy"
+            && row.scope == walked
+            && row.state == attest::State::Failed
+    }));
+    let output = kendex(
+        &home,
+        &caller,
+        &[
+            "verify",
+            "deploy",
+            "--project-path",
+            path,
+            "--scope",
+            "project",
+        ],
+    );
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(output.stdout.is_empty());
+    assert!(registered(&home).is_empty());
 }

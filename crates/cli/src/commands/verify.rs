@@ -17,7 +17,7 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::tracked_output::Held;
 
 use super::engine_common::print_unmanaged;
-use super::{resolve_scopes, scope_label};
+use super::{resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui::{self, Span, Status, Style};
 
@@ -241,11 +241,12 @@ pub fn run(
     env: &Env,
     names: Vec<String>,
     filter: ScopeFilter,
+    target: Option<&Path>,
     output: Output,
     warnings: Warnings,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let style = ui::style();
-    let scopes = resolve_scopes(env, filter)?;
+    let scopes = resolve_scopes_at(env, filter, target)?;
     let options = output.reading().plan_options();
     for scope in &scopes {
         if let Err(error) = kendex_core::engine::check_catalog_compatibility(env, scope, &options)
