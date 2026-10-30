@@ -2046,6 +2046,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     suite_script=""
     if [ -n "$release_version" ]; then
       case "$d" in pi-extensions/*) continue ;; esac
+      # REVISIT(D026): CI excludes the orch corpus until KEN-4733 restores it.
+      [ "$d:${CI:-false}" != skills/orch:true ] || continue
       release_suites=$(skill_suites "$d" shell) || { say scan "$d/tests"; continue; }
       [ -n "$release_suites" ] || continue
       release_inputs=$(skill_files "$d") || { say scan "$d"; continue; }

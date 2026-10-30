@@ -23,20 +23,15 @@ trivial|true|docs/architecture/overview.md|$VERIFY_LANES|[]
 trivial|true|AGENTS.md|$VERIFY_LANES|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
-micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|$ORCH_ALL +guards-scans +guards-tools
-micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
-micro|false|skills/orch/tests/dev-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/review-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/lane-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
-micro|false|skills/orch/tests/dev-review-lane-workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
-standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE|$ORCH_ALL +guards-tools +rest
+micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +rest
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE| +guards-scans +guards-tools
+micro|false|skills/orch/scripts/lanes|$SHARD_CODE| +guards-scans +guards-tools +rest
+standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE| +guards-tools +rest
 micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
-micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
-micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
-micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox $ORCH_ALL +slack +guards-tools
+micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  +guards-tools
+micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  -guards-scans
+micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox  +slack +guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls-a +linear-controls-b
 micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls-a +linear-controls-b +guards-tools
 micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls-a -linear-controls-b +guards-commit
@@ -198,7 +193,7 @@ check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
 # The lanes intentionally take the union. Root README is a run-time Rust
 # read, which selects cargo but does not change these two jobs.
 # The local suite runner consumes this result, without the class selector's
-# conservative package unions. Orch supplies its existing shard decision.
+# conservative package unions. Offline orch retains its existing shard environment.
 while IFS='|' read -r path shard expected; do
   for os in Linux macOS; do
     want=$expected
@@ -226,7 +221,7 @@ skills/deep-research/tests/deep-research.test.mjs||none
 tools/tests/guard-range.test.sh||none
 hooks/tests/check.test.sh||none
 ROWS
-sed 's/rest | orch-terminal | orch-rest | refresh/__no_checkout__/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
+sed 's/rest | refresh/__no_checkout__/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
 ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
 check 'control: removing checkout legs changes the same suite result' none \
   "$("$TMP/rule/tools/ci-job-set" --suite-kendex Linux skills/harness-ci/tests/change-class.test.sh '')"

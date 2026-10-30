@@ -162,13 +162,13 @@ while IFS='|' read -r path expected; do
     "$(SELECT_IN="$SEL_WORLD" selection micro false "$path" | field shards)"
 done <<ROWS
 skills/price-handling/scripts/x|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
-skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest"]
-skills/orch/scripts/lib/branch-growth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
+skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh","guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest"]
+skills/orch/scripts/lib/branch-growth.sh|["review-gate","refresh","guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
 skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["refresh","orch-rest","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","node"]
+crates/demo/src/discover.rs|["refresh","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","node"]
 .claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
@@ -189,8 +189,7 @@ ROWS
 # world: the copy must answer its path other than the script does. Fields
 # split on `@`, since the edits spell `|`. The row for
 # skills/orch/scripts/lib/branch-growth.sh under the package-arm edit is the
-# inverse the selection must never reach, an orch diff selecting none of
-# orch's shards.
+# inverse the selection must never reach, a shared-script diff missing its consumers.
 [ "$(grep -c '^    skills/orch)' "$JOB_SET")" -eq 1 ] || exit 1
 while IFS='@' read -r edit paths; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
@@ -204,7 +203,6 @@ while IFS='@' read -r edit paths; do
   [ "$got" != "$expected" ] && ok "control: $edit reddens $paths" ||
     bad "control: $edit reddens $paths (still '$got')"
 done <<'CONTROLS'
-/want_shard orch-terminal /s/ orch-dev / /@skills/orch/tests/dev-future.sh
 s/^    \[ "\$required" != "\$1" \] || reach_skill "\$skill"$/    :/@skills/orch/scripts/lib/branch-growth.sh
 s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_package "$package"/@skills/github/scripts/lib/gh-auth.sh
 s/? "suite" : "script")/? "script" : "script")/@skills/preflight/scripts/preflight
@@ -226,7 +224,6 @@ s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@skills/orch/scripts/li
 s/skills\/\* | hooks\/\* | tools\/\* | refresh\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
 s/skills\/\* | hooks\/\* | tools\/\* | refresh\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@refresh/runner.sh
 s/\[ "\$build" = false \] || .*/:/@crates/demo/src/unnamed.rs
-s/ want_shard orch-rest; }/ }/@crates/demo/src/unnamed.rs
 s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-review.md
 s/\[ "\$shards" != "\[\]" \] || shell=false/:/@install.sh
 s/^      macos=\$platform$/      macos=true/@skills/price-handling/SKILL.md

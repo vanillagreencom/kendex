@@ -69,7 +69,7 @@ run_release() { # BINARY [GUARD [PART]]
   : > "$SUITE_LOG"
   : > "$ENGINE_LOG"
   RC=0
-  OUT="$(cd "$R" && PATH="$TMP/main:$PATH" "${2:-$GUARD}" --released-packages "$1" ${3:+--part "$3"} --range "$BASE" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && CI="${RELEASE_TEST_CI:-false}" PATH="$TMP/main:$PATH" "${2:-$GUARD}" --released-packages "$1" ${3:+--part "$3"} --range "$BASE" 2>&1)" || RC=$?
   RAN="$(sort "$SUITE_LOG" | tr '\n' ' ')"
   ENGINE_CALLS="$(cat "$ENGINE_LOG")"
 }
@@ -254,6 +254,25 @@ run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
   || bad 'kendex suites only: the caller fails under the release engine' "$RC $RAN $OUT"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 [ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] && ok 'kendex suites only: the next engine passes' || bad 'kendex suites only: the next engine passes' "$RC $RAN $OUT"
+
+# The catalog job sets CI=true. Offline released-package runs keep their proof.
+RELEASE_TEST_CI=true run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
+[ "$RC:$RAN" = '0:' ] && [[ "$OUT" != *'selected-suite=skills/orch/tests/'* ]] \
+  && ok 'CI released packages exclude the orch corpus' || bad 'CI released packages exclude the orch corpus' "$RC $RAN $OUT"
+python3 - "$GUARD" "$TMP/native/tools/guard" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+needle = '[ "$d:${CI:-false}" != skills/orch:true ] || continue'
+assert source.count(needle) == 1
+mutant = source.replace(needle, ':')
+assert mutant != source
+Path(sys.argv[2]).write_text(mutant)
+PY
+RELEASE_TEST_CI=true run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
+[ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] \
+  && ok 'control: removing the CI exclusion rediscovers orch' || bad 'control: removing the CI exclusion rediscovers orch' "$RC $RAN $OUT"
+cp "$GUARD" "$TMP/native/tools/guard"
 
 # Each part runs its share of the selected suites, and the parts cover them;
 # a part with no share runs nothing.
