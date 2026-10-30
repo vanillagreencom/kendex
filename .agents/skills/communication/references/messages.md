@@ -11,6 +11,13 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 | `ceo` | Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person must act on it. Name a tool, script, session or folder the person must act on with its job in the same sentence. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
 | `engineer` | Use the session's technical vocabulary for the same outcomes and costs. |
 
+For CEO prose, retain technical source notes as evidence. Before drafting, extract what work is running or stopped, its effect on the person's goal, and the action taken or still needed. Mark an unread fact as unknown. Compose from those facts, not by shortening the source notes. Keep a necessary owner decision explicit.
+
+Fictitious drafting example:
+
+- Evidence: The only test job stopped after a disk-write failure; acceptance is unfinished; the build team owns storage repair; no retry has started; the failure's cause is unread.
+- CEO draft: No tests are running, so the change still awaits acceptance. The build team owns the storage repair. The retry has not started, and the disk-write failure's cause is unknown.
+
 ## Plain language
 
 - Write in ASD-STE100 Simplified Technical English.
@@ -18,7 +25,7 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 - Say what happened and what it means for the work. Name no generation, pane, token count, seat, mailbox id or internal rule unless the person must act on it.
 - Stop after the last fact. Write no closing sentence.
 - Put one idea in each short sentence. Use active voice.
-- Delete a sentence that could sit in an answer about anything else. Keep only specific facts the reader needs: numbers, names and mechanisms.
+- Delete a sentence that could sit in an answer about anything else. Keep the observed work, effect, cost and action the reader needs. Apply the reader mode before retaining a mechanism.
 - Never say that a fact is worth noticing.
 - Do the work, then report it. Never narrate what you are about to do.
 - Use no long dash, including after a bold label. Use a colon.

@@ -20,7 +20,34 @@ Put detail in the report file. Send one post per report, not a thread of fragmen
 
 ## Report opening
 
-Open with Overall in the [summary template](#summary-template). Put the repository's outcome readings in Readings, each with its date, scope and source. Name the decision taken when the reading moved. Omit a reading when it has no change and no decision. Reuse existing evidence comments and rulings.
+Open with Overall in the [summary template](#summary-template). Put the outcome readings in Numbers before Completed, each with its date, scope and source. Name the decision taken when a reading moved. Keep the required Numbers readings below; omit an additional reading only when it has no change and no decision. Reuse existing evidence comments and rulings.
+
+## Numbers
+
+Jarvis and overseer progress reports include the readings below.
+
+For Issues merged, Issues created, Issues verified and Issues cancelled, use the window since the actual previous progress report's coverage cutoff through this report's cutoff. Read that previous report; a planned report time is not its cutoff. State the period and time zone. An unread previous report leaves the period unknown.
+
+Cover all Linear teams, including issues without a project. Name the source and the teams covered or unread. Count each unique Linear issue identity once per category within that window, even if it has several pull requests or repeated events. Categories may overlap. Keep partial counts labelled with their covered scope; missing evidence is unknown, never zero.
+
+- **Issues merged:** Issues whose linked work actually merged in the window, using source-service merge times and the issue links.
+- **Issues created:** Issues whose source creation time falls in the window.
+- **Issues verified:** Issues whose required acceptance checks passed in the window, using dated acceptance evidence.
+- **Issues cancelled:** Issues whose activity records a transition to cancelled in the window.
+
+An issue's `updated_at`, current Done state or pull-request total proves none of these events. A merge alone does not prove verification. If event evidence cannot be read, state which category and coverage remain unread.
+
+Also report these current readings, with their observation time and source:
+
+- **Post-merge checks waiting:** Count unfinished required checks by Linear team and repository. Give each group's useful age or blocked-check detail, cause and action.
+- **Active workers:** Count actual working sessions or jobs per repository. Use current session/job evidence; powered-on computers, open issues and old lane records are not workers. State unread repositories explicitly.
+- **Workers past3.5hours:** Link each issue whose current worker run exceeds 3.5 hours. Give that run's actual hours, cause and action. Keep issue creation age and legacy lane age separate from current-run duration; an unread start time leaves duration unknown.
+
+Retain other useful outcome readings with their source, period, meaning and action under [Evidence and costs](messages.md#evidence-and-costs).
+
+## Issues created
+
+Place Issues created immediately after Blocked, before Waiting on you. Use Completed's linked-issue bullet style. Cover the same window and issue identities as the Numbers count. State each issue's problem, user impact and owner. Keep any partial coverage or unread period explicit.
 
 ## Evidence
 
@@ -53,7 +80,7 @@ Jarvis and overseer reports use this shared summary shape. Use this mrkdwn templ
 
 Use each section where it applies. Keep the general format and the section order.
 
-Give Overall, What's going well and What's not going well separate quote blocks, with an unquoted blank line between them in both forms. Apply the [work story](#work-story) to each What's not going well problem: state the action taken, or that nothing is being done and why. Apply [Evidence and costs](messages.md#evidence-and-costs) to each Readings line: state its meaning and the action taken. For standard Markdown, use this opening and convert the remaining mrkdwn example under [References and markup](messages.md#references-and-markup):
+Give Overall, What's going well and What's not going well separate quote blocks, with an unquoted blank line between them in both forms. Apply the [work story](#work-story) to each What's not going well problem: state the action taken, or that nothing is being done and why. Use the [Numbers](#numbers) evidence and [Issues created](#issues-created) window below. For standard Markdown, use this opening and convert the remaining mrkdwn example under [References and markup](messages.md#references-and-markup):
 
 ```markdown
 > **Overall:** [Overall outcome.]
@@ -70,19 +97,31 @@ The figures and items below are fictitious examples, not readings. Use each sect
 
 > *What's going well:* Merges reach main within an hour of review. The new lane order spends prepaid credit before it expires.
 
-> *What's not going well:* Two kendex lanes ran past 16 hours on repeated test failures; I narrowed their failing checks. Finished work still waits a day for its post-merge check; I started checking the oldest today.
+> *What's not going well:* Two workers have spent over 3.5 hours on unfinished checks; I addressed their failures. Finished work still waits a day for acceptance; I started checking the oldest today.
 
 ```
-Readings
+Numbers
 ```
 
-- Post-merge checks waiting delay acceptance; I started with the oldest:
-    - 90 kendex _(median 35 h)_: Acceptance is late; I started checking the oldest today.
-    - 10 fleet: Acceptance is late; I started checking these after kendex.
-- 3 lanes past 3.5 hours at 9:30 am need help; I inspected their failures:
-    - *<https://linear.app/vanillagreen/issue/KEN-0002|[KEN-0002]>* _(17 h)_: Review blocks progress; I sent the setup decision.
-        - _Paused for a design review of its test setup; I sent the decision._
-    - *<https://linear.app/vanillagreen/issue/HT-0003|[HT-0003]>* _(8 h)_: Repeated failures delay delivery; I narrowed its failing checks.
+_Issue events: previous report cutoff 9 am to 1 pm today, Pacific; all Linear teams covered, including issues without a project._
+
+_Sources: Linear creation/activity records, linked service merge times and dated acceptance checks; counts use unique issue identities._
+
+- *Issues merged:* 3 since the previous report; their changes are available.
+- *Issues created:* 1 since the previous report; its problem and owner appear below.
+- *Issues verified:* 2 since the previous report; their required acceptance checks passed.
+- *Issues cancelled:* 1 since the previous report; its owner confirmed the work was no longer needed.
+- *Post-merge checks waiting:* Acceptance is late; I started with the oldest:
+    - KEN / kendex: 90 unfinished checks _(median 35 h)_; repeated test failures block acceptance; I inspected the oldest failure.
+    - FLT / fleet: 10 unfinished checks; their prerequisite is incomplete; I asked its owner for the next action.
+- *Active workers:* Current job records show 3 working sessions at 1 pm; acceptance work is running:
+    - kendex: 2 workers running checks.
+    - fleet: 1 worker repairing a failed check.
+- *Workers past3.5hours:* 2 current runs exceed 3.5 hours at 1 pm; I addressed their causes:
+    - *<https://linear.app/vanillagreen/issue/KEN-0002|[KEN-0002]>* _(4.2 h this run)_: Check setup blocks acceptance; I supplied the missing decision.
+    - *<https://linear.app/vanillagreen/issue/FLT-0003|[FLT-0003]>* _(3.8 h this run)_: Repeated failures delay delivery; I narrowed its failing checks.
+
+_Waiting-check counts and ages come from current acceptance records at 1 pm Pacific; worker durations come from current job starts._
 
 _*<https://linear.app/vanillagreen/issue/KEN-0001|[KEN-0001]>* cuts the check time; I read it after it merges._
 
@@ -109,6 +148,14 @@ Blocked
 - *<https://linear.app/vanillagreen/issue/FLT-0009|[FLT-0009]>* Waits for its prerequisite
 
 _It launches when *<https://linear.app/vanillagreen/issue/KEN-0008|[KEN-0008]>* merges._
+
+```
+Issues created
+```
+
+- *<https://linear.app/vanillagreen/issue/FLT-0011|[FLT-0011]>* Missing test results delay acceptance; fleet's overseer owns restoring them.
+
+_One issue created from 9 am to 1 pm today, Pacific, matching Numbers._
 
 ```
 Waiting on you
