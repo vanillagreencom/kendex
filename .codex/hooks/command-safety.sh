@@ -130,10 +130,9 @@ environment_producer() { # command kind
           if [ -n "$named" ]; then mode=clean; elif [ -n "$null_output" ]; then mode=dump-nul; fi
         fi ;;
       export | declare | typeset)
-        # A word that starts with a literal name, alone or before = or +=,
-        # names a variable, and so does a quoted scalar expansion, which is
-        # always one word. Only a word with an unquoted expansion or an array
-        # expansion such as "$@" can expand to no word.
+        # Only a word that starts with a literal name, alone or before = or
+        # +=, names a variable. Any other expanding word, such as "$x", can
+        # be an option or no word at all, so it keeps the listing judgment.
         named=""; flags=""; listing=1
         for ((j=pos; j<${#args[@]}; j++)); do
           value=${args[$j]}
@@ -142,14 +141,13 @@ environment_producer() { # command kind
               flags=$flags$value; [[ $value =~ ^(--|-[gI]+)$ ]] || listing="" ;;
             literal:* | dollar-literal:*)
               if [[ $value =~ $declared_re ]]; then named=1; else listing=""; fi ;;
-            split:*) [[ ! $value =~ $declared_re ]] || named=1 ;;
-            *) [[ ! $value =~ $declared_re ]] && [[ $value =~ $array_re ]] || named=1 ;;
+            *) [[ ! $value =~ $declared_re ]] || named=1 ;;
           esac
         done
         if [ -z "$named" ]; then
           # With no name, declare and typeset print every variable: bare,
-          # after --, with only the g and I scope flags, or with only words
-          # that can expand to no word.
+          # after --, with only the g and I scope flags, or with expanding
+          # words that name none.
           case "$program:$flags" in export:* | *:*p* | *:*x*) mode=dump-lines ;; esac
           [ -z "$listing" ] || mode=dump-lines
           if [ "$mode" = dump-lines ]; then
@@ -502,7 +500,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target=""
-  local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$' declared_re='^[A-Za-z_][A-Za-z0-9_]*(\+?=.*)?$' array_re='\$@|\$\{[^}]*@'
+  local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$' declared_re='^[A-Za-z_][A-Za-z0-9_]*(\+?=.*)?$'
   local filter_re='^([A-Za-z_][A-Za-z0-9_]*=?|\^[A-Za-z_][A-Za-z0-9_]*=|\^\([A-Za-z_][A-Za-z0-9_]*(\|[A-Za-z_][A-Za-z0-9_]*)+\)=)$'
   local ordinary_span_re=$'^[^\'"\\\\$`# \t\r\n;|()<>&]+'
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
@@ -580,7 +578,7 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       if [ "$quote" = '"' ]; then
-        if [ "$c" = '"' ] && { [ "$1" != expansions ] || [ "${#closers[@]}" -ne 0 ]; }; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || [ "$kind" = split ] || kind=unknown; fi
+        if [ "$c" = '"' ] && { [ "$1" != expansions ] || [ "${#closers[@]}" -ne 0 ]; }; then quote=""; else word=$word$c; [ "$c" != '$' ] || [ "$kind" = ansi-escaped ] || kind=unknown; fi
         continue
       fi
       case "$c" in
@@ -593,8 +591,7 @@ environment_dump() { # command kind; arguments are already decoded data
               # existing command-head selector can use the literal word.
               [ "$kind" != literal ] || kind=dollar-literal
               i=$((i + 1)) ;;
-            # An unquoted expansion splits into any number of words.
-            *) [ "$kind" = ansi-escaped ] || kind=split; word=$word$c ;;
+            *) [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c ;;
           esac
           active=1; bare=""; continue ;;
         '#')

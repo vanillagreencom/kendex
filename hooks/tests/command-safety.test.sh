@@ -1383,7 +1383,11 @@ environment_rows() {
 [2,"typeset $NAME","typeset-unquoted-expansion"]
 [0,"declare FOO=\"$x\"","declare-assignment-quoted-expansion"]
 [0,"typeset FOO=\"$1\"","typeset-assignment-quoted-expansion"]
-[0,"declare -g \"$name\"","declare-global-quoted-name"]
+[2,"declare -g \"$name\"","declare-global-quoted-name"]
+[2,"x=-p; export \"$x\"","export-quoted-option-expansion"]
+[2,"declare \"$opt\"","declare-quoted-expansion"]
+[0,"declare FOO=$x","declare-assignment-unquoted-expansion"]
+[0,"export PATH=$HOME/bin:$PATH","export-assignment-unquoted-expansion"]
 [0,"export PATH=\"$HOME/bin:$PATH\"","export-assignment-quoted-expansion"]
 [0,"declare -g NAME=1","declare-global-named"]
 [2,"cat <<'EOF' | exec python3\nimport os; print(os.environ)\nEOF","opaque-piped-input-interpreter-dump"]
@@ -1626,8 +1630,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "declaration-listing" { swap("[[ $value =~ ^(--|-[gI]+)$ ]] || listing=\"\"", "listing=\"\"") }
       defect == "escape-reason" { swap("\"$dump_reason\"", "-") }
       defect == "string-zero-operand" { swap("{ [ -n \"$script_string\" ] ||", "{ false ||") }
-      defect == "declaration-naming" { swap("[[ ! $value =~ $declared_re ]] && [[ $value =~ $array_re ]] || named=1", ":") }
-      defect == "declaration-split" { swap("kind=split; word=$word$c", "kind=unknown; word=$word$c") }
+      defect == "declaration-naming" { swap("*) [[ ! $value =~ $declared_re ]] || named=1 ;;", "*) ;;") }
       { print }
       END { if (changed != 1) exit 1 }
     ' "$hook_source" >"$mutant" || exit 1
@@ -1791,8 +1794,8 @@ escape-reason|FAIL environment: ansi-shell-string-escape: exit=2 expected=2
 string-zero-operand|FAIL environment: shell-string-zero-operand-dump: exit=0 expected=2
 string-zero-operand|FAIL environment: shell-string-eval-zero-operand-dump: exit=0 expected=2
 string-zero-operand|FAIL environment: env-split-string-operand-dump: exit=0 expected=2
-declaration-naming|FAIL environment: declare-global-quoted-name: exit=2 expected=0
-declaration-split|FAIL environment: typeset-unquoted-expansion: exit=0 expected=2
+declaration-naming|FAIL environment: declare-assignment-quoted-expansion: exit=2 expected=0
+declaration-naming|FAIL environment: declare-assignment-unquoted-expansion: exit=2 expected=0
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
