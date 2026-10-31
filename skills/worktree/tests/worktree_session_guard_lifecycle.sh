@@ -1040,7 +1040,7 @@ probe_shebang="$(head -n 1 -- "$WORKTREE_SCRIPT")" || { echo "worktree_session_g
 [[ "$probe_shebang" == '#!'* ]] || { echo "worktree_session_guard_lifecycle: comm-probe=no-shebang value=[$probe_shebang]" >&2; exit 1; }
 printf '%s\nLC_ALL=C ps -o comm= -p "$$"\n' "$probe_shebang" >"$TMP_ROOT/comm-probe" \
   || { echo "worktree_session_guard_lifecycle: comm-probe=write-failed" >&2; exit 1; }
-chmod +x -- "$TMP_ROOT/comm-probe" || { echo "worktree_session_guard_lifecycle: comm-probe=chmod-failed" >&2; exit 1; }
+chmod -- +x "$TMP_ROOT/comm-probe" || { echo "worktree_session_guard_lifecycle: comm-probe=chmod-failed" >&2; exit 1; }
 probe_comm="$("$TMP_ROOT/comm-probe")" || { echo "worktree_session_guard_lifecycle: comm-probe=ps-failed" >&2; exit 1; }
 probe_comm="${probe_comm#"${probe_comm%%[![:space:]]*}"}"
 probe_comm="${probe_comm%"${probe_comm##*[![:space:]]}"}"
