@@ -46,6 +46,19 @@ run_hook() { # command -> rc, stderr in ERR_FILE
   set -e
 }
 
+# The tmux rule reads TMUX from the hook's own environment, so these rows set
+# it, or unset it, rather than inherit the session the suite runs in.
+run_with_tmux() { # TMUX-value command -> rc, stderr in ERR_FILE; an empty value unsets TMUX
+  set +e
+  if [ -n "$1" ]; then
+    json_for "$2" | TMUX="$1" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  else
+    json_for "$2" | env -u TMUX "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  fi
+  rc=$?
+  set -e
+}
+
 run_payload() { # raw-json -> rc, stderr in ERR_FILE
   set +e
   printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
@@ -102,6 +115,38 @@ echo "=== block-argv-kill: the stated limits ==="
 run_hook 'echo "never use pkill here"';        assert_eq "$rc" 2 'the verb inside a quoted string is refused'
 run_hook "p'kill' -f x";                       assert_eq "$rc" 0 'a verb the shell assembles from quotes is not seen'
 run_hook 'kill\all x';                         assert_eq "$rc" 0 'a verb the shell assembles from an escape is not seen'
+
+echo "=== block-argv-kill: a tmux stop inside a tmux session names its server ==="
+# A row is `label|tmux|want|command`: `lane` runs the hook with TMUX naming a
+# named-socket lane server, `default` with TMUX naming the default socket a
+# plain `tmux` launch gives, `out` with TMUX unset; `want` is the status and
+# the leading keyed lines, `;`-joined. The last two rows are the word
+# reading's stated limits, in both directions.
+REFUSED='rc=2 keys=tmux-socket=kill-server;fix=env -u TMUX tmux -S PATH kill-server'
+while IFS='|' read -r label where want text; do
+  [ -n "$label" ] || continue
+  case "$want" in refused) want=$REFUSED ;; passes) want='rc=0 keys=' ;; esac
+  case "$where" in
+    lane) run_with_tmux /tmp/tmux-1000/fleet-lane,6710,0 "$text" ;;
+    default) run_with_tmux /tmp/tmux-1000/default,4242,0 "$text" ;;
+    *) run_with_tmux '' "$text" ;;
+  esac
+  assert_eq "rc=$rc keys=$(keyed_block "$ERR_FILE" block-argv-kill)" "$want" "$label"
+done <<'ROWS'
+the FLT-1418 stop, TMUX_TMPDIR beside it, is refused|lane|refused|TMUX_TMPDIR=$d tmux kill-server
+a session stop's fix ends at the verb, no redirect fragment after it|lane|rc=2 keys=tmux-socket=kill-session;fix=env -u TMUX tmux -S PATH kill-session|tmux kill-session -t probe 2>&1
+a flag and its argument name no server|lane|refused|tmux -f /dev/null kill-server
+a stop after an earlier tmux command on the line is found|lane|refused|tmux ls; /usr/bin/tmux kill-server
+an env that keeps TMUX names no server|lane|refused|env TMUX_TMPDIR=/tmp/x tmux kill-server
+an env that unsets TMUX names no server, whichever socket TMUX names|lane|refused|env -u TMUX tmux kill-server
+a socket path names the server|lane|passes|tmux -S /tmp/probe.sock kill-server
+a socket name names the server|lane|passes|tmux -L probe kill-server
+the fix form passes|default|passes|env -u TMUX tmux -S /tmp/probe.sock kill-server
+a tmux command that stops nothing passes|lane|passes|tmux list-sessions
+outside a tmux session no server is inherited|out|passes|tmux kill-server
+the words inside a quoted string are refused|lane|refused|echo "tmux kill-server"
+a stop chained after another tmux command is not seen|lane|passes|tmux new -d \; kill-server
+ROWS
 
 echo "=== block-argv-kill: the first line of every condition ==="
 first_table "\
