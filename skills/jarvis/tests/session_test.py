@@ -360,6 +360,39 @@ class SessionContract(unittest.TestCase):
     def test_copilot_contract(self): self.lifecycle("copilot")
     def test_pi_contract(self): self.lifecycle("pi")
 
+    def test_provider_home_and_selected_account(self):
+        provider = self.root / "caller Claude provider's home"
+        provider.mkdir()
+        excluded = ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR",
+                    "CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
+                    "PI_SUBAGENT_CHILD_AGENT", "PI_SUBAGENT_PARENT_SESSION_ID", "PI_BRIDGE_PARENT_SESSION_ID",
+                    "SECOND_OPINION_CURRENT_MODEL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN")
+        config = self.home / ".fixture.json"
+        config.write_text(json.dumps(json.loads(config.read_text()) | {"excluded_env": excluded}))
+        for harness, caller in (("pi", str(provider)), ("pi", None), ("pi", ""),
+                                ("claude", str(provider)), ("codex", str(provider)), ("copilot", str(provider))):
+            with self.subTest(harness=harness, caller=caller):
+                account = self.root / ("selected-" + harness + "-account")
+                account.mkdir(exist_ok=True)
+                self.env.update({key: "fixture-parent-value" for key in excluded})
+                self.env.pop("CLAUDE_CONFIG_DIR", None)
+                if caller is not None:
+                    self.env["CLAUDE_CONFIG_DIR"] = caller
+                self.call("start", harness, account=account, mode="new")
+                self.wait()
+                native = self.started()[-1]
+                record = json.loads(self.record.read_text())
+                self.assertEqual(record["account"], str(account))
+                # Codex launches under the lane's prepared copy of the account.
+                self.assertEqual(native["account"], record["effective_home"])
+                if harness in ("pi", "claude"):
+                    self.assertEqual(native["account"], str(account))
+                expected = str(account) if harness == "claude" else (caller or None) if harness == "pi" else None
+                self.assertEqual(native["claude_config_dir"], expected)
+                self.assertEqual(native["excluded_env"], [])
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
     def test_contract_validator_controls(self):
         answer, _ = self.call("status")
         for patch in ({"reason": "unknown"}, {"detail": "x" * 201}, {"detail": "a\nb"}):

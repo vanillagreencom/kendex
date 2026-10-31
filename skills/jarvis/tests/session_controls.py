@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[3]
 CONTROLS = [
     ("fixture packaged compiler proxy", "jarvis/tests/session_test.py", 'shlex.quote(compiler)', 'shlex.quote(rustup)', "test_native_fixture_uses_installed_toolchain"),
     ("fixture compiler failure record", "jarvis/tests/fixtures/harness.py", '"stdout": result.stdout, "stderr": result.stderr,', '"stdout": "", "stderr": result.stderr,', "test_native_fixture_reports_compiler_failure"),
+    ("Pi provider home", "jarvis/scripts/lib/session.py", 'if harness == "pi" and os.environ.get("CLAUDE_CONFIG_DIR"):', 'if False and harness == "pi" and os.environ.get("CLAUDE_CONFIG_DIR"):', "test_provider_home_and_selected_account"),
+    ("caller environment isolation", "jarvis/scripts/lib/session.py", 'if key in keys or key.startswith(("XDG_", "LC_"))', 'if True or key in keys or key.startswith(("XDG_", "LC_"))', "test_provider_home_and_selected_account"),
     ("fixture installed toolchain", "jarvis/tests/fixtures/harness.py", 'cwd=path.parent,', 'cwd=None if True else path.parent,', "test_native_fixture_uses_installed_toolchain"),
     ("exact resume", "orch/scripts/lib/lane-relaunch.sh", '  [[ "$actual" == "$id" ]] || return 2', '  return 1', "test_claude_contract"),
     ("live desktop session", "jarvis/scripts/lib/session-backend.sh", '    lane_launch_keep_live_session\n', '', "test_claude_contract"),
