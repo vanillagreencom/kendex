@@ -50,6 +50,15 @@ CONTROL_JOBS="${CONTROL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf -- "${WORK:?}"' EXIT
+# With CONTROL_TRACE naming a file, each level's TERM handler below appends a
+# line on entry, so a stop that never reached a suite names the level it
+# missed; tests/interrupt.test.sh reads it. Bash 3.2 has no EPOCHREALTIME, so
+# there the time is `-` and the file's order alone orders the entries.
+trace_term() { # EVENT
+	[[ -n ${CONTROL_TRACE:-} ]] || return 0
+	printf '%s %s\n' "${EPOCHREALTIME:--}" "$1" >>"$CONTROL_TRACE" || true
+}
+
 # An interrupted run signals the control jobs it launched, and only the pids
 # it recorded when it launched them: every lane on this machine runs these
 # same suites out of its own worktree, so an argv match would reach theirs
@@ -62,7 +71,7 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # One trap each, so the code a wrapper reads says which signal arrived: an
 # interrupt and a kill are the same cleanup but not the same event.
 trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT
-trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 143' TERM
+trap 'trace_term "runner TERM pid=$$ jobs=[${PIDS[*]-}]"; kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 143' TERM
 
 # --- control vocabulary -----------------------------------------------------
 # A control script runs with CONTROL_ROOT pointing at its own copy of the
@@ -214,7 +223,7 @@ launch() {
 run_job() {
 	local n="$1" body="" rc
 	shift
-	trap '[[ -z $body ]] || kill -TERM "$body" 2>/dev/null' TERM
+	trap 'trace_term "job TERM body=[$body]"; [[ -z $body ]] || kill -TERM "$body" 2>/dev/null' TERM
 	("$@") >"$WORK/${JOBS[n]}.log" 2>&1 3>&- &
 	body=$!
 	wait "$body"
@@ -286,7 +295,7 @@ timed_suite() {
 	local pid="" rc line i remaining=0 stopped=0 capped=0 started=$SECONDS tree fragment="" consumed
 	local STOP_GRACE=$SUITE_KILL_GRACE
 	local -a wanted=()
-	trap 'if [[ -n $pid ]]; then tree="$(tree_of "$pid")"; stop_tree "$tree"; fi; exit 143' TERM
+	trap 'trace_term "timed_suite TERM suite=[$pid]"; if [[ -n $pid ]]; then tree="$(tree_of "$pid")"; stop_tree "$tree"; fi; exit 143' TERM
 	if [[ "$#" -eq 4 ]]; then
 		while IFS= read -r line; do
 			wanted+=("$line")
