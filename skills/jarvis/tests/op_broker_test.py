@@ -42,6 +42,16 @@ elif sys.argv[1]!='whoami':
 """
 
 
+class Platform:
+    """sys as op_fifo sees it on another platform; every other attribute reads the live sys, so its streams stay real."""
+
+    def __init__(self, name):
+        self.platform = name
+
+    def __getattr__(self, name):
+        return getattr(sys, name)
+
+
 class Broker(World):
     def start(self, body=None, args=None, terminal=True, leader=False):
         self.executable("op", body or OP)
@@ -290,12 +300,12 @@ elif sys.argv[1]=='read':
                             {"verb": "read", "reference": "https://example.org"},
                             {"verb": "op", "args": []}, {"verb": "op", "args": "whoami"}, {"verb": "op", "args": ["whoami", 1]},
                             {"verb": "script", "path": "relative-script"}):
-                with self.subTest(request=request), patch.object(module, "sys", SimpleNamespace(platform="linux")):
+                with self.subTest(request=request), patch.object(module, "sys", Platform("linux")):
                     module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), {}, "session")
                     self.assertEqual(module.receive(stream, module.time.monotonic() + 5)["status"], "invalid-request")
             self.assertFalse((self.root / "ran").exists())
             # A request that bypasses opq meets the broker's own platform rule.
-            with patch.object(module, "sys", SimpleNamespace(platform="darwin")):
+            with patch.object(module, "sys", Platform("darwin")):
                 for request in ({"verb": "op", "args": ["whoami"]}, {"verb": "script", "path": str(script)}):
                     with self.subTest(platform="darwin", verb=request["verb"]):
                         module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), {}, "session")
@@ -489,7 +499,7 @@ elif sys.argv[1]=='read':
                                       "platform=unsupported"),
                                      ("reused-directory", ["op-broker", "--directory", str(reused)], {}, "directory=exists")):
             with self.subTest(form=form):
-                with patch.object(module, "sys", SimpleNamespace(platform="darwin")), \
+                with patch.object(module, "sys", Platform("darwin")), \
                      patch.object(sys, "argv", argv), patch.dict(os.environ, env), \
                      patch.object(module.shutil, "which", return_value=str(self.root / "op")), \
                      patch.object(module, "session", side_effect=module.Refusal("session=reached")), \
