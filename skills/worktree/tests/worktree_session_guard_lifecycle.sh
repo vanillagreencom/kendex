@@ -872,8 +872,11 @@ established_rows() { # HARNESS
   : >"$common/kendex-worktree-session-guard.lock.d"
   LIVE_PATH="$NOFLOCK_BIN"
   in_harness "$hdir" bob claim "$LIVE_WT" --session
-  assert_eq "rc=$LIVE_RC owner=$(live_owner) mutex=$([[ -e $common/kendex-worktree-session-guard.lock.d ]] && echo held || echo gone)" \
-    "rc=6 owner=bob mutex=held" "$harness: an established claim without flock makes one attempt at a held mutex"
+  # The busy record is the zero-wait branch's own; a claim that waited out the
+  # bound would end on the same exit with the timeout record instead.
+  assert_eq "rc=$LIVE_RC first=$(message_records <"$hdir/err" | sed -n 1p) owner=$(live_owner) mutex=$([[ -e $common/kendex-worktree-session-guard.lock.d ]] && echo held || echo gone)" \
+    "rc=6 first=worktree-guard-mutex-busy: $common/kendex-worktree-session-guard.lock.d owner=bob mutex=held" \
+    "$harness: an established claim without flock makes one attempt at a held mutex"
   rm -f -- "${common:?}/kendex-worktree-session-guard.lock.d"
   session_harness_stop "$hdir"
 }
@@ -978,6 +981,7 @@ a zombie runs^lib/process-identity.sh^if [[ -z "$now" || "${now%% *}" == Z ]]; t
 a session claim reads nothing silently^worktree-session-guard^[[ -n "$caller" ]] || worktree_message guard-session-unidentified^[[ -n "$caller" ]] || : guard-session-unidentified^unidentified^a session-bound claim that cannot read its session process says so and records none
 a failed reading counts as dead^worktree-session-guard^			*) unknown=true ;;^			*) ;;^readfail^claude: a failed process read keeps the lease;claude: a failed identity reading keeps the lease;codex: a failed process read keeps the lease;codex: a failed identity reading keeps the lease
 a failed process read counts as ended^worktree-session-guard^! status="$(process_identity_status "$pid" "$start")"^! status="$(process_identity_status "$pid" "$start" || echo ended)"^readfail^claude: a failed process read keeps the lease;codex: a failed process read keeps the lease
+an established claim waits for the mutex^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 ||^acquire_guard_mutex "$COMMON_DIR" ||^established^claude: an established claim without flock makes one attempt at a held mutex;codex: an established claim without flock makes one attempt at a held mutex
 an established claim fails its admission^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"^acquire_guard_mutex "$COMMON_DIR" 0 || exit 1^established^claude: an established claim without flock makes one attempt at a held mutex;codex: an established claim without flock makes one attempt at a held mutex'
 PROC_LIVENESS_CONTROLS='a boot keeps its sessions^worktree-session-guard^	if [[ "$boot_part" == differ ]]; then^	if false; then^reclaim release relaunch^claude holds, codex claims: an expired lease whose session ran before a reboot is taken over;codex holds, claude claims: an expired lease whose session ran before a reboot is taken over;claude: release --stale releases an expired lease whose session ran before a reboot;claude: sweep releases an expired lease whose session ran before a reboot;claude: remove'"'"'s close-out releases a lease whose session ran before a reboot;codex: release --stale releases an expired lease whose session ran before a reboot;codex: sweep releases an expired lease whose session ran before a reboot;codex: remove'"'"'s close-out releases a lease whose session ran before a reboot;claude: a relaunched session'"'"'s claim drops the session from before the boot;claude: the relaunched session'"'"'s close-out releases its lease;codex: a relaunched session'"'"'s claim drops the session from before the boot;codex: the relaunched session'"'"'s close-out releases its lease
 the start is wall-clock time^lib/process-identity.sh^  if [[ -d /proc/self ]]; then^  if false; then^reclaim^claude holds, codex claims: an expired lease whose session'"'"'s wall-clock start moved stays held;codex holds, claude claims: an expired lease whose session'"'"'s wall-clock start moved stays held'

@@ -107,8 +107,10 @@ busy_rows() {
   rc=0
   session_harness_run "$hdir" "$TREE" env -i PATH="$BUSY_BIN:$PATH" HOME="$WORLD_HOME" USER=alice KENDEX_WORKTREE_CLAIM=required \
     "$BASH" "$INSTALL/worktree-prompt-claim.sh" || rc=$?
-  assert_eq "rc=$rc first=$(first_line "$hdir/err") stdout=$(wc -c <"$hdir/out" | tr -d ' ')" \
-    "rc=0 first=worktree-session-claim: maintenance=$TREE stdout=0" "an admitted session's prompt behind a busy guard lock proceeds"
+  # The busy record is the zero-wait branch's own; a claim that waited for the
+  # lock would end on the same exit with the timeout record instead.
+  assert_eq "rc=$rc first=$(first_line "$hdir/err") cause=$(sed -n '3s/:.*//p' "$hdir/err") stdout=$(wc -c <"$hdir/out" | tr -d ' ')" \
+    "rc=0 first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lock-busy stdout=0" "an admitted session's prompt behind a busy guard lock proceeds"
   rc=0
   session_harness_run "$ndir" "$TREE" env -i PATH="$BUSY_BIN:$PATH" HOME="$WORLD_HOME" USER=alice KENDEX_WORKTREE_CLAIM=required \
     "$BASH" "$INSTALL/worktree-prompt-claim.sh" || rc=$?
@@ -178,7 +180,7 @@ EOF
   # failed maintenance the hook reports as a failed claim, blocks its prompt.
   established_anchor='			acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"'
   assert_eq "$(grep -cxF -- "$established_anchor" "$SCRIPTS/worktree-session-guard" || :)" 1 'established wait control: unique anchor'
-  LINE=$established_anchor REPLACEMENT='			acquire_guard_mutex "$COMMON_DIR" || exit 1' awk '$0 == ENVIRON["LINE"] { print ENVIRON["REPLACEMENT"]; next } { print }' \
+  LINE=$established_anchor REPLACEMENT='			acquire_guard_mutex "$COMMON_DIR" || exit "$EXIT_MAINTENANCE"' awk '$0 == ENVIRON["LINE"] { print ENVIRON["REPLACEMENT"]; next } { print }' \
     "$SCRIPTS/worktree-session-guard" >"$GUARD"
   ! cmp -s "$SCRIPTS/worktree-session-guard" "$GUARD" || exit 1
   log=$(PASS=0 FAIL=0; busy_rows; session_harness_stop_all) || :

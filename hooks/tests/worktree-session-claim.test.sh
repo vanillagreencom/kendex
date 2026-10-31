@@ -353,8 +353,8 @@ session_rows() {
       "rc=0 answer=silent owner=alice pids=$hpid" "$harness: a start admits its session and records its harness process"
     session_mutex_hold "$MAIN/.git"
     hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
-    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
-      "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE owner=alice" \
+    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) cause=$(sed -n '3s/:.*//p' "$ERR_FILE") owner=$(lease_owner "$TREE")" \
+      "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lock-busy owner=alice" \
       "$harness: a compaction or clear in the admitted session continues past a busy guard lock"
     hook_in_harness "$ndir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
     assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
@@ -615,6 +615,18 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
     "claude: an admitted session continues past a failed lease write;codex: an admitted session continues past a failed lease write;" \
     "control failed-write-exit: the planted defect turns its rows red"
+
+  # A guard whose established claim waits for the lock holds a compaction or
+  # clear for the lock's bound before its maintenance notice.
+  wait_line='			acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"'
+  assert_eq "$(grep -cxF -- "$wait_line" "$WORKTREE_SCRIPTS/worktree-session-guard" || :)" 1 "control established-wait: its anchor stands once"
+  cp -R "$WORKTREE_SCRIPTS" "$TMP_ROOT/established-wait-scripts"
+  LINE=$wait_line awk '$0 == ENVIRON["LINE"] { print "			acquire_guard_mutex \"$COMMON_DIR\" || exit \"$EXIT_MAINTENANCE\""; next } { print }' \
+    "$WORKTREE_SCRIPTS/worktree-session-guard" >"$TMP_ROOT/established-wait-scripts/worktree-session-guard"
+  log=$(PASS=0 FAIL=0 WORKTREE_SCRIPTS="$TMP_ROOT/established-wait-scripts"; session_rows; session_harness_stop_all) || :
+  assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
+    "claude: a compaction or clear in the admitted session continues past a busy guard lock;codex: a compaction or clear in the admitted session continues past a busy guard lock;" \
+    "control established-wait: the planted defect turns its rows red"
 
   control worktree-script 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' \
     'CAUSE=$("${FOUND%/*}/worktree" list >/dev/null 2>&1; "$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' env_rows \
