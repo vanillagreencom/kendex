@@ -46,6 +46,22 @@ run_hook() { # command -> rc, stderr in ERR_FILE
   set -e
 }
 
+# The tmux rule reads TMUX from the hook's own environment, so these rows set
+# it, or unset it, rather than inherit the session the suite runs in.
+LANE_TMUX=/tmp/tmux-1000/fleet-lane,6710,0
+run_in_tmux() { # command -> rc, stderr in ERR_FILE, with TMUX naming a server
+  set +e
+  json_for "$1" | TMUX="$LANE_TMUX" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+run_outside_tmux() { # command -> rc, stderr in ERR_FILE, with TMUX unset
+  set +e
+  json_for "$1" | env -u TMUX "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+}
+
 run_payload() { # raw-json -> rc, stderr in ERR_FILE
   set +e
   printf '%s' "$1" | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"
@@ -102,6 +118,31 @@ echo "=== block-argv-kill: the stated limits ==="
 run_hook 'echo "never use pkill here"';        assert_eq "$rc" 2 'the verb inside a quoted string is refused'
 run_hook "p'kill' -f x";                       assert_eq "$rc" 0 'a verb the shell assembles from quotes is not seen'
 run_hook 'kill\all x';                         assert_eq "$rc" 0 'a verb the shell assembles from an escape is not seen'
+
+echo "=== block-argv-kill: a tmux stop inside a tmux session names its server ==="
+# A row is `label|tmux|want|command`: `in` runs the hook with TMUX set, `out`
+# with it unset; `want` is the status and the leading keyed lines, `;`-joined.
+# The last two rows are the word reading's stated limits, in both directions.
+REFUSED='rc=2 keys=tmux-socket=kill-server;fix=env -u TMUX tmux -S PATH kill-server'
+while IFS='|' read -r label where want text; do
+  [ -n "$label" ] || continue
+  case "$want" in refused) want=$REFUSED ;; passes) want='rc=0 keys=' ;; esac
+  if [ "$where" = in ]; then run_in_tmux "$text"; else run_outside_tmux "$text"; fi
+  assert_eq "rc=$rc keys=$(keyed_block "$ERR_FILE" block-argv-kill)" "$want" "$label"
+done <<'ROWS'
+the FLT-1418 stop, TMUX_TMPDIR beside it, is refused|in|refused|TMUX_TMPDIR=$d tmux kill-server
+a session stop is refused with its own verb|in|rc=2 keys=tmux-socket=kill-session;fix=env -u TMUX tmux -S PATH kill-session|tmux kill-session -t probe
+a flag and its argument name no server|in|refused|tmux -f /dev/null kill-server
+the stop is found after a separator|in|refused|sleep 1; /usr/bin/tmux kill-server
+an env that keeps TMUX names no server|in|refused|env TMUX_TMPDIR=/tmp/x tmux kill-server
+a socket path names the server|in|passes|tmux -S /tmp/probe.sock kill-server
+a socket name names the server|in|passes|tmux -L probe kill-server
+an env that unsets TMUX leaves none to inherit|in|passes|env -u TMUX tmux kill-server
+a tmux command that stops nothing passes|in|passes|tmux list-sessions
+outside a tmux session no server is inherited|out|passes|tmux kill-server
+the words inside a quoted string are refused|in|refused|echo "tmux kill-server"
+a stop chained after another tmux command is not seen|in|passes|tmux new -d \; kill-server
+ROWS
 
 echo "=== block-argv-kill: the first line of every condition ==="
 first_table "\
