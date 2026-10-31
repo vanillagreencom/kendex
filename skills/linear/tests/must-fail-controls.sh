@@ -22,9 +22,8 @@
 #
 # What it does not refuse is a mutation whose failures happen to sit inside
 # another's under an assertion nobody else claims. Refusing that would take
-# legitimate evidence with it: in controls/mutation-isolation.control.sh
-# mutation 5's failures sit wholly inside mutation 8's, and mutation 5 is the
-# only thing that reddens the TIMEOUT case.
+# legitimate evidence with it: the inner mutation can be the only one that
+# reddens the case it claims.
 #
 #   skills/linear/tests/must-fail-controls.sh                     # all
 #   skills/linear/tests/must-fail-controls.sh estimate-clear      # one, by stem
@@ -269,6 +268,9 @@ flush() {
 				[[ -f "$WORK/$stem/mutation$k.rc" ]] || return 0
 			done
 			sed -n '/^BASELINE /p' "$WORK/$stem.log"
+			for ((k = 1; k <= n; k++)); do
+				sed -n '/^MUTATION /p' "$WORK/$stem/mutation$k.log"
+			done
 			log=""
 			for ((k = n; k >= 1; k--)); do
 				[[ "$(cat "$WORK/$stem/mutation$k.rc")" -eq 0 ]] ||
@@ -276,7 +278,7 @@ flush() {
 			done
 		fi
 		if [[ -n "$log" ]]; then
-			cat "$log"
+			sed '/^MUTATION /d' "$log"
 			FAILURES=$((FAILURES + 1))
 		else
 			printf 'ok       %s.test.sh\n' "$stem"
@@ -513,7 +515,7 @@ prepare_one() {
 
 # mutate_one SUITE STEM K... — each mutation K of a control prepare_one passed.
 mutate_one() {
-	local suite="$1" stem="$2" root out rc k want
+	local suite="$1" stem="$2" root out rc k want started
 	shift 2
 	CONTROL_NAME="$stem"
 	CONTROL_PATH="$CONTROLS_DIR/$stem.control.sh"
@@ -540,8 +542,13 @@ mutate_one() {
 
 		grep "^$k	" "$CONTROL_EXPECT_FILE" | cut -f2- >"$root.wanted" ||
 			die "cannot read wanted assertions for $suite mutation $k"
+		started=$SECONDS
 		timed_suite "$root" "$suite" "$root.out" "$root.wanted"
 		rc=$?
+		# CI triage reads this beside BASELINE to hold every suite run
+		# under the cap.
+		printf 'MUTATION %-52s mutation=%d elapsed=%ss exit=%s cap=%ss\n' \
+			"$suite" "$k" "$((SECONDS - started))" "$rc" "$SUITE_TIMEOUT"
 		out="$(<"$root.out")" || die "cannot read the output of $suite"
 		if [[ "$rc" -eq 0 ]]; then
 			printf 'GREEN    %-52s suite passed with mutation %d, its only break\n' \
