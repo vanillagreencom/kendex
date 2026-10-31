@@ -213,6 +213,9 @@ a stale GH_TOKEN yields to the keyring login, which answers the question|GH_TOKE
 a stale GITHUB_TOKEN yields to the keyring login, which answers the question|GITHUB_TOKEN=ghp_stale|rc=0 out=<squash> err=worktree-github-auth: fallback=keyring reads=keyring,keyring
 a working GH_TOKEN keeps its identity beside a keyring login|GH_TOKEN=ghp_good|rc=0 out=<squash> err= reads=ghp_good,ghp_good
 a stale token with no keyring login leaves the question unanswered, never unmerged|GH_TOKEN=ghp_stale GH_KEYRING=none|rc=2 out= err=worktree-merge-unverified: topic reads=ghp_stale
+a refused GH_TOKEN placeholder yields to a working GITHUB_TOKEN, never to the keyring|GH_TOKEN=stale_placeholder GITHUB_TOKEN=ghp_good|rc=0 out=<squash> err= reads=ghp_good,ghp_good
+a GH_BOT_TOKEN beside a working GITHUB_TOKEN leaves the reads to GITHUB_TOKEN|GITHUB_TOKEN=ghp_good GH_BOT_TOKEN=ghp_stale_bot|rc=0 out=<squash> err= reads=ghp_good,ghp_good
+a GH_BOT_TOKEN alone is no read credential, so the keyring login answers|GH_BOT_TOKEN=ghp_stale_bot|rc=0 out=<squash> err= reads=keyring,keyring
 '
 while IFS='|' read -r label credentials want; do
   [[ -n "$label$credentials$want" ]] || continue
@@ -229,9 +232,9 @@ mkdir -p "$TMP_ROOT/auth-pkg"
 cp -R "$PACKAGE_DIR" "$TMP_ROOT/auth-pkg/worktree"
 cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/auth-pkg/github"
 AUTH_MUTANT="$TMP_ROOT/auth-pkg/worktree/scripts/worktree"
-assert_eq "$(grep -c '^  kendex_github_sanitize_gh_env 2>"$err_file"$' "$AUTH_MUTANT")" "1" \
+assert_eq "$(grep -c '^  kendex_github_sanitize_gh_env >/dev/null$' "$AUTH_MUTANT")" "1" \
   "control finds the sanitizer call"
-sed -i.bak 's/^  kendex_github_sanitize_gh_env 2>"$err_file"$/  : kendex_github_sanitize_gh_env 2>"$err_file"/' "$AUTH_MUTANT"
+sed -i.bak 's/^  kendex_github_sanitize_gh_env >\/dev\/null$/  : kendex_github_sanitize_gh_env >\/dev\/null/' "$AUTH_MUTANT"
 assert_eq "$(cmp -s "$AUTH_MUTANT.bak" "$AUTH_MUTANT" && printf unchanged || printf changed)" "changed" \
   "control disarms it only in its private copy"
 rm -f -- "${AUTH_MUTANT:?}.bak"

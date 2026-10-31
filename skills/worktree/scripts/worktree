@@ -185,30 +185,63 @@ git_with_github_https_auth() {
   fi
 }
 
-# Every gh read authenticates as the github skill's push helper does: its
-# selection names the token, and a GH_TOKEN or GITHUB_TOKEN GitHub refuses
-# yields to a working gh keyring login. Asked once, in the shell of the first
-# read, so a command substitution after it inherits the answer. A credential
-# with nothing to yield to stays, and the read fails with gh's own reason.
+# Every gh read takes the github skill's user ladder: GH_TOKEN, then
+# GITHUB_TOKEN, a 1Password reference resolved. GH_BOT_TOKEN is a bot
+# identity and never a read credential, as gh never reads it. A token GitHub
+# refuses yields to a working gh keyring login; one with nothing to yield to
+# stays, and the read fails with gh's own reason. The choice is made once, in
+# the shell of the first read, so a command substitution after it inherits
+# it. It lives in unexported variables that only github_read applies, so a
+# setup command or a git hook keeps the caller's GH_TOKEN and GITHUB_TOKEN.
+# GITHUB_READ_AUTH is unasked, inherited (no github skill: gh reads the
+# caller's environment) or selected.
 GITHUB_READ_AUTH=unasked
+unset GITHUB_READ_GH_TOKEN GITHUB_READ_GITHUB_TOKEN
 github_read_auth() {
-  local err_file=""
+  local err_file="" state="" fallback=none
   [[ "$GITHUB_READ_AUTH" == unasked ]] || return 0
-  GITHUB_READ_AUTH=asked
+  GITHUB_READ_AUTH=inherited
   declare -F kendex_github_sanitize_gh_env >/dev/null 2>&1 || return 0
-  kendex_github_apply_selected_auth_token router >/dev/null 2>&1 || true
-  # Set by the sanitizer below alone, never by whoever launched this script.
-  unset KENDEX_GITHUB_AUTH_FALLBACK
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-github-auth.XXXXXX")"; then
-    kendex_github_sanitize_gh_env
+    state="$(github_read_select)" || return 0
+  elif ! state="$(github_read_select 2>"$err_file")"; then
+    rm -f -- "${err_file:?}"
     return 0
   fi
-  kendex_github_sanitize_gh_env 2>"$err_file"
+  # Each line is NAME=VALUE, the value printf %q quoted, as eval reads it.
+  eval "$state"
+  GITHUB_READ_AUTH=selected
+  [[ -n "$err_file" ]] || return 0
   if [[ -s "$err_file" ]]; then
-    worktree_message github-auth "fallback=${KENDEX_GITHUB_AUTH_FALLBACK:-none}" >&2
+    worktree_message github-auth "fallback=$fallback" >&2
     sed 's/^/  /' "$err_file" >&2
   fi
   rm -f -- "${err_file:?}"
+}
+
+# The selection and the sanitizer, run in a subshell so their exports stay
+# there; prints the outcome for github_read_auth to read.
+github_read_select() {
+  kendex_github_apply_selected_auth_token user >/dev/null 2>&1 || true
+  # Set by the sanitizer below alone, never by whoever launched this script.
+  unset KENDEX_GITHUB_AUTH_FALLBACK
+  kendex_github_sanitize_gh_env >/dev/null
+  printf 'fallback=%q\n' "${KENDEX_GITHUB_AUTH_FALLBACK:-none}"
+  [[ -z "${GH_TOKEN+x}" ]] || printf 'GITHUB_READ_GH_TOKEN=%q\n' "$GH_TOKEN"
+  [[ -z "${GITHUB_TOKEN+x}" ]] || printf 'GITHUB_READ_GITHUB_TOKEN=%q\n' "$GITHUB_TOKEN"
+}
+
+# Run COMMAND in a subshell holding the read credential github_read_auth chose.
+github_read() { # COMMAND...
+  github_read_auth
+  (
+    if [[ "$GITHUB_READ_AUTH" == selected ]]; then
+      unset GH_TOKEN GITHUB_TOKEN
+      [[ -z "${GITHUB_READ_GH_TOKEN+x}" ]] || export GH_TOKEN="$GITHUB_READ_GH_TOKEN"
+      [[ -z "${GITHUB_READ_GITHUB_TOKEN+x}" ]] || export GITHUB_TOKEN="$GITHUB_READ_GITHUB_TOKEN"
+    fi
+    "$@"
+  )
 }
 
 restack_state_get() {
@@ -1160,7 +1193,7 @@ resolve_default_branch() { # [optional]
     # It answers for this checkout, as merged_pr_for_branch does: an inherited
     # GH_REPO would name another repository's default branch.
     github_read_auth
-    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?
+    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?
     case "$rc" in
       0) DEFAULT_BRANCH="$answer"; return 0 ;;
       3) ;;
@@ -1741,7 +1774,7 @@ open_pr_for_branch() {
   fi
   github_read_auth
 
-  if ! output="$(gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>&1)"; then
+  if ! output="$(github_read gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>&1)"; then
     worktree_message pr-query-failed "$branch" "Error: Could not query open pull requests for branch '$branch'; refusing to assume it is unowned." >&2
     [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
     return 1
@@ -1803,7 +1836,7 @@ merged_pr_for_branch() {
   # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
   # repository's same-named branch at the same commit authorize a delete here,
   # and a fork's PR is someone else's merge, so cross-repository rows are cut.
-  rows="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+  rows="$( (cd "$PROJECT_ROOT" && github_read env -u GH_REPO -u GITHUB_REPOSITORY \
               gh pr list --state merged --head "$branch" \
               --base "$DEFAULT_BRANCH" --limit 100 \
               --json number,headRefOid,isCrossRepository \
@@ -1850,7 +1883,7 @@ merged_fork_pr_at_tip() {
     printf 'could not create a scratch file for the gh diagnostic\n'
     return 2
   fi
-  row="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+  row="$( (cd "$PROJECT_ROOT" && github_read env -u GH_REPO -u GITHUB_REPOSITORY \
              gh pr view "$pr" --json state,baseRefName,headRefOid \
              --jq '[.state, .baseRefName, .headRefOid] | @tsv') 2>"$err_file" )" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
@@ -1901,7 +1934,7 @@ merge_commit_for_pr() { # PR
   fi
   # Same isolation as merged_pr_for_branch: an inherited GH_REPO or
   # GITHUB_REPOSITORY redirect would answer for another repository.
-  oid="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+  oid="$( (cd "$PROJECT_ROOT" && github_read env -u GH_REPO -u GITHUB_REPOSITORY \
              gh pr view "$pr" --json mergeCommit --jq '.mergeCommit.oid // ""') 2>"$err_file" )" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     detail="$(tr '\n' ' ' <"$err_file")"
@@ -1965,7 +1998,7 @@ resolve_pr_head() {
     return 1
   fi
   github_read_auth
-  if ! output="$(gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
+  if ! output="$(github_read gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
                   -q '[.headRefName, .headRefOid, (.isCrossRepository | tostring)] | @tsv' 2>&1)"; then
     worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2
     [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2

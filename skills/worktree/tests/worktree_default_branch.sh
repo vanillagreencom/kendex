@@ -135,10 +135,10 @@ mutant() { # NAME FROM TO [NEXT]
   cat -- "$TMP_ROOT/$1.edit" >"$script"
 }
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant read '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' '    answer=main'
+mutant read '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' '    answer=main'
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant inherited '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' \
-  '    answer="$( (cd "$PROJECT_ROOT" && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?'
+mutant inherited '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' \
+  '    answer="$( (cd "$PROJECT_ROOT" && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?'
 mutant refusing "        sed 's/^/  /' <<<\"\$answer\" >&2" "        sed 's/^/  /' <<<\"\$answer\" >&2; return 1"
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant uncalled '    resolve_default_branch || exit 1' '    :' \
@@ -219,6 +219,19 @@ rc=0
 assert_eq "$rc" 0 "create exits 0"
 assert_eq "$(git -C "$(cat "$TMP_ROOT/out")" rev-parse HEAD 2>/dev/null || true)" "$DEVELOP" \
   "the new tree starts at origin/develop"
+
+# The default-branch read selects its credential first; the setup command
+# create runs after it still holds the caller's own GH_TOKEN and GITHUB_TOKEN.
+rc=0
+: >"$GH_LOG"
+# shellcheck disable=SC2016 # the setup command's own shell expands it
+(cd "$MAIN" && env -u WORKTREE_DEFAULT_BRANCH -u GH_REPO -u GH_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+  PATH="$TMP_ROOT/bin:$PATH" GH_LOG="$GH_LOG" GH_SLUG=acme/widgets GH_DEFAULT=develop GITHUB_TOKEN=ghp_caller \
+  WORKTREE_SETUP_CMD='printf "GH_TOKEN=%s GITHUB_TOKEN=%s" "${GH_TOKEN-<unset>}" "${GITHUB_TOKEN-<unset>}" >"$SETUP_ENV"' \
+  SETUP_ENV="$TMP_ROOT/setup-env" "$WORKTREE_SCRIPT" create dev8 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
+assert_eq "rc=$rc reads=$(grep -c '^api repos/' "$GH_LOG" || true) env=$(cat -- "$TMP_ROOT/setup-env" 2>/dev/null || true)" \
+  "rc=0 reads=1 env=GH_TOKEN=<unset> GITHUB_TOKEN=ghp_caller" \
+  "the setup command after the default-branch read keeps the caller's tokens"
 
 # label|script|exit|stderr records|verb and arguments, {detached} the path
 # of a detached worktree; origin's inspect-a and inspect-b are branches
