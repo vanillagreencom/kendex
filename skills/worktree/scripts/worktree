@@ -2188,10 +2188,11 @@ worktree_lock_reason() {
 #
 #   cleanup           never collects a worktree under a guard lease; `--stale`
 #                     collects leases past the TTL whose recorded session
-#                     processes are all verified dead
+#                     processes are all verified dead, or that record none
 #   remove            releases only the caller's OWN lease, and only while no
-#                     other session process it records lives, so a claiming
-#                     session can still tear down its own tree
+#                     other session process it records is live or
+#                     unverifiable, so a claiming session can still tear down
+#                     its own tree
 #   create --reuse    refuses a foreign lease by name, refreshes its own
 #
 SESSION_GUARD="$SCRIPT_DIR/worktree-session-guard"
@@ -2277,11 +2278,24 @@ release_own_session_lease() {
     [[ -n "$issue_owner" && "$(issue_branch_name "$owner")" == "$(issue_branch_name "$issue_owner")" ]] || return 0
   fi
   [[ -n "$owner" ]] || return 0
-  if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --inactive --repo "$PROJECT_ROOT" >/dev/null; then
-    worktree_message lease-release-failed "$wt" "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
-    echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
-    return 1
-  fi
+  local release_rc=0
+  "$SESSION_GUARD" release "$wt" --owner "$owner" --inactive --repo "$PROJECT_ROOT" >/dev/null || release_rc=$?
+  case "$release_rc" in
+    0) ;;
+    7)
+      # The guard's session-held exit: another session process the lease
+      # records is live or cannot be verified ended. A plain owner release
+      # skips that check, so it is no remedy here.
+      worktree_message lease-session-held "path=$wt owner=$owner" "Error: another session process this lease records is live or cannot be verified ended; refusing to remove $wt." >&2
+      echo "  Let that session end, or confirm it has ended, then: $SESSION_GUARD release \"$wt\" --force --repo \"$PROJECT_ROOT\"" >&2
+      return 1
+      ;;
+    *)
+      worktree_message lease-release-failed "$wt" "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
+      echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
+      return 1
+      ;;
+  esac
   worktree_message lease-released "path=$wt owner=$owner" "Released session guard lease (owner=$owner): $wt" >&2
   return 0
 }

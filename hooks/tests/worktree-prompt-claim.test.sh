@@ -176,9 +176,9 @@ EOF
 
   # An established session that waits for the lock like a new one, or whose
   # failed maintenance the hook reports as a failed claim, blocks its prompt.
-  established_anchor='			try_guard_mutex "$COMMON_DIR" || exit "$EXIT_MAINTENANCE"'
+  established_anchor='			acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"'
   assert_eq "$(grep -cxF -- "$established_anchor" "$SCRIPTS/worktree-session-guard" || :)" 1 'established wait control: unique anchor'
-  LINE=$established_anchor REPLACEMENT='			acquire_guard_mutex "$COMMON_DIR"' awk '$0 == ENVIRON["LINE"] { print ENVIRON["REPLACEMENT"]; next } { print }' \
+  LINE=$established_anchor REPLACEMENT='			acquire_guard_mutex "$COMMON_DIR" || exit 1' awk '$0 == ENVIRON["LINE"] { print ENVIRON["REPLACEMENT"]; next } { print }' \
     "$SCRIPTS/worktree-session-guard" >"$GUARD"
   ! cmp -s "$SCRIPTS/worktree-session-guard" "$GUARD" || exit 1
   log=$(PASS=0 FAIL=0; busy_rows; session_harness_stop_all) || :

@@ -312,6 +312,16 @@ done
 exec $(command -v flock) "\${args[@]}"
 FLOCK
 chmod +x "$SESSION_BIN/flock"
+# A mv that refuses to replace a worktree lock, so the guard's lease write
+# fails after it holds the lock; every other move passes to the real mv.
+FAILED_WRITE_BIN="$TMP_ROOT/failed-write-bin"
+mkdir -p "$FAILED_WRITE_BIN"
+cat >"$FAILED_WRITE_BIN/mv" <<MV
+#!/usr/bin/env bash
+case "\${@: -1}" in */locked) exit 1 ;; esac
+exec $(command -v mv) "\$@"
+MV
+chmod +x "$FAILED_WRITE_BIN/mv"
 
 hook_in_harness() { # DIR ENV...
   local dir="$1"
@@ -351,6 +361,10 @@ session_rows() {
       "rc=0 answer=stop first=worktree-session-claim: unclaimed=$TREE owner=alice" \
       "$harness: a new session behind a busy guard lock keeps the admission refusal"
     session_mutex_free
+    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$FAILED_WRITE_BIN:$PATH"
+    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) cause=$(sed -n '3s/:.*//p' "$ERR_FILE") owner=$(lease_owner "$TREE")" \
+      "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lease-write owner=alice" \
+      "$harness: an admitted session continues past a failed lease write"
     release_all
     session_harness_run "$ndir" "$TREE" env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=bob "$GUARD" claim "$TREE" --session || :
     session_lease_rewrite "$TREE" expire
@@ -576,7 +590,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # A hook that treats an established session's failed maintenance as a
   # failed claim stops a working session at compaction or clear.
   control maintenance-stops '  6) advise maintenance "$ROOT" \' '  6) notice maintenance "$ROOT" \' session_rows \
-    "claude: a compaction or clear in the admitted session continues past a busy guard lock;codex: a compaction or clear in the admitted session continues past a busy guard lock;"
+    "claude: a compaction or clear in the admitted session continues past a busy guard lock;claude: an admitted session continues past a failed lease write;codex: a compaction or clear in the admitted session continues past a busy guard lock;codex: an admitted session continues past a failed lease write;"
   control copilot-project-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks) : ;;' output_failure_rows \
     "required: copilot-project normal encoder: context contract;required: copilot-project broken encoder: context contract;"
   control copilot-global-context '[ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true' ':' output_failure_rows \
@@ -590,6 +604,18 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "a worktree with no issue record runs no project file;"
 
   # A hook that asks the worktree script runs the repository's `.env.local`.
+  # A guard that reports an established session's failed lease write as a
+  # failed claim stops that session in required mode.
+  guard_line='			[[ "$established" != true ]] || exit "$EXIT_MAINTENANCE"'
+  assert_eq "$(grep -cxF -- "$guard_line" "$WORKTREE_SCRIPTS/worktree-session-guard" || :)" 1 "control failed-write-exit: its anchor stands once"
+  cp -R "$WORKTREE_SCRIPTS" "$TMP_ROOT/failed-write-scripts"
+  LINE=$guard_line awk '$0 == ENVIRON["LINE"] { print "			exit 1"; next } { print }' \
+    "$WORKTREE_SCRIPTS/worktree-session-guard" >"$TMP_ROOT/failed-write-scripts/worktree-session-guard"
+  log=$(PASS=0 FAIL=0 WORKTREE_SCRIPTS="$TMP_ROOT/failed-write-scripts"; session_rows; session_harness_stop_all) || :
+  assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
+    "claude: an admitted session continues past a failed lease write;codex: an admitted session continues past a failed lease write;" \
+    "control failed-write-exit: the planted defect turns its rows red"
+
   control worktree-script 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' \
     'CAUSE=$("${FOUND%/*}/worktree" list >/dev/null 2>&1; "$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' env_rows \
     "a skill-created worktree runs no project file;"

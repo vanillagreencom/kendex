@@ -8,9 +8,13 @@
 # direct child and lives until the suite stops it, so its recorded process is
 # live exactly while the suite holds it. Liveness is never read from an
 # invented or reaped PID: a dead session is the held process with another
-# recorded start, or a ps that reports its PID absent.
+# recorded start or boot id, a zombie whose parent the suite holds, or a ps
+# that reports its PID absent.
 #
 # session_harness_start DIR NAME  starts one under DIR; SESSION_HARNESS_PID.
+# session_zombie_start DIR        starts a held process whose child has
+#                                 exited unreaped; SESSION_ZOMBIE_PID is that
+#                                 zombie.
 # session_harness_run DIR CWD CMD...
 #                                 runs CMD inside it from CWD, stdin from
 #                                 /dev/null, stdout and stderr in DIR/out and
@@ -53,12 +57,35 @@ session_harness_run() { # DIR CWD CMD...
 session_harness_stop() { # DIR
   local pid
   pid="$(cat -- "$1/pid" 2>/dev/null)" || return 0
+  if [ -e "$1/kill" ]; then
+    kill "$pid" 2>/dev/null || :
   # A stand-in that already ended has no reader on its request pipe.
-  if kill -0 "$pid" 2>/dev/null; then
+  elif kill -0 "$pid" 2>/dev/null; then
     printf 'exit\n' >"$1/request"
   fi
   wait "$pid" 2>/dev/null || :
   rm -f -- "$1/pid"
+}
+
+session_zombie_start() { # DIR
+  local dir="$1" tries=0 state=''
+  mkdir -p -- "$dir" || return 1
+  # sh starts the child, then becomes a sleep, which never reaps it.
+  sh -c 'sleep 0 & printf "%s\n" "$!" >"$1"; exec sleep 600' _ "$dir/zombie" &
+  printf '%s\n' "$!" >"$dir/pid"
+  : >"$dir/kill"
+  SESSION_HARNESS_DIRS="$SESSION_HARNESS_DIRS $dir"
+  SESSION_ZOMBIE_PID=''
+  while :; do
+    if [ -s "$dir/zombie" ]; then
+      SESSION_ZOMBIE_PID="$(cat -- "$dir/zombie")" || return 1
+      state="$(ps -o stat= -p "$SESSION_ZOMBIE_PID" 2>/dev/null)" || state=''
+      case "${state// /}" in Z*) return 0 ;; esac
+    fi
+    tries=$((tries + 1))
+    [ "$tries" -lt 200 ] || { echo "session-harness: zombie=not-reached dir=$dir" >&2; return 1; }
+    sleep 0.05
+  done
 }
 
 session_harness_stop_all() {
@@ -76,9 +103,11 @@ session_lease_pids() { # GUARD WT REPO
 
 # Rewrites the guard lease on WT: `expire` moves its heartbeat past every TTL;
 # `restart PID` gives PID's recorded identity another start, which the held
-# process then contradicts; `rehost PID` moves that identity to another host.
-# A rewrite that changes nothing refuses.
-session_lease_rewrite() { # WT expire | restart PID | rehost PID
+# process then contradicts; `rehost PID` moves that identity to another host,
+# `reboot PID` to another boot id and `renamespace PID` to another PID
+# namespace; `zombie PID ZPID ZSTART` makes it name the zombie ZPID, started
+# at ZSTART. A rewrite that changes nothing refuses.
+session_lease_rewrite() { # WT expire | restart|rehost|reboot|renamespace PID | zombie PID ZPID ZSTART
   local file lease before ids out='' id pid start pidns boot host
   local -a list=()
   file="$(git -C "$1" rev-parse --absolute-git-dir)/locked" || return 1
@@ -86,14 +115,20 @@ session_lease_rewrite() { # WT expire | restart PID | rehost PID
   before="$lease"
   case "$2" in
     expire) lease="$(sed 's/ heartbeat_epoch=[0-9]*/ heartbeat_epoch=1000/' <<<"$lease")" || return 1 ;;
-    restart | rehost)
+    restart | rehost | reboot | renamespace | zombie)
       ids="${lease##* sessions=}"
       ids="${ids%% *}"
       IFS=, read -r -a list <<<"$ids"
       for id in ${list[@]+"${list[@]}"}; do
         IFS=/ read -r pid start pidns boot host <<<"$id"
         if [ "$pid" = "$3" ]; then
-          if [ "$2" = restart ]; then start=Thu_Jan__1_00:00:00_1970; else host=remote.invalid; fi
+          case "$2" in
+            restart) start=Thu_Jan__1_00:00:00_1970 ;;
+            rehost) host=remote.invalid ;;
+            reboot) boot=00000000-0000-4000-8000-000000000000 ;;
+            renamespace) pidns=1 ;;
+            zombie) pid="$4" start="$5" ;;
+          esac
         fi
         out="${out:+$out,}$pid/$start/$pidns/$boot/$host"
       done
@@ -105,13 +140,24 @@ session_lease_rewrite() { # WT expire | restart PID | rehost PID
   printf '%s\n' "$lease" >"$file"
 }
 
-# A directory whose ps reports PID absent to the start read and passes every
-# other read to the real ps: the absent branch as synthetic ps output.
+# A directory whose ps reports PID absent to every read of that PID and
+# passes every other read to the real ps: the absent branch as synthetic ps
+# output, for a host whose process reads go through ps.
 session_absent_ps() { # DIR PID
   local real
   real="$(command -v ps)" || return 1
   mkdir -p -- "$1" || return 1
-  printf '#!/usr/bin/env bash\ncase " $* " in *" -o lstart= -p %s "*) exit 1 ;; esac\nexec %q "$@"\n' "$2" "$real" >"$1/ps"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" -p %s "*) exit 1 ;; esac\nexec %q "$@"\n' "$2" "$real" >"$1/ps"
+  chmod +x "$1/ps"
+}
+
+# A directory whose ps answers PID's lstart with another wall-clock time, as
+# after a clock step, and passes every other read to the real ps.
+session_clockstep_ps() { # DIR PID
+  local real
+  real="$(command -v ps)" || return 1
+  mkdir -p -- "$1" || return 1
+  printf '#!/usr/bin/env bash\ncase " $* " in *" -o lstart= -p %s "*) echo "Thu Jan  1 00:00:00 1970"; exit 0 ;; esac\nexec %q "$@"\n' "$2" "$real" >"$1/ps"
   chmod +x "$1/ps"
 }
 

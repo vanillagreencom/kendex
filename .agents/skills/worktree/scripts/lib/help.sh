@@ -423,7 +423,9 @@ Session leases:
   Sessions on the same item share one lease; either may release it at close-out.
   remove releases it only when no harness session process the lease records,
   other than the remover's own, is live, on a remote host or in an unknown
-  process state. A lease that records none releases only when its recorded
+  process state. That refusal is worktree-lease-session-held: let that session
+  end, or confirm it has ended, before 'worktree-session-guard release
+  --force'. A lease that records none releases only when its recorded
   guard writer PID is absent on this host; that writer exits after
   claim/refresh, so this covers its write window and not a working harness.
   ID calls use the item ID; path calls use the private Git issue record.
