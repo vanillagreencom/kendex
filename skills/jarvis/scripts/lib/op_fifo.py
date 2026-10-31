@@ -1,6 +1,7 @@
 """Private FIFO transport for the optional 1Password broker on Linux/macOS."""
 import argparse
 import base64
+import errno
 import fcntl
 import json
 import os
@@ -17,6 +18,9 @@ import uuid
 
 CALL_SECONDS = 30
 CLIENT_SECONDS = 60
+# The tail of op's stderr the journal keeps for a call that never finished.
+STDERR_BYTES = 4096
+TTY_LEADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "op_tty.py")
 # Broker statuses for the op and script verbs, as the client reports them.
 RECORD_REFUSALS = {"invalid-request": "request=invalid", "script-refused": "script=private-owner-required",
                    "script-missing": "script=not-found", "run-failed": "run=failed",
@@ -171,11 +175,11 @@ def keepalive_seconds():
     return int(value)
 
 
-def keep_session(op, env, renewal):
+def keep_session(op, env, route):
     """Renew the session, log a failed renewal, and return whether it succeeded."""
     # The renewal contacts the server, so a failed run, an unreachable server included, says nothing about the session.
     try:
-        status = call_op([op, *renewal], env).returncode
+        status = call([op, *RENEWALS[route]], env, route).returncode
     except (OSError, subprocess.TimeoutExpired):
         print("op-broker: keepalive=failed", file=sys.stderr, flush=True)
         return False
@@ -200,56 +204,146 @@ def call_op(argv, env, interactive=False):
                 process.wait()
 
 
-def read_some(stream, output, seconds):
-    """Collect output for at most seconds; return False at end of output."""
-    if not select.select([stream], [], [], seconds)[0]:
-        return True
-    block = os.read(stream.fileno(), 65536)
-    output.extend(block)
-    return bool(block)
+def journal(cause, stderr):
+    """Log why a call never finished, then the last of its stderr; the client's reply carries neither."""
+    print("op-broker: run=failed " + cause, file=sys.stderr, flush=True)
+    for line in stderr.decode(errors="backslashreplace").splitlines():
+        print("op-broker: stderr=" + line, file=sys.stderr, flush=True)
 
 
-def run_work(argv, env, pass_fds=()):
-    """Linux: run caller-chosen work and end its process group when it exits or at the deadline."""
-    process = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, pass_fds=pass_fds, start_new_session=True)
+def spawn_failed(error, stderr):
+    journal("cause=spawn errno=" + errno.errorcode.get(error.errno, str(error.errno)), stderr)
+
+
+def read_streams(streams, seconds):
+    """Read what each open stream holds within seconds and return whether any was ready.
+
+    streams maps a descriptor to its buffer and byte bound; a stream leaves at its end, and a None buffer discards."""
+    if not streams:
+        time.sleep(seconds)
+        return False
+    ready = select.select(list(streams), [], [], seconds)[0]
+    for fd in ready:
+        try:
+            block = os.read(fd, 65536)
+        except OSError as error:
+            # A pty master reads EIO once no process holds its terminal.
+            if error.errno != errno.EIO:
+                raise
+            block = b""
+        buffer, bound = streams[fd]
+        if not block:
+            del streams[fd]
+        elif buffer is not None:
+            buffer.extend(block)
+            if bound is not None:
+                del buffer[:-bound]
+    return bool(ready)
+
+
+def run_work(argv, env, pass_fds=(), *, stderr, terminal):
+    """Linux: run work as a session leader and end its process group when the leader exits or at the deadline.
+
+    stderr keeps the work's last STDERR_BYTES of stderr for the journal of a call that never finished. terminal
+    gives the session a new pty, led by op_tty.py with the work as its child."""
+    errors = bytearray()
+    master = report = None
+    try:
+        try:
+            if terminal:
+                master, slave = os.openpty()
+                # From the start on, the leader holds the terminal and the status pipe's write end.
+                try:
+                    report, status = os.pipe()
+                    try:
+                        process = subprocess.Popen([sys.executable, "-I", TTY_LEADER, str(status), *argv], env=env,
+                            stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr else subprocess.DEVNULL,
+                            pass_fds=(*pass_fds, status), start_new_session=True)
+                    finally:
+                        os.close(status)
+                finally:
+                    os.close(slave)
+            else:
+                process = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE if stderr else subprocess.DEVNULL, pass_fds=pass_fds, start_new_session=True)
+        except OSError as error:
+            spawn_failed(error, errors)
+            raise
+        return collect(process, argv, master, report, errors)
+    finally:
+        for fd in (master, report):
+            if fd is not None:
+                os.close(fd)
+
+
+def collect(process, argv, master, report, errors):
+    """Collect the work's output until its leader exits, then end its process group."""
     deadline = time.monotonic() + CALL_SECONDS
     output = bytearray()
-    reading = True
+    streams = {process.stdout.fileno(): (output, None)}
+    if process.stderr is not None:
+        streams[process.stderr.fileno()] = (errors, STDERR_BYTES)
+    if master is not None:
+        # What the work writes to its terminal is discarded, so a full pty never blocks it.
+        streams[master] = (None, None)
     try:
         # The group is signalled only while the unreaped leader keeps its id from reuse.
         while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                # One read takes what a pipe buffers; a process that left the group cannot hold the broker longer.
+                read_streams(streams, 0)
+                journal("cause=deadline seconds=%s" % CALL_SECONDS, errors)
                 raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
             # Python 3.8 has no pidfd, so the leader's exit is polled between reads.
-            if reading:
-                reading = read_some(process.stdout, output, min(remaining, 0.05))
-            else:
-                time.sleep(min(remaining, 0.05))
+            read_streams(streams, min(remaining, 0.05))
         os.killpg(process.pid, signal.SIGKILL)
-        while reading and time.monotonic() < deadline:
-            reading = read_some(process.stdout, output, deadline - time.monotonic())
+        streams.pop(master, None)
+        while streams and time.monotonic() < deadline:
+            read_streams(streams, deadline - time.monotonic())
+        # op_tty.py has exited, so its status pipe holds an errno or has reached its end.
+        failure = b"" if report is None else os.read(report, 32)
+        if failure:
+            error = OSError(int(failure), os.strerror(int(failure)))
+            spawn_failed(error, errors)
+            raise error
         return subprocess.CompletedProcess(argv, process.wait(), bytes(output))
     finally:
         if process.returncode is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
         process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+
+
+def needs_terminal(route):
+    """Return whether the route's calls run under a terminal leader."""
+    # On Linux the desktop app names the call's top-level process in its approval prompt and aborts a call with none.
+    return route == "app-integration" and sys.platform == "linux"
+
+
+def call(argv, env, route):
+    """Run the op call of a read request or a renewal."""
+    if needs_terminal(route):
+        return run_work(argv, env, stderr=True, terminal=True)
+    return call_op(argv, env)
 
 
 def encoded(data):
     return base64.b64encode(data).decode()
 
 
-def respond(request, op, env):
+def respond(request, op, env, route):
     verb = request.get("verb")
     if verb == "read":
         reference = request.get("reference")
         if not isinstance(reference, str) or not reference.startswith("op://"):
             return {"status": "invalid-request"}
         try:
-            result = call_op([op, "read", "--no-newline", reference], env)
+            result = call([op, "read", "--no-newline", reference], env, route)
         except (OSError, subprocess.TimeoutExpired):
             return {"status": "read-failed"}
         return {"status": "ok", "value": encoded(result.stdout)} if result.returncode == 0 else {"status": "read-failed"}
@@ -276,7 +370,9 @@ def respond(request, op, env):
             return {"status": "script-refused"}
         argv = ["/dev/fd/%d" % script]
     try:
-        result = run_work(argv, env, () if script is None else (script,))
+        # A caller's script may print a secret on its stderr, so only op's own reaches the journal.
+        result = run_work(argv, env, () if script is None else (script,), stderr=script is None,
+                          terminal=needs_terminal(route))
     except (OSError, subprocess.TimeoutExpired):
         return {"status": "run-failed"}
     finally:
@@ -285,7 +381,7 @@ def respond(request, op, env):
     return {"status": "ok", "exit": result.returncode, "stdout": encoded(result.stdout)}
 
 
-def answer(directory, line, op, env):
+def answer(directory, line, op, env, route):
     """Answer one request and return whether it was a successful call."""
     try:
         request = json.loads(line)
@@ -302,7 +398,7 @@ def answer(directory, line, op, env):
     except (OSError, Refusal):
         return False
     try:
-        response = respond(request, op, env)
+        response = respond(request, op, env, route)
         try:
             send(fd, json.dumps(response).encode() + b"\n", time.monotonic() + CALL_SECONDS)
         except (OSError, Refusal):
@@ -352,13 +448,13 @@ def broker(args):
                 # A failed whoami asks nobody, so the session route stays armed. Under the app integration a
                 # failure can mean the app locked, and each retry would raise an approval prompt with no request
                 # pending, so only a caller's successful call arms it again.
-                renewing = keep_session(op, env, RENEWALS[route]) or route == "session"
+                renewing = keep_session(op, env, route) or route == "session"
                 continue
             pending.extend(os.read(fifo, 4096))
             while b"\n" in pending:
                 line, _, rest = pending.partition(b"\n")
                 pending = bytearray(rest)
-                renewing = answer(directory, line, op, env) or renewing
+                renewing = answer(directory, line, op, env, route) or renewing
             # opq writes at most PIPE_BUF bytes atomically, including the newline.
             if len(pending) >= os.fpathconf(fifo, "PC_PIPE_BUF"):
                 pending.clear()
