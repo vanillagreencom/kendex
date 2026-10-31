@@ -57,6 +57,56 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
   && ok 'normal range retains full production caller coverage' \
   || bad 'normal range retains full production caller coverage' "rc=$RC out=$OUT"
 
+# A skill doc and its render, each read by a suite outside the skill: tools/
+# reads the source, the orch consumer tree reads the render.
+mkdir -p "$R/skills/demo/references" "$R/.agents/skills/demo/references"
+printf '# Guide\n' > "$R/skills/demo/references/guide.md"
+cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
+printf 'cat "$PWD/skills/demo/references/guide.md" >/dev/null\nprintf "doc-source\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/doc-source.sh"
+printf 'cat "$PWD/.agents/skills/demo/references/guide.md" >/dev/null\nprintf "doc-render\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/doc-render.sh"
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm docs
+BASE="$(git -C "$R" rev-parse HEAD)"
+doc_change() { # [script]: edit the doc pair, and with `script` open-terminal too
+  printf '# Guide\nchanged\n' > "$R/skills/demo/references/guide.md"
+  cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
+  [ "${1:-}" != script ] || printf '#!/usr/bin/env bash\nlaunch_status=0\n# beside docs\n' > "$R/skills/orch/scripts/open-terminal"
+  : > "$SUITE_LOG"
+}
+doc_selection() { # GUARD: the scoped selection's selected-suite lines in PLAN
+  RC=0
+  OUT="$(cd "$R" && DEV_VALIDATE_SCOPED=true SUITE_LOG="$SUITE_LOG" "$1" --selection --range "$BASE" 2>&1)" || RC=$?
+  PLAN="$(sed -n 's/^guard-note: selected-suite=//p' <<<"$OUT" | sort | tr '\n' ' ')"
+  SELECTED="$(sort "$SUITE_LOG" | tr '\n' ' ')"
+}
+doc_change
+doc_selection "$GUARD"
+[ "$RC" -eq 0 ] && [ -z "$PLAN" ] && [ -z "$SELECTED" ] \
+  && ok 'scoped: a skill doc and its render select no suite' \
+  || bad 'scoped: a skill doc and its render select no suite' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
+if mutant_guard '/^              case "\$f" in skills\/\*\/\*\.md | \.agents\/skills\/\*\/\*\.md) continue ;; esac$/d'; then
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-source.sh ' ] \
+    && ok 'control: without the Markdown rule the scoped run selects both doc readers' \
+    || bad 'control: without the Markdown rule the scoped run selects both doc readers' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control removes the scoped Markdown rule'
+fi
+doc_change script
+doc_selection "$GUARD"
+[ "$RC" -eq 0 ] && [ "$SELECTED" = 'direct helper named ' ] \
+  && ok 'scoped: a script beside the docs still selects its own suites' \
+  || bad 'scoped: a script beside the docs still selects its own suites' "rc=$RC selected=$SELECTED out=$OUT"
+git -C "$R" checkout -q -- skills/orch/scripts/open-terminal
+doc_change
+RC=0
+OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && [ "$(sort "$SUITE_LOG" | tr '\n' ' ')" = 'doc-render doc-source ' ] \
+  && ok 'normal range runs both doc readers' \
+  || bad 'normal range runs both doc readers' "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- skills/demo .agents/skills/demo
+
 # A real cancellation must also name suites in batteries not yet entered.
 # The first selected suite acknowledges its start before the parent sends TERM.
 printf 'source "$PWD/skills/orch/scripts/open-terminal"\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"

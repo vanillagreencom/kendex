@@ -363,7 +363,8 @@ case "${1:-}" in
       '        runs every shell suite of the package.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
       '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
-      '        the same suite mapper, leaving the full record to merge-group CI.'
+      '        the same suite mapper, leaving the full record to merge-group CI;' \
+      '        a skill package'"'"'s Markdown, source or render, selects no suite there.'
     exit 0
     ;;
 esac
@@ -1852,6 +1853,13 @@ reach_join() { # ROLE PATH [changed]
 # production needles. Readers under tests/ still extend the reach, so a
 # suite can cover the file through its test helpers. Other production
 # readers add no needles or named suites. Merge-group CI keeps the full reach.
+# Scoped too, a changed .md file of a skill package, a source under
+# skills/<name>/ or its render under .agents/skills/<name>/, seeds no suite,
+# neither in its own tree nor as a ../ repository input of tools/ or a
+# consumer tree: the merge group first runs the suites that read it (D027).
+# Every other file a suite reads as data, a fixture, a script or a JSON
+# file, still seeds its suites, and so does a .md file outside a skill
+# package.
 # The reach is what the scan can see, not every caller: a script run through
 # a variable path is missed, and so is a suite that runs a changed script
 # only through another script that runs it. CI's full run owns completeness.
@@ -2113,6 +2121,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
             if [ "$scoped_only" -eq 1 ]; then
+              # mapped_suites' header states this set and why.
+              case "$f" in skills/*/*.md | .agents/skills/*/*.md) continue ;; esac
               if [[ $rel == ../* ]]; then
                 role=script
               else

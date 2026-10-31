@@ -179,7 +179,7 @@ git -C "$R" update-ref refs/remotes/origin/main "$BASE"
 for row in \
   'skills/orch/scripts/lib/shared.sh|hooks orch refresh' \
   'skills/orch/scripts/lib/private.sh|orch' \
-  'skills/orch/README.md|catalog' \
+  'skills/orch/README.md|' \
   'hooks/README.md|'; do
   IFS='|' read -r input expected <<<"$row"
   for mode in full range; do
