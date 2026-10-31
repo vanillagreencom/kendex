@@ -1,0 +1,1 @@
+- Automatic consumer refresh now leaves an unchanged published head and its existing arm or hold untouched. A run that publishes no new head defers automatic merge and queue admission, including after an earlier failed merge group.
