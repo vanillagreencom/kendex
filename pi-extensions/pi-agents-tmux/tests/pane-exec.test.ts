@@ -55,6 +55,56 @@ test("command capture requires a fixed probe or a resolver-approved bridge", asy
    }
 });
 
+// The extension starts a bridge lookup when it loads. A suite file that loads it
+// can leave that lookup waiting on a login shell into a later file's bridge case.
+async function staleBridgeLookup(runtime: typeof import("../extensions/subagent/pane.js")): Promise<void> {
+	const { symlinkSync } = await import("node:fs");
+	const { join } = await import("node:path");
+	const { clearPackageConfigCache } = await import("../extensions/subagent/package-config.js");
+	const root = tempRuntime();
+	const bridge = join(root, "bridge");
+	symlinkSync(process.execPath, bridge);
+	const previous = { bin: process.env.PI_BRIDGE_BIN, dir: process.env.PI_CODING_AGENT_DIR };
+	let releaseLookup!: () => void;
+	const lookupHeld = new Promise<void>((resolve) => { releaseLookup = resolve; });
+	let lookupStarted = false;
+	delete process.env.PI_BRIDGE_BIN;
+	process.env.PI_CODING_AGENT_DIR = root;
+	clearPackageConfigCache();
+	runtime.setPaneExecCaptureForTests(async () => {
+		lookupStarted = true;
+		await lookupHeld;
+		return { code: 0, stdout: "", stderr: "" };
+	});
+	try {
+		const stale = runtime.resolvePiBridgeBin();
+		assert.ok(lookupStarted, "the earlier lookup must reach the login-shell probe");
+		runtime.setPaneExecCaptureForTests();
+		process.env.PI_BRIDGE_BIN = bridge;
+		assert.equal(await runtime.resolvePiBridgeBin(), bridge);
+		releaseLookup();
+		assert.equal(await stale, undefined);
+		const result = await runtime.execCapture(bridge, ["-e", 'console.log("admitted")'], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } });
+		assert.equal(result.code, 0, "a stale bridge lookup must not revoke the newer resolution");
+		assert.equal(result.stdout.trim(), "admitted");
+	} finally {
+		releaseLookup();
+		runtime.setPaneExecCaptureForTests();
+		if (previous.bin === undefined) delete process.env.PI_BRIDGE_BIN;
+		else process.env.PI_BRIDGE_BIN = previous.bin;
+		if (previous.dir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous.dir;
+		clearPackageConfigCache();
+	}
+}
+
+test("a bridge lookup that settles after a newer resolution keeps the newer bridge admitted", async () => {
+	const runtime = await import("../extensions/subagent/pane.js");
+	await staleBridgeLookup(runtime);
+	const lastSettled = await importRuntimeCopy("pane.ts", "if (lookup === latestPiBridgeLookup) resolvedPiBridgeCommand = bin;", "resolvedPiBridgeCommand = bin;") as typeof runtime;
+	await assert.rejects(staleBridgeLookup(lastSettled), /a stale bridge lookup must not revoke/);
+});
+
 async function stalled(capture: typeof execCapture): Promise<void> {
 	const root = tempRuntime();
 	// Real time here lets the OS start and reap a SIGTERM-resistant faux bridge.

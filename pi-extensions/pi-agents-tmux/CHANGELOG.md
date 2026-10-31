@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- When the startup `pi-bridge` lookup finishes after a later lookup that found a different bridge, the later bridge stays approved. Commands to that bridge no longer fail with "Command origin is not a fixed probe or the resolved pi-bridge".
+
 ### 3.5.0
 
 - The exported agent stats interface gives pi-hooks the session's working task count from its task registry.
