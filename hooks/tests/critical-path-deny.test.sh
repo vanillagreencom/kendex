@@ -59,7 +59,11 @@ payload() { # main|ask|sub|norm|edit|askrm|suggest|junk
 #   lane      launched: `lane-marker` wrote the marker and the mailbox
 #   plain     no launch reached it
 #   nojudge   launched, with no lane-mail-check beside the hook
-#   badjudge  launched, with a lane-mail-check that writes `boom` and exits 3
+#   badjudge  launched, with a lane-mail-check that reads the payload to its
+#             end, as the real one does before any arm answers, then writes
+#             `boom` and exits 3. One that exits unread races the hook's
+#             write: where SIGPIPE is ignored, as on GitHub's runners, the
+#             write error lands on stderr ahead of the keyed line.
 #   markerdir launched, with a directory where the launch marker stands, which
 #             lane-mail-check reports with no answer
 LANE=""
@@ -74,7 +78,7 @@ world() { # NAME SHAPE
   [ "$2" = plain ] || "$REPO_ROOT/skills/orch/scripts/lane-marker" "$LANE" KEN-1
   case "$2" in
     nojudge) rm -f -- "$LANE/.claude/hooks/lane-mail-check.sh" ;;
-    badjudge) printf '#!/usr/bin/env bash\necho boom >&2\nexit 3\n' > "$LANE/.claude/hooks/lane-mail-check.sh" ;;
+    badjudge) printf '#!/usr/bin/env bash\ncat >/dev/null\necho boom >&2\nexit 3\n' > "$LANE/.claude/hooks/lane-mail-check.sh" ;;
     markerdir) rm -f -- "$LANE/.git/lane-mail/ken-1"; mkdir -- "$LANE/.git/lane-mail/ken-1" ;;
   esac
 }
