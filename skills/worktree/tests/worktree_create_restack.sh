@@ -872,11 +872,11 @@ build merged-mutant conflict merged-pr
 mkdir -p "$ROOT/pkg"
 cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
 merged_mutant="$ROOT/pkg/worktree/scripts/worktree"
-assert_eq "$(grep -c 'elif REUSE_MERGED_COMMIT=' "$merged_mutant")" "1" \
+assert_eq "$(grep -c 'elif merged_branch_commit ' "$merged_mutant")" "1" \
   "control finds the merged-branch arm"
-sed -i.bak 's/elif REUSE_MERGED_COMMIT=/elif false \&\& REUSE_MERGED_COMMIT=/' "$merged_mutant"
+sed -i.bak 's/elif merged_branch_commit /elif false \&\& merged_branch_commit /' "$merged_mutant"
 rm -f "$merged_mutant.bak"
-assert_eq "$(grep -c 'elif false && REUSE_MERGED_COMMIT=' "$merged_mutant")" "1" \
+assert_eq "$(grep -c 'elif false && merged_branch_commit ' "$merged_mutant")" "1" \
   "control disarms it only in its private copy"
 merged_mutant_rc=0
 (cd "$MAIN" && "$merged_mutant" create "$ISSUE" --reuse \

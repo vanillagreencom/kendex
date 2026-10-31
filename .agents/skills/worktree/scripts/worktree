@@ -189,17 +189,28 @@ git_with_github_https_auth() {
 # GITHUB_TOKEN, a 1Password reference resolved. GH_BOT_TOKEN is a bot
 # identity and never a read credential, as gh never reads it. A token GitHub
 # refuses yields to a working gh keyring login; one with nothing to yield to
-# stays, and the read fails with gh's own reason. The choice is made once, in
-# the shell of the first read, so a command substitution after it inherits
-# it. It lives in unexported variables that only github_read applies, so a
-# setup command or a git hook keeps the caller's GH_TOKEN and GITHUB_TOKEN.
-# GITHUB_READ_AUTH is unasked, inherited (no github skill: gh reads the
-# caller's environment) or selected.
+# stays, and the read fails with gh's own reason. The choice is made once per
+# run, in the script's own shell, at the first read: a choice made in a
+# subshell dies with it and the next read would choose again, a second gh
+# validation and a second fallback warning. So every reader runs in its
+# caller's shell and leaves its answer in GITHUB_ANSWER, never on stdout, and
+# asks here before the command substitution its gh call runs in, which then
+# inherits the choice. A first ask inside a subshell refuses as
+# worktree-github-auth-subshell and fails that read. The choice lives in
+# unexported variables that only github_read applies, so a setup command or a
+# git hook keeps the caller's GH_TOKEN and GITHUB_TOKEN. GITHUB_READ_AUTH is
+# unasked, inherited (no github skill: gh reads the caller's environment) or
+# selected.
 GITHUB_READ_AUTH=unasked
+GITHUB_ANSWER=""
 unset GITHUB_READ_GH_TOKEN GITHUB_READ_GITHUB_TOKEN
 github_read_auth() {
   local err_file="" state="" fallback=none
   [[ "$GITHUB_READ_AUTH" == unasked ]] || return 0
+  if [[ "$BASH_SUBSHELL" -gt 0 ]]; then
+    worktree_message github-auth-subshell "${FUNCNAME[*]:1}" "Error: a GitHub read chose its credential inside a subshell, which forgets the choice; the reader must run in the script's own shell." >&2
+    return 1
+  fi
   GITHUB_READ_AUTH=inherited
   declare -F kendex_github_sanitize_gh_env >/dev/null 2>&1 || return 0
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-github-auth.XXXXXX")"; then
@@ -233,7 +244,7 @@ github_read_select() {
 
 # Run COMMAND in a subshell holding the read credential github_read_auth chose.
 github_read() { # COMMAND...
-  github_read_auth
+  github_read_auth || return 1
   (
     if [[ "$GITHUB_READ_AUTH" == selected ]]; then
       unset GH_TOKEN GITHUB_TOKEN
@@ -1766,23 +1777,25 @@ source "$SCRIPT_DIR/lib/restack-state.sh"
 # shellcheck source=lib/base-reading.sh
 source "$SCRIPT_DIR/lib/base-reading.sh"
 
+# GITHUB_ANSWER: "<number>\t<url>" of BRANCH's open pull request, empty when
+# it has none.
 open_pr_for_branch() {
   local branch="$1"
-  local result="" output=""
+  local output=""
+  GITHUB_ANSWER=""
   [[ -n "$branch" ]] || return 0
   if ! command -v gh >/dev/null 2>&1; then
     worktree_message gh-required "ownership" "Error: gh is required for authoritative pull-request ownership discovery." >&2
     return 1
   fi
-  github_read_auth
+  github_read_auth || return 1
 
   if ! output="$(github_read gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>&1)"; then
     worktree_message pr-query-failed "$branch" "Error: Could not query open pull requests for branch '$branch'; refusing to assume it is unowned." >&2
     [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
     return 1
   fi
-  result="$output"
-  printf '%s\n' "$result"
+  GITHUB_ANSWER="$output"
 }
 
 # Merge proof for a branch ancestry cannot see. Work that lands by squash — the
@@ -1798,26 +1811,26 @@ open_pr_for_branch() {
 # be the exact commit some merged PR carried, and `--base` keeps the answer to
 # PRs that landed on the default branch.
 #
-# Exit 0: merged, PR number on stdout. Exit 1: provably NOT merged, either
+# Exit 0: merged, PR number in GITHUB_ANSWER. Exit 1: provably NOT merged, either
 # because no merged PR carries the name or because none of the ones that do has
 # this tip as its head — an identity mismatch is a definite answer, so it reads
 # as unmerged rather than as a failed lookup. Exit 2 stays reserved for a lookup
 # that genuinely cannot answer: gh missing, gh failing, a response this cannot
-# read. 1 and 2 print a one-line reason on stdout; only exit 0 authorizes a
-# delete.
+# read. 1 and 2 leave a one-line reason in GITHUB_ANSWER; only exit 0
+# authorizes a delete.
 merged_pr_for_branch() {
   local branch="$1" tip="" rows="" err_file="" detail="" oid="" number="" seen="" rc=0
-  [[ -n "$branch" ]] || { printf 'no branch to look up\n'; return 2; }
+  [[ -n "$branch" ]] || { GITHUB_ANSWER='no branch to look up'; return 2; }
   if ! command -v gh >/dev/null 2>&1; then
-    printf 'gh is not installed\n'
+    GITHUB_ANSWER='gh is not installed'
     return 2
   fi
   tip="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$branch" || true)"
   if [[ -z "$tip" ]]; then
-    printf 'branch has no local tip to compare a merged pull request against\n'
+    GITHUB_ANSWER='branch has no local tip to compare a merged pull request against'
     return 2
   fi
-  github_read_auth
+  github_read_auth || { GITHUB_ANSWER='the GitHub read credential was asked for in a subshell'; return 2; }
   # A fork inspection branch is named fork-pr-<n> (see resolve_pr_head), and
   # GitHub files that PR under the contributor's head name, so a --head query
   # can never find it. The number in the name is the lookup key instead.
@@ -1826,7 +1839,7 @@ merged_pr_for_branch() {
     return $?
   fi
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
-    printf 'could not create a scratch file for the gh diagnostic\n'
+    GITHUB_ANSWER='could not create a scratch file for the gh diagnostic'
     return 2
   fi
   # stdout and stderr are captured SEPARATELY. Folded together, gh's routine
@@ -1846,12 +1859,12 @@ merged_pr_for_branch() {
   if [[ "$rc" -ne 0 ]]; then
     detail="$(tr '\n' ' ' <"$err_file")"
     rm -f "$err_file"
-    printf '%s\n' "${detail:-gh pr list failed (exit $rc)}"
+    GITHUB_ANSWER="${detail:-gh pr list failed (exit $rc)}"
     return 2
   fi
   rm -f "$err_file"
   if [[ -z "$rows" ]]; then
-    printf 'no pull request merged into %s carries this branch name\n' "$DEFAULT_BRANCH"
+    printf -v GITHUB_ANSWER 'no pull request merged into %s carries this branch name' "$DEFAULT_BRANCH"
     return 1
   fi
   # Each row is validated as it is read: a row that is not a commit id and a
@@ -1861,16 +1874,16 @@ merged_pr_for_branch() {
   while read -r oid number; do
     [[ -n "$oid$number" ]] || continue
     if ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]] || ! [[ "$number" =~ ^[0-9]+$ ]]; then
-      printf 'gh returned a row this cannot read: %s %s\n' "$oid" "$number"
+      printf -v GITHUB_ANSWER 'gh returned a row this cannot read: %s %s' "$oid" "$number"
       return 2
     fi
     seen="$seen #$number"
     if [[ "$oid" == "$tip" ]]; then
-      printf '%s\n' "$number"
+      GITHUB_ANSWER="$number"
       return 0
     fi
   done <<<"$rows"
-  printf 'carries work past its merged pull request (merged under this name:%s; none has this tip %s as its head)\n' \
+  printf -v GITHUB_ANSWER 'carries work past its merged pull request (merged under this name:%s; none has this tip %s as its head)' \
     "$seen" "$tip"
   return 1
 }
@@ -1882,7 +1895,7 @@ merged_pr_for_branch() {
 merged_fork_pr_at_tip() {
   local pr="$1" tip="$2" err_file="" row="" detail="" state="" base="" oid="" rc=0
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
-    printf 'could not create a scratch file for the gh diagnostic\n'
+    GITHUB_ANSWER='could not create a scratch file for the gh diagnostic'
     return 2
   fi
   row="$( (cd "$PROJECT_ROOT" && github_read env -u GH_REPO -u GITHUB_REPOSITORY \
@@ -1891,47 +1904,46 @@ merged_fork_pr_at_tip() {
   if [[ "$rc" -ne 0 ]]; then
     detail="$(tr '\n' ' ' <"$err_file")"
     rm -f "$err_file"
-    printf '%s\n' "${detail:-gh pr view $pr failed (exit $rc)}"
+    GITHUB_ANSWER="${detail:-gh pr view $pr failed (exit $rc)}"
     return 2
   fi
   rm -f "$err_file"
   IFS=$'\t' read -r state base oid <<<"$row"
   if [[ -z "$state" || -z "$base" ]] || ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]]; then
-    printf 'gh returned a pull request #%s record this cannot read: %s\n' "$pr" "$row"
+    printf -v GITHUB_ANSWER 'gh returned a pull request #%s record this cannot read: %s' "$pr" "$row"
     return 2
   fi
   if [[ "$state" != "MERGED" ]]; then
-    printf 'fork pull request #%s is %s, not merged\n' "$pr" "$state"
+    printf -v GITHUB_ANSWER 'fork pull request #%s is %s, not merged' "$pr" "$state"
     return 1
   fi
   if [[ "$base" != "$DEFAULT_BRANCH" ]]; then
-    printf 'fork pull request #%s merged into %s, not %s\n' "$pr" "$base" "$DEFAULT_BRANCH"
+    printf -v GITHUB_ANSWER 'fork pull request #%s merged into %s, not %s' "$pr" "$base" "$DEFAULT_BRANCH"
     return 1
   fi
   if [[ "$oid" != "$tip" ]]; then
-    printf 'carries work past its merged pull request (#%s merged head %s, not this tip %s)\n' "$pr" "$oid" "$tip"
+    printf -v GITHUB_ANSWER 'carries work past its merged pull request (#%s merged head %s, not this tip %s)' "$pr" "$oid" "$tip"
     return 1
   fi
-  printf '%s\n' "$pr"
+  GITHUB_ANSWER="$pr"
   return 0
 }
 
 # The commit a merged pull request landed on the default branch.
-# merged_pr_for_branch above answers the merge question itself and prints the
-# pull request NUMBER, which remove and cleanup put in their own messages; only
-# the reuse refusal needs the commit, so it is read here rather than widened
-# into that function's stdout contract — a command substitution would strand a
-# variable it set in a subshell anyway.
+# merged_pr_for_branch above answers the merge question itself with the pull
+# request NUMBER, which remove and cleanup put in their own messages; only the
+# reuse refusal needs the commit, so it is read here rather than widened into
+# that function's answer.
 #
-# Exit 0: the commit id on stdout. Exit 2: a one-line reason on stdout. There
+# Exit 0: the commit id in GITHUB_ANSWER. Exit 2: a one-line reason there. There
 # is no exit 1: the caller already holds the proof that this pull request
 # merged, so a merged pull request with no readable merge commit is a lookup
 # that could not answer, never an answer of "not merged".
 merge_commit_for_pr() { # PR
   local pr="$1" err_file="" oid="" detail="" rc=0
-  github_read_auth
+  github_read_auth || { GITHUB_ANSWER='the GitHub read credential was asked for in a subshell'; return 2; }
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merge-commit.XXXXXX")"; then
-    printf 'could not create a scratch file for the gh diagnostic\n'
+    GITHUB_ANSWER='could not create a scratch file for the gh diagnostic'
     return 2
   fi
   # Same isolation as merged_pr_for_branch: an inherited GH_REPO or
@@ -1941,15 +1953,15 @@ merge_commit_for_pr() { # PR
   if [[ "$rc" -ne 0 ]]; then
     detail="$(tr '\n' ' ' <"$err_file")"
     rm -f -- "${err_file:?}"
-    printf '%s\n' "${detail:-gh pr view $pr failed (exit $rc)}"
+    GITHUB_ANSWER="${detail:-gh pr view $pr failed (exit $rc)}"
     return 2
   fi
   rm -f -- "${err_file:?}"
   if ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]]; then
-    printf 'pull request #%s merged but gh returned no merge commit for it\n' "$pr"
+    printf -v GITHUB_ANSWER 'pull request #%s merged but gh returned no merge commit for it' "$pr"
     return 2
   fi
-  printf '%s\n' "$oid"
+  GITHUB_ANSWER="$oid"
 }
 
 # The merge commit of the pull request that merged BRANCH into the default
@@ -1957,31 +1969,27 @@ merge_commit_for_pr() { # PR
 # merged_pr_for_branch decides WHETHER it merged, merge_commit_for_pr names
 # WHERE.
 #
-# Exit 0: the merge commit on stdout. Exit 1: provably not merged, a one-line
-# reason on stdout. Exit 2: the lookup could not answer, its reason on stdout
+# Exit 0: the merge commit in GITHUB_ANSWER. Exit 1: provably not merged, a
+# one-line reason there. Exit 2: the lookup could not answer, its reason there
 # and a worktree-merge-unverified record on stderr as well — a gap never
 # passes silently, while "not merged" is the ordinary answer on every branch
 # still in flight and is reported only to the caller that asked.
 merged_branch_commit() { # BRANCH
-  local branch="$1" detail="" commit="" rc=0
-  # Asked in this shell, so the two reads below share one answer.
-  github_read_auth
-  detail="$(merged_pr_for_branch "$branch")" || rc=$?
+  local branch="$1" rc=0
+  merged_pr_for_branch "$branch" || rc=$?
   case "$rc" in
     0) ;;
-    1) printf '%s\n' "$detail"; return 1 ;;
+    1) return 1 ;;
     *)
-      worktree_message merge-unverified "$branch" "Merge status of branch '$branch' could not be determined: ${detail:-no detail}" >&2
-      printf '%s\n' "${detail:-no detail}"
+      GITHUB_ANSWER="${GITHUB_ANSWER:-no detail}"
+      worktree_message merge-unverified "$branch" "Merge status of branch '$branch' could not be determined: $GITHUB_ANSWER" >&2
       return 2
       ;;
   esac
-  if ! commit="$(merge_commit_for_pr "$detail")"; then
-    worktree_message merge-unverified "$branch" "Merge status of branch '$branch' could not be determined: $commit" >&2
-    printf '%s\n' "$commit"
+  if ! merge_commit_for_pr "$GITHUB_ANSWER"; then
+    worktree_message merge-unverified "$branch" "Merge status of branch '$branch' could not be determined: $GITHUB_ANSWER" >&2
     return 2
   fi
-  printf '%s\n' "$commit"
 }
 
 # Sets BASE to the branch the PR checks out as. A same-repository PR leaves
@@ -1999,7 +2007,7 @@ resolve_pr_head() {
     worktree_message gh-required "$pr" "Error: gh is required to resolve PR #$pr" >&2
     return 1
   fi
-  github_read_auth
+  github_read_auth || return 1
   if ! output="$(github_read gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
                   -q '[.headRefName, .headRefOid, (.isCrossRepository | tostring)] | @tsv' 2>&1)"; then
     worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2
@@ -2120,13 +2128,11 @@ discover_candidate_ownership() {
   CANDIDATE_OPEN_PR_BRANCHES=()
   CANDIDATE_OPEN_PR_DETAILS=()
 
-  local branch pr_details
+  local branch
   for branch in "${CANDIDATE_BRANCHES[@]}"; do
-    if ! pr_details="$(open_pr_for_branch "$branch")"; then
-      return 1
-    fi
+    open_pr_for_branch "$branch" || return 1
     CANDIDATE_OPEN_PR_BRANCHES+=("$branch")
-    CANDIDATE_OPEN_PR_DETAILS+=("$pr_details")
+    CANDIDATE_OPEN_PR_DETAILS+=("$GITHUB_ANSWER")
   done
 }
 
@@ -2696,9 +2702,10 @@ refuse_existing_worktree() {
         read -r behind ahead <<<"$counts"
       fi
     fi
-    if ! pr_details="$(open_pr_for_branch "$branch")"; then
+    if open_pr_for_branch "$branch"; then
+      pr_details="$GITHUB_ANSWER"
+    else
       pr_lookup_failed=true
-      pr_details=""
     fi
   fi
   lock_reason="$(worktree_lock_reason "$wt" || true)"
@@ -3096,7 +3103,8 @@ case "${1:-}" in
         fi
         if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
           : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
-        elif REUSE_MERGED_COMMIT="$(merged_branch_commit "$CURRENT_BRANCH")"; then
+        elif merged_branch_commit "$CURRENT_BRANCH"; then
+          REUSE_MERGED_COMMIT="$GITHUB_ANSWER"
           # The work landed. A squash merge rewrites the branch into a fresh
           # commit on the default branch, so the branch tip is an ancestor of
           # nothing and the rebase below would replay the merged commits onto
@@ -3762,7 +3770,8 @@ case "${1:-}" in
       if git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$REMOVE_MERGE_TARGET" 2>/dev/null; then
         REMOVE_MERGE_PROOF="merged into $REMOVE_MERGE_TARGET"
       else
-        REMOVE_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || REMOVE_MERGE_RC=$?
+        merged_pr_for_branch "$BRANCH" || REMOVE_MERGE_RC=$?
+        REMOVE_MERGE_DETAIL="$GITHUB_ANSWER"
         REMOVE_MERGE_PROOF="squash-merged in pull request #$REMOVE_MERGE_DETAIL"
       fi
       DELETE_OUTPUT=""
@@ -3895,9 +3904,9 @@ case "${1:-}" in
         continue
       fi
       if ! git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
-        CLEANUP_MERGE_DETAIL=""
         CLEANUP_MERGE_RC=0
-        CLEANUP_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || CLEANUP_MERGE_RC=$?
+        merged_pr_for_branch "$BRANCH" || CLEANUP_MERGE_RC=$?
+        CLEANUP_MERGE_DETAIL="$GITHUB_ANSWER"
         case "$CLEANUP_MERGE_RC" in
           0) ;;
           1)
@@ -4010,7 +4019,8 @@ case "${1:-}" in
       MERGED_BRANCH="$(issue_branch_name "$MERGED_ID")"
     fi
     MERGED_RC=0
-    MERGED_ANSWER="$(merged_branch_commit "$MERGED_BRANCH")" || MERGED_RC=$?
+    merged_branch_commit "$MERGED_BRANCH" || MERGED_RC=$?
+    MERGED_ANSWER="$GITHUB_ANSWER"
     case "$MERGED_RC" in
       0) printf '%s\n' "$MERGED_ANSWER" ;;
       1) worktree_message unmerged "$MERGED_BRANCH" "Branch '$MERGED_BRANCH' has no pull request merged into $DEFAULT_BRANCH at this tip: $MERGED_ANSWER" >&2; exit 1 ;;
