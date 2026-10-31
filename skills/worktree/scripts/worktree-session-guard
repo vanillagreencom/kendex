@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Native Git worktree locks carrying an owner and a TTL heartbeat.
+# Native Git worktree locks carrying an owner, a TTL heartbeat and the harness
+# session processes that hold them.
 # stdout protocol: claim/refresh return the owner; status/list emit complete
 # JSON records by default. status --owner-only feeds worktree remove. Notices use stable
 # worktree-<key>: <value> lines; English explanation is not a parsed protocol.
@@ -24,7 +25,7 @@ fi
 source "$MESSAGE_DIR/lib/messages.sh"
 GUARD_MARKER='kendex-session-guard' GUARD_VERSION='v1'
 DEFAULT_TTL_MINUTES=720 EXIT_NO_LEASE=3 EXIT_UNMANAGED=4
-EXIT_ENUMERATION=5 EXIT_OWNED=75
+EXIT_ENUMERATION=5 EXIT_MAINTENANCE=6 EXIT_SESSION_HELD=7 EXIT_OWNED=75
 fail() {
 	worktree_message "$@" >&2
 	exit 1
@@ -37,11 +38,27 @@ Usage: worktree-session-guard <command> [PATH] [options]
 
 Commands:
   claim PATH        Claim a linked worktree, or refresh the same owner's lease.
+                    Takes over a foreign lease only when it is past the
+                    default TTL and every session process it records is
+                    verified dead.
   refresh PATH      Refresh the same owner's heartbeat without unlocking.
-  release PATH      Release the owner's lease. --stale uses heartbeat age.
+  release PATH      Release the owner's lease. --stale uses heartbeat age and
+                    session liveness.
   status PATH       Print lock state as JSON.
   list              Print one JSON object per linked worktree.
-  sweep             Release every guard lease past the TTL.
+  sweep             Release every guard lease past the TTL whose recorded
+                    session processes are all verified dead, or that records
+                    none.
+
+Session processes: a claim with --session or --adopt records the harness
+session process it runs under, read from its own process ancestry: the nearest
+ancestor that is not a shell or command launcher, by PID and the start time
+the system reports, with the PID namespace and boot id where readable. A
+recorded process is live while that PID still has that start; dead when the
+system reports the PID absent or started at another time, on the same host,
+namespace and boot; unknown otherwise. A lease that records processes is
+held while any of them is live or unknown. A lease that records none, such as
+an older lease or a plain --owner claim, keeps the age-only rule.
 
 Options (a flag a command does not take is a usage failure):
   --owner NAME       claim, refresh, release, status. Lease owner; defaults to
@@ -58,26 +75,37 @@ Options (a flag a command does not take is a usage failure):
   --session          claim. With the environment owner, refresh an issue
                      lease that --adopt recorded as this owner's lease.
                      Keep the issue owner. Default claims do not use this
-                     association.
+                     association. A lease this owner holds that already
+                     records the caller's session process is established:
+                     its claim takes the lock without waiting, and a busy
+                     lock or failed lease write exits 6 with the lease kept.
   --ttl-minutes N    release, sweep. Heartbeat TTL in minutes (default 720).
-  --stale            release. Release a lease only when it is past the TTL.
-  --force            release. Release a foreign lease regardless of age.
-  --inactive         release. With --owner, release only when the recorded
-                     guard writer PID is absent on this host. A live recorded
-                     PID or unknown process state refuses. The writer exits
-                     after claim/refresh; this does not prove harness inactivity.
-                     Cannot combine with --stale or --force.
+  --stale            release. Release a lease only when it is past the TTL
+                     and every session process it records is verified dead.
+  --force            release. Release a foreign lease regardless of age or
+                     session liveness.
+  --inactive         release. With --owner, release only when no session
+                     process the lease records, other than the caller's own,
+                     is live or unknown. A lease that records none releases
+                     only when the recorded guard writer PID is absent on this
+                     host; that writer exits after claim/refresh and does not
+                     prove harness inactivity. Cannot combine with --stale or
+                     --force.
   --dry-run          sweep. Report results without releasing leases.
   --repo DIR         release, status, list, sweep. Repository checkout.
 
 Mutations (claim, refresh, release, sweep) serialize on a lock in the
 repository's common dir, through flock(1) where it is on PATH and an
 exclusive-file mutex otherwise; either refuses after waiting 60 seconds for it.
+An established --session claim makes one attempt and does not wait.
 
 Exit codes: 0 success, 1 usage/Git failure or a lock wait that ran out,
 3 no lock, 4 non-guard lock, 5 enumeration failure or a lease sweep could
-not evaluate, 75 foreign owner/lock, a lease not yet stale, or an inactive
-release whose recorded writer PID is present or cannot be checked.
+not evaluate, 6 an established --session claim whose lock was busy or whose
+lease write failed (the lease stands), 7 a release refused because a session
+process the lease records is live or cannot be verified, 75 foreign
+owner/lock, a lease not yet stale, or an inactive release whose recorded
+writer PID is present or cannot be checked.
 EOF
 }
 
@@ -156,11 +184,183 @@ lease_is_managed() {
 }
 
 lease_line() {
-	local owner="$1" claimed="$2" heartbeat="$3" session_owner="$4" association=''
+	local owner="$1" claimed="$2" heartbeat="$3" session_owner="$4" sessions="$5" association='' processes=''
 	[[ -z "$session_owner" ]] || association=" session_owner=$session_owner"
-	printf '%s %s owner=%s pid=%s host=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s%s\n' \
-		"$GUARD_MARKER" "$GUARD_VERSION" "$owner" "$$" "$(sanitize_host)" \
-		"$(iso_from_epoch "$claimed")" "$claimed" "$(iso_from_epoch "$heartbeat")" "$heartbeat" "$association"
+	[[ -z "$sessions" ]] || processes=" sessions=$sessions"
+	printf '%s %s owner=%s pid=%s host=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s%s%s\n' \
+		"$GUARD_MARKER" "$GUARD_VERSION" "$owner" "$$" "$HOST_LABEL" \
+		"$(iso_from_epoch "$claimed")" "$claimed" "$(iso_from_epoch "$heartbeat")" "$heartbeat" "$association" "$processes"
+}
+
+# --- harness session processes -------------------------------------------------
+# The lease's pid= is the guard writer, which exits as soon as it has written,
+# so it says nothing about the harness session. A session-bound claim records
+# the session process instead, and every automatic release reads it back.
+#
+# The readers mirror skills/orch/scripts/lib/lane-state.sh (lane_process_table,
+# lane_process_start): `ps -A -o pid= -o ppid= -o comm=` with any directory
+# stripped from the name, since macOS prints an executable's path, and
+# `LC_ALL=C TZ=UTC ps -o lstart= -p PID` with blanks squeezed, which Linux
+# procps and macOS both answer. That library belongs to orch, which this
+# package does not require, so the reading is repeated here.
+
+# A harness starts a hook or a shell command through these, never the reverse.
+# The nearest ancestor outside the set is the harness session. The set names
+# no harness, so every harness gets the same reading.
+readonly SESSION_LAUNCHERS=' sh bash dash zsh ksh fish env timeout nice nohup setsid stdbuf '
+
+# A process's start as one blank-free token, or an empty line for a PID with
+# no process. Any other failure is status 2.
+process_start() { # PID
+	local out rc=0
+	out="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null)" || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		[[ "$rc" -eq 1 && -z "${out//[[:space:]]/}" ]] || return 2
+	fi
+	out="$(awk '{ $1 = $1; gsub(/ /, "_"); print }' <<<"$out")" || return 2
+	printf '%s\n' "$out"
+}
+
+# The PID of the nearest ancestor of this process that is not a launcher.
+# A process is a launcher when its name or its argv[0] is in the set: a script
+# run through a `#!/bin/bash` line carries the script's name while argv[0]
+# names the interpreter. PID 1 or a chain that leaves the table yields
+# nothing, status 1. The walk is bounded by the table's row count, so a table
+# read mid-reparent cannot loop.
+session_ancestor() {
+	local table argv pid
+	table="$(LC_ALL=C ps -A -o pid= -o ppid= -o comm= 2>/dev/null)" || return 1
+	argv="$(LC_ALL=C ps -A -o pid= -o args= 2>/dev/null)" || return 1
+	pid="$(awk -v self="$$" -v launchers="$SESSION_LAUNCHERS" '
+		function base(name) { sub(/.*\//, "", name); sub(/^-/, "", name); return name }
+		$0 == "--" { args = 1; next }
+		!args { p = $1; pp = $2; $1 = ""; $2 = ""; parent[p] = pp; comm[p] = base(substr($0, 3)); rows++; next }
+		{ argv0[$1] = base($2) }
+		END {
+			at = self
+			for (hops = 0; hops <= rows; hops++) {
+				if (!(at in comm) || at + 0 <= 1) exit
+				if (index(launchers, " " comm[at] " ") == 0 && index(launchers, " " argv0[at] " ") == 0) { print at; exit }
+				at = parent[at]
+			}
+		}' <<<"$table"$'\n--\n'"$argv")" || return 1
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	printf '%s\n' "$pid"
+}
+
+# This host's PID namespace and boot id, each empty where the system exposes
+# none (macOS). A PID means the same process only within one of each.
+HOST_LABEL="$(sanitize_host)"
+HOST_PIDNS="$(readlink /proc/self/ns/pid 2>/dev/null || true)"
+HOST_PIDNS="${HOST_PIDNS#'pid:['}"
+HOST_PIDNS="${HOST_PIDNS%']'}"
+[[ "$HOST_PIDNS" =~ ^[0-9]+$ ]] || HOST_PIDNS=''
+HOST_BOOT="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+[[ "$HOST_BOOT" =~ ^[0-9a-f-]+$ ]] || HOST_BOOT=''
+
+# The caller's session identity, PID/START/PIDNS/BOOT/HOST, the fields split
+# by / because a start and a host label can hold a colon. The walk and the
+# start are each read twice: a different answer is a process that changed
+# under the read, which yields no identity, status 1.
+caller_session_identity() {
+	local pid start again
+	pid="$(session_ancestor)" || return 1
+	start="$(process_start "$pid")" || return 1
+	[[ -n "$start" ]] || return 1
+	again="$(session_ancestor)" || return 1
+	[[ "$again" == "$pid" ]] || return 1
+	again="$(process_start "$pid")" || return 1
+	[[ "$again" == "$start" ]] || return 1
+	printf '%s/%s/%s/%s/%s\n' "$pid" "$start" "$HOST_PIDNS" "$HOST_BOOT" "$HOST_LABEL"
+}
+
+# How a recorded namespace or boot id relates to this host's: same, both
+# absent, differ, or one side only.
+identity_part() { # RECORDED LOCAL
+	if [[ -n "$1" && -n "$2" ]]; then
+		[[ "$1" == "$2" ]] && printf 'same\n' || printf 'differ\n'
+	elif [[ -z "$1" && -z "$2" ]]; then
+		printf 'absent\n'
+	else
+		printf 'one-sided\n'
+	fi
+}
+
+# live, dead or unknown for one recorded identity. Live needs this host and the
+# PID still started at the recorded time, within the same namespace and boot
+# wherever both sides know them. Dead needs this host, a namespace and boot
+# each the same or absent on both sides, and the system reporting the PID
+# absent or started at another time. Anything else, a read failure included,
+# is unknown.
+identity_state() { # IDENTITY
+	local pid start pidns boot host ns_part boot_part current
+	IFS=/ read -r pid start pidns boot host <<<"$1"
+	if [[ ! "$pid" =~ ^[1-9][0-9]*$ || -z "$start" || "$host" != "$HOST_LABEL" ]]; then
+		printf 'unknown\n'
+		return 0
+	fi
+	ns_part="$(identity_part "$pidns" "$HOST_PIDNS")" || ns_part=differ
+	boot_part="$(identity_part "$boot" "$HOST_BOOT")" || boot_part=differ
+	if [[ "$ns_part" == differ || "$boot_part" == differ ]] || ! current="$(process_start "$pid")"; then
+		printf 'unknown\n'
+	elif [[ "$current" == "$start" ]]; then
+		printf 'live\n'
+	elif [[ "$ns_part" != one-sided && "$boot_part" != one-sided ]]; then
+		printf 'dead\n'
+	else
+		printf 'unknown\n'
+	fi
+}
+
+# The lease's recorded identities, comma-separated, or empty.
+lease_sessions() { # LEASE
+	lease_field "$1" sessions 2>/dev/null || true
+}
+
+# none, live, dead or unknown for a lease, over its identities other than
+# EXCLUDE. Live if any reads live, dead only if at least one was read and all
+# read dead, none if none was read, unknown otherwise.
+lease_session_state() { # LEASE [EXCLUDE]
+	local -a identities=()
+	local identity state read_any=false unknown=false
+	IFS=, read -r -a identities <<<"$(lease_sessions "$1")"
+	for identity in ${identities[@]+"${identities[@]}"}; do
+		[[ -n "$identity" && "$identity" != "${2:-}" ]] || continue
+		read_any=true
+		state="$(identity_state "$identity")"
+		case "$state" in
+			live) printf 'live\n'; return 0 ;;
+			unknown) unknown=true ;;
+		esac
+	done
+	if [[ "$read_any" != true ]]; then
+		printf 'none\n'
+	elif [[ "$unknown" == true ]]; then
+		printf 'unknown\n'
+	else
+		printf 'dead\n'
+	fi
+}
+
+# The identities a session-bound write records: the caller's first, then each
+# recorded one that does not read dead. A live or unknown identity is never
+# dropped, so two sessions on one lease keep each other. A caller with no
+# identity leaves the list as it stands.
+merged_sessions() { # LEASE IDENTITY
+	local -a identities=()
+	local existing identity out="$2"
+	existing="$(lease_sessions "$1")"
+	if [[ -z "$2" ]]; then
+		printf '%s\n' "$existing"
+		return 0
+	fi
+	IFS=, read -r -a identities <<<"$existing"
+	for identity in ${identities[@]+"${identities[@]}"}; do
+		[[ -n "$identity" && "$identity" != "$2" ]] || continue
+		[[ "$(identity_state "$identity")" != dead ]] || continue
+		out="$out,$identity"
+	done
+	printf '%s\n' "$out"
 }
 
 # Control characters are escaped, never deleted: lock_reason carries arbitrary
@@ -288,16 +488,37 @@ acquire_guard_mutex() {
 	GUARD_MUTEX_FILE="$lock_path.d"
 }
 
-write_lease() {
-	local file="$1" lease="$2" staged="$1.$$"
-	printf '%s\n' "$lease" >"$staged" || fail guard-lease-stage "$REQUESTED_PATH" "Cannot stage the lease."
-	mv -f -- "$staged" "$file" || fail guard-lease-write "$REQUESTED_PATH" "Cannot update the lease."
+# One attempt at the same mutex, for an established session's maintenance,
+# which must not stall its harness: status 1 when it is held or cannot be
+# opened, with the keyed reason on stderr.
+try_guard_mutex() {
+	local common="$1" lock_path
+	lock_path="$common/kendex-worktree-session-guard.lock"
+	if command -v flock >/dev/null 2>&1; then
+		{ exec 9>"$lock_path"; } 2>/dev/null || { worktree_message guard-lock-open "$lock_path" "Cannot open the session lock file." >&2; return 1; }
+		flock -x -n 9 || { worktree_message guard-lock-busy "$lock_path" "Another guard process holds the session lock." >&2; return 1; }
+		return 0
+	fi
+	trap release_guard_mutex EXIT
+	(set -o noclobber; : >"$lock_path.d") 2>/dev/null || { worktree_message guard-mutex-busy "$lock_path.d" "Another guard process holds the session mutex." >&2; return 1; }
+	GUARD_MUTEX_FILE="$lock_path.d"
 }
 
+# Status 1 with the keyed reason on stderr; the caller picks the exit, since
+# an established session keeps its lease through a failed write.
+write_lease() {
+	local file="$1" lease="$2" staged="$1.$$"
+	{ printf '%s\n' "$lease" >"$staged"; } 2>/dev/null || { worktree_message guard-lease-stage "$REQUESTED_PATH" "Cannot stage the lease." >&2; return 1; }
+	mv -f -- "$staged" "$file" 2>/dev/null || { worktree_message guard-lease-write "$REQUESTED_PATH" "Cannot update the lease." >&2; return 1; }
+}
+
+# A lock file that exists but cannot be read leaves LEASE_TEXT empty, as an
+# unmanaged lock does, and sets LEASE_UNREADABLE so a claim can name it.
 read_lease() {
 	LEASE_TEXT=''
+	LEASE_UNREADABLE=false
 	[[ -f "$LOCK_FILE" ]] || return 1
-	LEASE_TEXT="$(head -n 1 "$LOCK_FILE" 2>/dev/null || true)"
+	LEASE_TEXT="$(head -n 1 -- "$LOCK_FILE" 2>/dev/null)" || { LEASE_TEXT=''; LEASE_UNREADABLE=true; }
 }
 
 lease_age() {
@@ -308,7 +529,7 @@ lease_age() {
 }
 
 status_output() {
-	local locked=false managed=false owner='' pid='' host='' claimed='' heartbeat='' age=-1 reason=''
+	local locked=false managed=false owner='' pid='' host='' claimed='' heartbeat='' age=-1 reason='' sessions='' session_state=none
 	if read_lease; then
 		locked=true
 		reason="$LEASE_TEXT"
@@ -326,14 +547,48 @@ status_output() {
 		printf '%s\n' "$owner"
 		return 0
 	fi
-	printf '{"path":"%s","directory_present":%s,"locked":%s,"managed":%s,"owner":"%s","pid":"%s","host":"%s","claimed_at":"%s","heartbeat_at":"%s","heartbeat_age_seconds":%s,"lock_reason":"%s"}\n' \
+	if [[ "$managed" == true ]]; then
+		sessions="$(lease_sessions "$LEASE_TEXT")"
+		session_state="$(lease_session_state "$LEASE_TEXT")"
+	fi
+	printf '{"path":"%s","directory_present":%s,"locked":%s,"managed":%s,"owner":"%s","pid":"%s","host":"%s","claimed_at":"%s","heartbeat_at":"%s","heartbeat_age_seconds":%s,"sessions":"%s","session_state":"%s","lock_reason":"%s"}\n' \
 		"$(json_escape "$REQUESTED_PATH")" "$DIRECTORY_PRESENT" "$locked" "$managed" \
 		"$(json_escape "$owner")" "$(json_escape "$pid")" "$(json_escape "$host")" \
-		"$(json_escape "$claimed")" "$(json_escape "$heartbeat")" "$age" "$(json_escape "$reason")"
+		"$(json_escape "$claimed")" "$(json_escape "$heartbeat")" "$age" "$(json_escape "$sessions")" "$session_state" "$(json_escape "$reason")"
 }
 
 claimed_by() {
 	worktree_message guard-owner-conflict "path=$REQUESTED_PATH owner=$1" "A lease under another owner holds this worktree." >&2
+}
+
+# A session-bound claim on a lease this owner holds, directly or through the
+# association --adopt recorded, that already lists the caller's process.
+lease_established() { # LEASE CALLER
+	local recorded associated
+	[[ "$session" == true && -n "$2" ]] && lease_is_managed "$1" || return 1
+	recorded="$(lease_field "$1" owner 2>/dev/null)" || return 1
+	associated="$(lease_field "$1" session_owner 2>/dev/null)" || associated=''
+	[[ "$recorded" == "$OWNER" || ( "$owner_set" != true && -n "$associated" && "$associated" == "$OWNER" ) ]] || return 1
+	[[ ",$(lease_sessions "$1")," == *",$2,"* ]]
+}
+
+# A foreign lease admission may take over: past the TTL, and every session
+# process it records verified dead. A lease that records none stays held.
+lease_reclaimable() { # LEASE
+	local age
+	age="$(lease_age "$1" 2>/dev/null)" || return 1
+	[[ "$age" -ge "$ttl_seconds" ]] || return 1
+	[[ "$(lease_session_state "$1")" == dead ]]
+}
+
+# Whether a lease's session state permits an automatic release: none (no
+# recorded process) or dead. Live or unknown is refused with its own key.
+release_session_held() { # STATE
+	case "$1" in
+		none | dead) return 0 ;;
+	esac
+	worktree_message guard-lease-session-held "path=$REQUESTED_PATH state=$1" "A session process this lease records is live or cannot be verified dead." >&2
+	return 1
 }
 
 release_current() {
@@ -347,13 +602,20 @@ release_current() {
 			worktree_message guard-lease-not-stale "$REQUESTED_PATH" >&2
 			return "$EXIT_OWNED"
 		}
+		release_session_held "$(lease_session_state "$LEASE_TEXT")" || return "$EXIT_SESSION_HELD"
 	elif [[ "$force" != true && "$recorded" != "$OWNER" ]]; then
 		claimed_by "${recorded:-unknown}"
 		return "$EXIT_OWNED"
 	fi
-	if [[ "$inactive" == true ]]; then
-		# The lease records the short-lived guard writer, not the harness.
-		# This protects the writer window only, not a working harness session.
+	if [[ "$inactive" == true && -n "$(lease_sessions "$LEASE_TEXT")" ]]; then
+		# remove's close-out runs from the session that holds the lease, so
+		# the caller's own process does not keep it; every other one does.
+		local caller=''
+		caller="$(caller_session_identity)" || caller=''
+		release_session_held "$(lease_session_state "$LEASE_TEXT" "$caller")" || return "$EXIT_SESSION_HELD"
+	elif [[ "$inactive" == true ]]; then
+		# A lease that records no session process names only the short-lived
+		# guard writer. This protects the writer window, not a working harness.
 		local pid='' host='' process='' process_rc=2
 		if pid="$(lease_field "$LEASE_TEXT" pid 2>/dev/null)" &&
 		   host="$(lease_field "$LEASE_TEXT" host 2>/dev/null)" &&
@@ -445,11 +707,28 @@ case "$command" in
 		[[ -n "$OWNER" ]] || fail guard-owner-required "$command" "This command requires an owner."
 		resolve_registration "$path" "$path" || fail guard-worktree-invalid "$path" "Path is not a linked worktree."
 		[[ "$DIRECTORY_PRESENT" == true ]] || fail guard-worktree-missing "$REQUESTED_PATH" "The worktree directory is missing."
-		acquire_guard_mutex "$COMMON_DIR"
+		caller=''
+		if [[ "$command" == claim && ( "$session" == true || "$adopt" == true ) ]]; then
+			caller="$(caller_session_identity)" || caller=''
+		fi
+		# A session that already holds its lease must not stall on another
+		# guard's lock at compact, clear or a prompt: one attempt, and a busy
+		# lock leaves the lease as it stands (exit 6). Under the lock the
+		# lease is read again, and a lease that is no longer established goes
+		# through admission like any other claim.
+		if read_lease && lease_established "$LEASE_TEXT" "$caller"; then
+			try_guard_mutex "$COMMON_DIR" || exit "$EXIT_MAINTENANCE"
+		else
+			acquire_guard_mutex "$COMMON_DIR"
+		fi
 		now="$(date -u +%s)"
 		session_owner=''
+		sessions="$caller"
+		established=false
 		if read_lease; then
+			[[ "$LEASE_UNREADABLE" != true ]] || fail guard-lock-unreadable "$REQUESTED_PATH" "Cannot read the worktree lock."
 			lease_is_managed "$LEASE_TEXT" || { worktree_message guard-lock-unmanaged "$REQUESTED_PATH" "The worktree lock belongs to another tool." >&2; exit "$EXIT_OWNED"; }
+			lease_established "$LEASE_TEXT" "$caller" && established=true
 			recorded="$(lease_field "$LEASE_TEXT" owner 2>/dev/null || true)"
 			session_owner="$(lease_field "$LEASE_TEXT" session_owner 2>/dev/null)" || session_owner=''
 			# Only verified adoption writes this association. The session
@@ -463,18 +742,35 @@ case "$command" in
 			# are one session: another --owner claim, such as output-prune's,
 			# relies on this refusal to keep a lease a session took after its
 			# probe.
-			[[ "$recorded" == "$OWNER" || ( "$adopt" == true && -n "$env_owner" && "$recorded" == "$env_owner" ) ]] \
-				|| { claimed_by "${recorded:-unknown}"; exit "$EXIT_OWNED"; }
-			if [[ "$adopt" == true && "$owner_set" == true && "$recorded" != "$OWNER" ]]; then
-				session_owner="$recorded"
+			if [[ "$recorded" == "$OWNER" || ( "$adopt" == true && -n "$env_owner" && "$recorded" == "$env_owner" ) ]]; then
+				if [[ "$adopt" == true && "$owner_set" == true && "$recorded" != "$OWNER" ]]; then
+					session_owner="$recorded"
+				fi
+				claimed="$(lease_field "$LEASE_TEXT" claimed_epoch 2>/dev/null || true)"
+				[[ "$claimed" =~ ^[0-9]+$ ]] || claimed="$now"
+				if [[ "$session" == true || "$adopt" == true ]]; then
+					sessions="$(merged_sessions "$LEASE_TEXT" "$caller")"
+				else
+					sessions="$(lease_sessions "$LEASE_TEXT")"
+				fi
+			elif [[ "$command" == claim ]] && lease_reclaimable "$LEASE_TEXT"; then
+				# Past the TTL with every recorded session process verified
+				# dead, decided under the same lock hold as the write.
+				worktree_message guard-lease-reclaimed "path=$REQUESTED_PATH owner=${recorded:-unknown}" >&2
+				session_owner=''
+				claimed="$now"
+			else
+				claimed_by "${recorded:-unknown}"
+				exit "$EXIT_OWNED"
 			fi
-			claimed="$(lease_field "$LEASE_TEXT" claimed_epoch 2>/dev/null || true)"
-			[[ "$claimed" =~ ^[0-9]+$ ]] || claimed="$now"
-	else
+		else
 			[[ "$command" == claim ]] || { worktree_message guard-lease-missing "$REQUESTED_PATH" "There is no lease to refresh." >&2; exit "$EXIT_NO_LEASE"; }
 			claimed="$now"
 		fi
-		write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now" "$session_owner")"
+		if ! write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now" "$session_owner" "$sessions")"; then
+			[[ "$established" != true ]] || exit "$EXIT_MAINTENANCE"
+			exit 1
+		fi
 		printf '%s\n' "$OWNER"
 		;;
 	status)
@@ -530,6 +826,7 @@ case "$command" in
 				continue
 			fi
 			[[ "$age" -ge "$ttl_seconds" ]] || continue
+			release_session_held "$(lease_session_state "$LEASE_TEXT")" || continue
 			if [[ "$dry_run" == true ]]; then
 				worktree_message guard-would-release "$REQUESTED_PATH" "Heartbeat age: $age seconds."
 			else

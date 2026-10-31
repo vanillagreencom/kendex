@@ -23,13 +23,17 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)" || { echo "worktree-session-claim: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "worktree-session-claim: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "worktree-session-claim: scratch=resolve-failed" >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'session_harness_stop_all; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 OUT_FILE="$TMP_ROOT/stdout"
 # shellcheck source=lib/assert.sh
 . "$TEST_DIR/lib/assert.sh"
 # shellcheck source=lib/first-line.sh
 . "$TEST_DIR/lib/first-line.sh"
+# Owned harness stand-ins and lease edits, shared with the worktree skill's
+# guard suite.
+# shellcheck source=../../skills/worktree/tests/lib/session-harness.sh
+. "$TEST_DIR/../../skills/worktree/tests/lib/session-harness.sh"
 
 # TREE sits where the worktree skill lays an issue tree out, under the default
 # base dir beside the checkout, and carries the issue record `worktree create`
@@ -287,6 +291,84 @@ adopted_start_rows() {
 }
 adopted_start_rows
 
+# The hook inside an owned stand-in for each harness. A start records its
+# harness process in the lease. A later start, compaction or clear in that same
+# process on its own lease is established and continues past a busy guard
+# lock, while a new session behind that lock keeps the admission refusal. A
+# start takes over an expired lease whose recorded session is dead and keeps
+# one whose session lives. A flock first on PATH shortens the guard's lock
+# wait to one second, so a refusal arrives without the full bound.
+SESSION_BIN="$TMP_ROOT/session-bin"
+mkdir -p "$SESSION_BIN"
+cat >"$SESSION_BIN/flock" <<FLOCK
+#!/usr/bin/env bash
+args=()
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -w) args+=(-w 1); shift 2 ;;
+    *) args+=("\$1"); shift ;;
+  esac
+done
+exec $(command -v flock) "\${args[@]}"
+FLOCK
+chmod +x "$SESSION_BIN/flock"
+
+hook_in_harness() { # DIR ENV...
+  local dir="$1"
+  shift
+  HOOK_RC=0
+  session_harness_run "$dir" "$TREE" env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER -u KENDEX_WORKTREE_CLAIM \
+    HOME="$WORLD_HOME" GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$@" "$BASH" "$WORLD_HOOKS/worktree-session-claim.sh" || HOOK_RC=$?
+  cp -- "$dir/out" "$OUT_FILE"
+  cp -- "$dir/err" "$ERR_FILE"
+  HOOK_ANSWER=silent
+  if [ -s "$OUT_FILE" ]; then
+    HOOK_ANSWER=$(jq -r 'if .continue == false then "stop" else "invalid" end' <"$OUT_FILE") || HOOK_ANSWER=invalid
+  fi
+}
+
+session_rows() {
+  local harness hdir ndir hpid npid
+  for harness in claude codex; do
+    release_all
+    install_world installed "$harness"
+    hdir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
+    ndir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
+    session_harness_start "$hdir" "$harness"
+    hpid=$SESSION_HARNESS_PID
+    session_harness_start "$ndir" "$harness"
+    npid=$SESSION_HARNESS_PID
+    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
+    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER owner=$(lease_owner "$TREE") pids=$(session_lease_pids "$GUARD" "$TREE" "$MAIN")" \
+      "rc=0 answer=silent owner=alice pids=$hpid" "$harness: a start admits its session and records its harness process"
+    session_mutex_hold "$MAIN/.git"
+    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
+    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
+      "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE owner=alice" \
+      "$harness: a compaction or clear in the admitted session continues past a busy guard lock"
+    hook_in_harness "$ndir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
+    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
+      "rc=0 answer=stop first=worktree-session-claim: unclaimed=$TREE owner=alice" \
+      "$harness: a new session behind a busy guard lock keeps the admission refusal"
+    session_mutex_free
+    release_all
+    session_harness_run "$ndir" "$TREE" env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=bob "$GUARD" claim "$TREE" --session || :
+    session_lease_rewrite "$TREE" expire
+    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
+    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
+      "rc=0 answer=stop first=worktree-session-claim: held=$TREE owner=bob" \
+      "$harness: a start keeps an expired lease whose recorded session lives"
+    session_lease_rewrite "$TREE" restart "$npid"
+    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
+    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER owner=$(lease_owner "$TREE") pids=$(session_lease_pids "$GUARD" "$TREE" "$MAIN")" \
+      "rc=0 answer=silent owner=alice pids=$hpid" \
+      "$harness: a start takes over an expired lease whose recorded session is dead"
+    session_harness_stop "$hdir"
+    session_harness_stop "$ndir"
+  done
+}
+session_rows
+
 # A lock timeout is the guard's bounded stalled-claim result. The fixture
 # writes a large cause and records every invocation, so no retry can hide a
 # first failure or run past the hook's one-attempt budget.
@@ -491,6 +573,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # own workflow adopted as foreign.
   control session-flag-at-start 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' adopted_start_rows \
     'claude: adopted SessionStart: the same session refreshes the issue lease;codex: adopted SessionStart: the same session refreshes the issue lease;copilot-project: adopted SessionStart: the same session refreshes the issue lease;copilot-global: adopted SessionStart: the same session refreshes the issue lease;'
+  # A hook that treats an established session's failed maintenance as a
+  # failed claim stops a working session at compaction or clear.
+  control maintenance-stops '  6) advise maintenance "$ROOT" \' '  6) notice maintenance "$ROOT" \' session_rows \
+    "claude: a compaction or clear in the admitted session continues past a busy guard lock;codex: a compaction or clear in the admitted session continues past a busy guard lock;"
   control copilot-project-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks) : ;;' output_failure_rows \
     "required: copilot-project normal encoder: context contract;required: copilot-project broken encoder: context contract;"
   control copilot-global-context '[ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true' ':' output_failure_rows \

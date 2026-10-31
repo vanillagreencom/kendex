@@ -3,7 +3,7 @@
 # name: worktree-session-claim
 # event: SessionStart
 # matcher:
-# description: Claims the linked git worktree a session starts in when its private git directory carries the worktree skill's `kendex-issue` record. The worktree skill's `references/session-guard.md` defines the lease and its limits. It runs `worktree-session-guard claim <worktree root>` with the guard's owner ladder: `KENDEX_SESSION_OWNER`, else `HT_SESSION_OWNER`, else `USER`. A workflow can adopt that initial lease under its issue ID with `--adopt`, which records the session's owner in the lease. Every claim passes `--session`, so a later start under that same owner, and on Claude a prompt in required mode, refreshes the issue lease and keeps the issue owner; a lease with no matching association stays foreign. It clears Git's local repository variables plus discovery limits and namespace before resolving the checkout from the session directory. It makes one claim attempt: the guard can wait 60 seconds for its lock, and another attempt would exceed this hook's 75-second timeout. Guard output is limited to its first 4096 bytes. Set the process environment variable `KENDEX_WORKTREE_CLAIM=required` to require a claim; this hook loads no project settings or `.env.local`. In required mode a foreign lease, missing guard, failed claim or unexpected hook error refuses a SessionStart on Codex with `continue:false` and a keyed reason. Claude, Pi, Gemini and Copilot cannot refuse a SessionStart; they receive the same keyed result as advisory context. Without the setting, failures are notices at exit 0, and a foreign lease stays silent. A main checkout, a repository without the issue record or a directory outside Git claims nothing and says nothing. Not run on antigravity: it has no SessionStart event. Not run on opencode: it runs no hooks, and a claim taken as an instruction claims nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a claim taken as an instruction claims nothing.
+# description: Claims the linked git worktree a session starts in when its private git directory carries the worktree skill's `kendex-issue` record. The worktree skill's `references/session-guard.md` defines the lease and its limits. It runs `worktree-session-guard claim <worktree root>` with the guard's owner ladder: `KENDEX_SESSION_OWNER`, else `HT_SESSION_OWNER`, else `USER`. A workflow can adopt that initial lease under its issue ID with `--adopt`, which records the session's owner in the lease. Every claim passes `--session`, so a later start under that same owner, and on Claude a prompt in required mode, refreshes the issue lease and keeps the issue owner; a lease with no matching association stays foreign. It clears Git's local repository variables plus discovery limits and namespace before resolving the checkout from the session directory. It makes one claim attempt: the guard can wait 60 seconds for its lock, and another attempt would exceed this hook's 75-second timeout. The guard records in the lease the harness process the hook runs under, and takes over an expired foreign lease only when every process it records is verified dead. A start, compaction, clear or Claude prompt on a lease that already records this process is established: its claim does not wait for the lock, and a busy lock or failed lease write gives the keyed `maintenance` notice on stderr at exit 0, never a refusal. Guard output is limited to its first 4096 bytes. Set the process environment variable `KENDEX_WORKTREE_CLAIM=required` to require a claim; this hook loads no project settings or `.env.local`. In required mode a foreign lease, missing guard, failed claim or unexpected hook error refuses a SessionStart on Codex with `continue:false` and a keyed reason. Claude, Pi, Gemini and Copilot cannot refuse a SessionStart; they receive the same keyed result as advisory context. Without the setting, failures are notices at exit 0, and a foreign lease stays silent. A main checkout, a repository without the issue record or a directory outside Git claims nothing and says nothing. Not run on antigravity: it has no SessionStart event. Not run on opencode: it runs no hooks, and a claim taken as an instruction claims nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a claim taken as an instruction claims nothing.
 # summary: Claims a git worktree the worktree skill created or adopted for the worktree session guard when a session starts in it.
 # safety: Reads Git repository metadata and the worktree issue record, and runs the guard found beside this hook's install; a project install can use the repository's guard. The guard writes the worktree's lease under the repository's Git directory. Loads no project settings or `.env.local`. Exit 0 carries a structured stop on Codex only when `KENDEX_WORKTREE_CLAIM=required`; Claude, Pi, Gemini and Copilot receive an advisory at SessionStart.
 # timeout: 75
@@ -30,14 +30,30 @@ case "${BASH_SOURCE[0]%/*}" in
 esac
 [ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true
 
-notice() { # KEY VALUE ENGLISH [CAUSE]
-  local text cause="${4:-}" answer fallback
+# Prints the keyed record, its English and the cause on stderr, and keeps the
+# text in NOTICE_TEXT for the structured answer.
+record() { # KEY VALUE ENGLISH [CAUSE]
+  local text cause="${4:-}"
   trap - EXIT
   # Keep the first cause within the context limits of session-start hooks.
   cause=${cause:0:4096}
   text=$(printf 'worktree-session-claim: %s=%s\n%s' "$1" "$2" "$3")
   [ -z "$cause" ] || text="$text"$'\n'"$cause"
   printf '%s\n' "$text" >&2
+  NOTICE_TEXT=$text
+}
+
+# An established session whose lease maintenance failed keeps its lease and
+# continues on every harness and event, Claude's prompt included.
+advise() { # KEY VALUE ENGLISH [CAUSE]
+  record "$@"
+  exit 0
+}
+
+notice() { # KEY VALUE ENGLISH [CAUSE]
+  local text answer fallback
+  record "$@"
+  text=$NOTICE_TEXT
   [ "$PROMPT" != true ] || exit 2
   if [ "${KENDEX_WORKTREE_CLAIM:-}" = required ]; then
     if answer=$(jq -nc --arg reason "$text" --argjson copilot "$COPILOT" '{continue:false,stopReason:$reason} + (if $copilot then {additionalContext:$reason} else {hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$reason}} end)' 2>/dev/null); then
@@ -123,12 +139,17 @@ rc=0
 # The guard can wait 60 seconds for its lock. One attempt fits timeout: 75;
 # a retry could exceed the harness's budget before the result is delivered.
 # A resume, /clear or compaction starts again under the owner that the
-# workflow's --adopt recorded, so --session keeps that adopted issue lease.
+# workflow's --adopt recorded, so --session keeps that adopted issue lease, and
+# a session the lease already records does not wait for the lock at all.
 CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?
 # Exit 75 means a lock already holds the tree; this start leaves that lock as
-# it stands.
+# it stands. Exit 6 is the guard's established session, whose lease already
+# lists this harness process: a busy lock or a failed write leaves that lease
+# standing, so it is no reason to stop the session.
 case "$rc" in
   0) ;;
+  6) advise maintenance "$ROOT" \
+    "This session already holds its lease; refreshing it failed this time and the lease stands." "$CAUSE" ;;
   75)
     [ "${KENDEX_WORKTREE_CLAIM:-}" != required ] || notice held "$ROOT" \
       "Another lease holds this worktree; use a worktree you own or ask its owner to release it before starting work." "$CAUSE"

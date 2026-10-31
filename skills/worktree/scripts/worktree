@@ -2187,8 +2187,10 @@ worktree_lock_reason() {
 # live worktrees under working sessions:
 #
 #   cleanup           never collects a worktree under a guard lease; `--stale`
-#                     collects leases past the TTL
-#   remove            releases only the caller's OWN lease, so a claiming
+#                     collects leases past the TTL whose recorded session
+#                     processes are all verified dead
+#   remove            releases only the caller's OWN lease, and only while no
+#                     other session process it records lives, so a claiming
 #                     session can still tear down its own tree
 #   create --reuse    refuses a foreign lease by name, refreshes its own
 #
@@ -2257,8 +2259,9 @@ probe_session_lease() {
 #
 # The issue record uses the branch's lower-case spelling; the lease keeps the
 # workflow's spelling. Compare through the existing issue normalizer, then
-# release the exact recorded owner. The guard checks its writer PID under its
-# mutex; that PID does not establish harness liveness.
+# release the exact recorded owner. Under its mutex the guard refuses while a
+# session process the lease records, other than this caller's own, is live or
+# unverifiable; a lease that records none falls back to its writer PID.
 release_own_session_lease() {
   local wt="$1" issue_owner="${2:-}" env_owner owner="" status_rc=0
   session_guard_available || return 0
@@ -2385,13 +2388,23 @@ cleanup_lease_permits_removal() {
   esac
   if [[ "$CLEANUP_STALE" != true ]]; then
     worktree_message cleanup-lease-held "$wt" "Skipped (a session holds a guard lease): $wt" >&2
-    echo "  Let that session release it, or pass --stale to collect leases past the ${CLEANUP_TTL_MINUTES}m TTL." >&2
+    echo "  Let that session release it, or pass --stale to collect leases past the ${CLEANUP_TTL_MINUTES}m TTL whose session has ended." >&2
     return 1
   fi
-  if "$SESSION_GUARD" release "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" --repo "$PROJECT_ROOT" >/dev/null 2>&1; then
-    worktree_message lease-stale-released "$wt" "Released stale session guard lease: $wt" >&2
-    return 0
-  fi
+  local release_rc=0
+  "$SESSION_GUARD" release "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || release_rc=$?
+  case "$release_rc" in
+    0)
+      worktree_message lease-stale-released "$wt" "Released stale session guard lease: $wt" >&2
+      return 0
+      ;;
+    7)
+      # The guard's session-held exit: past the TTL, but a session process
+      # the lease records is live or cannot be verified dead.
+      worktree_message cleanup-lease-session-held "$wt" "Skipped (guard lease is past the ${CLEANUP_TTL_MINUTES}m TTL, but a session it records is live or unverified): $wt" >&2
+      return 1
+      ;;
+  esac
   worktree_message cleanup-lease-fresh "$wt" "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
   return 1
 }
