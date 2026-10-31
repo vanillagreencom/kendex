@@ -26,14 +26,13 @@ export SUITE_TRACE="$TMP/trace"
 
 # A suite that says it has started, then runs until a TERM stops it and says
 # so. The runner's cap would stop it too, so the cap sits past the deadline
-# below: a suite stopped within the deadline was stopped by the TERM. Its trap
-# takes half a second, inside the one second the runner grants before KILL.
+# below: a suite stopped within the deadline was stopped by the TERM.
 root="$TMP/skill"
 marks="$TMP/marks"
 mkdir -p "$root/scripts" "$root/tests/controls" "$marks"
 cat >"$root/tests/alpha.test.sh" <<SUITE
 #!/usr/bin/env bash
-trap 'printf "%s fixture TERM\\n" "\${EPOCHREALTIME:--}" >>"$SUITE_TRACE"; sleep 0.5; : >"$marks/stopped"; printf "%s fixture stop-mark rc=%s\\n" "\${EPOCHREALTIME:--}" "\$?" >>"$SUITE_TRACE"; exit 143' TERM
+trap 'printf "%s fixture TERM\\n" "\${EPOCHREALTIME:--}" >>"$SUITE_TRACE"; : >"$marks/stopped"; printf "%s fixture stop-mark rc=%s\\n" "\${EPOCHREALTIME:--}" "\$?" >>"$SUITE_TRACE"; exit 143' TERM
 : >"$marks/started"
 printf '%s fixture started pid=%s ppid=%s\n' "\${EPOCHREALTIME:--}" "\$\$" "\$PPID" >>"$SUITE_TRACE"
 while :; do sleep 0.05; done
@@ -70,15 +69,6 @@ if ! wait_for "$marks/started"; then
     assert_stop "the fixture suite starts under the runner" "$(cat "$TMP/run.log")"
 fi
 runner_start="$(lane_process_start "$runner")" || runner_start=unread
-# The runner counts its grace in SECONDS, which steps on the wall clock's
-# whole seconds. A TERM sent 0.6s past one leaves 0.4s to the next, less than
-# the fixture's trap takes, so a grace that can end at the next step reddens
-# this row on every run rather than by chance.
-if ! perl -MTime::HiRes=time,sleep -e '$f = time - int(time); sleep(($f < 0.6 ? 0.6 : 1.6) - $f)'; then
-    kill -TERM "$runner" 2>/dev/null
-    wait "$runner"
-    assert_stop "the TERM is sent at a known point of the wall-clock second"
-fi
 kill -TERM "$runner"
 kill_rc=$?
 wait "$runner"

@@ -70,11 +70,8 @@ tree_running() { [ -n "$(tree_live "$1")" ]; } # TREE
 
 # One bounded teardown for cancellation and overdue suites. Keep identities
 # from before TERM: a parent that exits no longer leads to its descendants.
-# SECONDS steps on the wall clock's whole seconds, so a bound of SECONDS +
-# STOP_GRACE can fall due a moment after the TERM; counting from the next step
-# gives the tree the whole grace.
 stop_tree() { # TREE
-  local until=$((SECONDS + 1 + STOP_GRACE))
+  local until=$((SECONDS + STOP_GRACE))
   signal_tree TERM "$1"
   while tree_running "$1" && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
   signal_tree KILL "$1"

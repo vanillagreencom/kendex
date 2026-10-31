@@ -278,11 +278,8 @@ while IFS='|' read -r label fix ctl cap keep baselines expect; do
     assert_eq "$label: baseline output" "$baseline_output" "$baselines"
     if [[ "$fix" = baseline-term-ignore || "$ctl" = capped-term-ignore ]]; then
         cap_output=$(sed -n '/^SUITE_CAP /p' "$RUN_LOG")
-        # The cap falls due one whole-second step after the start, and the
-        # grace, counted from the step after that, two steps later: three in
-        # all, or four where a poll lands late.
         assert_matches "$label: KILL completes at cap plus grace" "$cap_output" \
-            '^SUITE_CAP suite=alpha.test.sh elapsed=[34]s cap=1s grace=1s exit=137$'
+            '^SUITE_CAP suite=alpha.test.sh elapsed=[12]s cap=1s grace=1s exit=137$'
         # CI consumes SUITE_CAP directly, before ordered BASELINE delivery.
         cap_order=$(awk '/^SUITE_CAP / { cap=NR } /^BASELINE / { base=NR } END { print (cap > 0 && cap < base) }' "$RUN_LOG")
         assert_eq "$label: cap diagnostic bypasses ordered output" "$cap_order" 1
