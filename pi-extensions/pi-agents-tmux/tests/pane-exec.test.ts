@@ -55,41 +55,49 @@ test("command capture requires a fixed probe or a resolver-approved bridge", asy
    }
 });
 
-// The extension starts a bridge lookup when it loads. A suite file that loads it
-// can leave that lookup waiting on a login shell into a later file's bridge case.
-async function staleBridgeLookup(runtime: typeof import("../extensions/subagent/pane.js")): Promise<void> {
+// The extension starts a bridge lookup when it loads, and parallel pane
+// dispatch starts one per task. On a PATH-only install each lookup waits on
+// the login-shell probe, so lookups settle in either order.
+const BRIDGE_ADMISSION_GUARD = "if (lookup > latestSettledPiBridgeLookup) {";
+const settleOrders = [
+	{ name: "a stale older lookup that settles last keeps the newer bridge", settle: ["newer", "older"], run: "newer", control: "{" },
+	{ name: "an older lookup that settles first runs the bridge it returned", settle: ["older"], run: "older", control: "if (lookup === latestPiBridgeLookup) {" },
+] as const;
+
+async function settledBridgeLookup(runtime: typeof import("../extensions/subagent/pane.js"), row: (typeof settleOrders)[number]): Promise<void> {
 	const { symlinkSync } = await import("node:fs");
 	const { join } = await import("node:path");
 	const { clearPackageConfigCache } = await import("../extensions/subagent/package-config.js");
 	const root = tempRuntime();
-	const bridge = join(root, "bridge");
-	symlinkSync(process.execPath, bridge);
+	const bridges = { older: join(root, "older-bridge"), newer: join(root, "newer-bridge") };
+	for (const bridge of Object.values(bridges)) symlinkSync(process.execPath, bridge);
 	const previous = { bin: process.env.PI_BRIDGE_BIN, dir: process.env.PI_CODING_AGENT_DIR };
-	let releaseLookup!: () => void;
-	const lookupHeld = new Promise<void>((resolve) => { releaseLookup = resolve; });
-	let lookupStarted = false;
+	const probes: Array<() => void> = [];
+	const found = [bridges.older, bridges.newer];
+	let lookups: Record<"older" | "newer", Promise<string | undefined>> | undefined;
 	delete process.env.PI_BRIDGE_BIN;
 	process.env.PI_CODING_AGENT_DIR = root;
 	clearPackageConfigCache();
 	runtime.setPaneExecCaptureForTests(async () => {
-		lookupStarted = true;
-		await lookupHeld;
-		return { code: 0, stdout: "", stderr: "" };
+		const stdout = found[probes.length];
+		await new Promise<void>((resolve) => probes.push(resolve));
+		return { code: 0, stdout, stderr: "" };
 	});
 	try {
-		const stale = runtime.resolvePiBridgeBin();
-		assert.ok(lookupStarted, "the earlier lookup must reach the login-shell probe");
+		lookups = { older: runtime.resolvePiBridgeBin(), newer: runtime.resolvePiBridgeBin() };
+		assert.equal(probes.length, 2, "both lookups must reach the login-shell probe");
 		runtime.setPaneExecCaptureForTests();
-		process.env.PI_BRIDGE_BIN = bridge;
-		assert.equal(await runtime.resolvePiBridgeBin(), bridge);
-		releaseLookup();
-		assert.equal(await stale, undefined);
-		const result = await runtime.execCapture(bridge, ["-e", 'console.log("admitted")'], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } });
-		assert.equal(result.code, 0, "a stale bridge lookup must not revoke the newer resolution");
+		for (const which of row.settle) {
+			probes[which === "older" ? 0 : 1]!();
+			assert.equal(await lookups[which], bridges[which]);
+		}
+		const result = await runtime.execCapture(bridges[row.run], ["-e", 'console.log("admitted")'], { env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root } });
+		assert.equal(result.code, 0, "a settled lookup's bridge must stay approved until a later-started lookup settles");
 		assert.equal(result.stdout.trim(), "admitted");
 	} finally {
-		releaseLookup();
+		for (const release of probes) release();
 		runtime.setPaneExecCaptureForTests();
+		if (lookups) await Promise.allSettled(Object.values(lookups));
 		if (previous.bin === undefined) delete process.env.PI_BRIDGE_BIN;
 		else process.env.PI_BRIDGE_BIN = previous.bin;
 		if (previous.dir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -98,12 +106,14 @@ async function staleBridgeLookup(runtime: typeof import("../extensions/subagent/
 	}
 }
 
-test("a bridge lookup that settles after a newer resolution keeps the newer bridge admitted", async () => {
-	const runtime = await import("../extensions/subagent/pane.js");
-	await staleBridgeLookup(runtime);
-	const lastSettled = await importRuntimeCopy("pane.ts", "if (lookup === latestPiBridgeLookup) resolvedPiBridgeCommand = bin;", "resolvedPiBridgeCommand = bin;") as typeof runtime;
-	await assert.rejects(staleBridgeLookup(lastSettled), /a stale bridge lookup must not revoke/);
-});
+for (const row of settleOrders) {
+	test(`bridge lookups settling out of order: ${row.name}`, async () => {
+		const runtime = await import("../extensions/subagent/pane.js");
+		await settledBridgeLookup(runtime, row);
+		const mutant = await importRuntimeCopy("pane.ts", BRIDGE_ADMISSION_GUARD, row.control) as typeof runtime;
+		await assert.rejects(settledBridgeLookup(mutant, row), /must stay approved/);
+	});
+}
 
 async function stalled(capture: typeof execCapture): Promise<void> {
 	const root = tempRuntime();

@@ -77,6 +77,7 @@ type ExecCaptureResult = { code: number; stdout: string; stderr: string; error?:
 type ExecCaptureFn = (command: string, args: string[], options?: ExecCaptureOptions) => Promise<ExecCaptureResult>;
 let resolvedPiBridgeCommand: string | undefined;
 let latestPiBridgeLookup = 0;
+let latestSettledPiBridgeLookup = 0;
 
 async function defaultExecCapture(command: string, args: string[], options: ExecCaptureOptions = {}, spawner: typeof spawn = spawn): Promise<ExecCaptureResult> {
 	const signal = options.signal ?? childSignal();
@@ -490,11 +491,15 @@ function resolveSessionBridgeExtension(cwd?: string): string | undefined {
 
 async function resolvePiBridgeBin(): Promise<string | undefined> {
 	// Overlapping lookups settle out of order: the extension's startup lookup can
-	// still be waiting on a login shell when a later call resolves. Only the
-	// latest started lookup sets the bridge execCapture admits.
+	// still be waiting on a login shell when a later call resolves. A lookup sets
+	// the bridge execCapture admits unless a later-started one already settled,
+	// so its caller can run what it returned and a stale result changes nothing.
 	const lookup = ++latestPiBridgeLookup;
 	const admit = (bin: string | undefined) => {
-		if (lookup === latestPiBridgeLookup) resolvedPiBridgeCommand = bin;
+		if (lookup > latestSettledPiBridgeLookup) {
+			latestSettledPiBridgeLookup = lookup;
+			resolvedPiBridgeCommand = bin;
+		}
 		return bin;
 	};
 	const projectBinDir = path.join(path.dirname(projectSettingsPath(process.cwd())), "bin");
