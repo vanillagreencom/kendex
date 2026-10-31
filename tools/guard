@@ -161,6 +161,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "free space on the cargo target volume could not be read at $2 after the cargo block, so the exhaustion check did not run." ;;
     touched-set)
       echo "the touched-file set for the suite lane could not be read at that step." ;;
+    inventory-rows)
+      echo "a side of the .kendex-generated.json change could not be read as a list of paths, so the scoped run maps that file as any changed file; the read's own error is above." ;;
     missing-tool)
       printf 'the required command %s is unavailable.\n' "$2" ;;
     missing-peers)
@@ -364,7 +366,8 @@ case "${1:-}" in
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
       '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
       '        the same suite mapper, leaving the full record to merge-group CI;' \
-      '        a skill package'"'"'s Markdown, source or render, selects no suite there.'
+      '        a skill package'"'"'s Markdown, source or render, selects no suite there,' \
+      '        nor does a .kendex-generated.json change only to their rows.'
     exit 0
     ;;
 esac
@@ -1857,9 +1860,13 @@ reach_join() { # ROLE PATH [changed]
 # skills/<name>/ or its render under .agents/skills/<name>/, seeds no suite,
 # neither in its own tree nor as a ../ repository input of tools/ or a
 # consumer tree: the merge group first runs the suites that read it (D027).
-# Every other file a suite reads as data, a fixture, a script or a JSON
-# file, still seeds its suites, and so does a .md file outside a skill
-# package.
+# A changed .kendex-generated.json is read as the rows it lists: where the
+# rows other than skill Markdown are the same list on both sides, the
+# change only adds, removes or reorders skill Markdown rows and seeds no
+# suite; any other changed row, or an unreadable side, seeds its suites as
+# any changed file does. Every other file a suite reads as data, a fixture,
+# a script or a JSON file, still seeds its suites, and so does a .md file
+# outside a skill package.
 # The reach is what the scan can see, not every caller: a script run through
 # a variable path is missed, and so is a suite that runs a changed script
 # only through another script that runs it. CI's full run owns completeness.
@@ -1983,6 +1990,30 @@ mapped_suites() { # DIR REL
   fi
   MAPPED=$out
 }
+skill_markdown() { # PATH: a .md file of a skill package, source or render
+  case "$1" in skills/*/*.md | .agents/skills/*/*.md) return 0 ;; esac
+  return 1
+}
+# The rows of .kendex-generated.json at REV, or in the working tree for an
+# empty REV, that are not skill Markdown, one per line in file order. An
+# absent file lists no rows. Status 1: the side could not be read or is not
+# a list of paths.
+inventory_rest() { # REV
+  local listed text row
+  if [ -n "$1" ]; then
+    listed=$(git ls-tree --name-only "$1" -- .kendex-generated.json) || return 1
+    [ -n "$listed" ] || return 0
+    text=$(git show "$1:.kendex-generated.json") || return 1
+  else
+    [ -e .kendex-generated.json ] || return 0
+    text=$(cat .kendex-generated.json) || return 1
+  fi
+  text=$(jq -r 'if type == "array" and all(.[]; type == "string" and (contains("\n") | not))
+    then .[] else error("not a list of paths") end' <<<"$text") || return 1
+  while IFS= read -r row; do
+    skill_markdown "$row" || printf '%s\n' "$row"
+  done <<<"$text"
+}
 # The final report uses the runner's subset vocabulary only for a smaller
 # mapped set. Empty means no tree was selected; any whole set makes it all.
 suite_selection=""
@@ -2002,6 +2033,14 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     [ -n "$consumer_suites" ] || continue
     consumer_trees+=("$consumer")
   done
+  inventory_markdown_only=0
+  if [ "$scoped_only" -eq 1 ] && grep -Fxq .kendex-generated.json <<<"$touched"; then
+    if base_rest=$(inventory_rest "$suites_base") && head_rest=$(inventory_rest ""); then
+      [ "$base_rest" != "$head_rest" ] || inventory_markdown_only=1
+    else
+      note inventory-rows unread
+    fi
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
@@ -2122,7 +2161,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
             [ "$tree" = "$d" ] || continue
             if [ "$scoped_only" -eq 1 ]; then
               # mapped_suites' header states this set and why.
-              case "$f" in skills/*/*.md | .agents/skills/*/*.md) continue ;; esac
+              ! skill_markdown "$f" || continue
+              [ "$f:$inventory_markdown_only" != .kendex-generated.json:1 ] || continue
               if [[ $rel == ../* ]]; then
                 role=script
               else

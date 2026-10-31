@@ -85,7 +85,7 @@ doc_selection "$GUARD"
 [ "$RC" -eq 0 ] && [ -z "$PLAN" ] && [ -z "$SELECTED" ] \
   && ok 'scoped: a skill doc and its render select no suite' \
   || bad 'scoped: a skill doc and its render select no suite' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
-if mutant_guard '/^              case "\$f" in skills\/\*\/\*\.md | \.agents\/skills\/\*\/\*\.md) continue ;; esac$/d'; then
+if mutant_guard '/^              ! skill_markdown "\$f" || continue$/d'; then
   doc_selection "$MUTANT_TOOLS/guard"
   [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-source.sh ' ] \
     && ok 'control: without the Markdown rule the scoped run selects both doc readers' \
@@ -106,6 +106,57 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
   && ok 'normal range runs both doc readers' \
   || bad 'normal range runs both doc readers' "rc=$RC out=$OUT"
 git -C "$R" checkout -q -- skills/demo .agents/skills/demo
+
+# .kendex-generated.json, read as data by a tools/ suite. A scoped run reads
+# the rows the range changed: skill Markdown rows alone select no suite, and
+# any other changed row, or a side that is no list of paths, maps the file as
+# today.
+jq -n '[".agents/skills/demo/SKILL.md", ".agents/skills/demo/kendex.settings.toml.example",
+  ".agents/skills/demo/references/guide.md", ".agents/skills/demo/scripts/tool", ".claude/skills/demo"]' \
+  > "$R/.kendex-generated.json"
+printf 'cat "$PWD/.kendex-generated.json" >/dev/null\nprintf "inventory-reader\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/inventory-reader.sh"
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm inventory
+BASE="$(git -C "$R" rev-parse HEAD)"
+READER='tools/tests/inventory-reader.sh '
+inventory_change() { # JQ-FILTER: rewrite the inventory through the filter
+  git -C "$R" show "$BASE:.kendex-generated.json" | jq "$1" > "$R/.kendex-generated.json"
+  : > "$SUITE_LOG"
+}
+for row in \
+  'markdown rows added;. + [".agents/skills/demo/references/new.md"] | sort;' \
+  'a markdown row removed;map(select(. != ".agents/skills/demo/references/guide.md"));' \
+  'a script row added;. + [".agents/skills/demo/scripts/extra"] | sort;reader' \
+  'a settings row removed;map(select(. != ".agents/skills/demo/kendex.settings.toml.example"));reader' \
+  'a markdown and a non-Markdown render row added;. + [".agents/skills/demo/references/new.md", ".claude/skills/other"] | sort;reader' \
+  'a side that is no list of paths;{rows: .};reader'; do
+  IFS=';' read -r name filter expected <<<"$row"
+  [ -z "$expected" ] || expected=$READER
+  inventory_change "$filter"
+  doc_selection "$GUARD"
+  [ "$RC" -eq 0 ] && [ "$PLAN" = "$expected" ] \
+    && ok "scoped inventory: $name" \
+    || bad "scoped inventory: $name" "rc=$RC plan=$PLAN expected=$expected out=$OUT"
+done
+inventory_change '. + [".agents/skills/demo/references/new.md"] | sort'
+if mutant_guard '/^              \[ "\$f:\$inventory_markdown_only" != \.kendex-generated\.json:1 \] || continue$/d'; then
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$PLAN" = "$READER" ] \
+    && ok 'control: without the inventory rule markdown rows select the inventory reader' \
+    || bad 'control: without the inventory rule markdown rows select the inventory reader' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control removes the scoped inventory rule'
+fi
+for filter in '. + [".agents/skills/demo/references/new.md"] | sort' '. + [".agents/skills/demo/scripts/extra"] | sort'; do
+  inventory_change "$filter"
+  RC=0
+  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] && [ "$(sort "$SUITE_LOG" | tr '\n' ' ')" = 'inventory-reader ' ] \
+    && ok "normal range runs the inventory reader: $filter" \
+    || bad "normal range runs the inventory reader: $filter" "rc=$RC out=$OUT"
+done
+git -C "$R" checkout -q -- .kendex-generated.json
 
 # A real cancellation must also name suites in batteries not yet entered.
 # The first selected suite acknowledges its start before the parent sends TERM.
