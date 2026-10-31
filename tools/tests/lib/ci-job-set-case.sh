@@ -6,9 +6,10 @@ cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$
 cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
-# build input runs `rest` and `refresh` for real kendex
-# rows, and a tools/ path its suites' two shards and the scans.
-BUILD_ROW="$(measured both false true true '["refresh","rest"]' '["refresh","rest"]')"
+# build input runs the checkout-kendex shards for real kendex rows, the
+# Linux-only jarvis leg among them, and a tools/ path its suites' two shards
+# and the scans.
+BUILD_ROW="$(measured both false true true '["refresh","rest","jarvis"]' '["refresh","rest"]')"
 TOOL_SHARDS='["guards-scans","guards-tools","guards-tools-tail"]'
 TOOL_ROW="$(measured both false true false "$TOOL_SHARDS" "$(macos_shards "$TOOL_SHARDS")")"
 # Where a shard runs, and where none does. A shard runs on both runners

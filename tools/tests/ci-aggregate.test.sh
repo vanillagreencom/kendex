@@ -1243,6 +1243,13 @@ RESULTS="$saved_results"
 saved_results="$RESULTS"
 RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
 expr="$(aggregate_lanes "$WORKFLOW" "$CI_JOB" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
+# A Jarvis change selects the Linux-only jarvis leg in the shell matrix, and
+# the macOS rest leg that keeps the family there.
+jarvis_change="$(SELECT_EVENT=merge_group selection micro false skills/jarvis/scripts/task)"
+check "a Jarvis change expands the jarvis leg" true \
+  "$(legs "$WORKFLOW" "$jarvis_change" success merge_group shard | jq -c 'index("jarvis") != null')"
+check "a Jarvis change runs macOS rest and no macOS jarvis leg" '[true,false]' \
+  "$(queue_legs "$WORKFLOW" merge_group success "$jarvis_change" | jq -c '[index("rest") != null, index("jarvis") != null]')"
 while IFS='|' read -r row event sel expected_value expected_status; do
   value="$(gh_eval value "$(context_json "$event" success "$sel" "$TMP/published-map")" "$expr")"
   check "$CI_JOB shell selection on $row" "$expected_value" "$value"
@@ -1251,15 +1258,24 @@ while IFS='|' read -r row event sel expected_value expected_status; do
 done <<ROWS
 selected-linux|merge_group|$one_skill|true|1
 selected-both|merge_group|$ORCH_CODE_ROW|true|1
+selected-jarvis|merge_group|$jarvis_change|true|1
 unselected|merge_group|$CODE_ROW|false|0
 ROWS
+# The matrix reports one result for every leg, so a failed, cancelled or
+# missing jarvis leg is the selected shell job's result.
+while IFS='|' read -r row sel; do
+  value="$(gh_eval value "$(context_json merge_group success "$sel" "$TMP/published-map")" "$expr")"
+  for result in failure cancelled skipped missing; do
+    RESULTS="$(jq -cn --arg result "$result" '{changes: {result: "success"}} +
+      (if $result == "missing" then {} else {"skill-suites-shard": {result: $result}} end)')"
+    check "$CI_JOB rejects $result evidence for the selected shell job on $row" 1 \
+      "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
+  done
+done <<ROWS
+selected-linux|$one_skill
+selected-jarvis|$jarvis_change
+ROWS
 value="$(gh_eval value "$(context_json merge_group success "$one_skill" "$TMP/published-map")" "$expr")"
-for result in failure cancelled skipped missing; do
-  RESULTS="$(jq -cn --arg result "$result" '{changes: {result: "success"}} +
-    (if $result == "missing" then {} else {"skill-suites-shard": {result: $result}} end)')"
-  check "$CI_JOB rejects $result evidence for the selected shell job" 1 \
-    "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
-done
 # The missing fixture removes the whole matrix job's needs key. A graph
 # omission leaves the independently selected matrix running outside CI's needs.
 mkdir -p "$TMP/selected-control/tools" "$TMP/selected-control/skills/harness-ci"
