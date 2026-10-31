@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # One complete repository job in a disposable consumer, on real production
 # operations with fake external services and no CI (plan step 3, decisions
-# 46 to 54): admission, launch, dev result, the configured review route,
-# publication preparation, verification and report, then close.
+# 46 to 54, 79 to 83, 93, 100 to 103): admission, launch, dev result, the
+# configured review route, publication preparation, verification and report,
+# then close; and the two interruptions the design survives, a context
+# handoff resumed by a relaunch and a lane killed with a validation run
+# admitted and going.
 #
 # Inputs: orch's scripts and runtime (scripts/orch-runtime through
 # scripts/setup), agent-runtime's launch and stop, the worktree, dev,
@@ -11,8 +14,12 @@
 #
 # Rows, one job each: a GitHub issue at the small tier (launch-time
 # item-tier --body --path, the internal panel route, gh issue close), a
-# tracker-less local key at the small tier (new-local-key, no tracker read),
-# and a GitHub issue at the micro tier (no dev round, no review). An argument
+# tracker-less local key at the small tier (new-local-key, no tracker read,
+# a lane that exits when done), a GitHub issue at the micro tier (no dev
+# round, no review), the local handoff row (the lane records a handoff after
+# its dev receipt and ends; the relaunch resumes the same round) and the
+# GitHub killed row (the lane dies with its admitted run held; the close
+# stops the run, the relaunch reconciles the round and retries). An argument
 # runs the rows whose name contains it.
 #
 # The job runs inside a mktemp -d root: a consumer repository, its bare
@@ -50,7 +57,6 @@ trap cleanup EXIT
 
 STUB="${ONE_JOB_STUB_HARNESS:-$TEST_DIR/job/stub-harness}"
 [[ -x "$STUB" ]] || { echo "one-job: stub-harness=not-executable path=[$STUB]" >&2; exit 1; }
-ORCH_RUNTIME="$REPO_ROOT/skills/orch/scripts/orch-runtime"
 # The runtime binary for these sources, through the shipped setup route;
 # a cache that already holds it builds nothing.
 "$REPO_ROOT/skills/orch/scripts/setup" >"$TMP_ROOT/setup.out" 2>&1 || { cat "$TMP_ROOT/setup.out" >&2; exit 1; }
@@ -65,15 +71,39 @@ unset ORCH_STATE_DIR ORCH_DELIVERY ORCH_PR_ORDER ORCH_TMUX_SESSION ORCH_HARNESS_
   CI_WAIT_MAX_SECS
 one_job_bin "$TMP_ROOT/bin"
 export PATH="$TMP_ROOT/bin:$SEALED:$PATH"
-# ci-wait reads its grace from the environment alone; the auth ladder takes
-# the env token and validates it against the fake's seeded `api user`.
-export CI_WAIT_NO_CHECKS_GRACE=1 GH_TOKEN=stub
 mkdir -p "$TMP_ROOT/home"
 one_job_server "$TMP_ROOT/server" fleet
 # The runtime resolves the fleet server from its own $TMUX, as a lane does.
 export TMUX="$ONE_JOB_SOCKET,0,0"
 
 FILTER="${1:-}"
+
+# The gh reads verify-head makes for a head nothing has checked on a base
+# with no rule, in the order the op makes them (the runtime's evidence
+# reader): one row per read as PATH|SELECTOR|REPLY. PATH carries SHA for the
+# pinned head; the fake answers a read whose PATH names the head by SELECTOR,
+# a part of the call no head appears in, and every other read under its
+# exact PATH.
+VERIFY_READS='repos/owner/repo/commits/SHA/check-runs?filter=all&per_page=100&page=1|/check-runs?filter=all&per_page=100&page=1|{"total_count":0,"check_runs":[]}
+repos/owner/repo/commits/SHA/check-suites?per_page=100&page=1|/check-suites?per_page=100&page=1|{"total_count":0,"check_suites":[]}
+repos/owner/repo/commits/SHA/status?per_page=100&page=1|/status?per_page=100&page=1|{"state":"pending","total_count":0,"statuses":[]}
+repos/owner/repo/actions/runs?head_sha=SHA&per_page=100&page=1|/actions/runs?head_sha=|{"total_count":0,"workflow_runs":[]}
+repos/owner/repo/actions/workflows?per_page=100&page=1|-|{"total_count":0,"workflows":[]}
+repos/owner/repo/rules/branches/main?per_page=100&page=1|-|[]
+repos/owner/repo/branches/main|-|{"name":"main","protected":false,"protection":{"enabled":false,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}'
+
+# stage_verify_reads — every answer of VERIFY_READS, staged before the lane
+# launches (the head is not known until the job pushes it).
+stage_verify_reads() {
+  local path selector reply
+  while IFS='|' read -r path selector reply; do
+    if [[ "$path" == *SHA* ]]; then
+      gh_stub_answer "api:$selector" "$reply"
+    else
+      gh_stub_answer "api-$path" "$reply"
+    fi
+  done <<<"$VERIFY_READS"
+}
 
 # await FILE PATTERN BOUND_TENTHS — wait for a line matching PATTERN in FILE.
 await() {
@@ -85,16 +115,66 @@ await() {
   done
 }
 
+# await_gone PID BOUND_TENTHS — wait until no process answers for PID.
+await_gone() {
+  local tries=0
+  while kill -0 "$1" 2>/dev/null; do
+    tries=$((tries + 1))
+    [[ "$tries" -lt "$2" ]] || return 1
+    sleep 0.1
+  done
+}
+
 state_get() { # STATE FILTER
   jq -r "$2" "$1"
 }
 
-# run_job NAME KEY_KIND TIER — one row: the overseer side here, the lane side
-# in the stub, then the assertions on the artifacts the job left.
-run_job() { # NAME KEY_KIND TIER
-  local name="$1" key_kind="$2" tier="$3" root main orch key number tracker body tier_line delta
-  local wt brief request launched pid pane fleet state status lane_status run_dir dev_rid review_rid pushed
-  local closed ci calls expected_calls cmdline
+# validate_stages STATE ROUND_ID — the round's validate stages as the rows
+# the suite compares: run directory, closed, outcome.
+validate_stages() { # STATE ROUND_ID
+  jq -c --arg r "$2" '[.stages[] | select(.kind == "validate" and .round_id == $r)] | map({run_dir, closed: (.end != null), outcome: (.outcome // null)})' "$1"
+}
+
+# launch_lane NAME ROOT REQUEST — one launch-lane op (skills/orch/workflows/oversee.md § 3):
+# confirmed, running, the recorded pid the stub. Sets PID and PANE. Returns 1
+# on a refused launch, after failing the row.
+launch_lane() { # NAME ROOT REQUEST
+  local launched cmdline
+  launched="$(cd "$main" && "$orch/orch-runtime" op --fleet --request "$3" 2>"$2/launch.err")" \
+    || { fail "$1: launch-lane" "$(cat "$2/launch.err")"; return 1; }
+  assert_eq "$(jq -r '.result.effect.report.intent.outcome + " " + .result.effect.report.lane.status' <<<"$launched")" \
+    "confirmed running" "$1: the launch confirms and the lane runs"
+  PID="$(jq -r '.result.effect.report.lane.launch.pid' <<<"$launched")"
+  PANE="$(jq -r '.result.effect.report.lane.launch.pane' <<<"$launched")"
+  cmdline="$(tr '\0' ' ' < "/proc/$PID/cmdline" 2>/dev/null || echo unreadable)"
+  assert_eq "$(case "$cmdline" in *"$STUB"*) echo stub ;; *) echo "$cmdline" ;; esac)" stub "$1: the recorded pid is the stub harness"
+}
+
+# close_lane NAME ROOT GROUND — one close-owned-resources op on GROUND, the
+# request's ground fields as a JSON object ({} for a bare close of an exited
+# lane): confirmed, the lane done, the ground recorded on the intent as the
+# request gave it. Sets CLOSED to the reply.
+close_lane() { # NAME ROOT GROUND
+  jq -cn --arg item "$key" --argjson ground "$3" '{op: "close-owned-resources", item: $item} + $ground' > "$2/close.json"
+  CLOSED="$(cd "$main" && "$orch/orch-runtime" op --fleet --request "$2/close.json" 2>"$2/close.err")" \
+    || { fail "$1: close-owned-resources" "$(cat "$2/close.err")"; return 1; }
+  assert_eq "$(jq -r '.result.effect.report.intent.outcome + " " + .result.effect.report.lane.status' <<<"$CLOSED")" "confirmed done" \
+    "$1: the close confirms and the lane is done"
+  assert_eq "$(jq -c '.result.effect.report.intent.close' <<<"$CLOSED")" \
+    "$(jq -cn --argjson g "$3" 'if $g.terminal then {ground: "terminal"} + $g.terminal else {ground: "exited"} end')" \
+    "$1: the close stands on the ground the request gave"
+  assert_eq "$(jq -r --arg k "$key" '[.lanes[] | select(.item == $k) | .status] | join(",")' "$fleet")" "done" "$1: the fleet record holds the lane as done"
+}
+
+# run_job NAME KEY_KIND TIER SCENARIO — one row: the overseer side here, the
+# lane side in the stub, then the assertions on the artifacts the job left.
+# SCENARIO is the stub's (plain, handoff, killed); a GitHub lane idles when
+# done and is closed on the tracker's terminal answer, a local lane exits
+# when done and is closed exited.
+run_job() { # NAME KEY_KIND TIER SCENARIO
+  local name="$1" key_kind="$2" tier="$3" scenario="$4" root main orch key number tracker body tier_line delta after
+  local wt brief request fleet state lane_status run_dir dev_rid review_rid pushed artifact
+  local calls first_run first_id retry_run ground
   root="$TMP_ROOT/$name"
   mkdir -p -- "$root"
   gh_stub_reset
@@ -107,7 +187,7 @@ run_job() { # NAME KEY_KIND TIER
   case "$tier" in small) delta=30 ;; micro) delta=2 ;; esac
   if [[ "$key_kind" == github ]]; then
     tracker=github
-    number="${name##*-}"
+    after=idle
     number=7
     [[ "$tier" != micro ]] || number=9
     key="issue-$number"
@@ -121,6 +201,7 @@ run_job() { # NAME KEY_KIND TIER
       "$name: launch-time admission reads the tier from the body and the Location path"
   else
     tracker=local
+    after="exit"
     number=""
     key="$(cd "$main" && "$orch/workflow-state" new-local-key)"
     assert_eq "$([[ "$key" =~ ^local-[0-9]+-[0-9]+-[0-9a-f]+$ ]] && echo shaped || echo "$key")" shaped "$name: a local key is minted"
@@ -129,6 +210,7 @@ run_job() { # NAME KEY_KIND TIER
     assert_eq "$tier_line" "tier=$tier brief=$tier cause=estimate-within-$tier production=$delta estimate=$delta delta=- paths=1" \
       "$name: launch-time admission reads the tier from the estimate and the Location path"
   fi
+  stage_verify_reads
 
   # --- the worktree and the lane (skills/orch/workflows/start.md § 4, skills/orch/workflows/oversee.md § 3) ---
   wt="$(cd "$main" && "$main/.agents/skills/worktree/scripts/worktree" create "$key" 2>"$root/create.err")" \
@@ -136,42 +218,113 @@ run_job() { # NAME KEY_KIND TIER
   assert_eq "$(git -C "$wt" branch --show-current)" "$key" "$name: the worktree is on the item branch"
   mkdir -p "$wt/tmp"
   brief="$wt/tmp/brief-$key.md"
-  {
-    printf 'item=%s\n' "$key"
-    printf 'tier=%s\n' "$tier"
-    printf 'tracker=%s\n' "$tracker"
-    printf 'repo=owner/repo\n'
-    printf 'number=%s\n' "$number"
-    printf 'worktree=%s\n' "$wt"
-    printf 'main=%s\n' "$main"
-    printf 'fixture_lib=%s\n' "$TEST_DIR/lib/one-job-fixture.sh"
-  } > "$brief"
+  write_brief() { # FILE SCENARIO
+    {
+      printf 'item=%s\n' "$key"
+      printf 'tier=%s\n' "$tier"
+      printf 'tracker=%s\n' "$tracker"
+      printf 'repo=owner/repo\n'
+      printf 'number=%s\n' "$number"
+      printf 'worktree=%s\n' "$wt"
+      printf 'main=%s\n' "$main"
+      printf 'scenario=%s\n' "$2"
+      printf 'after=%s\n' "$after"
+    } > "$1"
+  }
+  write_brief "$brief" "$scenario"
   request="$root/launch.json"
   jq -cn --arg item "$key" --arg wt "$wt" --arg home "$TMP_ROOT/home" --arg brief "$brief" --arg tracker "$tracker" \
     '{op: "launch-lane", item: $item, harness: "claude", mail_root: $wt, account: $home, repo: "owner/repo", brief_file: $brief}
      + (if $tracker == "github" then {tracker: "github"} else {} end)' > "$request"
-  launched="$(cd "$main" && "$orch/orch-runtime" op --fleet --request "$request" 2>"$root/launch.err")" \
-    || { fail "$name: launch-lane" "$(cat "$root/launch.err")"; return 0; }
-  assert_eq "$(jq -r '.result.effect.report.intent.outcome' <<<"$launched")" confirmed "$name: the launch confirms"
-  assert_eq "$(jq -r '.result.effect.report.lane.status' <<<"$launched")" running "$name: the lane runs"
-  pid="$(jq -r '.result.effect.report.lane.launch.pid' <<<"$launched")"
-  pane="$(jq -r '.result.effect.report.lane.launch.pane' <<<"$launched")"
+  launch_lane "$name" "$root" "$request" || return 0
   fleet="$main/tmp/workflow-state-oversee.json"
   assert_eq "$(jq -c --arg k "$key" '[.lanes[] | select(.item == $k)] | map({status, server: .launch.server, pane: .launch.pane, pid: .launch.pid})' "$fleet")" \
-    "$(jq -cn --argjson s "$ONE_JOB_SERVER_PID" --arg p "$pane" --argjson pid "$pid" '[{status: "running", server: $s, pane: $p, pid: $pid}]')" \
+    "$(jq -cn --argjson s "$ONE_JOB_SERVER_PID" --arg p "$PANE" --argjson pid "$PID" '[{status: "running", server: $s, pane: $p, pid: $pid}]')" \
     "$name: the fleet record holds the lane with its launch identity on the suite's server"
-  cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo unreadable)"
-  assert_eq "$(case "$cmdline" in *"$STUB"*) echo stub ;; *) echo "$cmdline" ;; esac)" stub "$name: the recorded pid is the stub harness"
-
-  # --- the lane runs the job; the overseer waits for its report -------------
   lane_status="$wt/tmp/lane-status"
-  if ! await "$lane_status" '^lane-(done|failed)' 2400; then
-    fail "$name: the lane ends its job within the bound" "$(cat "$lane_status" 2>/dev/null)"
-    return 0
-  fi
-  assert_eq "$(tail -n 1 "$lane_status")" lane-done "$name: every lane step ran" "$wt/tmp/lane.log"
-  assert_eq "$(sed -n 's/^lane-env: .* gh=//p' "$wt/tmp/lane.log")" "$TMP_ROOT/bin/gh" "$name: the lane resolves gh to the fake"
   state="$main/tmp/workflow-state-$key.json"
+
+  case "$scenario" in
+    handoff)
+      # --- the lane ends out of context with its round open; the relaunch resumes it ---
+      if ! await "$lane_status" '^lane-handoff$' 2400; then
+        fail "$name: the lane records its handoff within the bound" "$(cat "$lane_status" 2>/dev/null)"
+        return 0
+      fi
+      dev_rid="$(state_get "$state" '.dev_round_id // empty')"
+      first_run="$(jq -r '.run_dir' "$wt/tmp/admission-report.json")"
+      assert_eq "$(jq -c '[.recorded_now, .replaced]' "$wt/tmp/handoff-report.json")" '[true,false]' \
+        "$name: the handoff is recorded once"
+      assert_eq "$(jq -c '[(.handoff.round_id == .dev_round_id), .handoff.relaunch, .handoff.resumed_at, (.handoff.remaining | length)]' "$state")" \
+        '[true,"resume",null,3]' "$name: the record names the open round, asks for a resume and is not yet consumed"
+      assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: false, outcome: null}]')" \
+        "$name: the admitted run's stage is still open when the session ends"
+      assert_eq "$(await_gone "$PID" 100 && echo gone || echo alive)" gone "$name: the session's harness has exited"
+      close_lane "$name" "$root" '{}' || return 0
+      assert_eq "$(state_get "$state" '.handoff.resumed_at')" null "$name: closing the exited lane leaves the handoff standing"
+      launch_lane "$name" "$root" "$request" || return 0
+      assert_eq "$(jq -c --arg k "$key" '[.lanes[] | select(.item == $k)] | map({status, pid: .launch.pid})' "$fleet")" \
+        "$(jq -cn --argjson pid "$PID" '[{status: "running", pid: $pid}]')" "$name: the relaunch is the same lane record under a new harness"
+      if ! await "$lane_status" '^lane-(done|failed)' 2400; then
+        fail "$name: the relaunched lane ends its job within the bound" "$(cat "$lane_status" 2>/dev/null)"
+        return 0
+      fi
+      assert_eq "$(jq -c --arg r "$dev_rid" --arg run "$first_run" '[.resumed_now, (.round_id == $r), (.open_runs == [$run]), .relaunch]' "$wt/tmp/resume-report.json")" \
+        '[true,true,true,"resume"]' "$name: the continuation resumes the recorded round and finds its admitted run open"
+      assert_eq "$(jq -c --slurpfile r "$wt/tmp/resume-report.json" '[(.handoff.resumed_at == $r[0].resumed_at), (.handoff.resumed_at | type)]' "$state")" \
+        '[true,"number"]' "$name: the record is stamped resumed once, with the stamp the continuation read"
+      assert_eq "$(state_get "$state" '.dev_round_id')" "$dev_rid" "$name: the relaunch continues the same dev round"
+      ;;
+    killed)
+      # --- the lane dies with its validation run admitted and held; the close ends the run, the relaunch retries ---
+      if ! await "$lane_status" '^step=validate-held$' 2400; then
+        fail "$name: the lane holds its validation run within the bound" "$(cat "$lane_status" 2>/dev/null)"
+        return 0
+      fi
+      dev_rid="$(state_get "$state" '.dev_round_id // empty')"
+      first_run="$(jq -r '.run_dir' "$wt/tmp/admission-report.json")"
+      first_id="$(jq -r '.run_id' "$wt/tmp/admission-report.json")"
+      assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: false, outcome: null}]')" \
+        "$name: the held run's stage is open while it runs"
+      held_pid="$(cat "$first_run/pid")"
+      assert_eq "$(kill -0 "$held_pid" 2>/dev/null && echo alive || echo gone)" alive "$name: the admitted run's child is alive when the lane is killed"
+      # The lane's process group dies, harness and what it started with it;
+      # the detached run is the runner's and survives.
+      kill -TERM -- "-$PID" 2>/dev/null || kill -TERM "$PID"
+      assert_eq "$(await_gone "$PID" 100 && echo gone || echo alive)" gone "$name: the killed harness is gone"
+      assert_eq "$(kill -0 "$held_pid" 2>/dev/null && echo alive || echo gone)" alive "$name: the admitted run outlives the lane that started it"
+      close_lane "$name" "$root" '{}' || return 0
+      assert_eq "$(await_gone "$held_pid" 100 && echo gone || echo alive)" gone "$name: the close stopped the admitted run's child"
+      assert_eq "$([[ -e "$first_run/exit" ]] && echo present || echo absent)" absent "$name: the stopped run left no verdict"
+      assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: false, outcome: null}]')" \
+        "$name: the close itself closes no stage"
+      write_brief "$wt/tmp/brief-$key-retry.md" retry
+      jq -c --arg brief "$wt/tmp/brief-$key-retry.md" '.brief_file = $brief' "$request" > "$root/relaunch.json"
+      launch_lane "$name" "$root" "$root/relaunch.json" || return 0
+      if ! await "$lane_status" '^lane-(done|failed)' 2400; then
+        fail "$name: the relaunched lane ends its job within the bound" "$(cat "$lane_status" 2>/dev/null)"
+        return 0
+      fi
+      assert_eq "$(jq -c '.runs | map({run_dir, state, outcome, cause, seconds: (.seconds // null)})' "$wt/tmp/reconcile-retry.json")" \
+        "$(jq -cn --arg run "$first_run" '[{run_dir: $run, state: "closed", outcome: "lost", cause: "process-gone", seconds: null}]')" \
+        "$name: the next session's reconcile closes the stopped run lost, by its gone child, with no wall time to report"
+      retry_run="$(jq -r '.run_dir' "$wt/tmp/admission-retry.json")"
+      assert_eq "$(jq -c --arg id "$first_id" --arg run "$first_run" '[.minted, .admitted_now, (.run_id != $id), (.run_dir != $run)]' "$wt/tmp/admission-retry.json")" \
+        '[true,true,true,true]' "$name: the retry's admission mints the next attempt under a new directory"
+      assert_eq "$(validate_stages "$state" "$dev_rid")" \
+        "$(jq -cn --arg a "$first_run" --arg b "$retry_run" '[{run_dir: $a, closed: true, outcome: "lost"}, {run_dir: $b, closed: true, outcome: "pass"}]')" \
+        "$name: the lost attempt stays as a closed stage with its directory beside the passing retry"
+      assert_eq "$(state_get "$state" '.dev_round_id')" "$dev_rid" "$name: the retry runs under the same dev round"
+      ;;
+    *)
+      if ! await "$lane_status" '^lane-(done|failed)' 2400; then
+        fail "$name: the lane ends its job within the bound" "$(cat "$lane_status" 2>/dev/null)"
+        return 0
+      fi
+      ;;
+  esac
+  assert_eq "$(tail -n 1 "$lane_status")" lane-done "$name: every lane step ran" "$wt/tmp/lane.log"
+  assert_eq "$(sed -n 's/^lane-env: .* gh=//p' "$wt/tmp/lane.log" | head -n 1)" "$TMP_ROOT/bin/gh" "$name: the lane resolves gh to the fake"
   pushed="$(git --git-dir="$ONE_JOB_ORIGIN" rev-parse refs/heads/main)"
 
   # --- state keys ---------------------------------------------------------
@@ -180,14 +333,34 @@ run_job() { # NAME KEY_KIND TIER
   if [[ "$tier" == small ]]; then
     dev_rid="$(state_get "$state" '.dev_round_id // empty')"
     review_rid="$(state_get "$state" '.review_round_id // empty')"
-    assert_eq "$([[ "$dev_rid" =~ ^[0-9]+-[0-9]+$ ]] && echo minted || echo "$dev_rid")" minted "$name: a dev round was minted"
-    assert_eq "$([[ "$review_rid" =~ ^[0-9]+-[0-9]+$ ]] && echo minted || echo "$review_rid")" minted "$name: a review round was minted"
+    assert_eq "$([[ -n "$dev_rid" && -n "$review_rid" && "$dev_rid" != "$review_rid" ]] && echo two || echo "$dev_rid/$review_rid")" two \
+      "$name: a dev round and a review round were minted"
     assert_eq "$(state_get "$state" '.pr_order')" review-first "$name: the publication order is recorded"
-    run_dir="$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' "$wt/tmp/validate.out")"
-    assert_eq "$(jq -c --arg d "$dev_rid" --arg r "$review_rid" --arg run "$run_dir" \
-      '[.stages[] | {kind, round: (if .round_id == $d then "dev" elif .round_id == $r then "review" else .round_id end), run_dir: (.run_dir // null), closed: (.end != null)}]' "$state")" \
-      "$(jq -cn --arg run "$run_dir" '[{kind: "implement", round: "dev", run_dir: null, closed: true}, {kind: "validate", round: "dev", run_dir: $run, closed: true}, {kind: "review", round: "review", run_dir: null, closed: true}]')" \
-      "$name: the stages are the dev round (its kind set to the receipt's by dev-artifact-check), exactly one validate row opened by admission and closed by accept, and the review round"
+    # --- admission before the run (decisions 51, 79, 100) ---------------------
+    run_dir="$(jq -r '.run_dir' "$wt/tmp/admission-report.json")"
+    assert_eq "$(jq -c '[.minted, .admitted_now]' "$wt/tmp/admission-report.json")" '[true,true]' \
+      "$name: the round's first admission mints the run"
+    assert_eq "$(jq -c . "$wt/tmp/admission-stage.json")" "$(jq -cn --arg run "$run_dir" '[{run_dir: $run, end: null}]')" \
+      "$name: the validate stage stood open for the admitted directory before the run started"
+    assert_eq "$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' "$wt/tmp/validate.out")" "$run_dir" \
+      "$name: the run wrote into the directory its admission named"
+    if [[ "$scenario" == killed ]]; then
+      run_dir="$(jq -r '.run_dir' "$wt/tmp/admission-retry.json")"
+      assert_eq "$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' "$wt/tmp/validate-retry.out")" "$run_dir" \
+        "$name: the retry wrote into the directory its admission named"
+    fi
+    assert_eq "$(jq -c --arg r "$dev_rid" --arg run "$run_dir" '[(.round_id == $r), (.runs | map({run_dir, state, outcome, cause, timed: (.seconds | type)}))]' "$wt/tmp/reconcile-report.json")" \
+      "$(jq -cn --arg run "$run_dir" '[true, [{run_dir: $run, state: "closed", outcome: "pass", cause: "sentinel", timed: "number"}]]')" \
+      "$name: the accept's reconcile closes the admitted run with its sentinel's word and wall time"
+    assert_eq "$(jq -c '[.kind, .outcome, .closed_now]' "$wt/tmp/accept-dev.json")" '["implement","pass",true]' \
+      "$name: the runtime closes the dev stage with the acceptance word"
+    assert_eq "$(jq -c --arg d "$dev_rid" --arg r "$review_rid" \
+      '[.stages[] | select(.kind != "validate")] | map({kind, round: (if .round_id == $d then "dev" elif .round_id == $r then "review" else .round_id end), outcome, closed: (.end != null)})' "$state")" \
+      '[{"kind":"implement","round":"dev","outcome":"pass","closed":true},{"kind":"review","round":"review","outcome":"pass","closed":true}]' \
+      "$name: the round stages are the dev round (its kind set to the receipt's by dev-artifact-check) and the review round, each closed once with its word"
+    [[ "$scenario" == killed ]] || assert_eq "$(validate_stages "$state" "$dev_rid")" \
+      "$(jq -cn --arg run "$run_dir" '[{run_dir: $run, closed: true, outcome: "pass"}]')" \
+      "$name: exactly one validate stage, opened by admission and closed by the reconcile"
     assert_eq "$(state_get "$state" '.validate_rounds | length')" 1 "$name: dev-artifact-check recorded one validate round"
     assert_eq "$(state_get "$state" '.child_sessions | to_entries | map(.value.status) | unique | join(",")')" closed \
       "$name: every child session is retired"
@@ -195,12 +368,19 @@ run_job() { # NAME KEY_KIND TIER
       "$name: review-depth measures the dev result small and selects package review"
     assert_eq "$(state_get "$state" '.first_panel.agents | join(",")')" reviewer-correctness "$name: the panel is recorded"
     assert_eq "$(state_get "$state" '.json_paths | length')" 1 "$name: one review artifact path is recorded"
+    # --- the review stage end: the runtime's one write, timed by the artifact (decisions 81, 103) ---
+    artifact="$(state_get "$state" '.json_paths[0]')"
+    assert_eq "$(jq -c '[.kind, .outcome, .closed_now]' "$wt/tmp/accept-review.json")" '["review","pass",true]' \
+      "$name: the review accept carries the computed outcome and is the stage's one closer"
+    assert_eq "$(jq -r --arg r "$review_rid" --slurpfile a "$wt/tmp/accept-review.json" \
+      '([.stages[] | select(.round_id == $r)] | map(.end == $a[0].end) | tostring) + " " + ($a[0].end | tostring)' "$state")" \
+      "[true] $(stat -c %Y -- "$artifact")" "$name: the review stage carries the one end the accept wrote, the accepted artifact's modification time"
     # --- the dev result's artifacts ---------------------------------------
     assert_eq "$(sed -n 's/^\(guard-exit=0\) at=.*/\1/p' "$run_dir/exit")" guard-exit=0 "$name: the validation run's sentinel records a passing guard exit"
     assert_eq "$(grep -c -- "${run_dir##*/}" "$wt/tmp/validation-runs")" 1 "$name: the run is in the worktree's run index"
     assert_eq "$(jq -r '.round_id + " " + .validate + " " + .kind' "$wt/tmp/dev-return-$key-$dev_rid.json")" "$dev_rid pass implement" \
       "$name: the dev receipt binds the round and a passing validation"
-    assert_eq "$(jq -r '.verdict + " " + .head' "$(state_get "$state" '.json_paths[0]')")" "pass $(jq -r '.commit' "$wt/tmp/dev-return-$key-$dev_rid.json")" \
+    assert_eq "$(jq -r '.verdict + " " + .head' "$artifact")" "pass $(jq -r '.commit' "$wt/tmp/dev-return-$key-$dev_rid.json")" \
       "$name: the review artifact passes the reviewed head"
     assert_eq "$(cat "$wt/tmp/hook-count")" $'hook\nhook' "$name: the dev commit and the preparation fold each ran the commit hook"
   else
@@ -215,71 +395,76 @@ run_job() { # NAME KEY_KIND TIER
   assert_eq "$([[ -e "$(git -C "$wt" rev-parse --git-path kendex-rebase-map)" ]] && echo present || echo absent)" absent \
     "$name: the rebase map is consumed"
   assert_eq "$(cd "$wt" && bash tests/greet.test.sh && bash tests/*.test.sh && echo green)" green "$name: the consumer's tests pass on the published tree"
-  # --- verification ---------------------------------------------------------
-  ci="$wt/tmp/ci-wait.json"
-  assert_eq "$(jq -r '.status + " " + .verdict + " " + .repo' "$ci")" "complete none owner/repo" "$name: ci-wait --required-only answers the none verdict for the repository"
-  assert_eq "$(state_get "$state" '.verification | [.head, .verdict, .source, (.reason | startswith("no CI configured")), (.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))] | map(tostring) | join(" ")')" \
-    "$pushed none ci-wait --required-only true true" "$name: the verification record names the published head, the none verdict, its reader and the absence evidence"
-  assert_eq "$(jq -r '.op + " " + (.replaced | tostring)' "$wt/tmp/verification-report.json")" "record-verification false" "$name: the verdict was recorded once"
+  # --- verification (decisions 46, 52, 93) -----------------------------------
+  assert_eq "$(jq -c --arg head "$pushed" '[.ok, .result.status, .result.verdict, .result.repo, (.result.head == $head), (.result.checks | length)]' "$wt/tmp/verify-report.json")" \
+    '[true,"complete","none","owner/repo",true,0]' "$name: verify-head reads the published head complete with the none verdict and no check"
+  assert_eq "$(jq -c --arg head "$pushed" '.result.recorded.report | [.op, (.head == $head), .verdict, .replaced]' "$wt/tmp/verify-report.json")" \
+    '["record-verification",true,"none",false]' "$name: the op recorded the verdict itself, in the same call, as the head's first record"
+  assert_eq "$(jq -c --slurpfile v "$wt/tmp/verify-report.json" '.verification | [.head, .verdict, .source, (.reason == $v[0].result.reason)]' "$state")" \
+    "$(jq -cn --arg head "$pushed" '[$head, "none", "verify-head", true]')" \
+    "$name: the verification record names the published head, the none verdict, its reader and the absence evidence the reply gave"
   # --- report -------------------------------------------------------------
   assert_eq "$(jq -r '.kind + " " + .text' "$wt/tmp/lane-mail/$key/to-overseer.jsonl")" "notice Pushed $pushed to main." \
     "$name: the lane's notice names the pushed commit"
-  # One line per call: a multi-line --jq program (the required-set read's)
-  # continues on indented lines, which are dropped, and its first line is
-  # trimmed of the trailing space that precedes the program.
+  # One line per call: a multi-line --jq program continues on indented lines,
+  # which are dropped, and its first line is trimmed of the trailing space
+  # that precedes the program.
   calls="$(gh_stub_calls | grep -v '^ ' | sed 's/ *$//')"
+  # --- the service boundary: the fake gh and the local remote are the job's
+  # only services (PATH is sealed; origin's main is asserted above), and what
+  # reaches gh is a tracker read or close of an issue of owner/repo, the
+  # open-PR probe of the item's branch or a verify-head read of owner/repo.
+  # An api call with any flag beside its path would be a write.
+  assert_eq "$(awk -v k="$key" '
+      $1 == "issue" && $2 == "view" && $3 ~ /^[0-9]+$/ && $4 == "--repo" && $5 == "owner/repo" { next }
+      $1 == "issue" && $2 == "close" && $3 ~ /^[0-9]+$/ && $4 == "--repo" && $5 == "owner/repo" && $6 == "--reason" && $7 == "completed" && NF == 7 { next }
+      index($0, "pr list --state open --head " k " ") == 1 { next }
+      $1 == "api" && index($2, "repos/owner/repo/") == 1 && NF == 2 { next }
+      { print "outside: " $0 }' <<<"$calls")" "" \
+    "$name: every gh call is a tracker read or close on owner/repo, the open-PR probe of the item's branch or a verify-head read of owner/repo"
+  # --- local versus tracker: a GitHub item's tracker calls name its own issue
+  # and close it once; a local item reaches no tracker.
   if [[ "$tracker" == github ]]; then
-    expected_calls="issue view $number --repo owner/repo --json number,title,body,url,labels,state
-pr list --state open --head $key --limit 1 --json number,url --jq .[0] | select(.) | \"\\(.number)\\t\\(.url)\"
-pr list --state open --head $key --limit 1 --json number,url --jq .[0] | select(.) | \"\\(.number)\\t\\(.url)\""
-    [[ "$tier" == micro ]] || expected_calls="$expected_calls
-issue view $number --json labels --jq .labels[].name
-issue view $number --repo owner/repo --json body --jq .body"
-    expected_calls="$expected_calls
-issue view $number --repo owner/repo --json body"
+    assert_eq "$(awk -v n="$number" '$1 == "issue" && $3 != n { print "other-issue: " $0 } $1 == "issue" && $2 == "close" { closes++ } END { print "closes=" closes + 0 }' <<<"$calls")" \
+      "closes=1" "$name: the tracker calls name the job's issue and close it once"
+    # --- verification before completion: a verify-head read after the close
+    # would verify a job the tracker already holds done.
+    assert_eq "$(awk '$1 == "issue" && $2 == "close" { closed = 1; next } closed && $1 == "api" { print "after-close: " $0 }' <<<"$calls")" "" \
+      "$name: every verify-head read precedes the tracker close"
   else
-    expected_calls="pr list --state open --head $key --limit 1 --json number,url --jq .[0] | select(.) | \"\\(.number)\\t\\(.url)\"
-pr list --state open --head $key --limit 1 --json number,url --jq .[0] | select(.) | \"\\(.number)\\t\\(.url)\""
+    assert_eq "$(awk '$1 == "issue" { print "tracker: " $0 }' <<<"$calls")" "" "$name: a local item makes no tracker call"
   fi
-  expected_calls="$expected_calls
-api user --jq .login
-repo view --json nameWithOwner -q .nameWithOwner
-pr view ${number:-1} --repo owner/repo --json mergeStateStatus --jq .mergeStateStatus
-pr view ${number:-1} --repo owner/repo --json headRefOid --jq .headRefOid
-pr checks ${number:-1} --repo owner/repo --json name,state,bucket,link,startedAt,workflow
-pr view ${number:-1} --repo owner/repo --json headRefOid --jq .headRefOid
-pr view ${number:-1} --repo owner/repo --json baseRefName --jq .baseRefName
-api repos/owner/repo/rules/branches/main --paginate --jq
-api repos/owner/repo/branches/main
-pr view ${number:-1} --repo owner/repo --json headRefOid --jq .headRefOid
-api repos/owner/repo/actions/workflows --jq [.workflows[] | select(.state == \"active\")] | length
-pr view ${number:-1} --repo owner/repo --json baseRefName --jq .baseRefName
-api repos/owner/repo/branches/main --jq .protected
-api repos/owner/repo/rules/branches/main --jq [.[] | select(.type == \"required_status_checks\")] | length
-pr view ${number:-1} --repo owner/repo --json headRefOid --jq .headRefOid
-api repos/owner/repo/commits/$pushed/status --jq .total_count"
-  [[ "$tracker" != github ]] || expected_calls="$expected_calls
-issue close $number --repo owner/repo --reason completed"
-  assert_eq "$calls" "$expected_calls" "$name: the gh calls are the job's tracker reads, the verification's reads and the completion, in order, and nothing else"
+  # --- the published head: verify-head's reads of a head name the pushed
+  # commit and no other.
+  assert_eq "$(awk -v sha="$pushed" '$1 == "api" && /\/commits\/|head_sha=/ { if (index($0, sha)) own++; else print "other-head: " $0 } END { print "published-head-read=" (own > 0) }' <<<"$calls")" \
+    "published-head-read=1" "$name: verify-head reads the published commit and no other head"
   # --- close (the overseer, after the report) ------------------------------
-  printf '{"op": "close-owned-resources", "item": "%s"}\n' "$key" > "$root/close.json"
-  closed="$(cd "$main" && "$orch/orch-runtime" op --fleet --request "$root/close.json" 2>"$root/close.err")" \
-    || { fail "$name: close-owned-resources" "$(cat "$root/close.err")"; return 0; }
-  assert_eq "$(jq -r '.result.effect.report.intent.outcome + " " + .result.effect.report.lane.status' <<<"$closed")" "confirmed done" \
-    "$name: the close confirms and the lane is done"
-  assert_eq "$(jq -r --arg k "$key" '[.lanes[] | select(.item == $k) | .status] | join(",")' "$fleet")" done "$name: the fleet record holds the lane as done"
-  assert_eq "$(kill -0 "$pid" 2>/dev/null && echo alive || echo gone)" gone "$name: the harness process recorded at launch is gone"
-  assert_eq "$(tmux -S "$ONE_JOB_SOCKET" list-panes -a -F '#{pane_id}' | grep -c -x -- "$pane")" 0 "$name: the lane's window is closed"
+  # Decision 83's guard: a GitHub lane idles at its composer after the job
+  # and is ended on the tracker's own answer to the close the job made; a
+  # local lane has exited and is closed on that reading alone.
+  if [[ "$tracker" == github ]]; then
+    assert_eq "$(jq -c '[.command, .status]' "$wt/tmp/issue-close.json")" '["gh issue close",0]' "$name: the tracker answered the job's close"
+    ground="$(jq -c '{terminal: {verdict: .reason, source: .command}}' "$wt/tmp/issue-close.json" 2>/dev/null)" \
+      || { fail "$name: close ground" "the job recorded no tracker answer"; return 0; }
+  else
+    assert_eq "$(await_gone "$PID" 100 && echo gone || echo alive)" gone "$name: the local lane's harness exited after its job"
+    ground='{}'
+  fi
+  close_lane "$name" "$root" "$ground" || return 0
+  assert_eq "$(kill -0 "$PID" 2>/dev/null && echo alive || echo gone)" gone "$name: the harness process recorded at launch is gone"
+  assert_eq "$(tmux -S "$ONE_JOB_SOCKET" list-panes -a -F '#{pane_id}' | grep -c -x -- "$PANE")" 0 "$name: the lane's window is closed"
 }
 
-ROWS='github-small|github|small
-local-small|local|small
-github-micro|github|micro'
+ROWS='github-small|github|small|plain
+local-small|local|small|plain
+github-micro|github|micro|plain
+local-handoff|local|small|handoff
+github-killed|github|small|killed'
 ran=0
-while IFS='|' read -r name key_kind tier; do
+while IFS='|' read -r name key_kind tier scenario; do
   [[ -z "$FILTER" || "$name" == *"$FILTER"* ]] || continue
   ran=$((ran + 1))
-  run_job "$name" "$key_kind" "$tier"
+  run_job "$name" "$key_kind" "$tier" "$scenario"
 done <<<"$ROWS"
 [[ "$ran" -gt 0 ]] || { echo "one-job: no row matches [$FILTER]" >&2; exit 1; }
 

@@ -203,7 +203,6 @@
     "skills/orch/tests/copilot_wait.sh": "linux-duplicate",
     "skills/orch/tests/decider-issue-lookup-lint.test.sh": "linux-duplicate",
     "skills/orch/tests/dev-artifact-check-additions.sh": "linux-duplicate",
-    "skills/orch/tests/dev-artifact-check-wiring.test.sh": "linux-duplicate",
     "skills/orch/tests/dev-round-write-wiring.test.sh": "linux-duplicate",
     "skills/orch/tests/dev-validate-wait-lint.test.sh": "linux-duplicate",
     "skills/orch/tests/dev_artifact_check.sh": "linux-duplicate",

@@ -3,8 +3,7 @@
 # agent's completion JSON artifact in the orch dev-start / dev-fix /
 # review-pr-comments workflows. Identity is by per-delegation ROUND ID, not
 # mtime: the check resolves WT/tmp/dev-return-ISSUE-RID.json and requires the
-# internal `.round_id` to match. The workflow and schema documents this
-# contract is wired through are dev-artifact-check-wiring.test.sh.
+# internal `.round_id` to match.
 #
 # One case per behaviour surface; shaped input is one table per case, one
 # asserted row per shape. A row's `expect` names the fields it pins and
@@ -887,10 +886,7 @@ probe_table \
   "a jq that speaks first is still not ahead of the refusal, either mode^noisy-jq^$WAITING^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true" \
   "the same holds single-shot^noisy-jq^--file $NEVER^rc=2 stderr_first~dev-artifact-check:+verdict-unreadable+file=$NEVER=true"
 
-echo "=== round checks record stages after the schema gate ==="
-source "$TEST_DIR/lib/virtual-clock.sh"
-mkdir -p "$TMP_ROOT/clock-bin"
-virtual_clock_install "$TMP_ROOT/clock-bin" "$TMP_ROOT/clock"
+echo "=== round checks record the stage kind after the schema gate, never its end ==="
 WT="$FW"
 STAGE_SD="$TMP_ROOT/stage-state"
 STAGE_FILE="$STAGE_SD/workflow-state-$ISSUE.json"
@@ -898,8 +894,10 @@ stage_observed() {
   jq -c '{kind: .stages[0].kind, end: .stages[0].end,
     validate: [.stages[] | select(.kind == "validate") | {kind, round_id, start, end}], rounds: (.validate_rounds // [])}' "$STAGE_FILE"
 }
-stage_closed() {
-  jq -r --arg kind "$1" '.stages[0].kind == $kind and .stages[0].end == 1767230000' "$STAGE_FILE"
+# The dev entry carries the receipt's kind and stays open: its end is the
+# runtime's (`orch-runtime accept-result`), never this check's.
+stage_kinded() {
+  jq -r --arg kind "$1" '.stages[0].kind == $kind and .stages[0].end == null' "$STAGE_FILE"
 }
 stage_rows=(
   'implement^impl^.^0^implement^true'
@@ -923,18 +921,15 @@ for row in "${stage_rows[@]}"; do
     jq -n --arg issue "$ISSUE" --arg round "$R" --arg sha "$FW_HEAD" '{schema_version:2,issue:$issue,round_id:$round,base_sha:$sha,adds:[],items:[{n:1,text:"one"},{n:2,text:"two"}]}' > "$WT/tmp/dev-round-$ISSUE-$R.json"
     args=(--expect-items-from-round)
   fi
-  printf '1767230000\n' > "$STUB_CLOCK"
-  SHIM_PATH="$TMP_ROOT/clock-bin" ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
+  ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
   assert_eq "$RC" "$want_rc" "$label preserves artifact status" "$ERR"
   if [[ "$kind" == dev ]]; then
     assert_eq "$(jq -c '.stages' "$STAGE_FILE")" "[{\"kind\":\"dev\",\"round_id\":\"$R\",\"start\":1,\"end\":null},{\"kind\":\"validate\",\"round_id\":\"$R\",\"run_dir\":\"tmp/validation-runs/r1\",\"start\":2,\"end\":null}]" "$label writes no stage"
   else
-    assert_eq "$(stage_closed "$kind")" true "$label closes with artifact kind at the injected time"
+    assert_eq "$(stage_kinded "$kind")" true "$label sets the artifact kind and leaves the end open for the runtime"
     first="$(stage_observed)"
-    printf '1767230060\n' > "$STUB_CLOCK"
-    SHIM_PATH="$TMP_ROOT/clock-bin" ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
-    assert_eq "$(stage_observed)" "$first" "$label recheck keeps first end and one run"
-    assert_eq "$(stage_closed "$kind")" true "$label recheck keeps the first injected end"
+    ORCH_STATE_DIR="$STAGE_SD" run_check --worktree "$WT" --issue "$ISSUE" --round-id "$R" ${args[@]+"${args[@]}"}
+    assert_eq "$(stage_observed)" "$first" "$label recheck keeps the kind, the open end and one run"
     if [[ "$label" == 'failing without run' ]]; then
       assert_eq "$("$STATE" --state-dir "$STAGE_SD" findings query "$ISSUE" | jq -c '.classes | map({check:.class.check, observed_count, receipts:(.sources | map(.receipt))})')" \
         "[{\"check\":\"lint\",\"observed_count\":1,\"receipts\":[\"${ARTIFACT##*/}\"]}]" 'a schema-valid failed receipt records its exact check once before retry routing'
@@ -965,11 +960,11 @@ assert_file_contains "$ERR" "dev-artifact-check: stage-unrecorded issue=$ISSUE r
 STAGE_MUTANT="$(mutant_scripts no-stage dev-artifact-check)/dev-artifact-check"
 mutate_file "$STAGE_MUTANT" 'record_stage "$out" ||' 'true ||'
 ORCH_STATE_DIR="$STAGE_SD" "$STAGE_MUTANT" --worktree "$WT" --issue "$ISSUE" --round-id "$R" >/dev/null
-assert_eq "$(jq -r '.stages[0].end == null' "$STAGE_FILE")" true 'control: skipping the write fails implement closure'
-STAGE_MUTANT="$(mutant_scripts wrong-end dev-artifact-check)/dev-artifact-check"
-mutate_file "$STAGE_MUTANT" '--argjson end "$now"' '--argjson end 0'
-PATH="$TMP_ROOT/clock-bin:$PATH" ORCH_STATE_DIR="$STAGE_SD" "$STAGE_MUTANT" --worktree "$WT" --issue "$ISSUE" --round-id "$R" >/dev/null
-assert_eq "$(stage_closed implement)" false 'control: a wrong numeric end fails the same closure assertion'
+assert_eq "$(stage_kinded implement)" false 'control: skipping the write fails the kind assertion'
+STAGE_MUTANT="$(mutant_scripts writes-end dev-artifact-check)/dev-artifact-check"
+mutate_file "$STAGE_MUTANT" 'then .kind = $kind else . end))' 'then .kind = $kind | .end = 1 else . end))'
+ORCH_STATE_DIR="$STAGE_SD" "$STAGE_MUTANT" --worktree "$WT" --issue "$ISSUE" --round-id "$R" >/dev/null
+assert_eq "$(stage_kinded implement)" false 'control: an end the check writes fails the open-end assertion'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
