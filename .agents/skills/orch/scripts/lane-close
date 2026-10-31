@@ -44,6 +44,8 @@ message() { # REASON FIELD=VALUE...
     record-missing) printf '%s\n' 'No fleet lane record names this item.' ;;
     record-duplicate) printf '%s fleet lane records name this item; remove each superseded one through `workflow-state update oversee` and close again.\n' "$count" ;;
     record-invalid) printf '%s\n' 'The lane record lacks a value required for safe close-out, or an option contradicts one it carries.' ;;
+    intent-open) printf '%s\n' 'The orch runtime holds an open intent on this lane; its effect or reconcile moves the record, and this close changed nothing.' ;;
+    runtime-unavailable) printf '%s\n' 'The fleet state holds runtime intents and orch-runtime could not say which are open; its own line is above. Nothing changed.' ;;
     pane-missing)
       printf '%s\n' 'No tmux pane carries the recorded window name.' \
         'cause=renamed is a local record whose launch pane, pane=, the tmux server its launch recorded still lists though no pane carries window=: that window or its session was renamed, or the window was moved to another session, and the lane may still run there.' \
@@ -483,6 +485,19 @@ fi
 [[ "$count" == 1 ]] || { message record-missing "item=$ITEM" "count=$count" >&2; exit 1; }
 record="$(jq -c --arg item "$ITEM" '.[] | select(.item == $item)' <<<"$records")" \
   || { message record-invalid "item=$ITEM" "field=record" >&2; exit 1; }
+# A lane with an orch-runtime intent open is the runtime's to move (decision
+# 44): this writer refuses rather than moving the record out from under that
+# effect. The runtime judges which intents are open; this script only asks,
+# and only where the state holds any intent row, so a fleet the runtime never
+# wrote into needs no runtime binary to close a lane.
+intents="$($WORKFLOW_STATE ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} get oversee '(.intents // []) | length')" \
+  || { message record-invalid "item=$ITEM" "field=intents" >&2; exit 1; }
+if [[ "$intents" != 0 ]]; then
+  open_intent="$("$SCRIPT_DIR/orch-runtime" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} state inspect --fleet \
+    | jq -r --arg item "$ITEM" '[.result.open_intents[]? | select(.target == $item) | .id] | first // empty')" \
+    || { message runtime-unavailable "item=$ITEM" >&2; exit 1; }
+  [[ -z "$open_intent" ]] || { message intent-open "item=$ITEM" "intent=$open_intent" >&2; exit 1; }
+fi
 
 record_field() { jq -r --arg field "$1" '.[$field] // empty' <<<"$record"; }
 

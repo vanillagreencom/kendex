@@ -45,6 +45,12 @@ CODEX_PANES="$REPO_ROOT/skills/orch/tests/fixtures/oversee-watch"
 source "$(dirname "${BASH_SOURCE[0]}")/assertions.sh"
 
 mkdir -p "$TMP_ROOT/repo/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/cases"
+# The orch runtime the watch asks whether the overseer is changing hands: a
+# stand-in answering from each case's directory (no open intent unless the
+# case plants runtime.open-intents).
+# shellcheck source=runtime-stub.sh
+source "$(dirname "${BASH_SOURCE[0]}")/runtime-stub.sh"
+fixture_runtime_stub "$TMP_ROOT/bin"
 ln -s "$REPO_ROOT/skills/orch" "$TMP_ROOT/repo/.agents/skills/orch"
 ln -sfn "$REPO_ROOT/skills/mailbox" "$TMP_ROOT/repo/.agents/skills/mailbox"
 ln -s "$REPO_ROOT/skills/linear" "$TMP_ROOT/repo/.agents/skills/linear"
@@ -1007,6 +1013,7 @@ run_watch() {
            -u OVERSEE_REPORT_LANE_MAIL -u OVERSEE_REPORT_LANE_HOST ORCH_REPORT=off \
            ORCH_SECURITY_ALERT_TOKEN_FILE="$STUB_DIR/alert-token" \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
+           OVERSEE_WATCH_RUNTIME="$TMP_ROOT/bin/orch-runtime" \
            ORCH_WATCH_MAIL_INTERVAL=0 \
            ${age_args[@]+"${age_args[@]}"} \
            ${team_args[@]+"${team_args[@]}"} \

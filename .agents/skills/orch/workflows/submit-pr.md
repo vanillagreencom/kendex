@@ -180,7 +180,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` wor
    .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-edit-body "$PR_NUM" --body-file "$BODY_FILE"
    ```
 
-   `[ISSUE_TITLE]` comes from `linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --json title --jq '.title'`.
+   `[ISSUE_TITLE]` comes from `linear.sh issues get [ISSUE_ID]` or `gh issue view [N] --repo [OWNER/REPO] --json title --jq '.title'`.
 
    **Push-first ready head.** With `pr_order` reading `push-first-returned`, confirm the internal review's verdict is `pass`. The early request can have marked the PR ready already. Read the draft flag and head before requesting the combined head:
 
@@ -265,6 +265,24 @@ This call runs the existing worktree preparation, normal commit hooks and SHA re
 
 This call refuses a changed head before validation. It validates the prepared head locally, checks it again, then uses the existing pinned base transport without rebasing. Micro runs its final path check after the normal preparation hooks. Read `delivery: mode=push-base base=[BASE] commit=[PUSHED_SHA] at=[PUSHED_AT]` only after exit zero. `worktree-push --help` owns the failure contract. A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal returns to [merge-pr-restack.md](merge-pr-restack.md). That direct route returns here after its guarded restack and rules reload. A red validation publishes nothing. A failed push sends no completion notice.
 
+**Verification.** Verify the published head where it stands. The verification is pinned to `[PUSHED_SHA]`: the runtime reads that commit's check runs, statuses and Actions runs and the base's required set, never the branch's later head and never a pull request, and it records the verdict itself.
+
+```bash
+jq -cn --arg repo "[OWNER/REPO]" --arg base "[BASE]" --arg head "[PUSHED_SHA]" \
+  '{op: "verify-head", repo: $repo, base: $base, head: $head, required_only: true}' \
+  > "[WORKTREE_PATH]/tmp/verify-request-[ISSUE_ID].json"
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request "[WORKTREE_PATH]/tmp/verify-request-[ISSUE_ID].json"
+```
+
+| Reply | Action |
+|--------|--------|
+| `ok` true, `result.status` `complete` | The verdict is recorded. Bind `[VERDICT]` to `result.verdict`: `pass`, `fail` or `none`. `none` holds only with the result's `reason`, the affirmative absence evidence; a `fail` on a published head is recorded as read and named in the completion notice, and its fix is a new item |
+| `ok` true, `result.status` `pending` | Not final: a check or run has not ended, or CI exists and nothing has registered yet. The op runs no wait of its own. Repeat the same call every 180 seconds, the legacy poll interval (the GitHub API budget is shared by every lane), until `CI_WAIT_MAX_SECS` seconds have passed since the first call (`.agents/skills/orch/scripts/orch-env CI_WAIT_MAX_SECS 600`); a `pending` reply at that point is unconfirmed: record nothing and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice |
+| `ok` true, `result.status` `unreadable` | GitHub evidence could not be read or decoded; `result.reason` is the cause. Re-run once. If it repeats, record nothing and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice; a verdict that did not arrive is never recorded as one |
+| `ok` false | Report the refusal's key with the pushed SHA in the completion notice; it does not repeat transport |
+
+The op records a `complete` verdict through `record-verification` in the same call: make no separate `record-verification` call. The reply's `result.recorded.report` names the head, the verdict and whether an earlier record was replaced; the record's shape is the `verification` row of [workflow-state.md](../schemas/workflow-state.md).
+
 **Linear completion.** Read the common checkout before entering the reused step, including for a standalone caller:
 
 ```bash
@@ -281,13 +299,13 @@ gh issue close [ISSUE_NUMBER] --repo "[OWNER/REPO]" --reason completed
 
 Repeat that command with each qualified started bundle child's resolved number and repository. These are the children the PR body's `Closes` lines would include. Normal item commits need no closing trailer. A tracker failure is reported with the pushed SHA and does not repeat transport.
 
-**Completion notice.** Write `[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md` with `Pushed [PUSHED_SHA] to [BASE].` and the tracker completion result. Send that file through the existing lane mailbox:
+**Completion notice.** Write `[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md` with `Pushed [PUSHED_SHA] to [BASE].`, the verification line `verification: head=[PUSHED_SHA] verdict=[VERDICT]` or its unconfirmed form, and the tracker completion result. Send that file through the existing lane mailbox:
 
 ```bash
 .agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md"
 ```
 
-The overseer records that single commit through [Direct-push cycle records](../references/oversee-events.md#direct-push-cycle-records) before closing the lane. Return the receipt to the caller. Skip PR creation, comment triage, review-gate waits, Copilot, CI waits, the merge queue and the merge workflow. A managed caller retires its agents through [start-worktree.md § 5.4](start-worktree.md#54-retire-agents), then ends. A standalone caller ends here.
+The overseer records that single commit through [Direct-push cycle records](../references/oversee-events.md#direct-push-cycle-records) before closing the lane. Return the receipt to the caller. Skip PR creation, comment triage, review-gate waits, Copilot, the § 5 CI wait, the merge queue and the merge workflow; the verification above is this route's CI wait. A managed caller retires its agents through [start-worktree.md § 5.4](start-worktree.md#54-retire-agents), then ends. A standalone caller ends here.
 
 ---
 

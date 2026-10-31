@@ -135,6 +135,15 @@ A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anyth
 
 ### 2.2 Launch And Delegate
 
+**Round token.** An ordinary fresh batch mints its review round before its first spawn or process launch; a proved original-batch continuation keeps its original `review_round_id` and `review_delegated_at` and mints nothing. Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "review"}`, run it, then stamp the delegation time:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
+.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
+```
+
+`[REVIEW_ROUND_ID]` is the reply's `.result.report.round_id`. The one write mints the token, supersedes the open review stage and opens the new one ([workflow-state.md](../schemas/workflow-state.md) `stages`); § 3.3 closes it.
+
 **Scope before delegation.** Resolve `origin/[BASE_BRANCH]` and `HEAD` to commit SHAs on a fresh § 1 entry. On a § 4 or § 7 re-entry, resolve its `pre_delegate_sha` and current `HEAD` instead. Bind `[DIFF_RANGE]` to those concrete `[BASE_SHA]...[HEAD_SHA]` endpoints and pass it to both internal and external review below. A missing fix boundary keeps the existing `unavailable` internal range and external default; it supplies no continuation provenance. Preserve an original continuation's already resolved endpoints without re-resolving symbolic refs.
 
 **Attached review only, through the active-set write below.** Select an eligible finished thread or spawn each reviewer in `REVIEWERS_TO_LAUNCH` under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), resolving fresh Codex spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`. In **wave mode**, restrict this section to `[WAVE]` — the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not yet in `review_wave_done` — and reset the tracking on fresh entry from § 2.1 (skip the reset on a proved original-batch continuation or when re-entering from § 3.2 for the next wave of the same cycle). A continuation selects its wave only from the never-launched launch subset above, retaining the full required panel:
@@ -292,6 +301,24 @@ Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot
 `OUTSTANDING` empty (`unresponsive` counts as execution resolved, never accepted) → § 3.3 in persistent mode only when no never-launched required domain remains unread; otherwise return to § 2 for admission of that subset. In wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3. Every process-owned next wave passes its Process launch admission before the runtime command; returning here skips neither admission nor the preserved batch ownership. A proved continuation keeps its original batch across these launches; ordinary new waves keep § 2.2's fresh-batch rule.
 
 ### 3.3 Present
+
+**Close the review stage.** The runtime is the one writer of a stage's end ([workflow-state.md](../schemas/workflow-state.md) `stages`); `review-artifact-check` writes none. This section computes the entry's `outcome` from the required panel, `[AGENTS]`, and the artifacts § 3.1 accepted; the external lane is advisory and takes no part. `[WORD]` is the first row that holds:
+
+| Condition | `[WORD]` |
+|---|---|
+| Any accepted artifact of a required reviewer reports a blocker | `fail` |
+| A required reviewer's process was stopped at its terminal deadline (§ 3.2's recorded runner stop) | `stopped` |
+| A required reviewer's process ended with no accepted artifact and no stop: a nonzero exit, a confirmed interruption | `lost` |
+| A required reviewer is `unresponsive`, never launched, or its artifact was refused and not replaced | `no-verdict` |
+| Every required reviewer's artifact was accepted with no blocker | `pass` |
+
+Readable evidence from one member never stands for an unread required member. `[END_PATH]` is the path of the batch's last accepted artifact, the `path` of the last `ok == true` result; the runtime reads its modification time as the entry's end. Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "accept-result", "round_id": "[REVIEW_ROUND_ID]", "outcome": "[WORD]", "end": {"from_artifact": "[END_PATH]"}}` and run it:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
+```
+
+A batch that accepted no artifact closes with its `[WORD]` and no `end`. `outcome` is required; a request without it is refused `request-invalid`. A repeated accept changes nothing.
 
 Overall verdict is `action_required` when any reviewer reported blockers, else `pass`. Unresponsive reviewers do not affect it.
 

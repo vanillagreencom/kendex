@@ -22,7 +22,7 @@ A finding in a class `.agents/skills/reviewer/references/finding-disposition.md`
 
 ### Probes
 
-- **Mechanism over shapes**: a fix that patches the Nth instance of a pattern instead of the mechanism producing them. Recommend the structural fix that closes the class.
+- **Mechanism over shapes**: a fix that patches the Nth instance of a pattern instead of the owner producing them. Recommend the fix at that owner, which closes the class, and no wider than the routes a shipped producer reaches (`.agents/skills/code-quality/SKILL.md` § Correctness).
 - Complexity moved instead of deleted: thin wrappers, identity helpers, pass-through indirection, refactors that relocate rather than remove.
 - Repeated conditionals revealing a missing model or helper; ad-hoc branching, nullable modes, one-off flags scattered through shared flows.
 - Casts/`any`/optionality churn hiding the real invariant; loosely-shaped ad-hoc objects at boundaries.

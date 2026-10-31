@@ -22,7 +22,7 @@ The user's facts about their entity, accounts and people live in the user's own 
 
 - **Module boundaries and layering**: components respecting documented boundaries; cross-cutting leaks; dependency-rule violations.
 - **Abstraction quality**: interfaces minimal and cohesive; anti-patterns; over-engineering.
-- **Spec/proposal review.** When the change is a design document, audit the proposed mechanism itself: race windows (TOCTOU between pin and use), trust-boundary holes (who can alter the inputs a decision reads), enforcement-surface coverage (does the path/tier map reach every surface that can weaken a guard), and failure semantics (does a persistently missing dependency stay green forever).
+- **Spec/proposal review.** When the change is a design document, audit the proposed mechanism itself: race windows (TOCTOU between pin and use), trust-boundary holes (who can alter the inputs a decision reads), enforcement-surface coverage (does the path/tier map reach every surface its claim names, with a deliberate bypass left to review per `.agents/skills/code-quality/SKILL.md` § Over-Engineering), and failure semantics (does a persistently missing dependency stay green forever).
 - **Technical debt**: accumulated debt worth naming, prioritized by impact; architecture docs drifting from actual structure.
 
 ## Discipline

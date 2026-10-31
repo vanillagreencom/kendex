@@ -218,7 +218,7 @@ assert_eq "$(source "$MUTANT"; job_unit_cgroup_cap "$TMP_ROOT/uncapped" pids.max
 # A PATH holding what the setsid launch and its job call, and no systemd-run.
 FARM="$TMP_ROOT/farm"
 mkdir -p "$FARM"
-for name in bash setsid sleep mv tr; do
+for name in bash setsid sleep mv tr cat ps awk; do
   ln -sf "$(command -v "$name")" "$FARM/$name"
 done
 # The pid the job wrote, once that process has exec'd `sleep 30`: the job
@@ -251,12 +251,81 @@ launch_setsid_job() { # RECORD PIDFILE
 if command -v setsid >/dev/null 2>&1; then
   record="$TMP_ROOT/setsid.record"
   launch_setsid_job "$record" "$TMP_ROOT/setsid-1.pid"
-  assert_eq "$RC $OUT" "0 runner=setsid reason=no-systemd-run" \
-    "a launch with no systemd-run prints the setsid runner line"
-  assert_eq "$(cat "$record")" "$(printf 'runner=setsid\nline=runner=setsid reason=no-systemd-run')" \
-    "and records that runner and line, with no unit"
+  # The launcher read the child's identity from the kernel table before it
+  # returned (decision 120): the pid the job wrote for itself and the start
+  # /proc holds for it, on the runner line and in the record, no `ticks:0`.
+  JOB_START="$(set -- $(sed 's/.*) //' "/proc/$JOB_PID/stat"); printf 'ticks:%s' "${20}")"
+  assert_eq "$RC $OUT" "0 runner=setsid reason=no-systemd-run pid=$JOB_PID start=$JOB_START" \
+    "a launch with no systemd-run prints the setsid runner line with the job's identity"
+  assert_eq "$(cat "$record")" "$(printf 'runner=setsid\npid=%s\nstart=%s\nline=runner=setsid reason=no-systemd-run pid=%s start=%s' "$JOB_PID" "$JOB_START" "$JOB_PID" "$JOB_START")" \
+    "and records that runner, the identity the launcher read and the line, with no unit"
   assert_eq "$([[ "$JOB_PID" =~ ^[0-9]+$ ]] && kill -0 "$JOB_PID" 2>/dev/null && echo running || echo absent)" "running" \
     "and the job runs"
+  # The one stat reader refused: a `cat` that cannot read /proc stands in for
+  # a host without it. The launcher ends the child it started and refuses
+  # `identity-unread`; nothing runs unrecorded and nothing is manufactured.
+  mkdir -p "$TMP_ROOT/no-proc"
+  printf '#!/usr/bin/env bash\ncase "$1" in /proc/*) exit 1 ;; esac\nexec /bin/cat "$@"\n' > "$TMP_ROOT/no-proc/cat"
+  chmod +x "$TMP_ROOT/no-proc/cat"
+  run env PATH="$TMP_ROOT/no-proc:$FARM" "$JOB_UNIT" launch validate-id-1 "$TMP_ROOT/unread.record" --cap 60 \
+    -- bash -c 'echo $$ > "$0"; exec sleep 30' "$TMP_ROOT/unread.pid"
+  assert_eq "$RC|$ERR|$(grep -c '^pid=' "$TMP_ROOT/unread.record")" "4|job-unit: launch-failed status=identity-unread|0" \
+    "a start the launcher cannot read refuses status=identity-unread and records no identity"
+  unread_pid="$(cat "$TMP_ROOT/unread.pid" 2>/dev/null || true)"
+  assert_eq "$([[ -z "$unread_pid" ]] || ! kill -0 "$unread_pid" 2>/dev/null && echo gone || echo alive)" gone \
+    "and the child it started is ended"
+
+  # The child caught before it ran its own `setsid`: a farm `setsid` that
+  # blocks without exec'ing the real one leads no process group, so a group
+  # teardown alone would miss it. The farm `cat` refuses /proc, so the
+  # identity read fails and the unread-start path runs; the child is ended by
+  # its own pid, never running to write its survival marker.
+  mkdir -p "$TMP_ROOT/barrier"
+  printf '#!/usr/bin/env bash\nsleep 2 && echo survived > "$BARRIER_MARKER"\n' > "$TMP_ROOT/barrier/setsid"
+  printf '#!/usr/bin/env bash\ncase "$1" in /proc/*) exit 1 ;; esac\nexec /bin/cat "$@"\n' > "$TMP_ROOT/barrier/cat"
+  chmod +x "$TMP_ROOT/barrier/setsid" "$TMP_ROOT/barrier/cat"
+  rm -f "$TMP_ROOT/barrier.marker"
+  run env PATH="$TMP_ROOT/barrier:$FARM" BARRIER_MARKER="$TMP_ROOT/barrier.marker" \
+    "$JOB_UNIT" launch validate-id-1 "$TMP_ROOT/barrier.record" --cap 60 -- sleep 30
+  assert_eq "$RC|$ERR|$([[ -f "$TMP_ROOT/barrier.marker" ]] && echo survived || echo gone)" \
+    "4|job-unit: launch-failed status=identity-unread|gone" \
+    "a child caught before its setsid is ended by its own pid, not by a group that does not exist yet"
+  # The durable record names the ended launch (decision 124b): a reader that
+  # finds no identity settles the job by this word rather than holding it.
+  assert_eq "$(grep -o '^status=.*' "$TMP_ROOT/barrier.record")|$(grep -c '^pid=' "$TMP_ROOT/barrier.record")" \
+    "status=identity-unread|0" \
+    "and the record is rewritten with the status word the runtime reads as nothing started"
+  # control: with the pid-kill removed, the group teardown misses the
+  # pre-setsid child and it runs to write its marker.
+  mutant no-end-child '  job_unit_end_child "$1"' '  :'
+  rm -f "$TMP_ROOT/barrier.marker"
+  run env PATH="$TMP_ROOT/barrier:$FARM" BARRIER_MARKER="$TMP_ROOT/barrier.marker" \
+    "$MUTANT" launch validate-id-1 "$TMP_ROOT/barrier.record" --cap 60 -- sleep 30
+  assert_eq "$([[ -f "$TMP_ROOT/barrier.marker" ]] && echo survived || echo gone)" "survived" \
+    "control: without the pid-kill the pre-setsid child survives the group-only teardown"
+
+  # The sibling path (decision 124c): the identity reads, but the final record
+  # write fails. A farm `mv` that refuses once its destination exists lets the
+  # pre-write through and fails the identity write; the child, caught before
+  # its setsid as above, is ended by its own pid and never writes its marker.
+  # The ended record cannot be written either, so the reply alone carries the
+  # status the runtime reads as nothing started, with `record=unwritable`
+  # (decision 124d (19)); the record keeps the pre-write it could not replace.
+  mkdir -p "$TMP_ROOT/record-fail"
+  printf '#!/usr/bin/env bash\nsleep 2 && echo survived > "$BARRIER_MARKER"\n' > "$TMP_ROOT/record-fail/setsid"
+  printf '#!/usr/bin/env bash\nfor a; do last=$a; done\n[[ ! -e "$last" ]] || exit 1\nexec /bin/mv "$@"\n' > "$TMP_ROOT/record-fail/mv"
+  chmod +x "$TMP_ROOT/record-fail/setsid" "$TMP_ROOT/record-fail/mv"
+  rm -f "$TMP_ROOT/barrier.marker" "$TMP_ROOT/record-fail.record"
+  run env PATH="$TMP_ROOT/record-fail:$FARM" BARRIER_MARKER="$TMP_ROOT/barrier.marker" \
+    "$JOB_UNIT" launch validate-id-1 "$TMP_ROOT/record-fail.record" --cap 60 -- sleep 30
+  assert_eq "$RC|$ERR|$([[ -f "$TMP_ROOT/barrier.marker" ]] && echo survived || echo gone)|$(grep -c '^pid=\|^status=' "$TMP_ROOT/record-fail.record")" \
+    "1|job-unit: record-unwritable path=$TMP_ROOT/record-fail.record status=record-unwritable record=unwritable|gone|0" \
+    "a child whose identity record cannot be written is ended by its own pid before the launch is refused, and the reply carries the status the record cannot"
+  rm -f "$TMP_ROOT/barrier.marker" "$TMP_ROOT/record-fail.record"
+  run env PATH="$TMP_ROOT/record-fail:$FARM" BARRIER_MARKER="$TMP_ROOT/barrier.marker" \
+    "$MUTANT" launch validate-id-1 "$TMP_ROOT/record-fail.record" --cap 60 -- sleep 30
+  assert_eq "$RC|$([[ -f "$TMP_ROOT/barrier.marker" ]] && echo survived || echo gone)" "1|survived" \
+    "control: without the pid-kill the child of a failed record write survives the group-only teardown"
 
   # kill-group: the job leads its group, and its argv decides whether it is
   # the one meant.
@@ -290,17 +359,154 @@ if command -v setsid >/dev/null 2>&1; then
   assert_eq "$RC $(proc_state_after "$JOB_PID")" "0 gone" \
     "end on a setsid record kills the group its leader names"
 
-  # A setsid that cannot start the job is a launch failure, by name.
+  # A child that exited before its row was read is a launch failure by its
+  # status: a setsid that cannot start the job, read through a `cat` that
+  # answers after the child is gone, so the row is not raced by the exit.
   mkdir -p "$TMP_ROOT/failing-setsid"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP_ROOT/failing-setsid/setsid"
-  chmod +x "$TMP_ROOT/failing-setsid/setsid"
+  printf '#!/usr/bin/env bash\ncase "$1" in /proc/*) sleep 0.3 ;; esac\nexec /bin/cat "$@"\n' > "$TMP_ROOT/failing-setsid/cat"
+  chmod +x "$TMP_ROOT/failing-setsid/setsid" "$TMP_ROOT/failing-setsid/cat"
   run env PATH="$TMP_ROOT/failing-setsid:$FARM" "$JOB_UNIT" launch validate-id-1 "$record" --cap 60 -- sleep 30
-  assert_eq "$RC $ERR" "4 job-unit: launch-failed status=1" \
-    "a setsid that cannot start the job exits 4 as launch-failed"
-  mutant no-launch-failed '|| job_unit_fail launch-failed "status=$?" 4' ''
+  assert_eq "$RC $ERR|$(grep -o '^status=.*' "$record")" "4 job-unit: launch-failed status=1|status=exited-1" \
+    "a setsid that cannot start the job exits 4 as launch-failed with the child's status, the durable record naming the exit"
+  mutant no-launch-failed '    job_unit_launch_ended "$record" "$word" "$status" launch-failed 4' '    :'
   run env PATH="$TMP_ROOT/failing-setsid:$FARM" "$MUTANT" launch validate-id-1 "$record" --cap 60 -- sleep 30
-  assert_eq "$RC $ERR" "1 " \
-    "control: without its own status a failed launch reads as the record-unwritable status"
+  assert_eq "$RC $ERR" "0 " \
+    "control: without the status read a child that exited before its row was read passes as launched"
+
+  # Decision 124d (19), R-U4g5 Codex `job-exit-probe.py`: an exited leader
+  # proves nothing about what it started. The job forks a descendant into its
+  # group, records that pid, and exits 7 before the launcher's identity read
+  # (the farm `cat` answers for /proc only once the descendant is recorded).
+  # The launcher tears the group down and reads it empty before it reports
+  # `exited-7`: the descendant is ended, and the durable record says so.
+  mkdir -p "$TMP_ROOT/exit-with-child"
+  printf '#!/usr/bin/env bash\ncase "$1" in /proc/*)\n  while [[ ! -f "$PROBE_ROOT/descendant" ]]; do /bin/sleep .01; done\n  /bin/sleep .2\n;; esac\nexec /bin/cat "$@"\n' > "$TMP_ROOT/exit-with-child/cat"
+  chmod +x "$TMP_ROOT/exit-with-child/cat"
+  rm -f "$TMP_ROOT/exit-with-child/descendant" "$TMP_ROOT/exit-with-child.record"
+  run env PATH="$TMP_ROOT/exit-with-child:$FARM" PROBE_ROOT="$TMP_ROOT/exit-with-child" \
+    "$JOB_UNIT" launch validate-id-1 "$TMP_ROOT/exit-with-child.record" --cap 60 \
+    -- bash -c 'sleep 60 & echo $! > "$PROBE_ROOT/descendant"; exit 7'
+  descendant="$(cat "$TMP_ROOT/exit-with-child/descendant" 2>/dev/null || true)"
+  assert_eq "$RC|$ERR|$(grep -o '^status=.*' "$TMP_ROOT/exit-with-child.record")|$(proc_state_after "$descendant")" \
+    "4|job-unit: launch-failed status=7|status=exited-7|gone" \
+    "an exited leader's descendant is ended and the group read empty before the launch is reported exited-7"
+  # control: with the exited branch skipping the group teardown, the record
+  # says exited-7 while the descendant still runs.
+  mutant no-exited-unwind '    job_unit_unwind_child "$JOB_UNIT_PID" exited || { word=unwound-failed; status=$word; }' '    :'
+  rm -f "$TMP_ROOT/exit-with-child/descendant" "$TMP_ROOT/exit-with-child.record"
+  run env PATH="$TMP_ROOT/exit-with-child:$FARM" PROBE_ROOT="$TMP_ROOT/exit-with-child" \
+    "$MUTANT" launch validate-id-1 "$TMP_ROOT/exit-with-child.record" --cap 60 \
+    -- bash -c 'sleep 60 & echo $! > "$PROBE_ROOT/descendant"; exit 7'
+  descendant="$(cat "$TMP_ROOT/exit-with-child/descendant" 2>/dev/null || true)"
+  assert_eq "$(grep -o '^status=.*' "$TMP_ROOT/exit-with-child.record")|$(proc_state_after "$descendant")" "status=exited-7|alive" \
+    "control: without the exited branch's group teardown the record says exited-7 over a running descendant"
+  [[ -z "$descendant" ]] || kill -KILL "$descendant" 2>/dev/null || true
+
+  # Decision 124h (33), R-U4g7 Codex `job-exit-unknown-probe.py`: the exited
+  # leader's launch, with the kernel-row read failing at the shell builtin
+  # during the group read after the teardown. The leader's start was never
+  # read, so the record can name no identity, but the launch is reported
+  # `unwound-failed` with the group's key, `pgid=` the leader's pid, which
+  # the runtime reads the group by until it empties; no `pid=`/`start=` is
+  # made up. The job writes `$$ $!` so the row knows the leader's pid.
+  # Answers: exit|stderr|status line|pgid line|pid and start count|descendant.
+  launch_exited_leader_with_unreadable_rows() { # SCRIPT RECORD
+    (
+      # shellcheck source=/dev/null # the script under test, or its control's copy
+      source "$1"
+      read() { return 1; }
+      export PATH="$TMP_ROOT/exit-with-child:$FARM" PROBE_ROOT="$TMP_ROOT/exit-with-child"
+      rc=0
+      job_unit_main launch validate-id-1 "$2" --cap 60 -- bash -c 'sleep 60 & echo "$$ $!" > "$PROBE_ROOT/descendant"; exit 7' 2>"$TMP_ROOT/unknown-leader.err" >/dev/null || rc=$?
+      printf '%s|%s' "$rc" "$(/bin/cat "$TMP_ROOT/unknown-leader.err")"
+    )
+  }
+  rm -f -- "${TMP_ROOT:?}/exit-with-child/descendant" "${TMP_ROOT:?}/exit-with-child.record"
+  answer="$(launch_exited_leader_with_unreadable_rows "$JOB_UNIT" "$TMP_ROOT/exit-with-child.record")"
+  leader="$(cut -d' ' -f1 "$TMP_ROOT/exit-with-child/descendant" 2>/dev/null || true)"
+  descendant="$(cut -d' ' -f2 "$TMP_ROOT/exit-with-child/descendant" 2>/dev/null || true)"
+  assert_eq "$answer|$(grep -o '^status=.*' "$TMP_ROOT/exit-with-child.record")|$(grep -o '^pgid=.*' "$TMP_ROOT/exit-with-child.record")|$(grep -c '^pid=\|^start=' "$TMP_ROOT/exit-with-child.record")|$(proc_state_after "$descendant")" \
+    "4|job-unit: launch-failed status=unwound-failed|status=unwound-failed|pgid=$leader|0|gone" \
+    "an exited leader whose group rows cannot be read is reported unwound-failed with the group's key, pgid= the leader's pid, no identity made up, the descendant ended"
+  [[ -z "$descendant" ]] || kill -KILL "$descendant" 2>/dev/null || true
+  # control: with the group key dropped from the ended record, the record
+  # names nothing the runtime can read the group by.
+  mutant no-pgid '-z "$JOB_UNIT_PID" ]] || printf '"'"'pgid=' '-z "$JOB_UNIT_PID" ]] || : || printf '"'"'pgid='
+  rm -f -- "${TMP_ROOT:?}/exit-with-child/descendant" "${TMP_ROOT:?}/exit-with-child.record"
+  answer="$(launch_exited_leader_with_unreadable_rows "$MUTANT" "$TMP_ROOT/exit-with-child.record")"
+  descendant="$(cut -d' ' -f2 "$TMP_ROOT/exit-with-child/descendant" 2>/dev/null || true)"
+  assert_eq "$(cut -d'|' -f1 <<<"$answer")|$(grep -o '^status=.*' "$TMP_ROOT/exit-with-child.record")|$(grep -c '^pgid=\|^pid=\|^start=' "$TMP_ROOT/exit-with-child.record")" \
+    "4|status=unwound-failed|0" \
+    "control: without the group key the unwound-failed record of an exited leader names no group"
+  [[ -z "$descendant" ]] || kill -KILL "$descendant" 2>/dev/null || true
+
+  # Decision 124f (27), R-U4g6 Codex `group-read.sh`: the group reader is
+  # three-valued. Over an owned live setsid sleeper it reads a member; with
+  # the kernel-row read failing at the shell builtin, a row that still
+  # stands is unknown, never a member gone, and the reader signals nothing:
+  # the sleeper is live after both reads. Answers: readable|injected|live.
+  group_reader_answers() { # SCRIPT
+    (
+      # shellcheck source=/dev/null # the script under test, or its control's copy
+      source "$1"
+      setsid /bin/sleep 60 </dev/null >/dev/null 2>&1 &
+      pid=$!
+      n=0
+      while (( n < 100 )) && [[ "$(/bin/ps -o pgid= -p "$pid" | tr -d ' ')" != "$pid" ]]; do /bin/sleep .01; n=$((n + 1)); done
+      readable=0
+      job_unit_group_empty "$pid" || readable=$?
+      read() { return 1; }
+      injected=0
+      job_unit_group_empty "$pid" || injected=$?
+      unset -f read
+      live=gone
+      ! kill -0 "$pid" 2>/dev/null || live=live
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      printf '%s|%s|%s' "$readable" "$injected" "$live"
+    )
+  }
+  assert_eq "$(group_reader_answers "$JOB_UNIT")" "1|2|live" \
+    "the group reader reads a live member as 1 and a row it cannot read as unknown, 2, never empty, and signals nothing"
+  # The same injection through the launcher, on the one post-fork path that
+  # holds the child's identity when it unwinds: the identity write refused
+  # once (a farm `mv` that refuses the first replacement of an existing
+  # record and allows the next), the child ended by its pid, then the group
+  # read with every kernel row unreadable. The launch is reported
+  # `unwound-failed`, never `record-unwritable` over an unknown group, and
+  # the ended record keeps the leader's pid and start, the group's id the
+  # runtime reads by until it empties (decision 124g (31)). The child never
+  # writes its marker. Answers: exit|stderr.
+  mkdir -p "$TMP_ROOT/record-once"
+  printf '#!/usr/bin/env bash\nsleep 2 && echo survived > "$BARRIER_MARKER"\n' > "$TMP_ROOT/record-once/setsid"
+  printf '#!/usr/bin/env bash\nfor a; do last=$a; done\nif [[ -e "$last" && ! -e "$MV_REFUSED" ]]; then : > "$MV_REFUSED"; exit 1; fi\nexec /bin/mv "$@"\n' > "$TMP_ROOT/record-once/mv"
+  chmod +x "$TMP_ROOT/record-once/setsid" "$TMP_ROOT/record-once/mv"
+  launch_with_unreadable_rows() { # SCRIPT RECORD
+    (
+      # shellcheck source=/dev/null # the script under test, or its control's copy
+      source "$1"
+      read() { return 1; }
+      export PATH="$TMP_ROOT/record-once:$FARM" BARRIER_MARKER="$TMP_ROOT/unknown.marker" MV_REFUSED="$TMP_ROOT/unknown.refused"
+      rc=0
+      job_unit_main launch validate-id-1 "$2" --cap 60 -- sleep 30 2>"$TMP_ROOT/unknown.err" >/dev/null || rc=$?
+      printf '%s|%s' "$rc" "$(/bin/cat "$TMP_ROOT/unknown.err")"
+    )
+  }
+  rm -f -- "${TMP_ROOT:?}/unknown.record" "${TMP_ROOT:?}/unknown.marker" "${TMP_ROOT:?}/unknown.refused"
+  assert_eq "$(launch_with_unreadable_rows "$JOB_UNIT" "$TMP_ROOT/unknown.record")|$(grep -o '^status=.*' "$TMP_ROOT/unknown.record")|$(grep -c '^pid=\|^start=' "$TMP_ROOT/unknown.record")" \
+    "1|job-unit: record-unwritable path=$TMP_ROOT/unknown.record status=unwound-failed|status=unwound-failed|2" \
+    "a child whose identity write failed and whose group rows cannot be read is reported unwound-failed, never record-unwritable, and the ended record keeps the leader's pid and start"
+  assert_eq "$(sed -n 's/^pid=//p' "$TMP_ROOT/unknown.record" | grep -c '^[0-9][0-9]*$') $(sed -n 's/^start=//p' "$TMP_ROOT/unknown.record" | grep -c '^ticks:[0-9][0-9]*$') $([[ -f "$TMP_ROOT/unknown.marker" ]] && echo survived || echo gone)" "1 1 gone" \
+    "and the kept identity is the leader's pid and its kernel start, the child ended by its pid"
+  # control: with a failed row read skipped as a vanished member, the
+  # unreadable group reads empty and the launch is reported by the write
+  # failure alone, the record keeping no identity for a group it says ended.
+  mutant read-or-continue '    { IFS= read -r row < "$stat"; } 2>/dev/null || { [[ ! -e "$stat" ]] || unknown=1; continue; }' '    { IFS= read -r row < "$stat"; } 2>/dev/null || continue'
+  rm -f -- "${TMP_ROOT:?}/unknown.record" "${TMP_ROOT:?}/unknown.marker" "${TMP_ROOT:?}/unknown.refused"
+  assert_eq "$(launch_with_unreadable_rows "$MUTANT" "$TMP_ROOT/unknown.record" | cut -d'|' -f1)|$(grep -o '^status=.*' "$TMP_ROOT/unknown.record")|$(grep -c '^pid=\|^start=' "$TMP_ROOT/unknown.record")" \
+    "1|status=record-unwritable|0" \
+    "control: with the failed read skipped as a vanished member the unreadable group reads empty and the launch is reported record-unwritable over it"
 
   # No process group holds a memory bound, so a launch that would run under
   # setsid refuses one, naming its runner line, and starts nothing.
@@ -329,16 +535,16 @@ chmod +x "$TIMED_OUT/systemd-run" "$TIMED_OUT/systemctl"
 timed_out_launch() { # STUB_LOAD
   record="$TMP_ROOT/timed-out.record"
   rm -f -- "$record"
-  run env PATH="$TIMED_OUT:$FARM" STUB_LOAD="$1" "$JOB_UNIT" launch validate-id-9 "$record" --cap 60 -- bash -c :
+  run env PATH="$TIMED_OUT:$FARM" STUB_LOAD="$1" "$JOB_UNIT" launch validate-id-9 "$record" --cap 60 -- sleep 5
   printf '%s|%s|%s|%s' "$RC" "$OUT" "$ERR" "$(sed -n 's/^runner=//p' "$record" 2>/dev/null)" \
-    | sed 's/orch-validate-id-9-[0-9]*/orch-validate-id-9-PID/g'
+    | sed 's/orch-validate-id-9-[0-9]*/orch-validate-id-9-PID/g; s/ pid=[0-9]* start=ticks:[0-9]*/ pid=PID start=START/'
 }
 if command -v setsid >/dev/null 2>&1; then
   detail="detail=Failed to start transient service unit: Connection timed out"
   # manager's answer|what the launch answers|label
   TIMED_OUT_ROWS=(
     "loaded%0|runner=systemd unit=orch-validate-id-9-PID||systemd%a unit the manager has after a failed call is the job, never a second copy"
-    "not-found%0|runner=setsid reason=unit-launch-failed $detail||setsid%a unit the manager has no record of falls back to setsid"
+    "not-found%0|runner=setsid reason=unit-launch-failed $detail pid=PID start=START||setsid%a unit the manager has no record of falls back to setsid, the launcher reading the job's identity"
     "none%4||job-unit: launch-failed unit=orch-validate-id-9-PID.service step=show $detail|systemd%a manager that does not answer fails the launch"
   )
   for row in "${TIMED_OUT_ROWS[@]}"; do
@@ -347,18 +553,22 @@ if command -v setsid >/dev/null 2>&1; then
   done
 fi
 
-# Every SIGKILL the library sends is job_unit_teardown's, after its SIGTERM and
-# grace, so no setsid teardown can send SIGKILL alone. The floor names a broken
-# extractor, not a missing site.
-kill_sites() { # SCRIPT — `1 1`: the teardown holds a SIGKILL, and holds every one
-  local teardown all
-  teardown="$(awk '/^job_unit_teardown[(][)]/ { on = 1 } on { print } on && /^}/ { exit }' "$1" | grep -c 'kill -KILL' || true)"
+# Every SIGKILL the library sends follows a SIGTERM and grace: the group's in
+# job_unit_teardown, the pre-group child's in job_unit_end_child, so none is
+# sent alone. The floor names a broken extractor, not a missing site.
+kill_sites() { # SCRIPT — `1 1`: a grace-guarded function holds a SIGKILL, and holds every one
+  local guarded all
+  guarded="$(awk '
+    /^job_unit_teardown[(][)]/ || /^job_unit_end_child[(][)]/ { on = 1 }
+    on { print }
+    on && /^}/ { on = 0 }
+  ' "$1" | grep -c 'kill -KILL' || true)"
   all="$(grep -c 'kill -KILL' "$1" || true)"
-  printf '%s %s' "$(( teardown >= 1 ))" "$(( all == teardown ))"
+  printf '%s %s' "$(( guarded >= 1 ))" "$(( all == guarded ))"
 }
-assert_eq "$(kill_sites "$JOB_UNIT")" "1 1" "every SIGKILL in job-unit.sh is inside job_unit_teardown"
+assert_eq "$(kill_sites "$JOB_UNIT")" "1 1" "every SIGKILL in job-unit.sh follows a SIGTERM and grace"
 mutant kill-alone '  job_unit_teardown "$pid"' '  kill -KILL -- "-$pid"'
-assert_eq "$(kill_sites "$MUTANT")" "1 0" "control: a SIGKILL sent outside the teardown is found"
+assert_eq "$(kill_sites "$MUTANT")" "1 0" "control: a SIGKILL sent outside a grace-guarded function is found"
 
 # stop-job on a record the library cannot read is a failure, named.
 printf 'runner=bogus\n' > "$TMP_ROOT/bogus.record"
@@ -379,8 +589,8 @@ if command -v setsid >/dev/null 2>&1; then
   chmod +x "$TMP_ROOT"/no-linger/* "$TMP_ROOT"/linger-unread/*
   assert_linger_launch() { # SCRIPT; the current table row supplies the launch and assertion
     # shellcheck disable=SC2086 # the cap column is words
-    run env PATH="$TMP_ROOT/$stub:$FARM" "$1" launch validate-linger "$TMP_ROOT/linger.record" $cap -- true
-    assert_eq "$RC $(sed 's/-[0-9]*$/-PID/' <<<"$OUT")" "$want" "$label"
+    run env PATH="$TMP_ROOT/$stub:$FARM" "$1" launch validate-linger "$TMP_ROOT/linger.record" $cap -- sleep 5
+    assert_eq "$RC $(sed 's/-[0-9]*$/-PID/; s/ pid=[0-9]* start=ticks:[0-9]*//' <<<"$OUT")" "$want" "$label"
   }
   # stub dir|cap arguments|the runner line, its unit's pid folded|label
   while IFS='|' read -r stub cap want label; do

@@ -190,11 +190,17 @@ A directive that changes the round's scope goes first into the round's durable b
 
 The lane then reads the transcript for the change: read there, it is "delivered"; anything else, an unreadable transcript included, is "unconfirmed".
 
-An unconfirmed directive overrides whatever the watchdog returns, since a report or an `accept` answers the old scope: at that return, shut the agent down and run `round-recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --directive-unconfirmed`.
+An unconfirmed directive overrides whatever the watchdog returns, since a report or an `accept` answers the old scope: at that return, shut the agent down, then run `round-recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --directive-unconfirmed`.
 
-It ends the worktree's validation runs first, and a run it cannot end is its `stop-failed` refusal: stop and report it.
+It ends the worktree's validation runs first, and a run it cannot end is its `stop-failed` refusal: stop and report it. Past a refusal it mints the replacement round and prints only `redelegate`, with `from` naming the original round.
 
-Past a refusal it prints only `redelegate`; take that row, which keeps the uncommitted tree and delegates the updated brief under the fresh round id, with one change: on a fix round, the fresh round's record holds the updated scope, never the `from` round's authorization.
+Reconcile the original round next, before anything uses the replacement: write `[WORKTREE]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[FROM]"}` and run it, so each validation run the stop ended is a closed stage of the original round, as [dev-start.md § Close The Round's Stages](../workflows/dev-start.md#close-the-rounds-stages) states:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE]/tmp/orch-op-[ISSUE_ID].json
+```
+
+The replacement round is not used until the original round's stages are reconciled. Only then take the `redelegate` row, which keeps the uncommitted tree and delegates the updated brief under the fresh round id, with one change: on a fix round, the fresh round's record holds the updated scope, never the `from` round's authorization.
 
 Write its items file and run `dev-round-write` for the fresh id as step 4 of [dev-fix.md § 2](../workflows/dev-fix.md#2-delegate) does for a new delegation, with the items, `--source`, `--adds` and `--cut` the updated brief names, so `--expect-items-from-round` checks the receipt against the scope the agent was given.
 

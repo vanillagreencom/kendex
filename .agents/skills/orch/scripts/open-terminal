@@ -1676,6 +1676,28 @@ lane_record_read() { # WT_ID FIELD
   fi
 }
 
+# Whether no orch-runtime intent stands open on the item's lane. An open
+# intent is the runtime's effect in flight, which this writer never moves
+# under (decision 44): it refuses intent-open naming it. The runtime judges
+# which intents are open; this asks only where the state holds any intent
+# row, so a fleet the runtime never wrote into needs no runtime binary.
+lane_intent_clear() { # WT_ID ITEM
+  local intents open
+  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee || return 0
+  # A state that does not parse is the cap count's cap-unreadable where the
+  # cap is gated, as overseer_bind leaves it; otherwise it is refused here.
+  if ! intents="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '(.intents // []) | length')"; then
+    [[ "$CAP_GATED" == true ]] && return 0
+    ot_message state-read-failed "item=$2" >&2
+    return 1
+  fi
+  [[ "$intents" != 0 ]] || return 0
+  open="$("$SCRIPT_DIR/orch-runtime" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} state inspect --fleet \
+    | jq -r --arg item "$1" '[.result.open_intents[]? | select(.target == $item) | .id] | first // empty')" \
+    || { ot_message runtime-unavailable "item=$2" >&2; return 1; }
+  [[ -z "$open" ]] || { ot_message intent-open "item=$2" "intent=$open" >&2; return 1; }
+}
+
 # A wake reads the owner's live display from the lane record (live_display):
 # the woken turn is a new process the scrub would clear, and the overseer's
 # wake names no --live-display. A manual relaunch takes the option alone, as it
@@ -4184,6 +4206,12 @@ for raw in "${ITEMS[@]}"; do
   host_pending_step="" host_line="" host_command_restart=none
   if [[ "$LANE_HOST" != local ]]; then
     host_launch_resume || { failed=$((failed + 1)); continue; }
+  fi
+  # A lane the runtime holds an open intent on is not this launcher's to
+  # move (decision 44); judged before the cap, so nothing is reserved for it.
+  if [[ "$FLEET" == true ]] && ! lane_intent_clear "$wt_id" "$item"; then
+    failed=$((failed + 1))
+    break
   fi
   # Judged before the worktree, so a refused item leaves no tree behind. A
   # refusal stops the batch: the count it refused on stands for every later

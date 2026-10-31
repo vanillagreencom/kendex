@@ -767,6 +767,69 @@ for spec in \
     "control: a $kind refusal that returns 0 admits the launch to its worktree create"
 done
 
+echo "=== a lane the orch runtime holds an open intent on is not launched ==="
+# The runtime answers `state inspect --fleet` from a planted reply: the suite
+# never builds it, and the one question open-terminal asks of it is which
+# intents are open. With no reply planted the stub is a runtime not set up.
+RUNTIME_REPLY="$TMP_ROOT/runtime-reply"
+runtime_stub() { # OPEN_TERMINAL
+  local target
+  target="$(dirname "$1")/orch-runtime"
+  # The mutant tree links the shipped wrapper: the link is replaced, never
+  # written through into the shipped script.
+  [[ ! -L "$target" ]] || rm -- "${target:?}"
+  cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+[[ -n "${OT_RUNTIME_REPLY:-}" ]] || { printf 'orch-runtime: setup-required key=none\n' >&2; exit 69; }
+cat -- "$OT_RUNTIME_REPLY"
+EOF
+  chmod +x "$target"
+}
+# intent_row NAME OPEN — a fleet with CC-1 running on lane A and one runtime
+# intent row on it; the runtime's reply names it open (OPEN=yes) or not.
+intent_row() {
+  row "$1"
+  seed_running CC-1 running "$LANE_A"
+  "$WS" --state-dir "$STATE" append oversee intents '{"id":"launch-lane:CC-1:1-1","op":"launch-lane","target":"CC-1","outcome":"unconfirmed"}' >/dev/null
+  if [[ "$2" == yes ]]; then
+    printf '%s\n' '{"ok":true,"result":{"open_intents":[{"id":"launch-lane:CC-1:1-1","op":"launch-lane","target":"CC-1","outcome":"unconfirmed"}]}}' > "$RUNTIME_REPLY"
+  else
+    printf '%s\n' '{"ok":true,"result":{"open_intents":[]}}' > "$RUNTIME_REPLY"
+  fi
+  export OT_RUNTIME_REPLY="$RUNTIME_REPLY"
+}
+intent_line() { # TAG
+  printf 'rc=%s %s opened=%s running=%s' "$(rc "$1")" \
+    "$(grep -hE '^open-terminal: (intent-open|runtime-unavailable) ' "$ROW/$1.err" || true)" \
+    "$([[ -e "$ROW/opened.$1" ]] && echo yes || echo no)" "$(running)"
+}
+runtime_stub "$OT"
+intent_row intent-open yes
+launch one 5 --lane "$LANE_A" --relaunch CC-1
+assert_eq "$(intent_line one)" "rc=1 open-terminal: intent-open item=CC-1 intent=launch-lane:CC-1:1-1 opened=no running=CC-1" \
+  "a relaunch of a lane the runtime holds an open intent on is refused before the cap, with no window and the record as it was"
+intent_row intent-closed no
+launch one 5 --lane "$LANE_A" --relaunch CC-1
+assert_eq "$(intent_line one)" "rc=0  opened=yes running=CC-1" \
+  "intent rows the runtime judges closed leave the relaunch to proceed"
+intent_row intent-unavailable yes
+unset OT_RUNTIME_REPLY
+launch one 5 --lane "$LANE_A" --relaunch CC-1
+assert_eq "$(intent_line one)" "rc=1 open-terminal: runtime-unavailable item=CC-1 opened=no running=CC-1" \
+  "a runtime that cannot say which intents are open refuses the launch while intent rows stand"
+# Control: with the refusal's return gone the message still prints and the
+# relaunch opens its window under the open intent.
+CTL_OT="$(mutant_scripts intent-open-control open-terminal)/open-terminal" || exit 1
+orch_fixture_shared_libs "$TMP_ROOT/intent-open-control"
+runtime_stub "$CTL_OT"
+mutate_file "$CTL_OT" '  [[ -z "$open" ]] || { ot_message intent-open "item=$2" "intent=$open" >&2; return 1; }' \
+  '  [[ -z "$open" ]] || ot_message intent-open "item=$2" "intent=$open" >&2'
+intent_row intent-open-control yes
+OT="$CTL_OT" launch one 5 --lane "$LANE_A" --relaunch CC-1
+assert_eq "$(intent_line one)" "rc=0 open-terminal: intent-open item=CC-1 intent=launch-lane:CC-1:1-1 opened=yes running=CC-1" \
+  "control: without the refusal the relaunch opens its window under the open intent"
+unset OT_RUNTIME_REPLY
+
 echo "=== refusals ahead of any count ==="
 row options
 for spec in \

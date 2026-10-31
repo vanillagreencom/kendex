@@ -52,7 +52,7 @@ Select the agent through [dev § Implementer selection](../../dev/SKILL.md#imple
 # Linear
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --format=compact
 # GitHub
-gh issue view [N] --json labels --jq '.labels[].name'
+gh issue view [N] --repo [OWNER/REPO] --json labels --jq '.labels[].name'
 ```
 
 ## 2. Delegate
@@ -73,9 +73,15 @@ Then stamp the round and apply the cleanup condition in [references/skill-rules.
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
 
+A standing dev round (`.dev_round_id` not null, as a bundled group's predecessor leaves it) is reconciled before the new round supersedes it, so its admitted runs close with their words: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[PRIOR_DEV_ROUND_ID]"}` and run it with the command below; a run its reply reports `live` keeps running under the superseded round.
+
+Mint the round through the runtime. Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "dev"}`, then run it:
+
 ```bash
-.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
 ```
+
+`[DEV_ROUND_ID]` is the reply's `.result.report.round_id`. The one write mints the token, supersedes the open dev stage and opens the new one ([workflow-state.md](../schemas/workflow-state.md) `stages`).
 
 Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
 
@@ -86,6 +92,8 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
+
+Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`. The delegation's `Validation admission:` line names the command that runs it; the dev agent runs it before each validation start, so the run is admitted, under the directory the runtime names, before any work starts.
 
 Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
 
@@ -111,10 +119,11 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
+Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 </delegation_format>
 
-`[LABELS]` is the item's labels from § 1's read, comma-separated, or `none` when it carries none. The dev agent passes them to `dev-return-write`, whose Apple gate reads them.
+`[LABELS]` is the item's labels from § 1's read, comma-separated, or `none` when it carries none. The dev agent passes them to `dev-return-write`, whose Apple gate reads them. `Validation admission:` is the exact command the dev agent runs before each `dev-validate-run` start; the dev workflow does not depend on orch for it.
 
 **GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
 
@@ -139,6 +148,7 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [the parent's labels and every sub-issue's labels, each once, comma-separated, or none]
+Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim]
 
@@ -181,21 +191,33 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 `HEAD` must differ from `pre_delegate_sha`, `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands the audit-created sub-issues worked in this session. Bundle-expanded children follow the linear skill's `validate-completion` contract. Dev-implement § Issue state records verified branch-box ticks and Evidence through a description-only update while each child stays In Progress. Validation reads that persisted checklist, whether or not it has post-merge boxes. The session root stays In Progress or In Review before merge. Carry qualified started children into submit-pr's child `Closes` lines and merge-pr's post-merge completion step. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
-A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
+A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round. Before `round-recover` replaces the round, reconcile its admitted runs: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}` and run it with Close The Round's Stages' command, so a lost or stopped run is a closed stage before the round is replaced.
 
-`dev-artifact-check` records the round end and its validation time for every `reason` but `missing` and `invalid`. A retry or escalation keeps that time.
+`dev-artifact-check` sets the round entry's kind and records its validation time for every `reason` but `missing` and `invalid`. A retry or escalation keeps that time. The stage ends are the runtime's, closed in Close The Round's Stages below.
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. With `validate_mode` `ci`, acceptance completes local edits and leaves required PR CI pending; submit's existing exact-head wait supplies the proof. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. With `validate_mode` `ci`, acceptance completes local edits and leaves required PR CI pending; submit's existing exact-head wait supplies the proof. → Close The Round's Stages with `pass`, then Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid failed original, route a qualifying stopped-round recovery through [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), keeping the original delegation, `pre_delegate_sha` and Check B. Check A again after its terminal companion. A selected failed companion or an original that does not qualify is final. Run Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid failed original, route a qualifying stopped-round recovery through [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), keeping the original delegation, `pre_delegate_sha` and Check B. Check A again after its terminal companion. A selected failed companion or an original that does not qualify is final: run Close The Round's Stages with `fail`, then Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
 Each Store subsection below runs whatever the one before it did. `status: no_pr` in Store Proposed Rules ends that subsection, not the accept path.
+
+### Close The Round's Stages
+
+The runtime is the one writer of a stage's end ([workflow-state.md](../schemas/workflow-state.md) `stages`). Runs on the `accept` row and on a final `retry`, before the Store subsections. First the round's admitted validation runs. Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}` and run it:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
+```
+
+The runtime reads each open `validate` entry's run directory and closes the entry with the word the run supports: an ended run with its sentinel's verdict, `pass`, `fail` or `no-verdict`; an admitted directory never created, a refused or never attempted start, `stopped`; a run whose child is gone without its sentinel, or that never recorded one, `lost`. A run whose child still runs stays open and is reported `live`; one the runtime could not read stays open and is reported `unreadable` with the cause. The reply's `runs` rows name each. Read `dev-validate-run --record --run-dir [RUN_DIR]` for a closed run's mode and timing when the round's report needs them; the runtime does not read the record.
+
+Then the round's own entry, with the same command over `{"op": "accept-result", "round_id": "[DEV_ROUND_ID]", "outcome": "[WORD]"}`: `pass` on the accept row, `fail` on a final retry. `outcome` is required; a request without it is refused `request-invalid`. A repeated accept changes nothing and reports the recorded end and word.
 
 ### Store Proposed Rules
 

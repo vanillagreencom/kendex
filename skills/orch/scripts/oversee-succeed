@@ -257,72 +257,30 @@
 #        recovery route, not a failed coordinator. The CALLER reports its
 #        recovery reason and any measured account fields. A reserve balance
 #        does not refill at the plan bucket reset.
-#     4. Open the successor's session through the overseer-host adapter
-#        (`overseer-host`, schemas/overseer-host.md). The runtime is held to
-#        tmux, because this script reads the successor's account off its
-#        pane: ORCH_OVERSEER_HOST naming another refuses `runtime-unsupported`
-#        before anything is printed, recorded or opened. On tmux the session
-#        is a window named `overseer` at the session's base index, the harness
-#        launched there with a brief naming the handoff file, once the
-#        checkout it starts in is fast-forwarded to its base branch's origin
-#        head through `sync-base` (lib/overseer-launch.sh § ol_checkout_sync)
-#        inside ORCH_OVERSEER_SYNC_TIMEOUT_S seconds, in every mode that
-#        launches. A checkout that is dirty, diverged, off its base branch,
-#        not synced inside that bound or otherwise refused is the notice
-#        `checkout-unsynced cause=<key> path=<checkout> fix=<what clears it>`
-#        on stderr and, its path left out, in the fleet log, and the successor
-#        opens on the tree as it stands. The caller, or the dead or walled
-#        predecessor, still runs in that checkout: a succession abandoned
-#        after the sync leaves it on the fast-forwarded tree, and this script
-#        calls the moved helpers for the rest of its run. The steps from
-#        here to the close are
-#        lib/overseer-launch.sh's, the one launcher `oversee launch` runs a
-#        first launch or a --predecessor succession through, the succession
-#        itself its ol_succession. The command is built by lib/lane-launch.sh,
-#        the builder open-terminal uses, so a machine whose harness command is
-#        an account shim is launched through that shim rather than under an
-#        environment prefix it overwrites. Before the successor's first turn
-#        the session record is written into the fleet state's `overseer`
-#        object: runtime, server, session, account and a generation one past
-#        the record it replaces, which is how the hooks and the watch tell
-#        the successor from this session; a launch abandoned once its
-#        window opened puts the caller's record back. Then read the session's account back, wait
-#        for the adapter's `inspect` to show a running turn, and read the
-#        account again now that the harness is certainly the thing
-#        answering — all inside the one --wait-secs bound. A session observed
-#        running an account other than the one picked refuses
-#        `successor-wrong-lane`: the first read catches one that already
-#        disagrees, before the successor has had a turn to open a window or
-#        write to the tracker with it, and the second catches a wrapper that
-#        handed the account over as the harness started. A session stopped at
-#        a folder-trust dialog refuses `successor-dialog` with the pane line
-#        instead of waiting out the deadline. A successor is given that
-#        trust BEFORE it starts, through the same builder: the caller's
-#        directory is made trusted in the config the launch reads, for codex
-#        under a CODEX_HOME of the launch's own where the account's config
-#        cannot carry it, for claude in the picked config dir's own
-#        .claude.json, and a launch whose entry could not be made refuses
-#        `launch-trust-missing` rather than opening on the question.
-#     5. Stop the caller's session through the adapter with the successor
-#        named: on tmux the successor is swapped into the caller's window slot
-#        and the caller's window closed, so the successor holds the caller's
-#        index and no other window moves; with renumber-windows on, tmux
-#        renumbers as for any closed window.
-#     6. Ensure the fleet repeat watch runs through the orch job runner,
-#        serving the successor pane, before step 5 can end this command.
-#        With no watch claim, start one and wait for its claim. With a live
-#        claim, start the handover helper, which waits for the caller to
-#        close and restarts the recorded watch from the new pane. The shared
-#        owner is lib/watch-handover.sh. A refused start or helper launch
-#        refuses the succession with the runner's job-unit line. A later
-#        helper failure goes to oversee-watch.err beside the fleet state.
-#        This applies to live succession, --dead-pane and --walled-pane.
-#        Death replay takes its watch identity from the recorded launch.
-#        references/watch-delivery.md gives the session's log reader.
-#   A failure at any step, or a TERM, INT or HUP from the launch until the
-#   close, leaves the caller's window running and closes a successor window
-#   already opened. All three are ignored during the close: it is the commit
-#   point, and it ends this script's own window.
+#     4. Hand the succession to the orch runtime (decision 76): the
+#        checkout the successor opens in is fast-forwarded to its base
+#        branch's origin head through `sync-base` (lib/overseer-launch.sh §
+#        ol_checkout_sync; a refusal is the notice `checkout-unsynced
+#        cause=<key> path=<checkout> fix=<what clears it>` on stderr and, its
+#        path left out, in the fleet log, and the succession goes on), then
+#        `orch-runtime op --fleet --request` is asked for a `request-transfer`
+#        carrying the record this run read (the compare-and-swap set), the
+#        successor's launch identity and line from the builder, the handoff as
+#        the brief, the cause the mode names (`live`, `dead` for --dead-pane,
+#        `walled` for --walled-pane, with the spent account excluded) and
+#        --wait-secs as the runtime's verify bound. The runtime writes the
+#        pending successor, opens the waiting runner, retires this session by
+#        its recorded identity once this command has returned, delivers the
+#        handoff, publishes the record and restarts nothing of the watch;
+#        all of it runs in a detached job that outlives this pane. The
+#        runtime's refusal, the record moved since it was read among them, is
+#        relayed as `transfer-refused key=<its key>` with its words under it,
+#        exit 1, the caller kept and nothing opened. On success the last word
+#        is `transfer-started intent=<id> <runner line>`, exit 0; the
+#        succession completes after this command, and `orch-runtime state
+#        inspect --fleet` lists the intent until it does. The runtime is held
+#        to tmux as before: ORCH_OVERSEER_HOST naming another refuses
+#        `runtime-unsupported` before anything is printed or asked for.
 #   Run it under a shell-tool timeout longer than --wait-secs.
 #
 # Options:
@@ -497,13 +455,10 @@
 # and end the run at exit 0. `successor-account-unmeasured` (step 3) is on
 # stdout and in the fleet log, and settles no exit status.
 # `successor-launch` is on stdout too, but settles no
-# exit status: it is printed mid-run, before the window is opened, and names the
-# form the lane reached the harness by. `watch-handover` and `watch-started` are
-# on stdout too and settle nothing either, printed before the close, and a
-# `watch-restart-failed` before the close refuses the launch. A failure
-# after the close is recorded in the watch error log.
-# `successor-working` goes to stdout only after the close succeeded, and a real
-# handoff has ended this script's window by then.
+# exit status: it is printed mid-run, before the runtime is asked, and names
+# the form the lane reached the harness by. `transfer-started` is the last
+# line of a succession handed to the runtime, exit 0; `transfer-refused` on
+# stderr relays the runtime's refusal, exit 1.
 # A --dead-pane or --walled-pane run writes no refusal row: the
 # watch that ran it logs its failed relaunch itself.
 set -euo pipefail
@@ -511,6 +466,29 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
 export SCRIPT_DIR
 
+# Whether the WORD arguments carry a spelling whose full-bypass meaning
+# transfers between harnesses: the launch table's transfer column
+# (lib/lane-launch.sh), read through the table's one matcher. The posture the
+# runtime asked for is `bypass` only then (decision 124a (4)); every narrower
+# permission word (`--permission-mode dontAsk`, `-a never`, `--allow-all-tools`)
+# leaves it `native`, so a successor runs no wider than its caller. The words
+# are read as the arguments they are, never joined and re-split, so a prompt
+# word that holds a spelling as text, or a word with a space or a newline,
+# never moves the judgement (decision 124b).
+ol_words_full_bypass() { # HARNESS WORD...
+  local harness="$1" spellings i
+  shift
+  local -a tokens=("$@")
+  spellings="$(launch_choice_transfer_permission_spellings "$harness")" || return 1
+  [[ -n "$spellings" ]] || return 1
+  i=0
+  while (( i < ${#tokens[@]} )); do
+    launch_choice_permission_match "$spellings" "${tokens[i]}" "${tokens[i+1]:-}"
+    (( LAUNCH_CHOICE_PERMISSION_SPAN == 0 )) || return 0
+    i=$((i + 1))
+  done
+  return 1
+}
 usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 message() { # KEY FIELD=VALUE...
@@ -541,6 +519,8 @@ message() { # KEY FIELD=VALUE...
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
     succession-off) text='ORCH_OVERSEER_SUCCESSION is off; nothing was launched.' ;;
+    transfer-started) text='The runtime holds the succession: its job opens the successor, retires this session by its recorded identity once this command has returned, delivers the handoff and publishes the record. Nothing more runs here; orch-runtime state inspect --fleet shows the intent until it ends.' ;;
+    transfer-refused) text='The runtime refused the succession; its keyed line is under this one. Nothing was opened and this session keeps running. A record moved since it was read is overseer-changed; succession-off is the setting; intent-open names a succession, start or stop already in flight.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-wall-minutes) text='ORCH_OVERSEER_WALL_MINUTES takes a whole number of minutes; 0 disables this trigger.' ;;
     invalid-successor-accounts) text='ORCH_OVERSEER_SUCCESSOR_ACCOUNTS takes a whole number; 0 disables this trigger.' ;;
@@ -567,25 +547,16 @@ message() { # KEY FIELD=VALUE...
     no-lane-qualifies) text='No lane walked clears the headroom trigger; no successor was launched. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. With --print-launch-line --entry, the walk is that one entry with no caller fallback, and mark=none says no mark was judged. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. At mark=headroom the account and resets fields name the account at its policy mark and when its binding bucket resets. At mark=wall the caller requested account recovery, for a confirmed wall or a live reserve episode. This run judged no caller mark and names no account or reset. The caller reports its recovery judgement and any measured fields under references/overseer-session-events.md, Recovery requests.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable or unparseable, a dangling shim link being the usual codex cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account, or the claude config dir .claude.json, that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
-    interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;
     entry-permission-untransferable) text='This entry names another harness than the caller runs, and something of the caller would not cross to it. Without a model field: the caller runs under permission words with no equivalent on that harness, so a successor there would change what it may do. With a model field: the entry is a deprecated numeric one, which would run that caller model in the spelling of the caller harness, and the walk translates none. The entry is skipped and the walk goes on to the next one, ending at the harness the caller runs.' ;;
     successor-lane-excluded|successor-count-bound|successor-count-unmeasured) text='' ;;
     successor-status-line) text='The shared installer could not configure this Copilot home or its statusLine fallback. detail names the setup failure and cause names the fallback failure. The entry is skipped.' ;;
     successor-lane-spent) text='The pick named the caller account that this recovery request must leave. Another model bucket or an inventory that has not refreshed can still report launch room there. The entry is skipped. A fleet whose only candidate is that account refuses rather than reopening on it.' ;;
-    successor-dialog) text='The successor stopped at a dialog nobody is there to answer; the caller keeps running. The pane line follows.' ;;
-    successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
     owner-notice-unwritten) text='The succession refusal could not reach the owner channel. The key field names the refusal and the step field names the failed operation. The original refusal and its exit status stand.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
-    successor-wrong-lane) text='The successor is running on another account than the one picked, so a wrapper on PATH replaced the selection; the caller keeps running.' ;;
-    successor-lane-unobserved) text='The account the successor runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
-    successor-lane-unknown) text='The account check returned an outcome this script does not know; the successor was closed rather than trusted.' ;;
-    successor-working) text='The successor is running in the caller window slot.' ;;
-    close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
     watch-handover) text='The fleet watch serving the caller pane is restarted from the successor pane once this window closes, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
     watch-restarted) text='The fleet watch was stopped and started again from the successor pane, with the successor flags and account, so a successor that dies is reported. Its output stays beside the fleet state for the successor to read.' ;;
-    watch-started) text='The repeat fleet watch runs outside the successor session. Read the log field to receive its events. unread= names a retained command that could not be read; the watch runs the default selection. Restart a hand-selected watch by hand.' ;;
     watch-restart-failed) text='The fleet watch could not be started or restarted from the successor pane. Before the caller closes, this failure refuses the succession. A later helper failure is recorded in the watch error log.' ;;
   esac
   # One printf, so one write: the restarted watch appends its own keyed lines
@@ -1768,6 +1739,8 @@ if [[ "$MODE" == dead ]]; then
   LANE_FORM=unchecked
   lane_dir=""
   lane_var=CLAUDE_CONFIG_DIR
+  # The replayed line's permission words, read below, are the caller's own.
+  SUCC_PERMISSION=native SUCC_WORDS=()
 else
   # The successor's flag words as argv, from which the command is written in
   # one place below and which the fleet watch restarted from the successor
@@ -1783,6 +1756,29 @@ else
     "$OL_PICK_MODEL" "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
     || die "$OL_REASON" "entry=$chosen" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
   SUCC_FLAGS=(${OL_FLAGS[@]+"${OL_FLAGS[@]}"})
+  # The runtime builds the successor's command from typed fields (decision
+  # 109 (5)): the model and effort travel in the identity, the caller's own
+  # words beyond them here, exactly as given, with the posture they spell as
+  # its own field (decisions 115 (E), 120). A same-harness entry keeps the
+  # caller's words; the posture is `native` unless those words carry a
+  # full-bypass spelling (the launch table's transfer column, the words whose
+  # bypass meaning carries to another harness, decision 124a (4)), in which
+  # case it is `bypass`; a narrower permission word (`--permission-mode
+  # dontAsk`, `-a never`, `--allow-all-tools`) keeps the posture `native` with
+  # the words as given, so the successor runs no wider than its caller: the runtime's builder derives the permission environment
+  # (`COPILOT_ALLOW_ALL`, Claude's prompt-suppression values) from the posture
+  # and adds no word the argv already carries. Another harness runs the
+  # bypass posture the walk wrote for it, with none of the caller's words.
+  SUCC_PERMISSION=bypass SUCC_WORDS=()
+  if [[ "$OL_HARNESS" == "$CALLER_HARNESS" ]]; then
+    SUCC_PERMISSION=native
+    launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
+      || die "$OL_REASON" "entry=$chosen" "harness=$CALLER_HARNESS"
+    SUCC_WORDS=(${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"})
+    if ol_words_full_bypass "$CALLER_HARNESS" ${SUCC_WORDS[@]+"${SUCC_WORDS[@]}"}; then
+      SUCC_PERMISSION=bypass
+    fi
+  fi
   lane_dir="$OL_LANE_DIR" harness="$OL_HARNESS"
   # The command itself, the brief naming the handoff, the folder trust a codex
   # successor needs before it reads its arguments and the form the lane
@@ -1821,6 +1817,12 @@ else
     esac
     PI_CODING_AGENT_DIR="$pi_root" lane_adapter_pi_window_read "$CALLER_PATH" \
       || die pi-handoff-unmarked reason=no-window-read "dir=$CALLER_PATH"
+    # Pi's own root is the home the runtime launches the successor under
+    # (`PI_CODING_AGENT_DIR`), the picked seat its account (decision 120, H1):
+    # the identity's `home` names the root, never the seat.
+    [[ -z "$OL_IDENTITY" ]] \
+      || OL_IDENTITY="$(jq -c --arg home "$pi_root" '.home = $home' <<<"$OL_IDENTITY" 2>"$DEP_ERR")" \
+      || die record-unread field=home
   fi
 fi
 
@@ -1890,11 +1892,16 @@ if [[ "$MODE" == dead ]]; then
     || die record-unread field=launch_line
   ol_record_permission "$replay_permission" "$replay_harness" \
     || die launch-choice-failed reason=permission-unrecorded "harness=${replay_harness:-none}" "word=$(launch_choice_permission_write "$replay_harness" || true)"
+  SUCC_WORDS=(${OL_PERMISSION_FLAGS[@]+"${OL_PERMISSION_FLAGS[@]}"})
+  # The replayed line's posture, judged by the existing owner from the words
+  # it carries (decision 120, M1): a dead bypass overseer is relaunched under
+  # the bypass posture, its permission environment the builder's.
+  if ol_words_full_bypass "$replay_harness" ${SUCC_WORDS[@]+"${SUCC_WORDS[@]}"}; then
+    SUCC_PERMISSION=bypass
+  fi
   replay_cwd="$(jq -r '.cwd // empty' <<<"${OL_IDENTITY:-null}" 2>/dev/null)" || replay_cwd=""
   [[ -z "$replay_cwd" ]] || CALLER_PATH="$replay_cwd"
 fi
-PENDING=pending
-[[ "$MODE" != dead ]] || PENDING=replay
 # Which form the lane reached the harness by, before the window exists: on a
 # host where the two disagree about the account, this line is what says which
 # selector was used and a refusal below is read against it. The trust field
@@ -1902,100 +1909,56 @@ PENDING=pending
 # that asks no such question.
 message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}" "trust=${LANE_TRUST_ROUTE:-none}"
 
-# Two overseers never run: every failure from here closes the successor and
-# puts the predecessor's session record back, so the record names the
-# session that is still running. The close-out is the library's
-# ol_session_abandon, the same one `oversee launch` runs; the words are this
-# script's.
-SUCC_PANE="" SUCC_WINDOW=""
-# die_status reports the refusal after the successor has been closed.
-abandon() {
-  ol_session_abandon || { message record-unwritten field=overseer step=restore >&2; [[ -z "$OL_DETAIL" ]] || printf '%s\n' "$OL_DETAIL" >&2; }
-  die "$@"
-}
-# A shell tool that times out signals this script. The traps are set before
-# the session exists, and a signal that lands during the runtime's create runs
-# once the call returns; ol_session_abandon inside abandon reads the session
-# off the provider's answer and closes it, so the window is named here only
-# where the create had already returned it.
-interrupted() { # SIGNAL
-  abandon interrupted "window=${OL_WINDOW:-none}" "signal=$1"
-}
-trap 'interrupted TERM' TERM
-trap 'interrupted INT' INT
-trap 'interrupted HUP' HUP
-
-# The succession itself is lib/overseer-launch.sh's ol_succession, the one
-# `oversee launch --predecessor` runs: the pending record, the runtime's
-# create at the session's base index, the session record, the account and
-# first-turn verification inside the one --wait-secs bound (ol_session_verify
-# says why the account is asked twice), and the predecessor's stop, which
-# keeps the successor at the base index, the commit point. These are this script's words at
-# each step it reports. `verified` arranges step 6 of the header before the
-# close, because nothing after it can be counted on to run; the helper is
-# started before the commit point ignores any signal, so it inherits none of
-# those ignores.
-ol_succession_hook() { # STEP
-  case "$1" in
-    # A record write that fails is a notice, and 0 lets the succession go on
-    # (header, Output).
-    pending-unrecorded)
-      message line-unrecorded "field=overseer.pending" >&2
-      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-      return 0 ;;
-    opened) SUCC_PANE="$OL_SESSION" SUCC_WINDOW="$OL_WINDOW" ;;
-    record-unwritten)
-      message record-unwritten field=overseer step=write >&2
-      [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-      return 0 ;;
-    verified)
-      # The deciding read could not observe the account: the launch stands,
-      # and the notice says why the check refused nothing.
-      [[ -z "$OL_UNOBSERVED" ]] || message successor-lane-unobserved "reason=$OL_UNOBSERVED" >&2
-      hand_over_watch ;;
-  esac
-}
-# Step 6 of the header: lib/watch-handover.sh's watch_handover, the one
-# `oversee launch --predecessor` runs, in this script's words.
-hand_over_watch() {
-  if [[ "$MODE" == dead ]]; then
-    # Replay chose no new argv. The session record owner resolves the home
-    # and harness of the line that was replayed, with the caller as fallback.
-    local record_rc=0
-    ol_record_current "$OL_SERVER" "$SUCC_PANE" || record_rc=$?
-    (( record_rc < 2 )) || abandon watch-restart-failed step=identity
-    harness="${OL_CUR_HARNESS:-$CALLER_HARNESS}"
-    launch_home="${OL_CUR_HOME:-${OL_CUR_ACCOUNT:-$CALLER_CFG}}"
-    lane_var="$(lane_env_prefix "$harness" - "${OL_CUR_MODEL:-$CALLER_MODEL}")"
-    lane_var="${lane_var%%=*}"
-    SUCC_FLAGS=()
-  fi
-  if watch_handover "$CALLER_PANE" "$SUCC_PANE" "$lane_var" "$launch_home" "$harness" ${SUCC_FLAGS[@]+"${SUCC_FLAGS[@]}"}; then
-    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
-  else
-    abandon "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
-  fi
-}
-# Every refusal closes the successor before the commit point, or at a stop
-# that failed, so a disagreement costs nothing but the successor.
-if ! ol_succession "$CALLER_PANE" "$CALLER_PATH" "$cmd" "$OL_IDENTITY" "$PENDING" \
-    "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS"; then
-  case "$OL_REASON" in
-    succession-unbound|succession-write-failed)
-      if [[ -n "$OL_RECOVERY_RECORD" ]]; then
-        abandon model-recovery-refused "reason=$OL_REASON" "step=$OL_STEP"
-      fi
-      abandon launch-failed "reason=$OL_REASON" "step=$OL_STEP" ;;
-    create-failed) abandon launch-failed "step=$OL_REASON" ;;
-    stop-failed) abandon close-failed "window=$CALLER_WINDOW" ;;
-    wrong-lane) abandon successor-wrong-lane "picked=$lane_dir" "observed=$OL_OBSERVED" ;;
-    result-unknown) abandon successor-lane-unknown "result=$OL_RESULT" ;;
-    # The pane line and the last screen are in DEP_ERR, where the library
-    # put them: on the line after the keyed one, as dependency detail goes.
-    dialog) abandon successor-dialog "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
-    not-working) abandon successor-not-working "window=$SUCC_WINDOW" "waited=$OL_WAITED" ;;
-    inspect-failed) abandon launch-failed "step=$OL_STEP" ;;
-    *) abandon launch-failed "step=verify" "reason=$OL_REASON" ;;
-  esac
+# The succession itself is the runtime's `request-transfer` (decision 76): the
+# record compare-and-swap against the record this run read, the pending write,
+# the waiting runner, the predecessor's retirement by its recorded identity,
+# the brief and the publication run in a detached job the runtime starts,
+# which outlives this pane, the predecessor's own in a live succession. This
+# script hands it the judged inputs (decision 75): the record, the successor's
+# identity, the typed launch fields the runtime builds the command from (its
+# permission posture and the caller's own words, decision 109 (5)) beside the
+# line this script judged, recorded for display, the handoff, the cause its
+# mode names, under --walled-pane the spent account and, under
+# --recovery-record, the recovery's binding, which the runtime's transition
+# judges (decision 109 (8)); the runtime answers once the job holds the
+# intent, and `transfer-started intent=<id>` is this script's last word.
+# A refusal the runtime makes, the record moved since it was read among them,
+# is relayed as `transfer-refused key=<its key>` with its words under it;
+# nothing was opened and this session keeps running.
+# The checkout the successor opens in is synced first, as every launcher
+# synced it before its create (lib/overseer-launch.sh § ol_checkout_sync); a
+# sync that refuses is a notice and the succession goes on.
+ol_checkout_sync "$CALLER_PATH" || ol_checkout_notice
+cause=live
+case "$MODE" in dead) cause=dead ;; walled) cause=walled ;; esac
+handoff_abs="$HANDOFF_FILE"
+[[ "$handoff_abs" == /* ]] || handoff_abs="$PWD/$handoff_abs"
+request="$(mktemp)" || die launch-failed step=mktemp
+trap 'rm -f -- "${request:?}"' EXIT
+# The caller's words as a JSON array: `--args` takes each word as one
+# positional string, so a word that opens with `-` or holds a newline or a
+# space crosses whole; `--` ends jq's own option parsing before them.
+succ_words="$(jq -n '$ARGS.positional' --args -- ${SUCC_WORDS[@]+"${SUCC_WORDS[@]}"} 2>"$DEP_ERR")" || die launch-failed step=request
+jq -cn --argjson prior "${OL_PRIOR:-null}" --argjson identity "${OL_IDENTITY:-null}" \
+  --arg line "$cmd" --arg cause "$cause" --arg handoff "$handoff_abs" --arg exclude "${WALLED_LANE:-}" \
+  --arg permission "$SUCC_PERMISSION" --argjson words "$succ_words" --argjson recovery "${OL_RECOVERY_RECORD:-null}" '
+  ($prior // {}) as $p
+  | {op: "request-transfer",
+     cause: $cause,
+     expected: ({server: $p.server, server_start: $p.server_start, pane: $p.pane,
+                 generation: $p.generation, launch_line: $p.launch_line, cwd: $p.cwd}
+                + (if ($p.session_id // "") == "" then {} else {session_id: $p.session_id} end)
+                + (if $cause == "dead" then {} else {pending: ($p.pending // null)} end)),
+     successor: (($identity // {}) + {launch_line: $line, permission: $permission, extra_args: $words}),
+     brief_file: $handoff}
+  + (if $cause == "walled" then {exclude_account: $exclude} else {} end)
+  + (if $recovery == null then {} else {recovery: $recovery} end)' \
+  > "$request" 2>"$DEP_ERR" || die launch-failed step=request
+if ! reply="$(ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" "$SCRIPT_DIR/orch-runtime" op --fleet --request "$request" 2>"$DEP_ERR")"; then
+  key="$(sed -n '1s/^orch-runtime: \([^ ]*\).*/\1/p' "$DEP_ERR")"
+  die transfer-refused "key=${key:-runtime-unavailable}"
 fi
-message successor-working "window=$SUCC_WINDOW" "pane=$SUCC_PANE"
+intent="$(jq -r '.result.effect.intent // empty' <<<"$reply" 2>"$DEP_ERR")" || die transfer-refused key=reply-unread
+[[ -n "$intent" ]] || die transfer-refused key=reply-unread
+job="$(jq -r '.result.effect.job // "runner=unknown"' <<<"$reply" 2>/dev/null)" || job=runner=unknown
+message transfer-started "intent=$intent" "$job"

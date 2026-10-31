@@ -1182,6 +1182,51 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-sec
   "standard:false: class=standard docs-only=false class-fallback=classifier-absent" \
   "no classifier runs the whole battery, naming the absence" "$ERR"
 mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
+
+# --- --run-id: the directory the admission named ------------------------------
+# The runtime mints a run's identity at admission and records the open validate
+# stage naming its directory before any runner starts (tests/rust/item.rs owns
+# that minting); the start then creates that directory. The command is the
+# barrier, as the one-job consumer's tools/validate is: it reads the admitted
+# stage for its own directory and fails without it, so a pass proves the
+# admitted identity stood while the command ran and the printed directory
+# proves the start honoured the id. The state file stands in for the item's.
+ADMIT_ID=20300101T000000Z-admit
+proj_admit="$(make_proj proj-admit "bash $TMP_ROOT/proj-admit/barrier" 20)"
+mkdir -p "$proj_admit/tmp"
+cat > "$proj_admit/barrier" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+jq -e --arg d "$proj_admit/tmp/dev-validate-$ADMIT_ID" '[.stages[]? | select(.kind == "validate" and .run_dir == \$d and .end == null)] | length == 1' "$proj_admit/tmp/admitted.json" >/dev/null \\
+  || { echo 'validate: admission-missing'; exit 1; }
+echo 'validate: selection=all lanes=barrier'
+SH
+# Without the admission the barrier rejects the run: the instrument sees the
+# planted counterexample.
+run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id 20300101T000000Z-unadmitted
+assert_eq "$(verdict_of "$OUT") $(run_dir_of "$OUT")" "state=done guard-exit=1 validate=FAILING $proj_admit/tmp/dev-validate-20300101T000000Z-unadmitted" \
+  "a run started without its admission fails the barrier, under the directory --run-id named" "$ERR"
+# The admission as the runtime records it, then the start under its id.
+jq -n --arg d "$proj_admit/tmp/dev-validate-$ADMIT_ID" \
+  '{stages: [{kind: "dev", round_id: "r1", start: 1, end: null}, {kind: "validate", round_id: "r1", start: 2, end: null, run_dir: $d}]}' > "$proj_admit/tmp/admitted.json"
+run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id "$ADMIT_ID"
+assert_eq "$(verdict_of "$OUT") $(run_dir_of "$OUT")" "state=done guard-exit=0 validate=pass $proj_admit/tmp/dev-validate-$ADMIT_ID" \
+  "a run started under the admitted id runs in the admitted directory and finds its admission standing" "$ERR"
+assert_eq "$(grep -c -x -F -- "dev-validate-$ADMIT_ID" "$proj_admit/tmp/validation-runs")" 1 "the run index names the admitted directory"
+run_script "$RUN" --record --run-dir "$proj_admit/tmp/dev-validate-$ADMIT_ID"
+assert_eq "$RC $(record_field verdict "$OUT")" "0 pass" "the admitted directory's record reads as any run's" "$ERR"
+# The same id again names a directory that stands: refused, nothing recorded.
+index_before="$(cat "$proj_admit/tmp/validation-runs")"
+run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id "$ADMIT_ID"
+assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: run-exists run-dir=$proj_admit/tmp/dev-validate-$ADMIT_ID" \
+  "an id whose directory already stands is refused rather than reused" "$ERR"
+assert_eq "$(cat "$proj_admit/tmp/validation-runs")" "$index_before" "and the refused start records nothing"
+run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id not-a-run-id
+assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: invalid-run-id option=--run-id value=not-a-run-id" \
+  "an id outside the stamp-and-nonce grammar is refused" "$ERR"
+run_script "$RUN" --wait --run-dir "$proj_admit/tmp/dev-validate-$ADMIT_ID" --run-id "$ADMIT_ID"
+assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: option-unused option=--run-id mode=wait" \
+  "--run-id outside a start is refused, never dropped" "$ERR"
 fi
 
 # --- A ci request runs nothing where the base requires the named context -------
@@ -3365,6 +3410,7 @@ REPEAT_ROWS=(
   "--worktree|--worktree $proj_probe --worktree $TMP_ROOT/proj-log --poll 1"
   "--poll|--worktree $proj_probe --poll 1 --poll 2"
   "--run-dir|--wait --run-dir $TMP_ROOT/stale --run-dir $TMP_ROOT/absent"
+  "--run-id|--worktree $proj_probe --run-id 20300101T000000Z-1 --run-id 20300101T000000Z-2"
   "--budget|--wait --run-dir $TMP_ROOT/stale --budget 5 --budget 6"
 )
 repeat_rows() { # SCRIPT

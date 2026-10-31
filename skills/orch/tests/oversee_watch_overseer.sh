@@ -426,6 +426,54 @@ assert_eq "$(sed 's|--line-file .*/|--line-file |' "$STUB_DIR/succeed.launched")
   "--dead-pane $PANE --line-file overseer-line" \
   'control: removing the forwarded handoff path loses the custom snapshot' "$ERR"
 
+# --- the overseer changing hands under the runtime ---------------------------
+# A controller operation the runtime holds open (lib/overseer-launch.sh §
+# ol_runtime_open_controller_intent, read through `orch-runtime state inspect
+# --fleet`) is a succession, start or stop in flight: the pane reads exited
+# because the runtime's job retired it, and nothing is relaunched beside the
+# successor that job publishes. The pass says so and stops.
+overseer_case transfer_in_flight exited
+state_with "$LINE"
+printf '%s\n' '[{"id":"request-transfer:overseer:3:1-1","op":"request-transfer","target":"overseer:3","outcome":"not-started"}]' \
+  > "$STUB_DIR/runtime.open-intents"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(succeed_calls --dead-pane)|$(succeed_calls --walled-pane)" "0|0" \
+  "an open transfer intent relaunches nothing" "$ERR"
+assert_not_contains "$OUT" "EVENT overseer-dead" "and the pane being replaced is no death" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-transfer-in-flight intent=request-transfer:overseer:3:1-1 op=request-transfer" \
+  "the pass names the intent it defers to" "$ERR"
+assert_eq "$(grep -c '^state inspect --fleet$' "$STUB_DIR/runtime.args")" "2" \
+  "the runtime is asked once per pass, through its inspect" "$ERR"
+# The read failing leaves it unknown whether the overseer is changing hands,
+# and an unknown relaunches nothing either; the next pass asks again.
+overseer_case transfer_unread exited
+state_with "$LINE"
+printf '1\n' > "$STUB_DIR/runtime.inspect-rc"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(succeed_calls --dead-pane)" "0" "an unreadable runtime relaunches nothing" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-transfer-unread cause=runtime-unread" \
+  "the pass names the failed read" "$ERR"
+# The wrapper's setup-required (exit 69) is the binary for the current source
+# key being unavailable, not the fleet holding no intent (decision 109 (9)):
+# with any intents row in the fleet state it is read as runtime-unread, and
+# the pass relaunches nothing; only a fleet with no intents row at all is a
+# fleet a runtime never wrote into, which is judged as before.
+overseer_case transfer_runtime_unbuilt exited
+state_with "$LINE"
+jq '.intents = [{"id":"request-transfer:overseer:3:1-1","op":"request-transfer","target":"overseer:3","outcome":"failed","completed_at":"2026-01-29T15:21:00Z"}]' \
+  "$STUB_DIR/oversee-state.json" > "$STUB_DIR/oversee-state.json.new" && mv "$STUB_DIR/oversee-state.json.new" "$STUB_DIR/oversee-state.json"
+printf '69\n' > "$STUB_DIR/runtime.inspect-rc"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(succeed_calls --dead-pane)" "0" \
+  "a runtime not set up beside a fleet that holds intents relaunches nothing" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-transfer-unread cause=runtime-unread" \
+  "the pass reads setup-required as the runtime unread" "$ERR"
+overseer_case transfer_runtime_unbuilt_bare exited
+state_with "$LINE"
+printf '69\n' > "$STUB_DIR/runtime.inspect-rc"
+run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$RC|$(succeed_calls --dead-pane)" "3|1" \
+  "a fleet with no intents row at all was never written into by a runtime: the death is judged and relaunched" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

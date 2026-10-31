@@ -1058,22 +1058,22 @@ check_once() {
 
 # Timing is advisory: a failed state write cannot alter artifact acceptance.
 # Local ad-hoc keys can name artifacts without a workflow state. The dev
-# entry's kind and end, each receipt's validate_rounds row and the finding
-# occurrences are written here; the round's `validate` stage is not. Its one
-# writer is the runtime: `orch-runtime record-validation-admission` opens it
-# and `accept-result` closes it, so the map below leaves that kind alone.
+# entry's kind, each receipt's validate_rounds row and the finding occurrences
+# are written here; no stage's end is, and the round's `validate` stage is not
+# touched. The runtime is the one writer of a stage's end: `orch-runtime
+# record-validation-admission` opens the validate stage and `accept-result`
+# closes it and the round's own, so the map below sets the kind alone.
 record_stage() {
-  local result="$1" state now
+  local result="$1" state
   state="$("$SCRIPT_DIR/workflow-state" path "$issue" 2>/dev/null)" || return 1
   [[ -f "$state" ]] || return 0
-  now="$(date +%s)" || return 1
-  "$SCRIPT_DIR/workflow-state" update "$issue" --arg round "$round_id" --arg receipt "${file##*/}" --arg original "dev-return-$issue-$round_id.json" --argjson end "$now" \
+  "$SCRIPT_DIR/workflow-state" update "$issue" --arg round "$round_id" --arg receipt "${file##*/}" --arg original "dev-return-$issue-$round_id.json" \
     --slurpfile artifact "$file" --argjson result "$result" '
       include "cause-keys";
       record_occurrences(validation_occurrences($artifact[0]; $receipt))
       | $artifact[0].kind as $kind
       | .stages = ((.stages // []) | map(if .round_id == $round and .kind != "validate"
-          then .kind = $kind | .end //= $end else . end))
+          then .kind = $kind else . end))
       | if $result.validate_time == null then . else
           $result.validate_time as $time
           | .validate_rounds = ([(.validate_rounds // [])[] | select(.round_id != $round or (.receipt // $original) != $receipt)]

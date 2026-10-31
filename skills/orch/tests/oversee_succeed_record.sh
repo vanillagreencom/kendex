@@ -13,6 +13,8 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
+# shellcheck source=lib/runtime-stub.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/runtime-stub.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, the two halves of each control.
@@ -163,6 +165,11 @@ PENDING="$(jq -cn --arg h "$H" '{pending: {launch_line: "pending", harness: "cod
 # environment carries. Sets OUT (stdout), ERR (stderr) and RC.
 run_succeed() {
   fixture_watch_neighbor "${SUCCEED_BIN:-$SUCCEED}"
+  # The runtime the succession is handed to (decision 76): a stand-in beside
+  # the script that records the request; the successor's line is then run
+  # once through the harness stubs, so the argv records read what it gets.
+  fixture_runtime_stub "$(dirname "${SUCCEED_BIN:-$SUCCEED}")" "$TMP_ROOT"
+  rm -f -- "${TMP_ROOT:?}/runtime.request" "${TMP_ROOT:?}/runtime.args"
   local lane="$1"
   shift
   case " $* " in
@@ -177,7 +184,24 @@ run_succeed() {
     ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=0 ORCH_OVERSEER_PREFERENCE="${PREFERENCE:-}" "$lane" \
     "${SUCCEED_BIN:-$SUCCEED}" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(cat -- "$TMP_ROOT/err")"
+  replay_runtime_request
 }
+# The line runs in the successor's recorded directory, where the runtime
+# opens its window; the caller's checkout where the request names none.
+replay_runtime_request() {
+  local line cwd
+  [[ -f "$TMP_ROOT/runtime.request" ]] || return 0
+  line="$(jq -r '.successor.launch_line // empty' "$TMP_ROOT/runtime.request")" || return 1
+  [[ -n "$line" ]] || return 0
+  cwd="$(jq -r '.successor.cwd // empty' "$TMP_ROOT/runtime.request")" || return 1
+  [[ -n "$cwd" && -d "$cwd" ]] || cwd="$TMP_ROOT/work"
+  (cd -- "$cwd" && PATH="$BIN:$PATH" HOME="$H" timeout 1 bash -c "$line") >/dev/null 2>&1 || true
+}
+# A field of the request the script handed the runtime, `none` where absent.
+req() { jq -r ".$1 // \"none\"" "$TMP_ROOT/runtime.request" 2>/dev/null || echo none; }
+# The successor identity the request carries, as `harness account model
+# effort class`, `none` for a class it lacks.
+req_identity() { jq -r '.successor | [.harness, .account, .model, .effort, (.class // "none")] | join(" ")' "$TMP_ROOT/runtime.request" 2>/dev/null || echo none; }
 # judged — the judgement's key and the one figure that says which account and
 # model it read: `headroom` on a below-mark line, `value` on a reached one.
 judged() {
@@ -204,6 +228,10 @@ model_switch_rows() (
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
   cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
+  # The runtime the recovery's succession is handed to (decision 76): the
+  # stand-in that records the request, beside the copied scripts, so the
+  # rows read the request and no real runtime is asked for.
+  fixture_runtime_stub "$scripts" "$TMP_ROOT"
   cp -R -- "$SRC_DIR/../../mailbox" "$TMP_ROOT/work/.agents/skills/mailbox"
   cp -- "$SRC_DIR"/../../github/scripts/lib/*.sh "$TMP_ROOT/work/.agents/skills/github/scripts/lib/"
   cp -- "$TEST_DIR/../../../hooks/lane-mail-check.sh" "$hook"
@@ -294,7 +322,7 @@ BARRIER
     case "$scenario" in native-*) executable=opus recorded=opus ;; esac
     [[ "$relative_dir" == . ]] || executable=${executable%\[1m\]}
     new_caller claude
-    rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/capture-handoff" "${TMP_ROOT:?}/model.snapshot" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done"
+    rm -f -- "${TMP_ROOT:?}/model.argv" "${TMP_ROOT:?}/capture-handoff" "${TMP_ROOT:?}/model.snapshot" "${TMP_ROOT:?}/hold-recovery" "${TMP_ROOT:?}/recovery.ready" "${TMP_ROOT:?}/recovery.release" "${TMP_ROOT:?}/recovery.done" "${TMP_ROOT:?}/runtime.request"
     [[ "$scenario" != displaced ]] || : > "$TMP_ROOT/hold-recovery"
     launch_dir="$TMP_ROOT/work"
     if [[ "$relative_dir" != . ]]; then launch_dir+="/$relative_dir"; fi
@@ -431,12 +459,16 @@ BARRIER
     elif [[ "$scenario" == matching || "$scenario" == native-matching ]]; then
       assert_eq "$(jq -c . "$FLEET_STATE")" "$before" "$scenario models leave fleet state unchanged"
     elif [[ "$scenario" == switched || "$scenario" == custom || "$relative_dir" != . ]]; then
-      deadline=$((SECONDS + 30))
-      while [[ "$SECONDS" -lt "$deadline" ]] && tm list-panes -a -F '#{pane_id}' | grep -Fxq -- "$old_pane"; do sleep 0.05; done
-      after=$(jq -r .overseer.pane "$FLEET_STATE")
-      assert_not_contains "$after" "$old_pane" 'a fallback starts a verified successor' "$TMP_ROOT/work/tmp/model-recovery-overseer.log"
+      # The recovery's succession is the runtime's (decision 76): the
+      # request the hook's detached dispatch hands the stand-in is read, and
+      # its line replayed once through the harness stub for the argv rows.
+      # The successor's launch, publication and watch handover are the
+      # runtime's own (controller rows): the stand-in publishes nothing.
+      await_marker "$TMP_ROOT/runtime.request" || fail "$scenario model recovery hands its succession to the runtime"
+      replay_runtime_request
+      assert_eq "$(req cause)|$(req recovery.session_id)|$(req recovery.pane)" "live|s1|$old_pane" "$scenario model recovery hands the runtime its binding, the record it was acquired against"
       assert_eq "$(cat "$TMP_ROOT/model.argv" 2>/dev/null || :)" "$executable" 'a working successor receives the exact launched model' "$TMP_ROOT/work/tmp/model-recovery-overseer.log"
-      assert_eq "$(jq -r .overseer.account "$FLEET_STATE")" "$H/.claude" 'model recovery retains its account'
+      assert_eq "$(req successor.account)" "$H/.claude" 'model recovery retains its account'
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-switched")]|length' "$FLEET_STATE")" 1 'a fallback records exactly one model-switched event'
       assert_eq "$(jq -r '.fleet_log[] | select(.kind=="model-switched") | .launch_identity.pane' "$FLEET_STATE")" "$old_pane" 'the model event names its predecessor'
       assert_file_contains "$handoff" 'Retain the owner constraint from the previous handoff.' 'model recovery preserves standing handoff notes'
@@ -446,28 +478,12 @@ BARRIER
       assert_eq "$(cat "$TMP_ROOT/model.prompt")" "${BRIEF%tmp/handoffs/OVERSEER-HANDOFF.md}$handoff_path" "$scenario successor prompt retains its handoff destination"
       assert_eq "$(cat "$TMP_ROOT/model.cwd")" "$launch_dir" "$scenario successor keeps the recorded launch directory"
       assert_file_contains "$TMP_ROOT/model.snapshot" "attached-agent=running-agent status=running output=${transcript%.jsonl}/subagents/agent-running-agent.jsonl" "$scenario successor reads the fresh handoff snapshot"
-      deadline=$((SECONDS + 30))
-      until watch_pid_live "$FLEET_STATE" && [[ "$WATCH_PANE" == "$after" && "$WATCH_ORIGIN" == succession ]]; do
-        if (( SECONDS >= deadline )); then fail "$scenario successor watch claims its pane"; break; fi
-        sleep 0.05
-      done
-      watch_handoff=""
-      if watch_argv_read "$FLEET_STATE"; then
-        prompt=""
-        for word in "${WATCH_ARGV[@]}"; do
-          [[ "$prompt" != --handoff ]] || watch_handoff="$word"
-          prompt="$word"
-        done
-      fi
-      assert_eq "$watch_handoff" "$handoff_path" "$scenario watch handover retains its handoff destination"
-      assert_eq "$WATCH_CWD" "$launch_dir" "$scenario watch keeps the handoff resolution directory"
       if [[ -n "$root_handoff" ]]; then
         assert_eq "$(cat "$root_handoff")" "$root_before" "$scenario recovery leaves the repository root handoff unchanged"
       fi
       if [[ "$scenario" == custom ]]; then
         assert_eq "$(cat "$TMP_ROOT/work/tmp/handoffs/OVERSEER-HANDOFF.md")" "$default_before" 'custom model recovery leaves the default handoff unchanged'
       fi
-      CALLER_PANE=$after
     else
       assert_eq "$(jq '[.fleet_log[]? | select(.kind=="model-unavailable")]|length' "$FLEET_STATE")" 1 "$scenario reports unavailable once" "$TMP_ROOT/model.out"
       cause="$scenario"
@@ -785,34 +801,34 @@ assert_eq "$(grep -c '^oversee-succeed: pi-handoff-unmarked' <<<"$ERR" || true)|
   "control: a gate reading the caller's Pi root lets the pool successor open on an unmarked root"
 
 # A pi overseer launched under pi's split spelling, `--provider pi-claude
-# --model <id>`, at its context mark with Fable room on its own account: its
-# successor's record names the model with its provider, so the next
-# generation's turn-end judgement reaches the same claude account.
+# --model <id>`, at its context mark with Fable room on its own account: the
+# successor it hands the runtime names the model with its provider, so the
+# record the runtime publishes for the next generation judges the same claude
+# account. The publication itself, and the next generation's judgement on it,
+# are the runtime's (its controller rows: the typed Pi launch and the
+# publication of the pending's provider-bearing fields); the stand-in here
+# publishes nothing, so the rows end at the request.
 split_row() { # [SUCCEED_BIN]
   new_caller claude
   state "$(record "$CALLER_PANE" "$H/.claude" "" "$(jq -cn --arg cwd "$TMP_ROOT/work" '{harness: "pi", model: null, effort: null, cwd: $cwd}')")"
   SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --context 950000:1000000 --wait-secs 20 \
     -- --provider pi-claude --model claude-fable-5-1 --thinking high
-  SPLIT_RC="$RC"
-  CALLER_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
-  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
 }
 split_row
-assert_eq "$SPLIT_RC|$(jq -r '.overseer | [.harness, .model] | join(" ")' "$FLEET_STATE")|$RC|$(judged)" \
-  "0|pi pi-claude/claude-fable-5-1|0|account-below-mark headroom=90" \
-  "a split --provider launch records the model with its provider, and the next generation is judged on its claude account" "$TMP_ROOT/err"
+assert_eq "$RC|$(req successor.harness)|$(req successor.model)|$(req successor.account)" \
+  "0|pi|pi-claude/claude-fable-5-1|$H/.claude" \
+  "a split --provider launch hands the runtime the model with its provider and the claude seat it spends" "$TMP_ROOT/err"
 SPLITCTL="$(mutant_scripts splitctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$SPLITCTL/lib/overseer-launch.sh" '  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$(launch_choice_model_id "$harness" "$model" launch)" \' \
   '  ol_identity "$harness" "$lane_dir" "$OL_LAUNCH_HOME" "$(launch_choice_value "$(launch_choice_model_spellings "$harness")" "$*")" \'
 split_row "$SPLITCTL/oversee-succeed"
-assert_eq "$(jq -r '.overseer.model' "$FLEET_STATE")|$(judged)" \
-  "claude-fable-5-1|mark-unmeasured kind=headroom reason=headroom-none succession=on" \
-  "control: an identity that reads the bare model word leaves the next generation's account unjudged" "$TMP_ROOT/err"
+assert_eq "$(req successor.model)" "claude-fable-5-1" \
+  "control: an identity that reads the bare model word hands the runtime a model naming no account" "$TMP_ROOT/err"
 # A pi overseer nothing recorded, started with a bare `--model <id>`, whose
-# reading names `pi-claude/<id>`: it hands over at its context mark, and the
-# successor runs and records the provider-bearing model its account was chosen
-# from, so the next generation's judgement and succession read the claude
-# account rather than a bare model that names none.
+# reading names `pi-claude/<id>`: it hands over at its context mark with the
+# provider-bearing model its account was chosen from, so the record the
+# runtime publishes names the claude account rather than a bare model that
+# names none.
 bare_row() { # [SUCCEED_BIN]
   new_caller
   mkdir -p "$MAILBOX_DIR"
@@ -820,25 +836,19 @@ bare_row() { # [SUCCEED_BIN]
   state null
   SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --context 950000:1000000 --wait-secs 20 \
     -- --model claude-fable-5-1 --thinking high
-  BARE_RC="$RC" BARE_MODEL="$(jq -r '.overseer.model' "$FLEET_STATE")"
-  CALLER_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
-  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --check-marks
-  BARE_JUDGED="$(judged)"
-  SUCCEED_BIN="${1:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --context 950000:1000000 --wait-secs 20 \
-    -- --model claude-fable-5-1 --thinking high
 }
 bare_row
-assert_eq "$BARE_RC|$BARE_MODEL|$BARE_JUDGED|$RC|$(jq -r '.overseer.model' "$FLEET_STATE")" \
-  "0|pi-claude/claude-fable-5-1|account-below-mark headroom=90|0|pi-claude/claude-fable-5-1" \
-  "a bare --model pi overseer hands over on its reading's provider, and the next generation judges and hands over on the claude account" "$TMP_ROOT/err"
-# Its control: a successor that runs, and records, its caller's bare flag
-# leaves the next generation's succession refusing an account it cannot name.
+assert_eq "$RC|$(req successor.model)" \
+  "0|pi-claude/claude-fable-5-1" \
+  "a bare --model pi overseer hands over on its reading's provider" "$TMP_ROOT/err"
+# Its control: a successor handed its caller's bare flag names no account for
+# the next generation to judge.
 BARECTL="$(mutant_scripts barectl oversee-succeed)" || exit 1
 mutate_file "$BARECTL/oversee-succeed" '  if [[ "$CALLER_HARNESS" == pi && "$CALLER_MODEL" == ?*/?* ]]; then' '  if false; then'
 bare_row "$BARECTL/oversee-succeed"
-assert_eq "$BARE_MODEL|$RC|$(grep -m1 -o '^oversee-succeed: pi-account-unknown [^ ]*' <<<"$ERR")" \
-  "claude-fable-5-1|1|oversee-succeed: pi-account-unknown model=claude-fable-5-1" \
-  "control: a successor recording the bare flag leaves the next generation refusing pi-account-unknown"
+assert_eq "$RC|$(req successor.model)" \
+  "0|claude-fable-5-1" \
+  "control: a successor handed the bare flag names no provider, and so no account"
 
 # The control for the model rule: a caller that ignores the record's model is
 # judged on the reading's.
@@ -1045,9 +1055,8 @@ printf 'payload.context_window = usage.contextWindow;\n' > "$PI_CARRIER"
 DEAD_LINE="claude -n overseer $BYPASS 'relaunched from the record'"
 printf '%s\n' "$DEAD_LINE" > "$TMP_ROOT/line-file"
 # dead_relaunch EXTRA_JSON [SUCCEED_BIN] — a dead pane the record names with
-# EXTRA_JSON merged over its record, relaunched; sets SUCC_PANE to the pane the
-# record then names, DEAD_PANE_CWD to the dead pane's own directory and
-# SUCC_CWD to the successor pane's.
+# EXTRA_JSON merged over its record, its relaunch handed to the runtime under
+# `cause: dead`; sets DEAD_PANE_CWD to the dead pane's own directory.
 dead_relaunch() {
   local dead
   new_caller claude
@@ -1056,12 +1065,6 @@ reading "Fable 5.1"
   DEAD_PANE_CWD="$(tm display-message -p -t "$dead" '#{pane_current_path}')"
   state "$(record "$dead" "$H/.eclaude" fable "$1")"
   SUCCEED_BIN="${2:-}" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --dead-pane "$dead" --line-file "$TMP_ROOT/line-file" --wait-secs 20
-  SUCC_PANE="$(jq -r '.overseer.pane' "$FLEET_STATE")"
-  SUCC_CWD="$(tm display-message -p -t "$SUCC_PANE" '#{pane_current_path}')"
-}
-# print_on_successor — the successor pane's own --print-launch-line.
-print_on_successor() {
-  CALLER_PANE="$SUCC_PANE" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
 }
 OWN="$(jq -cn --arg line "$DEAD_LINE" '{launch_line: $line, class: "top"}')"
 PENDING_OWN="$(jq -cn --arg line "$DEAD_LINE" --arg a "$H/.claude" '{launch_line: "the dead session line", class: "top",
@@ -1072,130 +1075,123 @@ for row in \
   ; do
   IFS='|' read -r row_extra row_account row_model row_effort row_class row_what <<<"$row"
   dead_relaunch "$row_extra"
-  assert_eq "$RC|$(jq -r '.overseer | [.harness, .account, .model, .effort, (.class // "none"), (.pending // "none")] | join(" ")' "$FLEET_STATE")" \
-    "0|claude $row_account $row_model $row_effort $row_class none" \
-    "--dead-pane over $row_what records the identity that line was built with" "$TMP_ROOT/err"
-  print_on_successor
-  print_model="$row_model"
-  assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$row_account' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model $print_model --effort $row_effort $LEAD $BYPASS '$BRIEF'" \
-    "and the relaunched session's own print over $row_what reads its record" "$TMP_ROOT/err"
+  assert_eq "$RC|$(req cause)|$(req_identity)|$(req successor.launch_line)|$(jq -r '.overseer.pending // "none"' "$FLEET_STATE")" \
+    "0|dead|claude $row_account $row_model $row_effort $row_class|$DEAD_LINE|$(jq -r '.overseer.pending // "none"' "$FLEET_STATE")" \
+    "--dead-pane over $row_what hands the runtime the identity that line was built with, under cause dead, and writes no pending" "$TMP_ROOT/err"
 done
 # A replay with no identity refuses before it can produce an unidentified successor.
 DEADCTL="$(mutant_scripts deadctl oversee-succeed)" || exit 1
 mutate_file "$DEADCTL/oversee-succeed" '! ol_record_line_identity "$cmd"; then' '! ol_identity "" "" "" "" "" ""; then'
 dead_relaunch "$OWN" "$DEADCTL/oversee-succeed"
-unidentified_successors="$(tm list-windows -t fleet -F '#{window_name}' | awk '$0 == "overseer" {n++} END {print n+0}')"
-assert_eq "$RC|$(sed -n 1p <<<"$ERR")|$unidentified_successors" \
-  '1|oversee-succeed: launch-choice-failed reason=permission-unrecorded harness=none word=|0' \
-  "control: a replay with no identity refuses and produces no unidentified successor"
+assert_eq "$RC|$(sed -n 1p <<<"$ERR")|$(req cause)" \
+  '1|oversee-succeed: launch-choice-failed reason=permission-unrecorded harness=none word=|none' \
+  "control: a replay with no identity refuses and asks the runtime for nothing"
 # The control: a projection of the six positional fields alone drops the class.
 DEADCLASSCTL="$(mutant_scripts deadclassctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$DEADCLASSCTL/lib/overseer-launch.sh" \
   'def line_identity: ol_identity + (if has("class") then {class} else {} end);' 'def line_identity: ol_identity;'
 dead_relaunch "$PENDING_OWN" "$DEADCLASSCTL/oversee-succeed"
-assert_eq "$RC|$(jq -r '.overseer.class // "none"' "$FLEET_STATE")" "0|none" \
-  "control: a relaunch that projects no class records none"
-# A relaunch of a pending successor opens in the directory that successor was
-# built for, the one its record then names, not the dead pane's own.
+assert_eq "$RC|$(req successor.class)" "0|none" \
+  "control: a relaunch that projects no class hands none"
+# A relaunch of a pending successor names the directory that successor was
+# built for, the one the runtime opens it in, not the dead pane's own.
 DEAD_CWD="$TMP_ROOT/dead-cwd"
 mkdir -p "$DEAD_CWD"
 DEAD_CWD="$(cd "$DEAD_CWD" && pwd -P)"
 PENDING_CWD="$(jq -c --arg cwd "$DEAD_CWD" '.pending.cwd = $cwd' <<<"$PENDING_OWN")"
 dead_relaunch "$PENDING_CWD"
-assert_eq "$RC|$SUCC_CWD|$(jq -r '.overseer.cwd' "$FLEET_STATE")" "0|$DEAD_CWD|$DEAD_CWD" \
-  "--dead-pane over a pending successor opens in the directory it records"
-DEADCWDCTL="$(mutant_scripts deadcwdctl oversee-succeed)" || exit 1
-mutate_file "$DEADCWDCTL/oversee-succeed" '[[ -z "$replay_cwd" ]] || CALLER_PATH="$replay_cwd"' ':'
-dead_relaunch "$PENDING_CWD" "$DEADCWDCTL/oversee-succeed"
-assert_eq "$RC|$SUCC_CWD" "0|$DEAD_PANE_CWD" \
-  "control: a relaunch that ignores the replayed directory opens in the dead pane's"
+assert_eq "$RC|$(req successor.cwd)" "0|$DEAD_CWD" \
+  "--dead-pane over a pending successor hands the runtime the directory it records"
+assert_eq "$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
+  "[\"bypass\",[\"$BYPASS\"]]" \
+  "and the permission words the replayed line carries, under the posture they spell (decision 120, M1)"
 
-# --- the pending successor, as a succession writes it ---------------------
-# A workflow-state stand-in snapshots the record at the moment the succession
-# writes its pending successor, before that window opens. The caller's record
-# names .eclaude, at its trigger, and a directory of its own; the preference's
-# entry picks .claude on its own model and effort.
+# --- the successor, as a succession hands it to the runtime ----------------
+# The runtime stand-in records the request the script makes. The caller's
+# record names .eclaude, at its trigger, and a directory of its own; the
+# preference's entry picks .claude on its own model and effort.
 RECORDED_CWD="$TMP_ROOT/recorded-cwd"
 mkdir -p "$RECORDED_CWD"
 RECORDED_CWD="$(cd "$RECORDED_CWD" && pwd -P)"
-# pending_run SCRIPTS_DIR — that succession over SCRIPTS_DIR with the stand-in;
-# sets SNAP to the record the pending write left, CALLER_CWD to the caller
-# pane's own directory and SUCC_CWD to the successor pane's.
+# pending_run SCRIPTS_DIR — that succession over SCRIPTS_DIR; sets CALLER_CWD
+# to the caller pane's own directory.
 pending_run() {
   local dir="$1"
-  rm -f -- "${dir:?}/workflow-state" "${TMP_ROOT:?}/pending.snap"
-  cat > "$dir/workflow-state" <<STUB
-#!/usr/bin/env bash
-if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then
-  source "$SRC_DIR/workflow-state" || return \$?
-  return 0
-fi
-"$SRC_DIR/workflow-state" "\$@" || exit
-[[ "\$1 \$2 \$4 \$5 \$6" != "update-report oversee --arg operation pending" ]] || jq -c .overseer "$FLEET_STATE" > "$TMP_ROOT/pending.snap"
-STUB
-  chmod +x "$dir/workflow-state"
   new_caller claude
 reading "Fable 5.1"
   CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
   SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
-  SNAP="$(cat -- "$TMP_ROOT/pending.snap" 2>/dev/null || echo none)"
-  SUCC_CWD="$(tm display-message -p -t "$(jq -r '.overseer.pane' "$FLEET_STATE")" '#{pane_current_path}')"
 }
 SUCC_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable-next --effort low $LEAD $BYPASS '$BRIEF'"
 pending_run "$(mutant_scripts pendingrun)"
-assert_eq "$RC|$(jq -r '.pending | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' <<<"$SNAP")" \
+assert_eq "$RC|$(jq -r '.successor | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' "$TMP_ROOT/runtime.request")" \
   "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \
-  "a succession writes its successor's line and identity as pending before the window opens" "$TMP_ROOT/err"
-assert_eq "$(jq -r '[.account, .model, .launch_line] | join("|")' <<<"$SNAP")" "$H/.eclaude|fable|recorded" \
-  "and leaves the caller's own account, model and line as they were"
-assert_eq "$SUCC_CWD" "$RECORDED_CWD" "the successor opens in the directory the caller's record names"
-# The pending rule's producer control: a pending write under another key leaves
-# a death mid-succession nothing to replay.
-PENDWCTL="$(mutant_scripts pendwctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$PENDWCTL/lib/overseer-launch.sh" '$identity + {launch_line: $line}' '$identity + {line: $line}'
-pending_run "$PENDWCTL"
-assert_eq "$RC|$(jq -r '.pending.launch_line // "none"' <<<"$SNAP")" "0|none" \
-  "control: a pending write under another key records no line to replay"
-# The directory rule's control: a caller that ignores its recorded directory
-# opens the successor in the pane's own.
-CWDCTL="$(mutant_scripts cwdctl oversee-succeed)" || exit 1
-mutate_file "$CWDCTL/oversee-succeed" '  [[ -z "$OL_KNOWN_CWD" ]] || CALLER_PATH="$OL_KNOWN_CWD"' '  :'
-pending_run "$CWDCTL"
-assert_eq "$RC|$SUCC_CWD" "0|$CALLER_CWD" \
-  "control: a caller that ignores its recorded directory opens the successor in the pane's"
-# A session record write the state refuses is a notice here: the succession
-# commits, the caller's window closed and the successor in its slot.
-recordfail_run() { # SCRIPTS_DIR
-  local dir="$1"
-  rm -f -- "${dir:?}/workflow-state" "${TMP_ROOT:?}/record-refused"
-  cat > "$dir/workflow-state" <<STUB
-#!/usr/bin/env bash
-if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then
-  source "$SRC_DIR/workflow-state" || return \$?
-  return 0
-fi
-if [[ "\$1 \$2 \$4 \$5 \$6" == "update-report oversee --arg operation current" && ! -e "$TMP_ROOT/record-refused" ]]; then
-  touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
-fi
-exec "$SRC_DIR/workflow-state" "\$@"
-STUB
-  chmod +x "$dir/workflow-state"
+  "a succession hands the runtime its successor's line and identity, the directory the caller's record names included" "$TMP_ROOT/err"
+# The typed launch fields the runtime builds the command from (decisions 109
+# (5), 115 (E), 120): a same-harness successor carrying a full-bypass word
+# runs the `bypass` posture, and its argv reaches the runtime exactly as
+# given; the builder derives the environment and adds no second word.
+assert_eq "$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
+  "[\"bypass\",[\"$BYPASS\"]]" \
+  "and the caller's full-bypass word spells the bypass posture, its argv kept as given"
+assert_eq "$(jq -r '[.account, .model, .launch_line, (.pending // "none")] | join("|")' <<<"$(jq -c .overseer "$FLEET_STATE")")" "$H/.eclaude|fable|recorded|none" \
+  "and writes nothing: the caller's own account, model and line stand, with no pending"
+assert_eq "$(jq -r '.expected | [.server, .pane, .generation, .cwd] | join("|")' "$TMP_ROOT/runtime.request")" \
+  "$(jq -r '.overseer | [.server, .pane, (.generation|tostring), .cwd] | join("|")' "$FLEET_STATE")" \
+  "the request names the record the script read, for the runtime's compare-and-swap"
+# A narrower permission word (decision 124a (4)): the posture is judged
+# `bypass` only from the launch table's full-bypass column, so a caller on
+# `--permission-mode dontAsk` hands the runtime `native` with its words as
+# given, and the successor runs no wider than its caller.
+same_harness_words() { # WORD...
   new_caller claude
   reading "Fable 5.1"
-  state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
-  SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
-  CALLER_LISTED="$(tm list-panes -a -F '#{pane_id}' | grep -cxF -- "$CALLER_PANE" || true)"
+  state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
+  PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$@"
 }
-recordfail_run "$(mutant_scripts recordfail)"
-assert_eq "$RC|$(grep -c '^oversee-succeed: record-unwritten field=overseer step=write$' <<<"$ERR")|$CALLER_LISTED" \
-  "0|1|0" \
-  "a record write the state refuses is a notice, and the succession commits" "$TMP_ROOT/err"
-RECNOTICECTL="$(mutant_scripts recnoticectl oversee-succeed)" || exit 1
-mutate_file "$RECNOTICECTL/oversee-succeed" '      message record-unwritten field=overseer step=write >&2' '      return 1'
-recordfail_run "$RECNOTICECTL"
-assert_eq "$RC|$CALLER_LISTED" "1|1" \
-  "control: a hook that refuses on the failed record write keeps the caller running"
+same_harness_words --permission-mode dontAsk
+assert_eq "$RC|$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
+  '0|["native",["--permission-mode","dontAsk"]]' \
+  "a narrower permission word keeps the native posture with the caller's words as given (decision 124a (4))" "$TMP_ROOT/err"
+# Decision 124b (5), M1: a prompt word that merely holds a full-bypass
+# spelling as text is not a permission word, so the posture stays native and
+# the word reaches the request whole; the bridge reads the words as the
+# arguments they are, never joined and re-split.
+same_harness_words --append-system-prompt "never run with --dangerously-skip-permissions"
+assert_eq "$RC|$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
+  '0|["native",["--append-system-prompt","never run with --dangerously-skip-permissions"]]' \
+  "a prompt word holding a bypass spelling as text judges native (decision 124b)" "$TMP_ROOT/err"
+# Decision 124b (7), R-U4g4 L4: a newline word reaches the request whole
+# through the full bridge where a permission word stands early; the U4g4
+# report's claim that this always dies launch-trust-missing is withdrawn.
+same_harness_words --permission-mode dontAsk --append-system-prompt $'first\nsecond'
+assert_eq "$RC|$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
+  '0|["native",["--permission-mode","dontAsk","--append-system-prompt","first\nsecond"]]' \
+  "a newline word reaches the request whole through the bridge (decision 124b)" "$TMP_ROOT/err"
+# The request's argv encoder (decision 124 (6)): the one line of the script
+# under test that encodes the caller's words, run on a value holding a
+# newline and one holding a space. jq's positional arguments carry each word
+# whole; the newline-delimited text the legacy encoder read split it.
+ENCODER_LINE="$(grep -F "jq -n '\$ARGS.positional' --args --" "$SRC_DIR/oversee-succeed")"
+assert_eq "$(grep -cF "jq -n '\$ARGS.positional' --args --" "$SRC_DIR/oversee-succeed")" "1" \
+  "the script encodes the request's argv on one line, with jq's positional arguments"
+encoded="$(
+  DEP_ERR="$TMP_ROOT/encoder.err"
+  die() { echo "die $*" >&2; exit 1; }
+  SUCC_WORDS=(--append-system-prompt $'first\nsecond' "two words")
+  eval "$ENCODER_LINE" && jq -c . <<<"$succ_words"
+)"
+assert_eq "$encoded" '["--append-system-prompt","first\nsecond","two words"]' \
+  "a value with an embedded newline, and one with a space, reach the request as one argv element each"
+# The line rule's producer control: a request carrying the line under another
+# key leaves a death mid-succession nothing to replay.
+LINECTL="$(mutant_scripts linectl oversee-succeed)" || exit 1
+mutate_file "$LINECTL/oversee-succeed" 'successor: (($identity // {}) + {launch_line: $line, permission: $permission, extra_args: $words}),' \
+  'successor: (($identity // {}) + {line: $line, permission: $permission, extra_args: $words}),'
+pending_run "$LINECTL"
+assert_eq "$RC|$(req successor.launch_line)" "0|none" \
+  "control: a successor handed under another key records no line to replay"
 
 # --- the succession -------------------------------------------------------
 # A live succession judges the account and model its record names: .eclaude at
@@ -1210,12 +1206,96 @@ assert_eq "$RC|$(grep -o '^oversee-succeed: no-lane-qualifies .* mark=headroom' 
   "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=headroom|0" \
   "a succession is judged on its record's account and model, and opens nothing where none has room"
 
+
+# --- the bridge's request through the real builder (decision 120, H1) -------
+# The request the script hands the runtime, fed to the shipped runtime with
+# the record stubs as the harnesses, so the home and account the bridge
+# supplies are read off what the builder launched, never off a hand-made
+# request. The runtime is the one `scripts/setup` placed in the cache; where
+# it is absent these rows skip with a line, since nothing here may compile.
+RUST_FIXTURES="$TEST_DIR/rust/fixtures"
+RUNTIME="$SRC_DIR/orch-runtime"
+RUNTIME_READY=0
+if AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-}" "$RUNTIME" version >/dev/null 2>"$TMP_ROOT/runtime.version"; then
+  RUNTIME_READY=1
+else
+  echo "  skip  $(sed -n 1p "$TMP_ROOT/runtime.version"); the bridge-to-builder rows did not run"
+fi
+# replay_request CWD — the recorded request through the real runtime, the
+# caller pane's own process standing as the predecessor's identity (the
+# never-ready record stubs abandon before anything is retired), and the launch
+# record the stub wrote in CWD waited for. Sets LAUNCHED to that record's JSON,
+# `none` where none appeared.
+replay_request() { # CWD
+  local cwd="$1" pid start n=0
+  LAUNCHED=none
+  rm -f -- "$cwd/launch-record.json"
+  pid="$(tm display-message -p -t "$CALLER_PANE" '#{pane_pid}')"
+  start="$(set -- $(sed 's/.*) //' "/proc/$pid/stat"); printf 'ticks:%s' "${20}")"
+  jq --arg pid "$pid" --arg start "$start" '.overseer += {harness_pid: $pid, harness_start: $start}' \
+    "$FLEET_STATE" > "$TMP_ROOT/replay-state" && mv -- "$TMP_ROOT/replay-state" "$FLEET_STATE"
+  (cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" TMUX="$TMUX_ADDR" ORCH_TMUX_SESSION=fleet \
+    ORCH_HARNESS_BINARIES="claude=$RUST_FIXTURES/stub-record/claude,codex=$RUST_FIXTURES/stub-record/codex,pi=$RUST_FIXTURES/stub-record/pi" \
+    ORCH_LANE_CLOSE_SECS=2 ORCH_STATE_DIR="" ORCH_JOB_UNIT="$SRC_DIR/lib/job-unit.sh" \
+    LANE_MAIL_CLI="$RUST_FIXTURES/lane-mail-quiet/lane-mail" DEV_VALIDATE_CLI="$RUST_FIXTURES/dev-validate-quiet/dev-validate-run" \
+    ORCH_WATCH_HANDOVER="$RUST_FIXTURES/watch-handover-quiet/watch-handover.sh" AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-}" \
+    "$RUNTIME" --state-dir "$TMP_ROOT/work/tmp" op --fleet --request "$TMP_ROOT/runtime.request" \
+    > "$TMP_ROOT/replay.out" 2>"$TMP_ROOT/replay.err") || true
+  while (( n < 100 )) && [[ ! -f "$cwd/launch-record.json" ]]; do
+    sleep 0.2
+    n=$((n + 1))
+  done
+  [[ ! -f "$cwd/launch-record.json" ]] || LAUNCHED="$(cat "$cwd/launch-record.json")"
+}
+launched() { jq -r "$1" <<<"$LAUNCHED" 2>/dev/null || echo unread; }
+if (( RUNTIME_READY )); then
+  # Pi on the pi-claude provider: the bridge names Pi's own root as the home
+  # and the claude seat as the account, and the builder puts each in its own
+  # variable.
+  split_row
+  assert_eq "$RC|$(req successor.home)|$(req successor.account)" "0|$PI_AGENT|$H/.claude" \
+    "a pi successor's request names Pi's own root as its home and the claude seat as its account" "$TMP_ROOT/err"
+  replay_request "$TMP_ROOT/work"
+  assert_eq "$(launched '[.program, .env.PI_CODING_AGENT_DIR, .env.CLAUDE_CONFIG_DIR] | join("|")')" \
+    "$RUST_FIXTURES/stub-record/pi|$PI_AGENT|$H/.claude" \
+    "and the real builder launches pi on its own root with the claude seat routed" "$TMP_ROOT/replay.err"
+
+  # A claude caller succeeded by codex (decision 115 (D)): the bridge supplies
+  # the trust home it prepared, a private home under the account, and the
+  # builder launches codex under it, never under the account.
+  new_caller claude
+  reading "Fable 5.1"
+  state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
+  PREFERENCE='codex:gpt-6.1-sol:high' run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
+  CODEX_TRUST_HOME="$(req successor.home)"
+  assert_eq "$RC|$(req successor.harness)|$(req successor.account)|$(req successor.permission)|$(req extra_args)|$([[ "$CODEX_TRUST_HOME" == "$H/.codex/"* && "$CODEX_TRUST_HOME" != "$H/.codex" ]] && echo prepared-home || echo "$CODEX_TRUST_HOME")" \
+    "0|codex|$H/.codex|bypass|none|prepared-home" \
+    "a codex successor's request names the prepared trust home under the account, under the bypass posture with none of the caller's words" "$TMP_ROOT/err"
+  replay_request "$RECORDED_CWD"
+  assert_eq "$(launched '[.program, .env.CODEX_HOME, ([.argv[] | select(. == "--dangerously-bypass-approvals-and-sandbox")] | length)] | join("|")')" \
+    "$RUST_FIXTURES/stub-record/codex|$CODEX_TRUST_HOME|1" \
+    "and the real builder launches codex under the prepared trust home with its bypass word once" "$TMP_ROOT/replay.err"
+
+  # A codex predecessor's bypass line succeeded by claude (round-2 item 1):
+  # the walk writes the bypass posture for another harness, and the builder
+  # spells claude's bypass word once with both prompt-suppression values.
+  new_caller
+  reading "Fable 5.1"
+  state "$(record "$CALLER_PANE" "$H/.codex" gpt-5 "$(jq -cn --arg cwd "$RECORDED_CWD" '{harness: "codex", cwd: $cwd, launch_line: "codex --dangerously-bypass-approvals-and-sandbox -m gpt-5"}')")"
+  PREFERENCE=claude:fable-next:low run_succeed "CODEX_HOME=$H/.codex" --harness codex --context 950000:1000000 --wait-secs 20
+  assert_eq "$RC|$(req successor.harness)|$(req successor.account)|$(req successor.permission)|$(jq -c '.successor.extra_args' "$TMP_ROOT/runtime.request" 2>/dev/null)" \
+    "0|claude|$H/.claude|bypass|[]" \
+    "a claude successor to a codex bypass predecessor runs the bypass posture with no replayed codex word" "$TMP_ROOT/err"
+  replay_request "$RECORDED_CWD"
+  assert_eq "$(launched '[([.argv[] | select(. == "--dangerously-skip-permissions")] | length), .env.CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT, .env.CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT, .env.CLAUDE_CONFIG_DIR] | map(tostring) | join("|")')" \
+    "1|1|1|$H/.claude" \
+    "and the real builder launches claude with its bypass word once and both prompt-suppression values set" "$TMP_ROOT/replay.err"
+fi
+
 model_switch_rows || fail 'overseer model-switch behavior'
-succession_binding_rows || fail 'succession write ownership'
-for control in words identity handoff binding destination base; do
+for control in words identity handoff destination base; do
   status=0
   control_args=--model-switch
-  [[ "$control" != binding ]] || control_args=--succession-binding
   MODEL_OWNER_CONTROL="$control" "$BASH" "${BASH_SOURCE[0]}" "$control_args" >"$TMP_ROOT/model-$control.log" 2>&1 || status=$?
   if [[ -n "${MODEL_CONTROL_LOG_DIR:-}" ]]; then
     mkdir -p -- "$MODEL_CONTROL_LOG_DIR"
@@ -1224,7 +1304,6 @@ for control in words identity handoff binding destination base; do
   failure='^  FAIL  a working successor receives the exact launched model$'
   [[ "$control" != identity ]] || failure='^  FAIL  matching watch record retains the executable selector$'
   [[ "$control" != handoff ]] || failure='^  FAIL  model recovery preserves standing handoff notes$'
-  [[ "$control" != binding ]] || failure='^  FAIL  pending-unwritten refuses a displaced writer$'
   [[ "$control" != destination ]] || failure='^  FAIL  custom model recovery retains its active agent and output path$'
   [[ "$control" != base ]] || failure='^  FAIL  sub-custom successor reads the fresh handoff snapshot$'
   if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/model-$control.log"; then

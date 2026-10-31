@@ -248,6 +248,9 @@ WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/../../mailbox/scripts/lane-mail}"
 LANE_CLOSE="${OVERSEE_WATCH_LANE_CLOSE:-$SCRIPT_DIR/lane-close}"
 SUCCEED="${OVERSEE_WATCH_SUCCEED:-$SCRIPT_DIR/oversee-succeed}"
+# The orch runtime, whose open controller intents say whether the overseer is
+# changing hands (lib/overseer-launch.sh § ol_runtime_open_controller_intent).
+RUNTIME="${OVERSEE_WATCH_RUNTIME:-$SCRIPT_DIR/orch-runtime}"
 LANES_CLI="${OVERSEE_WATCH_LANES:-$SCRIPT_DIR/lanes}"
 REPORT_CLI="${OVERSEE_WATCH_REPORT:-$SCRIPT_DIR/oversee-report}"
 OPEN_TERMINAL="${OVERSEE_WATCH_OPEN_TERMINAL:-$SCRIPT_DIR/open-terminal}"
@@ -4388,6 +4391,20 @@ check_overseer() {
     || { overseer_note overseer-unwatched "var=TMUX_PANE"; return 0; }
   [[ -x "$WORKFLOW_STATE" ]] \
     || { overseer_note overseer-unwatched "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"; return 0; }
+  # A controller operation the runtime holds open is the overseer changing
+  # hands: its detached job retires the predecessor and publishes the
+  # successor, so this pane is being replaced, not dying, and nothing is
+  # judged or relaunched beside it. A runtime that cannot answer leaves that
+  # unknown, and an unknown authorizes no relaunch either.
+  local open_rc=0
+  DEP_ERR="$errf" ol_runtime_open_controller_intent "$RUNTIME" "$STATE_FILE" "$WORKFLOW_STATE" || open_rc=$?
+  case "$open_rc" in
+    0) overseer_note overseer-transfer-in-flight "intent=$OL_RUNTIME_INTENT" "op=$OL_RUNTIME_INTENT_OP"; return 1 ;;
+    1) ;;
+    *) overseer_note overseer-transfer-unread "cause=${OL_REASON:-runtime-unread}"
+       [[ ! -s "$errf" ]] || cat -- "$errf" >&2
+       return 1 ;;
+  esac
 
   overseer_pane_read "$pane" || return 0
   window="$OV_WINDOW"

@@ -36,6 +36,17 @@
 #       runs the moment it starts:
 #         runner=systemd|setsid
 #         unit=UNIT            where runner=systemd
+#         pid=PID              where runner=setsid: the job's pid and its
+#         start=ticks:N        kernel start, read by the launcher before it
+#                              returns; the runner line carries both too
+#         status=WORD          where a launch-failed path after this
+#                              pre-write ended the launch and read its
+#                              process group empty: the word the runtime
+#                              reads as nothing started, in place of an
+#                              identity (identity-unread, exited-N,
+#                              record-unwritable); unwound-failed where the
+#                              group could not be read empty, which the
+#                              runtime holds as a job possibly started
 #         line=RUNNER_LINE
 #       --cap is the unit's RuntimeMaxSec, from the timeout the caller already
 #       has: set above that bound plus the kill grace, so the job's own bound
@@ -48,11 +59,19 @@
 #       A systemd-run that fails after the probe answered falls back to setsid
 #       only where the manager has no unit of that name: its call can time out
 #       while the manager still starts the unit, which is then the job.
-#       Exit 0 launched; 1 RECORD could not be written (record-unwritable); 2
-#       no setsid where the fallback needs it (missing-command); 3 usage; 4
-#       the job was not started (launch-failed: setsid's exit status, or a
-#       unit the manager would not describe); 5 --memory-max where the job
-#       would run under setsid (memory-max-unheld, with the runner line).
+#       Exit 0 launched; 1 RECORD could not be written (record-unwritable,
+#       with `status=WORD` once a forked child was unwound, and
+#       `record=unwritable` where the ended record could not be written
+#       either, so the reply alone carries the status); 2 no setsid where the
+#       fallback needs it (missing-command); 3 usage; 4 the job was not
+#       started (launch-failed with the same `status=WORD` and
+#       `record=unwritable` fields: `status=N`, the child's exit status, where
+#       it exited before its row was read and the record says `exited-N`,
+#       `status=identity-unread` where its row could not be read,
+#       `status=unwound-failed` where its group could not be read empty; or a
+#       unit the manager would not describe); 5 --memory-max
+#       where the job would run under setsid (memory-max-unheld, with the
+#       runner line).
 #   job-unit.sh attach RECORD -- ARGV...
 #       Run ARGV attached: a child of this process, in its session, working
 #       directory and environment, that leads a process group of its own,
@@ -113,6 +132,8 @@ JOB_UNIT_KILL_GRACE=10
 JOB_UNIT_RUNNER=""
 JOB_UNIT_NAME=""
 JOB_UNIT_LINE=""
+JOB_UNIT_PID=""
+JOB_UNIT_START=""
 JOB_UNIT_ERROR=""
 JOB_UNIT_ERROR_KEY=""
 
@@ -184,8 +205,70 @@ job_unit_record() { # RECORD
   {
     printf 'runner=%s\n' "$JOB_UNIT_RUNNER"
     [[ -z "$JOB_UNIT_NAME" ]] || printf 'unit=%s\n' "$JOB_UNIT_NAME"
+    [[ -z "$JOB_UNIT_PID" ]] || printf 'pid=%s\nstart=%s\n' "$JOB_UNIT_PID" "$JOB_UNIT_START"
     printf 'line=%s\n' "$JOB_UNIT_LINE"
   } > "$1.part" && mv -- "$1.part" "$1"
+}
+
+# Rewrite the pre-written record with the launch's ended STATUS, the value
+# the runtime reads as nothing started (decision 120): a launch-failed path
+# after the record's pre-write names no identity, so a later read settles the
+# job by this word rather than holding it unread. An `unwound-failed` status
+# keeps the group's key on every post-fork path, `pgid=` (the child's pid,
+# which its group carries while any member runs), and the leader's pid and
+# start where the launcher read them: the runtime reads that group by the
+# identity, else by the key alone, on every reconcile until it empties
+# (decisions 124g (31), 124h (33)). Status 1 where the record could not be
+# written; the caller then carries the status on its reply, the one place the
+# runtime can read it from.
+job_unit_record_ended() { # RECORD STATUS
+  {
+    printf 'runner=%s\n' "$JOB_UNIT_RUNNER"
+    printf 'status=%s\n' "$2"
+    [[ "$2" != unwound-failed || -z "$JOB_UNIT_PID" ]] || printf 'pgid=%s\n' "$JOB_UNIT_PID"
+    [[ "$2" != unwound-failed || -z "$JOB_UNIT_START" ]] || printf 'pid=%s\nstart=%s\n' "$JOB_UNIT_PID" "$JOB_UNIT_START"
+    printf 'line=%s\n' "$JOB_UNIT_LINE"
+  } > "$1.part" && mv -- "$1.part" "$1"
+}
+
+# Whether the process group PGID reads empty in the kernel's own table: no
+# running process names it as its group, zombies left out, since they run
+# nothing and their parents reap them. Three answers (decision 124f (27)):
+# status 0 where every row read and none is a running member; 1 where a
+# member still runs; 2 where the table, or a row of a process that still
+# stands, cannot be read or parsed, so an unreadable row is unknown and
+# never reads as a member gone. A row gone between the listing and the read
+# is a process that exited, no member.
+job_unit_group_empty() { # PGID
+  local stat row rest fields unknown=0
+  [[ -d /proc/self ]] || return 2
+  for stat in /proc/[0-9]*/stat; do
+    { IFS= read -r row < "$stat"; } 2>/dev/null || { [[ ! -e "$stat" ]] || unknown=1; continue; }
+    rest="${row##*)}"
+    if ! read -r -a fields <<<"$rest" || [[ ! "${fields[2]:-}" =~ ^[0-9]+$ || -z "${fields[0]:-}" ]]; then
+      unknown=1
+      continue
+    fi
+    [[ "${fields[2]}" == "$1" ]] || continue
+    [[ "${fields[0]}" == Z ]] || return 1
+  done
+  [[ "$unknown" -eq 0 ]] || return 2
+  return 0
+}
+
+# The one reader of a process's kernel row: its state and its start in clock
+# ticks, from /proc/PID/stat, the fields after the command name's closing
+# parenthesis so a name with spaces moves nothing. Prints `STATE ticks:N`;
+# status 1 where the row cannot be read or the start is not a number, and
+# nothing is ever manufactured in its place.
+job_unit_proc_identity() { # PID
+  local row rest
+  row="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+  rest="${row##*)}"
+  # shellcheck disable=SC2086
+  set -- $rest
+  [[ "${20:-}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s ticks:%s' "$1" "${20}"
 }
 
 job_unit_read() { # RECORD
@@ -225,6 +308,8 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   shift
   JOB_UNIT_RUNNER=setsid
   JOB_UNIT_NAME=""
+  JOB_UNIT_PID=""
+  JOB_UNIT_START=""
   # A user manager that does not linger is stopped when the user's last
   # login session ends, SSH disconnects included, and every unit in it with
   # it, while tmux and the lanes in the login session run on: a job there
@@ -312,9 +397,95 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   fi
   [[ -z "$memory_max" ]] || { job_unit_fail memory-max-unheld "$JOB_UNIT_LINE" 5; return; }
   job_unit_record "$record" || { job_unit_fail record-unwritable "path=$record" 1; return; }
-  # setsid -f returns once it has forked; a status here is a fork it could not
-  # make or an argv it could not start.
-  setsid -f "$@" </dev/null >/dev/null 2>&1 || job_unit_fail launch-failed "status=$?" 4
+  # The job is this launch's own background child under setsid, which execs
+  # it in a session of its own without forking (no -f), so $! is the job's
+  # pid. The launcher reads the child's start from the kernel table itself
+  # and records the identity, pid and `/proc` start in clock ticks as the
+  # runtime's identity reader records it, before it returns (decision 120):
+  # no child writes its own identity and none is manufactured. A child that
+  # has already exited when its row is read is a launch that failed, by its
+  # status; a row that cannot be read ends the child and refuses the launch,
+  # so nothing runs unrecorded. exec keeps the pid and the start, so the
+  # recorded identity names the job the moment it runs, and a pid the system
+  # later reuses reads a different start and so reads the job gone.
+  setsid "$@" </dev/null >/dev/null 2>&1 &
+  JOB_UNIT_PID=$!
+  local identity state status="" word
+  if ! identity="$(job_unit_proc_identity "$JOB_UNIT_PID")"; then
+    if kill -0 "$JOB_UNIT_PID" 2>/dev/null; then
+      # A live child whose row cannot be read: ended with its group, since
+      # nothing could record it, and the launch refused; the record names the
+      # ended launch once the group reads empty.
+      word='identity-unread'
+      job_unit_unwind_child "$JOB_UNIT_PID" || word=unwound-failed
+      job_unit_launch_ended "$record" "$word" "$word" launch-failed 4
+      return
+    fi
+    # The child exited before its row was read: a launch that failed, by
+    # the status the shell kept for it.
+    status=0
+    wait "$JOB_UNIT_PID" || status=$?
+  else
+    state="${identity%% *}"
+    JOB_UNIT_START="${identity#* }"
+    if [[ "$state" == Z ]]; then
+      status=0
+      wait "$JOB_UNIT_PID" || status=$?
+    fi
+  fi
+  if [[ -n "$status" ]]; then
+    # An exited leader proves nothing about what it started: its group is
+    # torn down and read empty before the launch is reported ended.
+    # The record names the exit as `exited-N`; the reply keeps the bare
+    # status the callers of this launcher read.
+    word="exited-$status"
+    job_unit_unwind_child "$JOB_UNIT_PID" exited || { word=unwound-failed; status=$word; }
+    job_unit_launch_ended "$record" "$word" "$status" launch-failed 4
+    return
+  fi
+  JOB_UNIT_LINE="$JOB_UNIT_LINE pid=$JOB_UNIT_PID start=$JOB_UNIT_START"
+  if ! job_unit_record "$record"; then
+    # The identity was read but could not be recorded: the child is ended
+    # the same way, by its pid first, so nothing runs unrecorded.
+    word='record-unwritable'
+    job_unit_unwind_child "$JOB_UNIT_PID" || word=unwound-failed
+    job_unit_launch_ended "$record" "$word" "$word" record-unwritable 1
+    return
+  fi
+}
+
+# Report a launch that ended after its fork: the durable record rewritten
+# with `status=WORD`, and the reply under KEY and STATUS carrying
+# `status=REPLY` (the same word, or the bare exit status an exited child's
+# callers read), plus `record=unwritable` where the record could not be
+# rewritten, so the runtime reads the ended launch from the reply the
+# launcher that unwound the child gave it.
+job_unit_launch_ended() { # RECORD WORD REPLY KEY STATUS
+  local reply="status=$3"
+  [[ "$4" != record-unwritable ]] || reply="path=$1 $reply"
+  job_unit_record_ended "$1" "$2" || reply="$reply record=unwritable"
+  JOB_UNIT_PID="" JOB_UNIT_START=""
+  job_unit_fail "$4" "$reply" "$5"
+}
+
+# End the child this launch forked and everything it started, then read
+# nothing of it left. One that still runs is ended by its own pid first: it
+# may not have run its own `setsid` yet, so it leads no process group and a
+# group teardown alone would miss it; one that EXITED is reaped. Then the
+# group it led, its pgid being its pid under setsid, is torn down, the leader
+# is reaped, and the kernel's table is read for the group. Status 0 where the
+# group reads empty; 1 where a member still runs, 2 where the table or a
+# member's row cannot be read, so an ended launch is never reported over a
+# descendant that runs or a row that could not be read.
+job_unit_unwind_child() { # PID [exited]
+  if [[ "${2:-}" == exited ]]; then
+    wait "$1" 2>/dev/null || true
+  else
+    job_unit_end_child "$1"
+  fi
+  job_unit_teardown "$1" || true
+  wait "$1" 2>/dev/null || true
+  job_unit_group_empty "$1"
 }
 
 # The job forks through the github skill's KENDEX_GROUP_LEADER prefix: the
@@ -416,6 +587,20 @@ job_unit_group_others() { # PGID
         if (pg[i] == g && pid[i] != me && !(pid[i] in mine) && !(ppid[i] in mine)) n++
       print n
     }' <<<"$table"
+}
+
+# End the child PID directly, before any process group it may lead exists:
+# SIGTERM, up to the kill grace for it to exit, then SIGKILL. A child caught
+# before it ran its own `setsid` leads no group, so a group teardown would
+# miss it; this ends it by its own pid whatever stage it reached.
+job_unit_end_child() { # PID
+  local n=0
+  kill -TERM "$1" 2>/dev/null || true
+  while (( n < JOB_UNIT_KILL_GRACE * 5 )) && kill -0 "$1" 2>/dev/null; do
+    sleep 0.2
+    n=$((n + 1))
+  done
+  ! kill -0 "$1" 2>/dev/null || kill -KILL "$1" 2>/dev/null || true
 }
 
 # The one setsid teardown: SIGTERM to group PGID, as a unit's stop sends it, so

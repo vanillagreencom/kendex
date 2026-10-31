@@ -1487,10 +1487,57 @@ ol_succession_update() { # pending|current|restore PAYLOAD
   [[ "$1" != restore ]] || OL_SUCCESSION_STAGE=restored
 }
 
+# ol_runtime_open_controller_intent [RUNTIME] [STATE_FILE] [WORKFLOW_STATE] —
+# whether the runtime holds a controller operation open on this fleet: a
+# succession, a start or a stop in flight, which the runtime's detached job
+# completes whatever this process does. Read through `orch-runtime state
+# inspect --fleet`, whose `open_intents` the runtime judges; nothing here
+# reads the outcome words. RUNTIME is the orch-runtime command, this package's
+# wrapper by default; STATE_FILE the fleet state, else read through
+# WORKFLOW_STATE, this package's workflow-state by default. Returns 0 with
+# OL_RUNTIME_INTENT and OL_RUNTIME_INTENT_OP naming
+# the open operation; 1 where none stands; 2 where the runtime could not
+# answer, OL_REASON=runtime-unread and its words in DEP_ERR. The wrapper's
+# `setup-required` (exit 69) is the binary for the current source key being
+# unavailable, not the fleet holding no intent: it is runtime-unread
+# wherever the fleet state holds any intents row, as lane-close reads it,
+# and no intent only where the fleet holds none, since a runtime never built
+# wrote none.
+ol_runtime_open_controller_intent() { # [RUNTIME] [STATE_FILE] [WORKFLOW_STATE]
+  local runtime="${1:-$SCRIPT_DIR/orch-runtime}" state="${2:-}" workflow_state="${3:-$SCRIPT_DIR/workflow-state}" reply rc=0 line rows
+  OL_RUNTIME_INTENT="" OL_RUNTIME_INTENT_OP=""
+  reply="$("$runtime" state inspect --fleet 2>"$DEP_ERR")" || rc=$?
+  if (( rc == 69 )); then
+    if [[ -n "$state" ]]; then
+      rows="$(jq -r '(.intents // []) | length' "$state" 2>>"$DEP_ERR")" || { OL_REASON=runtime-unread; return 2; }
+    else
+      rows="$("$workflow_state" get oversee '(.intents // []) | length' 2>>"$DEP_ERR")" || { OL_REASON=runtime-unread; return 2; }
+    fi
+    [[ "$rows" == 0 ]] && return 1
+    OL_REASON=runtime-unread
+    return 2
+  fi
+  (( rc == 0 )) || { OL_REASON=runtime-unread; return 2; }
+  line="$(jq -r '(.result.open_intents // [])
+      | map(select(.op == "request-transfer" or .op == "start-controller" or .op == "stop-controller"))
+      | first // empty | [.id, .op] | join(" ")' <<<"$reply" 2>"$DEP_ERR")" \
+    || { OL_REASON=runtime-unread; return 2; }
+  [[ -n "$line" ]] || return 1
+  read -r OL_RUNTIME_INTENT OL_RUNTIME_INTENT_OP <<<"$line"
+}
+
 ol_succession() { # PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM WAIT_SECS
   local predecessor="$1" cwd="$2" line="$3" identity="$4" pending="$5"
-  local write_rc=0
+  local write_rc=0 open_rc=0
   shift 5
+  # A succession the runtime holds open is the overseer changing hands
+  # already; a second one here would make two successors (decision 36).
+  ol_runtime_open_controller_intent || open_rc=$?
+  case "$open_rc" in
+    0) OL_REASON=succession-runtime-open; OL_STEP=pending; return 1 ;;
+    1) ;;
+    *) OL_STEP=pending; return 1 ;;
+  esac
   OL_SUCCESSION_STAGE=unwritten
   OL_SUCCESSION_EXPECTED="${OL_PRIOR:-null}"
   OL_SUCCESSION_ORIGINAL_PENDING="$(jq -c '.pending // null' <<<"$OL_SUCCESSION_EXPECTED" 2>"$DEP_ERR")" || return 1

@@ -44,10 +44,18 @@
 # setsid. The log's first line is the runner line.
 #
 # Usage:
-#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range|ci] [--base REF] [--attached] [--fresh] [--reproduce | --restack]
+#   dev-validate-run --worktree PATH [--poll SECS] [--validate-mode full|range|ci] [--base REF] [--run-id ID] [--attached] [--fresh] [--reproduce | --restack]
 #       Start the run detached, then block until it ends. Prints the run
 #       directory first and the verdict last. Harness launch and resume routes:
 #       ../../dev/SKILL.md § Long-Running Validation.
+#       --run-id ID names the run directory tmp/dev-validate-ID, so a run
+#       admitted before it starts (orch-runtime record-validation-admission,
+#       which mints the id) runs under the directory its admission named. ID
+#       is the stamp-and-nonce form <YYYYMMDD>T<HHMMSS>Z-<alphanumerics>,
+#       refused otherwise as invalid-run-id; a directory already standing
+#       under that name is refused as run-exists, after classification and
+#       before anything is recorded. Without it the start mints the id
+#       itself from the clock and its pid.
 #       --reproduce marks the request as the local reproduction of a required
 #       run that failed, such as a red merge-group run, whose CI cannot prove
 #       the fix: it skips CI admission and the selector, runs the command its
@@ -474,6 +482,8 @@ die() {
       runner-unrecorded) printf 'The record of how the run is started could not be written, so no run was started.\n' ;;
       launch-failed) printf 'The run could not be started, so there is no verdict to wait for.\n' ;;
       run-live) printf 'Another validation run in this worktree is still going, so none was started beside it. Wait for its verdict with --wait --run-dir, or end it with --stop --worktree, then start again.\n' ;;
+      invalid-run-id) printf 'The run id must be <YYYYMMDD>T<HHMMSS>Z-<alphanumerics>, the form the admission mints.\n' ;;
+      run-exists) printf 'A run directory already stands under that id, so this start would read its records as this run'\''s. Admit a new run, or wait on the standing one with --wait --run-dir.\n' ;;
       job-end-failed) printf 'The verdict is recorded; what the command left in its process group may still run.\n' ;;
     esac
   } >&2
@@ -728,6 +738,7 @@ classify_snapshot() { # BASE — the snapshot and its two reads, in the scratch 
 
 worktree=""
 run_dir=""
+run_id=""
 mode=""
 poll="$POLL_DEFAULT"
 budget="$BUDGET_DEFAULT"
@@ -735,6 +746,7 @@ worktree_given=false
 validate_mode=full
 base=""
 run_dir_given=false
+run_id_given=false
 poll_given=false
 budget_given=false
 validate_mode_given=false
@@ -770,6 +782,9 @@ while (( $# > 0 )); do
     --last-pass) set_mode "$1" last-pass; shift ;;
     --live)     set_mode "$1" live; shift ;;
     --run-dir)  need "$1" $# "${2:-}"; once "$1" "$run_dir_given"; run_dir_given=true; run_dir="$2"; shift 2 ;;
+    --run-id)   need "$1" $# "${2:-}"; once "$1" "$run_id_given"; run_id_given=true; run_id="$2"
+                [[ "$run_id" =~ ^[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9]+$ ]] || die invalid-run-id "option=$1" "value=$run_id"
+                shift 2 ;;
     --poll)     need "$1" $# "${2:-}"; once "$1" "$poll_given"; poll_given=true; poll="$2"; shift 2 ;;
     --budget)   need "$1" $# "${2:-}"; once "$1" "$budget_given"; budget_given=true; budget="$2"; shift 2 ;;
     --validate-mode) need "$1" $# "${2:-}"; once "$1" "$validate_mode_given"; validate_mode_given=true; validate_mode="$2"; shift 2 ;;
@@ -791,6 +806,7 @@ done
 # Unused options are refused, except --base carried from --resolve-mode into
 # a full start: its notice lets that resolved start proceed.
 [[ "$attached" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--attached" "mode=$mode"
+[[ "$run_id_given" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--run-id" "mode=$mode"
 [[ "$fresh" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--fresh" "mode=$mode"
 [[ "$reproduce" == false || -z "$mode" || "$mode" == start ]] || die option-unused "option=--reproduce" "mode=$mode"
 [[ "$reproduce" == false || "$validate_mode" != ci ]] || die reproduce-ci "option=--reproduce" "validate-mode=$validate_mode"
@@ -1235,9 +1251,12 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
   [[ -z "$LIVE_RUN_DIR" ]] || die run-live "run-dir=$LIVE_RUN_DIR" "pid=$LIVE_RUN_PID"
 
   # A fresh directory per start, so a poll can never read the previous round's
-  # verdict as this one's.
-  run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  # verdict as this one's: the id the admission minted, or one from the clock
+  # and this pid. An admitted id whose directory already stands is refused
+  # rather than reused, for the same reason.
+  [[ "$run_id_given" == true ]] || run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
   run_dir="$worktree/tmp/dev-validate-$run_id"
+  [[ "$run_id_given" == false || ! -e "$run_dir" ]] || die run-exists "run-dir=$run_dir"
   mkdir -p "$run_dir"
   mv -- "$class_scratch/class.log" "$run_dir/class.log"
   [[ ! -f "$class_scratch/selection.log" ]] || mv -- "$class_scratch/selection.log" "$run_dir/selection.log"

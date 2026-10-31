@@ -646,6 +646,61 @@ MUTPY
   printf '%s\n' "$dir/skills/orch/scripts/lane-close"
 }
 
+# The runtime's answer to `state inspect --fleet`, planted per row: the
+# fixture never builds the runtime, and the one question lane-close asks of it
+# is which intents are open. With no reply planted the stub is a runtime that
+# is not set up.
+cat >"$SCRIPTS/orch-runtime" <<'EOF'
+#!/usr/bin/env bash
+[[ -n "${LANE_CLOSE_RUNTIME_REPLY:-}" ]] || { printf 'orch-runtime: setup-required key=none\n' >&2; exit 69; }
+cat -- "$LANE_CLOSE_RUNTIME_REPLY"
+EOF
+chmod +x "$SCRIPTS/orch-runtime"
+RUNTIME_REPLY="$TMP_ROOT/runtime-reply"
+# plant_intent — the fixture state gains one runtime intent row on KEN-1,
+# as orch-runtime's launch-lane writes it; whether it is open is the
+# runtime's to say.
+plant_intent() {
+  jq '.intents = [{id:"launch-lane:KEN-1:1-1", op:"launch-lane", target:"KEN-1", outcome:"unconfirmed"}]' "$STATE" >"$STATE.next"
+  mv -- "$STATE.next" "$STATE"
+}
+
+echo '=== lane-close refuses a lane the orch runtime holds an open intent on ==='
+write_state running codex /host; write_panes bash; printf '\n' >"$SCREEN"; plant_intent
+printf '%s\n' '{"ok":true,"result":{"open_intents":[{"id":"launch-lane:KEN-1:1-1","op":"launch-lane","target":"KEN-1","outcome":"unconfirmed"}]}}' >"$RUNTIME_REPLY"
+export LANE_CLOSE_RUNTIME_REPLY="$RUNTIME_REPLY"
+run_close "$SCRIPT"
+assert_eq "rc=$RC open=$(grep -c '^lane-close: intent-open item=KEN-1 intent=launch-lane:KEN-1:1-1$' <<<"$ERR" || true) host=$(host_call_count) kills=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 open=1 host=0 kills=0 status=running' 'an open runtime intent on the lane refuses before any stop, close or record write'
+# The same rows with the runtime answering that nothing is open: the exited
+# lane closes as it did before the runtime existed.
+printf '%s\n' '{"ok":true,"result":{"open_intents":[]}}' >"$RUNTIME_REPLY"
+run_close "$SCRIPT"
+assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 host=1 status=done' \
+  'intent rows the runtime judges closed leave the close to proceed'
+# A runtime that cannot answer while intent rows stand refuses rather than
+# reading nothing; a state with no intent row asks the runtime nothing.
+write_state running codex /host; write_panes bash; printf '\n' >"$SCREEN"; plant_intent
+unset LANE_CLOSE_RUNTIME_REPLY
+run_close "$SCRIPT"
+assert_eq "rc=$RC unavailable=$(grep -c '^lane-close: runtime-unavailable item=KEN-1$' <<<"$ERR" || true) host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 unavailable=1 host=0 status=running' 'a runtime that cannot say which intents are open refuses the close while intent rows stand'
+write_state running codex /host; write_panes bash; printf '\n' >"$SCREEN"
+run_close "$SCRIPT"
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' 'a fleet state with no intent row closes without the runtime'
+# Control: with the refusal's exit gone the message still prints and the close
+# moves the record out from under the open intent.
+MUTANT="$(mutant lane-close-intent-open \
+  '  [[ -z "$open_intent" ]] || { message intent-open "item=$ITEM" "intent=$open_intent" >&2; exit 1; }' \
+  '  [[ -z "$open_intent" ]] || message intent-open "item=$ITEM" "intent=$open_intent" >&2')"
+write_state running codex /host; write_panes bash; printf '\n' >"$SCREEN"; plant_intent
+printf '%s\n' '{"ok":true,"result":{"open_intents":[{"id":"launch-lane:KEN-1:1-1","op":"launch-lane","target":"KEN-1","outcome":"unconfirmed"}]}}' >"$RUNTIME_REPLY"
+export LANE_CLOSE_RUNTIME_REPLY="$RUNTIME_REPLY"
+run_close "$MUTANT"
+assert_eq "rc=$RC open=$(grep -c '^lane-close: intent-open ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 open=1 status=done' \
+  'control: without the refusal the close records done under the open intent'
+unset LANE_CLOSE_RUNTIME_REPLY
+
 echo '=== lane-close refuses ambiguous and live panes ==='
 write_state running claude /host
 write_panes bash duplicate
@@ -1772,8 +1827,9 @@ for spelling in space equals; do
     space) run_close "$SCRIPT" --state-dir "$FLEET_DIR" ;;
     equals) run_close "$SCRIPT" "--state-dir=$FLEET_DIR" ;;
   esac
+  # Two reads: the lane records and the runtime intent rows (decision 44).
   assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") get=$(state_call_count "--state-dir $FLEET_DIR get oversee ") update=$(state_call_count "--state-dir $FLEET_DIR update oversee ")" \
-    'rc=0 status=done get=1 update=1' "the $spelling spelling carries the fleet state directory into the read and the write"
+    'rc=0 status=done get=2 update=1' "the $spelling spelling carries the fleet state directory into the reads and the write"
 done
 
 echo '=== the exit wait reads the pane after the stop ==='

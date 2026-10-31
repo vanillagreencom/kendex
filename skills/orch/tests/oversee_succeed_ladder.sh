@@ -12,6 +12,8 @@
 # row reaches the headroom mark, or is the wall recovery, and walks.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/runtime-stub.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/runtime-stub.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
@@ -156,6 +158,11 @@ new_caller() {
 CALLER_FLAGS=("$BYPASS")
 run_succeed() {
   fixture_watch_neighbor "${SUCCEED_BIN:-$SUCCEED}"
+  # The runtime the succession is handed to (decision 76): a stand-in beside
+  # the script that records the request; the successor's line is then run
+  # once through the harness stubs, so `launched` reads what it gets.
+  fixture_runtime_stub "$(dirname "${SUCCEED_BIN:-$SUCCEED}")" "$TMP_ROOT"
+  rm -f -- "${TMP_ROOT:?}/runtime.request" "${TMP_ROOT:?}/runtime.args"
   local row="$1" pref=(ORCH_OVERSEER_PREFERENCE="$2") lane="${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
   local -a wait=(--wait-secs 20)
   [[ "$2" != unset ]] || pref=()
@@ -175,7 +182,17 @@ run_succeed() {
     ORCH_OVERSEER_WALL_MINUTES=0 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS="${SUCCESSOR_ACCOUNTS:-0}" ORCH_QUESTION_TOOL=overseer \
     ${pref[@]+"${pref[@]}"} "${SUCCEED_BIN:-$SUCCEED}" ${wait[@]+"${wait[@]}"} "$@" -- ${CALLER_FLAGS[@]+"${CALLER_FLAGS[@]}"} 2>&1)" || RC=$?
   printf '%s\n' "$OUT" > "$TMP_ROOT/out"
+  replay_runtime_request
 }
+replay_runtime_request() {
+  local line
+  [[ -f "$TMP_ROOT/runtime.request" ]] || return 0
+  line="$(jq -r '.successor.launch_line // empty' "$TMP_ROOT/runtime.request")" || return 1
+  [[ -n "$line" ]] || return 0
+  (cd "$TMP_ROOT/work" && PATH="$BIN:$PATH" HOME="$H" timeout 1 bash -c "$line") >/dev/null 2>&1 || true
+}
+# A field of the request the script handed the runtime, `none` where absent.
+req() { jq -r ".$1 // \"none\"" "$TMP_ROOT/runtime.request" 2>/dev/null || echo none; }
 # A claim from this suite's tmux server on a pane that stays live, on LANE.
 write_claim() { # ROW LANE
   mkdir -p "$TMP_ROOT/state-$1/claims"
@@ -233,7 +250,7 @@ context_preference_row() { # HARNESS MODEL_SOURCE PREFERENCE [SUCCEED_BIN]
   esac
   CALLER_LANE="$lane_var=$H/.$harness" \
     SUCCEED_BIN="${4:-}" run_succeed "context-$harness-$model_source" "$pref" --context "$reading" --harness "$harness"
-  CONTEXT_ACTUAL="$RC|$(caller_open)|$(jq -r '[.overseer.harness, .overseer.model] | join("|")' "$TMP_ROOT/work/tmp/workflow-state-oversee.json")"
+  CONTEXT_ACTUAL="$RC|$(caller_open)|$(jq -r '[.successor.harness, .successor.model] | join("|")' "$TMP_ROOT/runtime.request" 2>/dev/null || printf '|')"
   # The recorded model must also be the model the actual harness received.
   CONTEXT_ACTUAL+="|$(launched claude | awk '{print $2}')|$(launched codex | awk '{print $2}')"
   CALLER_FLAGS=("$BYPASS")
@@ -250,7 +267,7 @@ for row in \
   'codex|flags||codex|gpt-5.6-sol||gpt-5.6-sol'; do
   IFS='|' read -r harness model_source pref expected_harness expected_model expected_claude expected_codex <<<"$row"
   context_preference_row "$harness" "$model_source" "$pref"
-  assert_eq "$CONTEXT_ACTUAL" "0|no|$expected_harness|$expected_model|$expected_claude|$expected_codex" \
+  assert_eq "$CONTEXT_ACTUAL" "0|yes|$expected_harness|$expected_model|$expected_claude|$expected_codex" \
     "context succession from $harness/$model_source honors preference [$pref]" "$TMP_ROOT/out"
 done
 
@@ -260,10 +277,10 @@ CONTEXTCTL="$(mutant_scripts contextctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$CONTEXTCTL/lib/overseer-launch.sh" \
   '  [[ "${1:-}" != context ]] || fallback=""' '  : # [[ "${1:-}" != context ]] || fallback=""'
 context_preference_row codex record unset "$CONTEXTCTL/oversee-succeed"
-assert_eq "$CONTEXT_ACTUAL" '0|no|claude|opus|opus|' \
+assert_eq "$CONTEXT_ACTUAL" '0|yes|claude|opus|opus|' \
   'control: the old unset default changes a context successor to Claude' "$TMP_ROOT/out"
 control_status=0
-(FAIL=0; assert_eq "$CONTEXT_ACTUAL" '0|no|codex|gpt-5.6-sol||gpt-5.6-sol' 'context continuity'; [[ "$FAIL" -eq 0 ]]) \
+(FAIL=0; assert_eq "$CONTEXT_ACTUAL" '0|yes|codex|gpt-5.6-sol||gpt-5.6-sol' 'context continuity'; [[ "$FAIL" -eq 0 ]]) \
   > "$TMP_ROOT/context-control.log" || control_status=$?
 assert_eq "$control_status" 1 'control: the context continuity assertion rejects the old default'
 CONTEXTMODELCTL="$(mutant_scripts contextmodelctl oversee-succeed)" || exit 1
@@ -271,7 +288,7 @@ mutate_file "$CONTEXTMODELCTL/oversee-succeed" \
   '    OL_WALK_CALLER_MODEL="$OL_PREFERENCE_CALLER_MODEL"' \
   '    OL_WALK_CALLER_MODEL="" # OL_WALK_CALLER_MODEL="$OL_PREFERENCE_CALLER_MODEL"'
 context_preference_row codex reading unset "$CONTEXTMODELCTL/oversee-succeed"
-assert_eq "$CONTEXT_ACTUAL" '0|no|codex|||' \
+assert_eq "$CONTEXT_ACTUAL" '0|yes|codex|||' \
   'control: losing the context-only model launches the native default' "$TMP_ROOT/out"
 
 # Every claude seat is Fable-walled, .eclaude alone has Opus room, and codex is
@@ -286,14 +303,14 @@ codex_seat dcodex 99
 new_caller
 run_succeed opus unset
 assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex)|$(grep -cx -e --effort -e high "$TMP_ROOT/argv.claude")" \
-  "0|no|$H/.eclaude opus|none|2" \
+  "0|yes|$H/.eclaude opus|none|2" \
   "a Fable-walled seat with Opus room is chosen for the default ladder's Opus entry, at high effort"
 DEFAULTCTL="$(mutant_scripts defaultctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$DEFAULTCTL/lib/overseer-launch.sh" \
   'OL_DEFAULT_PREFERENCE="claude:standard:high,codex:standard:high"' 'OL_DEFAULT_PREFERENCE="claude:light:high,codex:standard:high"'
 new_caller
 SUCCEED_BIN="$DEFAULTCTL/oversee-succeed" run_succeed defaultctl unset
-assert_eq "$RC|$(caller_open)|$(launched claude)" "0|no|$H/.eclaude sonnet" \
+assert_eq "$RC|$(caller_open)|$(launched claude)" "0|yes|$H/.eclaude sonnet" \
   "control: the Sonnet default breaks the unset succession's Opus contract"
 control_status=0
 (FAIL=0; assert_eq "$(launched claude | awk '{print $2}')" opus "unset succession model"; [[ "$FAIL" -eq 0 ]]) \
@@ -306,7 +323,7 @@ assert_eq "$control_status" 1 "control: the Opus assertion rejects the Sonnet su
 new_caller
 run_succeed walled unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(caller_open)|$(launched claude)" \
-  "0|no|$H/.eclaude opus" \
+  "0|yes|$H/.eclaude opus" \
   "a walled Fable overseer is recovered onto the ladder's Opus entry"
 # Its control: a walled recovery that walks the caller entry alone stays on
 # Fable and refuses the fleet the ladder recovers on.
@@ -326,7 +343,7 @@ seat claude 10 99 10
 new_caller
 run_succeed walledopus unset --walled-pane "$CALLER_PANE"
 assert_eq "$RC|$(caller_open)|$(launched claude)" \
-  "0|no|$H/.eclaude opus" \
+  "0|yes|$H/.eclaude opus" \
   "a walled account with Opus room of its own is left out of the Opus pick"
 # Its control: a walled pick that keeps the walled account names it, the entry
 # is dropped, and the recovery refuses with .eclaude's Opus room unused.
@@ -404,7 +421,7 @@ codex_seat codex 20
 new_caller
 run_succeed codex unset
 assert_eq "$RC|$(caller_open)|$(launched claude)|$(launched codex | awk '{print $2}')|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-  "0|no|none||1" \
+  "0|yes|none||1" \
   "every claude entry walled: the default reaches codex's standard class on its native default"
 
 # The setting is the one list of models: a codex model no tier ladder and no
@@ -452,7 +469,7 @@ copilot_row() { # [SUCCEED_BIN]
 }
 copilot_row
 assert_eq "$RC|$(caller_open)|$(launched copilot)|$(grep -cx -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot")" \
-  "0|no|$H/.1copilot gpt-5.3-codex|3" \
+  "0|yes|$H/.1copilot gpt-5.3-codex|3" \
   "a copilot entry opens on the picked copilot account with its model and effort"
 # Its control: with `lanes` judging no copilot pick, the copilot entry has no
 # account to open on, and the walk refuses and opens nothing.
@@ -520,7 +537,7 @@ for row in \
     launch_home="$CODEX_LAUNCH_HOME"
   fi
   assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")|$(sed -n -e 's/^preference-deprecated-conversion .* replacement=\([^ ]*\).*/replacement=\1/p' -e 's/^preference-deprecated-conversion .* model=\([^ ]*\).*/model=\1/p' <<<"$OUT")|$(jq -r '.overseer.class // "none"' "$TMP_ROOT/work/tmp/workflow-state-oversee.json")" \
-    "0|no|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort|$conversion|none" \
+    "0|yes|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort|$conversion|none" \
     "numeric $harness preference keeps the $source model and supplied effort" "$TMP_ROOT/out"
 done
 # Normalizing the observed Codex model for account measurement must not erase
@@ -692,8 +709,10 @@ kept_line() { grep -m1 '^oversee-succeed: successor-account-unmeasured ' <<<"$OU
 kept_rows() { jq -r '[(.fleet_log // [])[] | select(.text | startswith("oversee-succeed: successor-account-unmeasured "))] | length' "$TMP_ROOT/work/tmp/workflow-state-oversee.json"; }
 KEPT_LINE="oversee-succeed: successor-account-unmeasured lane=$H/.1copilot status=no_credentials detail="
 copilot_ladder unmeasuredkeep context "" caller ''
+# The caller's window stays open: the succession is the runtime's detached
+# job, which the stand-in records and never runs, so nothing here retires it.
 assert_eq "$RC|$(kept_line)|$(kept_rows)|$(caller_open)|$(launched copilot)" \
-  "0|$KEPT_LINE|1|no|$H/.1copilot claude-opus-5.5" \
+  "0|$KEPT_LINE|1|yes|$H/.1copilot claude-opus-5.5" \
   "an unmeasured Copilot caller past its context mark keeps its own account, named once on stdout and in the fleet log"
 # Its control: a walk that never keeps the unmeasured account refuses.
 KEEPCTL="$(mutant_scripts keepctl oversee-succeed)" || exit 1
@@ -754,7 +773,7 @@ for entry in caller named; do
       retired)
         copilot_ladder "retained-$entry-policy-control" context "$POLICYCTL/oversee-succeed" caller "$pref"
         assert_eq "$RC|$(caller_open)|$(launched copilot)" \
-          "0|no|$H/.1copilot claude-opus-5.5" \
+          "0|yes|$H/.1copilot claude-opus-5.5" \
           "control: the $entry entry launches a retired caller when retention omits the policy check"
         ;;
       recovered)
@@ -764,7 +783,7 @@ for entry in caller named; do
         rm -f "$TMP_ROOT/recovered"
         copilot_ladder "retained-$entry-measure-control" context "$MEASURECTL/oversee-succeed" caller "$pref"
         assert_eq "$RC|$(caller_open)|$(launched copilot)" \
-          "0|no|$H/.1copilot claude-opus-5.5" \
+          "0|yes|$H/.1copilot claude-opus-5.5" \
           "control: the $entry entry launches the spent caller when retention ignores its current account verdict"
         mv "$H/.1copilot/config.json" "$H/.1copilot/config.json.held"
         ;;
@@ -840,7 +859,7 @@ CALLER_FLAGS=(--model pi-claude/claude-fable-5-1 --thinking high)
 new_pi_caller
 run_succeed piwalled 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_PANE" --harness pi
 assert_eq "$RC|$(caller_open)|$(launched pi)|$(grep -cx -e --thinking -e high "$TMP_ROOT/argv.pi")|$(tail -n 1 "$TMP_ROOT/argv.pi")" \
-  "0|no|$H/.eclaude pi-claude/claude-opus-5-5|2|/skill:orch follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md" \
+  "0|yes|$H/.eclaude pi-claude/claude-opus-5-5|2|/skill:orch follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md" \
   "a walled pi overseer is recovered onto a pi entry with a model, on a claude account with room for it"
 seat claude 10 99 99
 # Its control: a preference parse naming no pi refuses the entry.
@@ -890,7 +909,7 @@ pi_context_row() { # [SUCCEED_BIN]
   SUCCEED_BIN="${1:-}" run_succeed "pictx${1:+ctl}" '' --harness pi --context 950000:1000000
 }
 pi_context_row
-assert_eq "$RC|$(caller_open)|$(launched pi)" "0|no|$H/.claude pi-claude/claude-fable-5-1" \
+assert_eq "$RC|$(caller_open)|$(launched pi)" "0|yes|$H/.claude pi-claude/claude-fable-5-1" \
   "a record-less pi-claude overseer at its context mark succeeds on its own claude account"
 # Its control: a caller that reads no --model word cannot name the account
 # and refuses, launching nothing.
