@@ -3,8 +3,8 @@
 # name: block-argv-kill
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree. Inside a tmux session (`TMUX` set), also refuse a `tmux kill-server` or `kill-session` that names no `-S` or `-L` socket: tmux then acts on the server `TMUX` names, the one the caller's own session runs in, so `kill-server` ends that server and the lane on it, and `kill-session` ends the caller's own session or, with `-t` or `-a`, other sessions on that server. `env -u TMUX` names no server either: tmux then takes its default socket, which can be the caller's own. Names `env -u TMUX tmux -S PATH` with the caller's own arguments after the command.
-# summary: Stops a command that kills processes by name, which on a machine running several agents stops every lane using that tool, and, inside tmux, a tmux stop that names no socket, which acts on the server your own session runs in. Names the safe forms: kill a process id you started, or give tmux the socket you started.
+# description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree. Inside a tmux session (`TMUX` set), also refuse a `tmux kill-server` or `kill-session` that names no `-S` or `-L` socket: tmux then takes the server `TMUX` names, or under `env -u TMUX` its default socket, and either can be the server the caller's own session runs in, so the stop can end that session or others on it. Names `env -u TMUX tmux -S PATH` before the verb and tells the caller to keep the stop's own arguments after it.
+# summary: Stops a command that kills processes by name, which on a machine running several agents stops every lane using that tool, and, inside tmux, a tmux stop that names no socket, which can act on the server your own session runs in. Names the safe forms: kill a process id you started, or give tmux the socket you started.
 # safety: For the name rule, one regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. The tmux rule holds only while `TMUX` is set in the hook's environment, which the harness inherits from its pane. Each simple command, split at `;`, `&`, `|`, parentheses, backquotes and newlines, is read word by word: after a `tmux` word, its flags and the arguments of `-c`, `-f`, `-L`, `-S` and `-T`, then its command word; `kill-server` or `kill-session` there is refused unless a `-L` or `-S` flag came first; an `env -u TMUX` before `tmux` does not lift it, because tmux then takes its default socket. The command word ends the scan of its simple command, so the split is what finds a stop after an earlier tmux command on the same line. The same reading refuses `echo tmux kill-server`, and does not see a stop chained after `\;`, an abbreviated command name, a tmux the shell assembles at run time or one a script file runs. Missing tools or unreadable payload produce one keyed warning and allow the call. Every refusal opens with `block-argv-kill: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
@@ -15,9 +15,6 @@ trap 'rc=$?; case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac' EXIT
 # The command as it was read, empty until the reader has it: the refusal quotes
 # it, and a refusal can be reached before it is set.
 COMMAND=""
-# The words after a refused tmux stop's verb, as the command spelled them: the
-# remedy repeats them, so following it reaches the session the caller named.
-STOP_ARGS=""
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `block-argv-kill: <key>=<value>`: a
 # stable key for the condition and the value acted on — the missing tool, why
@@ -51,19 +48,19 @@ refuse() { # KEY VALUE [CAUSE]
       echo "pgrep and ps are fine for finding a PID; the kill itself takes the PID." >&2
       ;;
     tmux-socket=*)
-      printf 'block-argv-kill: fix=env -u TMUX tmux -S PATH %s\n' "$2${STOP_ARGS:+ $STOP_ARGS}" >&2
+      # One text for every refused input: the word reading cannot tell which
+      # server tmux will choose or what a verb's flags end, so no line here
+      # names an effect one input may not have, and the remedy re-spells none
+      # of the command's words, which the split may have cut mid-redirect.
+      printf 'block-argv-kill: fix=env -u TMUX tmux -S PATH %s\n' "$2" >&2
       echo "refusing a tmux stop that names no server:" >&2
       echo "  $COMMAND" >&2
-      case "$2" in
-        kill-server)
-          echo "Inside a tmux session, tmux takes the server from TMUX, so this command ends the server your own session runs in, and every session on it." >&2 ;;
-        *)
-          echo "Inside a tmux session, tmux takes the server from TMUX, so this command acts on the server your own session runs in: with no -t it ends your own session, and with -t or -a it ends other sessions on that server." >&2 ;;
-      esac
-      echo "Without TMUX and with no socket, tmux takes its default socket, which can also be the server your session runs in." >&2
-      echo "Name the server you started instead, and keep your own arguments after the command:" >&2
-      echo "  env -u TMUX tmux -S PATH $2${STOP_ARGS:+ $STOP_ARGS}    PATH is the socket you gave tmux -S when you started it" >&2
-      echo "  tmux -L NAME $2${STOP_ARGS:+ $STOP_ARGS}                NAME is the socket name you gave tmux -L" >&2
+      echo "This command names no server, so tmux chooses one: the server TMUX names, or with TMUX unset its default socket." >&2
+      echo "Either can be the server your own session runs in, and a stop there ends your session or others on it." >&2
+      echo "Name the server you started instead:" >&2
+      echo "  env -u TMUX tmux -S PATH $2    PATH is the socket you gave tmux -S when you started it" >&2
+      echo "  tmux -L NAME $2                NAME is the socket name you gave tmux -L" >&2
+      echo "Keep the stop's own tmux arguments, such as -t TARGET or -a, after $2." >&2
       ;;
   esac
   # The cause a command this hook ran wrote, captured at the site and replayed
@@ -135,11 +132,11 @@ fi
 # names no server reaches the caller's own: lane FLT-1418 ended on
 # `TMUX_TMPDIR=$d tmux kill-server`. Unsetting TMUX names no server either:
 # tmux then takes `${TMUX_TMPDIR:-/tmp}/tmux-UID/default`, the socket a plain
-# `tmux` launch gives the caller's own session. Only -L or -S names one.
+# `tmux` launch uses, which can be the caller's own. Only -L or -S names one.
 # Each simple command, split at ; & | ( ) backquote and newline, is read word
 # by word: tmux's flags, the argument each of -c -f -L -S -T takes, then its
 # command word, which ends the scan of that simple command.
-tmux_unnamed_stop() { # -> STOP_VERB and STOP_ARGS set; status 0 when a stop names no server
+tmux_unnamed_stop() { # -> STOP_VERB set; status 0 when a stop names no server
   local segments=$COMMAND nl=$'\n' sep segment word i tmux_seen named want_arg
   local -a words
   for sep in ';' '&' '|' '(' ')' '`'; do segments=${segments//"$sep"/$nl}; done
@@ -162,7 +159,6 @@ tmux_unnamed_stop() { # -> STOP_VERB and STOP_ARGS set; status 0 when a stop nam
           kill-server | kill-session)
             if [ "$named" = 0 ]; then
               STOP_VERB=$word
-              STOP_ARGS="${words[*]:i}"
               return 0
             fi ;;
         esac

@@ -134,11 +134,11 @@ while IFS='|' read -r label where want text; do
   assert_eq "rc=$rc keys=$(keyed_block "$ERR_FILE" block-argv-kill)" "$want" "$label"
 done <<'ROWS'
 the FLT-1418 stop, TMUX_TMPDIR beside it, is refused|lane|refused|TMUX_TMPDIR=$d tmux kill-server
-a session stop keeps its target in the fix|lane|rc=2 keys=tmux-socket=kill-session;fix=env -u TMUX tmux -S PATH kill-session -t probe|tmux kill-session -t probe
+a session stop's fix ends at the verb, no redirect fragment after it|lane|rc=2 keys=tmux-socket=kill-session;fix=env -u TMUX tmux -S PATH kill-session|tmux kill-session -t probe 2>&1
 a flag and its argument name no server|lane|refused|tmux -f /dev/null kill-server
 a stop after an earlier tmux command on the line is found|lane|refused|tmux ls; /usr/bin/tmux kill-server
 an env that keeps TMUX names no server|lane|refused|env TMUX_TMPDIR=/tmp/x tmux kill-server
-an env that unsets TMUX names the default socket, the session's own here|default|refused|env -u TMUX tmux kill-server
+an env that unsets TMUX names no server, whichever socket TMUX names|lane|refused|env -u TMUX tmux kill-server
 a socket path names the server|lane|passes|tmux -S /tmp/probe.sock kill-server
 a socket name names the server|lane|passes|tmux -L probe kill-server
 the fix form passes|default|passes|env -u TMUX tmux -S /tmp/probe.sock kill-server
