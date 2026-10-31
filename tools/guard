@@ -1466,7 +1466,7 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #   module       any other file below scripts/<dir>/
 #   test-module  any other file under tests/lib/
 #   test-program a Python file directly under tests/, which a suite
-#                wrapper runs by path
+#                wrapper runs by path or a sibling imports
 #   suite        a member of the tree's whole set: tests/*.sh but
 #                run-all.sh, and tests/*.test.mjs where no run-all.sh runs
 #                the set
@@ -1475,7 +1475,7 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # A module is scanned as a lib is, and a test module or test program as a
 # helper is, but a changed module seeds its enclosing folder and file name.
 # A changed test module maps to no suite: an import can spell no path. A
-# changed test program seeds its file name, which its wrapper spells.
+# changed test program seeds its file name; mapped_suites' header says when.
 # Status 1 is a path of no role:
 # run-all.sh, any other file under tests/<dir>/, a file of hooks/ that is no
 # hook, and anything else.
@@ -1876,13 +1876,14 @@ reach_join() { # ROLE PATH [changed]
 #   - A changed or deleted doc starts the same scan from the files
 #     doc_readers names, each adding its needle by its role. A doc no file
 #     reads runs nothing.
-#   - A deleted suite or test program whose reach holds no suite runs
-#     nothing.
+#   - A deleted suite whose reach holds no suite runs nothing, and so does
+#     a deleted test program in a scoped run.
 #   - A changed module seeds its scripts/<dir> folder and its file name.
 #     The folder needle reaches no test program: the folder a test program
 #     spells is part of a module path it names, which the file name reaches.
 #     A module no suite names runs nothing.
-#   - A path of no role, a changed test module, and a path whose
+#   - A path of no role, a changed test module, a changed or deleted test
+#     program outside a DEV_VALIDATE_SCOPED=true run, and a path whose
 #     reach holds no suite map to no suite.
 #   - Every tree also scans repository inputs outside its tree. Whole paths in
 #     code and `# Inputs:` path patterns seed the same reader reach. Input
@@ -1891,6 +1892,9 @@ reach_join() { # ROLE PATH [changed]
 # production needles. Readers under tests/ still extend the reach, so a
 # suite can cover the file through its test helpers. Other production
 # readers add no needles or named suites. Merge-group CI keeps the full reach.
+# Only a scoped run maps a changed test program by its reach, since a
+# control can run one through a bare quoted file name or a sibling suite,
+# which no needle follows.
 # Scoped too, a changed .md file of a skill package, a source under
 # skills/<name>/ or its render under .agents/skills/<name>/, seeds no suite,
 # neither in its own tree nor as a ../ repository input of tools/ or a
@@ -1911,7 +1915,8 @@ reach_join() { # ROLE PATH [changed]
 # only through another script that runs it. CI's full run owns completeness.
 # The suites land in MAPPED, one per line, rather than on stdout, so the
 # scan stays loaded for the tree's next path. None with status 0 is a
-# deleted suite, a module no suite names or a doc no file reads; status 1 is a path mapped to no
+# deleted suite or test program, a module no suite names or a doc no file
+# reads; status 1 is a path mapped to no
 # suite, status 2 evidence the scan could not read or compare, and status 3 a role
 # reach_join does not know, a broken guard.
 mapped_suites() { # DIR REL
@@ -1922,7 +1927,10 @@ mapped_suites() { # DIR REL
     ../*) role=doc ;;
     *) role=$(path_role "$dir" "$rel") || return 1 ;;
   esac
-  case "$role" in test-module) return 1 ;; esac
+  case "$role" in
+    test-module) return 1 ;;
+    test-program) [ "$scoped_only" -eq 1 ] || return 1 ;;
+  esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
@@ -1973,16 +1981,12 @@ mapped_suites() { # DIR REL
       names=${SCAN_NAMES[i]}
       hit=0
       for n in ${any[@]+"${any[@]}"}; do
-        # The folder a test program spells is a part of some module's path
-        # it names, so a module's folder seed does not reach it.
         [ "$n:${SCAN_ROLE[i]}" != "$folder:test-program" ] || continue
         if [[ $names == *"$nl/$n$nl"* ]]; then
           hit=1
           break
         fi
       done
-      # A script's needle: in a suite or helper anywhere, elsewhere only
-      # where a line sources it.
       if [ "$hit" -eq 0 ]; then
         case "${SCAN_ROLE[i]}" in
           suite | helper | test-module | test-program) ;;
