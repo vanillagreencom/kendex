@@ -17,8 +17,14 @@
 
 # `STATE START` for a PID, STATE the one-letter process state, or an empty
 # line for a PID with no process. Status 2 is a read that gave no answer.
+#
+# A PID has no process only on positive evidence: no /proc entry, or ps
+# exiting 1 with nothing on stdout or stderr. BSD and macOS ps also exit 1
+# with an empty stdout when ps itself fails, writing a diagnostic, so every
+# other reading has status 2.
 process_stat() { # PID
   local stat='' rest rc=0 start
+  local out err nl=$'\n'
   local -a fields=()
   if [[ -d /proc/self ]]; then
     if ! { IFS= read -r stat <"/proc/$1/stat"; } 2>/dev/null; then
@@ -34,10 +40,16 @@ process_stat() { # PID
     printf '%s %s\n' "${fields[0]}" "${fields[19]}"
     return 0
   fi
-  stat="$(LC_ALL=C ps -o stat= -p "$1" 2>/dev/null)" || rc=$?
-  stat="${stat//[[:space:]]/}"
+  # One ps call answers on both streams: its stderr fills the outer capture,
+  # and its status and blank-free stdout close it as one last line.
+  out="$( { stat="$(LC_ALL=C ps -o stat= -p "$1")" || rc=$?; } 2>&1
+    printf '\n%s %s' "$rc" "${stat//[[:space:]]/}" )"
+  err=${out%"$nl"*}
+  out=${out##*"$nl"}
+  rc=${out%% *}
+  stat=${out#* }
   if [[ "$rc" -ne 0 ]]; then
-    [[ "$rc" -eq 1 && -z "$stat" ]] || return 2
+    [[ "$rc" -eq 1 && -z "$stat" && -z "$err" ]] || return 2
     printf '\n'
     return 0
   fi

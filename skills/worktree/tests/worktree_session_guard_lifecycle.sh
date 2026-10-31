@@ -661,7 +661,9 @@ in_harness() { # DIR USER GUARD-ARGS...
 #                 host), reboot (its boot id), renamespace (its PID
 #                 namespace), zombie (the recorded process becomes a zombie
 #                 the suite holds), absent (the claimant's ps reports the
-#                 holder's PID absent), clockstep (the claimant's ps answers
+#                 holder's PID absent), failing (the claimant's ps fails
+#                 within ps itself on the holder's PID), clockstep (the
+#                 claimant's ps answers
 #                 the holder's lstart with another wall-clock time), each
 #                 applied in order; - for none
 # A row whose edit restarts the holder too keeps the lease on the one rule it
@@ -686,7 +688,8 @@ an expired lease recorded in another PID namespace stays held|held|expire restar
 an expired lease whose session's wall-clock start moved stays held|held|expire clockstep|75|bob|no"
 else
   RECLAIM_ROWS="$RECLAIM_ROWS
-an expired lease whose session PID the system reports absent is taken over|held|expire absent|0|alice|yes"
+an expired lease whose session PID the system reports absent is taken over|held|expire absent|0|alice|yes
+an expired lease whose session ps fails to read stays held|held|expire failing|75|bob|no"
 fi
 
 reclaim_rows() { # HOLDER CLAIMANT
@@ -718,6 +721,10 @@ reclaim_rows() { # HOLDER CLAIMANT
         absent)
           session_absent_ps "$LIVE_ROOT/absent-ps-$live_n" "$holder_pid"
           LIVE_PATH="$LIVE_ROOT/absent-ps-$live_n:$PATH"
+          ;;
+        failing)
+          session_failing_ps "$LIVE_ROOT/failing-ps-$live_n" "$holder_pid"
+          LIVE_PATH="$LIVE_ROOT/failing-ps-$live_n:$PATH"
           ;;
         clockstep)
           session_clockstep_ps "$LIVE_ROOT/clockstep-ps-$live_n" "$holder_pid"
@@ -896,6 +903,41 @@ unidentified_rows() {
     "a session-bound claim that cannot read its session process says so and records none"
 }
 
+# The ps reading of a process the suite holds, on every host: a copy of the
+# library with its /proc branch taken out reads through ps, as a host without
+# /proc does. Only ps's own report of no such process reads as absent.
+# A row: label|ps fixture, - for the real ps|status and output shape.
+PS_READ_ROWS='ps reads a held process as running|-|rc=0 shape=state_start
+ps that reports the PID absent reads as no process|absent|rc=0 shape=empty
+ps that fails within itself gives no answer|failing|rc=2 shape=empty'
+ps_read_rows() {
+  local source lib="$LIVE_ROOT/ps-read-lib.sh" branch='  if [[ -d /proc/self ]]; then' hdir pid label fixture want bin rc out shape
+  source="$(dirname -- "$GUARD_UNDER_TEST")/lib/process-identity.sh"
+  assert_eq "$(grep -cxF -- "$branch" "$source")" 1 "ps read: the /proc branch stands once"
+  BRANCH=$branch awk '$0 == ENVIRON["BRANCH"] { print "  if false; then"; next } { print }' "$source" >"$lib"
+  hdir="$LIVE_ROOT/ps-read-holder"
+  session_harness_start "$hdir" claude
+  pid=$SESSION_HARNESS_PID
+  while IFS='|' read -r label fixture want; do
+    bin=''
+    case "$fixture" in
+      absent) bin="$LIVE_ROOT/ps-read-absent"; session_absent_ps "$bin" "$pid" ;;
+      failing) bin="$LIVE_ROOT/ps-read-failing"; session_failing_ps "$bin" "$pid" ;;
+    esac
+    rc=0
+    out="$(PATH="${bin:+$bin:}$PATH" "$BASH" -c '. "$1" && process_stat "$2"' _ "$lib" "$pid")" || rc=$?
+    if [[ -z "$out" ]]; then
+      shape=empty
+    elif [[ "$out" =~ ^[A-Za-z]\ [^[:space:]]+$ ]]; then
+      shape=state_start
+    else
+      shape="other:[$out]"
+    fi
+    assert_eq "rc=$rc shape=$shape" "$want" "ps read: $label"
+  done <<<"$PS_READ_ROWS"
+  session_harness_stop "$hdir"
+}
+
 liveness_rows() { # RUN GUARD GROUP...
   local group
   LIVE_ROOT="$TMP_ROOT/live-$1"
@@ -913,10 +955,11 @@ liveness_rows() { # RUN GUARD GROUP...
       readfail) read_failure_rows claude; read_failure_rows codex ;;
       established) established_rows claude; established_rows codex ;;
       unidentified) unidentified_rows ;;
+      psread) ps_read_rows ;;
     esac
   done
 }
-liveness_rows main "$GUARD_SCRIPT" shared reclaim release readfail established unidentified
+liveness_rows main "$GUARD_SCRIPT" shared reclaim release readfail established unidentified psread
 [[ "$PROC_IDENTITY" != true ]] || liveness_rows boot "$GUARD_SCRIPT" relaunch
 
 # The worktree verbs go through the guard's release. cleanup --stale names a
@@ -981,7 +1024,8 @@ a session claim reads nothing silently^worktree-session-guard^[[ -n "$caller" ]]
 a failed reading counts as dead^worktree-session-guard^			*) unknown=true ;;^			*) ;;^readfail^claude: a failed process read keeps the lease;claude: a failed identity reading keeps the lease;codex: a failed process read keeps the lease;codex: a failed identity reading keeps the lease
 a failed process read counts as ended^worktree-session-guard^! status="$(process_identity_status "$pid" "$start")"^! status="$(process_identity_status "$pid" "$start" || echo ended)"^readfail^claude: a failed process read keeps the lease;codex: a failed process read keeps the lease
 an established claim waits for the mutex^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 ||^acquire_guard_mutex "$COMMON_DIR" ||^established^claude: an established claim without flock makes one attempt at a held mutex;codex: an established claim without flock makes one attempt at a held mutex
-an established claim fails its admission^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"^acquire_guard_mutex "$COMMON_DIR" 0 || exit 1^established^claude: an established claim without flock makes one attempt at a held mutex;codex: an established claim without flock makes one attempt at a held mutex'
+an established claim fails its admission^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"^acquire_guard_mutex "$COMMON_DIR" 0 || exit 1^established^claude: an established claim without flock makes one attempt at a held mutex;codex: an established claim without flock makes one attempt at a held mutex
+a ps diagnostic reads as no process^lib/process-identity.sh^ && -z "$err" ]]^ ]]^psread^ps read: ps that fails within itself gives no answer'
 PROC_LIVENESS_CONTROLS='a boot keeps its sessions^worktree-session-guard^	if [[ "$boot_part" == differ ]]; then^	if false; then^reclaim release relaunch^claude holds, codex claims: an expired lease whose session ran before a reboot is taken over;codex holds, claude claims: an expired lease whose session ran before a reboot is taken over;claude: release --stale releases an expired lease whose session ran before a reboot;claude: sweep releases an expired lease whose session ran before a reboot;claude: remove'"'"'s close-out releases a lease whose session ran before a reboot;codex: release --stale releases an expired lease whose session ran before a reboot;codex: sweep releases an expired lease whose session ran before a reboot;codex: remove'"'"'s close-out releases a lease whose session ran before a reboot;claude: a relaunched session'"'"'s claim drops the session from before the boot;claude: the relaunched session'"'"'s close-out releases its lease;codex: a relaunched session'"'"'s claim drops the session from before the boot;codex: the relaunched session'"'"'s close-out releases its lease
 the start is wall-clock time^lib/process-identity.sh^  if [[ -d /proc/self ]]; then^  if false; then^reclaim^claude holds, codex claims: an expired lease whose session'"'"'s wall-clock start moved stays held;codex holds, claude claims: an expired lease whose session'"'"'s wall-clock start moved stays held'
 [[ "$PROC_IDENTITY" != true ]] || LIVENESS_CONTROLS="$LIVENESS_CONTROLS

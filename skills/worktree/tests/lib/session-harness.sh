@@ -151,6 +151,17 @@ session_absent_ps() { # DIR PID
   chmod +x "$1/ps"
 }
 
+# A directory whose ps fails on every read of PID as BSD and macOS ps fail
+# within ps itself, a diagnostic on stderr, nothing on stdout and status 1,
+# and passes every other read to the real ps.
+session_failing_ps() { # DIR PID
+  local real
+  real="$(command -v ps)" || return 1
+  mkdir -p -- "$1" || return 1
+  printf '#!/usr/bin/env bash\ncase " $* " in *" -p %s "*) echo "ps: sysctl: Operation not permitted" >&2; exit 1 ;; esac\nexec %q "$@"\n' "$2" "$real" >"$1/ps"
+  chmod +x "$1/ps"
+}
+
 # A directory whose ps answers PID's lstart with another wall-clock time, as
 # after a clock step, and passes every other read to the real ps.
 session_clockstep_ps() { # DIR PID
