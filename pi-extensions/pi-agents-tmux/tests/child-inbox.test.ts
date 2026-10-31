@@ -92,6 +92,63 @@ test("installed inbox callback catches failure and releases ownership for the ne
 	await assert.rejects(installedRecovery(retained.default), /next installed poll must deliver/);
 });
 
+// Each lifecycle listener writes the task registry under the harness directory
+// without awaiting it. A delivered inbox task emits subagents:started, the write
+// installedRecovery's cleanup raced. The barrier holds the write until shutdown has begun.
+const listenerWrites = [
+	{ event: "subagents:started", payload: { mode: "pane", agent: "engineer", taskId: "work", status: "running" }, site: "runtime.\n\t\ttrackSessionPersistence(updateTaskRegistry(" },
+	{ event: "subagents:steered", payload: { mode: "pane", agent: "engineer", taskId: "work", deliverAs: "steer" }, site: "deliverAs) {\n\t\t\ttrackSessionPersistence(updateTaskRegistry(" },
+];
+
+async function listenerWriteBeforeTeardown(extension: (pi: import("@earendil-works/pi-coding-agent").ExtensionAPI) => void, row: typeof listenerWrites[number]): Promise<void> {
+	const { spyOn } = await import("bun:test");
+	const tasks = await import("../extensions/subagent/tasks.js");
+	const { createHarness, teardown, installExtension, fakeCtx, withoutRealIntervals } = await import("./extension-fixture.js");
+	const { runtimeDirForContext } = await import("../extensions/subagent/settings.js");
+	const harness = createHarness({ childAgent: "engineer", childPane: "1", tmuxPane: "%42" });
+	const ctx = fakeCtx(harness);
+	const handlers: NonNullable<Parameters<typeof installExtension>[1]>["handlers"] = new Map();
+	let emit!: import("@earendil-works/pi-coding-agent").ExtensionAPI["events"]["emit"];
+	const realUpdate = tasks.updateTaskRegistry;
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => { release = resolve; });
+	const held: Array<Promise<unknown>> = [];
+	const writes = spyOn(tasks, "updateTaskRegistry").mockImplementation((...args) => {
+		const write = gate.then(() => realUpdate(...args));
+		held.push(write);
+		return write;
+	});
+	try {
+		await withoutRealIntervals(async () => {
+			const start = await installExtension(harness, { handlers, extension: (pi) => { emit = pi.events.emit.bind(pi.events); extension(pi); } });
+			await start({}, ctx);
+			emit(row.event, { ...row.payload, runtimeRoot: runtimeDirForContext(ctx) });
+			assert.equal(held.length, 1, `${row.event} must start one registry write`);
+			const shutdown = (async () => { for (const handler of handlers.get("session_shutdown") ?? []) await handler({}, ctx); })();
+			release();
+			await shutdown;
+		});
+	} finally {
+		writes.mockRestore();
+		release();
+		teardown(harness);
+		await Promise.allSettled(held);
+	}
+	const leaked = existsSync(harness.cwd);
+	// The must-fail control's write recreates the directory after teardown.
+	rmSync(harness.cwd, { force: true, recursive: true });
+	assert.equal(leaked, false, `session_shutdown must drain the ${row.event} registry write before teardown; it recreated ${harness.cwd}`);
+}
+
+test("installed shutdown drains each lifecycle listener's registry write before teardown", async () => {
+	const runtime = await import("../extensions/subagent/index.js");
+	for (const row of listenerWrites) {
+		await listenerWriteBeforeTeardown(runtime.default, row);
+		const undrained = await importRuntimeCopy("index.ts", row.site, row.site.replace("trackSessionPersistence(", "void (")) as typeof runtime;
+		await assert.rejects(listenerWriteBeforeTeardown(undrained.default, row), new RegExp(`must drain the ${row.event} registry write`));
+	}
+});
+
 async function shutdownInbox(extension: (pi: import("@earendil-works/pi-coding-agent").ExtensionAPI) => void): Promise<void> {
 	const { EventEmitter } = await import("node:events");
 	const { createHarness, teardown, installExtension, fakeCtx, withoutRealIntervals } = await import("./extension-fixture.js");
@@ -142,7 +199,7 @@ test("shutdown stops the inbox poller before a stalled title drain", { timeout: 
 	const runtime = await import("../extensions/subagent/index.js");
 	await shutdownInbox(runtime.default);
 	const late = await importRuntimeCopy("index.ts", "\t\tif (childInboxPoller) clearInterval(childInboxPoller);\n\t\tif (runtimeLaneRefresh) clearInterval(runtimeLaneRefresh);\n\t\tcompletionPoller = undefined;", "\t\tif (runtimeLaneRefresh) clearInterval(runtimeLaneRefresh);\n\t\tcompletionPoller = undefined;", [
-		{ before: "await drainCurrentTmuxPaneTitle();\n\t\tawait drainTranscriptUsagePersistences();", after: "await drainCurrentTmuxPaneTitle();\n\t\tif (childInboxPoller) clearInterval(childInboxPoller);\n\t\tawait drainTranscriptUsagePersistences();" },
+		{ before: "await drainCurrentTmuxPaneTitle();\n\t\tawait drainSessionPersistences();", after: "await drainCurrentTmuxPaneTitle();\n\t\tif (childInboxPoller) clearInterval(childInboxPoller);\n\t\tawait drainSessionPersistences();" },
 	]) as typeof runtime;
 	await assert.rejects(shutdownInbox(late.default), /shutdown must stop the inbox poller/);
 });
