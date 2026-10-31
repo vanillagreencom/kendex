@@ -218,11 +218,12 @@ lease_line() {
 readonly SESSION_LAUNCHERS=' sh bash dash zsh ksh fish env timeout nice nohup setsid stdbuf '
 
 # The PID of the nearest ancestor of this process that is not a launcher.
-# A process is a launcher when its name or its argv[0] is in the set: a script
-# run through a `#!/bin/bash` line carries the script's name while argv[0]
-# names the interpreter. PID 1 or a chain that leaves the table yields
-# nothing, status 1. The walk is bounded by the table's row count, so a table
-# read mid-reparent cannot loop.
+# A process is a launcher when its name or its argv[0] is in the set: on
+# Linux a script run through a `#!/bin/bash` line carries the script's name
+# while argv[0] names the interpreter; macOS names it after the interpreter.
+# PID 1 or a chain that leaves the table yields nothing, status 1. The walk
+# is bounded by the table's row count, so a table read mid-reparent cannot
+# loop.
 session_ancestor() {
 	local table argv pid
 	table="$(process_table)" || return 1

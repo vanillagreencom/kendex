@@ -83,9 +83,9 @@ process_table() {
 }
 
 # Each process's argv[0] as `PID NAME` rows, its directory and a login
-# shell's leading `-` stripped. A script started through a `#!` line carries
-# the script's name in the table above and the interpreter's here. Status 1 is
-# a table that could not be read.
+# shell's leading `-` stripped. On Linux a script started through a `#!`
+# line carries the script's name in the table above and the interpreter's
+# here. Status 1 is a table that could not be read.
 process_argv0_table() {
   local raw
   raw="$(LC_ALL=C ps -A -o pid= -o args= 2>/dev/null)" || return 1

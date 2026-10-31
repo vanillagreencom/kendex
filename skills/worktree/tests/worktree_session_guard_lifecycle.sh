@@ -971,7 +971,6 @@ verb_rows main "$WORKTREE_PACKAGE_DIR/scripts"
 # fails where the host reads processes through /proc. The fails compare as a
 # set.
 LIVENESS_CONTROLS='launchers are not skipped^worktree-session-guard^readonly SESSION_LAUNCHERS='"' sh bash dash zsh ksh fish env timeout nice nohup setsid stdbuf '"'^readonly SESSION_LAUNCHERS='"'  '"'^shared^claude: a session-bound claim records the harness process it runs under;claude then codex: a second session on the lease keeps the first one'"'"'s record;claude then codex: one live session holds an expired lease whose other session is dead;claude then codex: the close-out from the holding session itself releases its lease;codex: a session-bound claim records the harness process it runs under;codex then claude: a second session on the lease keeps the first one'"'"'s record;codex then claude: one live session holds an expired lease whose other session is dead;codex then claude: the close-out from the holding session itself releases its lease
-a script interpreter stops the walk^worktree-session-guard^ && index(launchers, " " argv0[at] " ") == 0^^verbs^remove run by the session that holds the lease removes its own worktree
 a write drops recorded sessions^worktree-session-guard^		out="$out,$identity"^		:^shared^claude then codex: a second session on the lease keeps the first one'"'"'s record;claude then codex: one live session holds an expired lease whose other session is dead;claude then codex: the close-out from the holding session itself releases its lease;codex then claude: a second session on the lease keeps the first one'"'"'s record;codex then claude: one live session holds an expired lease whose other session is dead;codex then claude: the close-out from the holding session itself releases its lease
 takeover on age alone^worktree-session-guard^	[[ "$(lease_session_state "$1")" == dead ]]^	:^reclaim^claude holds, codex claims: an expired lease whose session lives stays held;claude holds, codex claims: an expired lease recorded on another host stays held;claude holds, codex claims: an expired lease that records no session stays held;codex holds, claude claims: an expired lease whose session lives stays held;codex holds, claude claims: an expired lease recorded on another host stays held;codex holds, claude claims: an expired lease that records no session stays held^claude holds, codex claims: an expired lease recorded in another PID namespace stays held;claude holds, codex claims: an expired lease whose session'"'"'s wall-clock start moved stays held;codex holds, claude claims: an expired lease recorded in another PID namespace stays held;codex holds, claude claims: an expired lease whose session'"'"'s wall-clock start moved stays held
 release on age alone^worktree-session-guard^		none | dead) return 0 ;;^		*) return 0 ;;^release^claude: release --stale keeps an expired lease whose session lives;claude: sweep keeps an expired lease whose session lives;claude: remove'"'"'s close-out from another process keeps a live session'"'"'s lease;codex: release --stale keeps an expired lease whose session lives;codex: sweep keeps an expired lease whose session lives;codex: remove'"'"'s close-out from another process keeps a live session'"'"'s lease
@@ -987,6 +986,28 @@ PROC_LIVENESS_CONTROLS='a boot keeps its sessions^worktree-session-guard^	if [[ 
 the start is wall-clock time^lib/process-identity.sh^  if [[ -d /proc/self ]]; then^  if false; then^reclaim^claude holds, codex claims: an expired lease whose session'"'"'s wall-clock start moved stays held;codex holds, claude claims: an expired lease whose session'"'"'s wall-clock start moved stays held'
 [[ "$PROC_IDENTITY" != true ]] || LIVENESS_CONTROLS="$LIVENESS_CONTROLS
 $PROC_LIVENESS_CONTROLS"
+# Linux names a process started through the worktree script's `#!` line
+# after its script, so only argv[0] shows the interpreter the walk passes.
+# macOS names it after the interpreter, so there the name alone passes it and
+# no walk reaches the argv[0] test this control removes. A probe started
+# through the same line reads which naming this host uses.
+ARGV0_CONTROL='a script interpreter stops the walk^worktree-session-guard^ && index(launchers, " " argv0[at] " ") == 0^^verbs^remove run by the session that holds the lease removes its own worktree'
+probe_shebang="$(head -n 1 -- "$WORKTREE_SCRIPT")" || { echo "worktree_session_guard_lifecycle: comm-probe=shebang-unreadable" >&2; exit 1; }
+[[ "$probe_shebang" == '#!'* ]] || { echo "worktree_session_guard_lifecycle: comm-probe=no-shebang value=[$probe_shebang]" >&2; exit 1; }
+printf '%s\nLC_ALL=C ps -o comm= -p "$$"\n' "$probe_shebang" >"$TMP_ROOT/comm-probe" \
+  || { echo "worktree_session_guard_lifecycle: comm-probe=write-failed" >&2; exit 1; }
+chmod +x -- "$TMP_ROOT/comm-probe" || { echo "worktree_session_guard_lifecycle: comm-probe=chmod-failed" >&2; exit 1; }
+probe_comm="$("$TMP_ROOT/comm-probe")" || { echo "worktree_session_guard_lifecycle: comm-probe=ps-failed" >&2; exit 1; }
+probe_comm="${probe_comm#"${probe_comm%%[![:space:]]*}"}"
+probe_comm="${probe_comm%"${probe_comm##*[![:space:]]}"}"
+probe_interpreter="${probe_shebang#'#!'}"
+probe_interpreter="${probe_interpreter%% *}"
+case "${probe_comm##*/}" in
+  comm-probe) LIVENESS_CONTROLS="$LIVENESS_CONTROLS
+$ARGV0_CONTROL" ;;
+  "${probe_interpreter##*/}") ;;
+  *) echo "worktree_session_guard_lifecycle: comm-probe=unexpected value=[$probe_comm]" >&2; exit 1 ;;
+esac
 control_n=0
 while IFS='^' read -r control_label control_file control_text control_replacement control_groups expected_fails proc_fails; do
   [[ "$PROC_IDENTITY" != true || -z "$proc_fails" ]] || expected_fails="$expected_fails;$proc_fails"
