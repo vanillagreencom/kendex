@@ -31,7 +31,7 @@ Run the classifier to decide whether CI can skip product checks. Commit `.kendex
   --event pull_request --base "$BASE" --head "$HEAD"
 ```
 
-The endpoints: [references/wiring.md § The endpoint expressions](references/wiring.md#the-endpoint-expressions). Flags and exit codes: `harness-only --help`. Consumer setup: [README.md](README.md). Workflow shapes to copy: [references/wiring.md](references/wiring.md).
+The endpoints: [references/wiring.md § The endpoint expressions](references/wiring.md#the-endpoint-expressions). Flags and exit codes: `harness-only --help`. Consumer setup and workflow shapes to copy: [references/wiring.md](references/wiring.md).
 
 Use `--mode render-candidate` only to gate the engine installation and mirror refresh. It prints `render_candidate=true|false` and grants no CI skip. It permits new head-owned paths and the adopted caller under the [caller ownership contract](#shared-refresh-caller-ownership). `change-class` must prove render before CI skips product checks.
 

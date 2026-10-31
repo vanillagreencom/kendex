@@ -94,7 +94,7 @@ Only participating installed transport processes on this host are covered. The w
 
 Every lane writes with one app token, and Linear lets that token write in every team, so `linear.sh` keeps writes in `LINEAR_TEAM` itself. Before any write it refuses `issues create` whose `--team` is another team, and `issues update`, `bulk-update`, `activate`, `block`, `unblock`, `complete`, `archive` and `trash` (or its alias `delete`) on an issue outside `LINEAR_TEAM`, judged by reading the issue's current team for each identifier or UUID, once per distinct reference per invocation. A failed team read refuses as `refused=cross-team-unread` before any write. Reads, `comments create`, `add-relation` and `remove-relation` run in any team. The refusal line is `linear: refused=cross-team action=<verb> issue=<ID> team=<KEY> own-team=<KEY> route=peer-mail`: give cross-team work to the overseer of that team's repository with `lane-mail peer send --repo [REPO]`. No setting turns the guard off. With no `LINEAR_TEAM`, an existing-issue write runs unchecked and prints `linear: cross-team-guard=inactive`.
 
-Set `LINEAR_APP_TOKEN` or the client pair in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another); `op://` references are supported. Use `auth-mint` on the host with the real pair to publish a token to the fleet. Credential precedence, expiry, caching and attribution: [README.md § Setup](README.md#setup).
+Set `LINEAR_APP_TOKEN` or the client pair in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another); `op://` references are supported. Use `auth-mint` on the host with the real pair to publish a token to the fleet. Credential precedence, expiry, caching and attribution: [authentication](references/authentication.md).
 
 `LINEAR_API_KEY` and `KENDEX_USER_EMAIL`, the operator's email, also belong in the private env file. Non-secret defaults belong in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes the key, team and email. A `LINEAR_API_KEY` from project files beats an inherited key. When the personal key is selected, `auth-check` warns with fingerprints if it shadows a different inherited key. Every other key uses process environment precedence over the private env file.
 
@@ -139,7 +139,7 @@ No match leaves the calling workflow's missing-file behavior unchanged. Multiple
 
 ## Blocked Label vs Issue Relations
 
-For a cross-team relation, select a minted app token through `LINEAR_APP_TOKEN`. Confirm `credential: "app-token"` with `auth-check` and check that the actor can access both teams. Credential selection follows [README.md § Setup](README.md#setup).
+For a cross-team relation, select a minted app token through `LINEAR_APP_TOKEN` ([credential selection](references/authentication.md)). Confirm `credential: "app-token"` with `auth-check` and check that the actor can access both teams.
 
 A blocker that is itself a Linear issue is a relation (`--blocked-by`); an external one (vendor, license) is the `blocked` label plus a comment.
 

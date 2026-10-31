@@ -26,7 +26,7 @@ The push check is there because Git runs no hook when it replays a commit. A reb
 
 ## Git hooks
 
-The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook allows commits when these Git hooks are absent. It reports the missing setup with a consent route, or a main-checkout owner route for a linked worktree. Git checks run only after setup is armed.
+The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. How they layer with the harness pre-commit hook: [references/hooks-and-settings.md § Hook layering](references/hooks-and-settings.md#hook-layering).
 
 Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).
 
@@ -34,9 +34,7 @@ Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMEN
 
 Requires Git, awk, jq 1.7 or newer (jq 1.6 refuses every generated-path inventory) and standard POSIX tools, plus ruff or pyflakes in a repository with Python files, and gitleaks 8.19 or newer for the credential scan. Where those tools are installed in CI is in [CHECKS.md § py-names](CHECKS.md#py-names) and [CHECKS.md § secrets](CHECKS.md#secrets). Bash 3.2 is supported. Run `bash .agents/skills/commit-guards/scripts/install-git-hooks`, which needs no kendex, or `kendex guard install` in each fresh clone, then `bash .agents/skills/commit-guards/scripts/install-git-hooks --check` or `kendex guard check` to check the hooks. Git never clones hooks: until they are armed, commits run no Git checks. The `pre-commit-check` harness hook allows the command and reports the setup route. Obtain the repository owner’s consent before setup runs repository scripts.
 
-Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Each resolves environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; a `.env` file is never read. Per-check flags (`--excludes`, `--baseline`) override every source; relative paths are repo-root-relative.
-
-A settings file is read whole. Each `[env]` value is a single-line basic string with no `"` or `\` inside, or a literal string with no apostrophe inside. Literal strings preserve backslashes and double quotes as text. One value in another shape, or one key assigned twice, fails every read from that file, on any key, because every kendex settings reader refuses the same file. The error for a value in another shape names the file, the line and the key: `settings-string=kendex.settings.toml:3:OTHER`.
+Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Set keys under `[env]` in committed `kendex.settings.toml`. Resolution order and the settings-file grammar: [references/hooks-and-settings.md](references/hooks-and-settings.md).
 
 ```toml
 [env]
@@ -44,7 +42,7 @@ COMMIT_GUARDS_BYTE_CEILING_KB = "500"
 COMMIT_GUARDS_CHECKS = "todo-ban suppression-ban"
 ```
 
-`COMMIT_GUARDS_PRE_COMMIT_LOCAL` names a project check the pre-commit hook runs last. `COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS` names the paths that check reads. The hook runs the check only for a commit that changes one of those paths, and prints `pre-commit: local-entry=skipped` when it skips it. The hook prints no install command of its own: write the check so that a missing tool prints its install command and exits `2`. With the paths set, that refusal blocks only a commit that changes them.
+`COMMIT_GUARDS_PRE_COMMIT_LOCAL` names a project check the pre-commit hook runs last. Writing that check: [references/hooks-and-settings.md § Repo-local check](references/hooks-and-settings.md#repo-local-check).
 
 ## Licence
 
