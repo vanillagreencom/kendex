@@ -381,7 +381,12 @@ class SessionContract(unittest.TestCase):
                 self.call("start", harness, account=account, mode="new")
                 self.wait()
                 native = self.started()[-1]
-                self.assertEqual(native["account"], str(account))
+                record = json.loads(self.record.read_text())
+                self.assertEqual(record["account"], str(account))
+                # Codex launches under the lane's prepared copy of the account.
+                self.assertEqual(native["account"], record["effective_home"])
+                if harness in ("pi", "claude"):
+                    self.assertEqual(native["account"], str(account))
                 expected = str(account) if harness == "claude" else (caller or None) if harness == "pi" else None
                 self.assertEqual(native["claude_config_dir"], expected)
                 self.assertEqual(native["excluded_env"], [])
