@@ -26,3 +26,4 @@ trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 - Check `mktemp -d` alone, never nested inside `cd`. A failed creation can make `cd` select the caller's directory and put it under the cleanup trap.
 - On MINGW/MSYS, export `MSYS=winsymlinks:nativestrict` at the suite entry. Check `[ -L ]` after `ln -s`, and never gate a skip on a creation probe alone. By default Git Bash `ln -s` copies the target and exits 0, so a test of symlink refusal sees a regular file. Evidence: hyprtrade's `tools/test-hermetic-lock-record` swap probe.
+- The held-file error of [code-quality § Tests](../SKILL.md#tests) on Windows is the sharing violation, winerror 32, which MSYS `rm` prints as `Device or resource busy`.
