@@ -622,13 +622,18 @@ fn an_incomplete_declaration_set_cannot_prove_record_agreement() {
 /// One skill this checkout's declaration configures instructions for,
 /// read off the declaration rather than named here so each control follows
 /// whatever this repository configures.
+/// The skill is one the install record holds: a package a branch adds
+/// stays out of the record until `main` re-records it (D007), so the
+/// planner holds its render back instead of writing it, which the
+/// written-side controls below cannot use.
 #[allow(clippy::expect_used)]
-fn instructed_skill(declared: &Manifest) -> String {
+fn instructed_skill(declared: &Manifest, lock: &Lock) -> String {
+    let recorded = crate::lock::skill_names(lock);
     declared
         .skill_instructions
         .keys()
-        .find(|skill| !matches!(skill.as_str(), "all" | "*"))
-        .expect("the manifest configures one skill's instructions")
+        .find(|skill| !matches!(skill.as_str(), "all" | "*") && recorded.contains(*skill))
+        .expect("the manifest configures instructions for a skill the record holds")
         .clone()
 }
 
@@ -650,9 +655,10 @@ impl Planted {
         let (tmp, copy) =
             committed_copy(&crate::test_util::checkout_root()).expect("the checkout copies");
         let mut declared = declaration(&env, &copy).expect("the copy's manifest reads");
+        let lock = record(&env, &copy).expect("the copy's install record reads");
         // Refusal controls judge one skill. The passing test above still
         // plans every declared installation and every committed render.
-        let skill = instructed_skill(&declared);
+        let skill = instructed_skill(&declared, &lock);
         let mut item = declared.skills[&skill].clone();
         item.harnesses = Some(vec![crate::model::HarnessId::Codex]);
         declared = Manifest {
@@ -669,7 +675,6 @@ impl Planted {
             toml::to_string(&declared).expect("the reduced declaration serializes"),
         )
         .expect("the private copy's declaration writes");
-        let lock = record(&env, &copy).expect("the copy's install record reads");
         Planted {
             env,
             _tmp: tmp,
@@ -708,7 +713,7 @@ impl Planted {
 #[test]
 fn a_render_its_source_no_longer_renders_is_refused() {
     let mut planted = Planted::new();
-    let skill = instructed_skill(&planted.declared);
+    let skill = instructed_skill(&planted.declared, &planted.lock);
     planted.grow(&skill);
 
     let (written, _) = planted.named();
@@ -762,7 +767,7 @@ fn a_render_of_a_package_the_record_does_not_hold_is_refused() {
 #[test]
 fn a_render_tree_holding_a_file_it_does_not_render_is_refused() {
     let planted = Planted::new();
-    let skill = instructed_skill(&planted.declared);
+    let skill = instructed_skill(&planted.declared, &planted.lock);
     let tree = format!(".agents/skills/{skill}");
     let extra = planted.copy.join(&tree).join("not-rendered.md");
     assert!(!extra.exists(), "the render already holds {extra:?}");
