@@ -153,14 +153,16 @@ Create Options:
   `--review-born --priority 2` one with no `Symptom:`; a placeholder or null
   token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
   Under the same key, create, update --description/--description-file,
-  and bulk-update --description
-  refuse a body whose first non-empty line, after an optional owner action
-  line (`**Name, what you do:** ...`), is a header (a line-start `**Key**:` or
-  `Reached by:`), and one with a header line over 500 characters; each
-  refusal names the line number and its length. Update judges the body after
-  it reads the issue: a body equal to the stored one apart from a leading
-  owner action line, which it places, replaces or removes, is judged on that
-  line's length alone, so an owner ask writes over a body filed header-first.
+  and bulk-update --description require nonempty quoted blocks starting with
+  `> **Story:**` then `> **Why this matters:**`, after any optional owner action
+  line (`**Name, what you do:** ...`). Keep each block's text quoted, with an
+  unquoted blank line between the blocks and before the first heading, if any.
+  Unfilled placeholders count as empty. Authors and reviewers judge the prose;
+  the guard checks structure. It also refuses a header line over 500
+  characters; each refusal names the line number and its length. Update judges
+  the body after it reads the issue: a body equal to the stored one apart from
+  a leading owner action line, which it places, replaces or removes, is judged
+  on that line's length alone, so an owner ask writes over a body filed header-first.
 
   Label taxonomy: where the repository declares one (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
@@ -185,7 +187,9 @@ Update Options:
                         Read current labels, apply the intended change, then
                         pass the full final set.
   --title <text>        New title
-  --description <text>  New description (empty text clears it)
+  --description <text>  New description. Empty text clears it with
+                        LINEAR_REQUIRE_REACH empty; otherwise the opening
+                        and stored-body owner-action rules above apply.
   --description-file <path>  Read new description from file (preferred for markdown)
   --project <name|uuid> Move to project (name or UUID, auto-resolved)
   --priority <0-4>      Priority: 0=None, 1=Urgent, 2=High, 3=Normal, 4=Low

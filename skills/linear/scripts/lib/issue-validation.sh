@@ -271,8 +271,8 @@ require_issue_reach() {
 
 # require_issue_header_shape DESCRIPTION [STORED] — 0 to proceed, 1 + a JSON
 # error on stderr naming the line and its length. The issue template puts the
-# outcome first, after an optional owner action line, and keeps each header to
-# one short sentence; any other header opening, or a header over
+# quoted Story and Why blocks first, after an optional owner action line,
+# and keeps each header short; an invalid opening, or a header over
 # ISSUE_HEADER_MAX characters, is refused. It is held by the reach guard's
 # setting so one key turns the filing bar on or off.
 #
@@ -296,6 +296,14 @@ require_issue_header_shape() {
 		def without_owner_action: gsub("\r\n"; "\n") | split("\n")
 			| if (.[0] // "" | owner_action) then .[1:] | if .[0] == "" then .[1:] else . end else . end
 			| join("\n");
+		# Project-management templates produce the two quoted blocks. This checks
+		# their boundaries and values; authors and reviewers judge their prose.
+		def opening_value:
+			gsub("\n> ?"; " ") | gsub("^\\s+|\\s+$"; "")
+			| length > 0 and (test("^(\\[[^]\\r\\n]+\\]\\s*)+$") | not);
+		def opening:
+			(try capture("^> \\*\\*Story:\\*\\*(?<story>[^\\n]*(?:\\n>[^\\n]*)*)\\n[ \\t]*\\n(?:[ \\t]*\\n)*> \\*\\*Why this matters:\\*\\*(?<why>[^\\n]*(?:\\n>[^\\n]*)*)(?:\\n[ \\t]*\\n(?:[ \\t]*\\n)*(?:#{1,6}[ \\t]+[\\s\\S]*)?|\\n?)$") catch null) // null
+			| . != null and (.story | opening_value) and (.why | opening_value);
 		def long_header($max): {error: "issue-header-length line=\(.line) length=\(.length) max=\($max)\nRefusing an issue body with a header line over \($max) characters. Keep each header to one short sentence and move the detail under a section.",
 			rule: "issue-header-length", line: .line, length: .length};
 		[$desc | gsub("\r\n"; "\n") | split("\n") | to_entries[]
@@ -303,7 +311,9 @@ require_issue_header_shape() {
 		| ($has_stored and ($desc | without_owner_action) == ($stored | without_owner_action)) as $moves_action
 		| [$lines[] | select(.text | test("\\S"))] as $content
 		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first
-		| ([$lines[] | select((.text | header) and .length > $max)] | first) as $long
+		| ([$lines[] | select((.text | header) or (.text | startswith("> **Why this matters:**")))
+			| .length -= (if (.text | startswith("> ")) then 2 else 0 end)
+			| select(.length > $max)] | first) as $long
 		| ([$parsed.boxes[] | select(.post_merge)
 			| if (.trigger | test("^release(?: |$)")) and .trigger_kind != "release" then
 				{rule: "post-merge-release-repository", box: .number, fix: "Use Trigger: release OWNER/REPO TAG-GLOB."}
@@ -312,9 +322,9 @@ require_issue_header_shape() {
 			  else empty end] | first) as $post
 		| if $moves_action then
 			([$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)] | first // empty)
-		  elif $first != null and ($first.text | header) then
-			{error: "issue-header-opening line=\($first.line) length=\($first.length)\nRefusing an issue body that opens with a header line. Open with the outcome sentence; the **Key**: and Reached by: headers follow it.",
-			 rule: "issue-header-opening", line: $first.line, length: $first.length}
+		  elif ($lines | map(select($first != null and .line >= $first.line) | .text) | join("\n") | opening | not) then
+			{error: "issue-header-opening line=\($first.line // 1) length=\($first.length // 0)\nOpen with nonempty quoted Story and Why this matters blocks, separated by an unquoted blank line, before a blank line and the first heading.",
+			 rule: "issue-header-opening", line: ($first.line // 1), length: ($first.length // 0)}
 		  elif $long != null then $long | long_header($max)
 		  elif $post != null then $post + {error: ($post.rule + " box=\($post.box)\nfix=" + $post.fix)}
 		  else empty end') || return 1

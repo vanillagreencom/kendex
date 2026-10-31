@@ -24,11 +24,16 @@ LINEAR_AGENT_LABELS = ""
 # Whether a new issue must say who runs into the problem. Any value turns it
 # on: a description with no "Reached by" line is refused, and a
 # high-priority issue born from a review also needs a "Symptom" line. A
-# description written on create or update must also open with its outcome,
-# not a header line, and keep each header line to 500 characters; an owner
-# action line may come before the outcome. An update that only adds, changes
-# or removes that line on the stored description is checked only on that
-# line's length. Empty turns it off.
+# description written on create, update or bulk-update must open with
+# nonempty quoted "> **Story:**" then "> **Why this matters:**" blocks.
+# Keep each block's text quoted, with an unquoted blank line between them
+# and before the first heading, if any. Unfilled opening placeholders count
+# as empty. Authors judge the prose; the guard checks structure. Keep each
+# header line to 500 characters; an owner action line may come before Story.
+# An update that only adds, changes or removes that line on the stored
+# description is checked only on that line's length. An empty changed body
+# fails the opening check unless that stored-body exception applies.
+# Empty turns it off.
 LINEAR_REQUIRE_REACH = "1"
 
 # How read commands print: "safe" flat, "table" for a person, "ids" bare

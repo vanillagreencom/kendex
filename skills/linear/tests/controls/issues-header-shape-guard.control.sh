@@ -1,27 +1,25 @@
-# One mutation per branch the guard makes, each written against the file as it
-# ships. Mutations 1 and 2 are the issue's must-fail control: without them the
-# validator accepts both refused bodies, as it did before the guard.
+# Mutations break the shipped structural, length, route and legacy contracts.
 #
 # 1. The opening check. Without it a body opening with `**Source**:` or
 #    `Reached by:` files, on create and update alike.
 control_expect "a create opening with a **Source**: line is refused"
 control_expect "a create whose first non-empty line is Reached by: is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
-	'		  elif $first != null and ($first.text | header) then' \
+	'		  elif ($lines | map(select($first != null and .line >= $first.line) | .text) | join("\n") | opening | not) then' \
 	'		  elif false then'
 
 # 2. The length check. Without it a header of any length files.
 control_expect "a create with a 501-character **Symptom**: line is refused"
 control_replace scripts/lib/issue-validation.sh 1 \
-	'		| ([$lines[] | select((.text | header) and .length > $max)] | first) as $long' \
-	'		| null as $long'
+	'			| select(.length > $max)] | first) as $long' \
+	'			| select(false)] | first) as $long'
 
 # 3. The bound. Read as inclusive, a header of exactly 500 characters is
 #    refused.
 control_expect "a create with a 500-character header line exits zero"
 control_replace scripts/lib/issue-validation.sh 1 \
-	'		| ([$lines[] | select((.text | header) and .length > $max)] | first) as $long' \
-	'		| ([$lines[] | select((.text | header) and .length >= $max)] | first) as $long'
+	'			| select(.length > $max)] | first) as $long' \
+	'			| select(.length >= $max)] | first) as $long'
 
 # 4. The unit. Counted in bytes, a short header in a non-Latin script is
 #    refused.
@@ -81,10 +79,10 @@ control_replace scripts/lib/issue-validation.sh 1 \
 	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \
 	'		| ($content | first) as $first'
 
-control_expect "an owner-shaped opening **Brad, what you do:** Run the check. Comment the result. followed by a header is refused"
+control_expect 'opening empty-why refuses'
 control_replace scripts/lib/issue-validation.sh 1 \
-	'		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first' \
-	'		| ($content | if length > 0 and (.[0].text | owner_action) then [] else . end | first) as $first'
+	'			| . != null and (.story | opening_value) and (.why | opening_value);' \
+	'			| . != null and (.story | opening_value);'
 
 # The stored-body exemption. Without it an owner ask over a body filed
 # header-first, and the rollback or close writing that body back, are refused.
