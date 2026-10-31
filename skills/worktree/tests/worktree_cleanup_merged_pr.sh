@@ -63,12 +63,13 @@ assert_eq() {
 # GH_STDERR_NOISE=1 prints gh's routine chatter on stderr beside a good answer.
 # GH_NOISE=1 puts that chatter on STDOUT, where it contaminates the answer.
 # FAIL_REGISTRATION_HEAD=1 makes the registration metadata read fail after Git
-# has already enumerated the worktree.
+# has already enumerated the worktree. lib/gh-credential.sh answers for the
+# credential first.
 REAL_HEAD="$(command -v head)" || exit 2
 mkdir -p "$TMP_ROOT/bin"
-cat >"$TMP_ROOT/bin/gh" <<'STUB'
-#!/usr/bin/env bash
-set -uo pipefail
+{
+  printf '#!/usr/bin/env bash\nset -uo pipefail\nsource %q\n' "$TEST_DIR/lib/gh-credential.sh"
+  cat <<'STUB'
 if [[ "${GH_FAIL:-0}" == "1" ]]; then
   echo "gh: could not reach api.github.com" >&2
   exit 1
@@ -117,6 +118,7 @@ while read -r want want_base oid number cross; do
 done <<<"${GH_MERGED_PRS:-}"
 exit 0
 STUB
+} >"$TMP_ROOT/bin/gh"
 chmod +x "$TMP_ROOT/bin/gh"
 cat >"$TMP_ROOT/bin/head" <<STUB
 #!/usr/bin/env bash
@@ -225,6 +227,17 @@ step() {
       fi
       ;;
     other) add_branch_tree other; OTHER="$ROOT/trees/other" ;;
+    # The second tree squash-merged the same way, after `other`.
+    squash-other)
+      printf 'other\n' >"$MAIN/other.txt"
+      git -C "$MAIN" add other.txt
+      git -C "$MAIN" commit -q -m 'other: work (squashed)'
+      git -C "$MAIN" push -q origin main
+      if git -C "$MAIN" merge-base --is-ancestor other origin/main; then
+        echo "FIXTURE: the squashed other branch is an ancestor of origin/main" >&2
+        exit 2
+      fi
+      ;;
     follow-up)
       printf 'follow-up\n' >"$WT/followup.txt"
       git -C "$WT" add followup.txt
@@ -284,6 +297,12 @@ gh_env() {
     fork) ROW_ENV=("GH_MERGED_PRS=topic main $TIP 42 1") ;;
     redirect) ROW_ENV=("GH_REPO=someone-else/other-repo" "GH_REDIRECT_OID=$TIP") ;;
     fail) ROW_ENV=("GH_FAIL=1") ;;
+    stale-keyring) ROW_ENV=("GH_TOKEN=ghp_stale" "GH_MERGED_PRS=topic main $TIP 42") ;;
+    stale-keyring-both)
+      ROW_ENV=("GH_TOKEN=ghp_stale" "GH_MERGED_PRS=topic main $TIP 42
+other main $(git -C "$MAIN" rev-parse refs/heads/other) 43")
+      ;;
+    stale-no-keyring) ROW_ENV=("GH_TOKEN=ghp_stale" "GH_KEYRING=none" "GH_MERGED_PRS=topic main $TIP 42") ;;
     noise-out) ROW_ENV=("GH_NOISE=1") ;;
     noise-err) ROW_ENV=("GH_STDERR_NOISE=1" "GH_MERGED_PRS=topic main $TIP 42") ;;
     registration-fail) ROW_ENV=("FAIL_REGISTRATION_HEAD=1" "GH_MERGED_PRS=topic main $TIP 42") ;;
@@ -375,6 +394,7 @@ err_text() {
   case "$1" in
     -) printf '' ;;
     other-unmerged) printf 'worktree-cleanup-unmerged: <other>' ;;
+    keyring) printf 'worktree-github-auth: fallback=keyring' ;;
     unmerged|moved) printf 'worktree-cleanup-unmerged: <wt>' ;;
     undetermined:*) printf 'worktree-cleanup-merge-unverified: <wt>' ;;
     detached) printf 'worktree-cleanup-detached: <wt>' ;;
@@ -393,6 +413,8 @@ err_text() {
 ROWS='
 cleanup collects the squash-merged worktree on the merged pull request and names the one it keeps|tree squash other|merged|cleanup|0|cleaned|other-unmerged|tree=absent dirty=- branch=absent other=present
 a lookup that fails keeps the worktree and says the status could not be determined|tree squash|fail|cleanup|0|-|undetermined:gh: could not reach api.github.com |tree=present dirty=- branch=tip other=-
+a stale GH_TOKEN yields to the keyring login, which proves the squash merge|tree squash|stale-keyring|cleanup|0|cleaned|keyring|tree=absent dirty=- branch=absent other=-
+a stale GH_TOKEN with no keyring login keeps the worktree as undetermined, not unmerged|tree squash|stale-no-keyring|cleanup|0|-|undetermined:HTTP 401|tree=present dirty=- branch=tip other=-
 gh chatter on stdout is an unreadable answer, not a row that did not match|tree squash|noise-out|cleanup|0|-|undetermined:gh returned a row this cannot read: A new release of gh is available: 2.40.0 -> 2.63.2|tree=present dirty=- branch=tip other=-
 a missing gh keeps the worktree and is named|tree squash|no-gh|cleanup|0|-|undetermined:gh is not installed|tree=present dirty=- branch=tip other=-
 a detached worktree is named, not passed over|tree detach|none|cleanup|0|-|detached|tree=present dirty=- branch=tip other=-
@@ -410,6 +432,7 @@ remove deletes a squash-merged branch on the merged pull request|tree squash|mer
 remove keeps an unmerged branch|tree|none|remove @topic|1|removed|kept-unmerged|tree=absent dirty=- branch=tip other=-
 remove keeps a branch merged only into its own upstream|tree upstream|none|remove @topic|1|removed|kept-unmerged|tree=absent dirty=- branch=tip other=-
 remove tells an unanswered lookup apart from a proven-unmerged branch|tree squash|fail|remove @topic|1|removed|kept-undetermined:gh: could not reach api.github.com |tree=absent dirty=- branch=tip other=-
+remove keeps the branch when a stale GH_TOKEN has no keyring login to yield to|tree squash|stale-no-keyring|remove @topic|1|removed|kept-undetermined:HTTP 401|tree=absent dirty=- branch=tip other=-
 '
 
 echo "=== cleanup and remove against squash-merged branches ==="
@@ -422,6 +445,80 @@ while IFS='|' read -r label fixture gh command rc out err want_state; do
   gh_env "$gh"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+
+# Two squash-merged trees under a stale GH_TOKEN beside a keyring login, with
+# WORKTREE_DEFAULT_BRANCH answering before any GitHub read: the credential is
+# chosen once for the run, at the first merge lookup, so one fallback record
+# and one probe of each credential however many lookups follow. `probes` lists
+# the gh calls that are not pull-request reads, `reads` the credential each
+# pull-request read used.
+echo "=== the read credential is chosen once per run ==="
+auth_once() { # NAME SCRIPT
+  build "auth-once-$1" tree squash other squash-other
+  gh_env stale-keyring-both
+  ROW_ENV+=("GH_CREDENTIAL_LOG=$ROOT/credential.log")
+  : >"$ROOT/credential.log"
+  printf '%s probes=%s reads=%s' "$(WORKTREE_SCRIPT="$2" run cleanup)" \
+    "$(awk '$2 != "pr" { print $1, $2, $3 }' "$ROOT/credential.log" | paste -s -d , -)" \
+    "$(awk '$2 == "pr" { print $1 }' "$ROOT/credential.log" | paste -s -d , -)"
+}
+assert_eq "$(auth_once real "$WORKTREE_SCRIPT")" \
+  "rc=0 out=worktree-cleaned: <other>;worktree-cleaned: <wt> err=worktree-github-auth: fallback=keyring tree=absent dirty=- branch=absent other=absent probes=ghp_stale api user,keyring auth status reads=keyring,keyring" \
+  "two squash-merged trees under a stale GH_TOKEN take one credential choice for the run"
+
+# The cleanup fetch runs before any GitHub read, WORKTREE_DEFAULT_BRANCH
+# answering the branch, and under the HTTPS fallback its git call takes the
+# router's credential, GH_BOT_TOKEN. The merge read after it still takes the
+# user ladder from the environment the run started with: GITHUB_TOKEN's value.
+echo "=== a git call's credential stays with that call ==="
+auth_after_git() { # NAME SCRIPT
+  build "auth-after-git-$1" tree squash
+  gh_env merged
+  ROW_ENV+=("GITHUB_TOKEN=ghp_user" "GH_BOT_TOKEN=ghp_bot" "KENDEX_GITHUB_GIT_HTTPS_FALLBACK=always" \
+    "GH_CREDENTIAL_LOG=$ROOT/credential.log")
+  : >"$ROOT/credential.log"
+  printf '%s reads=%s' "$(unset GH_TOKEN; WORKTREE_SCRIPT="$2" run cleanup)" \
+    "$(awk '$2 == "pr" { print $1 }' "$ROOT/credential.log" | paste -s -d , -)"
+}
+assert_eq "$(auth_after_git real "$WORKTREE_SCRIPT")" \
+  "rc=0 out=worktree-cleaned: <wt> err= tree=absent dirty=- branch=absent other=- reads=ghp_user" \
+  "the merge read after a fetch under the HTTPS fallback takes GITHUB_TOKEN, not the bot token"
+
+# must-fail: the git wrapper run in the script's shell leaves the router's
+# GH_TOKEN there, and the merge read takes the bot token.
+mkdir -p "$TMP_ROOT/git-auth-mutant"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/git-auth-mutant/worktree"
+cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/git-auth-mutant/github"
+git_auth_mutant="$TMP_ROOT/git-auth-mutant/worktree/scripts/worktree"
+assert_eq "$(grep -cx -- 'git_with_github_https_auth() (' "$git_auth_mutant")" "1" \
+  "control: the git wrapper's subshell body opens once"
+sed -i.bak -e 's/^git_with_github_https_auth() ($/git_with_github_https_auth() {/' \
+  -e '/^git_with_github_https_auth() {$/,/^)$/ s/^)$/}/' "$git_auth_mutant"
+assert_eq "$(cmp -s "$git_auth_mutant.bak" "$git_auth_mutant" && printf unchanged || printf changed)" "changed" \
+  "control: running the git wrapper in the script's shell changes the script"
+rm -f -- "${git_auth_mutant:?}.bak"
+assert_eq "$(auth_after_git mutant "$git_auth_mutant")" \
+  "rc=0 out=worktree-cleaned: <wt> err= tree=absent dirty=- branch=absent other=- reads=ghp_bot" \
+  "must-fail: a git wrapper in the script's shell hands the merge read the bot token"
+
+# must-fail: a merge lookup run in a subshell would choose the credential
+# there and forget it; the choice refuses instead, and the lookup it fails
+# keeps the tree as undetermined.
+mkdir -p "$TMP_ROOT/subshell-mutant"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/subshell-mutant/worktree"
+cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/subshell-mutant/github"
+subshell_mutant="$TMP_ROOT/subshell-mutant/worktree/scripts/worktree"
+# shellcheck disable=SC2016 # the script's own text, not expanded
+subshell_line='        merged_pr_for_branch "$BRANCH" || CLEANUP_MERGE_RC=$?'
+assert_eq "$(grep -cxF -- "$subshell_line" "$subshell_mutant")" "1" \
+  "control: the cleanup merge lookup occurs once"
+sed -i.bak 's/^        merged_pr_for_branch "\$BRANCH" || CLEANUP_MERGE_RC=\$?$/        ( merged_pr_for_branch "$BRANCH" ) || CLEANUP_MERGE_RC=$?/' "$subshell_mutant"
+assert_eq "$(cmp -s "$subshell_mutant.bak" "$subshell_mutant" && printf unchanged || printf changed)" "changed" \
+  "control: running the lookup in a subshell changes the script"
+rm -f -- "${subshell_mutant:?}.bak"
+assert_eq "$(auth_once subshell "$subshell_mutant")" \
+  "rc=0 out= err=worktree-github-auth-subshell: merged_pr_for_branch main;worktree-cleanup-merge-unverified: <other>;worktree-github-auth-subshell: merged_pr_for_branch main;worktree-cleanup-merge-unverified: <wt> tree=present dirty=- branch=tip other=present probes= reads=" \
+  "must-fail: a merge lookup in a subshell refuses its credential choice"
 
 build "registration-control" tree squash map
 gh_env registration-fail

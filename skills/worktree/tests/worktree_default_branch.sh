@@ -115,7 +115,8 @@ git -C "$MAIN" branch lonely
 # the default branch; `eager-reuse` resolves before --reuse reads the tree's
 # branch; `local-less` lists the range with no local default branch;
 # `origin-less` skips the range where origin lacks the branch too;
-# `silent` reads a failed listing as no unpushed commits.
+# `silent` reads a failed listing as no unpushed commits; `authed` selects
+# the GitHub read credential before the override answers.
 mutant() { # NAME FROM TO [NEXT]
   local script="$TMP_ROOT/$1/worktree/scripts/worktree" rc=0
   mkdir -p "$TMP_ROOT/$1"
@@ -135,10 +136,10 @@ mutant() { # NAME FROM TO [NEXT]
   cat -- "$TMP_ROOT/$1.edit" >"$script"
 }
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant read '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' '    answer=main'
+mutant read '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' '    answer=main'
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant inherited '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' \
-  '    answer="$( (cd "$PROJECT_ROOT" && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?'
+mutant inherited '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' \
+  '    answer="$( (cd "$PROJECT_ROOT" && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?'
 mutant refusing "        sed 's/^/  /' <<<\"\$answer\" >&2" "        sed 's/^/  /' <<<\"\$answer\" >&2; return 1"
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant uncalled '    resolve_default_branch || exit 1' '    :' \
@@ -165,6 +166,10 @@ mutant lazy-remove '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' 
 mutant eager-reuse '      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
   '      resolve_default_branch || exit 1; CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
   '      if [[ -n "$CURRENT_BRANCH" ]]; then'
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant authed '  if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then' \
+  '  github_read_auth; if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then' \
+  '    DEFAULT_BRANCH="$WORKTREE_DEFAULT_BRANCH"'
 
 # --- the rows -------------------------------------------------------------------
 # Every row runs one verb in the main checkout with the row's environment and
@@ -219,6 +224,19 @@ rc=0
 assert_eq "$rc" 0 "create exits 0"
 assert_eq "$(git -C "$(cat "$TMP_ROOT/out")" rev-parse HEAD 2>/dev/null || true)" "$DEVELOP" \
   "the new tree starts at origin/develop"
+
+# The default-branch read selects its credential first; the setup command
+# create runs after it still holds the caller's own GH_TOKEN and GITHUB_TOKEN.
+rc=0
+: >"$GH_LOG"
+# shellcheck disable=SC2016 # the setup command's own shell expands it
+(cd "$MAIN" && env -u WORKTREE_DEFAULT_BRANCH -u GH_REPO -u GH_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+  PATH="$TMP_ROOT/bin:$PATH" GH_LOG="$GH_LOG" GH_SLUG=acme/widgets GH_DEFAULT=develop GITHUB_TOKEN=ghp_caller \
+  WORKTREE_SETUP_CMD='printf "GH_TOKEN=%s GITHUB_TOKEN=%s" "${GH_TOKEN-<unset>}" "${GITHUB_TOKEN-<unset>}" >"$SETUP_ENV"' \
+  SETUP_ENV="$TMP_ROOT/setup-env" "$WORKTREE_SCRIPT" create dev8 >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
+assert_eq "rc=$rc reads=$(grep -c '^api repos/' "$GH_LOG" || true) env=$(cat -- "$TMP_ROOT/setup-env" 2>/dev/null || true)" \
+  "rc=0 reads=1 env=GH_TOKEN=<unset> GITHUB_TOKEN=ghp_caller" \
+  "the setup command after the default-branch read keeps the caller's tokens"
 
 # label|script|exit|stderr records|verb and arguments, {detached} the path
 # of a detached worktree; origin's inspect-a and inspect-b are branches
@@ -300,7 +318,21 @@ must-fail: with origin's branch unchecked, a default branch neither holds report
 a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|develop|0|worktree-default-branch-unreadable: <root>|1|UNPUSHED
 a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|-|1|worktree-default-branch-unreadable: <root>;worktree-default-branch-unknown: <root>|1|-
 ROWS
+
+# label|script|exit|gh calls. WORKTREE_DEFAULT_BRANCH names develop and a
+# GH_TOKEN is present, so only credential work ahead of the override reaches
+# gh: check reads nothing from GitHub.
+echo "=== the override answers before any GitHub credential work ==="
 git -C "$MAIN" remote set-head origin main
+while IFS='|' read -r label script rc calls; do
+  [[ -z "$label" ]] && continue
+  got="$(run_verb "$script" "GITHUB_TOKEN= KENDEX_GITHUB_VALIDATED_TOKEN= GH_TOKEN=ghp_fixture GH_SLUG=acme/widgets GH_DEFAULT=trunk WORKTREE_DEFAULT_BRANCH=develop" check)"
+  assert_eq "${got%% err=*} calls=$(wc -l <"$GH_LOG" | tr -d ' ') out=$(cat -- "$TMP_ROOT/out")" \
+    "rc=$rc calls=$calls out=$UNPUSHED" "$label"
+done <<'ROWS'
+check with the override set and a GH_TOKEN present asks gh nothing|real|0|0
+must-fail: with the credential selected before the override, check asks gh|authed|0|1
+ROWS
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
