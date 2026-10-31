@@ -143,11 +143,18 @@ set -euo pipefail
 
 # --suite-kendex OS PATH [ORCH_SHARD] reports checkout or none for one suite.
 # The shared suite runner supplies orch's owning shard from shard_of.
-suite_path="" suite_os="" suite_shard=""
+# --suite-shards PATH prints the shards that run one suite's package, on one
+# line, space-separated, and an empty line where no shard runs it. tools/guard's
+# scoped selection reads it to keep seeding the suites CI does not run.
+suite_path="" suite_os="" suite_shard="" suite_query=""
 if [ "${1-}" = --suite-kendex ]; then
   [ "$#" -ge 3 ] && [ "$#" -le 4 ] || exit 2
-  suite_os=$2 suite_path=$3 suite_shard=${4-}
+  suite_os=$2 suite_path=$3 suite_shard=${4-} suite_query=kendex
   case "$suite_os" in Linux | macOS) ;; *) exit 2 ;; esac
+  shift "$#"
+elif [ "${1-}" = --suite-shards ]; then
+  [ "$#" -eq 2 ] && [ -n "$2" ] || exit 2
+  suite_path=$2 suite_query=shards
   shift "$#"
 fi
 
@@ -417,6 +424,11 @@ if [ -n "$suite_path" ]; then
   package="$(printf '%s\n' "$suite_path" | awk -v mode=package "$PACKAGE_AWK")" ||
     die suite-package-unread "the suite path could not be mapped to its package"
   [ -z "$package" ] || want_package "${package% *}"
+  if [ "$suite_query" = shards ]; then
+    want=${want# }
+    printf '%s\n' "${want% }"
+    exit 0
+  fi
   kendex=none
   if [ "$suite_os" = Linux ]; then
     for shard in $want; do

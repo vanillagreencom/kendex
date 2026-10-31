@@ -57,6 +57,145 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
   && ok 'normal range retains full production caller coverage' \
   || bad 'normal range retains full production caller coverage' "rc=$RC out=$OUT"
 
+# A skill doc and its render, each read by a suite outside the skill: tools/
+# reads the source, the orch consumer tree reads the render. tools/ also reads
+# skills/AGENTS.md, Markdown in no skill package. The real tools/ci-job-set
+# answers which trees the merge group runs: tools/ in its shards, the orch
+# corpus in none until KEN-4733 (REVISIT(D026)), so the orch reader of a
+# skill doc stays in the scoped run.
+mkdir -p "$R/skills/demo/references" "$R/.agents/skills/demo/references"
+printf '# Guide\n' > "$R/skills/demo/references/guide.md"
+cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
+printf '# Skills\n' > "$R/skills/AGENTS.md"
+printf 'cat "$PWD/skills/demo/references/guide.md" >/dev/null\nprintf "doc-source\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/doc-source.sh"
+printf 'cat "$PWD/skills/AGENTS.md" >/dev/null\nprintf "doc-outside\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/doc-outside.sh"
+printf 'cat "$PWD/.agents/skills/demo/references/guide.md" >/dev/null\nprintf "doc-render\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/doc-render.sh"
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm docs
+BASE="$(git -C "$R" rev-parse HEAD)"
+doc_change() { # [script|outside]: edit the doc pair, and open-terminal or skills/AGENTS.md too
+  printf '# Guide\nchanged\n' > "$R/skills/demo/references/guide.md"
+  cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
+  case "${1:-}" in
+    script) printf '#!/usr/bin/env bash\nlaunch_status=0\n# beside docs\n' > "$R/skills/orch/scripts/open-terminal" ;;
+    outside) printf '# Skills\nchanged\n' > "$R/skills/AGENTS.md" ;;
+  esac
+  : > "$SUITE_LOG"
+}
+doc_selection() { # GUARD: the scoped selection's selected-suite lines in PLAN
+  RC=0
+  OUT="$(cd "$R" && DEV_VALIDATE_SCOPED=true SUITE_LOG="$SUITE_LOG" "$1" --selection --range "$BASE" 2>&1)" || RC=$?
+  PLAN="$(sed -n 's/^guard-note: selected-suite=//p' <<<"$OUT" | sort | tr '\n' ' ')"
+  SELECTED="$(sort "$SUITE_LOG" | tr '\n' ' ')"
+}
+doc_change
+doc_selection "$GUARD"
+[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh ' ] && [ "$SELECTED" = 'doc-render ' ] \
+  && ok 'scoped: a skill doc and its render select only the reader CI does not run' \
+  || bad 'scoped: a skill doc and its render select only the reader CI does not run' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
+if mutant_guard 's/^              if skill_markdown "\$f" || \[/              if [/'; then
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-source.sh ' ] \
+    && ok 'control: without the Markdown rule the scoped run selects both doc readers' \
+    || bad 'control: without the Markdown rule the scoped run selects both doc readers' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control removes the scoped Markdown rule'
+fi
+if mutant_guard '/^                  merge_group_runs "\$d" || tree_ci=\$?$/d'; then
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ -z "$PLAN" ] \
+    && ok 'control: without the CI-coverage exception the orch doc reader is dropped' \
+    || bad 'control: without the CI-coverage exception the orch doc reader is dropped' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control removes the CI-coverage exception'
+fi
+doc_change outside
+doc_selection "$GUARD"
+[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-outside.sh ' ] \
+  && ok 'scoped: Markdown outside a skill package still selects its reader' \
+  || bad 'scoped: Markdown outside a skill package still selects its reader' "rc=$RC plan=$PLAN out=$OUT"
+git -C "$R" checkout -q -- skills/AGENTS.md
+# An unread --suite-shards answer seeds each tree as on main, with its note.
+cp "$GUARD" "$MUTANT_TOOLS/guard"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$MUTANT_TOOLS/ci-job-set"
+chmod +x "$MUTANT_TOOLS/ci-job-set"
+doc_change
+doc_selection "$MUTANT_TOOLS/guard"
+[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-source.sh ' ] \
+  && grep -qx 'guard-note: merge-group-shards=unread tree=tools' <<<"$OUT" \
+  && ok 'scoped: an unread shard answer seeds the skill doc readers' \
+  || bad 'scoped: an unread shard answer seeds the skill doc readers' "rc=$RC plan=$PLAN out=$OUT"
+cp "$REPO/tools/ci-job-set" "$MUTANT_TOOLS/ci-job-set"
+doc_change script
+doc_selection "$GUARD"
+[ "$RC" -eq 0 ] && [ "$SELECTED" = 'direct doc-render helper named ' ] \
+  && ok 'scoped: a script beside the docs still selects its own suites' \
+  || bad 'scoped: a script beside the docs still selects its own suites' "rc=$RC selected=$SELECTED out=$OUT"
+git -C "$R" checkout -q -- skills/orch/scripts/open-terminal
+doc_change
+RC=0
+OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && [ "$(sort "$SUITE_LOG" | tr '\n' ' ')" = 'doc-render doc-source ' ] \
+  && ok 'normal range runs both doc readers' \
+  || bad 'normal range runs both doc readers' "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- skills/demo .agents/skills/demo
+
+# .kendex-generated.json, read as data by a tools/ suite and an orch suite. A
+# scoped run reads the rows the range changed: skill Markdown rows alone
+# select no tools/ suite, and any other changed row, or a side that is no list
+# of paths, maps the file as today. The orch reader runs on every row while
+# the merge group runs no orch suite.
+jq -n '[".agents/skills/demo/SKILL.md", ".agents/skills/demo/kendex.settings.toml.example",
+  ".agents/skills/demo/references/guide.md", ".agents/skills/demo/scripts/tool", ".claude/skills/demo"]' \
+  > "$R/.kendex-generated.json"
+printf 'cat "$PWD/.kendex-generated.json" >/dev/null\nprintf "inventory-reader\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/inventory-reader.sh"
+printf 'cat "$PWD/.kendex-generated.json" >/dev/null\nprintf "inventory-orch\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/inventory-orch.sh"
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm inventory
+BASE="$(git -C "$R" rev-parse HEAD)"
+ORCH_READER='skills/orch/tests/inventory-orch.sh '
+READERS="${ORCH_READER}tools/tests/inventory-reader.sh "
+inventory_change() { # JQ-FILTER: rewrite the inventory through the filter
+  git -C "$R" show "$BASE:.kendex-generated.json" | jq "$1" > "$R/.kendex-generated.json"
+  : > "$SUITE_LOG"
+}
+for row in \
+  'markdown rows added;. + [".agents/skills/demo/references/new.md"] | sort;' \
+  'a markdown row removed;map(select(. != ".agents/skills/demo/references/guide.md"));' \
+  'a script row added;. + [".agents/skills/demo/scripts/extra"] | sort;reader' \
+  'a settings row removed;map(select(. != ".agents/skills/demo/kendex.settings.toml.example"));reader' \
+  'an agent render row added;. + [".claude/agents/demo.md"] | sort;reader' \
+  'a markdown and a non-Markdown render row added;. + [".agents/skills/demo/references/new.md", ".claude/skills/other"] | sort;reader' \
+  'a side that is no list of paths;{rows: .};reader'; do
+  IFS=';' read -r name filter expected <<<"$row"
+  if [ -n "$expected" ]; then expected=$READERS; else expected=$ORCH_READER; fi
+  inventory_change "$filter"
+  doc_selection "$GUARD"
+  [ "$RC" -eq 0 ] && [ "$PLAN" = "$expected" ] \
+    && ok "scoped inventory: $name" \
+    || bad "scoped inventory: $name" "rc=$RC plan=$PLAN expected=$expected out=$OUT"
+done
+inventory_change '. + [".agents/skills/demo/references/new.md"] | sort'
+if mutant_guard 's/ || \[ "\$f:\$inventory_markdown_only" = \.kendex-generated\.json:1 \]; then$/; then/'; then
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$PLAN" = "$READERS" ] \
+    && ok 'control: without the inventory rule markdown rows select the inventory reader' \
+    || bad 'control: without the inventory rule markdown rows select the inventory reader' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control removes the scoped inventory rule'
+fi
+for filter in '. + [".agents/skills/demo/references/new.md"] | sort' '. + [".agents/skills/demo/scripts/extra"] | sort'; do
+  inventory_change "$filter"
+  RC=0
+  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
+  [ "$RC" -eq 0 ] && [ "$(sort "$SUITE_LOG" | tr '\n' ' ')" = 'inventory-orch inventory-reader ' ] \
+    && ok "normal range runs the inventory readers: $filter" \
+    || bad "normal range runs the inventory readers: $filter" "rc=$RC out=$OUT"
+done
+git -C "$R" checkout -q -- .kendex-generated.json
+
 # A real cancellation must also name suites in batteries not yet entered.
 # The first selected suite acknowledges its start before the parent sends TERM.
 printf 'source "$PWD/skills/orch/scripts/open-terminal"\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
