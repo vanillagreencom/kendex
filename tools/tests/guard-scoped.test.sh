@@ -196,6 +196,67 @@ for filter in '. + [".agents/skills/demo/references/new.md"] | sort' '. + [".age
 done
 git -C "$R" checkout -q -- .kendex-generated.json
 
+# Python test programs directly under a skill's tests/, as skills/jarvis
+# keeps them: each suite wrapper runs one by path. mod_test.py names the
+# module by path; importer_test.py imports mod_test by module name;
+# other_test.py names another module of the same scripts/lib/ folder.
+mkdir -p "$R/skills/pyreach/scripts/lib" "$R/skills/pyreach/tests"
+printf '#!/usr/bin/env bash\nexec python3 "${0%%/*}/lib/mod.py"\n' > "$R/skills/pyreach/scripts/pyreach"
+printf 'VALUE = 1\n' > "$R/skills/pyreach/scripts/lib/mod.py"
+printf 'VALUE = 2\n' > "$R/skills/pyreach/scripts/lib/other.py"
+printf 'SOURCE = "skills/pyreach/scripts/lib/mod.py"\n' > "$R/skills/pyreach/tests/mod_test.py"
+printf 'SOURCE = "skills/pyreach/scripts/lib/other.py"\n' > "$R/skills/pyreach/tests/other_test.py"
+printf 'import mod_test\n' > "$R/skills/pyreach/tests/importer_test.py"
+for name in mod other importer; do
+  printf 'python3 "$PWD/skills/pyreach/tests/%s_test.py"\nprintf "%s\\n" >> "$SUITE_LOG"\n' "$name" "$name" \
+    > "$R/skills/pyreach/tests/$name-wrapper.sh"
+done
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm python-tests
+BASE="$(git -C "$R" rev-parse HEAD)"
+PY_SELECTED='skills/pyreach/tests/importer-wrapper.sh skills/pyreach/tests/mod-wrapper.sh '
+python_change() { # PATH GUARD: append to PATH, then take the scoped selection
+  printf '# changed\n' >> "$R/$1"
+  : > "$SUITE_LOG"
+  doc_selection "$2"
+  git -C "$R" checkout -q -- "$1"
+}
+for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/tests/mod_test.py; do
+  python_change "$path" "$GUARD"
+  [ "$RC" -eq 0 ] && [ "$PLAN" = "$PY_SELECTED" ] && [ "$SELECTED" = 'importer mod ' ] \
+    && ok "scoped: $path selects the wrappers of the Python tests naming or importing it" \
+    || bad "scoped: $path selects the wrappers of the Python tests naming or importing it" "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
+done
+# Today's rule: tests/*.py has no role, so no scan reads it and a changed one
+# is skipped.
+if mutant_guard '/^    \*:tests\/\*\.py) echo test-program ;;$/d'; then
+  for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/tests/mod_test.py; do
+    python_change "$path" "$MUTANT_TOOLS/guard"
+    [ "$RC" -eq 0 ] && [ -z "$PLAN" ] \
+      && ok "control: with no test-program role $path selects no suite" \
+      || bad "control: with no test-program role $path selects no suite" "rc=$RC plan=$PLAN out=$OUT"
+  done
+else
+  bad 'control removes the test-program role'
+fi
+if mutant_guard 's/^        if (role == "test-program") scan_imports(reader, text)$/        if (0) scan_imports(reader, text)/'; then
+  python_change skills/pyreach/tests/mod_test.py "$MUTANT_TOOLS/guard"
+  [ "$PLAN" = 'skills/pyreach/tests/mod-wrapper.sh ' ] \
+    && ok 'control: without import names the importing test program goes unreached' \
+    || bad 'control: without import names the importing test program goes unreached' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control removes the import names'
+fi
+if mutant_guard '/^        \[ "\$n:\${SCAN_ROLE\[i\]}" != "\$folder:test-program" \] || continue$/d'; then
+  python_change skills/pyreach/scripts/lib/mod.py "$MUTANT_TOOLS/guard"
+  [ "$PLAN" = "${PY_SELECTED}skills/pyreach/tests/other-wrapper.sh " ] \
+    && ok 'control: with the folder seed reaching test programs the other module test runs' \
+    || bad 'control: with the folder seed reaching test programs the other module test runs' "rc=$RC plan=$PLAN out=$OUT"
+else
+  bad 'control removes the folder exception'
+fi
+
 # A real cancellation must also name suites in batteries not yet entered.
 # The first selected suite acknowledges its start before the parent sends TERM.
 printf 'source "$PWD/skills/orch/scripts/open-terminal"\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
