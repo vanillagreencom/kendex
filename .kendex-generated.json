@@ -558,6 +558,7 @@
   ".agents/skills/jarvis/scripts/jarvis-session",
   ".agents/skills/jarvis/scripts/lib/jarvis-env.sh",
   ".agents/skills/jarvis/scripts/lib/op_fifo.py",
+  ".agents/skills/jarvis/scripts/lib/op_tty.py",
   ".agents/skills/jarvis/scripts/lib/owner_note.py",
   ".agents/skills/jarvis/scripts/lib/owner_unanswered.py",
   ".agents/skills/jarvis/scripts/lib/progress.py",
