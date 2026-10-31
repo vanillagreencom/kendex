@@ -1176,7 +1176,8 @@ resolve_worktree_base_dir() { # [OUT_VAR]
 resolve_worktree_base_dir TREES_DIR
 
 # The branch new work starts from and merged work is proven against:
-# WORKTREE_DEFAULT_BRANCH when set, else the repository's default branch on
+# WORKTREE_DEFAULT_BRANCH when set, answered before any GitHub credential
+# work since it reads nothing, else the repository's default branch on
 # GitHub, read through the github skill beside this one. With no GitHub
 # repository, no github skill, or a failed GitHub read (a warning), git's
 # record of origin's HEAD answers; git refreshes it locally, never from the
@@ -1187,6 +1188,10 @@ DEFAULT_BRANCH=""
 resolve_default_branch() { # [optional]
   local answer="" rc=0 recorded=""
   [[ -z "$DEFAULT_BRANCH" ]] || return 0
+  if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
+    DEFAULT_BRANCH="$WORKTREE_DEFAULT_BRANCH"
+    return 0
+  fi
   if declare -F kendex_github_default_branch >/dev/null 2>&1; then
     # The reader writes stderr only when it fails, so one capture holds the
     # branch or its diagnostic, which goes under this script's own record.
@@ -1202,9 +1207,6 @@ resolve_default_branch() { # [optional]
         sed 's/^/  /' <<<"$answer" >&2
         ;;
     esac
-  elif [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
-    DEFAULT_BRANCH="$WORKTREE_DEFAULT_BRANCH"
-    return 0
   fi
   recorded="$(git -C "$PROJECT_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || recorded=""
   if [[ "$recorded" != origin/?* ]]; then

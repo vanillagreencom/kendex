@@ -115,7 +115,8 @@ git -C "$MAIN" branch lonely
 # the default branch; `eager-reuse` resolves before --reuse reads the tree's
 # branch; `local-less` lists the range with no local default branch;
 # `origin-less` skips the range where origin lacks the branch too;
-# `silent` reads a failed listing as no unpushed commits.
+# `silent` reads a failed listing as no unpushed commits; `authed` selects
+# the GitHub read credential before the override answers.
 mutant() { # NAME FROM TO [NEXT]
   local script="$TMP_ROOT/$1/worktree/scripts/worktree" rc=0
   mkdir -p "$TMP_ROOT/$1"
@@ -165,6 +166,10 @@ mutant lazy-remove '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' 
 mutant eager-reuse '      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
   '      resolve_default_branch || exit 1; CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
   '      if [[ -n "$CURRENT_BRANCH" ]]; then'
+# shellcheck disable=SC2016 # each line is the script's own text, not expanded
+mutant authed '  if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then' \
+  '  github_read_auth; if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then' \
+  '    DEFAULT_BRANCH="$WORKTREE_DEFAULT_BRANCH"'
 
 # --- the rows -------------------------------------------------------------------
 # Every row runs one verb in the main checkout with the row's environment and
@@ -313,7 +318,21 @@ must-fail: with origin's branch unchecked, a default branch neither holds report
 a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|develop|0|worktree-default-branch-unreadable: <root>|1|UNPUSHED
 a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|-|1|worktree-default-branch-unreadable: <root>;worktree-default-branch-unknown: <root>|1|-
 ROWS
+
+# label|script|exit|gh calls. WORKTREE_DEFAULT_BRANCH names develop and a
+# GH_TOKEN is present, so only credential work ahead of the override reaches
+# gh: check reads nothing from GitHub.
+echo "=== the override answers before any GitHub credential work ==="
 git -C "$MAIN" remote set-head origin main
+while IFS='|' read -r label script rc calls; do
+  [[ -z "$label" ]] && continue
+  got="$(run_verb "$script" "GITHUB_TOKEN= KENDEX_GITHUB_VALIDATED_TOKEN= GH_TOKEN=ghp_fixture GH_SLUG=acme/widgets GH_DEFAULT=trunk WORKTREE_DEFAULT_BRANCH=develop" check)"
+  assert_eq "${got%% err=*} calls=$(wc -l <"$GH_LOG" | tr -d ' ') out=$(cat -- "$TMP_ROOT/out")" \
+    "rc=$rc calls=$calls out=$UNPUSHED" "$label"
+done <<'ROWS'
+check with the override set and a GH_TOKEN present asks gh nothing|real|0|0
+must-fail: with the credential selected before the override, check asks gh|authed|0|1
+ROWS
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
