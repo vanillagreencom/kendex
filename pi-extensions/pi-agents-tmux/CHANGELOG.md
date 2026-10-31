@@ -5,6 +5,7 @@
 ### Unreleased
 
 - When the startup `pi-bridge` lookup finishes after a later lookup that found a different bridge, the later bridge stays approved. Commands to that bridge no longer fail with "Command origin is not a fixed probe or the resolved pi-bridge".
+- Session shutdown waits for the task registry write that each sub-agent lifecycle event starts. A task status change made just before shutdown is saved before the session ends, and the write no longer creates the session's runtime directory again after it was removed.
 
 ### 3.5.0
 
