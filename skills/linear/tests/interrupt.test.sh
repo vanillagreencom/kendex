@@ -10,19 +10,19 @@
 #
 #   - a TERM to the runner while a suite runs stops that suite: each level
 #     passes it to the one under it
-#   - a missed stop names the first step of that chain its trace lacks, and
-#     prints the trace, the inner run's log and the marks under that name
+#   - a missed stop names the first level whose TERM handler never ran, and
+#     prints the runner's trace, the inner run's log and the marks under it
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
 source "$SCRIPT_DIR/lib/control-runner.sh"
-source "$SCRIPT_DIR/../../orch/tests/lib/suite-process.sh"
 assert_tmpdir TMP
-# The stop chain's trace: the runner's levels write it through suite_trace,
-# the fixture below in the same line format.
-export SUITE_TRACE="$TMP/trace"
+# The runner's TERM handlers append their entries here; an empty file is a
+# runner that wrote none.
+export CONTROL_TRACE="$TMP/trace"
+: >"$CONTROL_TRACE"
 
 # A suite that says it has started, then runs until a TERM stops it and says
 # so. The runner's cap would stop it too, so the cap sits past the deadline
@@ -32,9 +32,8 @@ marks="$TMP/marks"
 mkdir -p "$root/scripts" "$root/tests/controls" "$marks"
 cat >"$root/tests/alpha.test.sh" <<SUITE
 #!/usr/bin/env bash
-trap 'printf "%s fixture TERM\\n" "\${EPOCHREALTIME:--}" >>"$SUITE_TRACE"; : >"$marks/stopped"; printf "%s fixture stop-mark rc=%s\\n" "\${EPOCHREALTIME:--}" "\$?" >>"$SUITE_TRACE"; exit 143' TERM
+trap ': >"$marks/stopped"; exit 143' TERM
 : >"$marks/started"
-printf '%s fixture started pid=%s ppid=%s\n' "\${EPOCHREALTIME:--}" "\$\$" "\$PPID" >>"$SUITE_TRACE"
 while :; do sleep 0.05; done
 SUITE
 printf '%s\n' 'control_expect "unused"' >"$root/tests/controls/alpha.control.sh"
@@ -68,62 +67,41 @@ if ! wait_for "$marks/started"; then
     wait "$runner"
     assert_stop "the fixture suite starts under the runner" "$(cat "$TMP/run.log")"
 fi
-runner_start="$(lane_process_start "$runner")" || runner_start=unread
 kill -TERM "$runner"
 kill_rc=$?
 wait "$runner"
 wait_rc=$?
-suite_trace "test runner=$runner kill=$kill_rc wait=$wait_rc wait-start=$(clock)"
+waited="$(clock)"
 
 stopped=no
 wait_for "$marks/stopped" && stopped=yes
-suite_trace "test wait-end=$(clock) stopped=$stopped"
 assert_eq "a TERM to the runner stops the suite it is running" "$stopped" yes
 
-# The chain's steps in order, each as the trace line that shows it done. The
-# first one missing is the step the stop never reached; with none missing the
-# mark came after the wait ended.
+# The stop chain's levels in order, each as the trace line its TERM handler
+# writes on entry. The first one missing is the level the stop never reached.
+# With every handler entered, the stop mark names the rest: absent, the suite
+# never stopped; present, it stopped after the wait ended.
 if [ "$stopped" != yes ]; then
     step=trace-unread
-    traced=""
+    stop_mark="$(mark_time "$marks/stopped")"
     capture=(
-        "bash: $(command -v bash) $(bash -c 'echo "$BASH_VERSION"'); this shell $BASH_VERSION"
-        "tools: ps=$(command -v ps) perl=$(command -v perl || echo absent) timeout=$(command -v timeout)"
-        "runner: pid=$runner start=$runner_start"
-        "marks: started=$(mark_time "$marks/started") stopped=$(mark_time "$marks/stopped")"
+        "test: kill=$kill_rc wait=$wait_rc waited=$waited gave-up=$(clock)"
+        "marks: started=$(mark_time "$marks/started") stopped=$stop_mark"
     )
-    if [ -f "$SUITE_TRACE" ]; then
-        step=late
+    if [ -r "$CONTROL_TRACE" ]; then
+        step=""
         while IFS='|' read -r key pattern; do
-            grep -Eq -- "$pattern" "$SUITE_TRACE" || { step="$key"; break; }
+            grep -Eq -- "$pattern" "$CONTROL_TRACE" || { step="$key"; break; }
         done <<'STEPS'
 runner-term| runner TERM pid=
-runner-forward| runner forwarded rc=0$
 job-term| job TERM body=
-job-forward| job forwarded body=[0-9]+ rc=0$
 timed-suite-term| timed_suite TERM suite=
-tree-read| tree root=[0-9]+ hops=0 pid=[0-9]+ start=[A-Z]
-suite-signal| signal TERM pid=[0-9]+ rc=0$
-fixture-term| fixture TERM$
-fixture-mark| fixture stop-mark rc=0$
 STEPS
-        while IFS= read -r line; do capture+=("trace: $line"); done <"$SUITE_TRACE"
-        traced="$(sed -n -e 's/.* jobs=\[\([0-9 ]*\)\].*/\1/p' -e 's/.* body=\[\([0-9]*\)\].*/\1/p' \
-            -e 's/.* fixture started pid=\([0-9]*\) ppid=\([0-9]*\)$/\1 \2/p' "$SUITE_TRACE")"
-    fi
-    # Each process the trace names and each child of one, as it stands now:
-    # gone, or where it waits.
-    for pid in $traced; do
-        line="$(ps -o pid= -o ppid= -o stat= -o wchan= -o command= -p "$pid" 2>&1)" || line="$pid gone"
-        capture+=("process: $line")
-    done
-    if table="$(ps -A -o pid= -o ppid= -o stat= -o wchan= -o command= 2>&1)"; then
-        # shellcheck disable=SC2086 # one word per traced pid
-        while IFS= read -r line; do
-            [ -z "$line" ] || capture+=("child: $line")
-        done <<<"$(awk -v traced=" $(printf '%s ' $traced)" 'index(traced, " " $2 " ")' <<<"$table")"
-    else
-        capture+=("children: unread: $table")
+        if [ -z "$step" ]; then
+            step=late
+            [ "$stop_mark" != absent ] || step=stop-mark
+        fi
+        while IFS= read -r line; do capture+=("trace: $line"); done <"$CONTROL_TRACE"
     fi
     while IFS= read -r line; do capture+=("run.log: $line"); done <"$TMP/run.log"
     assert_fail "a missed TERM stop names its first missing step: $step" "${capture[@]}"

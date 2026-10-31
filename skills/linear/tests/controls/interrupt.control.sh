@@ -6,5 +6,5 @@
 control_expect "a TERM to the runner stops the suite it is running"
 control_expect "a missed TERM stop names its first missing step: job-term"
 control_replace tests/must-fail-controls.sh 1 \
-	'	trap '"'"'suite_trace "job TERM body=[$body]"; [[ -z $body ]] || { kill -TERM "$body" 2>/dev/null; suite_trace "job forwarded body=$body rc=$?"; }'"'"' TERM' \
+	'	trap '"'"'trace_term "job TERM body=[$body]"; [[ -z $body ]] || kill -TERM "$body" 2>/dev/null'"'"' TERM' \
 	'	trap - TERM'
