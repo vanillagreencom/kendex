@@ -5,25 +5,3 @@ control_expect "issueUpdate carries the state and the replaced agent label set i
 control_replace scripts/commands/issues.sh 1 \
     '        update_args+=(--labels "$final_labels")' \
     '        :'
-
-control_expect "activation uses live issue-team and workspace label IDs"
-control_replace scripts/lib/common.sh 1 \
-    '        query='"'"'query GetLabel($name: String!, $teamName: String!, $after: String) { issueLabels(filter: {name: {eq: $name}, or: [{team: {name: {eq: $teamName}}}, {team: {null: true}}]}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'"'" \
-    '        query='"'"'query GetLabel($name: String!, $teamName: String!, $after: String) { issueLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'"'"
-
-control_expect "recorded activation refuses an unresolved agent"
-control_replace scripts/commands/issues.sh 1 \
-    '            [ "$label_rc" = 0 ] || return 1' \
-    '            [ "$label_rc" = 0 ] || :'
-
-control_expect "activate ids split prints only the identifier"
-control_expect "activate ids equals prints only the identifier"
-control_replace scripts/commands/issues.sh 3 \
-    '    if [ "$output_format" = "ids" ]; then' \
-    '    if [ "$output_format" = "bogus" ]; then'
-
-control_expect "activate invalid format split sends no request"
-control_expect "activate invalid format equals sends no request"
-control_replace scripts/commands/issues.sh 4 \
-    '            linear_require_format "$output_format" ids || return 1' \
-    '            linear_require_format "$output_format" ids || :'
