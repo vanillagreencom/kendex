@@ -120,6 +120,15 @@ run_files \
   "an inner allow indented inside a module block fails at its own line|ok.rs|mod m {\n    #![allow(unused)]\n    fn f() {}\n}\n|||rc=1 $(hit 'module-wide rust allow' ok.rs 2 '    #![allow(unused)]');$(summary '' 1 0)" \
   "a per-item outer attribute for a named lint passes|ok.rs|#[allow(clippy::too_many_arguments)]\nfn f() {}\n|||rc=0 $OK" \
   "a dead_code allow with a stated reason passes: the reasoned form is the legal one|ok.rs|#[allow(dead_code, reason = \"kept for the public API surface\")]\nfn f() {}\n|||rc=0 $OK" \
+  "an inner allow naming one lint with a reason passes on one line|ok.rs|#![allow(clippy::disallowed_methods, reason = \"why\")]\nfn main() {}\n|||rc=0 $OK" \
+  "the rustfmt three-line form of the same attribute passes|ok.rs|#![allow(\n    clippy::disallowed_methods,\n    reason = \"why\"\n)]\nfn main() {}\n|||rc=0 $OK" \
+  "an inner dead_code allow with a reason passes gate 1 and is exempt from the ratchet|ok.rs|#![allow(dead_code, reason = \"why\")]\nfn f() {}\n|||rc=0 $OK" \
+  "an inner allow naming a lint group fails, reason or not|ok.rs|#![allow(clippy::all, reason = \"why\")]\nfn main() {}\n|||rc=1 $(hit 'module-wide rust allow' ok.rs 1 '#![allow(clippy::all, reason = "why")]');$(summary '' 1 0)" \
+  "the three-line form is judged whole: a group inside it fails at the opening line|ok.rs|#![allow(\n    clippy::pedantic,\n    reason = \"why\"\n)]\nfn main() {}\n|||rc=1 $(hit 'module-wide rust allow' ok.rs 1 '#![allow(');$(summary '' 1 0)" \
+  "an inner allow listing two lints fails, reason or not|ok.rs|#![allow(dead_code, unused, reason = \"why\")]\nfn f() {}\n|||rc=1 $(hit 'module-wide rust allow' ok.rs 1 '#![allow(dead_code, unused, reason = "why")]');$(summary '' 1 0)" \
+  "an inner allow naming one lint with no reason fails|ok.rs|#![allow(clippy::disallowed_methods)]\nfn main() {}\n|||rc=1 $(hit 'module-wide rust allow' ok.rs 1 '#![allow(clippy::disallowed_methods)]');$(summary '' 1 0)" \
+  "an inner allow with an empty reason fails|ok.rs|#![allow(dead_code, reason = \"\")]\nfn f() {}\n|||rc=1 $(hit 'module-wide rust allow' ok.rs 1 '#![allow(dead_code, reason = "")]');$(summary '' 1 0)" \
+  "an inner allow never closed fails at its opening line|ok.rs|#![allow(\n    dead_code,\n|||rc=1 $(hit 'module-wide rust allow' ok.rs 1 '#![allow(');$(summary '' 1 0)" \
   "a file-level ruff noqa fails|ok.py|# ruff: noqa\nx = 1\n|||rc=1 $(hit 'file-level noqa' ok.py 1 '# ruff: noqa');$(summary '' 1 0)" \
   "a file-level flake8 noqa fails|ok.py|# flake8: noqa\nx = 1\n|||rc=1 $(hit 'file-level noqa' ok.py 1 '# flake8: noqa');$(summary '' 1 0)" \
   "a per-line noqa naming its code passes|ok.py|import os  # noqa: F401 -- re-exported for the package API\n|||rc=0 $OK" \

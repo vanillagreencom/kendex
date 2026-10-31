@@ -36,13 +36,13 @@ Blanket suppressions fail flat, scanned by pathspec:
 
 | Language | Pathspec | Banned shape |
 |---|---|---|
-| Rust | `*.rs` | `#![allow(...)]` inner attribute at line start |
+| Rust | `*.rs` | an inner `#![allow(...)]` at line start, judged whole across its lines, that names a lint group, lists two or more lints, or carries no `reason = "..."` |
 | Python | `*.py` | own-line `# ruff: noqa` or `# flake8: noqa`, with or without codes |
 | JS/TS | `*.js *.jsx *.ts *.tsx *.mjs *.cjs *.mts *.cts *.vue *.svelte` | bare block `/* eslint-disable */` |
 | Go | `*.go` | `//nolint` alone, or `//nolint:all` |
 | Biome | the JS/TS pathspec plus `*.css *.jsonc` | `biome-ignore-all`; `biome-ignore-start` with no rule or a bare `lint` or `lint/<group>` scope; `biome-ignore lint:` or `biome-ignore lint/<group>:` naming no rule |
 
-Legal: a per-line suppression naming its lint with a reason (`# noqa: E501`, `// eslint-disable-next-line rule -- why`, `//nolint:gosec // why`, `// biome-ignore lint/<group>/<rule>: why`, a per-item Rust attribute).
+Legal: a per-line suppression naming its lint with a reason (`# noqa: E501`, `// eslint-disable-next-line rule -- why`, `//nolint:gosec // why`, `// biome-ignore lint/<group>/<rule>: why`, a per-item Rust attribute). A Rust `#![allow(lint, reason = "...")]` naming one lint is legal at any level. A group, a list of lints or a missing reason fails.
 
 The bare-allow ratchet counts reasonless `#[allow(dead_code)]` and `#[allow(unused...)]` attributes per `*.rs` file; `reason = "..."` exempts one. Counts are held to `COMMIT_GUARDS_SUPPRESSION_BASELINE`, tighten-only: a new bare allow, growth past a row, and a row looser than reality all fail. `--update` lowers or removes rows and re-checks, never adds or raises one; the first baseline is written by hand from the reported `new bare allow` lines. `--baseline FILE` and `--excludes FILE` override the baseline and `COMMIT_GUARDS_SUPPRESSION_EXCLUDES`.
 
