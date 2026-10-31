@@ -23,6 +23,15 @@ pub enum Harness {
     Pi,
 }
 
+/// What a permission spelling selects: the harness's full bypass, which
+/// transfers to another harness as its bypass posture, or a narrower grant
+/// that stays with the words as given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionMeaning {
+    FullBypass,
+    Narrower,
+}
+
 impl Harness {
     pub const ALL: [Harness; 4] = [
         Harness::Claude,
@@ -63,6 +72,27 @@ impl Harness {
             Harness::Codex => "CODEX_HOME",
             Harness::Copilot => "COPILOT_HOME",
             Harness::Pi => "PI_CODING_AGENT_DIR",
+        }
+    }
+
+    /// The variable the account a launch spends is routed through, for a
+    /// launch of this harness on `model`: the harness's own home variable,
+    /// except a Pi launch, which spends the account its model's provider
+    /// bills. `pi-claude/` is pi-claude-bridge on a Claude seat, so the seat
+    /// is `CLAUDE_CONFIG_DIR`; `github-copilot/` and `anthropic/` are Pi's
+    /// own root; any other Pi provider, or a Pi model naming none, takes the
+    /// Claude variable too, as the legacy `lane_env_prefix` routed it. The
+    /// one table of orch's `lib/lane-launch.sh` (`lane_env_prefix`,
+    /// `lane_pick_harness`), held here as data for every launcher.
+    pub fn account_var(self, model: Option<&str>) -> &'static str {
+        match self {
+            Harness::Claude | Harness::Codex | Harness::Copilot => self.home_var(),
+            Harness::Pi => match model {
+                Some(m) if m.starts_with("github-copilot/") || m.starts_with("anthropic/") => {
+                    Harness::Pi.home_var()
+                }
+                Some(_) | None => Harness::Claude.home_var(),
+            },
         }
     }
 
@@ -150,6 +180,89 @@ impl Harness {
             Harness::Copilot => vec!["--allow-all"],
             Harness::Pi => Vec::new(),
         }
+    }
+
+    /// Every permission spelling an unattended launch of this harness
+    /// accepts, with its meaning: the sixth column of orch's launch table
+    /// (`lib/lane-launch.sh`), its full-bypass subset the seventh. A
+    /// `FLAG=VALUE` spelling also matches the two-word `FLAG VALUE` form.
+    /// The builder adds its own permission word only where none of these
+    /// stands (the legacy rule, `oversee-succeed`), and a `native` posture
+    /// carrying a full-bypass spelling is a mismatch (decision 124a (4)).
+    ///
+    /// ```text
+    /// harness  accepted (sixth column)                                  full bypass (seventh)
+    /// claude   --dangerously-skip-permissions                            yes
+    ///          --permission-mode=bypassPermissions                       yes
+    ///          --permission-mode=dontAsk                                 no
+    /// codex    --dangerously-bypass-approvals-and-sandbox                yes
+    ///          --approve-for-me                                          no
+    ///          --ask-for-approval=never                                  no
+    ///          -a=never                                                  no
+    /// copilot  --allow-all                                               yes
+    ///          --yolo                                                    yes
+    ///          --allow-all-tools                                         no
+    /// pi       (none: its native posture asks nothing)
+    /// ```
+    pub fn permission_spellings(self) -> Vec<(&'static str, PermissionMeaning)> {
+        use PermissionMeaning::{FullBypass, Narrower};
+        match self {
+            Harness::Claude => vec![
+                ("--dangerously-skip-permissions", FullBypass),
+                ("--permission-mode=bypassPermissions", FullBypass),
+                ("--permission-mode=dontAsk", Narrower),
+            ],
+            Harness::Codex => vec![
+                ("--dangerously-bypass-approvals-and-sandbox", FullBypass),
+                ("--approve-for-me", Narrower),
+                ("--ask-for-approval=never", Narrower),
+                ("-a=never", Narrower),
+            ],
+            Harness::Copilot => vec![
+                ("--allow-all", FullBypass),
+                ("--yolo", FullBypass),
+                ("--allow-all-tools", Narrower),
+            ],
+            Harness::Pi => Vec::new(),
+        }
+    }
+
+    /// The first permission word `words` carry for this harness, with its
+    /// meaning: a plain spelling, or a `FLAG=VALUE` spelling given as the two
+    /// words `FLAG VALUE`. `None` where no permission word stands.
+    pub fn permission_word_in(self, words: &[String]) -> Option<(String, PermissionMeaning)> {
+        let spellings = self.permission_spellings();
+        words.iter().enumerate().find_map(|(i, word)| {
+            spellings.iter().find_map(|(spelling, meaning)| {
+                if word == spelling {
+                    return Some(((*spelling).to_owned(), *meaning));
+                }
+                let (flag, value) = spelling.split_once('=')?;
+                (word == flag && words.get(i + 1).map(String::as_str) == Some(value))
+                    .then(|| (format!("{flag} {value}"), *meaning))
+            })
+        })
+    }
+
+    /// The first word of `words` that spells this harness's full bypass, in
+    /// either the plain or the two-word `FLAG VALUE` form. Every word is
+    /// read, so a narrower permission word before a full-bypass one does not
+    /// hide it (decision 124b).
+    pub fn bypass_word_in(self, words: &[String]) -> Option<String> {
+        let spellings = self.permission_spellings();
+        words.iter().enumerate().find_map(|(i, word)| {
+            spellings
+                .iter()
+                .filter(|(_, meaning)| *meaning == PermissionMeaning::FullBypass)
+                .find_map(|(spelling, _)| {
+                    if word == spelling {
+                        return Some((*spelling).to_owned());
+                    }
+                    let (flag, value) = spelling.split_once('=')?;
+                    (word == flag && words.get(i + 1).map(String::as_str) == Some(value))
+                        .then(|| format!("{flag} {value}"))
+                })
+        })
     }
 
     /// The settings words every unattended launch carries.
@@ -306,12 +419,101 @@ mod tests {
         }
     }
 
+    /// The account routing table: every harness but Pi routes its account
+    /// through its home variable; Pi routes by its model's provider.
+    #[test]
+    fn the_account_variable_follows_the_harness_and_pi_s_provider() {
+        assert_eq!(Harness::Claude.account_var(None), "CLAUDE_CONFIG_DIR");
+        assert_eq!(
+            Harness::Codex.account_var(Some("gpt-6.1-sol")),
+            "CODEX_HOME"
+        );
+        assert_eq!(Harness::Copilot.account_var(None), "COPILOT_HOME");
+        assert_eq!(
+            Harness::Pi.account_var(Some("pi-claude/claude-fable-5-1")),
+            "CLAUDE_CONFIG_DIR"
+        );
+        assert_eq!(
+            Harness::Pi.account_var(Some("github-copilot/claude-opus-5.5")),
+            "PI_CODING_AGENT_DIR"
+        );
+        assert_eq!(
+            Harness::Pi.account_var(Some("anthropic/claude-opus-5-5")),
+            "PI_CODING_AGENT_DIR"
+        );
+        assert_eq!(
+            Harness::Pi.account_var(Some("ollama/x")),
+            "CLAUDE_CONFIG_DIR"
+        );
+        assert_eq!(Harness::Pi.account_var(None), "CLAUDE_CONFIG_DIR");
+    }
+
     #[test]
     fn copilot_owns_its_main_thread_process_name() {
         assert!(Harness::Copilot.owns_process("MainThread"));
         assert!(Harness::Copilot.owns_process("copilot"));
         assert!(!Harness::Claude.owns_process("MainThread"));
         assert!(Harness::Pi.owns_process("pi"));
+    }
+
+    /// The full-bypass spelling table (decision 120, M3): every supported
+    /// spelling is recognized, a `FLAG=VALUE` spelling in its two-word form
+    /// too, and a non-bypass permission word is not a bypass.
+    #[test]
+    fn a_full_bypass_spelling_is_recognized_in_any_of_its_forms() {
+        let words = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            Harness::Claude.bypass_word_in(&words(&["--permission-mode=bypassPermissions"])),
+            Some("--permission-mode=bypassPermissions".to_owned())
+        );
+        assert_eq!(
+            Harness::Claude.bypass_word_in(&words(&["--permission-mode", "bypassPermissions"])),
+            Some("--permission-mode bypassPermissions".to_owned())
+        );
+        assert_eq!(
+            Harness::Claude.bypass_word_in(&words(&["--dangerously-skip-permissions"])),
+            Some("--dangerously-skip-permissions".to_owned())
+        );
+        // A non-bypass permission word is not a full bypass, and one before a
+        // full bypass does not hide it (decision 124b).
+        assert_eq!(
+            Harness::Claude.bypass_word_in(&words(&["--permission-mode=dontAsk"])),
+            None
+        );
+        assert_eq!(
+            Harness::Claude.bypass_word_in(&words(&[
+                "--permission-mode=dontAsk",
+                "--dangerously-skip-permissions"
+            ])),
+            Some("--dangerously-skip-permissions".to_owned())
+        );
+        assert_eq!(
+            Harness::Copilot.bypass_word_in(&words(&["--yolo"])),
+            Some("--yolo".to_owned())
+        );
+        assert_eq!(
+            Harness::Copilot.bypass_word_in(&words(&["--allow-all-tools"])),
+            None
+        );
+        assert_eq!(Harness::Pi.bypass_word_in(&words(&["--yolo"])), None);
+        // Narrower grants are permission words with their own meaning, in
+        // either form.
+        assert_eq!(
+            Harness::Codex.permission_word_in(&words(&["-a", "never"])),
+            Some(("-a never".to_owned(), PermissionMeaning::Narrower))
+        );
+        assert_eq!(
+            Harness::Codex.permission_word_in(&words(&["--approve-for-me"])),
+            Some(("--approve-for-me".to_owned(), PermissionMeaning::Narrower))
+        );
+        assert_eq!(
+            Harness::Copilot.permission_word_in(&words(&["--allow-all-tools"])),
+            Some(("--allow-all-tools".to_owned(), PermissionMeaning::Narrower))
+        );
+        assert_eq!(
+            Harness::Claude.permission_word_in(&words(&["--model", "opus"])),
+            None
+        );
     }
 
     #[test]

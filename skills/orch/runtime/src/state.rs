@@ -1,7 +1,6 @@
 //! Workflow records: the item state `<state-dir>/workflow-state-<ITEM>.json`
 //! and the fleet state `workflow-state-oversee.json`, in the shape the legacy
-//! `workflow-state` script writes, with `record_version` and `revision` as
-//! top-level keys once `migrate` has stamped a file.
+//! `workflow-state` script writes.
 //!
 //! A record is held as the document the file holds, a `serde_json::Map` in
 //! the file's own key order. The typed structs here are read views derived
@@ -10,16 +9,19 @@
 //! and a key it adds appends. No typed struct is ever the serialized form of
 //! a file, so no absent optional field is written back as `null`.
 //!
-//! agent-runtime's `record` module owns the lock, the atomic replacement and
-//! the meta keys. This module owns the document model, the read views, the
-//! two write checks (content for an unstamped file, revision for a stamped
-//! one) and the one migration that stamps a file.
+//! agent-runtime's `record` module owns the lock and the atomic replacement.
+//! This module owns the document model, the read views and the write check:
+//! the content comparison under the lock. A file agent-runtime's `record`
+//! module stamped with `record_version` and `revision` is not a workflow
+//! record and is refused by name.
 
-use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use agent_runtime::harness::Harness;
+use agent_runtime::launch::Permission;
+use agent_runtime::process::Identity;
 use agent_runtime::protocol::Outcome;
 use agent_runtime::record::{self, RECORD_VERSION_KEY, REVISION_KEY, Wait};
 use serde::de::DeserializeOwned;
@@ -28,15 +30,18 @@ use serde_json::{Map, Value};
 
 use crate::error::{Error, Result, ShapeReason};
 
-/// The version `migrate` writes.
-pub const RECORD_VERSION: u64 = 1;
-/// The versions this build reads once a file is stamped.
-pub const SUPPORTED_VERSIONS: &[u64] = &[1];
+/// The observation note a reconcile writes when it found the intent's owner
+/// still live and deferred to it (decision 72). The outcome records only
+/// this observation; it moves no record.
+pub const OWNER_LIVE: &str = "owner-live";
+/// The observation note a reconcile writes when the intent's owner could
+/// not be read (decision 99): neither live nor dead is established, so the
+/// outcome records the observation and its cause and moves no record, as
+/// [`OWNER_LIVE`] does.
+pub const OWNER_UNREAD: &str = "owner-unreadable";
 /// The fleet state's fixed file name: `workflow-state` writes the key
 /// `oversee` into `workflow-state-<KEY>.json`.
 pub const FLEET_FILE_NAME: &str = "workflow-state-oversee.json";
-/// The suffix the migration gives the copy of the original bytes.
-pub const PRE_MIGRATION_SUFFIX: &str = ".pre-migration";
 
 /// A record as the file holds it: one JSON object in its own key order.
 pub type Document = Map<String, Value>;
@@ -50,6 +55,26 @@ pub fn item_path(dir: &Path, item: &str) -> PathBuf {
 /// The fleet state file under `dir`.
 pub fn fleet_path(dir: &Path) -> PathBuf {
     dir.join(FLEET_FILE_NAME)
+}
+
+/// The receipt the pane an effect opened writes for its intent (decision
+/// 96), beside the records under `dir`: `intents/<intent id>.pane`. An
+/// intent id is `<op>:<target>:<stamp>` and carries no path separator.
+pub fn receipt_path(dir: &Path, intent_id: &str) -> PathBuf {
+    dir.join("intents").join(format!("{intent_id}.pane"))
+}
+
+/// The request a transfer's detached job runs (decision 76), written by the
+/// caller beside the receipt before the job starts: `intents/<intent
+/// id>.request`.
+pub fn job_request_path(dir: &Path, intent_id: &str) -> PathBuf {
+    dir.join("intents").join(format!("{intent_id}.request"))
+}
+
+/// The job-unit record of that job, `intents/<intent id>.job`, which names
+/// how the job runs (its unit, or its process group).
+pub fn job_record_path(dir: &Path, intent_id: &str) -> PathBuf {
+    dir.join("intents").join(format!("{intent_id}.job"))
 }
 
 /// Which state file a path names. The fleet state has one fixed name; every
@@ -80,30 +105,10 @@ impl Kind {
     }
 }
 
-/// What the file carried for `record_version` and `revision`: nothing (a
-/// file `migrate` has not stamped) or both.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum Stamp {
-    Legacy,
-    Stamped { record_version: u64, revision: u64 },
-}
-
-impl Stamp {
-    /// The revision a write expects to find, 0 for a file not yet stamped.
-    pub fn revision(self) -> u64 {
-        match self {
-            Stamp::Legacy => 0,
-            Stamp::Stamped { revision, .. } => revision,
-        }
-    }
-}
-
 /// How a write takes the file's lock. `wait` bounds the acquisition, the
-/// flock and the mutex together; with `legacy_mutex` an unstamped file is
-/// also written under the `mkdir` mutex the legacy shell writers take where
-/// the host has no `flock(1)`, so those writers are excluded until `migrate`
-/// makes this runtime the only writer.
+/// flock and the mutex together; with `legacy_mutex` the file is also
+/// written under the `mkdir` mutex the legacy shell writers take where the
+/// host has no `flock(1)`, so those writers are excluded.
 #[derive(Debug, Clone, Copy)]
 pub struct Locking {
     pub wait: Wait,
@@ -111,28 +116,19 @@ pub struct Locking {
 }
 
 impl Locking {
-    /// The policy for a host whose `PATH` is `path_var`: the legacy wait,
-    /// and the mutex wherever `flock(1)` is not on that path.
-    pub fn for_host(path_var: Option<&OsStr>) -> Locking {
-        Locking {
-            wait: Wait::LEGACY,
-            legacy_mutex: !record::flock_on_path(path_var),
-        }
-    }
-
-    /// A host with `flock(1)`: the flock alone, with the legacy wait.
+    /// A host with `flock(1)`: the flock alone, with the legacy wait. The
+    /// command resolves a host's policy itself, from its own `PATH`.
     pub const FLOCK: Locking = Locking {
         wait: Wait::LEGACY,
         legacy_mutex: false,
     };
 }
 
-/// A state file as read: the document, its kind and the stamp a later
-/// write is checked against.
+/// A state file as read: the document a later write is checked against,
+/// and its kind.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub kind: Kind,
-    pub stamp: Stamp,
     pub doc: Document,
 }
 
@@ -280,9 +276,39 @@ impl StageKind {
     }
 }
 
+/// The word `accept-result` and `reconcile-round` close a stage with: the
+/// run's verdict, or how an admitted run ended without one. A request
+/// names the word; none is assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StageOutcome {
+    Pass,
+    Fail,
+    /// The run ended by its bound or an unavailable host check.
+    NoVerdict,
+    /// The run's process went away before a verdict.
+    Lost,
+    /// The run was stopped before a verdict.
+    Stopped,
+}
+
+impl StageOutcome {
+    /// The word as the file holds it.
+    pub fn word(self) -> &'static str {
+        match self {
+            StageOutcome::Pass => "pass",
+            StageOutcome::Fail => "fail",
+            StageOutcome::NoVerdict => "no-verdict",
+            StageOutcome::Lost => "lost",
+            StageOutcome::Stopped => "stopped",
+        }
+    }
+}
+
 /// One `stages[]` entry as read: `{kind, round_id, start, end}` in epoch
 /// seconds, `superseded: true` once a later round of the kind opened over
-/// it, `run_dir` on a validation run's entry.
+/// it, `run_dir` on a validation run's entry, `outcome` once `accept-result`
+/// closed it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Stage {
     pub kind: StageKind,
@@ -295,6 +321,8 @@ pub struct Stage {
     pub superseded: Option<bool>,
     #[serde(default)]
     pub run_dir: Option<String>,
+    #[serde(default)]
+    pub outcome: Option<StageOutcome>,
 }
 
 /// An item's workflow state: the fields the round operations read. Every
@@ -351,13 +379,30 @@ impl LaneStatus {
     }
 }
 
-/// A lane's launch identity `{pane, server, pid, start}`.
+/// A deliberate, finite hold on a lane's slot in the fleet cap (decision
+/// 97): `reason` names why an op wrote it and `until` the ISO 8601 UTC
+/// stamp it lapses at. The cap charges the lane while the hold stands, and
+/// nothing else about the lane does once its harness is gone; a relaunch,
+/// `release-lane` and a confirmed close drop it. Expiry never slides on a
+/// read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reservation {
+    pub reason: String,
+    pub until: String,
+}
+
+/// A lane's launch identity `{pane, server, server_start, pid, start}`.
+/// `server_start` is the tmux server's start the runtime's launch published
+/// (decision 120, L4), so the pane is keyed on the server's pid and start; a
+/// record the legacy launcher wrote carries none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchIdentity {
     #[serde(default)]
     pub pane: Option<String>,
     #[serde(default)]
     pub server: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_start: Option<u64>,
     #[serde(default)]
     pub pid: Option<u64>,
     #[serde(default)]
@@ -406,12 +451,18 @@ pub struct Lane {
     pub over_cap: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<LaunchIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation: Option<Reservation>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 /// The successor a succession is about to open, `overseer.pending`: the
-/// identity fields the legacy `ol_identity` names plus the launch line.
+/// identity fields the legacy `ol_identity` names, the launch line it
+/// judged, and the typed launch fields the runtime builds the command from
+/// (decision 109 (5)): the permission posture and the caller's own words.
+/// The line is recorded for display and a dead-pane replay's identity read;
+/// the runtime never executes it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pending {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -430,6 +481,16 @@ pub struct Pending {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
+    /// The permission posture the launch runs under: `bypass`, or `native`
+    /// with the caller's own permission words among `extra_args`. Left out,
+    /// the runtime's launch permission setting decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<Permission>,
+    /// The caller's own launch words beyond what the builder spells from the
+    /// typed fields: its permission words under `native`, and whatever else
+    /// the legacy walk carried over, as given.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_args: Vec<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -504,6 +565,12 @@ pub enum EffectOp {
     LaunchLane,
     RequestTransfer,
     CloseOwnedResources,
+    /// A controller's first launch, or its launch after an explicit `off`:
+    /// a succession with no predecessor to retire.
+    StartController,
+    /// The explicit off of decision 78: the controller retired exactly by
+    /// identity and the record marked so no recovery relaunches it.
+    StopController,
 }
 
 impl EffectOp {
@@ -513,8 +580,87 @@ impl EffectOp {
             EffectOp::LaunchLane => "launch-lane",
             EffectOp::RequestTransfer => "request-transfer",
             EffectOp::CloseOwnedResources => "close-owned-resources",
+            EffectOp::StartController => "start-controller",
+            EffectOp::StopController => "stop-controller",
         }
     }
+
+    /// Whether the operation moves the controller record, its target an
+    /// `overseer:<generation>`.
+    pub fn on_controller(self) -> bool {
+        match self {
+            EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
+                true
+            }
+            EffectOp::LaunchLane | EffectOp::CloseOwnedResources => false,
+        }
+    }
+}
+
+/// Why a succession was asked for (step4-map A4 to A8). The judges that
+/// settle on a cause stay legacy (decision 75); the cause tells the effect
+/// what proves the predecessor terminal and the transition what it must
+/// refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransferCause {
+    /// The controller succeeds itself at one of its marks.
+    #[default]
+    Live,
+    /// The watch read the controller dead: the held line is the successor
+    /// and a predecessor with no recorded identity is proven terminal by
+    /// the exit record or the pane (decision 77).
+    Dead,
+    /// The controller's account is walled: the successor must not run on
+    /// the spent account.
+    Walled,
+    /// A refused succession left a standing handoff; a fresh session takes
+    /// over from it, retiring the still-live predecessor first.
+    RefusedRecovery,
+}
+
+impl TransferCause {
+    /// The cause's word as a request and the record carry it.
+    pub fn word(self) -> &'static str {
+        match self {
+            TransferCause::Live => "live",
+            TransferCause::Dead => "dead",
+            TransferCause::Walled => "walled",
+            TransferCause::RefusedRecovery => "refused-recovery",
+        }
+    }
+}
+
+/// What the tracker judged the lane's item: shipped, or ended any other
+/// way. The judge stays the tracker package's; the close op takes its
+/// verdict as evidence (decision 83).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalVerdict {
+    Completed,
+    Canceled,
+}
+
+/// What authorizes a close to end a lane's harness, recorded on the close
+/// intent so its outcome moves the record the way that ground allows
+/// (decisions 83, 98). `exited` and `terminal` end the lane as done;
+/// `no-landing` retires the attempt alone and keeps the item's work and
+/// history, the lane reading `stopped`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "ground", rename_all = "kebab-case")]
+pub enum CloseGround {
+    /// The recorded harness read gone when the close was asked: there is
+    /// nothing live to protect.
+    Exited,
+    /// The tracker read the item terminal; `source` names the read.
+    Terminal {
+        verdict: TerminalVerdict,
+        source: String,
+    },
+    /// An explicit disposition: the attempt ends with no landing while the
+    /// item stays open, on idle-or-gone proof of its harness. `source`
+    /// names who recorded it.
+    NoLanding { reason: String, source: String },
 }
 
 /// The harness, account, model and effort a launch was asked for. The
@@ -532,6 +678,89 @@ pub struct Selection {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+}
+
+/// The process that persisted an intent: its pid and start, read through
+/// agent-runtime's one identity reader when the intent was written
+/// (decision 72). A reconcile that finds this process still live defers to
+/// it and touches nothing; only a dead or absent owner lets a reconcile
+/// complete or fail the intent. Legacy intents carry none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Owner {
+    /// The runtime writes the number; a string form is read too (decision
+    /// 63), so a record a jq writer produced is not refused.
+    #[serde(deserialize_with = "de_pid")]
+    pub pid: u64,
+    pub start: String,
+}
+
+/// Read a pid written as a JSON number or the string a jq `--arg` produced
+/// (decision 63).
+fn de_pid<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
+    match Value::deserialize(d)? {
+        Value::Number(n) => n
+            .as_u64()
+            .ok_or_else(|| serde::de::Error::custom("pid is not a non-negative integer")),
+        Value::String(s) => s
+            .parse()
+            .map_err(|_| serde::de::Error::custom(format!("pid {s:?} is not an integer"))),
+        other => Err(serde::de::Error::custom(format!(
+            "pid is {other}, not a number or string"
+        ))),
+    }
+}
+
+/// What an effect recorded around opening its window (decisions 73, 96):
+/// the server a window is about to open on and the floor its native session
+/// is read above, every field of [`OpenedPane`] but the pane, and then the
+/// pane id the creating `new-window` call printed, written before anything
+/// is typed into it. A reconcile at this phase reads the pane's own receipt
+/// first, else judges the recorded pane; a window neither receipted nor
+/// recorded is never adopted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Opening {
+    pub server: u64,
+    pub server_start: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_process_start: Option<String>,
+    pub socket: String,
+    pub since_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub baseline: Vec<String>,
+    /// The pane the effect's own `new-window` created, recorded before the
+    /// launch line is typed into it (decision 96); `None` until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<String>,
+    /// Whether the launcher has been asked for the window (decision 111
+    /// (5)): written before `new-window` runs, so a phase with no pane and
+    /// `asked` names a window possibly opened, and one without it nothing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asked: bool,
+}
+
+impl Opening {
+    /// The [`OpenedPane`] this opening becomes once its window is found: the
+    /// recorded server and floor with the pane (decision 73), and the
+    /// identity the pane's receipt proved where a reconcile adopted it
+    /// (decision 99).
+    pub fn into_opened(&self, pane: String, identity: Option<Identity>) -> OpenedPane {
+        OpenedPane {
+            pane,
+            server: self.server,
+            server_start: self.server_start,
+            server_process_start: self.server_process_start.clone(),
+            socket: self.socket.clone(),
+            since_ms: self.since_ms,
+            brief: self.brief.clone(),
+            session_id: self.session_id.clone(),
+            baseline: self.baseline.clone(),
+            identity,
+        }
+    }
 }
 
 /// The pane an effect opened and the floor its native session is read
@@ -570,6 +799,13 @@ pub struct OpenedPane {
     /// file is the one lead that appears and is absent here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub baseline: Vec<String>,
+    /// The harness identity this attempt runs under, once read: the
+    /// receipt's pid confirmed live at adoption, or the identity the judge
+    /// read in the pane (decision 99). It is the one identity every later
+    /// read, publication and retirement of the attempt uses; none selects
+    /// another process in its place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<Identity>,
 }
 
 /// The runner's own native session file, bound once before the brief is
@@ -592,6 +828,14 @@ pub struct BoundSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum Phase {
+    /// Written before any window opens (decision 73) and again with the
+    /// pane once one is created (decision 96). A reconcile here adopts the
+    /// pane the intent's receipt names, fails the recorded pane that never
+    /// registered, or fails `nothing-opened` with neither.
+    Opening {
+        #[serde(flatten)]
+        opening: Opening,
+    },
     WindowOpened {
         #[serde(flatten)]
         opened: OpenedPane,
@@ -599,6 +843,18 @@ pub enum Phase {
     Retired {
         #[serde(flatten)]
         opened: OpenedPane,
+    },
+    /// Written before the brief is typed (decision 124e (23)): a reconcile
+    /// that finds it reads the brief as possibly delivered and waits for the
+    /// turn, never pasting again.
+    Delivering {
+        #[serde(flatten)]
+        opened: OpenedPane,
+        /// The user turns the bound file held before the paste.
+        turns_before: u64,
+        session: BoundSession,
+        /// The lines the brief holds, as typed.
+        lines: u64,
     },
     Delivered {
         #[serde(flatten)]
@@ -616,13 +872,16 @@ pub enum Phase {
 }
 
 impl Phase {
-    /// The pane every phase names.
-    pub fn opened(&self) -> &OpenedPane {
+    /// The pane a phase names, or `None` at `opening`, before a window
+    /// exists.
+    pub fn opened(&self) -> Option<&OpenedPane> {
         match self {
             Phase::WindowOpened { opened }
             | Phase::Retired { opened }
+            | Phase::Delivering { opened, .. }
             | Phase::Delivered { opened, .. }
-            | Phase::IdentityRead { opened, .. } => opened,
+            | Phase::IdentityRead { opened, .. } => Some(opened),
+            Phase::Opening { .. } => None,
         }
     }
 }
@@ -631,7 +890,7 @@ impl Phase {
 /// starts, its `outcome` written after. The id is
 /// `<op>:<target>:<nanos>-<nonce>`, the operation's word, its target and
 /// the stamp the caller's `Env` minted for the call, so two intents on one
-/// target never share an id whatever the file's stamp. One intent per
+/// target never share an id whatever the file holds. One intent per
 /// target may be open; a repeated request of the same operation finds it
 /// and reconciles, a request of another operation on the target refuses.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -639,8 +898,11 @@ pub struct Intent {
     pub id: String,
     pub op: EffectOp,
     pub target: String,
-    pub expected_revision: u64,
     pub created_at: String,
+    /// The process that persisted the intent (decision 72); a reconcile
+    /// that finds it live defers to it. Absent on a legacy intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Owner>,
     pub outcome: Outcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
@@ -655,11 +917,51 @@ pub struct Intent {
     /// the transfer fails, as the legacy succession restores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_pending: Option<Value>,
+    /// Why a transfer was asked for; a reconcile reads it to know what
+    /// proves the predecessor terminal (decision 77). Absent on the other
+    /// operations and on transfers recorded before the cause existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<TransferCause>,
+    /// The owner that persisted the intent and handed it to the detached
+    /// job that now owns it (decision 76), written by the claim: the job
+    /// lets that process answer and exit before it retires the pane the
+    /// process asked from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handed_from: Option<Owner>,
+    /// The account a wall relaunch must not run on, canonical, recorded on
+    /// the launch intent that refused it (step4-map A11). Absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_account: Option<String>,
+    /// What authorized a close (decisions 83, 98); its confirmed outcome
+    /// moves the lane as that ground allows. Absent on the other operations
+    /// and on closes recorded before the ground existed, which end the lane
+    /// as done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<CloseGround>,
+    /// The failure the detached job's outcome announced (decision 109 (7)):
+    /// the fleet-log row and the owner notice the legacy `die_status`
+    /// emitted, sent once per intent and recorded here so a repeated
+    /// reconcile of the same outcome emits nothing again. Absent until an
+    /// outcome of a transfer or a stop failed or stayed unconfirmed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<Notice>,
     /// How far the effect got, written before each wait (decision 62); a
     /// reconciliation completes the effect from it. Absent until the effect
     /// has opened something.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<Phase>,
+    /// The obligations the effect stands under (decision 115 (A)): every
+    /// handle it acquired, written before the wait that follows the
+    /// acquisition, with the discharges made so far and whether anything was
+    /// signalled. Every later step and every reconcile reads this set and
+    /// never rebuilds it from the lane or the phase. Absent on an intent
+    /// recorded before the field existed; its next step writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obligations: Option<ObligationRecord>,
+    /// How the fleet watch was handed to a confirmed successor (decision 115
+    /// (C)): the continuation recorded once, after the publication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<WatchHandover>,
     /// What the effect last observed of its target: the pane it opened or
     /// found, the process and screen it read, and for a succession whether
     /// the predecessor was retired. A reconciliation re-observes from it.
@@ -674,6 +976,314 @@ pub struct Intent {
     pub observed_status: Option<LaneStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_generation: Option<u64>,
+}
+
+/// One recorded handle of an operation's target (decisions 111 (A) (1), 115
+/// (A)), typed by what it is. A pane and a window carry the server's pid and
+/// tmux start, the only form this host addresses a pane in; a lane record
+/// written by the legacy launcher carries the pid alone (decision 35), so
+/// its pane's start is unknown and `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Obligation {
+    /// A process identity (pid and start) the record names or the effect
+    /// read.
+    Process(Identity),
+    /// A pid recorded with no start: no identity reads it, but a pid nothing
+    /// holds proves the recorded process gone.
+    Pid { pid: u32 },
+    Pane {
+        pane: String,
+        server: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        server_start: Option<u64>,
+    },
+    /// A pane recorded with no server (decision 35 admits the record): this
+    /// host cannot address it, and the record does not prove it absent.
+    PaneUnaddressed { pane: String },
+    /// A launcher was asked for a window on this server and no pane id was
+    /// recorded yet (decision 111 (5)): a window possibly opened.
+    Window { server: u64, server_start: u64 },
+    /// The pane's receipt was armed (decision 96): an obligation until read.
+    Receipt,
+    /// The worktree's validation runs, owed to orch's own runner's stop
+    /// (decision 108 (7)).
+    Validation,
+    /// The job launcher was asked and its record not yet read (decision 115
+    /// (B)): a job possibly started.
+    JobSidecar,
+    /// The detached job runs as this transient user unit.
+    JobUnit { unit: String },
+    /// The detached job leads this process group, by the identity its child
+    /// wrote before it ran.
+    JobGroup(Identity),
+    /// The detached job's process group by its key alone: the launcher ended
+    /// the launch `unwound-failed` without reading the leader's start, and
+    /// the group is read in the kernel's table until it empties (decision
+    /// 124h (33)).
+    JobPgid { pgid: u32 },
+}
+
+/// The part a recorded handle plays in its intent (decision 124d (15)): the
+/// lane's own harness and pane, its detached wake turn, the runner a
+/// succession opens, the predecessor it retires, the worktree's validation
+/// runs, or the detached job. A selection from the set reads the role and
+/// never the target's record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Role {
+    Harness,
+    Wake,
+    Runner,
+    Predecessor,
+    Validation,
+    Job,
+}
+
+/// One standing obligation as the record holds it: the handle, flattened
+/// under its `kind`, its role, and, under the harness role, the harness
+/// kind the lane ran when the handle was acquired (decision 124g (29)): what
+/// names the processes below the recorded root that a stop may signal,
+/// never the harness a relaunched session runs. A record written before the
+/// role existed carries none, and the handle bootstraps it once at open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Held {
+    #[serde(flatten)]
+    pub obligation: Obligation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<Harness>,
+}
+
+/// An obligation settled, with the evidence word that settled it, the role
+/// it held and the harness kind recorded on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Discharged {
+    pub obligation: Obligation,
+    pub by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<Harness>,
+}
+
+/// The durable obligation set of an intent (decision 115 (A)): what stands,
+/// what was discharged and by what, and whether the effect has signalled
+/// anything, after which no refusal is expressible on the intent. `revision`
+/// counts the set's replacements: the store advances it on every write that
+/// changes the set, and a handle whose write names an older revision is
+/// refused `set-replaced` (decisions 124d (16), 124g (26)).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ObligationRecord {
+    #[serde(default)]
+    pub standing: Vec<Held>,
+    #[serde(default)]
+    pub discharged: Vec<Discharged>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub signalled: bool,
+    /// Independent stale readings per recorded identity (`pid:start`), one
+    /// per run that read the pid live under another start; the second
+    /// settles the identity (decision 124c).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub stale: std::collections::BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub revision: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// The keys a lane intent's terminal carries (decision 124d (14)): the
+/// lane's `session_since` when the intent was written and every identity,
+/// pid and pane key the intent's set recorded under the harness role, the
+/// launch record's own and the harness read in its pane. The store applies a
+/// terminal to the lane only when the lane's launch names nothing but these.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneKeys {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane_since: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub harness: Vec<Obligation>,
+}
+
+/// What a lane's `launch` record names as obligations: a pane with its
+/// server, else the pane unaddressable; an identity with its start, else
+/// the pid alone. The one reading of a launch record both the store's
+/// moved-lane judgement and the handle's bootstrap take.
+pub fn launch_obligations(launch: Option<&LaunchIdentity>) -> Vec<Obligation> {
+    let Some(launch) = launch else {
+        return Vec::new();
+    };
+    let mut named = Vec::new();
+    match (&launch.pane, launch.server) {
+        (Some(pane), Some(server)) => named.push(Obligation::Pane {
+            pane: pane.clone(),
+            server,
+            server_start: launch.server_start,
+        }),
+        (Some(pane), None) => named.push(Obligation::PaneUnaddressed { pane: pane.clone() }),
+        (None, Some(_) | None) => {}
+    }
+    match (
+        launch.pid.and_then(|pid| u32::try_from(pid).ok()),
+        &launch.start,
+    ) {
+        (Some(pid), Some(start)) => named.push(Obligation::Process(Identity {
+            pid,
+            start: start.clone(),
+        })),
+        (Some(pid), None) => named.push(Obligation::Pid { pid }),
+        (None, _) => {}
+    }
+    named
+}
+
+impl ObligationRecord {
+    /// Move every standing obligation `which` selects to the discharged set
+    /// under `by`, each keeping its role; how many moved.
+    pub fn discharge_where(&mut self, which: impl Fn(&Obligation) -> bool, by: &str) -> usize {
+        let (moved, kept): (Vec<Held>, Vec<Held>) = std::mem::take(&mut self.standing)
+            .into_iter()
+            .partition(|h| which(&h.obligation));
+        self.standing = kept;
+        let count = moved.len();
+        self.discharged
+            .extend(moved.into_iter().map(|held| Discharged {
+                obligation: held.obligation,
+                by: by.to_owned(),
+                role: held.role,
+                harness: held.harness,
+            }));
+        count
+    }
+
+    /// The harness kind recorded under the harness role, standing or
+    /// discharged (decision 124g (29)).
+    pub fn recorded_harness(&self) -> Option<Harness> {
+        self.standing
+            .iter()
+            .filter(|h| h.role == Some(Role::Harness))
+            .find_map(|h| h.harness)
+            .or_else(|| {
+                self.discharged
+                    .iter()
+                    .filter(|d| d.role == Some(Role::Harness))
+                    .find_map(|d| d.harness)
+            })
+    }
+
+    /// Whether `obligation` stands.
+    pub fn stands(&self, obligation: &Obligation) -> bool {
+        self.standing.iter().any(|h| h.obligation == *obligation)
+    }
+
+    /// Whether the record carries `obligation`, standing or discharged.
+    pub fn holds(&self, obligation: &Obligation) -> bool {
+        self.stands(obligation) || self.discharged.iter().any(|d| d.obligation == *obligation)
+    }
+
+    /// The role `obligation` holds or held, where the record names one.
+    pub fn role_of(&self, obligation: &Obligation) -> Option<Role> {
+        self.standing
+            .iter()
+            .find(|h| h.obligation == *obligation)
+            .and_then(|h| h.role)
+            .or_else(|| {
+                self.discharged
+                    .iter()
+                    .find(|d| d.obligation == *obligation)
+                    .and_then(|d| d.role)
+            })
+    }
+
+    /// Every standing obligation, in record order.
+    pub fn standing_obligations(&self) -> impl Iterator<Item = &Obligation> {
+        self.standing.iter().map(|h| &h.obligation)
+    }
+
+    /// Whether the two records hold the same set: everything but the
+    /// revision the store assigns.
+    pub fn same_set(&self, other: &ObligationRecord) -> bool {
+        self.standing == other.standing
+            && self.discharged == other.discharged
+            && self.signalled == other.signalled
+            && self.stale == other.stale
+    }
+
+    /// The lane keys the record holds under the harness role, standing or
+    /// discharged: every process, pid and pane key (decision 124d (14)).
+    pub fn lane_keys(&self, lane_since: Option<String>) -> LaneKeys {
+        let harness = self
+            .standing_obligations()
+            .chain(self.discharged.iter().map(|d| &d.obligation))
+            .filter(|o| self.role_of(o) == Some(Role::Harness))
+            .filter(|o| match o {
+                Obligation::Process(_)
+                | Obligation::Pid { .. }
+                | Obligation::Pane { .. }
+                | Obligation::PaneUnaddressed { .. } => true,
+                Obligation::Window { .. }
+                | Obligation::Receipt
+                | Obligation::Validation
+                | Obligation::JobSidecar
+                | Obligation::JobUnit { .. }
+                | Obligation::JobGroup(_)
+                | Obligation::JobPgid { .. } => false,
+            })
+            .cloned()
+            .collect();
+        LaneKeys {
+            lane_since,
+            harness,
+        }
+    }
+
+    /// Whether `obligation` is a detached job's handle or its unread record.
+    pub fn is_job(obligation: &Obligation) -> bool {
+        matches!(
+            obligation,
+            Obligation::JobSidecar
+                | Obligation::JobUnit { .. }
+                | Obligation::JobGroup(_)
+                | Obligation::JobPgid { .. }
+        )
+    }
+}
+
+/// How the fleet watch handover after a confirmed succession went (decision
+/// 115 (C)): the handover owner's keyed line, and the cause where it failed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum WatchHandover {
+    HandedOver { line: String },
+    Failed { cause: String, line: String },
+}
+
+/// The one failure announcement an intent makes (decision 109 (7)): the
+/// keyed line the fleet log holds under `item: overseer`, as the legacy
+/// `oversee-succeed: <key> field=value...` row, and how the owner notice
+/// went. The outcome's own write records the notice `owed`, with its row
+/// (decision 124f (28)); the send follows, and a later write marks it
+/// `sent`, or `unsent:<cause>` where the mailbox CLI refused or could not
+/// be run. A notice still `owed` on a closed intent is a continuation every
+/// reconcile and request runs once, under the owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notice {
+    pub key: String,
+    pub text: String,
+    pub owner: String,
+}
+
+/// The `owner` word of a notice recorded with its outcome and not yet sent.
+pub const NOTICE_OWED: &str = "owed";
+
+impl Notice {
+    /// Whether the notice is recorded and still to be sent.
+    pub fn owed(&self) -> bool {
+        self.owner == NOTICE_OWED
+    }
 }
 
 /// Why an intent was closed apart from its effect's own outcome.
@@ -770,35 +1380,37 @@ fn snapshot_of(path: &Path, value: Value) -> Result<Snapshot> {
             format!("found {}", json_type(&value)),
         ));
     };
-    let stamp = if doc.contains_key(RECORD_VERSION_KEY) {
-        let (record_version, revision, _) =
-            record::split_meta(path, Value::Object(doc.clone()), SUPPORTED_VERSIONS)?;
-        Stamp::Stamped {
-            record_version,
-            revision,
-        }
-    } else if doc.contains_key(REVISION_KEY) {
-        return Err(shape(
-            path,
-            REVISION_KEY,
-            ShapeReason::TypeMismatch,
-            format!("{REVISION_KEY} without {RECORD_VERSION_KEY}"),
-        ));
-    } else {
-        Stamp::Legacy
-    };
+    // A file stamped with agent-runtime's record meta keys (the retired
+    // `state migrate` wrote one) is no workflow record this runtime reads:
+    // the legacy writers patch the file beside it and keep no revision, so
+    // the content comparison is the one write check, and a file carrying
+    // either key is refused by name rather than read as if unstamped.
+    if let Some(key) = [RECORD_VERSION_KEY, REVISION_KEY]
+        .into_iter()
+        .find(|key| doc.contains_key(*key))
+    {
+        return Err(agent_runtime::Error::refused(
+            "record-stamped",
+            &[("path", &path.display().to_string()), ("key", key)],
+        )
+        .into());
+    }
     if kind == Kind::Fleet {
         // The one field the legacy watch refuses the whole file on.
         field::<Vec<String>>(path, &doc, "launch_queue")?;
     }
-    Ok(Snapshot { kind, stamp, doc })
+    Ok(Snapshot { kind, doc })
 }
 
 /// Read a state file. The reader refuses what the legacy readers refuse on
 /// the same file: unparsable bytes (`json-invalid`), a non-object, a
-/// `launch_queue` entry that is not a string (`record-shape`), and a
-/// `record_version` this build does not know. Every other field is read
-/// when an operation needs it.
+/// `launch_queue` entry that is not a string (`record-shape`), and a file
+/// stamped with `record_version` or `revision` (`record-stamped`). Every
+/// other field is read when an operation needs it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one reader of a state file, whose typed snapshot every transition and effect reads"
+)]
 pub fn load(path: &Path) -> Result<Option<Snapshot>> {
     let Some(value) = record::read_value(path)? else {
         return Ok(None);
@@ -817,21 +1429,21 @@ fn validate(path: &Path, snapshot: &Snapshot) -> Result<()> {
 // Writing
 // ---------------------------------------------------------------------------
 
-/// Run `f` under the file's lock, bounded by `locking.wait`. With
-/// `legacy_writers` the file is also held under the legacy `mkdir` mutex
-/// where the policy says the host's legacy writers take one: an unstamped
-/// file still has them. Both locks are taken under one deadline, so the
-/// whole acquisition waits at most the legacy 10 s.
-fn locked<R>(
-    path: &Path,
-    locking: Locking,
-    legacy_writers: bool,
-    f: impl FnOnce() -> Result<R>,
-) -> Result<R> {
+/// Run `f` under the lock beside `path` (`<path>.lock`), bounded by
+/// `locking.wait`, and under the legacy `mkdir` mutex where the policy says
+/// the host's legacy writers take one. Both locks are taken under one
+/// deadline, so the whole acquisition waits at most the legacy 10 s. The
+/// lane admission takes the legacy fleet launch lock through the same
+/// helper (`ops`), so one lock discipline serves both legacy locks.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one acquisition of a record's locks, under the legacy wait's clock"
+)]
+pub(crate) fn locked<R>(path: &Path, locking: Locking, f: impl FnOnce() -> Result<R>) -> Result<R> {
     let deadline = locking.wait.start();
     let mut guard = record::lock(path)?;
     guard.with_wait(&deadline, || {
-        let _mutex = if legacy_writers && locking.legacy_mutex {
+        let _mutex = if locking.legacy_mutex {
             Some(record::mutex_lock(path, &deadline)?)
         } else {
             None
@@ -840,62 +1452,60 @@ fn locked<R>(
     })?
 }
 
-/// Write `doc` over the file `snapshot` was read from. An unstamped file is
-/// written back unstamped and refuses `record-changed` when its content
-/// moved since the read, the check the legacy writers' lock cannot give it
-/// otherwise; a stamped file refuses `revision-mismatch` unless the file
-/// still holds the snapshot's revision, and gains the next one in place.
-/// Only `migrate` adds the two meta keys.
-pub fn store(path: &Path, snapshot: &Snapshot, doc: &Document, locking: Locking) -> Result<Stamp> {
-    let legacy_writers = snapshot.stamp == Stamp::Legacy;
-    locked(path, locking, legacy_writers, || match snapshot.stamp {
-        Stamp::Legacy => {
-            match record::read_value(path)? {
-                Some(Value::Object(current)) if current == snapshot.doc => {}
-                _ => {
-                    return Err(agent_runtime::Error::refused(
-                        "record-changed",
-                        &[("path", &path.display().to_string())],
-                    )
-                    .into());
-                }
-            }
-            record::replace_atomically(path, &Value::Object(doc.clone()))?;
-            Ok(Stamp::Legacy)
-        }
-        Stamp::Stamped {
-            record_version,
-            revision,
-        } => {
-            let found = match record::read_value(path)? {
-                Some(Value::Object(current)) => current
-                    .get(REVISION_KEY)
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                Some(_) | None => 0,
-            };
-            if found != revision {
-                return Err(agent_runtime::Error::RevisionMismatch {
-                    path: path.to_path_buf(),
-                    expected: revision,
-                    found,
-                }
+/// Write `doc` over the file `snapshot` was read from, refusing
+/// `record-changed` when the file's content moved since the read: the check
+/// the legacy writers' lock cannot give it otherwise. A `doc` whose record
+/// bytes equal the snapshot's passes the same check and then writes nothing
+/// (decision 89), so a repeated request that reconciles its standing intent
+/// leaves the file as it found it. The comparison is of the serialized
+/// bytes with key order kept (decision 95), never of the values: a key that
+/// moved is a changed record.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one writer of a state file, behind the write check"
+)]
+pub fn store(path: &Path, snapshot: &Snapshot, doc: &Document, locking: Locking) -> Result<()> {
+    let unchanged = same_document(path, doc, &snapshot.doc)?;
+    locked(path, locking, || {
+        match record::read_value(path)? {
+            Some(Value::Object(current)) if current == snapshot.doc => {}
+            _ => {
+                return Err(agent_runtime::Error::refused(
+                    "record-changed",
+                    &[("path", &path.display().to_string())],
+                )
                 .into());
             }
-            let next = revision + 1;
-            let mut out = doc.clone();
-            out.insert(REVISION_KEY.to_owned(), Value::from(next));
-            record::replace_atomically(path, &Value::Object(out))?;
-            Ok(Stamp::Stamped {
-                record_version,
-                revision: next,
-            })
         }
+        if !unchanged {
+            record::replace_atomically(path, &Value::Object(doc.clone()))?;
+        }
+        Ok(())
+    })
+}
+
+/// Whether two documents are one record byte for byte, key order included
+/// (decisions 89, 95): what the store's no-change check compares, and what a
+/// transition compares before it reports a record changed.
+pub(crate) fn same_document(path: &Path, a: &Document, b: &Document) -> Result<bool> {
+    Ok(serialized(path, a)? == serialized(path, b)?)
+}
+
+/// The bytes the record writer puts on disk for `doc`, key order included:
+/// the form the no-change check compares, since two documents equal as
+/// values are different records once a key moved.
+fn serialized(path: &Path, doc: &Document) -> Result<Vec<u8>> {
+    serde_json::to_vec_pretty(doc).map_err(|source| {
+        agent_runtime::Error::Json {
+            path: path.to_path_buf(),
+            source,
+        }
+        .into()
     })
 }
 
 // ---------------------------------------------------------------------------
-// Initialization, inspection and migration
+// Initialization and inspection
 // ---------------------------------------------------------------------------
 
 /// What `workflow-state init` takes beside the item: the fields a caller
@@ -966,8 +1576,12 @@ pub struct Initialized {
 /// Create the state file at `path` with the init object, as `cmd_init`
 /// writes it: the directory made, the file created exclusively and refused
 /// `state-exists` where one already stands, the object pretty-printed with
-/// jq's two-space indent and final newline. Unstamped, like every file the
-/// legacy writers still read; `migrate` stamps it.
+/// jq's two-space indent and final newline, in the shape the legacy writers
+/// read.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one creation of a state file, exclusive, for the `state init` command"
+)]
 pub fn init(path: &Path, fields: &InitFields) -> Result<Initialized> {
     let kind = Kind::of_path(path);
     let issue_id = match kind {
@@ -1016,12 +1630,22 @@ pub fn init(path: &Path, fields: &InitFields) -> Result<Initialized> {
 pub struct Inspection {
     pub path: PathBuf,
     pub kind: Kind,
-    pub stamp: Stamp,
     /// The object exactly as the file holds it.
     pub state: Value,
+    /// The fleet's intents whose effect may still be in flight, as this
+    /// runtime judges them (`Intent::open`): a reader that must know whether
+    /// an operation stands on a target, the legacy watch's succession guard
+    /// among them, takes the judgement from here rather than from the
+    /// outcome words. Empty on an item file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_intents: Vec<Intent>,
 }
 
 /// Read every typed field of the file by its kind and return it unchanged.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the inspection's one read of the state file, for the `state inspect` command"
+)]
 pub fn inspect(path: &Path) -> Result<Inspection> {
     let Some(snapshot) = load(path)? else {
         return Err(Error::RecordMissing {
@@ -1029,141 +1653,20 @@ pub fn inspect(path: &Path) -> Result<Inspection> {
         });
     };
     validate(path, &snapshot)?;
+    let open_intents = match snapshot.kind {
+        Kind::Fleet => snapshot
+            .view::<FleetState>(path)?
+            .intents
+            .into_iter()
+            .filter(Intent::open)
+            .collect(),
+        Kind::Item => Vec::new(),
+    };
     Ok(Inspection {
         path: path.to_path_buf(),
         kind: snapshot.kind,
-        stamp: snapshot.stamp,
         state: Value::Object(snapshot.doc),
-    })
-}
-
-/// Where `migrate` keeps the original bytes: `<file>.pre-migration`.
-pub fn pre_migration_path(path: &Path) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map(|n| n.to_os_string())
-        .unwrap_or_default();
-    name.push(PRE_MIGRATION_SUFFIX);
-    path.with_file_name(name)
-}
-
-/// What `migrate` did.
-#[derive(Debug, Clone, Serialize)]
-pub struct Migration {
-    pub path: PathBuf,
-    pub kind: Kind,
-    /// False when the file already carried the current version.
-    pub migrated: bool,
-    pub stamp: Stamp,
-    /// Where the original bytes were kept, when the file was migrated.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub original: Option<PathBuf>,
-}
-
-/// `record_version` and `revision` first, then `fields` in their order,
-/// minus any copy of the two keys.
-fn stamped(revision: u64, fields: Document) -> Value {
-    let mut ordered = Map::new();
-    ordered.insert(RECORD_VERSION_KEY.to_owned(), Value::from(RECORD_VERSION));
-    ordered.insert(REVISION_KEY.to_owned(), Value::from(revision));
-    for (key, value) in fields {
-        if key != RECORD_VERSION_KEY && key != REVISION_KEY {
-            ordered.insert(key, value);
-        }
-    }
-    Value::Object(ordered)
-}
-
-/// Create `<file>.pre-migration` holding `bytes`. A standing copy whose
-/// bytes equal the file's is this flow's own leftover from a run that died
-/// before the replacement, and is kept as the copy; one that differs refuses
-/// `migration-exists`.
-fn keep_original(original: &Path, bytes: &[u8]) -> agent_runtime::Result<()> {
-    let mut copy = match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(original)
-    {
-        Ok(copy) => copy,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let standing = fs::read(original)
-                .map_err(|e| agent_runtime::Error::io("read-original", original, e))?;
-            if standing == bytes {
-                return Ok(());
-            }
-            return Err(agent_runtime::Error::refused(
-                "migration-exists",
-                &[("path", &original.display().to_string())],
-            ));
-        }
-        Err(e) => return Err(agent_runtime::Error::io("create-original", original, e)),
-    };
-    let kept = copy.write_all(bytes).and_then(|_| copy.sync_all());
-    drop(copy);
-    if let Err(e) = kept {
-        // The copy is this call's own, created exclusively above; with the
-        // file untouched there is nothing it preserves.
-        let _ = fs::remove_file(original);
-        return Err(agent_runtime::Error::io("write-original", original, e));
-    }
-    Ok(())
-}
-
-/// Stamp a legacy file with `record_version` and `revision`, keeping its
-/// own bytes beside it as `<file>.pre-migration`. Everything happens under
-/// the file's lock (and the legacy mutex where the policy takes one): the
-/// whole input is read by its kind, the copy is created, then the stamped
-/// record replaces the file with every field in its original order. A newer
-/// version, malformed input or a differing standing copy refuses without
-/// touching the file; a standing copy equal to the file is a retry of an
-/// interrupted run and completes.
-pub fn migrate(path: &Path, locking: Locking) -> Result<Migration> {
-    let kind = Kind::of_path(path);
-    let original = pre_migration_path(path);
-    // Judged before the lock, so a missing file gains no lock sidecar; the
-    // locked read below is the one that decides.
-    if let Err(e) = fs::metadata(path) {
-        return Err(match e.kind() {
-            std::io::ErrorKind::NotFound => Error::RecordMissing {
-                path: path.to_path_buf(),
-            },
-            _ => agent_runtime::Error::io("stat", path, e).into(),
-        });
-    }
-    locked(path, locking, true, || {
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(Error::RecordMissing {
-                    path: path.to_path_buf(),
-                });
-            }
-            Err(e) => return Err(agent_runtime::Error::io("read", path, e).into()),
-        };
-        let value: Value = serde_json::from_slice(&bytes).map_err(|e| json(path, e))?;
-        let snapshot = snapshot_of(path, value)?;
-        validate(path, &snapshot)?;
-        if let Stamp::Stamped { .. } = snapshot.stamp {
-            return Ok(Migration {
-                path: path.to_path_buf(),
-                kind,
-                migrated: false,
-                stamp: snapshot.stamp,
-                original: None,
-            });
-        }
-        keep_original(&original, &bytes)?;
-        record::replace_atomically(path, &stamped(1, snapshot.doc))?;
-        Ok(Migration {
-            path: path.to_path_buf(),
-            kind,
-            migrated: true,
-            stamp: Stamp::Stamped {
-                record_version: RECORD_VERSION,
-                revision: 1,
-            },
-            original: Some(original.clone()),
-        })
+        open_intents,
     })
 }
 
@@ -1205,9 +1708,14 @@ pub(crate) mod fixtures {
     pub const HAND_WRITTEN_LANE: &str = r#"{"item":"KEN-4500","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/home/u/dev/.worktrees/kendex/ken-4500","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:00:00Z","status":"running","obligation":null}"#;
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the rows measure the store's real lock waits"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
@@ -1238,7 +1746,6 @@ mod tests {
             ("tmp/workflow-state-oversee.json", Kind::Fleet),
             ("tmp/workflow-state-KEN-1.json", Kind::Item),
             ("tmp/workflow-state-issue-12.json", Kind::Item),
-            ("/x/workflow-state-oversee.json.pre-migration", Kind::Item),
         ];
         for (path, kind) in rows {
             assert_eq!(Kind::of_path(Path::new(path)), kind, "{path}");
@@ -1246,9 +1753,9 @@ mod tests {
     }
 
     /// Finding 1, probe P1: a file an older init wrote lacks the newest init
-    /// fields and still reads, stores and migrates.
+    /// fields and still reads and stores.
     #[test]
-    fn a_file_missing_the_newer_init_fields_reads_stores_and_migrates() {
+    fn a_file_missing_the_newer_init_fields_reads_and_stores() {
         let dir = tempfile::tempdir().unwrap();
         let rows = [
             ("workflow-state-KEN-4687.json", fixtures::ITEM),
@@ -1258,24 +1765,14 @@ mod tests {
             let legacy = fixtures::without_init_fields(text);
             let path = write(dir.path(), name, &legacy);
             let s = snapshot(&path);
-            assert_eq!(s.stamp, Stamp::Legacy, "{name}");
             validate(&path, &s).unwrap();
             for key in fixtures::PRE_2026_INIT_FIELDS {
                 assert!(!s.doc.contains_key(*key), "{name}: {key}");
             }
             // An unchanged store writes the same bytes back.
-            assert_eq!(
-                store(&path, &s, &s.doc, Locking::FLOCK).unwrap(),
-                Stamp::Legacy
-            );
+            store(&path, &s, &s.doc, Locking::FLOCK).unwrap();
             assert_eq!(fs::read_to_string(&path).unwrap(), legacy, "{name}");
             inspect(&path).unwrap();
-            let migration = migrate(&path, Locking::FLOCK).unwrap();
-            assert!(migration.migrated, "{name}");
-            let after = object(&path);
-            let mut expected = vec!["record_version".to_owned(), "revision".to_owned()];
-            expected.extend(keys(&s.doc));
-            assert_eq!(keys(&after), expected, "{name}");
         }
     }
 
@@ -1420,26 +1917,6 @@ mod tests {
         inspect(&path).unwrap();
     }
 
-    /// Finding 2 and decision 33: a store never stamps; only `migrate` adds
-    /// the two meta keys.
-    #[test]
-    fn a_store_on_an_unstamped_file_leaves_it_unstamped() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = write(dir.path(), "workflow-state-KEN-4687.json", fixtures::ITEM);
-        let s = snapshot(&path);
-        let mut doc = s.doc.clone();
-        set(&mut doc, "cycles", 1);
-        assert_eq!(
-            store(&path, &s, &doc, Locking::FLOCK).unwrap(),
-            Stamp::Legacy
-        );
-        let after = object(&path);
-        assert!(!after.contains_key(RECORD_VERSION_KEY));
-        assert!(!after.contains_key(REVISION_KEY));
-        assert_eq!(after["cycles"], Value::from(1));
-        assert_eq!(snapshot(&path).stamp, Stamp::Legacy);
-    }
-
     /// Finding 2, probe P10b: a legacy-style edit between the read and the
     /// store refuses `record-changed`, and the edit stands.
     #[test]
@@ -1454,60 +1931,79 @@ mod tests {
         let err = store(&path, &s, &doc, Locking::FLOCK).unwrap_err();
         assert_eq!(err.key(), "record-changed");
         assert_eq!(fs::read_to_string(&path).unwrap(), moved);
-        // Stamped by someone else in between: the content check refuses too.
-        migrate(&path, Locking::FLOCK).unwrap();
-        let err = store(&path, &s, &doc, Locking::FLOCK).unwrap_err();
-        assert_eq!(err.key(), "record-changed");
     }
 
+    /// Decisions 89 and 95: a document whose record bytes equal the
+    /// snapshot's writes nothing, so a repeated request that changes no
+    /// record leaves the file as it found it. A document equal as a value
+    /// but with a key moved is a changed record: it is written, as a changed
+    /// value is.
     #[test]
-    fn a_stale_revision_refuses_and_the_newer_write_stands() {
+    fn an_unchanged_document_writes_nothing_and_a_moved_key_is_written() {
         let dir = tempfile::tempdir().unwrap();
         let path = write(dir.path(), "workflow-state-KEN-4687.json", fixtures::ITEM);
-        migrate(&path, Locking::FLOCK).unwrap();
-        let first = snapshot(&path);
-        let second = snapshot(&path);
-        let mut doc = second.doc.clone();
-        set(&mut doc, "cycles", 7);
-        assert_eq!(
-            store(&path, &second, &doc, Locking::FLOCK).unwrap(),
-            Stamp::Stamped {
-                record_version: 1,
-                revision: 2
-            }
+        let s = snapshot(&path);
+        let before = fs::read(&path).unwrap();
+        store(&path, &s, &s.doc, Locking::FLOCK).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), before);
+        // The same values with `cycles` moved to the end of the document.
+        let mut reordered = s.doc.clone();
+        let cycles = reordered.shift_remove("cycles").unwrap();
+        reordered.insert("cycles".to_owned(), cycles);
+        assert_eq!(reordered, s.doc, "equal as values");
+        assert_ne!(keys(&reordered), keys(&s.doc), "a key moved");
+        store(&path, &s, &reordered, Locking::FLOCK).unwrap();
+        assert_ne!(
+            fs::read(&path).unwrap(),
+            before,
+            "an order-only change is written"
         );
-        let mut stale = first.doc.clone();
-        set(&mut stale, "cycles", 1);
-        let err = store(&path, &first, &stale, Locking::FLOCK).unwrap_err();
-        assert!(matches!(
-            err,
-            Error::Runtime(agent_runtime::Error::RevisionMismatch {
-                expected: 1,
-                found: 2,
-                ..
-            })
-        ));
-        let after = object(&path);
-        assert_eq!(after["cycles"], Value::from(7));
-        assert_eq!(keys(&after)[..2], ["record_version", "revision"]);
+        assert_eq!(
+            keys(&object(&path)).last().map(String::as_str),
+            Some("cycles")
+        );
+        let s = snapshot(&path);
+        let mut doc = s.doc.clone();
+        set(&mut doc, "cycles", 7);
+        store(&path, &s, &doc, Locking::FLOCK).unwrap();
+        assert_eq!(object(&path)["cycles"], Value::from(7));
     }
 
+    /// A file stamped with agent-runtime's record meta keys, under any
+    /// version, is no workflow record: the reader and the inspection refuse
+    /// `record-stamped` naming the key, and the file is left as it was.
     #[test]
-    fn a_newer_record_version_refuses_without_touching_the_file() {
+    fn a_stamped_file_refuses_record_stamped_without_touching_the_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write(dir.path(), "workflow-state-KEN-9999.json", fixtures::NEWER);
-        let before = fs::read(&path).unwrap();
-        let err = load(&path).unwrap_err();
-        assert!(matches!(
-            err,
-            Error::Runtime(agent_runtime::Error::RecordVersion { found: 99, .. })
-        ));
-        let err = inspect(&path).unwrap_err();
-        assert_eq!(err.key(), "record-version");
-        let err = migrate(&path, Locking::FLOCK).unwrap_err();
-        assert_eq!(err.key(), "record-version");
-        assert_eq!(fs::read(&path).unwrap(), before);
-        assert!(!pre_migration_path(&path).exists());
+        let rows = [
+            (
+                "workflow-state-KEN-9999.json",
+                fixtures::NEWER.to_owned(),
+                "record_version",
+            ),
+            (
+                "workflow-state-KEN-4687.json",
+                fixtures::ITEM.replacen("{", "{\"record_version\": 1, \"revision\": 4,", 1),
+                "record_version",
+            ),
+            (
+                "workflow-state-KEN-1.json",
+                "{\"revision\": 3, \"issue_id\": \"KEN-1\"}".to_owned(),
+                "revision",
+            ),
+        ];
+        for (name, text, key) in rows {
+            let path = write(dir.path(), name, &text);
+            let before = fs::read(&path).unwrap();
+            for err in [load(&path).unwrap_err(), inspect(&path).unwrap_err()] {
+                assert_eq!(err.key(), "record-stamped", "{name}: {err:?}");
+                let Error::Runtime(agent_runtime::Error::Refused { fields, .. }) = &err else {
+                    panic!("{name}: {err:?}")
+                };
+                assert_eq!(fields[1], ("key".to_owned(), key.to_owned()), "{name}");
+            }
+            assert_eq!(fs::read(&path).unwrap(), before, "{name}");
+        }
     }
 
     /// Finding 12 and decision 35: unparsable bytes are `json-invalid`; a
@@ -1515,7 +2011,7 @@ mod tests {
     #[test]
     fn malformed_input_refuses_by_cause_without_touching_the_file() {
         let dir = tempfile::tempdir().unwrap();
-        let rows: [(&str, String, &str, Option<&str>); 6] = [
+        let rows: [(&str, String, &str, Option<&str>); 5] = [
             (
                 "truncated",
                 "{\"issue_id\": \"KEN-1\",".to_owned(),
@@ -1527,12 +2023,6 @@ mod tests {
                 "[1, 2]".to_owned(),
                 "record-shape",
                 Some(""),
-            ),
-            (
-                "revision-without-version",
-                "{\"revision\": 3, \"issue_id\": \"KEN-1\"}".to_owned(),
-                "record-shape",
-                Some("revision"),
             ),
             (
                 "stage-start-text",
@@ -1561,7 +2051,7 @@ mod tests {
             };
             let path = write(dir.path(), &file, &text);
             let before = fs::read(&path).unwrap();
-            let err = migrate(&path, Locking::FLOCK).unwrap_err();
+            let err = inspect(&path).unwrap_err();
             assert_eq!(err.key(), key, "{name}");
             if let Some(expected) = field {
                 let Error::Shape { field, .. } = &err else {
@@ -1570,8 +2060,6 @@ mod tests {
                 assert_eq!(field, expected, "{name}");
             }
             assert_eq!(fs::read(&path).unwrap(), before, "{name}");
-            assert!(!pre_migration_path(&path).exists(), "{name}");
-            assert_eq!(inspect(&path).unwrap_err().key(), key, "{name}");
         }
         // The one field `load` itself reads on a fleet file.
         let path = write(
@@ -1590,83 +2078,11 @@ mod tests {
     }
 
     #[test]
-    fn migration_keeps_the_original_bytes_and_the_field_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = write(dir.path(), FLEET_FILE_NAME, fixtures::FLEET);
-        let migration = migrate(&path, Locking::FLOCK).unwrap();
-        assert!(migration.migrated);
-        assert_eq!(migration.kind, Kind::Fleet);
-        let original = migration.original.unwrap();
-        assert_eq!(fs::read_to_string(&original).unwrap(), fixtures::FLEET);
-        let after = object(&path);
-        let before_keys: Vec<String> = match serde_json::from_str(fixtures::FLEET).unwrap() {
-            Value::Object(map) => map.keys().cloned().collect(),
-            _ => unreachable!(),
-        };
-        let mut expected = vec!["record_version".to_owned(), "revision".to_owned()];
-        expected.extend(before_keys);
-        assert_eq!(keys(&after), expected);
-        assert_eq!(after["revision"], Value::from(1));
-        // A second run has nothing to do and makes no second copy.
-        let again = migrate(&path, Locking::FLOCK).unwrap();
-        assert!(!again.migrated);
-        assert_eq!(
-            again.stamp,
-            Stamp::Stamped {
-                record_version: 1,
-                revision: 1
-            }
-        );
-        assert!(again.original.is_none());
-    }
-
-    /// Finding 10, probe P9, and decision 38: a copy equal to the file is an
-    /// interrupted run's leftover and the retry completes; a differing copy
-    /// refuses and keeps both files.
-    #[test]
-    fn a_standing_copy_completes_the_retry_when_equal_and_refuses_when_not() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = write(dir.path(), "workflow-state-KEN-4687.json", fixtures::ITEM);
-        fs::write(pre_migration_path(&path), fixtures::ITEM).unwrap();
-        let migration = migrate(&path, Locking::FLOCK).unwrap();
-        assert!(migration.migrated);
-        assert_eq!(
-            fs::read_to_string(pre_migration_path(&path)).unwrap(),
-            fixtures::ITEM
-        );
-        assert_eq!(object(&path)["revision"], Value::from(1));
-
-        let path = write(dir.path(), "workflow-state-KEN-4688.json", fixtures::ITEM);
-        fs::write(pre_migration_path(&path), "earlier copy").unwrap();
-        let err = migrate(&path, Locking::FLOCK).unwrap_err();
-        assert_eq!(err.key(), "migration-exists");
-        let Error::Runtime(agent_runtime::Error::Refused { fields, .. }) = &err else {
-            panic!("{err:?}")
-        };
-        assert_eq!(
-            fields[0],
-            (
-                "path".to_owned(),
-                pre_migration_path(&path).display().to_string()
-            )
-        );
-        assert_eq!(fs::read_to_string(&path).unwrap(), fixtures::ITEM);
-        assert_eq!(
-            fs::read_to_string(pre_migration_path(&path)).unwrap(),
-            "earlier copy"
-        );
-    }
-
-    #[test]
     fn a_missing_file_reads_as_none_and_inspects_as_missing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("workflow-state-KEN-1.json");
         assert!(load(&path).unwrap().is_none());
         assert_eq!(inspect(&path).unwrap_err().key(), "record-missing");
-        assert_eq!(
-            migrate(&path, Locking::FLOCK).unwrap_err().key(),
-            "record-missing"
-        );
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
@@ -1718,6 +2134,16 @@ mod tests {
     }
 
     /// 250 ms in 100 ms polls: two whole polls and one clamped to the rest.
+    /// The policy the command resolves for a host whose `PATH` is
+    /// `path_var` (`main.rs`'s `host_locking`): the legacy wait, and the
+    /// mutex wherever `flock(1)` is not on that path.
+    fn for_host(path_var: Option<&OsStr>) -> Locking {
+        Locking {
+            wait: Wait::LEGACY,
+            legacy_mutex: !record::flock_on_path(path_var),
+        }
+    }
+
     fn short(timer: &'static FakeTimer) -> Wait {
         Wait {
             limit: Duration::from_millis(250),
@@ -1733,12 +2159,11 @@ mod tests {
     ];
 
     /// Finding 11 and decision 39: on a host whose `PATH` lacks `flock(1)`
-    /// the unstamped write takes the legacy `mkdir` mutex, so a legacy
-    /// writer holding it excludes the store, and the store removes its own
-    /// mutex afterwards. After migration the mutex is not taken. The wait
-    /// runs on the fake clock and stops at the limit.
+    /// the write takes the legacy `mkdir` mutex, so a legacy writer holding
+    /// it excludes the store, and the store removes its own mutex
+    /// afterwards. The wait runs on the fake clock and stops at the limit.
     #[test]
-    fn without_flock_on_path_the_unstamped_write_takes_the_legacy_mutex() {
+    fn without_flock_on_path_the_write_takes_the_legacy_mutex() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
         fs::create_dir(&bin).unwrap();
@@ -1746,7 +2171,7 @@ mod tests {
         let timer = FakeTimer::leaked();
         let locking = Locking {
             wait: short(timer),
-            ..Locking::for_host(Some(&path_var))
+            ..for_host(Some(&path_var))
         };
         assert!(locking.legacy_mutex);
         let path = write(dir.path(), "workflow-state-KEN-4687.json", fixtures::ITEM);
@@ -1762,18 +2187,9 @@ mod tests {
         };
         assert_eq!(fields[0], ("path".to_owned(), mutex.display().to_string()));
         assert_eq!(timer.slept(), CLAMPED);
-        assert_eq!(migrate(&path, locking).unwrap_err().key(), "lock-timeout");
-        assert_eq!(timer.slept().len(), 2 * CLAMPED.len());
         fs::remove_dir(&mutex).unwrap();
         store(&path, &s, &s.doc, locking).unwrap();
         assert!(!mutex.exists());
-        migrate(&path, locking).unwrap();
-        assert!(!mutex.exists());
-        // Stamped: the mutex standing again excludes nothing.
-        fs::create_dir(&mutex).unwrap();
-        let s = snapshot(&path);
-        store(&path, &s, &s.doc, locking).unwrap();
-        fs::remove_dir(&mutex).unwrap();
         // With flock on the path the policy takes no mutex.
         fs::write(bin.join("flock"), "#!/bin/sh\n").unwrap();
         #[cfg(unix)]
@@ -1781,7 +2197,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(bin.join("flock"), fs::Permissions::from_mode(0o755)).unwrap();
         }
-        assert!(!Locking::for_host(Some(&path_var)).legacy_mutex);
+        assert!(!for_host(Some(&path_var)).legacy_mutex);
     }
 
     /// Finding 11: the flock wait is bounded and refuses `lock-timeout` at
@@ -1865,7 +2281,7 @@ mod tests {
         });
         let locking = Locking {
             wait: short(timer),
-            ..Locking::for_host(Some(&path_var))
+            ..for_host(Some(&path_var))
         };
         assert!(locking.legacy_mutex);
         let started = Instant::now();

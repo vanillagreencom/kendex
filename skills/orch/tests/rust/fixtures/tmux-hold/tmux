@@ -1,0 +1,73 @@
+#!/bin/bash
+# A pass-through tmux for the orch-runtime ownership tests: it execs the real
+# tmux for every call, except that before the one call of the held verb it
+# blocks on a FIFO the test owns, so the process is held alive at that step
+# with its intent already persisted: at `new-window`, the default, held at
+# its window open at the `opening` phase; at `kill-window`, held after the
+# predecessor's stop with the retirement not yet recorded. The test releases
+# the FIFO once it has read what the hold was for. $TMUX_REAL is the real
+# tmux the shim execs (never itself, so no recursion); $TMUX_HOLD_FIFO is the
+# FIFO it waits on; $TMUX_HOLD_VERB names the verb held; $TMUX_HOLD_MARK, where
+# set, is a file created just before the hold, so a test knows the held
+# process has reached it.
+#
+# A barrier beside the hold, for a row whose launch reads a pane it opened:
+# with $TMUX_HOLD_OPENED set, each `new-window` this shim runs appends the
+# pane id it printed to that file, and with $TMUX_HOLD_READY_COMM set too, a
+# pane-field read of one of those panes (`display-message -t <pane>` with a
+# format naming `pane_pid`, never the mode read that precedes a paste)
+# answers only once /proc/<pane pid>/comm reads that word, so the launch's
+# first pane-field read after it typed its line sees the harness the line
+# exec'd, never the shell still running it (decision 124i (34)). A pane the
+# test opened itself is not in the file and is never gated.
+verb=""
+target=""
+prev=""
+fields=0
+before=()
+for arg in "$@"; do
+  if [ -z "$verb" ]; then
+    case "$arg" in
+      new-window|display-message|capture-pane|send-keys|kill-window|kill-pane|kill-server|list-panes) verb="$arg" ;;
+      *) before+=("$arg") ;;
+    esac
+  elif [ "$prev" = "-t" ]; then
+    target="$arg"
+  else
+    case "$arg" in *pane_pid*) fields=1 ;; esac
+  fi
+  prev="$arg"
+done
+if [ -n "${TMUX_HOLD_OPENED:-}" ] && [ -n "$verb" ]; then
+  case "$verb" in
+    new-window)
+      out="$("${TMUX_REAL:-tmux}" "$@")"
+      status=$?
+      [ "$status" -ne 0 ] || printf '%s\n' "${out%% *}" >> "$TMUX_HOLD_OPENED"
+      printf '%s\n' "$out"
+      exit "$status"
+      ;;
+    display-message)
+      if [ -n "${TMUX_HOLD_READY_COMM:-}" ] && [ -n "$target" ] && [ "$fields" -eq 1 ] \
+        && grep -qxF -- "$target" "$TMUX_HOLD_OPENED" 2>/dev/null; then
+        pid="$("${TMUX_REAL:-tmux}" ${before[@]+"${before[@]}"} display-message -p -t "$target" '#{pane_pid}' 2>/dev/null)"
+        # A pane whose process is gone is left to the real tmux to answer.
+        while [ -n "$pid" ] && [ -d "/proc/$pid" ] \
+          && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" != "$TMUX_HOLD_READY_COMM" ]; do
+          sleep 0.01
+        done
+      fi
+      ;;
+  esac
+fi
+for arg in "$@"; do
+  if [ "$arg" = "${TMUX_HOLD_VERB:-new-window}" ]; then
+    if [ -n "${TMUX_HOLD_FIFO:-}" ]; then
+      [ -z "${TMUX_HOLD_MARK:-}" ] || : > "$TMUX_HOLD_MARK"
+      # Blocks until the test writes to the FIFO, then falls through to exec.
+      cat "$TMUX_HOLD_FIFO" >/dev/null
+    fi
+    break
+  fi
+done
+exec "${TMUX_REAL:-tmux}" "$@"

@@ -1,0 +1,15 @@
+#!/bin/bash
+# A `kill` for the orch-runtime evidence rows that holds the stop at its
+# first signal: it appends its arguments to $KILL_HOLD_LOG, blocks on the
+# FIFO $KILL_HOLD_FIFO at the first call until the row releases it, and
+# signals nothing
+# and reports success, so the row reads the intent record while the stop
+# waits with its signal acknowledged and the process still live; put ahead
+# of `PATH` for the one run that plants it.
+[ -z "${KILL_HOLD_LOG:-}" ] || printf '%s\n' "$*" >> "$KILL_HOLD_LOG"
+# The first signal alone is held; the stop's later signals pass straight
+# through, so the row releases one hold.
+if [ -n "${KILL_HOLD_FIFO:-}" ] && [ -n "${KILL_HOLD_LOG:-}" ] && [ "$(wc -l < "$KILL_HOLD_LOG")" -eq 1 ]; then
+  cat "$KILL_HOLD_FIFO" >/dev/null
+fi
+exit 0

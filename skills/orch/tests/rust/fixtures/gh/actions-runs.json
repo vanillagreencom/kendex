@@ -1,0 +1,36 @@
+{
+  "total_count": 1,
+  "workflow_runs": [
+    {
+      "id": 700,
+      "name": "CI",
+      "node_id": "MDExOldvcmtmbG93UnVuNzAw",
+      "head_branch": "main",
+      "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+      "path": ".github/workflows/ci.yml",
+      "display_title": "fix(KEN-4687): one commit",
+      "run_number": 12,
+      "event": "push",
+      "status": "completed",
+      "conclusion": "success",
+      "workflow_id": 161335,
+      "check_suite_id": 5,
+      "check_suite_node_id": "MDEwOkNoZWNrU3VpdGU1",
+      "url": "https://api.github.com/repos/owner/repo/actions/runs/700",
+      "html_url": "https://github.com/owner/repo/actions/runs/700",
+      "created_at": "2026-01-29T15:09:00Z",
+      "updated_at": "2026-01-29T15:16:00Z",
+      "run_attempt": 1,
+      "referenced_workflows": [
+        {
+          "path": "owner/source/.github/workflows/required.yml@refs/heads/main",
+          "sha": "0123456789abcdef0123456789abcdef01234567",
+          "ref": "refs/heads/main"
+        }
+      ],
+      "run_started_at": "2026-01-29T15:09:00Z",
+      "repository": { "id": 1296269, "name": "repo", "full_name": "owner/repo" },
+      "head_repository": { "id": 1296269, "name": "repo", "full_name": "owner/repo" }
+    }
+  ]
+}

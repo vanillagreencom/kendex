@@ -4,23 +4,24 @@
 //! prints `orch-runtime: usage` and clap's message on stderr and exits 2,
 //! clap's own convention and agent-runtime's, with no reply: there was no
 //! request to answer.
-
 use std::collections::hash_map::RandomState;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
-use orch_runtime::effects::{self, SystemClock};
+use orch_runtime::effects;
 use orch_runtime::error::{Error, Result};
 use orch_runtime::ops::{self, Env, Request};
 use orch_runtime::protocol::{self, Reply};
+use orch_runtime::schedule;
 use orch_runtime::settings::{self, Flags, Settings};
 use orch_runtime::state::{self, Locking};
+use orch_runtime::verify;
 
 #[derive(Parser)]
 #[command(
@@ -45,7 +46,7 @@ struct Cli {
 enum Verb {
     /// Print the protocol and crate version.
     Version,
-    /// Read, initialize or migrate one state file.
+    /// Read or initialize one state file.
     State {
         #[command(subcommand)]
         op: StateOp,
@@ -64,6 +65,15 @@ enum Verb {
     Reconcile {
         #[command(flatten)]
         target: Target,
+    },
+    /// The detached job a transfer runs in (decision 76): claim the open
+    /// intent, run its effect from the request written beside the record,
+    /// record the outcome.
+    Job {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        intent: String,
     },
 }
 
@@ -105,26 +115,45 @@ enum StateOp {
         #[arg(long)]
         sub_issues: Option<String>,
     },
-    /// Stamp a legacy file with its version and revision, keeping the
-    /// original bytes beside it as `<file>.pre-migration`.
-    Migrate {
-        #[command(flatten)]
-        target: Target,
-    },
 }
 
-/// The clock and nonce this process stamps with. The nonce comes from the
-/// hasher's random seed, the one source of randomness std provides.
-fn system_env() -> Env {
+/// The clock, nonce and owner this process stamps with. The nonce comes
+/// from the hasher's random seed, the one source of randomness std provides;
+/// the owner is this process's identity through agent-runtime's one reader
+/// (decision 72). A failed identity read refuses the verb with its cause
+/// (decision 90); a reader that answers with no process for this pid
+/// leaves the owner unset, and the library then refuses to persist an
+/// intent without one.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command reads the wall clock and its own identity for the stamp and the owner it writes with (decision 72); no effect runs here"
+)]
+fn system_env() -> Result<Env> {
     let since_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     let nonce = (RandomState::new().build_hasher().finish() % 32_768) as u32;
-    Env {
+    let pid = std::process::id();
+    let owner = match agent_runtime::process::identity(pid) {
+        agent_runtime::reading::Reading::Live(id) => Some(orch_runtime::state::Owner {
+            pid: id.pid as u64,
+            start: id.start,
+        }),
+        agent_runtime::reading::Reading::Gone => None,
+        agent_runtime::reading::Reading::Unreadable { cause } => {
+            return Err(Error::Runtime(agent_runtime::Error::Process {
+                operation: "owner-identity",
+                pid,
+                cause: cause.to_owned(),
+            }));
+        }
+    };
+    Ok(Env {
         now_secs: since_epoch.as_secs(),
         now_nanos: since_epoch.as_nanos(),
         nonce,
-    }
+        owner,
+    })
 }
 
 /// The checkout the runtime runs in and the settings it acts on, resolved
@@ -175,25 +204,22 @@ fn read_request(path: &PathBuf) -> Result<Request> {
 }
 
 fn run(cli: Cli) -> Result<serde_json::Value> {
-    // The lock policy follows this host's PATH, as the legacy writers' does.
-    let locking = Locking::for_host(std::env::var_os("PATH").as_deref());
+    let locking = host_locking(std::env::var_os("PATH").as_deref());
     let flags = Flags {
         state_dir: cli.state_dir.clone(),
         private_env: !cli.no_private_env,
     };
-    let clock = SystemClock;
     let value = match cli.verb {
         Verb::Version => serde_json::json!({
             "protocol": protocol::PROTOCOL,
             "crate": env!("CARGO_PKG_VERSION"),
-            "record_version": state::RECORD_VERSION,
             "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
         }),
         Verb::State {
             op: StateOp::Inspect { target },
         } => {
             let settings = resolve_settings(&flags)?;
-            serde_json::to_value(state::inspect(&target_path(&target, &settings))?)?
+            serde_json::to_value(inspect_state(&target_path(&target, &settings))?)?
         }
         Verb::State {
             op:
@@ -214,20 +240,44 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 qa_labels: parse_array(qa_labels.as_deref())?,
                 sub_issues: parse_array(sub_issues.as_deref())?,
             };
-            serde_json::to_value(state::init(&target_path(&target, &settings), &fields)?)?
-        }
-        Verb::State {
-            op: StateOp::Migrate { target },
-        } => {
-            let settings = resolve_settings(&flags)?;
-            serde_json::to_value(state::migrate(&target_path(&target, &settings), locking)?)?
+            serde_json::to_value(init_state(&target_path(&target, &settings), &fields)?)?
         }
         Verb::Op { target, request } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
             let request = read_request(&request)?;
-            let env = system_env();
-            let applied = ops::apply(&path, &request, &env, locking)?;
+            // The target's kind is the precondition of every operation,
+            // checked before anything is read: a verification must not
+            // reach GitHub for a target it could never record on.
+            ops::target_kind(&path, &request)?;
+            // What the settings refuse before any transition: a succession
+            // under `ORCH_OVERSEER_SUCCESSION=off` (decision 78).
+            ops::admit(&request, &settings)?;
+            let env = system_env()?;
+            // A verification reads GitHub first and makes its one
+            // transition through record-verification itself.
+            if let Request::VerifyHead(r) = &request {
+                return Ok(serde_json::to_value(verify_head(&path, r, &env, locking)?)?);
+            }
+            // An adoption reads the pane first and makes its one transition
+            // on what it read.
+            if let Request::AdoptController(r) = &request {
+                return Ok(serde_json::to_value(effects::adopt_controller(
+                    &path, r, &settings, locking,
+                )?)?);
+            }
+            // The notices earlier outcomes still owe are sent before the
+            // request's own transition; a mark the store refused is in the
+            // reply and fails nothing (decision 124i (36)).
+            let notices_unmarked = effects::send_owed_notices(
+                &path,
+                &request,
+                &settings,
+                &env,
+                locking,
+                &schedule::SystemClock,
+            )?;
+            let applied = persist(&path, &request, &env, locking, &settings)?;
             // Run the live effect the persisted intent names and record its
             // outcome; the committed outcome transition is the result.
             match effects::run(
@@ -237,24 +287,117 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &settings,
                 &env,
                 locking,
-                &clock,
+                &schedule::SystemClock,
             )? {
-                Some(outcome) => serde_json::json!({
-                    "persisted": applied,
-                    "effect": outcome,
-                }),
+                Some(outcome) => {
+                    let mut reply = serde_json::json!({
+                        "persisted": applied,
+                        "effect": outcome,
+                    });
+                    if !notices_unmarked.is_empty() {
+                        reply["notices_unmarked"] = serde_json::to_value(notices_unmarked)?;
+                    }
+                    reply
+                }
                 None => serde_json::to_value(applied)?,
             }
         }
         Verb::Reconcile { target } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
-            let env = system_env();
-            let reconciled = effects::reconcile(&path, &settings, &env, locking, &clock)?;
-            serde_json::json!({ "reconciled": reconciled })
+            let env = system_env()?;
+            serde_json::to_value(effects::reconcile(
+                &path,
+                &settings,
+                &env,
+                locking,
+                &schedule::SystemClock,
+            )?)?
+        }
+        Verb::Job { target, intent } => {
+            let settings = resolve_settings(&flags)?;
+            let path = target_path(&target, &settings);
+            let env = system_env()?;
+            serde_json::to_value(effects::run_job(
+                &path,
+                &intent,
+                &settings,
+                &env,
+                locking,
+                &schedule::SystemClock,
+            )?)?
         }
     };
     Ok(value)
+}
+
+/// The lock policy for the host whose `PATH` is `path_var`, as the legacy
+/// writers resolve theirs: the legacy wait, and the mutex wherever
+/// `flock(1)` is not on that path. The one lookup of the lock tool, which
+/// decides the locking every write of this process takes.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one lookup of the lock tool"
+)]
+fn host_locking(path_var: Option<&OsStr>) -> Locking {
+    Locking {
+        wait: agent_runtime::record::Wait::LEGACY,
+        legacy_mutex: !agent_runtime::record::flock_on_path(path_var),
+    }
+}
+
+/// The `state inspect` verb's one call of the inspection; the compiler
+/// boundary names it, so this is its one caller.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one call of the state inspection"
+)]
+fn inspect_state(path: &Path) -> Result<state::Inspection> {
+    state::inspect(path)
+}
+
+/// The `state init` verb's one call of the creation; the compiler boundary
+/// names it, so this is its one caller.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one call of the state file's creation"
+)]
+fn init_state(path: &Path, fields: &state::InitFields) -> Result<state::Initialized> {
+    state::init(path, fields)
+}
+
+/// The `verify-head` request's one call of the verification, which reads
+/// GitHub and records the verdict; the compiler boundary names the
+/// verification, so this is its one caller.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one call of the verification"
+)]
+fn verify_head(
+    path: &Path,
+    r: &ops::VerifyHead,
+    env: &Env,
+    locking: Locking,
+) -> Result<verify::Verified> {
+    verify::run(path, r, env, locking)
+}
+
+/// The command's one store entry: the request's transition committed,
+/// judged against the host facts a lane transition needs (decision 97), the
+/// cap setting, the legacy claim store and the kernel's own reads.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one store entry; every effect that follows runs through the operation handle"
+)]
+fn persist(
+    path: &Path,
+    request: &Request,
+    env: &Env,
+    locking: Locking,
+    settings: &Settings,
+) -> Result<ops::Applied> {
+    let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+    ops::apply_on(path, request, env, locking, &host)
 }
 
 /// Exit status of a usage error, clap's convention.

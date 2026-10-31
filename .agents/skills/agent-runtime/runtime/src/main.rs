@@ -5,6 +5,10 @@
 //! and exits 2, clap's own convention, with no reply: there was no request
 //! to answer.
 
+// Every reading, close and stop outcome is matched variant by variant
+// (decision 105).
+#![deny(clippy::wildcard_enum_match_arm)]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -17,11 +21,12 @@ use serde_json::Map;
 use agent_runtime::clock;
 use agent_runtime::error::{Error, Result};
 use agent_runtime::harness::{self, Harness};
-use agent_runtime::host::tmux;
+use agent_runtime::host::tmux::{self, Close, PaneFields};
 use agent_runtime::launch::{self, LaunchIntent};
 use agent_runtime::observe::{self, ProcessReading, State};
 use agent_runtime::process::{self, Identity};
 use agent_runtime::protocol::{self, Outcome, Reply};
+use agent_runtime::reading::{Reading, Unreadable};
 use agent_runtime::record::{self, Expect};
 use agent_runtime::session;
 
@@ -86,15 +91,6 @@ enum Verb {
         #[arg(long, default_value_t = 10)]
         grace_secs: u64,
     },
-    /// Find the newest lead native session for a working directory.
-    Session {
-        #[arg(long)]
-        harness: String,
-        #[arg(long)]
-        cwd: PathBuf,
-        #[arg(long)]
-        home: Option<PathBuf>,
-    },
     /// Judge a captured screen held in a file (fixtures and probes), drawn
     /// by the named harness. The screen alone is judged: `--process` is the
     /// caller's own reading of the pane (`harness-up` asserts the harness
@@ -132,15 +128,27 @@ struct LaunchRecord {
     command_line: String,
     pane: tmux::Pane,
     launched_at: String,
-    /// The pane's shell when the window opened.
-    shell: Option<Identity>,
-    /// The harness process below the shell, read once it is up.
+    /// The harness process holding the pane, read once it is up and the
+    /// only process a later read confirms (decision 99).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     harness_process: Option<Identity>,
-    /// The native session the harness recorded for the cwd, read once it
-    /// is up.
+    /// The native session the harness recorded for the cwd, bound once it
+    /// is up: by the id the launch fixed, else as the one lead session for
+    /// the cwd that appeared after the window opened and stood in no
+    /// `baseline` (decision 65). Never the newest file by its age
+    /// (decision 92).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_session: Option<session::SessionRef>,
+    /// The lead session ids for the cwd under the launch's home before the
+    /// window opened, the floor `native_session` is bound above for a
+    /// harness whose launch fixes no id. Three-valued (decision 108 (6)):
+    /// absent where no baseline was read (the launch fixed an id, named no
+    /// home, or the record predates the field), when nothing binds by
+    /// appearance; present and empty where the store held no lead for the
+    /// cwd, when exactly one appeared lead binds; present and filled as
+    /// read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    baseline: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stopped: Option<StopRecord>,
 }
@@ -149,17 +157,24 @@ struct LaunchRecord {
 struct StopRecord {
     at: String,
     outcome: process::Stop,
-    window_closed: bool,
+    window: Close,
 }
 
+/// What `inspect` read: the pane by its exact id, the recorded harness and
+/// whether it still runs, the native session and the judged state. Each
+/// read is three-valued (decision 99); an unreadable pane or process is
+/// printed as such, never as absent.
 #[derive(Debug, Serialize)]
 struct Inspection {
-    pane_present: bool,
-    foreground: Option<String>,
-    pane_pid: Option<u32>,
+    pane: Reading<PaneFields>,
     harness_process: Option<Identity>,
-    harness_live: Option<process::Liveness>,
+    harness_live: Option<Reading<Identity>>,
     native_session: Option<session::SessionRef>,
+    /// Why `native_session` is null though the store was asked: the cause
+    /// word of the read that failed (decision 108 (8)). Absent when the
+    /// store was read whole, or not asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_session_unreadable: Option<&'static str>,
     state: State,
     screen_tail: Vec<String>,
 }
@@ -180,54 +195,118 @@ fn owns(rec: &LaunchRecord) -> impl Fn(&str) -> bool + '_ {
     }
 }
 
-fn harness_identity(rec: &LaunchRecord) -> Result<Option<Identity>> {
-    let (_, pane_pid) = tmux::pane_process(&rec.pane)?;
-    let rows = process::table()?;
-    let below = process::below(&rows, pane_pid, &owns(rec));
+/// The harness holding the pane with no identity recorded: the nearest
+/// harness-named process under the pane's own, by one table read. `Gone`
+/// when no harness process runs under the pane.
+fn harness_identity(rec: &LaunchRecord) -> Reading<Identity> {
+    let fields = match tmux::pane_fields(&rec.pane.server, &rec.pane.id) {
+        Reading::Live(fields) => fields,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    let rows = match process::table() {
+        Ok(rows) => rows,
+        Err(Unreadable { cause }) => return Reading::Unreadable { cause },
+    };
+    let below = process::below(&rows, fields.pid, &owns(rec));
     let Some((_, pid)) = below.first() else {
-        return Ok(None);
+        return Reading::Gone;
     };
     process::identity(*pid)
 }
 
-fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
-    let present = tmux::pane_present(&rec.pane)?;
-    if !present {
-        return Ok(Inspection {
-            pane_present: false,
-            foreground: None,
-            pane_pid: None,
-            harness_process: rec.harness_process.clone(),
-            harness_live: None,
-            native_session: rec.native_session.clone(),
-            state: State::Unjudged {
-                cause: "pane-gone".to_owned(),
-            },
-            screen_tail: Vec::new(),
-        });
+/// The inspection of a pane that was not read live: nothing of it judged.
+fn unjudged(rec: &LaunchRecord, pane: Reading<PaneFields>, cause: &str) -> Inspection {
+    Inspection {
+        pane,
+        harness_process: rec.harness_process.clone(),
+        harness_live: None,
+        native_session: rec.native_session.clone(),
+        native_session_unreadable: None,
+        state: State::Unjudged {
+            cause: cause.to_owned(),
+        },
+        screen_tail: Vec::new(),
     }
-    let (foreground, pane_pid) = tmux::pane_process(&rec.pane)?;
-    // Who holds the pane's terminal, read against the recorded identity
-    // while that one still runs; a record with none, or whose process has
-    // ended, takes the harness-named process now in the foreground.
-    let harness_live = match &rec.harness_process {
-        Some(id) => Some(process::still_runs(id)?),
-        None => None,
+}
+
+/// What the store answered when the record's native session was asked for.
+enum Binding {
+    Bound(session::SessionRef),
+    /// Nothing binds yet: the fixed id's file is not written, no lead or
+    /// several appeared, or no baseline was read to bind above.
+    Unbound,
+    /// A read failed; nothing is bound over an unread store (decision 95).
+    Unreadable(&'static str),
+}
+
+/// The record's native session, bound by its fixed id where the launch
+/// fixed one (the file that id names under `home`, once written), else as
+/// the one lead for the cwd that appeared at or after the launch and stood
+/// in no baseline (decision 65). None or several bind nothing; a record
+/// that predates the baseline and fixed no id binds nothing either, since
+/// nothing tells its session from a neighbour's (decision 92).
+fn bound_session(rec: &LaunchRecord, home: &Path) -> Binding {
+    if let Some(id) = &rec.intent.session_id {
+        let Some(file) = session::fixed_file(rec.harness, home, &rec.intent.cwd, id) else {
+            return Binding::Unbound;
+        };
+        match std::fs::metadata(&file) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Binding::Unbound,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Binding::Unbound,
+            Err(_) => return Binding::Unreadable("session-file-unreadable"),
+        }
+        return match session::identify(rec.harness, &file, Some(&rec.intent.cwd)) {
+            Ok(Some(found)) => Binding::Bound(found),
+            Ok(None) => Binding::Unbound,
+            Err(_) => Binding::Unreadable("session-file-unreadable"),
+        };
+    }
+    // A record with no baseline read binds nothing by appearance: nothing
+    // tells its session from a neighbour's (decision 92). An empty baseline
+    // was read, and the one lead that appeared over it is the launch's.
+    let Some(baseline) = &rec.baseline else {
+        return Binding::Unbound;
     };
-    let recorded = rec
-        .harness_process
-        .as_ref()
-        .filter(|_| harness_live == Some(process::Liveness::Live));
-    let reading = observe::foreground(pane_pid, &owns(rec), recorded)?;
+    let Some(since) = clock::epoch_secs(&rec.launched_at) else {
+        return Binding::Unbound;
+    };
+    let since = std::time::UNIX_EPOCH + std::time::Duration::from_secs(since);
+    match session::new_leads(rec.harness, home, &rec.intent.cwd, since, baseline) {
+        Reading::Live(mut appeared) => match appeared.len() {
+            1 => Binding::Bound(appeared.remove(0)),
+            _ => Binding::Unbound,
+        },
+        Reading::Gone => Binding::Unbound,
+        Reading::Unreadable { cause } => Binding::Unreadable(cause),
+    }
+}
+
+fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
+    let fields = match tmux::pane_fields(&rec.pane.server, &rec.pane.id) {
+        Reading::Live(fields) => fields,
+        Reading::Gone => return Ok(unjudged(rec, Reading::Gone, "pane-gone")),
+        Reading::Unreadable { cause } => {
+            return Ok(unjudged(
+                rec,
+                Reading::Unreadable { cause },
+                "pane-unreadable",
+            ));
+        }
+    };
+    // Who holds the pane's terminal, read against the recorded identity
+    // where the record has one: that identity alone is the harness, and an
+    // ended one is read as other, never replaced (decision 99). A record
+    // with none takes the harness-named process now in the foreground.
+    let reading = observe::foreground(fields.pid, &owns(rec), rec.harness_process.as_ref());
     if let ProcessReading::Harness { identity } = &reading
-        && recorded.is_none()
+        && rec.harness_process.is_none()
     {
         rec.harness_process = Some(identity.clone());
     }
-    let harness_live = match &rec.harness_process {
-        Some(id) => Some(process::still_runs(id)?),
-        None => None,
-    };
+    let harness_live = rec.harness_process.as_ref().map(process::still_runs);
+    let mut native_session_unreadable = None;
     if rec.native_session.is_none() {
         let home = rec
             .intent
@@ -235,7 +314,11 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
             .clone()
             .or_else(|| session::default_home(rec.harness));
         if let Some(home) = home {
-            rec.native_session = session::find_lead(rec.harness, &home, &rec.intent.cwd, None)?;
+            match bound_session(rec, &home) {
+                Binding::Bound(found) => rec.native_session = Some(found),
+                Binding::Unbound => {}
+                Binding::Unreadable(cause) => native_session_unreadable = Some(cause),
+            }
         }
     }
     let screen = tmux::capture(&rec.pane)?;
@@ -251,12 +334,11 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
         .rev()
         .collect();
     Ok(Inspection {
-        pane_present: true,
-        foreground: Some(foreground),
-        pane_pid: Some(pane_pid),
+        pane: Reading::Live(fields),
         harness_process: rec.harness_process.clone(),
         harness_live,
         native_session: rec.native_session.clone(),
+        native_session_unreadable,
         state,
         screen_tail: tail,
     })
@@ -323,20 +405,42 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 ));
             }
             let line = command.shell_line();
-            let pane = tmux::new_window(&server, &session, &window_name, &intent.cwd, &line)?;
-            let shell = match tmux::pane_process(&pane) {
-                Ok((_, pid)) => process::identity(pid)?,
-                Err(_) => None,
+            // The leads that stand before the window opens, so the one that
+            // appears after it is the launch's own (decision 65). A store
+            // that cannot be read is no baseline: the launch is refused
+            // before any window opens rather than recording a floor it does
+            // not have (decision 95).
+            let baseline = match intent
+                .home
+                .clone()
+                .or_else(|| session::default_home(intent.harness))
+            {
+                Some(home) if intent.session_id.is_none() => {
+                    match session::lead_ids(intent.harness, &home, &intent.cwd) {
+                        Reading::Live(ids) => Some(ids),
+                        Reading::Gone => Some(Vec::new()),
+                        Reading::Unreadable { cause } => {
+                            return Err(Error::refused(
+                                "baseline-unreadable",
+                                &[("home", &home.display().to_string()), ("cause", cause)],
+                            ));
+                        }
+                    }
+                }
+                Some(_) | None => None,
             };
+            let launched_at = clock::now();
+            let pane = tmux::new_window(&server, &session, &window_name, &intent.cwd)?;
+            tmux::send_line(&pane, &line)?;
             let rec = LaunchRecord {
                 harness: intent.harness,
                 intent,
                 command_line: line,
                 pane,
-                launched_at: clock::now(),
-                shell,
+                launched_at,
                 harness_process: None,
                 native_session: None,
+                baseline,
                 stopped: None,
             };
             record::write(
@@ -377,8 +481,17 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &extra,
                 Expect::Revision(revision),
             )?;
-            if !inspection.pane_present {
-                return Err(Error::refused("pane-gone", &[("pane", &rec.pane.id)]));
+            match &inspection.pane {
+                Reading::Live(_) => {}
+                Reading::Gone => {
+                    return Err(Error::refused("pane-gone", &[("pane", &rec.pane.id)]));
+                }
+                Reading::Unreadable { cause } => {
+                    return Err(Error::refused(
+                        "pane-unreadable",
+                        &[("pane", &rec.pane.id), ("cause", cause)],
+                    ));
+                }
             }
             if !force && inspection.state != State::Idle {
                 let word = serde_json::to_value(&inspection.state)
@@ -404,19 +517,38 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         } => {
             let (mut rec, revision, extra) = read_record(&record_path)?;
             let grace = Duration::from_secs(grace_secs);
+            // The recorded harness, else the one read in the pane now; a
+            // read that fails stops nothing and refuses with its cause.
             let identity = match rec.harness_process.clone() {
-                Some(id) => Some(id),
-                None => harness_identity(&rec).unwrap_or(None),
+                Some(id) => Reading::Live(id),
+                None => harness_identity(&rec),
             };
             let outcome = match identity {
-                Some(id) => process::stop_tree(&id, &owns(&rec), grace)?,
-                None => process::Stop::AlreadyGone,
+                Reading::Live(id) => process::stop_tree(&id, &owns(&rec), grace)?,
+                Reading::Gone => process::Stop::AlreadyGone,
+                Reading::Unreadable { cause } => {
+                    return Err(Error::refused(
+                        "harness-unreadable",
+                        &[("pane", &rec.pane.id), ("cause", cause)],
+                    ));
+                }
             };
-            let window_closed = tmux::kill_window(&rec.pane).unwrap_or(false);
+            // The window is the launch's own: closed whole, and only once
+            // the stop confirmed every process it names ended.
+            let window = match &outcome {
+                process::Stop::Stopped { .. } | process::Stop::AlreadyGone => {
+                    tmux::kill_window(&rec.pane)
+                }
+                process::Stop::IdentityStale
+                | process::Stop::Timeout { .. }
+                | process::Stop::Unreadable { .. } => Close::Unreadable {
+                    cause: "stop-unconfirmed".to_owned(),
+                },
+            };
             rec.stopped = Some(StopRecord {
                 at: clock::now(),
                 outcome: outcome.clone(),
-                window_closed,
+                window: window.clone(),
             });
             record::write(
                 &record_path,
@@ -427,21 +559,8 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             )?;
             Ok(serde_json::json!({
                 "stop": outcome,
-                "window_closed": window_closed,
+                "window": window,
             }))
-        }
-        Verb::Session {
-            harness: name,
-            cwd,
-            home,
-        } => {
-            let h = Harness::parse(&name)
-                .ok_or_else(|| Error::refused("harness-unknown", &[("harness", &name)]))?;
-            let home = home
-                .or_else(|| session::default_home(h))
-                .ok_or_else(|| Error::refused("home-unresolved", &[("harness", h.name())]))?;
-            let found = session::find_lead(h, &home, &cwd, None)?;
-            Ok(serde_json::to_value(found).unwrap_or_default())
         }
         Verb::Judge {
             screen,
@@ -455,7 +574,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let reading = match reading.as_str() {
                 "shells-only" => ProcessReading::ShellsOnly,
                 "harness-up" => ProcessReading::HarnessUp,
-                "unread" => ProcessReading::Unread,
+                "unread" => ProcessReading::Unread {
+                    cause: "caller-asserted",
+                },
                 other => {
                     return Err(Error::refused(
                         "process-reading-unknown",
@@ -465,13 +586,15 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             };
             Ok(serde_json::to_value(observe::judge(&text, h, &reading, None)).unwrap_or_default())
         }
+        // Both print the reading whole: `live` with the identity, `gone`,
+        // or `unreadable` with its cause (decision 99).
         Verb::Process { op } => match op {
             ProcessOp::Identity { pid } => {
-                Ok(serde_json::to_value(process::identity(pid)?).unwrap_or_default())
+                Ok(serde_json::to_value(process::identity(pid)).unwrap_or_default())
             }
             ProcessOp::Live { pid, start } => Ok(serde_json::to_value(process::still_runs(
                 &Identity { pid, start },
-            )?)
+            ))
             .unwrap_or_default()),
         },
     }

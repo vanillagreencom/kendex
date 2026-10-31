@@ -5,8 +5,8 @@
 //!
 //! The crate owns the item and fleet state files as the legacy
 //! `workflow-state` script shaped them, every transition over them, and the
-//! two write checks (content on an unstamped file, revision on a stamped
-//! one). It writes a record as a patch on the document it read, so a field
+//! write check (the content comparison under the file's lock). It writes a
+//! record as a patch on the document it read, so a field
 //! it does not transition keeps its value and position, and it refuses only
 //! what a legacy reader refuses on the same file. It does not own process or
 //! native-session identity, launch, observation, delivery or the exact stop:
@@ -14,7 +14,8 @@
 //! intent here, runs the effect through that crate (`effects`) and records
 //! the outcome it observed. `settings` is the one reader of the project's
 //! `kendex.settings.toml` keys the runtime acts on; the keys and their
-//! defaults are its constants.
+//! defaults are its constants. `verify` reads GitHub for a published head
+//! through agent-runtime's one process runner and records the verdict.
 
 pub mod effects;
 pub mod error;
@@ -23,5 +24,6 @@ pub mod protocol;
 pub mod schedule;
 pub mod settings;
 pub mod state;
+pub mod verify;
 
 pub use error::{Error, Result};

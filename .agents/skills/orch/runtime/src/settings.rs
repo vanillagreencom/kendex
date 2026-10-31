@@ -21,7 +21,6 @@
 //! other shape assigns nothing here; one that assigns a key this runtime
 //! reads in a shape it cannot decode refuses, since reading past it would
 //! take the shell's value for another.
-
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
@@ -54,6 +53,13 @@ pub const HARNESS_BINARIES_KEY: &str = "ORCH_HARNESS_BINARIES";
 /// The worktree program that resolves a lane's directory; empty finds the
 /// installed worktree package.
 pub const WORKTREE_CLI_KEY: &str = "WORKTREE_CLI";
+/// Whether a controller may ask for its own succession: `on`, the default,
+/// or `off`, under which `request-transfer` refuses before any intent
+/// persists (decision 78).
+pub const SUCCESSION_KEY: &str = "ORCH_OVERSEER_SUCCESSION";
+/// The job-unit launcher a succession's effect is detached through
+/// (decision 76); empty finds the installed orch package's own.
+pub const JOB_UNIT_KEY: &str = "ORCH_JOB_UNIT";
 /// The settings key naming the project's private env file.
 pub const ENV_FILE_KEY: &str = "KENDEX_ENV_FILE";
 /// The private env file read when the project names none.
@@ -62,14 +68,45 @@ pub const DEFAULT_ENV_FILE: &str = ".env.local";
 pub const SETTINGS_FILES: [&str; 2] = ["kendex.settings.toml", ".kendex/settings.toml"];
 /// The worktree package's program under the project's install.
 pub const WORKTREE_CLI_DEFAULT: &str = ".agents/skills/worktree/scripts/worktree";
+/// The orch package's job-unit launcher under the project's install.
+pub const JOB_UNIT_DEFAULT: &str = ".agents/skills/orch/scripts/lib/job-unit.sh";
+/// The lanes the fleet cap admits at once: every lane kind but
+/// `claude-cloud`, which the legacy cloud cap bounds. The shipped default
+/// is 4; the legacy launcher keeps its own, 3 (`open-terminal`, `orch-env
+/// ORCH_OVERSEER_LANES 3`), until it retires (decision 94).
+pub const LANE_CAP_KEY: &str = "ORCH_OVERSEER_LANES";
+/// The directory the legacy launcher keeps its claim store under, as
+/// `<dir>/claims` (`lib/lane-claims.sh`, `lane_claims_dir`); the main
+/// checkout's `tmp/oversee-watch` when unset. Read, never written, by the
+/// lane cap's admission during coexistence (decision 97).
+pub const CLAIM_STATE_DIR_KEY: &str = "OVERSEE_WATCH_STATE_DIR";
+/// The mailbox program a close asks for a lane's unanswered asks; empty
+/// finds the installed mailbox package.
+pub const LANE_MAIL_CLI_KEY: &str = "LANE_MAIL_CLI";
+/// The program a close ends a worktree's validation runs through; empty
+/// finds the installed orch package's own.
+pub const DEV_VALIDATE_CLI_KEY: &str = "DEV_VALIDATE_CLI";
+/// The mailbox package's program under the project's install.
+pub const LANE_MAIL_CLI_DEFAULT: &str = ".agents/skills/mailbox/scripts/lane-mail";
+/// The fleet watch handover owner a confirmed publication runs (decision
+/// 109 (6)): the orch package's `lib/watch-handover.sh`, sourced and asked
+/// for `watch_handover`; empty finds the installed orch package's own.
+pub const WATCH_HANDOVER_KEY: &str = "ORCH_WATCH_HANDOVER";
+/// The orch package's watch handover library under the project's install.
+pub const WATCH_HANDOVER_DEFAULT: &str = ".agents/skills/orch/scripts/lib/watch-handover.sh";
+/// The orch package's validation runner under the project's install.
+pub const DEV_VALIDATE_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/dev-validate-run";
+/// The claim store under the main checkout when no directory is named.
+pub const CLAIM_STORE_DEFAULT: &str = "tmp/oversee-watch/claims";
 
 const DEFAULT_STATE_DIR: &str = "tmp";
 const DEFAULT_VERIFY_SECS: u64 = 15;
 const DEFAULT_CLOSE_SECS: u64 = 15;
+const DEFAULT_LANE_CAP: u32 = 4;
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The keys this runtime reads from the private env file.
-const READ_KEYS: [&str; 8] = [
+const READ_KEYS: [&str; 15] = [
     STATE_DIR_KEY,
     TMUX_SESSION_KEY,
     VERIFY_SECS_KEY,
@@ -78,6 +115,13 @@ const READ_KEYS: [&str; 8] = [
     LAUNCH_PERMISSION_KEY,
     HARNESS_BINARIES_KEY,
     WORKTREE_CLI_KEY,
+    SUCCESSION_KEY,
+    JOB_UNIT_KEY,
+    LANE_CAP_KEY,
+    CLAIM_STATE_DIR_KEY,
+    LANE_MAIL_CLI_KEY,
+    DEV_VALIDATE_CLI_KEY,
+    WATCH_HANDOVER_KEY,
 ];
 
 /// What the command line says about the settings: a state directory that
@@ -116,6 +160,13 @@ impl QuestionToolSetting {
     }
 }
 
+/// Whether a controller may ask for its own succession (decision 78).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Succession {
+    On,
+    Off,
+}
+
 /// The settings the runtime acts on, resolved once per process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -128,6 +179,19 @@ pub struct Settings {
     pub permission: Permission,
     pub harness_binaries: BTreeMap<Harness, PathBuf>,
     pub worktree_cli: PathBuf,
+    pub succession: Succession,
+    /// The job-unit launcher a transfer's effect is detached through.
+    pub job_unit: PathBuf,
+    /// The lanes the fleet cap admits at once (decision 97).
+    pub lane_cap: u32,
+    /// The legacy claim store the cap's admission reads, never writes.
+    pub claim_store: PathBuf,
+    /// The mailbox program a close asks for unanswered asks.
+    pub lane_mail_cli: PathBuf,
+    /// The program a close ends a worktree's validation runs through.
+    pub dev_validate_cli: PathBuf,
+    /// The watch handover library a confirmed publication sources.
+    pub watch_handover: PathBuf,
 }
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::Error {
@@ -182,6 +246,10 @@ pub fn roots(cwd: &Path) -> Result<Roots> {
 
 /// One line of `git -C cwd rev-parse ARG`, or `None` where `cwd` is in no
 /// repository, git's one answer this reads as an absence.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the settings reader runs git for the checkout roots it resolves, no effect on a lane or a controller"
+)]
 fn git_line(cwd: &str, operation: &'static str, args: &[&str]) -> Result<Option<String>> {
     let mut full = vec!["-C", cwd, "rev-parse"];
     full.extend_from_slice(args);
@@ -307,6 +375,43 @@ pub fn load(
         Some(path) => PathBuf::from(path),
         None => roots.project.join(WORKTREE_CLI_DEFAULT),
     };
+    let succession = match get(SUCCESSION_KEY) {
+        None | Some("on") => Succession::On,
+        Some("off") => Succession::Off,
+        Some(other) => return Err(value_refusal(SUCCESSION_KEY, other)),
+    };
+    let job_unit = match get(JOB_UNIT_KEY) {
+        Some(path) => PathBuf::from(path),
+        None => roots.project.join(JOB_UNIT_DEFAULT),
+    };
+    // Base ten, no sign and no leading zero, as the legacy launcher parses
+    // it; a cap of none admits no lane and names a misconfiguration.
+    let lane_cap = match get(LANE_CAP_KEY) {
+        None => DEFAULT_LANE_CAP,
+        Some(text) => match text.parse::<u32>() {
+            Ok(n) if n > 0 && !text.starts_with('0') && !text.starts_with('+') => n,
+            Ok(_) | Err(_) => return Err(value_refusal(LANE_CAP_KEY, text)),
+        },
+    };
+    let claim_store = match get(CLAIM_STATE_DIR_KEY) {
+        Some(dir) => {
+            let dir = PathBuf::from(dir);
+            let dir = if dir.is_absolute() {
+                dir
+            } else {
+                roots.project.join(dir)
+            };
+            dir.join("claims")
+        }
+        None => roots.common.join(CLAIM_STORE_DEFAULT),
+    };
+    let program = |key: &str, default: &str| match get(key) {
+        Some(path) => PathBuf::from(path),
+        None => roots.project.join(default),
+    };
+    let lane_mail_cli = program(LANE_MAIL_CLI_KEY, LANE_MAIL_CLI_DEFAULT);
+    let dev_validate_cli = program(DEV_VALIDATE_CLI_KEY, DEV_VALIDATE_CLI_DEFAULT);
+    let watch_handover = program(WATCH_HANDOVER_KEY, WATCH_HANDOVER_DEFAULT);
     Ok(Settings {
         roots: roots.clone(),
         state_dir,
@@ -317,6 +422,13 @@ pub fn load(
         permission,
         harness_binaries,
         worktree_cli,
+        succession,
+        job_unit,
+        lane_cap,
+        claim_store,
+        lane_mail_cli,
+        dev_validate_cli,
+        watch_handover,
     })
 }
 
@@ -477,6 +589,10 @@ fn private_env_file(path: &Path) -> Result<Vec<(String, String)>> {
     Ok(out)
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the rows write the settings files they read"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,6 +836,22 @@ mod tests {
             settings.worktree_cli,
             roots.project.join(WORKTREE_CLI_DEFAULT)
         );
+        assert_eq!(settings.succession, Succession::On);
+        assert_eq!(settings.job_unit, roots.project.join(JOB_UNIT_DEFAULT));
+        assert_eq!(settings.lane_cap, 4);
+        assert_eq!(settings.claim_store, roots.common.join(CLAIM_STORE_DEFAULT));
+        assert_eq!(
+            settings.lane_mail_cli,
+            roots.project.join(LANE_MAIL_CLI_DEFAULT)
+        );
+        assert_eq!(
+            settings.dev_validate_cli,
+            roots.project.join(DEV_VALIDATE_CLI_DEFAULT)
+        );
+        assert_eq!(
+            settings.watch_handover,
+            roots.project.join(WATCH_HANDOVER_DEFAULT)
+        );
         let settings = load(
             &roots,
             &env(&[
@@ -730,10 +862,34 @@ mod tests {
                     "claude=/opt/claude/claude, pi=/opt/pi",
                 ),
                 (WORKTREE_CLI_KEY, "/opt/worktree"),
+                (SUCCESSION_KEY, "off"),
+                (JOB_UNIT_KEY, "/opt/job-unit.sh"),
+                (LANE_CAP_KEY, "7"),
+                (CLAIM_STATE_DIR_KEY, "/var/watch"),
+                (LANE_MAIL_CLI_KEY, "/opt/lane-mail"),
+                (DEV_VALIDATE_CLI_KEY, "/opt/dev-validate-run"),
+                (WATCH_HANDOVER_KEY, "/opt/watch-handover.sh"),
             ]),
             &FLAGS,
         )
         .unwrap();
+        assert_eq!(settings.succession, Succession::Off);
+        assert_eq!(settings.job_unit, PathBuf::from("/opt/job-unit.sh"));
+        assert_eq!(settings.lane_cap, 7);
+        assert_eq!(settings.claim_store, PathBuf::from("/var/watch/claims"));
+        assert_eq!(settings.lane_mail_cli, PathBuf::from("/opt/lane-mail"));
+        assert_eq!(
+            settings.dev_validate_cli,
+            PathBuf::from("/opt/dev-validate-run")
+        );
+        assert_eq!(
+            settings.watch_handover,
+            PathBuf::from("/opt/watch-handover.sh")
+        );
+        // A relative claim directory is the project's, as the legacy
+        // launcher reads it from the checkout it runs in.
+        let relative = load(&roots, &env(&[(CLAIM_STATE_DIR_KEY, "tmp/w")]), &FLAGS).unwrap();
+        assert_eq!(relative.claim_store, roots.project.join("tmp/w/claims"));
         assert_eq!(settings.permission, Permission::Native);
         assert_eq!(settings.question_tool, QuestionToolSetting::Overseer);
         assert_eq!(settings.question_tool.for_overseer(), QuestionTool::Keep);
@@ -756,6 +912,11 @@ mod tests {
             (HARNESS_BINARIES_KEY, "opencode=/opt/oc"),
             (HARNESS_BINARIES_KEY, "claude=/a,claude=/b"),
             (HARNESS_BINARIES_KEY, "claude"),
+            (SUCCESSION_KEY, "maybe"),
+            (LANE_CAP_KEY, "0"),
+            (LANE_CAP_KEY, "03"),
+            (LANE_CAP_KEY, "+4"),
+            (LANE_CAP_KEY, "four"),
         ];
         for (key, value) in refused {
             let err = load(&roots, &env(&[(key, value)]), &FLAGS).unwrap_err();

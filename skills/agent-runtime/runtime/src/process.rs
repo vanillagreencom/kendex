@@ -9,6 +9,12 @@
 //! read back in its own form, so the legacy shell writers' bare `lstart`
 //! text and this crate's `ticks:` form each match the process they name.
 //!
+//! Every read here answers with a [`Reading`] (decision 99): the process
+//! live under its identity, gone (no live process holds the pid, an exited
+//! one awaiting its parent's wait included), or unreadable with the cause.
+//! A `/proc` entry that cannot be read or parsed, a `ps` that failed, or a
+//! process table with one such entry is unreadable, never an absence.
+//!
 //! The same table answers which processes hold a pane's terminal: the
 //! members of the foreground process group the kernel records for the
 //! pane's own process (`tpgid`), each named by its command. tmux's
@@ -16,16 +22,29 @@
 //! interpreter's name for a script, and carries no pid, so the identity
 //! reader reads the group's members itself.
 
+// Every reading here is matched variant by variant (decision 105): a
+// wildcard arm would let a later variant fall into an absence.
+#![deny(clippy::wildcard_enum_match_arm)]
+
 use std::collections::HashMap;
+use std::ffi::OsStr;
+#[cfg(target_os = "linux")]
 use std::fs;
+use std::os::unix::process::ExitStatusExt;
 #[cfg(not(target_os = "linux"))]
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus, Output};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::host::run_with;
+use crate::reading::{Reading, Unreadable};
+
+/// The bound on one `ps` run.
+const PS_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Identity {
@@ -33,15 +52,6 @@ pub struct Identity {
     /// The start the kernel reports for the pid: `ticks:<n>` on Linux,
     /// `lstart:<text>` elsewhere.
     pub start: String,
-}
-
-/// What a process read found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Liveness {
-    Live,
-    Zombie,
-    Gone,
 }
 
 /// The one process table read: pid, parent pid, process group and command
@@ -54,28 +64,13 @@ pub struct Row {
     pub name: String,
 }
 
-#[cfg(target_os = "linux")]
-fn proc_stat(pid: u32) -> Result<Option<String>> {
-    match fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(text) => Ok(Some(text)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        // A process that exited between the directory listing and the read
-        // reports ESRCH as a generic error on some kernels.
-        Err(e) if e.raw_os_error() == Some(3) => Ok(None),
-        Err(e) => Err(Error::Process {
-            operation: "read-stat",
-            pid,
-            cause: e.to_string(),
-        }),
-    }
-}
-
 /// The fields of one `/proc/<pid>/stat` line this crate reads: the command
 /// name inside the parentheses, then, counted after them, the state (field
 /// 3), the parent pid (4), the process group (5), the foreground process
 /// group of the controlling terminal (8, `-1` without one) and the start in
 /// clock ticks since boot (22).
 #[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
 struct Stat {
     name: String,
     state: char,
@@ -106,106 +101,161 @@ fn parse_stat(stat: &str) -> Option<Stat> {
     })
 }
 
+/// What one `/proc/<pid>/stat` read says. No entry (ENOENT, or the ESRCH
+/// some kernels report for a process that exited between a listing and the
+/// read) is `Gone`; so is a process that has exited and waits for its
+/// parent (`Z`, `X`), which holds its pid and nothing else. Any other read
+/// error, and a line this crate cannot parse, is `Unreadable`.
 #[cfg(target_os = "linux")]
-fn stat_of(pid: u32) -> Result<Option<Stat>> {
-    match proc_stat(pid)? {
-        None => Ok(None),
-        Some(stat) => parse_stat(&stat).map(Some).ok_or_else(|| Error::Process {
-            operation: "parse-stat",
-            pid,
-            cause: "unreadable stat line".to_owned(),
-        }),
+fn stat_reading(read: std::io::Result<String>) -> Reading<Stat> {
+    let text = match read {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound || e.raw_os_error() == Some(3) => {
+            return Reading::Gone;
+        }
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "stat-unreadable",
+            };
+        }
+    };
+    match parse_stat(&text) {
+        None => Reading::Unreadable {
+            cause: "stat-unparsed",
+        },
+        Some(Stat {
+            state: 'Z' | 'X', ..
+        }) => Reading::Gone,
+        Some(stat) => Reading::Live(stat),
     }
 }
 
-/// Read a pid's liveness.
-pub fn liveness(pid: u32) -> Result<Liveness> {
+#[cfg(target_os = "linux")]
+fn stat_of(pid: u32) -> Reading<Stat> {
+    stat_reading(fs::read_to_string(format!("/proc/{pid}/stat")))
+}
+
+/// What a `ps -p <pid>` answer says, from its exit status and both streams
+/// (decision 105). A row under exit 0 is `Live`, its blanks squeezed. `Gone`
+/// is the one documented no-match answer alone: exit 1 with nothing on
+/// either stream. procps-ng exits 1 when it printed no process
+/// (`src/ps/output.c`, `show_one_proc`'s end-of-run call: `exit(1)` unless
+/// `did_stuff`), and Apple's and FreeBSD's `ps` exit 1 when no process was
+/// kept (`ps.c`: `if (nkept == 0) ... exit(1)`; the FreeBSD manual says
+/// only "0 on success, and >0 if an error occurs"). procps-ng exits 1 for a
+/// usage error too, writing it to stderr, so a written error under exit 1
+/// is no absence. Every other answer is `Unreadable` with a cause naming
+/// the status: `ps-exit-<code>`, `ps-signal-<n>` for a `ps` ended by a
+/// signal before it answered, `ps-empty` for a successful run that printed
+/// no row.
+fn ps_reading(output: &Output) -> Reading<String> {
+    let text = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    match (
+        output.status.code(),
+        text.is_empty(),
+        output.stderr.is_empty(),
+    ) {
+        (Some(0), false, _) => Reading::Live(text),
+        (Some(0), true, _) => Reading::Unreadable { cause: "ps-empty" },
+        (Some(1), true, true) => Reading::Gone,
+        (Some(_) | None, _, _) => Reading::Unreadable {
+            cause: status_cause(output.status),
+        },
+    }
+}
+
+/// The cause word for a `ps` status that is no answer: `ps-exit-<code>` or
+/// `ps-signal-<n>`. A reading's cause is a stable `&'static str`, and the
+/// set of these words is finite (an exit code is one byte, a signal number
+/// is small), so each distinct word is made once and kept for the life of
+/// the process.
+fn status_cause(status: ExitStatus) -> &'static str {
+    static WORDS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let word = match (status.code(), status.signal()) {
+        (Some(code), _) => format!("ps-exit-{code}"),
+        (None, Some(signal)) => format!("ps-signal-{signal}"),
+        (None, None) => "ps-status-unknown".to_owned(),
+    };
+    let mut words = WORDS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(known) = words.iter().find(|w| **w == word) {
+        return known;
+    }
+    let kept: &'static str = Box::leak(word.into_boxed_str());
+    words.push(kept);
+    kept
+}
+
+/// One `ps` run through the crate's one runner, in the C locale and UTC so a
+/// reader elsewhere prints the same text; the status comes back whole.
+fn ps(operation: &'static str, args: &[&str]) -> Result<Output> {
+    let env: [(&str, &OsStr); 2] = [("LC_ALL", OsStr::new("C")), ("TZ", OsStr::new("UTC"))];
+    run_with("ps", operation, args, &env, None, PS_TIMEOUT)
+}
+
+/// One `ps` column of one pid. A `ps` that could not run, or did not answer
+/// within the bound, is `ps-unavailable`.
+fn ps_column(pid: u32, column: &str) -> Reading<String> {
+    let column = format!("{column}=");
+    let pid = pid.to_string();
+    match ps("ps-column", &["-o", &column, "-p", &pid]) {
+        Ok(output) => ps_reading(&output),
+        Err(_) => Reading::Unreadable {
+            cause: "ps-unavailable",
+        },
+    }
+}
+
+/// The identity of the live process holding `pid`: the pid with the start
+/// the kernel reports for it in this host's recording form.
+pub fn identity(pid: u32) -> Reading<Identity> {
     #[cfg(target_os = "linux")]
     {
-        match stat_of(pid)? {
-            None => Ok(Liveness::Gone),
-            Some(Stat {
-                state: 'Z' | 'X', ..
-            }) => Ok(Liveness::Zombie),
-            Some(_) => Ok(Liveness::Live),
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let output = Command::new("ps")
-            .args(["-o", "stat=", "-p", &pid.to_string()])
-            .output()
-            .map_err(|e| Error::Process {
-                operation: "ps-stat",
-                pid,
-                cause: e.to_string(),
-            })?;
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if text.is_empty() {
-            return Ok(Liveness::Gone);
-        }
-        Ok(if text.starts_with('Z') {
-            Liveness::Zombie
-        } else {
-            Liveness::Live
+        stat_of(pid).map(|stat| Identity {
+            pid,
+            start: stat.start,
         })
     }
-}
-
-/// Read the start the kernel reports for a pid in this host's recording
-/// form, `None` for a pid no process holds: `ticks:<n>` on Linux, the
-/// `lstart:<text>` of `ps` elsewhere.
-pub fn start(pid: u32) -> Result<Option<String>> {
-    #[cfg(target_os = "linux")]
-    {
-        start_ticks(pid)
-    }
     #[cfg(not(target_os = "linux"))]
     {
-        start_lstart(pid)
+        match ps_column(pid, "stat") {
+            Reading::Live(state) if state.starts_with('Z') => return Reading::Gone,
+            Reading::Live(_) => {}
+            Reading::Gone => return Reading::Gone,
+            Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+        }
+        start_lstart(pid).map(|start| Identity { pid, start })
     }
 }
 
-/// The `/proc` starttime of a pid as `ticks:<n>`; `None` where no process
-/// holds the pid, and on a host without `/proc`.
+/// The `/proc` starttime of a pid as `ticks:<n>`. A host without `/proc`
+/// cannot read this form, so a `ticks:` start recorded elsewhere is
+/// unreadable there, never gone.
 #[cfg(target_os = "linux")]
-fn start_ticks(pid: u32) -> Result<Option<String>> {
-    Ok(stat_of(pid)?.map(|s| s.start))
+fn start_ticks(pid: u32) -> Reading<String> {
+    stat_of(pid).map(|stat| stat.start)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn start_ticks(_pid: u32) -> Result<Option<String>> {
-    Ok(None)
+fn start_ticks(_pid: u32) -> Reading<String> {
+    Reading::Unreadable {
+        cause: "ticks-unavailable",
+    }
 }
 
-/// The `ps -o lstart` start of a pid as `lstart:<squeezed text>`, in the C
-/// locale and UTC so a reader elsewhere prints the same line; `None` where
-/// no process holds the pid. Available on every host, so a legacy
-/// `lstart`-form identity can be matched on Linux too.
-fn start_lstart(pid: u32) -> Result<Option<String>> {
-    let output = Command::new("ps")
-        .env("LC_ALL", "C")
-        .env("TZ", "UTC")
-        .args(["-o", "lstart=", "-p", &pid.to_string()])
-        .output()
-        .map_err(|e| Error::Process {
-            operation: "ps-lstart",
-            pid,
-            cause: e.to_string(),
-        })?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    Ok(if joined.is_empty() {
-        None
-    } else {
-        Some(format!("lstart:{joined}"))
-    })
+/// The `ps -o lstart` start of a pid as `lstart:<squeezed text>`. Available
+/// on every host, so a legacy `lstart`-form identity can be matched on
+/// Linux too.
+fn start_lstart(pid: u32) -> Reading<String> {
+    ps_column(pid, "lstart").map(|text| format!("lstart:{text}"))
 }
 
 /// The form a recorded start is written in, so a reader matches a live pid's
-/// start in the same form. The runtime writes [`start`]'s host form; a
-/// legacy shell writer records the bare `ps -o lstart` text; the non-Linux
-/// reader records `lstart:`. All three are admitted (decision 55).
+/// start in the same form. The runtime writes the host form; a legacy shell
+/// writer records the bare `ps -o lstart` text; the non-Linux reader records
+/// `lstart:`. All three are admitted (decision 55).
 enum StartForm {
     Ticks,
     Lstart,
@@ -231,79 +281,74 @@ fn normalize_start(recorded: &str) -> String {
     body.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// A live pid's start read in `form` and normalized; `None` for a pid no
-/// process holds.
-fn start_in_form(pid: u32, form: StartForm) -> Result<Option<String>> {
+/// A live pid's start read in `form` and normalized.
+fn start_in_form(pid: u32, form: StartForm) -> Reading<String> {
     let read = match form {
-        StartForm::Ticks => start_ticks(pid)?,
-        StartForm::Lstart => start_lstart(pid)?,
+        StartForm::Ticks => start_ticks(pid),
+        StartForm::Lstart => start_lstart(pid),
     };
-    Ok(read.map(|s| normalize_start(&s)))
-}
-
-/// The identity of a live pid, `None` when no live process holds it.
-pub fn identity(pid: u32) -> Result<Option<Identity>> {
-    Ok(start(pid)?.map(|start| Identity { pid, start }))
+    read.map(|start| normalize_start(&start))
 }
 
 /// The process group holding the terminal of `pane_pid`'s process: the
-/// group whose members read the pane's keystrokes. `None` for a pid no
-/// process holds, or one with no controlling terminal.
-pub fn foreground_group(pane_pid: u32) -> Result<Option<u32>> {
+/// group whose members read the pane's keystrokes, `None` for a live
+/// process with no controlling terminal.
+pub fn foreground_group(pane_pid: u32) -> Reading<Option<u32>> {
     #[cfg(target_os = "linux")]
     {
-        Ok(stat_of(pane_pid)?.and_then(|s| u32::try_from(s.tpgid).ok()))
+        stat_of(pane_pid).map(|stat| u32::try_from(stat.tpgid).ok())
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let text = ps_column(pane_pid, "tpgid")?;
-        Ok(text
-            .and_then(|t| t.parse::<i64>().ok())
-            .and_then(|t| u32::try_from(t).ok()))
+        match ps_column(pane_pid, "tpgid") {
+            Reading::Live(text) => match text.parse::<i64>() {
+                Ok(group) => Reading::Live(u32::try_from(group).ok()),
+                Err(_) => Reading::Unreadable {
+                    cause: "ps-unparsed",
+                },
+            },
+            Reading::Gone => Reading::Gone,
+            Reading::Unreadable { cause } => Reading::Unreadable { cause },
+        }
     }
 }
 
-/// One `ps` column of one pid, trimmed; `None` where no process holds it.
-#[cfg(not(target_os = "linux"))]
-fn ps_column(pid: u32, column: &str) -> Result<Option<String>> {
-    let output = Command::new("ps")
-        .args(["-o", &format!("{column}="), "-p", &pid.to_string()])
-        .output()
-        .map_err(|e| Error::Process {
-            operation: "ps-column",
-            pid,
-            cause: e.to_string(),
-        })?;
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    Ok(if text.is_empty() { None } else { Some(text) })
-}
-
-/// Whether the process this identity names still runs: live, with the same
-/// start. A zombie or a pid now carrying another start is `Gone`. The
-/// recorded start is read in its own form, so a `ticks:`, an `lstart:` and a
-/// bare legacy start each match the live pid they name (decision 55).
-pub fn still_runs(id: &Identity) -> Result<Liveness> {
-    match liveness(id.pid)? {
-        Liveness::Gone => Ok(Liveness::Gone),
-        Liveness::Zombie => Ok(Liveness::Zombie),
-        Liveness::Live => match start_in_form(id.pid, start_form(&id.start))? {
-            Some(s) if s == normalize_start(&id.start) => Ok(Liveness::Live),
-            _ => Ok(Liveness::Gone),
-        },
+/// Whether the process this identity names still runs: live under the
+/// recorded start, carried back as `Live`. `Gone` when no live process
+/// holds the pid, and also when the pid now carries another start: the
+/// recorded process ended either way, and [`identity`] tells the two apart
+/// for a caller that needs to. The recorded start is read in its own form,
+/// so a `ticks:`, an `lstart:` and a bare legacy start each match the live
+/// pid they name (decision 55).
+pub fn still_runs(id: &Identity) -> Reading<Identity> {
+    match identity(id.pid) {
+        Reading::Live(_) => {}
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    }
+    match start_in_form(id.pid, start_form(&id.start)) {
+        Reading::Live(start) if start == normalize_start(&id.start) => Reading::Live(id.clone()),
+        Reading::Live(_) | Reading::Gone => Reading::Gone,
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
     }
 }
 
-/// One read of the whole process table.
-pub fn table() -> Result<Vec<Row>> {
+/// One read of the whole process table. A process that exits during the
+/// listing is left out, and so is one that has exited and waits for its
+/// parent (a zombie), which holds its pid and runs nothing: the `/proc`
+/// read answers it gone, and the `ps` read drops its `Z` row. One entry
+/// that cannot be read or parsed makes the whole table unreadable (decision
+/// 99), since a decision over an incomplete table could select the wrong
+/// process.
+pub fn table() -> std::result::Result<Vec<Row>, Unreadable> {
     #[cfg(target_os = "linux")]
     {
-        let mut rows = Vec::new();
-        let entries = fs::read_dir("/proc").map_err(|e| Error::Process {
-            operation: "read-proc",
-            pid: 0,
-            cause: e.to_string(),
-        })?;
-        for entry in entries.flatten() {
+        let unreadable = Unreadable {
+            cause: "proc-unreadable",
+        };
+        let mut readings = Vec::new();
+        for entry in fs::read_dir("/proc").map_err(|_| unreadable)? {
+            let entry = entry.map_err(|_| unreadable)?;
             let Some(pid) = entry
                 .file_name()
                 .to_str()
@@ -311,43 +356,43 @@ pub fn table() -> Result<Vec<Row>> {
             else {
                 continue;
             };
-            // A process that exits during the listing, or a line this
-            // reader cannot parse, is left out of the table.
-            let Ok(Some(stat)) = stat_of(pid) else {
-                continue;
-            };
-            rows.push(Row {
-                pid,
-                ppid: stat.ppid,
-                pgrp: stat.pgrp,
-                name: stat.name,
-            });
+            readings.push((pid, stat_of(pid)));
         }
-        Ok(rows)
+        table_of(readings)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let output = Command::new("ps")
-            .args([
-                "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "comm=",
-            ])
-            .output()
-            .map_err(|e| Error::Process {
-                operation: "ps-table",
-                pid: 0,
-                cause: e.to_string(),
-            })?;
+        let output = ps(
+            "ps-table",
+            &[
+                "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "stat=", "-o", "comm=",
+            ],
+        )
+        .map_err(|_| Unreadable {
+            cause: "ps-unavailable",
+        })?;
+        if !output.status.success() {
+            return Err(Unreadable {
+                cause: status_cause(output.status),
+            });
+        }
         let text = String::from_utf8_lossy(&output.stdout);
         let mut rows = Vec::new();
-        for line in text.lines() {
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
             let mut parts = line.split_whitespace();
-            let (Some(pid), Some(ppid), Some(pgrp)) = (
+            let (Some(pid), Some(ppid), Some(pgrp), Some(stat)) = (
                 parts.next().and_then(|p| p.parse().ok()),
                 parts.next().and_then(|p| p.parse().ok()),
                 parts.next().and_then(|p| p.parse().ok()),
+                parts.next(),
             ) else {
-                continue;
+                return Err(Unreadable {
+                    cause: "ps-unparsed",
+                });
             };
+            if stat.starts_with('Z') {
+                continue;
+            }
             let name = parts.collect::<Vec<_>>().join(" ");
             let name = Path::new(&name)
                 .file_name()
@@ -361,8 +406,31 @@ pub fn table() -> Result<Vec<Row>> {
                 name,
             });
         }
+        if rows.is_empty() {
+            return Err(Unreadable { cause: "ps-empty" });
+        }
         Ok(rows)
     }
+}
+
+/// The table from each listed pid's stat reading: an exited process is left
+/// out, an unreadable one fails the whole table.
+#[cfg(target_os = "linux")]
+fn table_of(readings: Vec<(u32, Reading<Stat>)>) -> std::result::Result<Vec<Row>, Unreadable> {
+    let mut rows = Vec::new();
+    for (pid, reading) in readings {
+        match reading {
+            Reading::Live(stat) => rows.push(Row {
+                pid,
+                ppid: stat.ppid,
+                pgrp: stat.pgrp,
+                name: stat.name,
+            }),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => return Err(Unreadable { cause }),
+        }
+    }
+    Ok(rows)
 }
 
 /// The pids at or below `root` whose name `matches`, nearest first, from one
@@ -418,7 +486,9 @@ pub fn is_shell(name: &str) -> bool {
     )
 }
 
-/// What an exact stop did.
+/// What an exact stop did. A caller that drops it has not learned whether
+/// the process ended (decision 105).
+#[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "outcome")]
 pub enum Stop {
@@ -430,6 +500,23 @@ pub enum Stop {
     IdentityStale,
     /// A signaled process still runs after the grace.
     Timeout { pid: u32 },
+    /// A read the stop depends on failed at `pid`, so whether that process
+    /// runs is not known; nothing was signalled past that read. `signalled`
+    /// says whether any signal was sent before it: a stop that sent none left
+    /// every target as it found it.
+    Unreadable {
+        pid: u32,
+        cause: String,
+        signalled: bool,
+    },
+}
+
+fn unreadable(pid: u32, cause: &'static str, signalled: bool) -> Stop {
+    Stop::Unreadable {
+        pid,
+        cause: cause.to_owned(),
+        signalled,
+    }
 }
 
 fn signal(pid: u32, name: &str) -> Result<bool> {
@@ -446,15 +533,21 @@ fn signal(pid: u32, name: &str) -> Result<bool> {
 
 /// End the processes `targets` names, each only while its start still
 /// matches: TERM, a grace, then KILL to what still runs. A pid whose start
-/// changed between reads is left alone.
+/// changed between reads is left alone; one whose read fails ends the stop
+/// as `Unreadable`, since a process that cannot be read cannot be confirmed
+/// ended.
 pub fn stop_identities(targets: &[Identity], grace: Duration) -> Result<Stop> {
     let mut live: Vec<Identity> = Vec::new();
     for t in targets {
-        match still_runs(t)? {
-            Liveness::Live => live.push(t.clone()),
-            Liveness::Zombie | Liveness::Gone => {}
+        match still_runs(t) {
+            Reading::Live(_) => live.push(t.clone()),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => return Ok(unreadable(t.pid, cause, false)),
         }
     }
+    // Whether any signal has been sent: an unreadable read before the first
+    // one leaves every target as it was.
+    let mut sent = false;
     if live.is_empty() {
         return Ok(Stop::AlreadyGone);
     }
@@ -462,22 +555,46 @@ pub fn stop_identities(targets: &[Identity], grace: Duration) -> Result<Stop> {
     for sig in ["TERM", "KILL"] {
         let mut remaining = Vec::new();
         for id in &live {
-            if still_runs(id)? != Liveness::Live {
-                continue;
+            match still_runs(id) {
+                Reading::Live(_) => {}
+                Reading::Gone => continue,
+                Reading::Unreadable { cause } => return Ok(unreadable(id.pid, cause, sent)),
             }
-            if !signal(id.pid, sig)? && still_runs(id)? == Liveness::Live {
-                return Err(Error::Process {
-                    operation: "signal",
-                    pid: id.pid,
-                    cause: format!("SIG{sig} refused"),
-                });
+            let delivered = signal(id.pid, sig)?;
+            sent = true;
+            if !delivered {
+                match still_runs(id) {
+                    Reading::Live(_) => {
+                        return Err(Error::Process {
+                            operation: "signal",
+                            pid: id.pid,
+                            cause: format!("SIG{sig} refused"),
+                        });
+                    }
+                    Reading::Gone => continue,
+                    Reading::Unreadable { cause } => return Ok(unreadable(id.pid, cause, sent)),
+                }
             }
             remaining.push(id.clone());
         }
         let deadline = Instant::now() + grace;
         loop {
-            remaining.retain(|id| matches!(still_runs(id), Ok(Liveness::Live)));
-            if remaining.is_empty() || Instant::now() >= deadline {
+            let mut unread = None;
+            remaining.retain(|id| match still_runs(id) {
+                Reading::Live(_) => true,
+                Reading::Gone => false,
+                Reading::Unreadable { cause } => {
+                    unread = Some((id.pid, cause));
+                    true
+                }
+            });
+            if remaining.is_empty() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                if let Some((pid, cause)) = unread {
+                    return Ok(unreadable(pid, cause, sent));
+                }
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -490,34 +607,45 @@ pub fn stop_identities(targets: &[Identity], grace: Duration) -> Result<Stop> {
     Ok(Stop::Timeout { pid: live[0].pid })
 }
 
-/// Stop one recorded identity and the harness-named processes below it.
-/// `IdentityStale` when the pid runs something else now.
+/// Stop one recorded identity and the harness-named processes below it,
+/// each only while its start still matches. The recorded identity is the
+/// harness, so it is always a target. `IdentityStale` when the pid runs
+/// something else now; `Unreadable` when a read the stop depends on failed,
+/// nothing signalled past it.
 pub fn stop_tree(root: &Identity, matches: &dyn Fn(&str) -> bool, grace: Duration) -> Result<Stop> {
-    match still_runs(root)? {
-        Liveness::Gone => {
-            return Ok(match start(root.pid)? {
-                Some(_) => Stop::IdentityStale,
-                None => Stop::AlreadyGone,
+    match still_runs(root) {
+        Reading::Live(_) => {}
+        Reading::Gone => {
+            return Ok(match identity(root.pid) {
+                Reading::Live(_) => Stop::IdentityStale,
+                Reading::Gone => Stop::AlreadyGone,
+                Reading::Unreadable { cause } => unreadable(root.pid, cause, false),
             });
         }
-        Liveness::Zombie => return Ok(Stop::AlreadyGone),
-        Liveness::Live => {}
+        Reading::Unreadable { cause } => return Ok(unreadable(root.pid, cause, false)),
     }
-    let rows = table()?;
-    let mut targets = Vec::new();
+    let rows = match table() {
+        Ok(rows) => rows,
+        Err(Unreadable { cause }) => return Ok(unreadable(root.pid, cause, false)),
+    };
+    let mut targets = vec![root.clone()];
     for (_, pid) in below(&rows, root.pid, matches) {
-        if let Some(id) = identity(pid)? {
-            targets.push(id);
+        if pid == root.pid {
+            continue;
         }
-    }
-    if targets.is_empty() {
-        return Ok(Stop::Stopped { signaled: 0 });
+        match identity(pid) {
+            Reading::Live(id) => targets.push(id),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => return Ok(unreadable(pid, cause, false)),
+        }
     }
     stop_identities(&targets, grace)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn rows(spec: &[(u32, u32, &str)]) -> Vec<Row> {
@@ -529,6 +657,61 @@ mod tests {
                 name: (*name).to_owned(),
             })
             .collect()
+    }
+
+    /// A child this test holds: its pid is nobody else's while the test
+    /// reads it, and it is killed and reaped on drop whatever the test
+    /// asserted, so a failed assertion leaves nothing behind.
+    struct Held(std::process::Child);
+
+    impl Held {
+        fn spawn(command: &mut Command) -> Held {
+            Held(command.spawn().unwrap())
+        }
+
+        fn sleep() -> Held {
+            Held::spawn(Command::new("sleep").arg("30"))
+        }
+
+        fn pid(&self) -> u32 {
+            self.0.id()
+        }
+
+        /// Tell the child to exit and wait until the kernel reads it gone,
+        /// bounded; it stays unreaped, so its pid is still held.
+        fn kill_and_await_gone(&mut self) {
+            self.0.kill().unwrap();
+            await_gone(self.pid());
+        }
+    }
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            // An already-ended child refuses the kill; the wait reaps it
+            // either way.
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// A start in the same form as `live`, the host's own, that no process
+    /// here carried: a mismatch that is read and refused, never an
+    /// unsupported form.
+    fn mismatched_start(live: &str) -> String {
+        let mismatch = match start_form(live) {
+            StartForm::Ticks => "ticks:0".to_owned(),
+            StartForm::Lstart => "lstart:Thu Jan  1 00:00:00 1970".to_owned(),
+        };
+        assert_ne!(normalize_start(live), normalize_start(&mismatch));
+        mismatch
+    }
+
+    fn await_gone(pid: u32) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while identity(pid) != Reading::Gone {
+            assert!(Instant::now() < deadline, "the child never read gone");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
@@ -551,16 +734,20 @@ mod tests {
     /// A synthetic `/proc/<pid>/stat` line with a space in its command name
     /// and the fields this crate reads at their documented positions.
     #[cfg(target_os = "linux")]
-    #[test]
-    fn parse_stat_reads_the_name_state_parent_foreground_group_and_start() {
+    fn stat_line(name: &str, state: &str) -> String {
         let mut fields: Vec<String> = (3..=52).map(|n| n.to_string()).collect();
-        fields[0] = "S".to_owned(); // 3: state
+        fields[0] = state.to_owned(); // 3: state
         fields[1] = "41".to_owned(); // 4: ppid
         fields[2] = "42".to_owned(); // 5: pgrp
         fields[5] = "4567".to_owned(); // 8: tpgid
         fields[19] = "9912345".to_owned(); // 22: starttime
-        let line = format!("42 (my script) {}", fields.join(" "));
-        let stat = parse_stat(&line).expect("parsed");
+        format!("42 ({name}) {}", fields.join(" "))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_stat_reads_the_name_state_parent_foreground_group_and_start() {
+        let stat = parse_stat(&stat_line("my script", "S")).expect("parsed");
         assert_eq!(stat.name, "my script");
         assert_eq!(stat.state, 'S');
         assert_eq!(stat.ppid, 41);
@@ -568,8 +755,7 @@ mod tests {
         assert_eq!(stat.tpgid, 4567);
         assert_eq!(stat.start, "ticks:9912345");
         // No controlling terminal: the kernel writes -1, read as no group.
-        fields[5] = "-1".to_owned();
-        let line = format!("42 (x) {}", fields.join(" "));
+        let line = stat_line("x", "S").replace(" 4567 ", " -1 ");
         assert_eq!(parse_stat(&line).unwrap().tpgid, -1);
         assert!(
             parse_stat("42 (x) S 1").is_none(),
@@ -577,24 +763,178 @@ mod tests {
         );
     }
 
+    /// Decision 99: the three readings of one `/proc` stat read, from the
+    /// kernel's answers as planted. No entry and an exited process are
+    /// `Gone`; a refused read and an unparsable line are `Unreadable` with
+    /// their causes, never an absence.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stat_read_is_live_gone_or_unreadable_by_what_the_kernel_answered() {
+        use std::io::{Error as Io, ErrorKind};
+        assert!(matches!(
+            stat_reading(Ok(stat_line("claude", "S"))),
+            Reading::Live(Stat { ref name, .. }) if name == "claude"
+        ));
+        assert_eq!(
+            stat_reading(Ok(stat_line("claude", "Z"))),
+            Reading::Gone,
+            "an exited process awaiting its parent"
+        );
+        assert_eq!(
+            stat_reading(Err(Io::from(ErrorKind::NotFound))),
+            Reading::Gone
+        );
+        assert_eq!(
+            stat_reading(Err(Io::from_raw_os_error(3))),
+            Reading::Gone,
+            "ESRCH for a process that exited mid-listing"
+        );
+        assert_eq!(
+            stat_reading(Err(Io::from(ErrorKind::PermissionDenied))),
+            Reading::Unreadable {
+                cause: "stat-unreadable"
+            }
+        );
+        assert_eq!(
+            stat_reading(Ok("not a stat line".to_owned())),
+            Reading::Unreadable {
+                cause: "stat-unparsed"
+            }
+        );
+    }
+
+    /// Decision 99: a table is read whole or not at all. A process that
+    /// exited mid-listing is left out; one entry that could not be read
+    /// fails the table with that entry's cause.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_table_leaves_out_an_exited_entry_and_is_unreadable_with_an_unread_one() {
+        let live = |pid: u32| (pid, stat_reading(Ok(stat_line("claude", "S"))));
+        let table = table_of(vec![live(1), (2, Reading::Gone), live(3)]).expect("readable");
+        assert_eq!(table.iter().map(|r| r.pid).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(
+            table_of(vec![
+                live(1),
+                (
+                    2,
+                    Reading::Unreadable {
+                        cause: "stat-unreadable"
+                    }
+                ),
+                live(3),
+            ]),
+            Err(Unreadable {
+                cause: "stat-unreadable"
+            })
+        );
+    }
+
+    /// The test-owned `ps` at `tests/rust/fixtures/fake-ps/ps`, found first
+    /// on the child's `PATH` and asked the reader's own `-o lstart= -p`
+    /// question; the pid chooses its answer (the script lists them). The
+    /// production runner carries the status back whole.
+    fn fake_ps(pid: u32) -> Output {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/rust/fixtures/fake-ps");
+        let mut path = fixtures.into_os_string();
+        if let Some(rest) = std::env::var_os("PATH") {
+            path.push(":");
+            path.push(rest);
+        }
+        let env: [(&str, &OsStr); 1] = [("PATH", &path)];
+        run_with(
+            "ps",
+            "fake-ps",
+            &["-o", "lstart=", "-p", &pid.to_string()],
+            &env,
+            None,
+            PS_TIMEOUT,
+        )
+        .expect("the fake ps runs")
+    }
+
+    /// Decision 105: the readings of a `ps -p` answer by its real exit
+    /// status, from a fake `ps` on `PATH`. A row under exit 0 is live. The
+    /// documented no-match answer, exit 1 with nothing on either stream, is
+    /// gone. A `ps` killed by a signal, one exiting 2, a usage error written
+    /// under exit 1 and a successful run that printed no row are each
+    /// unreadable with a cause naming what happened, never an absence.
+    #[test]
+    fn a_ps_answer_is_live_gone_or_unreadable_by_its_exit_status_and_streams() {
+        let rows: [(u32, Reading<String>); 6] = [
+            (1, Reading::Live("Thu Jan 1 00:00:00 1970".to_owned())),
+            (2, Reading::Gone),
+            (
+                4,
+                Reading::Unreadable {
+                    cause: "ps-signal-9",
+                },
+            ),
+            (3, Reading::Unreadable { cause: "ps-exit-2" }),
+            (5, Reading::Unreadable { cause: "ps-exit-1" }),
+            (6, Reading::Unreadable { cause: "ps-empty" }),
+        ];
+        for (pid, expected) in rows {
+            let output = fake_ps(pid);
+            assert_eq!(
+                ps_reading(&output),
+                expected,
+                "pid {pid}: status {:?}, stdout {:?}, stderr {:?}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert!(
+            fake_ps(4).status.signal() == Some(9),
+            "the fixture's signalled answer is a real signal status"
+        );
+    }
+
     #[test]
     fn the_table_names_a_child_this_test_owns_in_its_own_group() {
         use std::os::unix::process::CommandExt;
-        let mut child = Command::new("sleep")
-            .arg("30")
-            .process_group(0)
-            .spawn()
-            .unwrap();
-        let rows = table().unwrap();
+        let child = Held::spawn(Command::new("sleep").arg("30").process_group(0));
+        let rows = table().expect("a readable table");
         let row = rows
             .iter()
-            .find(|r| r.pid == child.id())
+            .find(|r| r.pid == child.pid())
             .expect("the child's row");
         assert_eq!(row.name, "sleep");
         assert_eq!(row.ppid, std::process::id());
-        assert_eq!(row.pgrp, child.id(), "a new group led by the child");
-        let _ = child.kill();
-        child.wait().unwrap();
+        assert_eq!(row.pgrp, child.pid(), "a new group led by the child");
+    }
+
+    /// A child that exited and stands unreaped holds its pid as a zombie:
+    /// the table leaves it out and its identity reads gone, so a group
+    /// read by pgid never holds on a member only its parent's reap would
+    /// end (decision 124l (47)).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_table_leaves_an_unreaped_exited_child_out() {
+        let child = Held::spawn(&mut Command::new("true"));
+        let pid = child.pid();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let state = fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|text| parse_stat(&text))
+                .map(|stat| stat.state);
+            if state == Some('Z') {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the child never read Z: {state:?}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let rows = table().expect("a readable table");
+        assert!(
+            !rows.iter().any(|r| r.pid == pid),
+            "the zombie is no row of the table"
+        );
+        assert_eq!(identity(pid), Reading::Gone);
+        drop(child);
     }
 
     #[test]
@@ -605,17 +945,56 @@ mod tests {
         assert!(!only_shells_below(&t, 20));
     }
 
+    /// Decision 99 on a real process: a child this test holds reads live
+    /// under its identity, and once it has exited, still held unreaped so
+    /// its pid is nobody else's, reads gone. A recorded start the pid never
+    /// carried, in the host's own form, reads gone through `still_runs`
+    /// while the process runs.
     #[test]
-    fn a_zombie_identity_does_not_run() {
-        // The current process is live and carries a stable start.
-        let me = std::process::id();
-        let id = identity(me).unwrap().unwrap();
-        assert_eq!(still_runs(&id).unwrap(), Liveness::Live);
+    fn a_held_child_reads_live_then_gone_once_it_exited_and_a_stale_start_never_runs() {
+        let mut child = Held::sleep();
+        let pid = child.pid();
+        let Reading::Live(id) = identity(pid) else {
+            panic!("a held child is live");
+        };
+        assert_eq!(id.pid, pid);
+        assert_eq!(still_runs(&id), Reading::Live(id.clone()));
         let stale = Identity {
-            pid: me,
+            pid,
+            start: mismatched_start(&id.start),
+        };
+        assert_eq!(still_runs(&stale), Reading::Gone);
+        child.kill_and_await_gone();
+        assert_eq!(still_runs(&id), Reading::Gone);
+    }
+
+    /// The `ticks:` start form is `/proc`'s: Linux reads it, so a ticks
+    /// start the pid never carried is gone there; a host without `/proc`
+    /// cannot read the form at all, so the same identity is unreadable with
+    /// its cause, never gone (M2 of R-U4a5).
+    #[test]
+    fn a_ticks_start_is_read_on_linux_and_unreadable_elsewhere() {
+        let child = Held::sleep();
+        let ticks = Identity {
+            pid: child.pid(),
             start: "ticks:0".to_owned(),
         };
-        assert_eq!(still_runs(&stale).unwrap(), Liveness::Gone);
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(still_runs(&ticks), Reading::Gone);
+            let Reading::Live(id) = identity(child.pid()) else {
+                panic!("a held child is live");
+            };
+            assert!(id.start.starts_with("ticks:"), "{:?}", id.start);
+            assert_eq!(still_runs(&id), Reading::Live(id.clone()));
+        }
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(
+            still_runs(&ticks),
+            Reading::Unreadable {
+                cause: "ticks-unavailable"
+            }
+        );
     }
 
     /// Decision 55: one reader admits every start form a shipped writer
@@ -626,43 +1005,47 @@ mod tests {
         let me = std::process::id();
         // The lstart text a legacy shell writer records bare, and the
         // non-Linux reader records with an `lstart:` prefix.
-        let prefixed = start_lstart(me).unwrap().expect("own lstart");
+        let Reading::Live(prefixed) = start_lstart(me) else {
+            panic!("own lstart");
+        };
         let bare = prefixed
             .strip_prefix("lstart:")
             .expect("lstart prefix")
             .to_owned();
         // The host form the runtime itself records (ticks on Linux).
-        let native = start(me).unwrap().expect("own start");
-        for form in [native, prefixed.clone(), bare.clone()] {
+        let Reading::Live(native) = identity(me) else {
+            panic!("own identity");
+        };
+        for form in [native.start.clone(), prefixed.clone(), bare.clone()] {
             let id = Identity {
                 pid: me,
                 start: form.clone(),
             };
-            assert_eq!(still_runs(&id).unwrap(), Liveness::Live, "form {form:?}");
+            assert_eq!(still_runs(&id), Reading::Live(id.clone()), "form {form:?}");
         }
-        // A legacy fixture value copied from
-        // `skills/orch/tests/rust/fixtures/workflow-state-oversee.json`: a
-        // ticks start no live process here holds.
-        let fixture = Identity {
+        // A start in the host's own form that this process never carried.
+        let mismatch = Identity {
             pid: me,
-            start: "ticks:9912345".to_owned(),
+            start: mismatched_start(&native.start),
         };
-        assert_eq!(still_runs(&fixture).unwrap(), Liveness::Gone);
-        // A mismatch in the lstart form is `Gone` too.
+        assert_eq!(still_runs(&mismatch), Reading::Gone);
+        // A mismatch in the lstart form, read on every host, is `Gone` too.
         let wrong = Identity {
             pid: me,
             start: "lstart:Thu Jan  1 00:00:00 1970".to_owned(),
         };
-        assert_eq!(still_runs(&wrong).unwrap(), Liveness::Gone);
+        assert_eq!(still_runs(&wrong), Reading::Gone);
     }
 
     #[test]
     fn stopping_a_child_this_test_owns_ends_it_exactly_once() {
-        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
-        let id = identity(child.id()).unwrap().unwrap();
+        let mut child = Held::sleep();
+        let Reading::Live(id) = identity(child.pid()) else {
+            panic!("a held child is live");
+        };
         let stop = stop_identities(std::slice::from_ref(&id), Duration::from_secs(5)).unwrap();
         assert_eq!(stop, Stop::Stopped { signaled: 1 });
-        child.wait().unwrap();
+        child.0.wait().unwrap();
         // A second stop of the ended identity signals nothing.
         assert_eq!(
             stop_identities(std::slice::from_ref(&id), Duration::from_secs(1)).unwrap(),

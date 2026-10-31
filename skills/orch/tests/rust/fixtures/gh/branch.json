@@ -1,0 +1,11 @@
+{
+  "name": "main",
+  "commit": { "sha": "e99849b1c72b1c082cf8325f316799e753f99561", "url": "https://api.github.com/repos/owner/repo/commits/e99849b1c72b1c082cf8325f316799e753f99561" },
+  "_links": { "self": "https://api.github.com/repos/owner/repo/branches/main", "html": "https://github.com/owner/repo/tree/main" },
+  "protected": false,
+  "protection": {
+    "enabled": false,
+    "required_status_checks": { "enforcement_level": "off", "contexts": [], "checks": [] }
+  },
+  "protection_url": "https://api.github.com/repos/owner/repo/branches/main/protection"
+}

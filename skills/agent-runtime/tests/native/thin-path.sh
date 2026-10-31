@@ -16,6 +16,8 @@
 set -euo pipefail
 
 here="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+# shellcheck source=lib/reading.sh
+. "$here/lib/reading.sh"
 runtime="$here/../../runtime"
 bin="$runtime/target/debug/agent-runtime"
 harnesses=()
@@ -164,20 +166,23 @@ server_start=""
 start_server() { # CWD
   tmux -S "$socket" new-session -d -s probe -c "$1" -x 220 -y 60
   server_pid="$(tmux -S "$socket" display-message -p '#{pid}')"
-  server_start="$("$bin" process identity "$server_pid" | jq -r '.result.start')"
+  server_start="$("$bin" process identity "$server_pid" | identity_start)"
+  [ -n "$server_start" ] || { echo "thin-path: server-identity-unread pid=$server_pid" >&2; return 1; }
 }
 
-# End the private server and report whether its recorded identity is gone.
-end_server() { # -> prints true|false|unread
-  [ -n "$server_pid" ] || { echo unread; return; }
+# live_reading PID START: the reading of the identity now, as the JSON
+# object `process_reading` prints: `live`, `gone`, `unreadable` with its
+# cause, or `unread` when the binary gave no reading.
+live_reading() {
+  "$bin" process live "$1" "$2" | process_reading
+}
+
+# End the private server and report the reading of its recorded identity
+# afterwards, as `live_reading` prints it.
+end_server() {
+  [ -n "$server_pid" ] || { echo '{"reading":"unread","cause":null}'; return; }
   tmux -S "$socket" kill-server 2>/dev/null || :
-  local live
-  live="$("$bin" process live "$server_pid" "$server_start" | jq -r '.result')"
-  case "$live" in
-    gone) echo true ;;
-    live|zombie) echo false ;;
-    *) echo unread ;;
-  esac
+  live_reading "$server_pid" "$server_start"
 }
 
 run_one() {
@@ -207,10 +212,10 @@ BRIEF
   t0="$(epoch)"
   run_deadline=$(( t0 + deadline_secs ))
   if ! "$bin" launch --intent "$intent" --record "$record" --socket "$socket" --session probe --window-name "probe-$h" > "$dir/launch.json" 2> "$dir/launch.err"; then
-    local server_ended
-    server_ended="$(end_server)"
-    jq -n --arg h "$h" --arg at "$(now_utc)" --rawfile err "$dir/launch.err" --arg ended "$server_ended" \
-      '{harness: $h, at: $at, outcome: "launch-refused", stderr: $err, server_ended: ($ended == "true")}' > "$out/$h.json"
+    local server_after
+    server_after="$(end_server)"
+    jq -n --arg h "$h" --arg at "$(now_utc)" --rawfile err "$dir/launch.err" --argjson server "$server_after" \
+      '{harness: $h, at: $at, outcome: "launch-refused", stderr: $err, server_ended: ($server.reading == "gone"), server_after: $server}' > "$out/$h.json"
     return
   fi
   # Start identity: the harness process below the pane, then its first turn.
@@ -279,14 +284,16 @@ BRIEF
   tmux -S "$socket" capture-pane -p -J -t "$pane_id" > "$dir/final-screen.txt" 2>/dev/null || :
   "$bin" stop --record "$record" > "$dir/stop.json" 2> "$dir/stop.err" || :
   t_stop="$(epoch)"
+  # The recorded harness identity after the stop, and the private server
+  # after its end: each the whole reading, an unreadable one with its cause.
   local start live
   pid="$(jq -r '.harness_process.pid // empty' "$record")"
   start="$(jq -r '.harness_process.start // empty' "$record")"
   if [ -n "$pid" ] && [ -n "$start" ]; then
-    live="$("$bin" process live "$pid" "$start" | jq -r '.result')"
-  else live="unread"; fi
-  local server_ended
-  server_ended="$(end_server)"
+    live="$(live_reading "$pid" "$start")"
+  else live='{"reading":"unread","cause":null}'; fi
+  local server_after
+  server_after="$(end_server)"
   jq -n --arg h "$h" --arg at "$(now_utc)" \
     --arg version "$("$bin" probe --harness "$h" | jq -r '.result[0].version // "unread"')" \
     --arg os "$(uname -sr)" \
@@ -296,9 +303,9 @@ BRIEF
     --arg first "$first" --arg idle "$idle" --arg second "$second" --arg third "$third" \
     --arg blocked "$blocked" --argjson deadline "$deadline_secs" \
     --argjson t_start "$((t_start - t0))" --argjson t_idle "$((t_idle - t0))" --argjson t_two "$((t_two - t0))" --argjson t_three "$((t_three - t0))" --argjson t_stop "$((t_stop - t0))" \
-    --slurpfile stop "$dir/stop.json" --arg live "$live" \
+    --slurpfile stop "$dir/stop.json" --argjson live "$live" \
     --arg final_screen_bytes "$(wc -c < "$dir/final-screen.txt")" \
-    --arg server_ended "$server_ended" --argjson server_pid "${server_pid:-0}" \
+    --argjson server_after "$server_after" --argjson server_pid "${server_pid:-0}" \
     --rawfile d2err "$dir/deliver-2.err" --rawfile d3err "$dir/deliver-3.err" '{
       harness: $h, at: $at, harness_version: $version, os: $os, route: "tmux-pane-paste",
       deadline_secs: $deadline,
@@ -318,7 +325,7 @@ BRIEF
       final_screen_captured: (($final_screen_bytes | tonumber) > 0),
       stop: ($stop[0].result // null),
       harness_process_after_stop: $live,
-      private_server: {pid: $server_pid, ended: ($server_ended == "true")},
+      private_server: {pid: $server_pid, ended: ($server_after.reading == "gone"), after: $server_after},
       seconds: {start_identity: $t_start, first_idle: $t_idle, second_file: $t_two, third_file: $t_three, stopped: $t_stop}
     }' > "$out/$h.json"
 }

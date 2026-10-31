@@ -37,3 +37,7 @@ cargo clippy --all-targets
 ```
 
 Clippy denies `println!` and `eprintln!`: the one stdout line is the reply and the stderr lines are the refusal, both written in `main`.
+
+## Permission spellings
+
+`Harness::permission_spellings` in `runtime/src/harness.rs` is a transcription of the sixth and seventh columns of orch's launch table in `skills/orch/scripts/lib/lane-launch.sh` and changes with them; no test compares the two.

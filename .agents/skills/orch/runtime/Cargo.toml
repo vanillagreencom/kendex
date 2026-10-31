@@ -43,6 +43,22 @@ path = "../tests/rust/main.rs"
 name = "effects"
 path = "../tests/rust/effects.rs"
 
+[[test]]
+name = "item"
+path = "../tests/rust/item.rs"
+
+[[test]]
+name = "verify"
+path = "../tests/rust/verify.rs"
+
+[[test]]
+name = "lane"
+path = "../tests/rust/lane.rs"
+
+[[test]]
+name = "controller"
+path = "../tests/rust/controller.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

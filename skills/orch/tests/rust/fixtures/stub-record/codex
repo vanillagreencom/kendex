@@ -1,0 +1,17 @@
+#!/bin/bash
+# The Codex stub for the orch-runtime launch rows, named `codex` so the
+# kernel records Codex's process name for it: it writes the command it was
+# launched as into `launch-record.json` in its working directory (its argv
+# and the account variables of its environment) and then stands, drawing no
+# composer, so a succession that opened it abandons it as `successor-not-ready`
+# once the record is written and the row reads the record.
+argv="" first=1
+for arg in "$@"; do
+  [ "$first" = 1 ] || argv="$argv,"
+  first=0
+  argv="$argv\"$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+done
+printf '{"program":"%s","argv":[%s],"env":{"CLAUDE_CONFIG_DIR":"%s","PI_CODING_AGENT_DIR":"%s","CODEX_HOME":"%s","COPILOT_HOME":"%s","COPILOT_ALLOW_ALL":"%s"}}\n' \
+  "$0" "$argv" "${CLAUDE_CONFIG_DIR-}" "${PI_CODING_AGENT_DIR-}" "${CODEX_HOME-}" "${COPILOT_HOME-}" "${COPILOT_ALLOW_ALL-}" > launch-record.json
+printf 'codex starting, no composer\n'
+while IFS= read -r _line; do :; done

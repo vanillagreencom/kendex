@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use agent_runtime::protocol::Outcome;
 
-use crate::state::{EffectOp, Kind, LaneStatus};
+use crate::state::{EffectOp, Kind, LaneStatus, Owner};
 
 /// Why a field of a record is not the shape the operations read. The word
 /// is the `reason=` value of a `record-shape` line.
@@ -57,6 +57,15 @@ pub enum Error {
     },
     #[error("{path}: not an operation request: {cause}")]
     Request { path: PathBuf, cause: String },
+    /// The request reads an external system before its one transition, so
+    /// `apply` cannot run it as a transition; `verify::run` does.
+    #[error("{op} reads before it writes and is not applied as a transition")]
+    OpNotTransition { op: &'static str },
+    /// A `verify-head` field is not the form its reads pin: `repo` is
+    /// `owner/name`, `base` a branch name, `head` a full lowercase 40-hex
+    /// commit id. The value stays in this text: it may hold whitespace.
+    #[error("verify-head {field} {value:?} is not the pinned form")]
+    VerifyRequestInvalid { field: &'static str, value: String },
     #[error("no lane record names {item}")]
     LaneMissing { item: String },
     /// The lane is in flight, so a launch or an adoption would make a second
@@ -110,6 +119,30 @@ pub enum Error {
     IntentDuplicate { id: String },
     #[error("intent {id} already ended as {outcome:?}")]
     IntentComplete { id: String, outcome: Outcome },
+    /// A progress write names the obligation set at a revision the record no
+    /// longer holds: another handle or process replaced the set since the
+    /// writer read it, so the writer's view is stale and it acts on nothing
+    /// (decision 124f (26)).
+    #[error(
+        "intent {id}: the obligation set was replaced (revision {expected} written, {found} recorded)"
+    )]
+    SetReplaced {
+        id: String,
+        expected: u64,
+        found: u64,
+    },
+    /// A launcher-side write found the intent under another owner: the store
+    /// yielded the write to that claimant and the handle acts on nothing
+    /// (decision 124h (32)); its caller hands the claimant's state back
+    /// through its own route.
+    #[error("intent {id} yielded to its claimant {}:{}", owner.pid, owner.start)]
+    Yielded { id: String, owner: Owner },
+    /// An intent's recorded obligation set carries a row without a role: a
+    /// record an unreleased build of this runtime wrote before roles existed.
+    /// The set alone selects the harness, the pane and the wake by role, so
+    /// no handle opens on it; the record is closed by hand.
+    #[error("intent {id}: an obligation is recorded without a role")]
+    RoleMissing { id: String },
     /// `not-started` is the state an intent is created in, never an outcome
     /// an effect reports.
     #[error("{outcome:?} is not an outcome an effect can report")]
@@ -119,6 +152,157 @@ pub enum Error {
     /// no verdict about the head, so it is refused rather than recorded.
     #[error("{verdict:?} is not a verification verdict")]
     VerdictInvalid { verdict: String },
+    /// The operation persists an intent, and the process asking has no
+    /// readable identity to own it with (decision 90). A contender could not
+    /// tell such an intent's live effect from a dead one, so none is written.
+    #[error("{op}: no readable process identity to own the intent")]
+    OwnerUnreadable { op: &'static str },
+    /// An `accept-result` end outside `[start, now]` of the stage it closes.
+    #[error("round {round_id}: end {end} is outside the stage's [{start}, {now}]")]
+    EndOutOfRange {
+        round_id: String,
+        end: u64,
+        start: u64,
+        now: u64,
+    },
+    /// A minted admission needs the item's recorded worktree to name the run
+    /// directory under, and the record carries none.
+    #[error("{path}: the item records no worktree, so no run directory can be minted")]
+    WorktreeUnrecorded { path: PathBuf },
+    /// An `accept-result` end names an artifact whose modification time
+    /// cannot be read.
+    #[error("{path}: the end artifact's modification time cannot be read: {cause}")]
+    EndArtifactUnreadable { path: PathBuf, cause: String },
+    #[error("{path}: no handoff record stands")]
+    HandoffNone { path: PathBuf },
+    /// A handoff record with other content stands; the named fields differ.
+    /// A repeat of the same content is a no-op, and replacing the record
+    /// is asked for with `supersede: true`.
+    #[error("{path}: a handoff record with other {} stands", fields.join(","))]
+    HandoffDiffers { path: PathBuf, fields: Vec<String> },
+    #[error("handoff written_at {written_at:?} is not ISO 8601 UTC")]
+    HandoffWrittenAtInvalid { written_at: String },
+    #[error("handoff written_at {written_at} is later than the clock at {now}")]
+    HandoffWrittenAtFuture { written_at: String, now: String },
+    /// `ORCH_OVERSEER_SUCCESSION=off`: no succession is asked for and no
+    /// intent persists (decision 78).
+    #[error("succession is off, so no transfer is requested")]
+    SuccessionOff,
+    /// The controller was stopped on purpose (`off` recorded); no recovery
+    /// relaunches it, only an explicit start (decision 78).
+    #[error("{path}: the controller at generation {generation} is off")]
+    ControllerOff { path: PathBuf, generation: u64 },
+    /// A walled succession's successor would run on the account the wall
+    /// spent.
+    #[error("the successor account {account} is the spent one")]
+    SuccessorAccountSpent { account: String },
+    /// A recovery from a standing handoff names a session other than the
+    /// recorded controller's.
+    #[error("the handoff names session {expected:?}, the record {recorded:?}")]
+    HandoffSessionMismatch {
+        expected: String,
+        recorded: Option<String>,
+    },
+    /// A transfer cause needs a field the request left out.
+    #[error("a {cause} transfer needs {field}")]
+    TransferFieldMissing {
+        cause: &'static str,
+        field: &'static str,
+    },
+    /// A controller is live where a start or an adoption would make a
+    /// second one.
+    #[error("{path}: the recorded controller (pid {pid}) is live")]
+    OverseerLive { path: PathBuf, pid: u64 },
+    /// The recorded controller cannot be resolved (decision 109 (1)): its
+    /// server start is unrecorded, its record names no server and pane, or
+    /// its server is gone or replaced. Nothing proves it terminal, so
+    /// nothing replaces it; the remedy is adoption from its pane.
+    #[error("{path}: the recorded controller is unproven: {cause}")]
+    PredecessorUnproven { path: PathBuf, cause: String },
+    /// A model-recovery transfer whose binding no longer holds against the
+    /// record (decision 109 (8)): the legacy `ol_recovery_bound` predicate
+    /// read false, and nothing is written.
+    #[error("{path}: the recovery request is not bound to the record: {cause}")]
+    RecoveryUnbound { path: PathBuf, cause: &'static str },
+    /// Whether the recorded controller is live could not be read.
+    #[error("{path}: the recorded controller could not be read: {cause}")]
+    OverseerUnreadable { path: PathBuf, cause: String },
+    /// The pane an adoption names does not hold the harness in its
+    /// foreground, so there is no identity to adopt.
+    #[error("pane {pane} does not hold the harness: {reading}")]
+    PaneNotHarness { pane: String, reading: String },
+    /// A claim of an intent whose effect already recorded a phase: the
+    /// prior owner opened something, so a second owner would be a second
+    /// effect.
+    #[error("intent {id} has started under its owner")]
+    IntentStarted { id: String },
+    /// The detached job that runs a transfer or a stop could not be started;
+    /// the request is recorded `failed` and the controller keeps control.
+    #[error("intent {intent}: the detached job could not be launched: {cause}")]
+    JobLaunchFailed { intent: String, cause: String },
+    /// The job launched but never took the intent's owner lease within the
+    /// bound; the request is recorded `failed`.
+    #[error("intent {intent}: the detached job never claimed the intent")]
+    JobUnclaimed { intent: String },
+    /// The fleet cap admits no further lane: `occupancy` slots charge it
+    /// (decision 97), `lanes` of them lane records and `claims` legacy claim
+    /// store rows, and `cap` is the setting.
+    #[error(
+        "the fleet cap of {cap} is reached: {occupancy} slots charge it ({lanes} lanes, {claims} legacy claims)"
+    )]
+    CapReached {
+        occupancy: u32,
+        cap: u32,
+        lanes: u32,
+        claims: u32,
+    },
+    /// The cap could not be judged: a source the count reads failed. A count
+    /// missing a lane admits one lane too many, so none is made.
+    #[error("the cap count could not read its {read} at {path}: {cause}")]
+    CapUnreadable {
+        /// Which input failed: `claims` or `records`.
+        read: &'static str,
+        path: PathBuf,
+        cause: String,
+    },
+    /// A wall relaunch names the account the wall spent (step4-map A11).
+    #[error("the lane for {item} would run on the spent account {account}")]
+    AccountSpent { item: String, account: String },
+    /// The lane's recorded harness still runs under its recorded start,
+    /// whatever its status word reads: a relaunch would make a second one.
+    #[error("the lane for {item} still runs its harness (pid {pid})")]
+    HarnessLive { item: String, pid: u64 },
+    /// Whether the lane's recorded harness runs could not be read; nothing
+    /// that would start or end a harness is authorized on an unknown.
+    #[error("the lane for {item}: harness pid {pid} could not be read: {cause}")]
+    HarnessUnreadable {
+        item: String,
+        pid: u64,
+        cause: String,
+    },
+    /// The identity an adoption names holds no live process, so there is
+    /// no execution to bind the lane to.
+    #[error("the lane for {item}: pid {pid} holds no live process under its start")]
+    IdentityGone { item: String, pid: u64 },
+    /// A close request names both a terminal verdict and a no-landing
+    /// disposition; one ground authorizes a close.
+    #[error("the close of {item} names two grounds")]
+    CloseGroundAmbiguous { item: String },
+    /// A reservation's `until` is not an ISO 8601 UTC stamp after the clock.
+    #[error("the reservation on {item} lapses at {until:?}, not a stamp after now")]
+    ReservationInvalid { item: String, until: String },
+    /// A request bound to an earlier attempt of the lane: its `session_since`
+    /// is not the record's, so it changes nothing (decision 97).
+    #[error("the lane for {item} is attempt {current:?}, not {session_since:?}")]
+    AttemptStale {
+        item: String,
+        session_since: String,
+        current: Option<String>,
+    },
+    /// A park the lane's host cannot take: a local lane has no sandbox to
+    /// stop (`lane-close --park`, `park-refused reason=local`).
+    #[error("the lane for {item} cannot be parked: {reason}")]
+    ParkRefused { item: String, reason: &'static str },
 }
 
 fn word(outcome: Outcome) -> String {
@@ -137,6 +321,8 @@ impl Error {
             Error::Shape { .. } => "record-shape",
             Error::OpKind { .. } => "op-kind",
             Error::Request { .. } => "request-invalid",
+            Error::OpNotTransition { .. } => "op-not-transition",
+            Error::VerifyRequestInvalid { .. } => "verify-request-invalid",
             Error::LaneMissing { .. } => "lane-missing",
             Error::LaneLive { .. } => "lane-live",
             Error::LaneDone { .. } => "lane-done",
@@ -152,8 +338,42 @@ impl Error {
             Error::IntentUnknown { .. } => "intent-unknown",
             Error::IntentDuplicate { .. } => "intent-duplicate",
             Error::IntentComplete { .. } => "intent-complete",
+            Error::SetReplaced { .. } => "set-replaced",
+            Error::Yielded { .. } => "intent-yielded",
+            Error::RoleMissing { .. } => "role-missing",
             Error::OutcomeInvalid { .. } => "outcome-invalid",
             Error::VerdictInvalid { .. } => "verdict-invalid",
+            Error::OwnerUnreadable { .. } => "owner-unreadable",
+            Error::EndOutOfRange { .. } => "end-out-of-range",
+            Error::WorktreeUnrecorded { .. } => "worktree-unrecorded",
+            Error::EndArtifactUnreadable { .. } => "end-artifact-unreadable",
+            Error::HandoffNone { .. } => "handoff-none",
+            Error::HandoffDiffers { .. } => "handoff-differs",
+            Error::HandoffWrittenAtInvalid { .. } => "handoff-written-at-invalid",
+            Error::HandoffWrittenAtFuture { .. } => "handoff-written-at-future",
+            Error::SuccessionOff => "succession-off",
+            Error::ControllerOff { .. } => "controller-off",
+            Error::SuccessorAccountSpent { .. } => "successor-account-spent",
+            Error::HandoffSessionMismatch { .. } => "handoff-session-mismatch",
+            Error::TransferFieldMissing { .. } => "transfer-field-missing",
+            Error::OverseerLive { .. } => "overseer-live",
+            Error::PredecessorUnproven { .. } => "predecessor-unproven",
+            Error::RecoveryUnbound { .. } => "recovery-unbound",
+            Error::OverseerUnreadable { .. } => "overseer-unreadable",
+            Error::PaneNotHarness { .. } => "pane-not-harness",
+            Error::IntentStarted { .. } => "intent-started",
+            Error::JobLaunchFailed { .. } => "job-launch-failed",
+            Error::JobUnclaimed { .. } => "job-unclaimed",
+            Error::CapReached { .. } => "cap-reached",
+            Error::CapUnreadable { .. } => "cap-unreadable",
+            Error::AccountSpent { .. } => "account-spent",
+            Error::HarnessLive { .. } => "harness-live",
+            Error::HarnessUnreadable { .. } => "harness-unreadable",
+            Error::IdentityGone { .. } => "identity-gone",
+            Error::CloseGroundAmbiguous { .. } => "close-ground-ambiguous",
+            Error::ReservationInvalid { .. } => "reservation-invalid",
+            Error::AttemptStale { .. } => "attempt-stale",
+            Error::ParkRefused { .. } => "park-refused",
         }
     }
 
@@ -225,8 +445,133 @@ impl Error {
                 pair("intent_id", id.clone()),
                 pair("outcome", word(*outcome)),
             ],
+            Error::SetReplaced {
+                id,
+                expected,
+                found,
+            } => vec![
+                pair("intent_id", id.clone()),
+                pair("expected", expected.to_string()),
+                pair("found", found.to_string()),
+            ],
+            Error::Yielded { id, owner } => vec![
+                pair("intent_id", id.clone()),
+                pair("owner_pid", owner.pid.to_string()),
+                pair("owner_start", owner.start.clone()),
+            ],
+            Error::RoleMissing { id } => vec![pair("intent_id", id.clone())],
             Error::OutcomeInvalid { outcome } => vec![pair("outcome", word(*outcome))],
             Error::VerdictInvalid { verdict } => vec![pair("verdict", verdict.clone())],
+            Error::OwnerUnreadable { op } | Error::OpNotTransition { op } => {
+                vec![pair("op", (*op).to_owned())]
+            }
+            Error::VerifyRequestInvalid { field, .. } => vec![pair("field", (*field).to_owned())],
+            Error::EndOutOfRange {
+                round_id,
+                end,
+                start,
+                now,
+            } => vec![
+                pair("round_id", round_id.clone()),
+                pair("end", end.to_string()),
+                pair("start", start.to_string()),
+                pair("now", now.to_string()),
+            ],
+            Error::WorktreeUnrecorded { path }
+            | Error::HandoffNone { path }
+            | Error::EndArtifactUnreadable { path, .. } => {
+                vec![pair("path", path.display().to_string())]
+            }
+            Error::HandoffDiffers { path, fields } => vec![
+                pair("path", path.display().to_string()),
+                pair("fields", fields.join(",")),
+            ],
+            Error::HandoffWrittenAtInvalid { written_at } => {
+                vec![pair("written_at", written_at.clone())]
+            }
+            Error::HandoffWrittenAtFuture { written_at, now } => vec![
+                pair("written_at", written_at.clone()),
+                pair("now", now.clone()),
+            ],
+            Error::SuccessionOff => vec![pair("ORCH_OVERSEER_SUCCESSION", "off".to_owned())],
+            Error::ControllerOff { path, generation } => vec![
+                pair("path", path.display().to_string()),
+                pair("generation", generation.to_string()),
+            ],
+            Error::SuccessorAccountSpent { account } => vec![pair("account", account.clone())],
+            Error::HandoffSessionMismatch { expected, recorded } => vec![
+                pair("expected", expected.clone()),
+                pair("recorded", recorded.clone().unwrap_or_default()),
+            ],
+            Error::TransferFieldMissing { cause, field } => vec![
+                pair("cause", (*cause).to_owned()),
+                pair("field", (*field).to_owned()),
+            ],
+            Error::OverseerLive { path, pid } => vec![
+                pair("path", path.display().to_string()),
+                pair("pid", pid.to_string()),
+            ],
+            Error::OverseerUnreadable { path, cause }
+            | Error::PredecessorUnproven { path, cause } => vec![
+                pair("path", path.display().to_string()),
+                pair("cause", cause.clone()),
+            ],
+            Error::RecoveryUnbound { path, cause } => vec![
+                pair("path", path.display().to_string()),
+                pair("cause", (*cause).to_owned()),
+            ],
+            Error::PaneNotHarness { pane, reading } => {
+                vec![pair("pane", pane.clone()), pair("reading", reading.clone())]
+            }
+            Error::IntentStarted { id } => vec![pair("intent_id", id.clone())],
+            Error::JobLaunchFailed { intent, .. } | Error::JobUnclaimed { intent } => {
+                vec![pair("intent_id", intent.clone())]
+            }
+            Error::CapReached {
+                occupancy,
+                cap,
+                lanes,
+                claims,
+            } => vec![
+                pair("occupancy", occupancy.to_string()),
+                pair("cap", cap.to_string()),
+                pair("lanes", lanes.to_string()),
+                pair("claims", claims.to_string()),
+            ],
+            Error::CapUnreadable { read, path, .. } => vec![
+                pair("source", (*read).to_owned()),
+                pair("path", path.display().to_string()),
+            ],
+            Error::AccountSpent { item, account } => {
+                vec![pair("item", item.clone()), pair("account", account.clone())]
+            }
+            Error::HarnessLive { item, pid } | Error::IdentityGone { item, pid } => {
+                vec![pair("item", item.clone()), pair("pid", pid.to_string())]
+            }
+            Error::HarnessUnreadable { item, pid, cause } => vec![
+                pair("item", item.clone()),
+                pair("pid", pid.to_string()),
+                pair("cause", cause.clone()),
+            ],
+            Error::CloseGroundAmbiguous { item } => vec![pair("item", item.clone())],
+            Error::ReservationInvalid { item, until } => {
+                vec![pair("item", item.clone()), pair("until", until.clone())]
+            }
+            Error::AttemptStale {
+                item,
+                session_since,
+                current,
+            } => vec![
+                pair("item", item.clone()),
+                pair("session_since", session_since.clone()),
+                pair("current", current.clone().unwrap_or_default()),
+            ],
+            Error::ParkRefused { item, reason } => {
+                vec![
+                    pair("item", item.clone()),
+                    pair("reason", (*reason).to_owned()),
+                ]
+            }
         }
     }
 }

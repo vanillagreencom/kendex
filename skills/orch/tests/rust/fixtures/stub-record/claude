@@ -1,0 +1,44 @@
+#!/bin/bash
+# A stub harness for the orch-runtime launch rows, named `claude` so the
+# kernel records the harness's own process name for it, which first writes
+# the command it was launched as into `launch-record.json` in its working
+# directory: its argv, the account variables of its environment and Claude's
+# two prompt-suppression values, so a row reads what the typed launch put on
+# the line and in the environment, never what a recorded shell line says. Then it behaves as stub-confirm: draws
+# Claude Code's composer marker, takes `--session-id`, records each line it
+# reads as a user turn under CLAUDE_CONFIG_DIR.
+record() {
+  local argv="" first=1 arg
+  for arg in "$@"; do
+    [ "$first" = 1 ] || argv="$argv,"
+    first=0
+    argv="$argv\"$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+  done
+  printf '{"program":"%s","argv":[%s],"env":{"CLAUDE_CONFIG_DIR":"%s","PI_CODING_AGENT_DIR":"%s","CODEX_HOME":"%s","COPILOT_HOME":"%s","CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT":"%s","CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT":"%s"}}\n' \
+    "$0" "$argv" "${CLAUDE_CONFIG_DIR-}" "${PI_CODING_AGENT_DIR-}" "${CODEX_HOME-}" "${COPILOT_HOME-}" \
+    "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-}" "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-}" > launch-record.json
+}
+record "$@"
+printf '\xe2\x9d\xaf\xc2\xa0\n'
+printf '  ? for shortcuts\n'
+session="stub-$$"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) session="${2:-$session}"; shift ;;
+  esac
+  shift
+done
+rows=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  slug="${PWD//[\/.]/-}"
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
+  rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
+  printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+fi
+while IFS= read -r line; do
+  [ -n "$rows" ] || continue
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s"}\n' \
+    "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" >> "$rows"
+done

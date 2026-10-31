@@ -1,0 +1,24 @@
+#!/bin/bash
+# job-unit as a launcher that writes its record and then fails: `launch NAME
+# RECORD -- ARGV...` writes RECORD in job-unit's own form and answers
+# $JOB_UNIT_FAIL_LINE on stderr with status 4, as job-unit answers a launch
+# that failed after its record, so a test reads what the runtime makes of a
+# launcher asked that did not answer for the job, or said nothing started.
+# With $JOB_UNIT_FAIL_PID set, RECORD names a `setsid` group by that pid and
+# $JOB_UNIT_FAIL_START (as the setsid child writes its own identity, decision
+# 115 (B)): a test points it at a dead pid to read the job gone. Without it,
+# RECORD names no identity (unread). Every call is appended to $JOB_UNIT_LOG
+# when set.
+[ -z "${JOB_UNIT_LOG:-}" ] || printf '%s\n' "$*" >> "$JOB_UNIT_LOG"
+case "${1:-}" in
+  launch)
+    if [ -n "${JOB_UNIT_FAIL_PID:-}" ]; then
+      printf 'runner=setsid\npid=%s\nstart=%s\nline=runner=setsid reason=fixture\n' \
+        "$JOB_UNIT_FAIL_PID" "${JOB_UNIT_FAIL_START:-ticks:1}" > "$3"
+    else
+      printf 'runner=setsid\nline=runner=setsid reason=fixture\n' > "$3"
+    fi
+    printf '%s\n' "${JOB_UNIT_FAIL_LINE:-job-unit: launch-failed detail=fixture}" >&2
+    exit 4 ;;
+  *) echo "job-unit-fail: verb=$1" >&2; exit 2 ;;
+esac

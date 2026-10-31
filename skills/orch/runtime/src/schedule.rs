@@ -6,7 +6,7 @@
 //! acting at, or a [`Clock`] it owns, so a test drives the schedule with a
 //! fake and asserts ordering without waiting.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// The duties the legacy fleet watch runs on one clock: the mail turn, the
 /// pane and process observations, tracker work, verification, the report
@@ -98,18 +98,48 @@ impl Cadences {
     }
 }
 
-/// The clock a running scheduler reads. Production reads the monotonic
-/// clock; a test supplies the instants it wants.
+/// The one clock the scheduler and every effect wait read (decision 121,
+/// Q16): `main.rs` builds it and hands it down, so a test supplies the
+/// instants it wants and a bound can be waited without real time passing.
+/// The effects reach it only through the operation handle (decision 124c).
 pub trait Clock {
     fn now(&self) -> Instant;
+    /// The wall-clock time, for a moment a record carries (the instant a
+    /// window was asked for, which a session file's appearance is read
+    /// against).
+    fn wall(&self) -> SystemTime;
+    /// Wait `d` on this clock. The system clock sleeps; a fake clock passes
+    /// the time it wants.
+    fn sleep(&self, d: Duration);
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClock;
 
+/// The system clock's own reads and its sleep, each behind the one injected
+/// clock: the allowance sits on each method alone, so a method added to the
+/// trait and this impl needs its own registered site (decision 124i (35)).
 impl Clock for SystemClock {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the system clock's monotonic read, behind the one injected clock"
+    )]
     fn now(&self) -> Instant {
         Instant::now()
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the system clock's wall read, behind the one injected clock"
+    )]
+    fn wall(&self) -> SystemTime {
+        SystemTime::now()
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the system clock's sleep, behind the one injected clock"
+    )]
+    fn sleep(&self, d: Duration) {
+        std::thread::sleep(d);
     }
 }
 
@@ -194,6 +224,10 @@ impl Schedule {
 
     /// Run every duty due on the clock, advancing each from its anchor, and
     /// return what ran.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the scheduler's one read of the injected clock, which decides what is due"
+    )]
     pub fn run_due<C: Clock>(&mut self, clock: &C, mut run: impl FnMut(Duty)) -> Vec<Duty> {
         let now = clock.now();
         let due = self.due_at(now);
@@ -211,6 +245,10 @@ impl Schedule {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the rows start the schedule at a real instant and drive it with a fake clock"
+)]
 mod tests {
     use super::*;
     use std::cell::Cell;
@@ -239,6 +277,12 @@ mod tests {
     impl Clock for FakeClock {
         fn now(&self) -> Instant {
             self.now.get()
+        }
+        fn wall(&self) -> SystemTime {
+            SystemTime::UNIX_EPOCH
+        }
+        fn sleep(&self, d: Duration) {
+            self.pass(d);
         }
     }
 

@@ -1,0 +1,23 @@
+#!/bin/sh
+# A fake `ps` for the process reader's rows (decision 105): placed first on
+# the child's PATH, it is asked the reader's own `-o <column>= -p <pid>`
+# question and answers by the pid, so each exit status the reader must tell
+# apart is a real one.
+#   1  one row, exit 0: a live process
+#   2  nothing on either stream, exit 1: no process matched (procps-ng and
+#      the BSD ps both answer so)
+#   3  nothing, exit 2
+#   4  killed by SIGKILL before answering
+#   5  a usage error on stderr, exit 1 (procps-ng exits 1 for those too)
+#   6  nothing, exit 0
+for pid; do :; done
+case "$pid" in
+  1) echo " Thu Jan  1 00:00:00 1970"; exit 0 ;;
+  2) exit 1 ;;
+  3) exit 2 ;;
+  4) kill -KILL $$ ;;
+  5) echo "error: process ID list syntax error" >&2; exit 1 ;;
+  6) exit 0 ;;
+esac
+echo "fake-ps: pid=$pid unknown" >&2
+exit 3

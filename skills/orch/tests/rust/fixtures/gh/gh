@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# The fake gh for the verify-head rows. It answers `gh api PATH` from the
+# JSON map at $GH_FAKE_REPLIES, {PATH: {exit?, body?, text?}}: `body` is
+# printed as JSON, `text` as raw bytes (an answer that is not JSON), `exit`
+# is the status, 0 when absent. A path with no entry is a failed request,
+# as gh exits 1 on an HTTP error. The GraphQL form
+# `gh api graphql -f query=… -f ids[]=…` answers from the map's `graphql`
+# entry: when its `body` holds `nodes`, a map from node id to node, the
+# reply is `{data: {nodes: […]}}` in the order asked, null for an id the map
+# lacks, as GitHub answers `nodes(ids:)`; an asked id its `errored` list
+# names is null with a `NOT_FOUND` error at the node's path `["nodes", i]`
+# in `errors`, GraphQL's shape for a field it could not resolve
+# (specification § 6.4.4); a GraphQL `body` carrying `errors` is printed
+# with exit 1 and `gh: ` then the errors' messages, one per line, on
+# stderr, as gh exits nonzero on every such reply and writes that
+# (v2.103.3 `pkg/cmd/api/api.go:492-557`, `:722`); a planted `exit` with an
+# error-free `body` is a call that failed for a cause its output does not
+# carry; any other `body`, `text` or `exit` is printed as for a path.
+# Every call appends its arguments to $GH_FAKE_LOG, so a row can assert
+# what was read and what was not.
+set -u
+printf '%s\n' "$*" >> "${GH_FAKE_LOG:?}"
+if [ "${1:-}" != api ]; then
+  echo "gh-fake: unexpected-call args=[$*]" >&2
+  exit 64
+fi
+if [ "${2:-}" = graphql ]; then
+  ids='[]'
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -f) shift; case "$1" in ids\[\]=*) ids=$(jq -c --arg id "${1#ids[]=}" '. + [$id]' <<<"$ids") ;; query=*) ;; *) echo "gh-fake: unexpected-field field=[$1]" >&2; exit 64 ;; esac ;;
+      *) echo "gh-fake: unexpected-call args=[$*]" >&2; exit 64 ;;
+    esac
+    shift
+  done
+  reply=$(jq -c --argjson ids "$ids" '
+    .graphql // empty
+    | if (.body | type) == "object" and (.body | has("nodes")) then
+        .body.nodes as $nodes | (.body.errored // []) as $errored
+        | [$ids | to_entries[] | select(.value | IN($errored[]))
+           | {type: "NOT_FOUND", path: ["nodes", .key], message: "Could not resolve to a node with the global id of \u0027\(.value)\u0027"}] as $errors
+        | .body = ({data: {nodes: [$ids[] | $nodes[.] // null]}} + (if ($errors | length) > 0 then {errors: $errors} else {} end))
+      else . end
+    | if (.body | type) == "object" and ((.body.errors // []) | length) > 0
+      then .exit = 1 | .stderr = ("gh: " + ([.body.errors[] | .message // ""] | join("\n")))
+      else . end' -- "${GH_FAKE_REPLIES:?}") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+elif [ "$#" -ne 2 ]; then
+  echo "gh-fake: unexpected-call args=[$*]" >&2
+  exit 64
+else
+  reply=$(jq -c --arg p "$2" '.[$p] // empty' -- "${GH_FAKE_REPLIES:?}") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+fi
+if [ -z "$reply" ]; then
+  echo "gh: HTTP 404: Not Found (https://api.github.com/${2:-graphql})" >&2
+  echo '{"message":"Not Found"}'
+  exit 1
+fi
+jq -r '.stderr // empty' <<<"$reply" >&2
+if jq -e 'has("text")' <<<"$reply" >/dev/null; then
+  jq -rj '.text' <<<"$reply"
+else
+  jq -c '.body' <<<"$reply"
+fi
+exit "$(jq -r '.exit // 0' <<<"$reply")"

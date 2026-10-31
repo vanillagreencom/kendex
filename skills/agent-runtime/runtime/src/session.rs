@@ -14,6 +14,11 @@
 //! - Pi: `<sessions root>/<cwd slug>/<stamp>_<id>.jsonl`, whose first row
 //!   is `{"type":"session","id":...,"cwd":...}`.
 //!
+//! A session is bound by the id its launch fixed, or as the one lead that
+//! appeared for its directory after the launch and stood in no baseline
+//! read before it (decision 65). No reader here picks a file by its age: a
+//! lookup that can name a neighbour's file is not an API (decision 92).
+//!
 //! The same files record each user turn, which is how a delivery is
 //! confirmed: a turn the harness itself wrote down arrived, whatever the
 //! pane paste returned. The shapes are the native probe's
@@ -35,6 +40,7 @@ use serde_json::Value;
 
 use crate::error::{Error, Result};
 use crate::harness::Harness;
+use crate::reading::{Reading, Unreadable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRef {
@@ -97,6 +103,70 @@ pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option
     }
 }
 
+/// Whether the destination home holds a session with the fixed id `id` for
+/// `cwd`, read three-valued so a relaunch tells absent from unreadable
+/// (decision 115 (G)). `Live(())` is present, `Gone` absent, `Unreadable`
+/// a read that failed. Every resumable harness has a lookup: Claude by the
+/// file its fixed id names; Codex by the rollout under its store whose name
+/// ends in the id; Copilot by its session-state directory for the id; Pi
+/// resumes by file, not id, so it reads absent and the relaunch starts
+/// fresh.
+pub fn resume_present(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<()> {
+    match harness {
+        Harness::Claude => {
+            let Some(file) = fixed_file(harness, home, cwd, id) else {
+                return Reading::Gone;
+            };
+            match fs::metadata(&file) {
+                Ok(_) => Reading::Live(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
+                Err(_) => Reading::Unreadable {
+                    cause: STORE_UNREADABLE.cause,
+                },
+            }
+        }
+        Harness::Codex => {
+            // The id is the tail of the rollout file name
+            // `rollout-<stamp>-<id>.jsonl`, under `sessions/YYYY/MM/DD/`. The
+            // store's root is read three-valued through the one listing
+            // (decision 120, L2): no root is a cold home, an absent session; a
+            // root that cannot be listed is unreadable, never absent.
+            let root = home.join("sessions");
+            match listed(&root) {
+                Reading::Live(_) => {}
+                Reading::Gone => return Reading::Gone,
+                Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+            }
+            let suffix = format!("-{id}.jsonl");
+            let mut found = Vec::new();
+            if let Err(Unreadable { cause }) = walk(&root, &mut found, 3) {
+                return Reading::Unreadable { cause };
+            }
+            if found.iter().any(|c| {
+                c.path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(&suffix))
+            }) {
+                Reading::Live(())
+            } else {
+                Reading::Gone
+            }
+        }
+        Harness::Copilot => {
+            let dir = home.join("session-state").join(id);
+            match fs::metadata(dir.join("workspace.yaml")) {
+                Ok(_) => Reading::Live(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
+                Err(_) => Reading::Unreadable {
+                    cause: STORE_UNREADABLE.cause,
+                },
+            }
+        }
+        Harness::Pi => Reading::Gone,
+    }
+}
+
 /// Claude Code and Pi name a project directory by its path with every `/`
 /// and `.` replaced by `-`.
 pub fn claude_slug(cwd: &Path) -> String {
@@ -132,12 +202,6 @@ fn first_rows(file: &Path, limit: usize) -> Result<Vec<Value>> {
         }
     }
     Ok(rows)
-}
-
-fn mtime(path: &Path) -> SystemTime {
-    fs::metadata(path)
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
 /// Read the identity a session file carries, or `None` when the file is not
@@ -256,10 +320,14 @@ pub fn identify(harness: Harness, file: &Path, cwd: Option<&Path>) -> Result<Opt
             let (Some(id), Some(row_cwd)) = (id, row_cwd) else {
                 return Ok(None);
             };
+            // A session with no event yet is not a lead; an events file
+            // that cannot be read is no evidence of either (decision 95).
             let events = file.with_file_name("events.jsonl");
-            let has_events = fs::metadata(&events).map(|m| m.len() > 0).unwrap_or(false);
-            if !has_events {
-                return Ok(None);
+            match fs::metadata(&events) {
+                Ok(meta) if meta.len() > 0 => {}
+                Ok(_) => return Ok(None),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(Error::io("stat", &events, e)),
             }
             if cwd.is_some_and(|c| c != row_cwd) {
                 return Ok(None);
@@ -334,136 +402,242 @@ fn is_user_turn(harness: Harness, row: &Value) -> bool {
     }
 }
 
-fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    match harness {
-        Harness::Claude => {
-            let dir = home.join("projects").join(claude_slug(cwd));
-            if let Ok(entries) = fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|e| e == "jsonl") && path.is_file() {
-                        files.push(path);
-                    }
-                }
-            }
+/// A session file a store lists for a cwd, with the modification time read
+/// beside it, so the floor a launch binds above costs no second read.
+struct Candidate {
+    path: PathBuf,
+    modified: SystemTime,
+}
+
+const STORE_UNREADABLE: Unreadable = Unreadable {
+    cause: "session-store-unreadable",
+};
+const FILE_UNREADABLE: Unreadable = Unreadable {
+    cause: "session-file-unreadable",
+};
+const MTIME_UNREADABLE: Unreadable = Unreadable {
+    cause: "session-mtime-unreadable",
+};
+
+/// The entries of `dir`, every one read: a listing or an entry that fails
+/// is `Unreadable`, since a candidate dropped is a session that may be
+/// bound to its neighbour (decision 95). `Gone` is a directory that does
+/// not exist.
+fn listed(dir: &Path) -> Reading<Vec<PathBuf>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: STORE_UNREADABLE.cause,
+            };
         }
-        Harness::Codex => {
-            let root = home.join("sessions");
-            walk(&root, &mut files, 4)?;
-            files.retain(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
-            });
-        }
-        Harness::Pi => {
-            let dir = home.join("sessions").join(pi_slug(cwd));
-            if let Ok(entries) = fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|e| e == "jsonl") && path.is_file() {
-                        files.push(path);
-                    }
-                }
-            }
-        }
-        Harness::Copilot => {
-            let root = home.join("session-state");
-            if let Ok(entries) = fs::read_dir(&root) {
-                for entry in entries.flatten() {
-                    let ws = entry.path().join("workspace.yaml");
-                    if ws.is_file() {
-                        files.push(ws);
-                    }
-                }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => paths.push(entry.path()),
+            Err(_) => {
+                return Reading::Unreadable {
+                    cause: STORE_UNREADABLE.cause,
+                };
             }
         }
     }
-    Ok(files)
+    Reading::Live(paths)
 }
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(Error::io("read-dir", dir, e)),
+/// `path` as a candidate where it is a regular file, read once for its
+/// kind and its modification time; `None` for a directory or anything
+/// else that is no session file.
+fn candidate(path: PathBuf) -> std::result::Result<Option<Candidate>, Unreadable> {
+    let meta = fs::metadata(&path).map_err(|_| STORE_UNREADABLE)?;
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    let modified = meta.modified().map_err(|_| MTIME_UNREADABLE)?;
+    Ok(Some(Candidate { path, modified }))
+}
+
+/// Every file under `dir` to `depth` directories down, every listing and
+/// every entry read; the Codex store is `sessions/YYYY/MM/DD/`.
+fn walk(dir: &Path, out: &mut Vec<Candidate>, depth: usize) -> std::result::Result<(), Unreadable> {
+    let paths = match listed(dir) {
+        Reading::Live(paths) => paths,
+        // A directory the listing named and then could not enter is a
+        // store changing under the read, not an empty one.
+        Reading::Gone => return Err(STORE_UNREADABLE),
+        Reading::Unreadable { cause } => return Err(Unreadable { cause }),
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
+    for path in paths {
+        let meta = fs::metadata(&path).map_err(|_| STORE_UNREADABLE)?;
+        if meta.is_dir() {
             if depth > 0 {
                 walk(&path, out, depth - 1)?;
             }
-        } else if path.is_file() {
-            out.push(path);
+        } else if meta.is_file() {
+            let modified = meta.modified().map_err(|_| MTIME_UNREADABLE)?;
+            out.push(Candidate { path, modified });
         }
     }
     Ok(())
 }
 
+/// The session files the harness's store holds for `cwd` under `home`,
+/// every one read: `Gone` where the store's root for that cwd does not
+/// exist (a cold directory, an empty set), `Unreadable` where any listing,
+/// entry or file metadata failed. Nothing is filtered by a failed read.
+fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<Candidate>> {
+    let jsonl_files = |dir: PathBuf| -> Reading<Vec<Candidate>> {
+        let paths = match listed(&dir) {
+            Reading::Live(paths) => paths,
+            Reading::Gone => return Reading::Gone,
+            Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+        };
+        let mut files = Vec::new();
+        for path in paths {
+            if path.extension().is_none_or(|e| e != "jsonl") {
+                continue;
+            }
+            match candidate(path) {
+                Ok(Some(found)) => files.push(found),
+                Ok(None) => {}
+                Err(Unreadable { cause }) => return Reading::Unreadable { cause },
+            }
+        }
+        Reading::Live(files)
+    };
+    match harness {
+        Harness::Claude => jsonl_files(home.join("projects").join(claude_slug(cwd))),
+        Harness::Pi => jsonl_files(home.join("sessions").join(pi_slug(cwd))),
+        Harness::Codex => {
+            let root = home.join("sessions");
+            let mut files = Vec::new();
+            match listed(&root) {
+                Reading::Live(paths) => {
+                    for path in paths {
+                        let meta = match fs::metadata(&path) {
+                            Ok(meta) => meta,
+                            Err(_) => {
+                                return Reading::Unreadable {
+                                    cause: STORE_UNREADABLE.cause,
+                                };
+                            }
+                        };
+                        if meta.is_dir()
+                            && let Err(Unreadable { cause }) = walk(&path, &mut files, 3)
+                        {
+                            return Reading::Unreadable { cause };
+                        }
+                    }
+                }
+                Reading::Gone => return Reading::Gone,
+                Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+            }
+            files.retain(|c| {
+                c.path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
+            });
+            Reading::Live(files)
+        }
+        Harness::Copilot => {
+            let paths = match listed(&home.join("session-state")) {
+                Reading::Live(paths) => paths,
+                Reading::Gone => return Reading::Gone,
+                Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+            };
+            let mut files = Vec::new();
+            for dir in paths {
+                // A session directory with no workspace.yaml is no session;
+                // one whose file cannot be read is unread, not absent.
+                let ws = dir.join("workspace.yaml");
+                match fs::metadata(&ws) {
+                    Ok(meta) if meta.is_file() => match meta.modified() {
+                        Ok(modified) => files.push(Candidate { path: ws, modified }),
+                        Err(_) => {
+                            return Reading::Unreadable {
+                                cause: MTIME_UNREADABLE.cause,
+                            };
+                        }
+                    },
+                    Ok(_) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => {
+                        return Reading::Unreadable {
+                            cause: STORE_UNREADABLE.cause,
+                        };
+                    }
+                }
+            }
+            Reading::Live(files)
+        }
+    }
+}
+
 /// Every lead session the harness recorded for `cwd` under `home`, oldest
 /// or newest alike: the baseline a launch reads before its window opens, so
 /// the session that appears after it can be told from every neighbour that
-/// stood before (decision 65).
-pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Result<Vec<String>> {
+/// stood before (decision 65). `Gone` is a store with no root for the cwd,
+/// an empty baseline read; `Unreadable` is a baseline not read, which binds
+/// nothing by appearance later.
+pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<String>> {
+    let found = match candidates(harness, home, cwd) {
+        Reading::Live(found) => found,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
     let mut ids = Vec::new();
-    for file in candidates(harness, home, cwd)? {
-        if let Some(found) = identify(harness, &file, Some(cwd))? {
-            ids.push(found.id);
+    for candidate in found {
+        match identify(harness, &candidate.path, Some(cwd)) {
+            Ok(Some(lead)) => ids.push(lead.id),
+            Ok(None) => {}
+            Err(_) => {
+                return Reading::Unreadable {
+                    cause: FILE_UNREADABLE.cause,
+                };
+            }
         }
     }
-    Ok(ids)
+    Reading::Live(ids)
 }
 
 /// The lead sessions for `cwd` under `home` that appeared since a launch's
 /// window opened: modified at or after `since` and absent from the
 /// `baseline` read before the window opened. One is the launch's own; two
-/// or more cannot be told apart, and none has appeared yet.
+/// or more cannot be told apart, and none has appeared yet. A set is read
+/// whole or not at all: any candidate that could not be read makes the
+/// reading `Unreadable`, so one readable lead beside an unreadable one binds
+/// nothing (decision 95).
 pub fn new_leads(
     harness: Harness,
     home: &Path,
     cwd: &Path,
     since: SystemTime,
     baseline: &[String],
-) -> Result<Vec<SessionRef>> {
-    let mut found = Vec::new();
-    for file in candidates(harness, home, cwd)? {
-        if mtime(&file) < since {
+) -> Reading<Vec<SessionRef>> {
+    let found = match candidates(harness, home, cwd) {
+        Reading::Live(found) => found,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    let mut appeared = Vec::new();
+    for candidate in found {
+        if candidate.modified < since {
             continue;
         }
-        if let Some(lead) = identify(harness, &file, Some(cwd))?
-            && !baseline.contains(&lead.id)
-        {
-            found.push(lead);
+        match identify(harness, &candidate.path, Some(cwd)) {
+            Ok(Some(lead)) if !baseline.contains(&lead.id) => appeared.push(lead),
+            Ok(_) => {}
+            Err(_) => {
+                return Reading::Unreadable {
+                    cause: FILE_UNREADABLE.cause,
+                };
+            }
         }
     }
-    Ok(found)
-}
-
-/// The newest lead session the harness recorded for `cwd` under `home`.
-/// With `since`, only a session file modified at or after that stamp counts,
-/// so a relaunch never binds to a session an earlier run retired; `None`
-/// where no such session exists.
-pub fn find_lead(
-    harness: Harness,
-    home: &Path,
-    cwd: &Path,
-    since: Option<SystemTime>,
-) -> Result<Option<SessionRef>> {
-    let mut best: Option<(SystemTime, SessionRef)> = None;
-    for file in candidates(harness, home, cwd)? {
-        let at = mtime(&file);
-        if since.is_some_and(|floor| at < floor) {
-            continue;
-        }
-        if let Some(found) = identify(harness, &file, Some(cwd))?
-            && best.as_ref().is_none_or(|(t, _)| at > *t)
-        {
-            best = Some((at, found));
-        }
-    }
-    Ok(best.map(|(_, s)| s))
+    Reading::Live(appeared)
 }
 
 #[cfg(test)]
@@ -523,18 +697,102 @@ mod tests {
         fs::create_dir_all(&s).unwrap();
         fs::write(s.join("workspace.yaml"), "id: S1\ncwd: /w\n").unwrap();
         let home = dir.path();
-        assert!(
-            find_lead(Harness::Copilot, home, Path::new("/w"), None)
-                .unwrap()
-                .is_none()
+        assert_eq!(
+            lead_ids(Harness::Copilot, home, Path::new("/w")),
+            Reading::Live(Vec::new())
         );
         fs::write(s.join("events.jsonl"), "{\"type\":\"x\"}\n").unwrap();
         assert_eq!(
-            find_lead(Harness::Copilot, home, Path::new("/w"), None)
-                .unwrap()
-                .unwrap()
-                .id,
-            "S1"
+            lead_ids(Harness::Copilot, home, Path::new("/w")),
+            Reading::Live(vec!["S1".to_owned()])
+        );
+    }
+
+    /// Decision 108 (8): a read that fails is `Unreadable`, never a candidate
+    /// dropped. A Copilot session directory the reader cannot enter beside a
+    /// readable lead makes the whole reading unreadable, for the baseline
+    /// and for the leads that appeared alike; a Codex day directory the
+    /// reader cannot list does the same; a store with no root for the cwd
+    /// reads `Gone`, an empty set, on every harness.
+    #[test]
+    #[cfg(unix)]
+    fn an_unreadable_candidate_makes_the_whole_reading_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let cwd = Path::new("/w");
+        for harness in Harness::ALL {
+            assert_eq!(lead_ids(harness, home, cwd), Reading::Gone, "{harness:?}");
+            assert_eq!(
+                new_leads(harness, home, cwd, SystemTime::UNIX_EPOCH, &[]),
+                Reading::Gone,
+                "{harness:?}"
+            );
+        }
+        let readable = home.join("session-state").join("S1");
+        fs::create_dir_all(&readable).unwrap();
+        fs::write(readable.join("workspace.yaml"), "id: S1\ncwd: /w\n").unwrap();
+        fs::write(readable.join("events.jsonl"), "{\"type\":\"x\"}\n").unwrap();
+        let dark = home.join("session-state").join("S2");
+        fs::create_dir_all(&dark).unwrap();
+        fs::set_permissions(&dark, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(
+            matches!(
+                fs::read_dir(&dark),
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied
+            ),
+            "the fixture needs a directory this process cannot enter; a root run reads everything"
+        );
+        const UNREADABLE: &str = "session-store-unreadable";
+        assert_eq!(
+            lead_ids(Harness::Copilot, home, cwd),
+            Reading::Unreadable { cause: UNREADABLE }
+        );
+        assert_eq!(
+            new_leads(Harness::Copilot, home, cwd, SystemTime::UNIX_EPOCH, &[]),
+            Reading::Unreadable { cause: UNREADABLE },
+            "one readable lead beside an unreadable directory binds nothing"
+        );
+        fs::set_permissions(&dark, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            lead_ids(Harness::Copilot, home, cwd),
+            Reading::Live(vec!["S1".to_owned()]),
+            "readable again, the one lead reads"
+        );
+        let day = home.join("sessions").join("2026").join("10").join("27");
+        fs::create_dir_all(&day).unwrap();
+        fs::write(
+            day.join("rollout-a-R.jsonl"),
+            r#"{"type":"session_meta","payload":{"id":"R","cwd":"/w","parent_thread_id":null,"source":"cli"}}"#,
+        )
+        .unwrap();
+        let month = home.join("sessions").join("2026").join("09");
+        fs::create_dir_all(&month).unwrap();
+        fs::set_permissions(&month, fs::Permissions::from_mode(0o000)).unwrap();
+        assert_eq!(
+            lead_ids(Harness::Codex, home, cwd),
+            Reading::Unreadable { cause: UNREADABLE }
+        );
+        fs::set_permissions(&month, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            lead_ids(Harness::Codex, home, cwd),
+            Reading::Live(vec!["R".to_owned()])
+        );
+        // A session file that cannot be opened is unread, not a non-lead.
+        let project = home.join("projects").join(claude_slug(cwd));
+        fs::create_dir_all(&project).unwrap();
+        let sealed = project.join("sealed.jsonl");
+        fs::write(
+            &sealed,
+            r#"{"type":"user","sessionId":"sealed","cwd":"/w"}"#,
+        )
+        .unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+        assert_eq!(
+            lead_ids(Harness::Claude, home, cwd),
+            Reading::Unreadable {
+                cause: "session-file-unreadable"
+            }
         );
     }
 
@@ -697,7 +955,9 @@ mod tests {
         };
         let neighbour = day.join("rollout-a-N.jsonl");
         fs::write(&neighbour, meta("N", "/w")).unwrap();
-        let baseline = lead_ids(Harness::Codex, home, Path::new("/w")).unwrap();
+        let Reading::Live(baseline) = lead_ids(Harness::Codex, home, Path::new("/w")) else {
+            panic!("the baseline reads")
+        };
         assert_eq!(baseline, vec!["N".to_owned()]);
         std::thread::sleep(std::time::Duration::from_millis(20));
         let since = SystemTime::now();
@@ -710,29 +970,28 @@ mod tests {
         fs::write(&neighbour, grown).unwrap();
         fs::write(day.join("rollout-b-R.jsonl"), meta("R", "/w")).unwrap();
         fs::write(day.join("rollout-c-O.jsonl"), meta("O", "/other")).unwrap();
-        let found = new_leads(Harness::Codex, home, Path::new("/w"), since, &baseline).unwrap();
-        assert_eq!(
-            found.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
-            vec!["R"]
-        );
-        // With no baseline the neighbour counts too, and nothing tells them
-        // apart.
-        let all = new_leads(Harness::Codex, home, Path::new("/w"), since, &[]).unwrap();
-        assert_eq!(all.len(), 2);
-        // Nothing has appeared when every lead stood in the baseline.
-        let none = new_leads(
+        let leads = |baseline: &[String]| match new_leads(
             Harness::Codex,
             home,
             Path::new("/w"),
             since,
-            &["N".to_owned(), "R".to_owned()],
-        )
-        .unwrap();
-        assert!(none.is_empty());
+            baseline,
+        ) {
+            Reading::Live(found) => found.into_iter().map(|s| s.id).collect::<Vec<_>>(),
+            other => panic!("the leads read: {other:?}"),
+        };
+        assert_eq!(leads(&baseline), vec!["R".to_owned()]);
+        // With no baseline the neighbour counts too, and nothing tells them
+        // apart.
+        assert_eq!(leads(&[]).len(), 2);
+        // Nothing has appeared when every lead stood in the baseline.
+        assert!(leads(&["N".to_owned(), "R".to_owned()]).is_empty());
     }
 
+    /// Every Claude lead for the cwd counts, oldest and newest alike, and a
+    /// subagent's file under `subagents/` never does.
     #[test]
-    fn the_newest_claude_lead_for_the_cwd_wins_and_subagents_are_skipped() {
+    fn claude_leads_are_every_lead_file_and_never_a_subagent_s() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir
             .path()
@@ -743,12 +1002,17 @@ mod tests {
         fs::write(&old, r#"{"type":"user","sessionId":"aaaa","cwd":"/w"}"#).unwrap();
         let sub = project.join("subagents").join("agent-x.jsonl");
         fs::write(&sub, r#"{"type":"user","sessionId":"sub","cwd":"/w"}"#).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
         let new = project.join("bbbb.jsonl");
         fs::write(&new, r#"{"type":"user","sessionId":"bbbb","cwd":"/w"}"#).unwrap();
-        let found = find_lead(Harness::Claude, dir.path(), Path::new("/w"), None)
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, "bbbb");
+        let Reading::Live(mut ids) = lead_ids(Harness::Claude, dir.path(), Path::new("/w")) else {
+            panic!("the leads read")
+        };
+        ids.sort();
+        assert_eq!(ids, vec!["aaaa".to_owned(), "bbbb".to_owned()]);
+        assert!(
+            identify(Harness::Claude, &sub, Some(Path::new("/w")))
+                .unwrap()
+                .is_none()
+        );
     }
 }

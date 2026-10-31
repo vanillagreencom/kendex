@@ -11,14 +11,18 @@
 //! draws lines a marker rule can match, before the harness has started or
 //! after it has gone, and never reads idle whatever it draws.
 
+// Every process reading is matched variant by variant (decision 105).
+#![deny(clippy::wildcard_enum_match_arm)]
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
-use crate::error::Result;
 use crate::harness::Harness;
-use crate::process::{self, Identity};
+use crate::process::{self, Identity, Row};
+use crate::reading::{Reading, Unreadable};
 
+#[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "state")]
 pub enum State {
@@ -48,7 +52,8 @@ pub enum WallKind {
 /// What the process table says about the pane: who holds its terminal.
 /// [`foreground`] reads it from a live pane; the `judge` verb takes one of
 /// the two readings a screen file cannot supply.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "reading", rename_all = "kebab-case")]
 pub enum ProcessReading {
     /// Nothing but shells run under the pane: the harness is gone.
@@ -65,8 +70,27 @@ pub enum ProcessReading {
     /// Another process holds the terminal: not a shell and not the harness,
     /// or the harness under an identity other than the recorded one.
     ForegroundOther { name: String, pid: u32 },
-    /// The table could not be read.
-    Unread,
+    /// The table, the pane's process or the identity it needed could not be
+    /// read; `cause` is the reader's word for what failed (decision 99).
+    Unread { cause: &'static str },
+}
+
+/// The identity reads [`classify`] makes once it has the table: the kernel
+/// in production, planted readings under test.
+trait Identities {
+    fn identity(&self, pid: u32) -> Reading<Identity>;
+    fn still_runs(&self, id: &Identity) -> Reading<Identity>;
+}
+
+struct Kernel;
+
+impl Identities for Kernel {
+    fn identity(&self, pid: u32) -> Reading<Identity> {
+        process::identity(pid)
+    }
+    fn still_runs(&self, id: &Identity) -> Reading<Identity> {
+        process::still_runs(id)
+    }
 }
 
 /// Read who holds the terminal of the pane whose process is `pane_pid`: the
@@ -74,52 +98,92 @@ pub enum ProcessReading {
 /// one of its own processes under the pane is a member, the exec'd harness
 /// itself or a harness a non-interactive shell wrapper waits on; `owns`
 /// names the harness's processes (`Harness::owns_process_of`). With
-/// `recorded`, only that exact identity is the harness; without one, the
+/// `recorded`, only that exact identity is the harness, and no other
+/// process is ever selected in its place (decision 99); without one, the
 /// nearest harness-named member is, and its identity is read for the caller
 /// to record. A group of shells alone is `ShellsOnly` when no harness
-/// process runs under the pane at all, else `ForegroundShell`.
+/// process runs under the pane at all, else `ForegroundShell`. A table, a
+/// pane process or an identity that could not be read is `Unread` with its
+/// cause, never a reading of absence.
 pub fn foreground(
     pane_pid: u32,
     owns: &dyn Fn(&str) -> bool,
     recorded: Option<&Identity>,
-) -> Result<ProcessReading> {
-    let Some(group) = process::foreground_group(pane_pid)? else {
-        return Ok(ProcessReading::Unread);
+) -> ProcessReading {
+    let group = match process::foreground_group(pane_pid) {
+        Reading::Live(Some(group)) => group,
+        Reading::Live(None) => {
+            return ProcessReading::Unread {
+                cause: "no-terminal",
+            };
+        }
+        Reading::Gone => {
+            return ProcessReading::Unread {
+                cause: "pane-process-gone",
+            };
+        }
+        Reading::Unreadable { cause } => return ProcessReading::Unread { cause },
     };
-    let rows = process::table()?;
-    let members: Vec<&process::Row> = rows.iter().filter(|r| r.pgrp == group).collect();
+    let rows = match process::table() {
+        Ok(rows) => rows,
+        Err(Unreadable { cause }) => return ProcessReading::Unread { cause },
+    };
+    classify(&rows, group, pane_pid, owns, recorded, &Kernel)
+}
+
+/// Who holds the pane's terminal, from one table read: the members of
+/// `group`, the harness-named processes under `pane_pid`, and the identity
+/// reads `ids` answers.
+fn classify(
+    rows: &[Row],
+    group: u32,
+    pane_pid: u32,
+    owns: &dyn Fn(&str) -> bool,
+    recorded: Option<&Identity>,
+    ids: &dyn Identities,
+) -> ProcessReading {
+    let members: Vec<&Row> = rows.iter().filter(|r| r.pgrp == group).collect();
     if members.is_empty() {
-        return Ok(ProcessReading::Unread);
+        return ProcessReading::Unread {
+            cause: "foreground-group-empty",
+        };
     }
-    let below = process::below(&rows, pane_pid, owns);
-    let held: Vec<u32> = below
+    let below = process::below(rows, pane_pid, owns);
+    let held: Vec<&Row> = below
         .iter()
-        .map(|(_, pid)| *pid)
-        .filter(|pid| members.iter().any(|m| m.pid == *pid))
+        .filter_map(|(_, pid)| members.iter().copied().find(|m| m.pid == *pid))
         .collect();
-    if let Some(&pid) = held.first() {
-        return Ok(match recorded {
-            Some(recorded) => {
-                if held.contains(&recorded.pid)
-                    && process::identity(recorded.pid)?.as_ref() == Some(recorded)
-                {
-                    ProcessReading::Harness {
-                        identity: recorded.clone(),
-                    }
-                } else {
-                    let name = members
-                        .iter()
-                        .find(|m| m.pid == pid)
-                        .map(|m| m.name.clone())
-                        .unwrap_or_default();
-                    ProcessReading::ForegroundOther { name, pid }
-                }
-            }
-            None => match process::identity(pid)? {
-                Some(identity) => ProcessReading::Harness { identity },
-                None => ProcessReading::Unread,
+    if let Some(recorded) = recorded {
+        // Only the recorded identity is the harness: in the foreground
+        // group, and still the process the record names.
+        if let Some(member) = members.iter().find(|m| m.pid == recorded.pid) {
+            return match ids.still_runs(recorded) {
+                Reading::Live(_) => ProcessReading::Harness {
+                    identity: recorded.clone(),
+                },
+                Reading::Gone => ProcessReading::ForegroundOther {
+                    name: member.name.clone(),
+                    pid: member.pid,
+                },
+                Reading::Unreadable { cause } => ProcessReading::Unread { cause },
+            };
+        }
+        // A harness-named member that is not the recorded process holds the
+        // terminal under another identity: named, never adopted.
+        if let Some(other) = held.first() {
+            return ProcessReading::ForegroundOther {
+                name: other.name.clone(),
+                pid: other.pid,
+            };
+        }
+    } else if let Some(nearest) = held.first() {
+        return match ids.identity(nearest.pid) {
+            Reading::Live(identity) => ProcessReading::Harness { identity },
+            Reading::Gone => ProcessReading::Unread {
+                cause: "harness-exited-mid-read",
             },
-        });
+            Reading::Unreadable { cause } => ProcessReading::Unread { cause },
+        };
     }
     // The group's leader names it; a leader that exited leaves the first
     // member to.
@@ -128,18 +192,18 @@ pub fn foreground(
         .find(|m| m.pid == group)
         .unwrap_or(&members[0]);
     if members.iter().all(|m| process::is_shell(&m.name)) {
-        return Ok(if below.is_empty() {
+        return if below.is_empty() {
             ProcessReading::ShellsOnly
         } else {
             ProcessReading::ForegroundShell {
                 name: leader.name.clone(),
             }
-        });
+        };
     }
-    Ok(ProcessReading::ForegroundOther {
+    ProcessReading::ForegroundOther {
         name: leader.name.clone(),
         pid: leader.pid,
-    })
+    }
 }
 
 static WORKING: LazyLock<Regex> = LazyLock::new(|| {
@@ -255,7 +319,10 @@ pub fn pi_composer_drawn(slice: &str) -> bool {
 /// marker padded with U+00A0, Codex's `› ` line, Copilot's marker line
 /// framed by a rule under it, Pi's rule, prompt and footer. A shell prompt
 /// that happens to start with the marker, `❯ cd … && exec claude …` as the
-/// pane's shell echoes the launch line, matches none of them.
+/// pane's shell echoes the launch line, matches none of them. Each rule
+/// reads a drawn row: the screen arrives row by row (`host::tmux::capture`),
+/// so an echo that fills its last row exactly stays apart from the composer
+/// drawn after it.
 pub fn composer_drawn(slice: &str, harness: Harness) -> bool {
     let lines: Vec<&str> = slice.lines().collect();
     match harness {
@@ -317,7 +384,9 @@ pub fn judge(
                 cause: "foreground-not-harness".to_owned(),
             };
         }
-        ProcessReading::HarnessUp | ProcessReading::Harness { .. } | ProcessReading::Unread => {}
+        ProcessReading::HarnessUp
+        | ProcessReading::Harness { .. }
+        | ProcessReading::Unread { .. } => {}
     }
     let slice = below_last_turn(screen);
     if let Some(banner) = limit_banner(&slice) {
@@ -353,7 +422,7 @@ pub fn judge(
             ProcessReading::HarnessUp | ProcessReading::Harness { .. } => State::Idle,
             // A drawn composer with the process table unread: the second
             // fact idle needs is missing.
-            ProcessReading::Unread
+            ProcessReading::Unread { .. }
             | ProcessReading::ShellsOnly
             | ProcessReading::ForegroundShell { .. }
             | ProcessReading::ForegroundOther { .. } => State::Unjudged {
@@ -363,7 +432,7 @@ pub fn judge(
     }
     State::Unjudged {
         cause: match (process, harness) {
-            (ProcessReading::Unread, _) => "process-unread".to_owned(),
+            (ProcessReading::Unread { .. }, _) => "process-unread".to_owned(),
             (_, Harness::Pi) => "composer-undrawn".to_owned(),
             (_, Harness::Claude | Harness::Codex | Harness::Copilot) => "no-marker".to_owned(),
         },
@@ -495,7 +564,14 @@ mod tests {
             );
         }
         assert_eq!(
-            judge(screen, Harness::Claude, &ProcessReading::Unread, None),
+            judge(
+                screen,
+                Harness::Claude,
+                &ProcessReading::Unread {
+                    cause: "stat-unreadable"
+                },
+                None
+            ),
             State::Unjudged {
                 cause: "process-unread".to_owned()
             }
@@ -507,6 +583,128 @@ mod tests {
             },
         };
         assert_eq!(judge(screen, Harness::Claude, &held, None), State::Idle);
+    }
+
+    /// Planted identity readings for [`classify`]: each pid's reading, and
+    /// `still_runs` answered from the same table by pid and start.
+    struct Planted(Vec<(u32, Reading<Identity>)>);
+
+    impl Identities for Planted {
+        fn identity(&self, pid: u32) -> Reading<Identity> {
+            self.0
+                .iter()
+                .find(|(p, _)| *p == pid)
+                .map(|(_, r)| r.clone())
+                .unwrap_or(Reading::Gone)
+        }
+        fn still_runs(&self, id: &Identity) -> Reading<Identity> {
+            match self.identity(id.pid) {
+                Reading::Live(now) if now == *id => Reading::Live(now),
+                Reading::Live(_) | Reading::Gone => Reading::Gone,
+                Reading::Unreadable { cause } => Reading::Unreadable { cause },
+            }
+        }
+    }
+
+    fn row(pid: u32, ppid: u32, pgrp: u32, name: &str) -> Row {
+        Row {
+            pid,
+            ppid,
+            pgrp,
+            name: name.to_owned(),
+        }
+    }
+
+    fn id(pid: u32, start: &str) -> Identity {
+        Identity {
+            pid,
+            start: start.to_owned(),
+        }
+    }
+
+    /// Decision 99: with a recorded identity, the judge confirms that
+    /// identity's foreground state and selects no other process. Another
+    /// harness-named process holding the terminal is named as other, a
+    /// recorded pid now carrying another process is other, and an identity
+    /// that cannot be read is unread with its cause. Without a record, the
+    /// nearest harness-named member is read and its identity returned.
+    #[test]
+    fn a_recorded_identity_is_confirmed_in_the_foreground_and_never_replaced() {
+        // The pane shell 20 waits on harness 30, whose group 30 holds the
+        // terminal; 31 is a second harness-named process in that group.
+        let rows = [
+            row(20, 10, 20, "bash"),
+            row(30, 20, 30, "claude"),
+            row(31, 30, 30, "claude"),
+        ];
+        let owns = |name: &str| name == "claude";
+        let live = Planted(vec![
+            (30, Reading::Live(id(30, "ticks:3"))),
+            (31, Reading::Live(id(31, "ticks:4"))),
+        ]);
+        let recorded = id(30, "ticks:3");
+        assert_eq!(
+            classify(&rows, 30, 20, &owns, Some(&recorded), &live),
+            ProcessReading::Harness {
+                identity: recorded.clone()
+            }
+        );
+        // The record names 99, which is not in the group: the harness-named
+        // member 30 is other, never adopted as the harness.
+        assert_eq!(
+            classify(&rows, 30, 20, &owns, Some(&id(99, "ticks:9")), &live),
+            ProcessReading::ForegroundOther {
+                name: "claude".to_owned(),
+                pid: 30
+            }
+        );
+        // The recorded pid is in the group under another start: other.
+        assert_eq!(
+            classify(&rows, 30, 20, &owns, Some(&id(30, "ticks:0")), &live),
+            ProcessReading::ForegroundOther {
+                name: "claude".to_owned(),
+                pid: 30
+            }
+        );
+        // The recorded identity cannot be read: unread with the cause.
+        let unread = Planted(vec![(
+            30,
+            Reading::Unreadable {
+                cause: "stat-unreadable",
+            },
+        )]);
+        assert_eq!(
+            classify(&rows, 30, 20, &owns, Some(&recorded), &unread),
+            ProcessReading::Unread {
+                cause: "stat-unreadable"
+            }
+        );
+        // No record: the nearest harness-named member is the harness.
+        assert_eq!(
+            classify(&rows, 30, 20, &owns, None, &live),
+            ProcessReading::Harness {
+                identity: id(30, "ticks:3")
+            }
+        );
+        assert_eq!(
+            classify(&rows, 30, 20, &owns, None, &unread),
+            ProcessReading::Unread {
+                cause: "stat-unreadable"
+            }
+        );
+        // A shell holds the terminal: with the harness below, a foreground
+        // shell; with none, shells only.
+        let shell_rows = [row(20, 10, 20, "bash"), row(30, 20, 30, "claude")];
+        assert_eq!(
+            classify(&shell_rows, 20, 20, &owns, Some(&recorded), &live),
+            ProcessReading::ForegroundShell {
+                name: "bash".to_owned()
+            }
+        );
+        assert_eq!(
+            classify(&shell_rows[..1], 20, 20, &owns, Some(&recorded), &live),
+            ProcessReading::ShellsOnly
+        );
     }
 
     /// The pane's shell echoing the launch line starts with the marker and

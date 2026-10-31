@@ -1,0 +1,21 @@
+#!/bin/bash
+# The mailbox CLI as the orch-runtime evidence tests see it: `pending` answers
+# with the ask rows $LANE_MAIL_ASKS holds (one JSON row per line), none when
+# it is unset, so a close reads a lane with or without an unanswered ask
+# without a mailbox; `notice` takes an owner notice and sends it nowhere, the
+# file's first line appended to the log beside the call. Every call is
+# appended to $LANE_MAIL_LOG when set.
+[ -z "${LANE_MAIL_LOG:-}" ] || printf '%s\n' "$*" >> "$LANE_MAIL_LOG"
+case "${1:-}" in
+  pending)
+    [ -z "${LANE_MAIL_ASKS:-}" ] || printf '%s\n' "$LANE_MAIL_ASKS" ;;
+  notice)
+    file=""
+    while [ $# -gt 0 ]; do
+      case "$1" in --file) file="${2:-}"; shift ;; esac
+      shift
+    done
+    [ -z "${LANE_MAIL_LOG:-}" ] || [ -z "$file" ] || { printf 'notice-text '; sed -n 1p "$file"; } >> "$LANE_MAIL_LOG" ;;
+  *) echo "lane-mail-quiet: verb=$1" >&2; exit 2 ;;
+esac
+exit "${LANE_MAIL_STATUS:-0}"

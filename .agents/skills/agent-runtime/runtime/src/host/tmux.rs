@@ -4,6 +4,12 @@
 //! later server, so the identity of a pane is the triple (socket, server
 //! pid, server start) plus the pane id. Every read and write here first
 //! confirms the server it reaches is the one the identity names.
+//!
+//! A pane known by id is addressed by that exact id, `-t %N`, never found
+//! in a server-wide listing filtered afterwards, and a pane read answers
+//! with a [`Reading`] (decision 99): live with its fields, gone when the
+//! server has no such pane, unreadable when tmux did not answer. A failed
+//! tmux call is never an absence.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -13,8 +19,34 @@ use serde::{Deserialize, Serialize};
 
 use super::{run_with, stderr_text, stdout_text};
 use crate::error::{Error, Result};
+use crate::reading::Reading;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The fields of one pane read by its exact id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PaneFields {
+    pub pane: Pane,
+    /// The pane's own process, the shell tmux started or what it exec'd.
+    pub pid: u32,
+    /// tmux's `pane_current_command`, the foreground group's `argv[0]`
+    /// basename; informational, since it carries no pid.
+    pub command: String,
+}
+
+/// What an exact close did. A caller that drops it has not learned whether
+/// the target stands (decision 105).
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "close", rename_all = "kebab-case")]
+pub enum Close {
+    /// The target stood and was killed.
+    Closed,
+    /// The server has no such target.
+    AlreadyGone,
+    /// tmux did not answer, so the target may still stand.
+    Unreadable { cause: String },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Server {
@@ -172,18 +204,17 @@ pub fn session_present(server: &Server, session: &str) -> Result<bool> {
     })
 }
 
-/// Open a new window in `session` running `line` through the default
-/// shell, detached, and return the pane. The window is named `name`.
-pub fn new_window(
-    server: &Server,
-    session: &str,
-    name: &str,
-    cwd: &Path,
-    line: &str,
-) -> Result<Pane> {
+/// Open a new window in `session` at the default shell, detached, named
+/// `name` in `cwd`, and return the pane. The pane id comes from the
+/// creating call's own `-P -F` answer, no second command, so the caller
+/// holds the one identity of the window it made before it types anything
+/// into it with [`send_line`]: a fresh window sits at its shell until then.
+/// The session name is read with the id, so a session whose name carries a
+/// blank is still read whole: the format puts it last.
+pub fn new_window(server: &Server, session: &str, name: &str, cwd: &Path) -> Result<Pane> {
     confirm(server)?;
-    let socket = server.socket.display().to_string();
     let target = format!("={session}:");
+    let cwd_display = cwd.display().to_string();
     let out = tmux(
         Some(&server.socket),
         "new-window",
@@ -198,10 +229,10 @@ pub fn new_window(
             "-n",
             name,
             "-c",
-            &cwd.display().to_string(),
+            &cwd_display,
         ],
     )?;
-    let mut parts = out.split_whitespace();
+    let mut parts = out.splitn(3, ' ');
     let (Some(id), Some(window), Some(session_name)) = (parts.next(), parts.next(), parts.next())
     else {
         return Err(Error::External {
@@ -210,97 +241,152 @@ pub fn new_window(
             cause: format!("unreadable new-window answer {out:?}"),
         });
     };
-    let pane = Pane {
+    Ok(Pane {
         server: server.clone(),
         id: id.to_owned(),
         window: window.to_owned(),
         session: session_name.to_owned(),
-    };
-    // Type the line into the fresh shell. A fresh window sits at its shell
-    // before anything else runs, so no process check is owed here.
-    let _ = socket;
-    send_line(&pane, line)?;
-    Ok(pane)
+    })
 }
 
-/// The pane `id` names on the server, with its window and session, or
-/// `None` when the server lists no such pane. The server is confirmed
-/// first, since a pane id repeats on every server.
-pub fn pane_by_id(server: &Server, id: &str) -> Result<Option<Pane>> {
-    confirm(server)?;
-    let list = tmux(
-        Some(&server.socket),
-        "list-panes",
-        &[
-            "list-panes",
-            "-a",
-            "-F",
-            "#{pane_id} #{window_id} #{session_name}",
-        ],
-    )?;
-    for line in list.lines() {
-        let mut parts = line.split_whitespace();
-        let (Some(pane), Some(window), Some(session)) = (parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        if pane == id {
-            return Ok(Some(Pane {
-                server: server.clone(),
-                id: pane.to_owned(),
-                window: window.to_owned(),
-                session: session.to_owned(),
-            }));
-        }
+/// tmux's answer to a command on a missing target, the one failure that is
+/// an absence.
+fn names_missing_target(stderr: &str) -> bool {
+    stderr.starts_with("can't find pane") || stderr.starts_with("can't find window")
+}
+
+/// The pane `id` names on the server, read by that exact id: the pane with
+/// its window, session, process and foreground command. The server is
+/// confirmed first, since a pane id repeats on every server; a server that
+/// does not answer, or is not the recorded one, leaves the pane unreadable.
+/// tmux answers `display-message -t` on a missing pane with an empty
+/// expansion, or on older servers with an error naming the pane: both are
+/// `Gone`. Any other failure is `Unreadable`.
+pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
+    if let Err(e) = confirm(server) {
+        return Reading::Unreadable { cause: e.key() };
     }
-    Ok(None)
-}
-
-/// Whether the pane still exists on its server, confirmed first.
-pub fn pane_present(pane: &Pane) -> Result<bool> {
-    confirm(&pane.server)?;
-    let list = tmux(
-        Some(&pane.server.socket),
-        "list-panes",
-        &["list-panes", "-a", "-F", "#{pane_id}"],
-    )?;
-    Ok(list.lines().any(|l| l == pane.id))
-}
-
-/// The pane's foreground command and its pid.
-pub fn pane_process(pane: &Pane) -> Result<(String, u32)> {
-    confirm(&pane.server)?;
-    let out = tmux(
-        Some(&pane.server.socket),
-        "pane-process",
+    let socket = server.socket.display().to_string();
+    let output = match run_with(
+        "tmux",
+        "pane-fields",
         &[
+            "-S",
+            &socket,
             "display-message",
             "-p",
             "-t",
-            &pane.id,
-            "#{pane_pid} #{pane_current_command}",
+            id,
+            "#{pane_id}\t#{pane_pid}\t#{window_id}\t#{pane_current_command}\t#{session_name}",
         ],
-    )?;
-    let mut parts = out.split_whitespace();
-    let pid = parts
-        .next()
-        .and_then(|p| p.parse().ok())
-        .ok_or_else(|| Error::External {
-            program: "tmux",
-            operation: "pane-process",
-            cause: format!("unreadable pane pid in {out:?}"),
-        })?;
-    let command = parts.next().unwrap_or_default().to_owned();
-    Ok((command, pid))
+        &[],
+        None,
+        TIMEOUT,
+    ) {
+        Ok(output) => output,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "tmux-unavailable",
+            };
+        }
+    };
+    if !output.status.success() {
+        return if names_missing_target(&stderr_text(&output)) {
+            Reading::Gone
+        } else {
+            Reading::Unreadable {
+                cause: "tmux-failed",
+            }
+        };
+    }
+    let text = stdout_text(&output);
+    let mut parts = text.splitn(5, '\t');
+    let (Some(pane), Some(pid), Some(window), Some(command), Some(session)) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return Reading::Unreadable {
+            cause: "pane-fields-unparsed",
+        };
+    };
+    if pane.is_empty() {
+        return Reading::Gone;
+    }
+    let Ok(pid) = pid.parse() else {
+        return Reading::Unreadable {
+            cause: "pane-fields-unparsed",
+        };
+    };
+    if pane != id {
+        return Reading::Unreadable {
+            cause: "pane-id-mismatch",
+        };
+    }
+    Reading::Live(PaneFields {
+        pane: Pane {
+            server: server.clone(),
+            id: pane.to_owned(),
+            window: window.to_owned(),
+            session: session.to_owned(),
+        },
+        pid,
+        command: command.to_owned(),
+    })
 }
 
-/// The pane's visible screen with wrapped lines joined.
+/// Run one `kill-*` command against an exact target and read what it did.
+fn close(server: &Server, operation: &'static str, target: &str) -> Close {
+    if let Err(e) = confirm(server) {
+        return Close::Unreadable {
+            cause: e.key().to_owned(),
+        };
+    }
+    let socket = server.socket.display().to_string();
+    match run_with(
+        "tmux",
+        operation,
+        &["-S", &socket, operation, "-t", target],
+        &[],
+        None,
+        TIMEOUT,
+    ) {
+        Ok(output) if output.status.success() => Close::Closed,
+        Ok(output) if names_missing_target(&stderr_text(&output)) => Close::AlreadyGone,
+        Ok(output) => Close::Unreadable {
+            cause: stderr_text(&output),
+        },
+        Err(e) => Close::Unreadable {
+            cause: e.to_string(),
+        },
+    }
+}
+
+/// Close exactly the pane, by its id; a sibling pane in the same window is
+/// untouched.
+pub fn kill_pane(pane: &Pane) -> Close {
+    close(&pane.server, "kill-pane", &pane.id)
+}
+
+/// The pane's visible screen, one line per drawn row, each row's trailing
+/// blanks kept (`-N`). The judge's rules are over drawn rows anchored at the
+/// row start, and every consumer (`inspect`, orch's pane read) is the judge
+/// or a tail for the record, so no reader takes `-J`. Joining wrapped rows
+/// would serve only the pane shell's echo of the typed launch line, and
+/// when that echo fills its last row exactly, tmux flags the next row, the
+/// harness's composer, as its continuation: `-J` appends the composer to
+/// the echo and the row rule cannot see it. A trailing blank can be the
+/// drawing itself: Codex's composer over an empty or blank draft is `› `
+/// and nothing after, and a bare `-p` trims it to `›`, which its rule does
+/// not take.
 pub fn capture(pane: &Pane) -> Result<String> {
     confirm(&pane.server)?;
     tmux(
         Some(&pane.server.socket),
         "capture-pane",
-        &["capture-pane", "-p", "-J", "-t", &pane.id],
+        &["capture-pane", "-p", "-N", "-t", &pane.id],
     )
 }
 
@@ -384,27 +470,23 @@ pub fn send_key(pane: &Pane, key: &str) -> Result<()> {
     Ok(())
 }
 
-/// Close the pane's window. A pane already gone is not a failure.
-pub fn kill_window(pane: &Pane) -> Result<bool> {
-    confirm(&pane.server)?;
-    if !pane_present(pane)? {
-        return Ok(false);
-    }
-    tmux(
-        Some(&pane.server.socket),
-        "kill-window",
-        &["kill-window", "-t", &pane.window],
-    )?;
-    Ok(true)
+/// Close the pane's whole window, for a caller that owns the window: every
+/// pane in it goes.
+pub fn kill_window(pane: &Pane) -> Close {
+    close(&pane.server, "kill-window", &pane.window)
 }
 
 /// Start a private tmux server on `socket` with one detached session, for
-/// fixtures and probes that must not touch the person's own server.
+/// fixtures and probes that must not touch the person's own server. It
+/// reads no configuration file, so no hook or option of the person's
+/// reaches it.
 pub fn start_private_server(socket: &Path, session: &str, cwd: &Path) -> Result<Server> {
     tmux(
         Some(socket),
         "new-session",
         &[
+            "-f",
+            "/dev/null",
             "new-session",
             "-d",
             "-s",
@@ -425,4 +507,85 @@ pub fn kill_server(server: &Server) -> Result<()> {
     confirm(server)?;
     tmux(Some(&server.socket), "kill-server", &["kill-server"])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A private server on a socket under `dir`, ended on drop whatever the
+    /// test did; its socket is its own, never the person's.
+    struct Private(Server);
+
+    impl Private {
+        fn start(dir: &Path) -> Private {
+            let server = start_private_server(&dir.join("t.sock"), "t", dir).expect("a server");
+            Private(server)
+        }
+    }
+
+    impl Drop for Private {
+        fn drop(&mut self) {
+            let _ = kill_server(&self.0);
+        }
+    }
+
+    /// Decision 99 on the host: a pane the live server does not have reads
+    /// gone, by its exact id; once the server is gone, the same read is
+    /// unreadable with the cause, never an absence.
+    #[test]
+    fn a_missing_pane_reads_gone_and_a_dead_server_reads_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(dir.path());
+        let server = private.0.clone();
+        let Reading::Live(first) = pane_fields(&server, "%0") else {
+            panic!("the session's pane is live");
+        };
+        assert_eq!(first.pane.id, "%0");
+        assert_eq!(first.pane.session, "t");
+        assert!(first.pid > 0);
+        assert_eq!(pane_fields(&server, "%999"), Reading::Gone);
+        kill_server(&server).unwrap();
+        assert_eq!(
+            pane_fields(&server, "%0"),
+            Reading::Unreadable {
+                cause: "server-gone"
+            }
+        );
+        assert_eq!(
+            kill_pane(&first.pane),
+            Close::Unreadable {
+                cause: "server-gone".to_owned()
+            }
+        );
+    }
+
+    /// An exact close takes the named pane alone: its sibling in the same
+    /// window stands, and a second close of the gone pane reads so.
+    #[test]
+    fn kill_pane_closes_exactly_the_named_pane_and_leaves_its_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(dir.path());
+        let server = &private.0;
+        let split = tmux(
+            Some(&server.socket),
+            "split-window",
+            &["split-window", "-d", "-t", "%0", "-P", "-F", "#{pane_id}"],
+        )
+        .expect("a second pane");
+        let Reading::Live(sibling) = pane_fields(server, &split) else {
+            panic!("the split pane is live");
+        };
+        let Reading::Live(first) = pane_fields(server, "%0") else {
+            panic!("the first pane is live");
+        };
+        assert_eq!(sibling.pane.window, first.pane.window, "one window");
+        assert_eq!(kill_pane(&sibling.pane), Close::Closed);
+        assert_eq!(pane_fields(server, &split), Reading::Gone);
+        assert!(
+            matches!(pane_fields(server, "%0"), Reading::Live(_)),
+            "the sibling stands"
+        );
+        assert_eq!(kill_pane(&sibling.pane), Close::AlreadyGone);
+    }
 }

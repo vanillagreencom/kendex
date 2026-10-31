@@ -14,6 +14,7 @@ pub mod launch;
 pub mod observe;
 pub mod process;
 pub mod protocol;
+pub mod reading;
 pub mod record;
 pub mod session;
 

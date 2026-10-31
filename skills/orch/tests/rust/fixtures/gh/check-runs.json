@@ -1,0 +1,41 @@
+{
+  "total_count": 2,
+  "check_runs": [
+    {
+      "id": 4,
+      "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+      "node_id": "MDg6Q2hlY2tSdW40",
+      "external_id": "",
+      "url": "https://api.github.com/repos/owner/repo/check-runs/4",
+      "html_url": "https://github.com/owner/repo/actions/runs/700/job/4",
+      "details_url": "https://github.com/owner/repo/actions/runs/700/job/4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-01-29T15:10:00Z",
+      "completed_at": "2026-01-29T15:15:00Z",
+      "output": { "title": "Build", "summary": "ok", "text": null, "annotations_count": 0, "annotations_url": "" },
+      "name": "build",
+      "check_suite": { "id": 5 },
+      "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+      "pull_requests": []
+    },
+    {
+      "id": 6,
+      "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+      "node_id": "MDg6Q2hlY2tSdW42",
+      "external_id": "",
+      "url": "https://api.github.com/repos/owner/repo/check-runs/6",
+      "html_url": "https://github.com/owner/repo/actions/runs/700/job/6",
+      "details_url": "https://github.com/owner/repo/actions/runs/700/job/6",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-01-29T15:10:00Z",
+      "completed_at": "2026-01-29T15:16:00Z",
+      "output": { "title": "Test", "summary": "ok", "text": null, "annotations_count": 0, "annotations_url": "" },
+      "name": "test",
+      "check_suite": { "id": 5 },
+      "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+      "pull_requests": []
+    }
+  ]
+}

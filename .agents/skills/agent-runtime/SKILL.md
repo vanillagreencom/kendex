@@ -26,6 +26,8 @@ tags: [automation]
 <!-- kendex:shared-instructions:start -->
 Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first.
 <!-- kendex:shared-instructions:end -->
+
+Before changing this skill's scripts, runtime or tests, read DEVELOPMENT.md.
 <!-- kendex:project-instructions:end -->
 
 # Agent Runtime
@@ -37,7 +39,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 This package owns reusable launch, account-selection mechanics under caller policy, session identity, delivery, handoff and stop. It holds no GitHub policy, issue classification, report formatting, personal tasks or fleet scheduling: a caller supplies its intent and policy and consumes typed results.
 
-- One execution contract. A session is started, inspected, handed work and stopped through the CLI verbs `launch`, `inspect`, `deliver` and `stop`, or through the same operations in the `agent_runtime` library crate; `session`, `probe`, `judge` and `process` are the reads behind them. A caller writes no harness flag, process classifier or stop sequence of its own.
+- One execution contract. A session is started, inspected, handed work and stopped through the CLI verbs `launch`, `inspect`, `deliver` and `stop`; `session`, `probe`, `judge` and `process` are the reads behind them. A caller writes no harness flag, process classifier or stop sequence of its own. The library holds the primitives the CLI verbs compose.
 - Every verb prints one JSON reply on stdout: `protocol` is `agent-runtime-v1`, `ok` is true with a `result` or false with a `refusal` of `key`, `fields` and `text`, never both. A refusal also prints one line `agent-runtime: <key> field=value ...` on stderr and exits 1. Route on the key, never on the text, and refuse a reply whose protocol you do not know.
 - An effect reports an `Outcome`: `not-started`, `confirmed`, `failed` or `unconfirmed`. Reconcile an `unconfirmed` effect before asking for the same effect again.
 - `deliver` refuses unless the judge reads the pane `idle`; the refusal names the state it read. `--force` is for a probe that knows better, never for a workflow.

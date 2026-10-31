@@ -1,0 +1,35 @@
+#!/bin/bash
+# A stub harness for the orch-runtime evidence rows, named `claude` so the
+# kernel records the harness's own process name for it: stub-confirm's
+# composer and session rows, with the hangup tmux sends on a pane or window
+# kill ignored, so the process survives its pane's close as a harness whose
+# pane was killed under it does (R-U4g2 C1, the receipted survivor). It
+# launches no model and reaches no account; a row that started it ends it by
+# pid.
+trap '' HUP
+printf '\xe2\x9d\xaf\xc2\xa0\n'
+printf '  ? for shortcuts\n'
+session="stub-$$"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) session="${2:-$session}"; shift ;;
+  esac
+  shift
+done
+rows=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  slug="${PWD//[\/.]/-}"
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
+  rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
+  printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+fi
+# The pane's close ends this process's stdin; a survivor keeps running on
+# its own, as the hung-up harness does, until it is ended by pid.
+while IFS= read -r line; do
+  [ -n "$rows" ] || continue
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s"}\n' \
+    "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" >> "$rows"
+done
+exec sleep 600

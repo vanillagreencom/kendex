@@ -1,0 +1,139 @@
+# The effect boundary at the compiler (decision 129): every agent-runtime
+# acting and reading primitive, every raw command, record write, lock and
+# wait, every std clock read and wait, every std file writer, the recorded-
+# path readers that collapse an unreadable path into a word, and the
+# store's own entry points are disallowed methods in this crate, so `cargo
+# clippy --all-targets -- -D warnings` refuses an ordinary call of one
+# outside `effects::operation` (the one owner of the primitives) and the
+# functions, trait-impl methods and test modules that carry a reviewed
+# `#[allow(clippy::disallowed_methods, reason = "..")]`; each allowance
+# carries its reason at its attribute, and those attributes are the
+# inventory. The list
+# guards against a developer's accidental call past the operation handle.
+# Code deliberately written to defeat it is a code-review matter, never the
+# list's: an allowance is reviewed with the change that adds it, and a new
+# acting function in agent-runtime joins this list in the same change.
+disallowed-methods = [
+    # tmux: a window, a pane, a server
+    { path = "agent_runtime::host::tmux::kill_pane", reason = "an effect closes a pane only through the operation handle's token" },
+    { path = "agent_runtime::host::tmux::kill_window", reason = "an effect closes a window only through the operation handle's token" },
+    { path = "agent_runtime::host::tmux::kill_server", reason = "no effect ends a tmux server" },
+    { path = "agent_runtime::host::tmux::new_window", reason = "an effect opens a window only through the operation handle, its acquisition written first" },
+    { path = "agent_runtime::host::tmux::send_line", reason = "an effect types into a pane only through the operation handle's token" },
+    { path = "agent_runtime::host::tmux::send_key", reason = "an effect sends a key only through the operation handle's token" },
+    { path = "agent_runtime::host::tmux::pane_fields", reason = "a pane is read only through the operation handle, which discharges by its own read" },
+    { path = "agent_runtime::host::tmux::capture", reason = "a pane's screen is read only through the operation handle" },
+    { path = "agent_runtime::host::tmux::server", reason = "a tmux server is reached only through the operation handle or the occupancy host" },
+    { path = "agent_runtime::host::tmux::session_present", reason = "a tmux session is read only through the operation handle" },
+    { path = "agent_runtime::host::tmux::start_private_server", reason = "no effect starts a tmux server; the fixtures of the process tests do" },
+    # processes
+    { path = "agent_runtime::process::identity", reason = "a process identity is read only through the operation handle, which records it before any wait" },
+    { path = "agent_runtime::process::still_runs", reason = "a process is read only through the operation handle or the occupancy host" },
+    { path = "agent_runtime::process::foreground_group", reason = "a pane's foreground group is read only through the one judge inside the operation handle" },
+    { path = "agent_runtime::process::table", reason = "the process table is read only inside the operation handle" },
+    { path = "agent_runtime::process::stop_tree", reason = "a process is signalled only through the operation handle's token, `signalled` written first" },
+    { path = "agent_runtime::process::stop_identities", reason = "a process is signalled only through the operation handle's token, `signalled` written first" },
+    { path = "agent_runtime::observe::foreground", reason = "who holds a pane is judged only inside the operation handle or the occupancy host" },
+    # the runner, the raw command and the harness probe
+    { path = "agent_runtime::host::run", reason = "a program is run only by the operation handle or a named non-effect module for its own work" },
+    { path = "agent_runtime::harness::probe", reason = "the harness binary is run only by the operation handle" },
+    { path = "std::process::Command::new", reason = "a program is run only through agent-runtime's one runner, from the operation handle or a named non-effect function" },
+    { path = "std::process::Command::spawn", reason = "a program is run only through agent-runtime's one runner" },
+    { path = "std::process::Command::status", reason = "a program is run only through agent-runtime's one runner" },
+    { path = "std::process::Command::output", reason = "a program is run only through agent-runtime's one runner" },
+    { path = "std::process::Child::wait", reason = "a child is waited on only inside agent-runtime's one runner" },
+    { path = "std::process::Child::try_wait", reason = "a child is read only inside agent-runtime's one runner" },
+    # the native session stores
+    { path = "agent_runtime::session::resume_present", reason = "a session store is read only through the operation handle" },
+    { path = "agent_runtime::session::lead_ids", reason = "a session store is read only through the operation handle" },
+    { path = "agent_runtime::session::new_leads", reason = "a session store is read only through the operation handle" },
+    { path = "agent_runtime::session::user_turns", reason = "a session file is read only through the operation handle" },
+    { path = "agent_runtime::session::identify", reason = "a session file is read only through the operation handle" },
+    { path = "agent_runtime::session::fixed_file", reason = "a session file is named only through the operation handle" },
+    { path = "agent_runtime::session::default_home", reason = "a harness home is resolved only through the operation handle" },
+    { path = "agent_runtime::session::fresh_session_id", reason = "a session id is minted only through the operation handle" },
+    # the job launcher, its record and files, and the owner notice
+    { path = "orch_runtime::effects::operation::job::read_handle", reason = "the launcher's record is read only by the operation handle" },
+    { path = "orch_runtime::effects::operation::job::unit_end", reason = "a unit is read only by the operation handle" },
+    { path = "orch_runtime::effects::operation::job::group_end", reason = "a job group is read only by the operation handle" },
+    { path = "orch_runtime::effects::operation::job::write_request", reason = "the job's request file is written only by the operation handle" },
+    { path = "orch_runtime::effects::operation::job::remove_files", reason = "the job's files are removed only by the recording boundary" },
+    { path = "orch_runtime::effects::operation::job::send_owner_notice", reason = "the owner notice is sent only by the recording boundary, from the recorded owed notice" },
+    { path = "orch_runtime::effects::operation::job::mark_notice", reason = "an owed notice's mark is written only by the recording boundary" },
+    { path = "orch_runtime::effects::operation::job::pgid_end", reason = "a job group is read only by the operation handle" },
+    # records and the store: every write goes through `ops::apply`, every
+    # read of a state file through the store's reader
+    { path = "agent_runtime::record::read_value", reason = "a record file is read only by the state module's load" },
+    { path = "agent_runtime::record::read", reason = "a record file is read only by the state module's load" },
+    { path = "agent_runtime::record::flock_on_path", reason = "the lock tool is looked up only where the command resolves its locking" },
+    { path = "agent_runtime::record::write", reason = "a record is written only by the state module's store" },
+    { path = "agent_runtime::record::replace_atomically", reason = "a record is written only by the state module's store" },
+    { path = "agent_runtime::record::lock", reason = "a record's lock is taken only by the state module's store" },
+    { path = "agent_runtime::record::mutex_lock", reason = "the legacy mutex is taken only by the state module's store" },
+    { path = "agent_runtime::record::Guard::with", reason = "a record's lock is held only by the state module's store" },
+    { path = "agent_runtime::record::Guard::with_wait", reason = "a record's lock is held only by the state module's store" },
+    { path = "agent_runtime::record::Wait::start", reason = "the lock wait's clock is read only by the state module's store" },
+    { path = "orch_runtime::state::load", reason = "a state file is read only by the transitions' one read, the operation module's one read, the inspection and the verification" },
+    { path = "orch_runtime::state::store", reason = "the state file is written only through `ops::apply`" },
+    { path = "orch_runtime::state::init", reason = "a state file is created only by the `state init` command" },
+    { path = "orch_runtime::state::inspect", reason = "a state file is inspected only by the `state inspect` command" },
+    { path = "orch_runtime::ops::apply", reason = "the store is reached only by the operation handle's writes, the recording boundary and the command" },
+    { path = "orch_runtime::ops::apply_on", reason = "the store is reached only by the operation module's one close over a superseded launch and the command" },
+    { path = "orch_runtime::ops::apply_adoption", reason = "the adoption's store write takes the pane read only the operation module mints" },
+    { path = "orch_runtime::ops::occupancy::Host::kernel", reason = "the kernel's readers are handed to a transition only by the command's store entry and the operation module" },
+    { path = "orch_runtime::state::locked", reason = "a record's locks are taken only by the store and the lane admission" },
+    { path = "orch_runtime::verify::run", reason = "GitHub is read and the verdict recorded only by the `verify-head` command" },
+    # the file system: a file is written, replaced, linked, created or
+    # removed only by the store, the receipt, sidecar and notice writers
+    # inside the operation module, and the command's setup (decisions 124j
+    # (39), 124l (46)); agent-runtime's record writers stay the one atomic
+    # route
+    { path = "std::fs::OpenOptions::open", reason = "a file is opened for writing only by the store's writers and the operation module; this catches every `OpenOptions` and `File::options` chain at its call" },
+    { path = "std::fs::File::create", reason = "a file is created only by the store's writers and the operation module" },
+    { path = "std::fs::File::create_new", reason = "a file is created only by the store's writers and the operation module" },
+    { path = "std::fs::write", reason = "a file is written only by the store's writers and the operation module" },
+    { path = "std::fs::copy", reason = "a file is copied over only by the store's writers and the operation module" },
+    { path = "std::fs::hard_link", reason = "a file is linked only by the store's writers and the operation module" },
+    { path = "std::fs::rename", reason = "a file is replaced only by the store's writers and the operation module" },
+    { path = "std::fs::remove_file", reason = "a file is removed only by the store's writers and the operation module" },
+    { path = "std::fs::remove_dir", reason = "a directory is removed only by the store's writers and the operation module" },
+    { path = "std::fs::remove_dir_all", reason = "a tree is removed only by the store's writers and the operation module" },
+    { path = "std::fs::create_dir", reason = "a directory is made only by the store's writers and the operation module" },
+    { path = "std::fs::create_dir_all", reason = "a directory is made only by the store's writers and the operation module" },
+    { path = "std::fs::set_permissions", reason = "a file's mode is changed only by the store's writers and the operation module" },
+    { path = "std::os::unix::fs::symlink", reason = "a link is made only by the store's writers and the operation module" },
+    # a recorded path: a reader answers present, absent or unreadable
+    # through `std::fs::metadata` (decision 124c (10)); these three read an
+    # unreadable path as absent and closed a stage on a permission error
+    { path = "std::path::Path::exists", reason = "a recorded path is read three-valued through `std::fs::metadata`, never collapsed into absent" },
+    { path = "std::path::Path::is_dir", reason = "a recorded path is read three-valued through `std::fs::metadata`, never collapsed into absent" },
+    { path = "std::path::Path::is_file", reason = "a recorded path is read three-valued through `std::fs::metadata`, never collapsed into absent" },
+    # the clock and every wait: a wait reads the one injected clock through
+    # the handle, and a moment is read from it (decision 121, Q16); the std
+    # surface is a reviewed list
+    { path = "std::thread::sleep", reason = "a wait reads the one injected clock through the operation handle (decision 121, Q16)" },
+    { path = "std::thread::park", reason = "a wait reads the one injected clock through the operation handle" },
+    { path = "std::thread::park_timeout", reason = "a timed wait reads the one injected clock through the operation handle" },
+    { path = "std::thread::JoinHandle::join", reason = "a wait on another thread reads the one injected clock through the operation handle" },
+    { path = "std::time::Instant::now", reason = "the time is read from the one injected clock through the operation handle (decision 121, Q16)" },
+    { path = "std::time::Instant::elapsed", reason = "the time is read from the one injected clock through the operation handle" },
+    { path = "std::time::Instant::duration_since", reason = "a span between instants is taken only beside the one injected clock's reads" },
+    { path = "std::time::SystemTime::now", reason = "the wall clock is read from the one injected clock through the operation handle" },
+    { path = "std::time::SystemTime::elapsed", reason = "the wall clock is read from the one injected clock through the operation handle; this catches a read derived from `UNIX_EPOCH`" },
+    { path = "std::time::SystemTime::duration_since", reason = "a span between moments is taken only beside the one injected clock's reads" },
+    { path = "std::sync::Condvar::wait", reason = "a wait reads the one injected clock through the operation handle" },
+    { path = "std::sync::Condvar::wait_timeout", reason = "a timed wait reads the one injected clock through the operation handle" },
+    { path = "std::sync::Condvar::wait_timeout_while", reason = "a timed wait reads the one injected clock through the operation handle" },
+    { path = "std::sync::Condvar::wait_timeout_ms", reason = "a timed wait reads the one injected clock through the operation handle" },
+    { path = "std::sync::Condvar::wait_while", reason = "a wait reads the one injected clock through the operation handle" },
+    { path = "std::sync::mpsc::Receiver::recv", reason = "a wait on a channel reads the one injected clock through the operation handle" },
+    { path = "std::sync::mpsc::Receiver::recv_timeout", reason = "a timed wait reads the one injected clock through the operation handle" },
+    { path = "orch_runtime::schedule::Clock::now", reason = "the clock is read only by the scheduler and the operation handle" },
+    { path = "orch_runtime::schedule::Clock::wall", reason = "the wall clock is read only by the operation handle" },
+    { path = "orch_runtime::schedule::Clock::sleep", reason = "the clock is waited on only by the scheduler and the operation handle" },
+    { path = "orch_runtime::schedule::Schedule::run_due", reason = "the scheduler's clock read runs only where the schedule is driven, never from an effect file" },
+    { path = "orch_runtime::schedule::Schedule::new", reason = "a schedule starts from an instant only where the schedule is driven, never from an effect file" },
+    { path = "agent_runtime::record::Timer::now", reason = "the lock wait's clock is read only inside agent-runtime's record locks" },
+    { path = "agent_runtime::record::Timer::sleep", reason = "the lock wait's sleep runs only inside agent-runtime's record locks" },
+    { path = "agent_runtime::clock::now", reason = "the wall clock is read only by the command's stamp, through the one injected clock" },
+]

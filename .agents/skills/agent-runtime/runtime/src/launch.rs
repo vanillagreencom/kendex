@@ -67,6 +67,13 @@ pub struct LaunchIntent {
     /// The account home. `None` keeps the harness's default home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
+    /// The account the launch spends, routed to the harness through the
+    /// variable its provider reads (`Harness::account_var`). For every
+    /// harness but Pi that is the home variable, so `account` and `home`
+    /// name one directory or `home` alone is given; a Pi launch on a Claude
+    /// seat names the seat here and Pi's own root in `home`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<PathBuf>,
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -160,6 +167,39 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         }
         env.insert(h.home_var().to_owned(), home.display().to_string());
     }
+    if let Some(account) = &intent.account {
+        if !account.is_absolute() {
+            return Err(Error::refused(
+                "account-relative",
+                &[
+                    ("harness", h.name()),
+                    ("account", &account.display().to_string()),
+                ],
+            ));
+        }
+        let var = h.account_var(intent.model.as_deref());
+        // The account's variable is the home's on every harness but a Pi
+        // launch on another provider's seat: there the home names Pi's root
+        // and the account the seat. One variable with two directories is a
+        // request this builder cannot spell, so it is refused, never judged.
+        match env.get(var) {
+            Some(home) if home != &account.display().to_string() => {
+                return Err(Error::refused(
+                    "account-home-conflict",
+                    &[
+                        ("harness", h.name()),
+                        ("variable", var),
+                        ("home", home),
+                        ("account", &account.display().to_string()),
+                    ],
+                ));
+            }
+            Some(_) => {}
+            None => {
+                env.insert(var.to_owned(), account.display().to_string());
+            }
+        }
+    }
     args.extend(h.settings_words().into_iter().map(str::to_owned));
     if let Some(model) = &intent.model {
         args.extend(h.model_words(model, intent.effort.as_deref()));
@@ -169,7 +209,15 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     match intent.permission {
         Permission::Native => {}
         Permission::Bypass => {
-            args.extend(h.bypass_words().into_iter().map(str::to_owned));
+            // The caller's own words may already carry a permission word, in
+            // any supported spelling (a same-harness succession keeps the
+            // caller's argv as given, decision 120): the canonical word is
+            // added only where none stands, the legacy's rule (decision 124a
+            // (4)), so it is never doubled under an alias such as `--yolo` and
+            // never added beside a narrower grant the caller chose.
+            if h.permission_word_in(&intent.extra_args).is_none() {
+                args.extend(h.bypass_words().into_iter().map(str::to_owned));
+            }
             if h == Harness::Copilot {
                 // `true` also trusts the folder and loads its hooks; every
                 // other command carries it empty so an inherited value does
@@ -360,6 +408,7 @@ mod tests {
         LaunchIntent {
             harness: h,
             home: Some(PathBuf::from("/home/x/.1claude")),
+            account: None,
             cwd: PathBuf::from("/work/tree"),
             model: Some("opus".into()),
             effort: Some("high".into()),
@@ -427,6 +476,41 @@ mod tests {
         assert!(line.ends_with("\"$(cat /work/tree/tmp/brief.md)\""));
     }
 
+    /// Decision 120, M3: under the bypass posture the canonical bypass word is
+    /// added only where no full-bypass spelling already stands, so an alias the
+    /// caller gave (`--yolo`, `--permission-mode=bypassPermissions`) is never
+    /// doubled; a caller word that is not a full bypass still gets the word.
+    #[test]
+    fn a_bypass_launch_adds_no_second_word_under_an_alias() {
+        let bypass = |h: Harness, words: &[&str]| {
+            let mut i = intent(h);
+            i.home = Some(PathBuf::from("/home/x/.1home"));
+            i.brief = Brief::None;
+            i.extra_args = words.iter().map(|w| (*w).to_owned()).collect();
+            build(&i).unwrap().args
+        };
+        // Copilot `--yolo` keeps its own word and gains no `--allow-all`.
+        let copilot = bypass(Harness::Copilot, &["--yolo"]);
+        assert!(copilot.contains(&"--yolo".to_owned()));
+        assert!(!copilot.contains(&"--allow-all".to_owned()));
+        // Claude's alias spelling is not doubled by the canonical word.
+        let claude = bypass(Harness::Claude, &["--permission-mode=bypassPermissions"]);
+        assert_eq!(
+            claude
+                .iter()
+                .filter(|a| a.starts_with("--permission-mode")
+                    || *a == "--dangerously-skip-permissions")
+                .count(),
+            1
+        );
+        assert!(!claude.contains(&"--dangerously-skip-permissions".to_owned()));
+        // A narrower permission word the caller chose stands alone: no word
+        // is added beside it (decision 124a (4)).
+        let dont_ask = bypass(Harness::Claude, &["--permission-mode=dontAsk"]);
+        assert!(!dont_ask.contains(&"--dangerously-skip-permissions".to_owned()));
+        assert!(dont_ask.contains(&"--permission-mode=dontAsk".to_owned()));
+    }
+
     /// A configured executable replaces the name on `PATH` and nothing
     /// else about the command; a relative one is refused before any run.
     #[test]
@@ -441,6 +525,64 @@ mod tests {
             build(&i),
             Err(Error::Refused {
                 key: "program-relative",
+                ..
+            })
+        ));
+    }
+
+    /// The account routing is the builder's (decision 109 (5)): a Pi launch
+    /// on a `pi-claude/` model carries Pi's root in `PI_CODING_AGENT_DIR`
+    /// and the chosen Claude seat in `CLAUDE_CONFIG_DIR`; a Pi launch on the
+    /// Copilot pool routes the account through Pi's own variable; a Claude
+    /// account is its home; and two directories for one variable refuse.
+    #[test]
+    fn the_account_is_routed_through_the_provider_s_variable() {
+        let mut i = intent(Harness::Pi);
+        i.home = Some(PathBuf::from("/home/x/pi-home"));
+        i.account = Some(PathBuf::from("/home/x/.2claude"));
+        i.model = Some("pi-claude/claude-fable-5-1".into());
+        i.effort = None;
+        let cmd = build(&i).unwrap();
+        assert_eq!(
+            cmd.env.get("PI_CODING_AGENT_DIR").unwrap(),
+            "/home/x/pi-home"
+        );
+        assert_eq!(
+            cmd.env.get("CLAUDE_CONFIG_DIR").unwrap(),
+            "/home/x/.2claude"
+        );
+        assert!(cmd.args.contains(&"--model".to_owned()));
+        assert!(cmd.args.contains(&"pi-claude/claude-fable-5-1".to_owned()));
+        let mut pool = intent(Harness::Pi);
+        pool.home = None;
+        pool.account = Some(PathBuf::from("/home/x/.1pi"));
+        pool.model = Some("github-copilot/claude-opus-5.5".into());
+        let cmd = build(&pool).unwrap();
+        assert_eq!(cmd.env.get("PI_CODING_AGENT_DIR").unwrap(), "/home/x/.1pi");
+        assert!(!cmd.env.contains_key("CLAUDE_CONFIG_DIR"));
+        let mut same = intent(Harness::Claude);
+        same.account = Some(PathBuf::from("/home/x/.1claude"));
+        let cmd = build(&same).unwrap();
+        assert_eq!(
+            cmd.env.get("CLAUDE_CONFIG_DIR").unwrap(),
+            "/home/x/.1claude"
+        );
+        let mut conflict = intent(Harness::Claude);
+        conflict.account = Some(PathBuf::from("/home/x/.2claude"));
+        assert!(matches!(
+            build(&conflict),
+            Err(Error::Refused {
+                key: "account-home-conflict",
+                ..
+            })
+        ));
+        let mut relative = intent(Harness::Claude);
+        relative.home = None;
+        relative.account = Some(PathBuf::from(".2claude"));
+        assert!(matches!(
+            build(&relative),
+            Err(Error::Refused {
+                key: "account-relative",
                 ..
             })
         ));

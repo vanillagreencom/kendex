@@ -1,0 +1,9 @@
+[
+  {"name":"Changes","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/100/job/1001","workflow":"CI","startedAt":"2026-07-16T04:08:13Z"},
+  {"name":"CI Gate Publisher","state":"FAILURE","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/100/job/1002","workflow":"CI","startedAt":"2026-07-16T04:08:50Z"},
+  {"name":"Changes","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/200/job/2001","workflow":"CI","startedAt":"2026-07-16T04:18:55Z"},
+  {"name":"Build","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/200/job/2002","workflow":"CI","startedAt":"2026-07-16T04:19:38Z"},
+  {"name":"CI Gate Publisher","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/200/job/2003","workflow":"CI","startedAt":"2026-07-16T04:33:20Z"},
+  {"name":"Changes","state":"SKIPPED","bucket":"skipping","link":"https://github.com/owner/repo/actions/runs/300/job/3001","workflow":"CI","startedAt":"2026-07-16T04:19:24Z"},
+  {"name":"CI Required","state":"SUCCESS","bucket":"pass","link":"https://github.com/owner/repo/actions/runs/200","workflow":"","startedAt":"0001-01-01T00:00:00Z"}
+]

@@ -48,6 +48,10 @@ Run probes that import Python fixtures with `python3 -B`. Bytecode caches under 
 
 - Secret-value pattern. `secret-value.test.sh` reads [references/secret-value.ere](references/secret-value.ere) by the reader contract in its header and runs every row through both readers the header names, `grep -aiE` in the C locale and Python's `re` with `re.I | re.M`; each row needs its verdict from both. Its control removes the `xapp-` branch and requires an app token to pass.
 
+## Effect boundary
+
+The runtime at `runtime/` is its own Cargo workspace; run `cargo clippy --all-targets -- -D warnings` there. Its `clippy.toml` lists the tmux, process, session, job, store, clock, wait and file primitives as disallowed methods, so that command refuses an ordinary call of one outside `src/effects/operation/` and the functions that carry an allowance. The list guards against an accidental call past the operation handle; a deliberate bypass is a code-review matter, never the list's. An allowance is one `#[allow(clippy::disallowed_methods, reason = "..")]` on a function, a trait impl's method, a test module or `mod operation`, its reason at the attribute, reviewed with the change that adds it; the inventory is those attributes. A new acting function in agent-runtime joins the list in the same change. Before building a guard here, state the goal it serves and who it is against, weigh its upkeep against the harm it prevents, and treat a constructed bypass as a defect only when ordinary code reaches it.
+
 ## GitHub auth ladder
 
 `approval-wait`, `ci-wait` and `queue-wait` share `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's helpers. Each candidate is probed at most once, except the timed-out env token in step 1:
