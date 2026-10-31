@@ -455,7 +455,8 @@ linear|linear, bot-instructions and preflight suites|skills/linear/tests|bash4-r
 linear|linear, bot-instructions and preflight suites|skills/bot-instructions/tests|bounds.test
 linear|linear, bot-instructions and preflight suites|skills/preflight/tests|precision.test
 worktree|worktree suites|skills/worktree/tests|worktree_output_prune
-worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack'
+worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack
+jarvis|Jarvis suites|skills/jarvis/tests|task.test'
 
 # These three controls must reject their private mutants before baseline assertions.
 baseline_tmp="$TMP"
@@ -470,11 +471,12 @@ PART="$CONTROL_TMP/partition"
 
 # Dedicated owners disappear independently. Their declarations and the
 # generic rest invocation must not answer the claims search themselves.
-for package in slack review-gate; do
+for package in slack review-gate jarvis; do
   owner=""
   case "$package" in
     slack) owner="- name: Slack suites" ;;
     review-gate) owner="- name: review-gate suites" ;;
+    jarvis) owner="- name: Jarvis suites" ;;
   esac
   wf_owner_removed="$TMP/wf-owner-removed-$package.yml"
   awk -v owner="$owner" -v package="$package" '
@@ -502,7 +504,7 @@ printf 'control: forbidden-orch suites=%s\n' "$(comm -13 "$UNIV" <(sort -u "$TMP
 # The old literal Slack declaration answered its own search after removal.
 wf_self_claim="$TMP/wf-slack-self-claim.yml"
 awk '
-  /needle="--battery skills\/\$x\/tests"/ {
+  /github \| slack \| mailbox\) needle="--battery skills\/\$x\/tests"/ {
     $0 = "              github | slack | mailbox) if [ \"$x\" = slack ]; then needle=\"--battery skills/slack/tests\"; else needle=\"--battery skills/$x/tests\"; fi ;;"; hits++
   }
   { print }
@@ -875,7 +877,7 @@ claims_file "$wf_nostep" "$TMP/claims-nostep"
 check "with the step that globs a package deleted, no suite of it is unclaimed" \
   "" "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-nostep"))"
 
-for package in slack review-gate; do
+for package in slack review-gate jarvis; do
   wf_owner_removed="$CONTROL_TMP/wf-owner-removed-$package.yml"
   claims_file "$wf_owner_removed" "$TMP/claims-owner-removed-$package"
   check "$package suites move to rest when dedicated ownership is removed" \
@@ -1203,26 +1205,29 @@ check "must-fail: routing GitHub away from rest names its unselected suite" \
   "$(cat "$TMP/github-selection-owner")" \
   "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT")"
 
-# Must-fail: removing Slack's package row leaves its shard standing down on
-# a Slack diff, and the suite its selection misses is named. The edit reaches
-# the Slack rows alone, and every other row's selection is the check's above,
-# so the control hands the mutant those rows and wants each of them back.
+# Must-fail: removing a dedicated package's row sends its diffs to `rest`
+# alone, leaving its own shard standing down, and the suite its selection
+# misses is named. The edit reaches that package's rows alone, and every other
+# row's selection is the check's above, so the control hands the mutant those
+# rows and wants each of them back.
 mkdir -p "$TMP/owner-tools"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/owner-tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/owner-tools/rust-reads"
 cp -R "$ROOT/tools/lib" "$TMP/owner-tools/lib"
-awk '$0 ~ /^    skills\/slack\) want_shard slack ;;$/ { n++; next } { print } END { exit n != 1 }' \
-  "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
-  { bad "must-fail: the Slack row is no longer one line in $JOB_SET"; }
-chmod +x "$TMP/owner-tools/ci-job-set"
-grep "^slack	skills/slack/tests/" "$OWNERS" >"$TMP/owners-slack" ||
-  bad "must-fail: no Slack suite is read from the workflow, so the Slack control has no row"
-if [[ -s "$TMP/owners-slack" &&
-  "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$TMP/owners-slack")" == "$(cat "$TMP/owners-slack")" ]]; then
-  ok "must-fail: a table sending Slack elsewhere names the Slack suites"
-else
-  bad "must-fail: a table sending Slack elsewhere named nothing, so the selection check proves nothing"
-fi
+for package in slack jarvis; do
+  awk -v row="    skills/$package) want_shard $package" 'index($0, row) == 1 { n++; next } { print } END { exit n != 1 }' \
+    "$JOB_SET" > "$TMP/owner-tools/ci-job-set" ||
+    { bad "must-fail: the $package row is no longer one line in $JOB_SET"; continue; }
+  chmod +x "$TMP/owner-tools/ci-job-set"
+  grep "^$package	skills/$package/tests/" "$OWNERS" >"$TMP/owners-$package" ||
+    bad "must-fail: no $package suite is read from the workflow, so the $package control has no row"
+  if [[ -s "$TMP/owners-$package" &&
+    "$(unselected_owners "$TMP/owner-tools/ci-job-set" "$TMP/owners-$package")" == "$(cat "$TMP/owners-$package")" ]]; then
+    ok "must-fail: a table sending $package elsewhere names the $package suites"
+  else
+    bad "must-fail: a table sending $package elsewhere named nothing, so the selection check proves nothing"
+  fi
+done
 
 # The moved suites need the refresh path to reach the refresh shard.
 awk '$0 ~ /^      refresh\/\*) want_package refresh ;;$/ { n++; next } { print } END { exit n != 1 }' \
@@ -1560,6 +1565,40 @@ for os in ubuntu-latest macos-latest; do
   fi
 done
 
+# --- 4e. The checkout kendex on each Linux leg ----------------------------
+# A suite tools/ci-job-set gives the checkout kendex on Linux skips its
+# real-kendex rows where its leg built none, and the leg reads green. Every
+# Linux shard running such a suite must be one the `kendex from this checkout`
+# step builds for, read from that step's real `if:`.
+kendex_build_if() { # WORKFLOW ; the `if:` text of the kendex build step
+  awk 'build && /^        if: / { sub(/^        if: /, ""); print; exit }
+       /^      - / { build = ($0 == "      - name: kendex from this checkout") }' "$1"
+}
+unbuilt_checkout_legs() { # WORKFLOW ; each checkout shard whose Linux leg builds no kendex
+  local cond shard built
+  cond="$(kendex_build_if "$1")"
+  [[ -n "$cond" ]] || { printf 'no-build-condition\n'; return 0; }
+  for shard in $(cut -f1 "$TMP/checkout-suites" | sort -u); do
+    built="$(gh_eval value "$(jq -cn --arg shard "$shard" '{matrix: {shard: $shard}, runner: {os: "Linux"}}')" "$cond")"
+    [[ "$built" == true ]] || printf '%s\n' "$shard"
+  done
+}
+suite_owners "$WORKFLOW" > "$TMP/kendex-owners"
+: > "$TMP/checkout-suites"
+while IFS=$'\t' read -r shard path; do
+  policy="$(cd "$ROOT" && "$JOB_SET" --suite-kendex Linux "$path")" ||
+    { bad "ci-job-set gave no kendex policy for $path"; continue; }
+  [[ "$policy" != checkout ]] || printf '%s\t%s\n' "$shard" "$path" >> "$TMP/checkout-suites"
+done < "$TMP/kendex-owners"
+check "the checkout-kendex legs read from ci-job-set include jarvis, refresh and rest" "" \
+  "$(comm -23 <(printf '%s\n' jarvis refresh rest) <(cut -f1 "$TMP/checkout-suites" | sort -u))"
+check "every Linux leg running a checkout-kendex suite builds kendex from this checkout" "" \
+  "$(unbuilt_checkout_legs "$WORKFLOW")"
+plant "$WORKFLOW" " || matrix.shard == 'jarvis') && runner.os == 'Linux'" ") && runner.os == 'Linux'" \
+  "$TMP/kendex-unbuilt.yml" "skill-suites-shard/kendex from this checkout"
+check "must-fail: a build step dropping jarvis names the leg whose picker rows would skip" jarvis \
+  "$(unbuilt_checkout_legs "$TMP/kendex-unbuilt.yml")"
+
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.
 rm -- "$PART/skills"
@@ -1589,6 +1628,7 @@ skills/commit-guards/tests/pre-push-future.test.sh|guards-commit|guards-commit
 skills/linear/tests/native-future.test.sh|linear|linear
 skills/deep-research/tests/native-future.sh|rest|rest
 skills/slack/tests/worker-stall.test.sh|slack|slack
+skills/jarvis/tests/native-future.test.sh|jarvis|rest
 UNKNOWN
 sort -o "$TMP/unknown-paths" "$TMP/unknown-paths"
 git -C "$GITHUB_SELECT" add .
@@ -1624,6 +1664,36 @@ os_claims "$TMP/unknown-linear.yml" macos-latest 3 > "$TMP/unknown-linear-claims
 check "must-fail: the old linear roster loses its unresolved suite" \
   skills/linear/tests/native-future.test.sh \
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
+
+# Linux rest releases Jarvis to its shard; macOS rest keeps the family, mixed
+# and unresolved suites alike, because macOS runs no jarvis leg. Releasing on
+# both loses every Jarvis suite on macOS; releasing on neither runs each twice
+# on Linux.
+jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="--battery skills/$x/tests" ;;'
+(cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.sh) > "$TMP/jarvis-suites"
+grep -qxF skills/jarvis/tests/controls.test.sh "$TMP/jarvis-suites" ||
+  bad "no mixed Jarvis suite was discovered, so the Jarvis retention controls prove nothing"
+while IFS='|' read -r os major fault replacement; do
+  NEEDLE="$jarvis_arm" REPLACEMENT="$replacement" \
+    awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
+    "$WORKFLOW" > "$TMP/jarvis-$fault.yml" || { bad "jarvis $fault control changed no workflow owner"; continue; }
+  cp "$TMP/jarvis-suites" "$TMP/jarvis-eligible"
+  if [[ "$os" == macos-latest ]]; then
+    "$ROOT/tools/macos-test-contracts" --filter <"$TMP/jarvis-suites" >"$TMP/jarvis-eligible" || exit 1
+  fi
+  sort -u "$TMP/jarvis-eligible" <(grep '^skills/jarvis/' "$TMP/unknown-paths") > "$TMP/os-universe"
+  os_claims "$TMP/jarvis-$fault.yml" "$os" "$major" > "$TMP/jarvis-$fault-claims"
+  case "$fault" in
+    lost) got="$(comm -23 "$TMP/os-universe" "$TMP/jarvis-$fault-claims")" ;;
+    duplicated) got="$(uniq -d "$TMP/jarvis-$fault-claims")" ;;
+  esac
+  check "must-fail: a Jarvis rest arm with its native condition changed leaves every Jarvis suite $fault on $os" \
+    "$(cat "$TMP/os-universe")" "$got"
+done <<'ROWS'
+macos-latest|3|lost|              jarvis) needle="--battery skills/$x/tests" ;;
+ubuntu-latest|4|duplicated|              jarvis) needle="" ;;
+ROWS
+cp "$TMP/unknown-paths" "$TMP/os-universe"
 
 sed 's/want_shard rest; break;/:; break;/' "$JOB_SET" > "$GITHUB_SELECT/tools/ci-job-set"
 edited "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set" unknown-package-selector

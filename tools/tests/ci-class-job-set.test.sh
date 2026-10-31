@@ -23,13 +23,14 @@ trivial|true|docs/architecture/overview.md|$VERIFY_LANES|[]
 trivial|true|AGENTS.md|$VERIFY_LANES|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
-micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +rest
+micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +rest +jarvis
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE| +guards-scans +guards-tools
 micro|false|skills/orch/scripts/lanes|$SHARD_CODE| +guards-scans +guards-tools +rest
 standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE| +guards-tools +rest
 micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  +guards-tools
+micro|false|skills/jarvis/scripts/task|$SHARD_CODE|+jarvis +rest
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  -guards-scans
 micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox  +slack +guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls-a +linear-controls-b
@@ -207,6 +208,7 @@ skills/orch/tests/open-terminal-copilot-context.sh|orch-terminal|checkout
 skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
 skills/orch/tests/dev_return.sh|orch-dev|none
 skills/github/tests/pr-view.test.sh||checkout
+skills/jarvis/tests/task.test.sh||checkout
 refresh/tests/refresh-consumer.test.sh||checkout
 skills/harness-ci/tests/change-class.test.sh||checkout
 skills/review-gate/tests/check.test.sh||none
@@ -221,10 +223,21 @@ skills/deep-research/tests/deep-research.test.mjs||none
 tools/tests/guard-range.test.sh||none
 hooks/tests/check.test.sh||none
 ROWS
-sed 's/rest | refresh/__no_checkout__/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
+sed 's/^CHECKOUT_KENDEX_SHARDS=.*/CHECKOUT_KENDEX_SHARDS=""/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
 ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
 check 'control: removing checkout legs changes the same suite result' none \
   "$("$TMP/rule/tools/ci-job-set" --suite-kendex Linux skills/harness-ci/tests/change-class.test.sh '')"
+# The build rule reads the same list: without jarvis on it, a build input
+# no longer runs the Jarvis picker rows against the kendex it changes.
+sed 's/^CHECKOUT_KENDEX_SHARDS="refresh rest jarvis"$/CHECKOUT_KENDEX_SHARDS="refresh rest"/' \
+  "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
+got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false crates/cli/src/commands/tier_model.rs)"
+case "$got" in
+  exit=*) bad "the build-rule control runs the selector ($got)" ;;
+  *) check 'control: dropping jarvis from the build rule drops the Jarvis leg' \
+    'missing=jarvis ' "$(shards_miss +jarvis "$(field shards <<<"$got")")" ;;
+esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

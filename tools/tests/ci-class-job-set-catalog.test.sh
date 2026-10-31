@@ -168,7 +168,7 @@ skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commi
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["refresh","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","node"]
+crates/demo/src/discover.rs|["refresh","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","jarvis","node"]
 .claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
