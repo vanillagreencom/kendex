@@ -905,6 +905,7 @@
   ".agents/skills/worktree/scripts/lib/links.sh",
   ".agents/skills/worktree/scripts/lib/messages.sh",
   ".agents/skills/worktree/scripts/lib/output-prune.sh",
+  ".agents/skills/worktree/scripts/lib/process-identity.sh",
   ".agents/skills/worktree/scripts/lib/restack-state.sh",
   ".agents/skills/worktree/scripts/worktree",
   ".agents/skills/worktree/scripts/worktree-output-prune",

@@ -127,8 +127,18 @@ step() {
       ;;
     adopted-lease)
       # The hook claims under the session identity; orch adopts under its item.
+      # These rows hold the writer-PID rule of a lease that records no session
+      # process, as an older lease does: a ps that cannot answer keeps the
+      # adopt from recording the suite's own ancestry. The lifecycle suite
+      # covers leases that record one.
+      if [[ ! -x "$TMP_ROOT/no-ps-bin/ps" ]]; then
+        mkdir -p "$TMP_ROOT/no-ps-bin"
+        printf '#!/usr/bin/env bash\nexit 2\n' >"$TMP_ROOT/no-ps-bin/ps"
+        chmod +x "$TMP_ROOT/no-ps-bin/ps"
+      fi
       env KENDEX_SESSION_OWNER=predecessor "$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard" claim "$WT" >/dev/null
-      env KENDEX_SESSION_OWNER=predecessor "$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard" claim "$WT" --owner TOPIC --adopt >/dev/null
+      env KENDEX_SESSION_OWNER=predecessor PATH="$TMP_ROOT/no-ps-bin:$PATH" "$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard" claim "$WT" --owner TOPIC --adopt >/dev/null
+      [[ -z "$("$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard" status "$WT" | jq -r .sessions)" ]] || { echo 'worktree_remove: fixture=adopted-lease-recorded-a-session' >&2; exit 1; }
       ;;
     item-record)
       # create records the normalized issue ID, rather than the lease spelling.
