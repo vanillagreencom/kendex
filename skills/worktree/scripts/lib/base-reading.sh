@@ -22,13 +22,13 @@
 # the next call another read. The repository is the one gh resolves from WT:
 # an inherited GH_REPO or GITHUB_REPOSITORY outranks the working directory for
 # gh, so both come off, or another repository's policy would stand for this
-# checkout's base. Under scripts/worktree the read takes that script's
-# github_read credential, asked for here in the caller's shell so the choice
-# outlives the read's substitution; base-freshness defines no github_read, and
-# gh reads its own environment.
+# checkout's base. The read takes the github skill's user ladder, the pair
+# that skill's gh-auth.sh owns, applied inside the read's own substitution so
+# every caller chooses alike and no caller's environment keeps the choice: a
+# GH_TOKEN or GITHUB_TOKEN GitHub refuses yields to a working keyring login.
+# With no github skill beside this one, gh reads the caller's environment.
 base_policy_read() { # WT BRANCH
-  local wt="$1" branch="$2" cache="" line="" uri="" rules=""
-  local -a reader=()
+  local wt="$1" branch="$2" cache="" line="" uri="" rules="" auth_lib=""
   BASE_POLICY=unverified
   cache="$(git -C "$wt" rev-parse --git-path kendex-base-policy 2>/dev/null)" || cache=""
   [[ -z "$cache" || "$cache" == /* ]] || cache="$wt/$cache"
@@ -42,13 +42,20 @@ base_policy_read() { # WT BRANCH
   fi
   command -v gh >/dev/null 2>&1 || return 0
   uri="$(jq -rn --arg v "$branch" '$v | @uri' 2>/dev/null)" || return 0
-  if declare -F github_read >/dev/null 2>&1; then
-    github_read_auth || return 0
-    reader=(github_read)
-  fi
-  rules="$(cd -- "$wt" && ${reader[@]+"${reader[@]}"} env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate \
-    --jq '.[] | select(.type == "merge_queue" or .type == "required_status_checks") | "\(.type) \(.parameters.strict_required_status_checks_policy // false)"' 2>/dev/null)" \
-    || return 0
+  auth_lib="$(dirname -- "${BASH_SOURCE[0]}")/../../../github/scripts/lib/gh-auth.sh"
+  rules="$(
+    cd -- "$wt" || exit 1
+    if ! declare -F kendex_github_apply_selected_auth_token >/dev/null 2>&1 && [[ -f "$auth_lib" ]]; then
+      # shellcheck source=../../../github/scripts/lib/gh-auth.sh
+      source "$auth_lib"
+    fi
+    if declare -F kendex_github_apply_selected_auth_token >/dev/null 2>&1; then
+      kendex_github_apply_selected_auth_token user >/dev/null 2>&1 || true
+      kendex_github_sanitize_gh_env >/dev/null 2>&1
+    fi
+    env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate \
+      --jq '.[] | select(.type == "merge_queue" or .type == "required_status_checks") | "\(.type) \(.parameters.strict_required_status_checks_policy // false)"' 2>/dev/null
+  )" || return 0
   case $'\n'"$rules"$'\n' in
     *$'\nrequired_status_checks true\n'*) BASE_POLICY=strict ;;
     *$'\nmerge_queue '*) BASE_POLICY=queue ;;

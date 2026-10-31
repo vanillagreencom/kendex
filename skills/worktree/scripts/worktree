@@ -193,7 +193,9 @@ git_with_github_https_auth() (
 # GITHUB_TOKEN, a 1Password reference resolved. GH_BOT_TOKEN is a bot
 # identity and never a read credential, as gh never reads it. A token GitHub
 # refuses yields to a working gh keyring login; one with nothing to yield to
-# stays, and the read fails with gh's own reason. The choice is made once per
+# stays, and the read fails with gh's own reason. The base policy read, shared
+# with orch's base-freshness, applies the same ladder for itself in
+# lib/base-reading.sh. For the others the choice is made once per
 # run, in the script's own shell, at the first read: a choice made in a
 # subshell dies with it and the next read would choose again, a second gh
 # validation and a second fallback warning. So every reader runs in its

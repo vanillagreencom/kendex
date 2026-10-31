@@ -1277,14 +1277,16 @@ for cache_case in 'a second push answers from the checkout, not GitHub|pair queu
 done
 
 echo
-echo "=== the base policy read takes the worktree's read credential ==="
+echo "=== the base policy read takes the user ladder for every caller ==="
 
-# A first push to the bot remote, which holds no tracking ref, fetches it for
-# the lease under the HTTPS fallback before the base policy is read. The read
-# takes the user ladder from the environment the push started with: the stale
-# GH_TOKEN yields to the keyring login, and the queue answer skips the rebase.
-# The control is a package copy whose policy read runs gh bare, which reads the
-# stale token, finds the policy unverified and rebases.
+# The read applies the github skill's user-ladder pair inside its own
+# substitution, so a stale GH_TOKEN yields to the keyring login whoever calls
+# it. A first push to the bot remote, which holds no tracking ref, fetches it
+# for the lease under the HTTPS fallback before the base policy is read: the
+# queue answer skips the rebase. A bare shell that defines none of the worktree
+# script's readers, as orch's base-freshness is, reads the same queue. The
+# control is a package copy whose policy read lacks the pair: gh reads the
+# stale token, finds the policy unverified, and the push rebases.
 policy_credential() { # NAME SCRIPT
   build "policy-credential-$1" pair bot-remote queue-auth advance fix
   : >"$ROOT/credential.log"
@@ -1294,24 +1296,36 @@ policy_credential() { # NAME SCRIPT
       ROW_SCRIPT="$2" run "push @wt --set-upstream")" \
     "$(awk '$2 == "api" && $3 ~ /\/rules\/branches\// { print $1 }' "$ROOT/credential.log" | paste -s -d , -)"
 }
+policy_bare_shell() { # NAME LIB
+  build "policy-bare-$1" pair queue-auth fix
+  : >"$ROOT/credential.log"
+  printf 'policy=%s rules=%s' \
+    "$(env -u GITHUB_TOKEN -u GH_BOT_TOKEN GH_TOKEN=ghp_stale GH_CREDENTIAL_LOG="$ROOT/credential.log" PATH="$ROW_PATH:$PATH" \
+      bash -c 'source "$1"; declare -F github_read github_read_auth >&2 && exit 3; base_policy_read "$2" main; printf %s "$BASE_POLICY"' \
+      policy-bare "$2" "$WT")" \
+    "$(awk '$2 == "api" && $3 ~ /\/rules\/branches\// { print $1 }' "$ROOT/credential.log" | paste -s -d , -)"
+}
 assert_eq "$(policy_credential real "$WORKTREE_SCRIPT")" \
-  "rc=0 out= err=worktree-github-auth: fallback=keyring;worktree-rebase-skipped-queue: topic head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:-,bot:end upstream=bot push=- auth=- map=- rules=keyring" \
+  "rc=0 out= err=worktree-rebase-skipped-queue: topic head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:-,bot:end upstream=bot push=- auth=- map=- rules=keyring" \
   "a first push to the bot remote reads the base policy with the keyring login a stale GH_TOKEN yields to"
+assert_eq "$(policy_bare_shell real "$PACKAGE_DIR/scripts/lib/base-reading.sh")" "policy=queue rules=keyring" \
+  "a shell with no worktree reader reads the queue policy with the keyring login a stale GH_TOKEN yields to"
 
 mkdir -p "$TMP_ROOT/policy-auth-mutant"
 cp -R "$PACKAGE_DIR" "$TMP_ROOT/policy-auth-mutant/worktree"
 cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/policy-auth-mutant/github"
 policy_auth_mutant="$TMP_ROOT/policy-auth-mutant/worktree/scripts/lib/base-reading.sh"
-policy_auth_line='  if declare -F github_read >/dev/null 2>&1; then'
-assert_eq "$(grep -cxF -- "$policy_auth_line" "$policy_auth_mutant")" "1" \
-  "control: the policy read's credential arm occurs once"
-sed -i.bak 's/^  if declare -F github_read >\/dev\/null 2>&1; then$/  if false; then/' "$policy_auth_mutant"
-assert_eq "$(cmp -s "$policy_auth_mutant.bak" "$policy_auth_mutant" && printf unchanged || printf changed)" "changed" \
-  "control: cutting the policy read's credential arm changes the library"
+assert_eq "$(grep -cE '^      kendex_github_(apply_selected_auth_token user|sanitize_gh_env) ' "$policy_auth_mutant")" "2" \
+  "control: the policy read's user-ladder pair occurs once each"
+sed -i.bak -E 's/^      kendex_github_(apply_selected_auth_token user|sanitize_gh_env) .*/      :/' "$policy_auth_mutant"
+assert_eq "$(grep -cE '^      kendex_github_(apply_selected_auth_token user|sanitize_gh_env) ' "$policy_auth_mutant" || true):$(cmp -s "$policy_auth_mutant.bak" "$policy_auth_mutant" && printf unchanged || printf changed)" "0:changed" \
+  "control: cutting the pair changes the library and leaves neither call"
 rm -f -- "${policy_auth_mutant:?}.bak"
 assert_eq "$(policy_credential mutant "$TMP_ROOT/policy-auth-mutant/worktree/scripts/worktree")" \
   "rc=0 out=rebase-map: <end> <head> err=worktree-rebase-count: 1 head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=- auth=- map=rebase-hop:;rebase-map: <end> <head> rules=ghp_stale" \
-  "must-fail: a policy read run bare takes the stale GH_TOKEN, reads the policy unverified and rebases"
+  "must-fail: a push whose policy read lacks the pair takes the stale GH_TOKEN, reads the policy unverified and rebases"
+assert_eq "$(policy_bare_shell mutant "$policy_auth_mutant")" "policy=unverified rules=ghp_stale" \
+  "must-fail: a bare shell whose policy read lacks the pair takes the stale GH_TOKEN and reads the policy unverified"
 echo
 echo "=== rewrite recovery keeps shell syntax in the branch name inert ==="
 

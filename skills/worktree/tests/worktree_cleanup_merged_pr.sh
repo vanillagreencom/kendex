@@ -492,8 +492,8 @@ cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/git-auth-mutant/github"
 git_auth_mutant="$TMP_ROOT/git-auth-mutant/worktree/scripts/worktree"
 assert_eq "$(grep -cx -- 'git_with_github_https_auth() (' "$git_auth_mutant")" "1" \
   "control: the git wrapper's subshell body opens once"
-sed -i.bak 's/^git_with_github_https_auth() ($/git_with_github_https_auth() {/' "$git_auth_mutant"
-sed -i '/^git_with_github_https_auth() {$/,/^)$/ s/^)$/}/' "$git_auth_mutant"
+sed -i.bak -e 's/^git_with_github_https_auth() ($/git_with_github_https_auth() {/' \
+  -e '/^git_with_github_https_auth() {$/,/^)$/ s/^)$/}/' "$git_auth_mutant"
 assert_eq "$(cmp -s "$git_auth_mutant.bak" "$git_auth_mutant" && printf unchanged || printf changed)" "changed" \
   "control: running the git wrapper in the script's shell changes the script"
 rm -f -- "${git_auth_mutant:?}.bak"
