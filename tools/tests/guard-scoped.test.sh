@@ -116,6 +116,17 @@ doc_selection "$GUARD"
   && ok 'scoped: Markdown outside a skill package still selects its reader' \
   || bad 'scoped: Markdown outside a skill package still selects its reader' "rc=$RC plan=$PLAN out=$OUT"
 git -C "$R" checkout -q -- skills/AGENTS.md
+# An unread --suite-shards answer seeds each tree as on main, with its note.
+cp "$GUARD" "$MUTANT_TOOLS/guard"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$MUTANT_TOOLS/ci-job-set"
+chmod +x "$MUTANT_TOOLS/ci-job-set"
+doc_change
+doc_selection "$MUTANT_TOOLS/guard"
+[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-source.sh ' ] \
+  && grep -qx 'guard-note: merge-group-shards=unread tree=tools' <<<"$OUT" \
+  && ok 'scoped: an unread shard answer seeds the skill doc readers' \
+  || bad 'scoped: an unread shard answer seeds the skill doc readers' "rc=$RC plan=$PLAN out=$OUT"
+cp "$REPO/tools/ci-job-set" "$MUTANT_TOOLS/ci-job-set"
 doc_change script
 doc_selection "$GUARD"
 [ "$RC" -eq 0 ] && [ "$SELECTED" = 'direct doc-render helper named ' ] \
