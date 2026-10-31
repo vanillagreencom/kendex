@@ -51,9 +51,11 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           disconnected; every SLACK_POLL_SECONDS, per root, the mailbox's
           events; owner text lands as a directive or, in a question's
           thread, as its answer, each with --delivery-id channel:ts; asks,
-          notices and rulings land in Slack as standard
-          Markdown, one past 12,000 characters as mrkdwn, a report as its
-          file with the notice as its mrkdwn comment. A post Slack refuses fails the poll and is made again on
+          notices and rulings land in Slack as standard Markdown.
+          Reports continue in formatted parts when needed; normal and overdue
+          questions past 12,000 characters after expansion are refused.
+          An attached report lands as its file with the notice as its mrkdwn
+          comment. A post Slack refuses fails the poll and is made again on
           the next one; an envelope post whose response was lost is
           journaled unknown and never repeated. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once
@@ -71,8 +73,8 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           reports state=failing cause=binding-missing|binding-unreadable,
           whatever the connection, with fix=slack setup --take CHANNEL --root DIR
 post      one message to the bound channel, or --channel for another, its
-          text sent as standard Markdown of at most 12,000 characters;
-          link expansion past that cap selects Slack's mrkdwn instead;
+          text sent as standard Markdown of at most 12,000 characters
+          after link expansion; larger text is refused;
           --mention prefixes every owner, unless the root's Jarvis session
           hold stands, which posts with no mention and prints mention-held
           on stderr; --file uploads the file with the

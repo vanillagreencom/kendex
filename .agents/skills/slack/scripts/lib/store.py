@@ -170,6 +170,7 @@ class State:
     threads: Dict[str, Thread] = field(default_factory=dict)
     by_envelope: Dict[str, str] = field(default_factory=dict)
     unknown: Dict[str, str] = field(default_factory=dict)
+    progress: Dict[str, Dict] = field(default_factory=dict)
     pending_files: Dict[str, str] = field(default_factory=dict)
     refused: Dict[str, str] = field(default_factory=dict)
     ignored: Set[str] = field(default_factory=set)
@@ -232,6 +233,12 @@ class State:
             if state == "retry":
                 self.carried.discard(env_id)
                 return
+            if state == "progress":
+                self.progress[env_id] = {"thread": str(line["thread"]), "next": int(line["next"]),
+                                         "hash": str(line["hash"])}
+                self.carried.discard(env_id)
+                return
+            self.progress.pop(env_id, None)
             self.carried.add(env_id)
             if state == "refused":
                 self.refused[env_id] = str(line["reason"])
@@ -242,9 +249,14 @@ class State:
             thread_ts = str(line["thread"])
             if thread_ts not in self.threads:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=env_id, kind=line["kind"], open=state == "open")
+            elif self.threads[thread_ts].kind == "parent" and "parent" in line:
+                # Catch-up can discover a continuation's root before its
+                # final part lands. Keep its context and delivery marks.
+                thread = self.threads[thread_ts]
+                thread.envelope, thread.kind, thread.open = env_id, line["kind"], state == "open"
             self.threads[thread_ts].active = max(self.threads[thread_ts].active, parse_at(str(line["at"])))
             if "parent" in line:
-                self.threads[thread_ts].parent = line["parent"]
+                self.threads[thread_ts].parent = dict(line["parent"], **(self.threads[thread_ts].parent or {}))
             self.by_envelope[env_id] = thread_ts
         elif kind == "resolved":
             if "source" in line:
@@ -369,6 +381,8 @@ def compact(root: Path, cutoff_ts: float) -> int:
             # A later outcome owns retention; its redundant pre-send line
             # must not become unknown when that outcome leaves the journal.
             drop = str(line["id"]) not in state.unknown
+        elif kind == "out" and line["state"] == "progress":
+            drop = aged or str(line["id"]) not in state.progress
         elif aged and line["state"] == "file":
             drop = True
         elif aged and line["state"] in ("open", "resolved"):
