@@ -25,7 +25,7 @@ Requires Git and jq. kendex installs orch, linear and github. Linear reads go to
 
 - Set `PM_CREATE_AUTONOMY` in `kendex.settings.toml` under `[env]`: `ask`, the caller default, requests approval; `auto` executes the audit's accepted creations and cancellations and reports reasons for declined entries and cancellations. Under `ORCH_USER_MODE=ceo` an unset key composes to `auto`.
 - Declare the project's label taxonomy as the `json` block under `### Project taxonomy` in the manifest's `[skill-instructions].project-management`. [references/labels.md § Project Taxonomy Contract](references/labels.md#project-taxonomy-contract) defines the block, and the rest of that file the label workflow.
-- New issues take each existing label whose name and description fit them. Set `PM_LABEL_RULES` in `kendex.settings.toml` under `[env]` for a fixed mapping or an extra rule.
+- New issues that an audit or a roadmap files take each existing label the taxonomy maps whose name and description fit them. Set `PM_LABEL_RULES` in `kendex.settings.toml` under `[env]` for a fixed mapping or an extra rule.
 - Issue creation checks descriptions for a `Reached by:` line unless `LINEAR_REQUIRE_REACH` is set empty in `kendex.settings.toml` under `[env]`. Set `LINEAR_AGENT_LABELS` there to check routing labels as well.
 
 ## Licence

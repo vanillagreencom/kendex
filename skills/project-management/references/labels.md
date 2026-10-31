@@ -72,7 +72,7 @@ Any failure halts before mutation and reports: the requested set, the missing la
 
 ## Creates Carry the Full Set
 
-A new issue needs a complete validated `labels[]`; `agent` / `agent_label` alone are never sufficient. The set is the item's own labels, each label of the issue's team or the workspace whose name and description fit the item, and each label `PM_LABEL_RULES` assigns it, at most one per exclusive category:
+A new issue needs a complete validated `labels[]`; `agent` / `agent_label` alone are never sufficient. The set is the item's own labels, each label of the issue's team or the workspace (on GitHub, the repository) that the project taxonomy maps and whose name and description fit the item, and each label `PM_LABEL_RULES` assigns it, at most one per exclusive category. With no taxonomy declared, name and description alone decide:
 
 ```json
 {"title": "Implement: example scope", "labels": ["agent:example", "domain-example", "workflow-label"]}
