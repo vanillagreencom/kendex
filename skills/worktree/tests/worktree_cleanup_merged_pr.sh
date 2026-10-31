@@ -63,12 +63,13 @@ assert_eq() {
 # GH_STDERR_NOISE=1 prints gh's routine chatter on stderr beside a good answer.
 # GH_NOISE=1 puts that chatter on STDOUT, where it contaminates the answer.
 # FAIL_REGISTRATION_HEAD=1 makes the registration metadata read fail after Git
-# has already enumerated the worktree.
+# has already enumerated the worktree. lib/gh-credential.sh answers for the
+# credential first.
 REAL_HEAD="$(command -v head)" || exit 2
 mkdir -p "$TMP_ROOT/bin"
-cat >"$TMP_ROOT/bin/gh" <<'STUB'
-#!/usr/bin/env bash
-set -uo pipefail
+{
+  printf '#!/usr/bin/env bash\nset -uo pipefail\nsource %q\n' "$TEST_DIR/lib/gh-credential.sh"
+  cat <<'STUB'
 if [[ "${GH_FAIL:-0}" == "1" ]]; then
   echo "gh: could not reach api.github.com" >&2
   exit 1
@@ -117,6 +118,7 @@ while read -r want want_base oid number cross; do
 done <<<"${GH_MERGED_PRS:-}"
 exit 0
 STUB
+} >"$TMP_ROOT/bin/gh"
 chmod +x "$TMP_ROOT/bin/gh"
 cat >"$TMP_ROOT/bin/head" <<STUB
 #!/usr/bin/env bash
@@ -284,6 +286,8 @@ gh_env() {
     fork) ROW_ENV=("GH_MERGED_PRS=topic main $TIP 42 1") ;;
     redirect) ROW_ENV=("GH_REPO=someone-else/other-repo" "GH_REDIRECT_OID=$TIP") ;;
     fail) ROW_ENV=("GH_FAIL=1") ;;
+    stale-keyring) ROW_ENV=("GH_TOKEN=ghp_stale" "GH_MERGED_PRS=topic main $TIP 42") ;;
+    stale-no-keyring) ROW_ENV=("GH_TOKEN=ghp_stale" "GH_KEYRING=none" "GH_MERGED_PRS=topic main $TIP 42") ;;
     noise-out) ROW_ENV=("GH_NOISE=1") ;;
     noise-err) ROW_ENV=("GH_STDERR_NOISE=1" "GH_MERGED_PRS=topic main $TIP 42") ;;
     registration-fail) ROW_ENV=("FAIL_REGISTRATION_HEAD=1" "GH_MERGED_PRS=topic main $TIP 42") ;;
@@ -375,6 +379,7 @@ err_text() {
   case "$1" in
     -) printf '' ;;
     other-unmerged) printf 'worktree-cleanup-unmerged: <other>' ;;
+    keyring) printf 'worktree-github-auth: fallback=keyring' ;;
     unmerged|moved) printf 'worktree-cleanup-unmerged: <wt>' ;;
     undetermined:*) printf 'worktree-cleanup-merge-unverified: <wt>' ;;
     detached) printf 'worktree-cleanup-detached: <wt>' ;;
@@ -393,6 +398,8 @@ err_text() {
 ROWS='
 cleanup collects the squash-merged worktree on the merged pull request and names the one it keeps|tree squash other|merged|cleanup|0|cleaned|other-unmerged|tree=absent dirty=- branch=absent other=present
 a lookup that fails keeps the worktree and says the status could not be determined|tree squash|fail|cleanup|0|-|undetermined:gh: could not reach api.github.com |tree=present dirty=- branch=tip other=-
+a stale GH_TOKEN yields to the keyring login, which proves the squash merge|tree squash|stale-keyring|cleanup|0|cleaned|keyring|tree=absent dirty=- branch=absent other=-
+a stale GH_TOKEN with no keyring login keeps the worktree as undetermined, not unmerged|tree squash|stale-no-keyring|cleanup|0|-|undetermined:HTTP 401|tree=present dirty=- branch=tip other=-
 gh chatter on stdout is an unreadable answer, not a row that did not match|tree squash|noise-out|cleanup|0|-|undetermined:gh returned a row this cannot read: A new release of gh is available: 2.40.0 -> 2.63.2|tree=present dirty=- branch=tip other=-
 a missing gh keeps the worktree and is named|tree squash|no-gh|cleanup|0|-|undetermined:gh is not installed|tree=present dirty=- branch=tip other=-
 a detached worktree is named, not passed over|tree detach|none|cleanup|0|-|detached|tree=present dirty=- branch=tip other=-
@@ -410,6 +417,7 @@ remove deletes a squash-merged branch on the merged pull request|tree squash|mer
 remove keeps an unmerged branch|tree|none|remove @topic|1|removed|kept-unmerged|tree=absent dirty=- branch=tip other=-
 remove keeps a branch merged only into its own upstream|tree upstream|none|remove @topic|1|removed|kept-unmerged|tree=absent dirty=- branch=tip other=-
 remove tells an unanswered lookup apart from a proven-unmerged branch|tree squash|fail|remove @topic|1|removed|kept-undetermined:gh: could not reach api.github.com |tree=absent dirty=- branch=tip other=-
+remove keeps the branch when a stale GH_TOKEN has no keyring login to yield to|tree squash|stale-no-keyring|remove @topic|1|removed|kept-undetermined:HTTP 401|tree=absent dirty=- branch=tip other=-
 '
 
 echo "=== cleanup and remove against squash-merged branches ==="

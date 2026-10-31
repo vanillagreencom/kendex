@@ -107,6 +107,15 @@ Same-checkout setup:
   as in a standalone clone or the main checkout: every configured entry would
   act on its own source.
 
+GitHub reads:
+  Each gh read (the default branch, pull-request ownership, merge proof and
+  --pr heads) selects its credential as the github skill's git-https-auth
+  does. A GH_TOKEN or GITHUB_TOKEN GitHub refuses yields to a working gh
+  keyring login, recorded as worktree-github-auth with fallback=keyring.
+  With no login to yield to, the token stays and the read fails with gh's
+  reason: a merge lookup then reports worktree-merge-unverified, never a
+  not-merged answer.
+
 Setup-path hardening:
   Configured setup paths (WORKTREE_SYMLINKS, WORKTREE_COPIES, WORKTREE_MKDIRS,
   and the path side of WORKTREE_RELATIVE_SYMLINKS) must be worktree-relative

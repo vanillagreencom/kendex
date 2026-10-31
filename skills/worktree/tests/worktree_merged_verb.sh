@@ -49,11 +49,12 @@ assert_eq() {
 # GH_ROW is the answer for the row: "<head-oid> <number> <merge-commit>", empty
 # for a branch no merged pull request carries. --state is honoured because the
 # script asks this command for OPEN pull requests elsewhere and must never be
-# handed a merged row as an ownership signal.
+# handed a merged row as an ownership signal. lib/gh-credential.sh answers for
+# the credential first.
 mkdir -p "$TMP_ROOT/bin"
-cat >"$TMP_ROOT/bin/gh" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
+{
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nsource %q\n' "$TEST_DIR/lib/gh-credential.sh"
+  cat <<'STUB'
 if [[ "${GH_ROW:-}" == FAIL ]]; then
   echo "gh: could not reach api.github.com" >&2
   exit 1
@@ -71,6 +72,7 @@ case "${1:-}:${2:-}" in
 esac
 exit 0
 STUB
+} >"$TMP_ROOT/bin/gh"
 chmod +x "$TMP_ROOT/bin/gh"
 
 # A PATH carrying every tool the script reaches for EXCEPT gh: shadowing gh is
@@ -187,6 +189,55 @@ assert_eq "$(run_id detached "$TIP 42 $SQUASH" "$GH_PATH")" "rc=2 out= err=workt
   "a registered worktree with nothing checked out leaves the question unanswered, never falling back to the id's name"
 assert_eq "$(run_id lonely "$TIP 42 $SQUASH" "$GH_PATH")" "rc=0 out=<squash> err=" \
   "an id with no registered worktree is answered from the id's own branch name"
+
+echo
+echo "=== the credential the reads use ==="
+
+# The restack and reuse paths ask this same question. The caller's own tokens
+# never reach these rows; a row names the credentials it holds, and `reads`
+# lists the one each pull-request read used.
+run_credential() { # SCRIPT ENV...
+  local script="$1" rc=0
+  shift
+  : >"$TMP_ROOT/credential.log"
+  ( cd "$MAIN" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u KENDEX_GITHUB_VALIDATED_TOKEN \
+      PATH="$GH_PATH" GH_ROW="$TIP 42 $SQUASH" GH_CREDENTIAL_LOG="$TMP_ROOT/credential.log" "$@" \
+      "$script" merged topic >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" ) || rc=$?
+  printf 'rc=%s out=%s err=%s reads=%s' "$rc" "$(alias_text <"$TMP_ROOT/out")" "$(alias_text <"$TMP_ROOT/err")" \
+    "$(awk '$2 == "pr" { print $1 }' "$TMP_ROOT/credential.log" | paste -s -d , -)"
+}
+
+# label|credentials|expected
+CREDENTIAL_ROWS='
+a stale GH_TOKEN yields to the keyring login, which answers the question|GH_TOKEN=ghp_stale|rc=0 out=<squash> err=worktree-github-auth: fallback=keyring reads=keyring,keyring
+a stale GITHUB_TOKEN yields to the keyring login, which answers the question|GITHUB_TOKEN=ghp_stale|rc=0 out=<squash> err=worktree-github-auth: fallback=keyring reads=keyring,keyring
+a working GH_TOKEN keeps its identity beside a keyring login|GH_TOKEN=ghp_good|rc=0 out=<squash> err= reads=ghp_good,ghp_good
+a stale token with no keyring login leaves the question unanswered, never unmerged|GH_TOKEN=ghp_stale GH_KEYRING=none|rc=2 out= err=worktree-merge-unverified: topic reads=ghp_stale
+'
+while IFS='|' read -r label credentials want; do
+  [[ -n "$label$credentials$want" ]] || continue
+  # shellcheck disable=SC2086
+  assert_eq "$(run_credential "$WORKTREE_SCRIPT" $credentials)" "$want" "$label"
+done <<<"$CREDENTIAL_ROWS"
+
+echo
+echo "=== must-fail control: with the keyring fallback cut, a stale token leaves the question unanswered ==="
+
+# The package and the github skill it reads auth through, copied as installed
+# side by side; the planted defect skips the sanitizer and keeps its text.
+mkdir -p "$TMP_ROOT/auth-pkg"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/auth-pkg/worktree"
+cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/auth-pkg/github"
+AUTH_MUTANT="$TMP_ROOT/auth-pkg/worktree/scripts/worktree"
+assert_eq "$(grep -c '^  kendex_github_sanitize_gh_env 2>"$err_file"$' "$AUTH_MUTANT")" "1" \
+  "control finds the sanitizer call"
+sed -i.bak 's/^  kendex_github_sanitize_gh_env 2>"$err_file"$/  : kendex_github_sanitize_gh_env 2>"$err_file"/' "$AUTH_MUTANT"
+assert_eq "$(cmp -s "$AUTH_MUTANT.bak" "$AUTH_MUTANT" && printf unchanged || printf changed)" "changed" \
+  "control disarms it only in its private copy"
+rm -f -- "${AUTH_MUTANT:?}.bak"
+assert_eq "$(run_credential "$AUTH_MUTANT" GH_TOKEN=ghp_stale)" \
+  "rc=2 out= err=worktree-merge-unverified: topic reads=ghp_stale" \
+  "control: the mutant reads with the stale token and answers nothing"
 
 echo
 echo "=== must-fail control: with the merge-commit check cut, an unreadable answer passes as merged ==="

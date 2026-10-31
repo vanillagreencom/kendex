@@ -185,6 +185,32 @@ git_with_github_https_auth() {
   fi
 }
 
+# Every gh read authenticates as the github skill's push helper does: its
+# selection names the token, and a GH_TOKEN or GITHUB_TOKEN GitHub refuses
+# yields to a working gh keyring login. Asked once, in the shell of the first
+# read, so a command substitution after it inherits the answer. A credential
+# with nothing to yield to stays, and the read fails with gh's own reason.
+GITHUB_READ_AUTH=unasked
+github_read_auth() {
+  local err_file=""
+  [[ "$GITHUB_READ_AUTH" == unasked ]] || return 0
+  GITHUB_READ_AUTH=asked
+  declare -F kendex_github_sanitize_gh_env >/dev/null 2>&1 || return 0
+  kendex_github_apply_selected_auth_token router >/dev/null 2>&1 || true
+  # Set by the sanitizer below alone, never by whoever launched this script.
+  unset KENDEX_GITHUB_AUTH_FALLBACK
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-github-auth.XXXXXX")"; then
+    kendex_github_sanitize_gh_env
+    return 0
+  fi
+  kendex_github_sanitize_gh_env 2>"$err_file"
+  if [[ -s "$err_file" ]]; then
+    worktree_message github-auth "fallback=${KENDEX_GITHUB_AUTH_FALLBACK:-none}" >&2
+    sed 's/^/  /' "$err_file" >&2
+  fi
+  rm -f -- "${err_file:?}"
+}
+
 restack_state_get() {
   local wt="$1" key="$2"
   git -C "$wt" config --worktree --get "kendex-restack.$key" 2>/dev/null || true
@@ -1133,6 +1159,7 @@ resolve_default_branch() { # [optional]
     # branch or its diagnostic, which goes under this script's own record.
     # It answers for this checkout, as merged_pr_for_branch does: an inherited
     # GH_REPO would name another repository's default branch.
+    github_read_auth
     answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?
     case "$rc" in
       0) DEFAULT_BRANCH="$answer"; return 0 ;;
@@ -1712,6 +1739,7 @@ open_pr_for_branch() {
     worktree_message gh-required "ownership" "Error: gh is required for authoritative pull-request ownership discovery." >&2
     return 1
   fi
+  github_read_auth
 
   if ! output="$(gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>&1)"; then
     worktree_message pr-query-failed "$branch" "Error: Could not query open pull requests for branch '$branch'; refusing to assume it is unowned." >&2
@@ -1754,6 +1782,7 @@ merged_pr_for_branch() {
     printf 'branch has no local tip to compare a merged pull request against\n'
     return 2
   fi
+  github_read_auth
   # A fork inspection branch is named fork-pr-<n> (see resolve_pr_head), and
   # GitHub files that PR under the contributor's head name, so a --head query
   # can never find it. The number in the name is the lookup key instead.
@@ -1865,6 +1894,7 @@ merged_fork_pr_at_tip() {
 # that could not answer, never an answer of "not merged".
 merge_commit_for_pr() { # PR
   local pr="$1" err_file="" oid="" detail="" rc=0
+  github_read_auth
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merge-commit.XXXXXX")"; then
     printf 'could not create a scratch file for the gh diagnostic\n'
     return 2
@@ -1899,6 +1929,8 @@ merge_commit_for_pr() { # PR
 # still in flight and is reported only to the caller that asked.
 merged_branch_commit() { # BRANCH
   local branch="$1" detail="" commit="" rc=0
+  # Asked in this shell, so the two reads below share one answer.
+  github_read_auth
   detail="$(merged_pr_for_branch "$branch")" || rc=$?
   case "$rc" in
     0) ;;
@@ -1932,6 +1964,7 @@ resolve_pr_head() {
     worktree_message gh-required "$pr" "Error: gh is required to resolve PR #$pr" >&2
     return 1
   fi
+  github_read_auth
   if ! output="$(gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
                   -q '[.headRefName, .headRefOid, (.isCrossRepository | tostring)] | @tsv' 2>&1)"; then
     worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2
