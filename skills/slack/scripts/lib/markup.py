@@ -241,6 +241,16 @@ def _partition(text: str, capacity: int) -> List[str]:
 
     pos = 0
     for match in LITERAL.finditer(text):
+        # Keep a fitting line's marker and formatting with its links.
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.start())
+        line_end = len(text) if line_end < 0 else line_end + 1
+        if pos <= line_start and match.end() <= line_end and line_end - line_start <= capacity:
+            ordinary(text[pos:line_start])
+            pos = line_start
+            if len(current) + line_end - line_start > capacity:
+                chunks.append(current)
+                current = ""
         ordinary(text[pos:match.start()])
         literal = match.group()
         if len(literal) > capacity:

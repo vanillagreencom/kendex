@@ -350,9 +350,10 @@ assert_eq "$RC=$(refused_line "$GAMMA" "$LONG_ID")=$(sk_state '[.messages.C002[]
   "0=resolved =markdown_text" "a notice past the cap lands as standard Markdown continuations"
 sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text s7 "q$LONG")" --options a,b --recommend a >"$SK_TMP/ask-long.out"
 LONG_ASK="$(sed 's/^id=//' "$SK_TMP/ask-long.out")"
+LONG_ASK_POSTS="$(sk_state '[.calls[] | select(. == "chat.postMessage")] | length')"
 sk_poll "$GAMMA"
-assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_ASK\" and .state == \"open\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '[.messages.C002[] | select(.body_arg == "markdown_text" and (.text | test("^[^\\n]*[0-9]+/[0-9]+\\n\\n"))) | .body_arg] | unique | join(" ")')" \
-  "0=open=markdown_text" "an ask past the cap lands in Markdown continuations and stands open"
+assert_eq "$RC=$(refused_line "$GAMMA" "$LONG_ASK")=$(jq -cs --arg id "$LONG_ASK" '[.[] | select(.t == "out" and .id == $id) | .state]' "$(sk_journal "$GAMMA")")=$(sk_state '[.calls[] | select(. == "chat.postMessage")] | length')" \
+  "0=refused text-too-long=[\"refused\"]=$LONG_ASK_POSTS" "an oversized ask refuses before API writes, open delivery or continuation state"
 LONG_REPORT="$GAMMA/tmp/progress-reports/long.md"
 printf '# Long\n' > "$LONG_REPORT"
 UPLOADS="$(sk_state '.uploads | length')"

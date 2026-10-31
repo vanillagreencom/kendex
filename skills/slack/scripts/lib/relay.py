@@ -99,7 +99,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
-from api import RETRIES, Slack
+from api import RETRIES, Slack, markdown_checked
 from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail
 from markup import Verbatim, continuations, outbound, plain
 from refusals import LockRefusal, Refusal, keyed, notice, print_refusal
@@ -967,14 +967,17 @@ class RootRelay:
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
         the text as its comment, or the text posted as standard Markdown.
-        Slack's refusal goes to `post_refused`. Long Markdown continues in
-        order under the original root, with acknowledged progress synced
-        after each part. An ambiguous write never retries. Returns the
+        Slack's refusal goes to `post_refused`. Questions must fit one
+        message. Long reports continue in order under the original root,
+        with acknowledged progress synced after each part. An ambiguous
+        write never retries. Returns the
         message ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
         try:
             text, body_arg = outbound(self.path, text, file_comment=bool(attach))
             secret_check(text.encode(), f"id={env_id}")
+            if kind in ("ask", "overdue"):
+                markdown_checked(text, f"id={env_id} kind={kind} fix=shorten-question-or-link-detail-in-file-issue-or-report")
             data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
             parts = [text] if attach else continuations(text)
             digest = hashlib.sha256(json.dumps([thread_ts, parts], ensure_ascii=False).encode()).hexdigest()
