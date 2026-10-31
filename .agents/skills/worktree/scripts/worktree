@@ -177,13 +177,17 @@ if [[ "${1:-}" != path && "${1:-}" != exists && -f "$GITHUB_REPO_LIB" && -f "$GI
   source "$GITHUB_SETTINGS_LIB"
 fi
 
-git_with_github_https_auth() {
+# A subshell, because kendex_github_git exports the router's credential choice
+# (GH_TOKEN, or neither token, and its KENDEX_GITHUB_* records) for the git it
+# runs: left in the script's shell, that choice would become the next gh
+# read's credential. Hooks git runs from this call see that choice.
+git_with_github_https_auth() (
   if declare -F kendex_github_git >/dev/null 2>&1; then
     kendex_github_git "$@"
   else
     git "$@"
   fi
-}
+)
 
 # Every gh read takes the github skill's user ladder: GH_TOKEN, then
 # GITHUB_TOKEN, a 1Password reference resolved. GH_BOT_TOKEN is a bot
@@ -198,7 +202,8 @@ git_with_github_https_auth() {
 # inherits the choice. A first ask inside a subshell refuses as
 # worktree-github-auth-subshell and fails that read. The choice lives in
 # unexported variables that only github_read applies, so a setup command or a
-# git hook keeps the caller's GH_TOKEN and GITHUB_TOKEN. GITHUB_READ_AUTH is
+# hook of a git call outside git_with_github_https_auth keeps the caller's
+# GH_TOKEN and GITHUB_TOKEN. GITHUB_READ_AUTH is
 # unasked, inherited (no github skill: gh reads the caller's environment) or
 # selected.
 GITHUB_READ_AUTH=unasked

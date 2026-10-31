@@ -22,9 +22,13 @@
 # the next call another read. The repository is the one gh resolves from WT:
 # an inherited GH_REPO or GITHUB_REPOSITORY outranks the working directory for
 # gh, so both come off, or another repository's policy would stand for this
-# checkout's base.
+# checkout's base. Under scripts/worktree the read takes that script's
+# github_read credential, asked for here in the caller's shell so the choice
+# outlives the read's substitution; base-freshness defines no github_read, and
+# gh reads its own environment.
 base_policy_read() { # WT BRANCH
   local wt="$1" branch="$2" cache="" line="" uri="" rules=""
+  local -a reader=()
   BASE_POLICY=unverified
   cache="$(git -C "$wt" rev-parse --git-path kendex-base-policy 2>/dev/null)" || cache=""
   [[ -z "$cache" || "$cache" == /* ]] || cache="$wt/$cache"
@@ -38,7 +42,11 @@ base_policy_read() { # WT BRANCH
   fi
   command -v gh >/dev/null 2>&1 || return 0
   uri="$(jq -rn --arg v "$branch" '$v | @uri' 2>/dev/null)" || return 0
-  rules="$(cd -- "$wt" && env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate \
+  if declare -F github_read >/dev/null 2>&1; then
+    github_read_auth || return 0
+    reader=(github_read)
+  fi
+  rules="$(cd -- "$wt" && ${reader[@]+"${reader[@]}"} env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/rules/branches/$uri" --paginate \
     --jq '.[] | select(.type == "merge_queue" or .type == "required_status_checks") | "\(.type) \(.parameters.strict_required_status_checks_policy // false)"' 2>/dev/null)" \
     || return 0
   case $'\n'"$rules"$'\n' in

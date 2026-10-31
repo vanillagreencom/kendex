@@ -108,15 +108,17 @@ Same-checkout setup:
   act on its own source.
 
 GitHub reads:
-  Each gh read (the default branch, pull-request ownership, merge proof and
-  --pr heads) takes GH_TOKEN, else GITHUB_TOKEN, a 1Password reference
-  resolved, else gh's keyring login. GH_BOT_TOKEN is never a read
-  credential. A GH_TOKEN or GITHUB_TOKEN GitHub refuses yields to a working
-  gh keyring login, recorded as worktree-github-auth with fallback=keyring.
-  With no login to yield to, the token stays and the read fails with gh's
-  reason: a merge lookup then reports worktree-merge-unverified, never a
-  not-merged answer. The choice holds for the gh reads alone: a setup
-  command and a git hook see the caller's GH_TOKEN and GITHUB_TOKEN.
+  Each gh read (the default branch, pull-request ownership, merge proof,
+  --pr heads and the base policy) takes GH_TOKEN, else GITHUB_TOKEN, a
+  1Password reference resolved, else gh's keyring login. GH_BOT_TOKEN is
+  never a read credential. A GH_TOKEN or GITHUB_TOKEN GitHub refuses yields
+  to a working gh keyring login, recorded as worktree-github-auth with
+  fallback=keyring. With no login to yield to, the token stays and the read
+  fails with gh's reason: a merge lookup then reports
+  worktree-merge-unverified, never a not-merged answer. The choice holds for
+  the gh reads alone: a setup command and a hook of a local git command see
+  the caller's GH_TOKEN and GITHUB_TOKEN. A hook of a fetch or push sees the
+  credential the HTTPS fallback chose for that call.
 
 Setup-path hardening:
   Configured setup paths (WORKTREE_SYMLINKS, WORKTREE_COPIES, WORKTREE_MKDIRS,

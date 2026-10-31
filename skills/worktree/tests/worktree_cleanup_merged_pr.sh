@@ -466,6 +466,41 @@ assert_eq "$(auth_once real "$WORKTREE_SCRIPT")" \
   "rc=0 out=worktree-cleaned: <other>;worktree-cleaned: <wt> err=worktree-github-auth: fallback=keyring tree=absent dirty=- branch=absent other=absent probes=ghp_stale api user,keyring auth status reads=keyring,keyring" \
   "two squash-merged trees under a stale GH_TOKEN take one credential choice for the run"
 
+# The cleanup fetch runs before any GitHub read, WORKTREE_DEFAULT_BRANCH
+# answering the branch, and under the HTTPS fallback its git call takes the
+# router's credential, GH_BOT_TOKEN. The merge read after it still takes the
+# user ladder from the environment the run started with: GITHUB_TOKEN's value.
+echo "=== a git call's credential stays with that call ==="
+auth_after_git() { # NAME SCRIPT
+  build "auth-after-git-$1" tree squash
+  gh_env merged
+  ROW_ENV+=("GITHUB_TOKEN=ghp_user" "GH_BOT_TOKEN=ghp_bot" "KENDEX_GITHUB_GIT_HTTPS_FALLBACK=always" \
+    "GH_CREDENTIAL_LOG=$ROOT/credential.log")
+  : >"$ROOT/credential.log"
+  printf '%s reads=%s' "$(unset GH_TOKEN; WORKTREE_SCRIPT="$2" run cleanup)" \
+    "$(awk '$2 == "pr" { print $1 }' "$ROOT/credential.log" | paste -s -d , -)"
+}
+assert_eq "$(auth_after_git real "$WORKTREE_SCRIPT")" \
+  "rc=0 out=worktree-cleaned: <wt> err= tree=absent dirty=- branch=absent other=- reads=ghp_user" \
+  "the merge read after a fetch under the HTTPS fallback takes GITHUB_TOKEN, not the bot token"
+
+# must-fail: the git wrapper run in the script's shell leaves the router's
+# GH_TOKEN there, and the merge read takes the bot token.
+mkdir -p "$TMP_ROOT/git-auth-mutant"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/git-auth-mutant/worktree"
+cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/git-auth-mutant/github"
+git_auth_mutant="$TMP_ROOT/git-auth-mutant/worktree/scripts/worktree"
+assert_eq "$(grep -cx -- 'git_with_github_https_auth() (' "$git_auth_mutant")" "1" \
+  "control: the git wrapper's subshell body opens once"
+sed -i.bak 's/^git_with_github_https_auth() ($/git_with_github_https_auth() {/' "$git_auth_mutant"
+sed -i '/^git_with_github_https_auth() {$/,/^)$/ s/^)$/}/' "$git_auth_mutant"
+assert_eq "$(cmp -s "$git_auth_mutant.bak" "$git_auth_mutant" && printf unchanged || printf changed)" "changed" \
+  "control: running the git wrapper in the script's shell changes the script"
+rm -f -- "${git_auth_mutant:?}.bak"
+assert_eq "$(auth_after_git mutant "$git_auth_mutant")" \
+  "rc=0 out=worktree-cleaned: <wt> err= tree=absent dirty=- branch=absent other=- reads=ghp_bot" \
+  "must-fail: a git wrapper in the script's shell hands the merge read the bot token"
+
 # must-fail: a merge lookup run in a subshell would choose the credential
 # there and forget it; the choice refuses instead, and the lookup it fails
 # keeps the tree as undetermined.

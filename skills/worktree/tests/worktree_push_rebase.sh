@@ -712,10 +712,14 @@ EOF
     # required-status-checks rule that demands an up-to-date branch or not.
     # The stub answers the rules read through the caller's own --jq and logs
     # every gh call, so a row sees the policy the push reads and how often.
-    # `rules-fail` is the same GitHub with the rules read failing, and
+    # `rules-fail` is the same GitHub with the rules read failing,
     # `strict-here` a GitHub where the checkout's own repository demands an
-    # up-to-date branch while any repository GH_REPO names does not.
-    queue | queue-strict | rules-fail | strict-here)
+    # up-to-date branch while any repository GH_REPO names does not, and
+    # `queue-auth` the queue GitHub answering for the credential first, as
+    # lib/gh-credential.sh does.
+    queue | queue-auth | queue-strict | rules-fail | strict-here)
+      credential_lib=":"
+      [[ "$1" != queue-auth ]] || credential_lib="source $(printf %q "$TEST_DIR/lib/gh-credential.sh")"
       queue_strict=false
       [[ "$1" != queue-strict ]] || queue_strict=true
       here_only=false
@@ -728,6 +732,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "\$*" >>"$ROOT/gh.calls"
+$credential_lib
 [[ "$rules_exit" == 0 ]] || { echo 'gh: HTTP 502' >&2; exit $rules_exit; }
 strict=$queue_strict
 if [[ "$here_only" == true ]]; then
@@ -831,8 +836,8 @@ EOF
           ;;
         unfixed-inherited-repo)
           mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
-          mutant_from='&& env -u GH_REPO -u GITHUB_REPOSITORY gh api'
-          mutant_to='&& gh api'
+          mutant_from=' env -u GH_REPO -u GITHUB_REPOSITORY gh api'
+          mutant_to=' gh api'
           ;;
         unfixed-branch-key)
           mutant="$ROOT/pkg/worktree/scripts/lib/base-reading.sh"
@@ -1271,6 +1276,42 @@ for cache_case in 'a second push answers from the checkout, not GitHub|pair queu
   assert_eq "$(grep -c '/rules/branches/' "$ROOT/gh.calls" || true)" "$cache_want" "$cache_label"
 done
 
+echo
+echo "=== the base policy read takes the worktree's read credential ==="
+
+# A first push to the bot remote, which holds no tracking ref, fetches it for
+# the lease under the HTTPS fallback before the base policy is read. The read
+# takes the user ladder from the environment the push started with: the stale
+# GH_TOKEN yields to the keyring login, and the queue answer skips the rebase.
+# The control is a package copy whose policy read runs gh bare, which reads the
+# stale token, finds the policy unverified and rebases.
+policy_credential() { # NAME SCRIPT
+  build "policy-credential-$1" pair bot-remote queue-auth advance fix
+  : >"$ROOT/credential.log"
+  printf '%s rules=%s' \
+    "$(export GH_TOKEN=ghp_stale KENDEX_GITHUB_GIT_HTTPS_FALLBACK=always GH_CREDENTIAL_LOG="$ROOT/credential.log"
+      unset GITHUB_TOKEN GH_BOT_TOKEN
+      ROW_SCRIPT="$2" run "push @wt --set-upstream")" \
+    "$(awk '$2 == "api" && $3 ~ /\/rules\/branches\// { print $1 }' "$ROOT/credential.log" | paste -s -d , -)"
+}
+assert_eq "$(policy_credential real "$WORKTREE_SCRIPT")" \
+  "rc=0 out= err=worktree-github-auth: fallback=keyring;worktree-rebase-skipped-queue: topic head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:-,bot:end upstream=bot push=- auth=- map=- rules=keyring" \
+  "a first push to the bot remote reads the base policy with the keyring login a stale GH_TOKEN yields to"
+
+mkdir -p "$TMP_ROOT/policy-auth-mutant"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/policy-auth-mutant/worktree"
+cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/policy-auth-mutant/github"
+policy_auth_mutant="$TMP_ROOT/policy-auth-mutant/worktree/scripts/lib/base-reading.sh"
+policy_auth_line='  if declare -F github_read >/dev/null 2>&1; then'
+assert_eq "$(grep -cxF -- "$policy_auth_line" "$policy_auth_mutant")" "1" \
+  "control: the policy read's credential arm occurs once"
+sed -i.bak 's/^  if declare -F github_read >\/dev\/null 2>&1; then$/  if false; then/' "$policy_auth_mutant"
+assert_eq "$(cmp -s "$policy_auth_mutant.bak" "$policy_auth_mutant" && printf unchanged || printf changed)" "changed" \
+  "control: cutting the policy read's credential arm changes the library"
+rm -f -- "${policy_auth_mutant:?}.bak"
+assert_eq "$(policy_credential mutant "$TMP_ROOT/policy-auth-mutant/worktree/scripts/worktree")" \
+  "rc=0 out=rebase-map: <end> <head> err=worktree-rebase-count: 1 head=rebased ahead=1 tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=- auth=- map=rebase-hop:;rebase-map: <end> <head> rules=ghp_stale" \
+  "must-fail: a policy read run bare takes the stale GH_TOKEN, reads the policy unverified and rebases"
 echo
 echo "=== rewrite recovery keeps shell syntax in the branch name inert ==="
 
