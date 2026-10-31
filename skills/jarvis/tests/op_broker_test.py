@@ -657,11 +657,12 @@ elif sys.argv[1]=='read': sys.stdout.write('fixture-value')
             "sys.stdout.write('out'); sys.stdout.flush()\n"
             "if sys.argv[2]=='stay': time.sleep(60)\n"
             "if sys.argv[2]=='signal': os.kill(os.getpid(), signal.SIGTERM)\n"
+            "if sys.argv[2]=='kill': os.kill(os.getpid(), signal.SIGKILL)\n"
             "sys.exit(3)\n")
         # Each launch form: the work leads its session, or op_tty.py leads it on a terminal with the work as its child.
         rows = [(terminal, mode, deadline, expected) for terminal in (False, True)
                 for mode, deadline, expected in (("exit", 10, (3, b"out")), ("signal", 10, (-signal.SIGTERM, b"out")),
-                                                 ("stay", 0.5, None))]
+                                                 ("kill", 10, (-signal.SIGKILL, b"out")), ("stay", 0.5, None))]
         for terminal, mode, deadline, expected in rows:
             with self.subTest(terminal=terminal, mode=mode):
                 held, holder = os.pipe()
@@ -758,11 +759,10 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         spawn = ["op-broker: run=failed cause=spawn errno=ENOENT"]
         read = {"verb": "read", "reference": "op://fixture/item/password"}
         op_request = {"verb": "op", "args": ["vault", "list"]}
-        # Each call a deadline or a failed start ends, under each launch form. A script's stderr stays out of the
-        # journal, and no reply carries stderr.
-        rows = (("op-deadline", op_request, stall, "session", "run-failed", deadline + ["op-broker: stderr=fixture-stderr"]),
-                ("op-deadline-terminal", op_request, stall, "app-integration", "run-failed",
-                 deadline + ["op-broker: stderr=fixture-stderr"]),
+        # Each call a deadline or a failed start ends, under each launch form. Only the stderr of a call whose
+        # arguments the broker chooses reaches the journal, and no reply carries stderr.
+        rows = (("op-deadline", op_request, stall, "session", "run-failed", deadline),
+                ("op-deadline-terminal", op_request, stall, "app-integration", "run-failed", deadline),
                 ("read-deadline-terminal", read, stall, "app-integration", "read-failed",
                  deadline + ["op-broker: stderr=fixture-stderr"]),
                 ("script-deadline-terminal", {"verb": "script", "path": str(script)}, stall, "app-integration",

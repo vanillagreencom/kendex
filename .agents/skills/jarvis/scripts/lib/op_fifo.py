@@ -18,7 +18,7 @@ import uuid
 
 CALL_SECONDS = 30
 CLIENT_SECONDS = 60
-# The tail of op's stderr the journal keeps for a call that never finished.
+# The tail of op's stderr the journal keeps for a read or renewal that never finished.
 STDERR_BYTES = 4096
 TTY_LEADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "op_tty.py")
 # Broker statuses for the op and script verbs, as the client reports them.
@@ -370,8 +370,9 @@ def respond(request, op, env, route):
             return {"status": "script-refused"}
         argv = ["/dev/fd/%d" % script]
     try:
-        # A caller's script may print a secret on its stderr, so only op's own reaches the journal.
-        result = run_work(argv, env, () if script is None else (script,), stderr=script is None,
+        # The caller chooses what writes this stderr, a script or a program op run or op plugin run starts, and it
+        # may print a secret there; only read and the renewal, whose arguments the broker chooses, journal stderr.
+        result = run_work(argv, env, () if script is None else (script,), stderr=False,
                           terminal=needs_terminal(route))
     except (OSError, subprocess.TimeoutExpired):
         return {"status": "run-failed"}

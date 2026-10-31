@@ -28,7 +28,9 @@ def main():
     os.close(status)
     code = child.wait()
     if code < 0:
-        signal.signal(-code, signal.SIG_DFL)
+        # SIGKILL's disposition cannot change, and its default already ends the process.
+        if code != -signal.SIGKILL:
+            signal.signal(-code, signal.SIG_DFL)
         signal.raise_signal(-code)
         # Only a signal whose default action ends the process ends a child.
         raise AssertionError("signal %d did not end op_tty.py" % -code)
