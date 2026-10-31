@@ -62,7 +62,7 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # One trap each, so the code a wrapper reads says which signal arrived: an
 # interrupt and a kill are the same cleanup but not the same event.
 trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT
-trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 143' TERM
+trap 'suite_trace "runner TERM pid=$$ jobs=[${PIDS[*]-}]"; kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; suite_trace "runner forwarded rc=$?"; exit 143' TERM
 
 # --- control vocabulary -----------------------------------------------------
 # A control script runs with CONTROL_ROOT pointing at its own copy of the
@@ -214,7 +214,7 @@ launch() {
 run_job() {
 	local n="$1" body="" rc
 	shift
-	trap '[[ -z $body ]] || kill -TERM "$body" 2>/dev/null' TERM
+	trap 'suite_trace "job TERM body=[$body]"; [[ -z $body ]] || { kill -TERM "$body" 2>/dev/null; suite_trace "job forwarded body=$body rc=$?"; }' TERM
 	("$@") >"$WORK/${JOBS[n]}.log" 2>&1 3>&- &
 	body=$!
 	wait "$body"
@@ -286,7 +286,7 @@ timed_suite() {
 	local pid="" rc line i remaining=0 stopped=0 capped=0 started=$SECONDS tree fragment="" consumed
 	local STOP_GRACE=$SUITE_KILL_GRACE
 	local -a wanted=()
-	trap 'if [[ -n $pid ]]; then tree="$(tree_of "$pid")"; stop_tree "$tree"; fi; exit 143' TERM
+	trap 'suite_trace "timed_suite TERM suite=[$pid]"; if [[ -n $pid ]]; then tree="$(tree_of "$pid")"; stop_tree "$tree"; fi; exit 143' TERM
 	if [[ "$#" -eq 4 ]]; then
 		while IFS= read -r line; do
 			wanted+=("$line")
@@ -329,6 +329,7 @@ timed_suite() {
 		fi
 		if [[ "$SECONDS" -ge "$((started + SUITE_TIMEOUT))" ]]; then
 			capped=1
+			suite_trace "timed_suite cap suite=$pid"
 			tree="$(tree_of "$pid")"
 			stop_tree "$tree"
 			break
