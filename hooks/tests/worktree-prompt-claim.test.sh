@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Surface: hooks/worktree-prompt-claim.sh.
 # Inputs: hooks/worktree-session-claim.sh, skills/worktree/scripts/**,
-# hooks/tests/lib/assert.sh, hooks/tests/lib/first-line.sh.
+# skills/worktree/tests/lib/session-harness.sh, hooks/tests/lib/assert.sh,
+# hooks/tests/lib/first-line.sh.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -12,11 +13,13 @@ SCRIPTS="$TEST_DIR/../../skills/worktree/scripts"
 TMP_ROOT="$(mktemp -d)" || { echo 'worktree-prompt-claim: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'worktree-prompt-claim: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'worktree-prompt-claim: scratch=resolve-failed' >&2; exit 1; }
-trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'session_harness_stop_all; rm -rf -- "${TMP_ROOT:?}"' EXIT
 PASS=0
 FAIL=0
 . "$TEST_DIR/lib/assert.sh"
 . "$TEST_DIR/lib/first-line.sh"
+# shellcheck source=../../skills/worktree/tests/lib/session-harness.sh
+. "$TEST_DIR/../../skills/worktree/tests/lib/session-harness.sh"
 MAIN="$TMP_ROOT/main"
 TREE="$TMP_ROOT/tree"
 WORLD_HOME="$TMP_ROOT/home"
@@ -72,6 +75,53 @@ EOF
 }
 rows
 
+# A prompt in a session the lease already records proceeds past a busy guard
+# lock; a prompt from a session it does not record keeps the blocking refusal.
+# Each session is an owned Claude stand-in (lib/session-harness.sh in the
+# worktree skill's tests). A flock first on PATH shortens the guard's lock wait
+# to one second.
+BUSY_BIN="$TMP_ROOT/busy-bin"
+mkdir -p "$BUSY_BIN"
+cat >"$BUSY_BIN/flock" <<FLOCK
+#!/usr/bin/env bash
+args=()
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -w) args+=(-w 1); shift 2 ;;
+    *) args+=("\$1"); shift ;;
+  esac
+done
+exec $(command -v flock) "\${args[@]}"
+FLOCK
+chmod +x "$BUSY_BIN/flock"
+busy_rows() {
+  local hdir ndir rc
+  "$GUARD" release "$TREE" --force --repo "$MAIN" >/dev/null 2>&1 || :
+  hdir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
+  ndir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
+  session_harness_start "$hdir" claude
+  session_harness_start "$ndir" claude
+  session_harness_run "$hdir" "$TREE" env -i PATH="$PATH" HOME="$WORLD_HOME" USER=alice KENDEX_WORKTREE_CLAIM=required \
+    "$BASH" "$INSTALL/worktree-session-claim.sh" || :
+  session_mutex_hold "$MAIN/.git"
+  rc=0
+  session_harness_run "$hdir" "$TREE" env -i PATH="$BUSY_BIN:$PATH" HOME="$WORLD_HOME" USER=alice KENDEX_WORKTREE_CLAIM=required \
+    "$BASH" "$INSTALL/worktree-prompt-claim.sh" || rc=$?
+  # The busy record is the zero-wait branch's own; a claim that waited for the
+  # lock would end on the same exit with the timeout record instead.
+  assert_eq "rc=$rc first=$(first_line "$hdir/err") cause=$(sed -n '3s/:.*//p' "$hdir/err") stdout=$(wc -c <"$hdir/out" | tr -d ' ')" \
+    "rc=0 first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lock-busy stdout=0" "an admitted session's prompt behind a busy guard lock proceeds"
+  rc=0
+  session_harness_run "$ndir" "$TREE" env -i PATH="$BUSY_BIN:$PATH" HOME="$WORLD_HOME" USER=alice KENDEX_WORKTREE_CLAIM=required \
+    "$BASH" "$INSTALL/worktree-prompt-claim.sh" || rc=$?
+  assert_eq "rc=$rc first=$(first_line "$ndir/err")" "rc=2 first=worktree-session-claim: unclaimed=$TREE" \
+    "a new session's prompt behind a busy guard lock is blocked"
+  session_mutex_free
+  session_harness_stop "$hdir"
+  session_harness_stop "$ndir"
+}
+busy_rows
+
 # A removed companion cannot evaluate the required claim. The dependency
 # installer prevents this layout; manual deletion can still produce it.
 missing_judge() {
@@ -122,9 +172,21 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" "$expected" "$label control: association contract"
   done <<'EOF'
 foreign association|			if [[ "$session" == true && "$owner_set" != true && -n "$session_owner" && "$session_owner" == "$OWNER" ]]; then|			if [[ "$session" == true && "$owner_set" != true && -n "$session_owner" ]]; then|another session after issue adoption: prompt decision;another session after issue adoption: keyed reason;
-lost association|				session_owner="$recorded"|				session_owner=''|same session after issue adoption: prompt decision;same session after issue adoption: keyed reason;same session after issue refresh: prompt decision;same session after issue refresh: keyed reason;
-issue owner replaced|		write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now" "$session_owner")"|		write_lease "$LOCK_FILE" "$(lease_line "${session_owner:-$OWNER}" "$claimed" "$now" "$session_owner")"|same session after issue adoption: lease owner;same session after issue refresh: lease owner;another session after issue adoption: lease owner;
+lost association|					session_owner="$recorded"|					session_owner=''|same session after issue adoption: prompt decision;same session after issue adoption: keyed reason;same session after issue refresh: prompt decision;same session after issue refresh: keyed reason;
+issue owner replaced|		if ! write_lease "$LOCK_FILE" "$(lease_line "$OWNER" "$claimed" "$now" "$session_owner" "$sessions")"; then|		if ! write_lease "$LOCK_FILE" "$(lease_line "${session_owner:-$OWNER}" "$claimed" "$now" "$session_owner" "$sessions")"; then|same session after issue adoption: lease owner;same session after issue refresh: lease owner;another session after issue adoption: lease owner;
 EOF
+
+  # An established session that waits for the lock like a new one, or whose
+  # failed maintenance the hook reports as a failed claim, blocks its prompt.
+  established_anchor='			acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"'
+  assert_eq "$(grep -cxF -- "$established_anchor" "$SCRIPTS/worktree-session-guard" || :)" 1 'established wait control: unique anchor'
+  LINE=$established_anchor REPLACEMENT='			acquire_guard_mutex "$COMMON_DIR" || exit "$EXIT_MAINTENANCE"' awk '$0 == ENVIRON["LINE"] { print ENVIRON["REPLACEMENT"]; next } { print }' \
+    "$SCRIPTS/worktree-session-guard" >"$GUARD"
+  ! cmp -s "$SCRIPTS/worktree-session-guard" "$GUARD" || exit 1
+  log=$(PASS=0 FAIL=0; busy_rows; session_harness_stop_all) || :
+  assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
+    "an admitted session's prompt behind a busy guard lock proceeds;" 'established wait control: the prompt does not wait on a busy lock'
+  cp "$SCRIPTS/worktree-session-guard" "$GUARD"
 fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -421,10 +421,13 @@ Failure semantics:
 
 Session leases:
   Sessions on the same item share one lease; either may release it at close-out.
-  remove releases it only when its recorded guard writer PID is absent on this
-  host. A live recorded PID, remote host or unknown process state refuses.
-  The guard writer exits after claim/refresh. This check covers its write window
-  and does not establish whether the harness is still working.
+  remove releases it only when no harness session process the lease records,
+  other than the remover's own, is live, on a remote host or in an unknown
+  process state. That refusal is worktree-lease-session-held: let that session
+  end, or confirm it has ended, before 'worktree-session-guard release
+  --force'. A lease that records none releases only when its recorded
+  guard writer PID is absent on this host; that writer exits after
+  claim/refresh, so this covers its write window and not a working harness.
   ID calls use the item ID; path calls use the private Git issue record.
   The session environment is a fallback identity. A foreign lease is left
   alone and refuses the removal, naming the owner.
@@ -562,7 +565,10 @@ since this mode never takes --stale.
 
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL
-                      (an abandoned session). Releases the lease, then removes.
+                      and whose recorded session processes are all verified
+                      dead, or that records none (an abandoned session).
+                      Releases the lease, then removes. A lease past the TTL
+                      whose session is live or unverified is skipped and named.
   --ttl-minutes N     Staleness horizon for --stale (default: 720)
   --targets-only      Prune build output; keep the worktree and its branch.
   --apply             Delete what the preview listed. --targets-only only.
