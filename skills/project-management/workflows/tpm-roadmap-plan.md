@@ -28,7 +28,7 @@ Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before a
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every issue emitted must carry a `labels[]` set valid against that inventory. Select each issue's set by [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set), keeping input `labels[]` when present, deriving the agent label when only `agent` was supplied, and completing required categories from the taxonomy; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
+Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every issue emitted must carry a `labels[]` set valid against that inventory. Select each issue's set by [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set), deriving the agent label when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
 
 ### 1.3 Origin Issue
 

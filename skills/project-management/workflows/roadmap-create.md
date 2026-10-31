@@ -94,7 +94,7 @@ Position within the backlog is not set here; `audit-issues project-order` owns p
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Load the project taxonomy and validate every issue's `labels[]` per [labels.md](../references/labels.md) § Validation before writing the audit file. Complete a set from the taxonomy when only `agent`/`agent_label` is present. Any failure there halts before mutation.
+Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). When only `agent`/`agent_label` is present, complete the set per [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set). Validate every issue's `labels[]` per [labels.md § Validation](../references/labels.md#validation) before writing the audit file. Any failure there halts before mutation.
 
 ### 4.2 Convert to Audit Input
 
