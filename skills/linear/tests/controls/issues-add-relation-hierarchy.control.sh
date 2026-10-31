@@ -1,5 +1,5 @@
 # Keep the old peer-only predicate: it loses a leaf's cross-bundle wait.
-control_expect "cross-bundle leaf (CC-766 --blocks CC-767): the accepted relation sent issueRelationCreate"
+control_expect "cross-bundle leaf (CC-766 --blocks CC-767): issueRelationCreate stores 766>767"
 control_replace scripts/lib/issue-validation.sh 1 \
     '		  and (.parent1 == .parent2 or (.has_children | not))' \
     '		  and (.parent1 == .parent2)'
@@ -17,7 +17,7 @@ control_replace scripts/lib/issue-validation.sh 1 \
     '		| true'
 
 # Blind the guard to the blocker's own parent: container siblings stop matching.
-control_expect "siblings (CC-763 --blocks CC-764): the accepted relation sent issueRelationCreate"
+control_expect "siblings (CC-763 --blocks CC-764): issueRelationCreate stores 763>764"
 control_replace scripts/lib/issue-validation.sh 1 \
     '		   parent1: ($ancestors_a[0] // ""), parent2: ($ancestors_b[0] // ""),' \
     '		   parent1: "", parent2: ($ancestors_b[0] // ""),'
