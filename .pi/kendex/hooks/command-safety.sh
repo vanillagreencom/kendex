@@ -495,7 +495,7 @@ environment_program_text() {
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
-  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" fallback_sources listing language
+  local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target=""
@@ -764,6 +764,18 @@ environment_dump() { # command kind; arguments are already decoded data
     # A /proc environ input only these readers' arms can classify. Any other
     # program, such as a shell reading its descriptors, can print it.
     case "$program" in cat | strings | tr | xargs) ;; *) [ -z "$proc" ] || mode=dump-unknown ;; esac
+    # Plain pipe text must reach the receiver's source decision. Other word
+    # kinds keep their late arrival: opaque receivers treat escaped pipes as data.
+    deferred_piped_source=""
+    if [ "$stage" -gt 0 ] && [ "${separators[$((stage - 1))]}" = '|' ]; then
+      for doc in $piped_source; do
+        if [ "${literal_kinds[$doc]}" = literal ]; then
+          data_source="$data_source $doc"
+        else
+          deferred_piped_source="$deferred_piped_source $doc"
+        fi
+      done
+    fi
     environment_program_text
     # Supported shell source keeps this classification check in its queue.
     # Other unclassified forwarded argv retains the complete read evidence.
@@ -778,10 +790,7 @@ environment_dump() { # command kind; arguments are already decoded data
     if [ "$program" = opaque ] && [ -n "$program_pos" ]; then
       case "${args[$program_pos]}" in exec | builtin) script_pos=$program_pos; script_string="" ;; esac
     fi
-    # Keep pipe input before the body checks: an opaque receiver can execute it.
-    if [ "$stage" -gt 0 ] && [ "${separators[$((stage - 1))]}" = '|' ]; then
-      data_source="$data_source$piped_source"
-    fi
+    data_source="$data_source$deferred_piped_source"
     # The approved data and file-writing classes are data. Every other
     # heredoc body an unknown receiver gets is judged alone as shell source
     # below. A here-string is judged only here, for an opaque stage, and as
@@ -858,6 +867,24 @@ environment_dump() { # command kind; arguments are already decoded data
     case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
     decisions[stage]=$mode
     piped_source=$data_source
+    # Echo's plain operands define its output without another shell parser.
+    # Options, escapes and expanding words need runtime interpretation.
+    if [ "$program" = echo ] && [ "${separators[$stage]}" = '|' ] && [ -z "$output" ]; then
+      text=""; span=""; named=1
+      for ((j=pos; j<${#args[@]}; j++)); do
+        [ "${arg_kinds[$j]}" = literal ] || { named=""; break; }
+        value=${args[$j]}
+        case "$value" in *\\*) named=""; break ;; esac
+        if [ "$j" -eq "$pos" ]; then
+          case "$value" in -*) named=""; break ;; esac
+        fi
+        text=$text$span$value; span=' '
+      done
+      if [ -n "$named" ]; then
+        doc=${#literal_inputs[@]}; literal_inputs[doc]=$text$'\n'; literal_kinds[doc]=literal
+        piped_source=" $doc"
+      fi
+    fi
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
     data_source=${stage_sources[$stage]}

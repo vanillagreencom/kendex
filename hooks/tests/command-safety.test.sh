@@ -376,6 +376,23 @@ environment_rows() {
 [2,". /dev/stdin <<'EOF'\nprintenv\nEOF","dot-heredoc-program"]
 [2,"bash <<< 'env'","shell-here-string-program","project","environment-dump","-","runs-env"]
 [2,"cat <<< 'env' | sh","piped-here-string-program","project","environment-dump","-","runs-env"]
+[2,"cat <<< 'env' | exec \"$BASH\"","plain-pipe-cat-exec"]
+[2,"cat <<< 'env' | { exec; bash; }","plain-pipe-cat-group"]
+[2,"echo env | exec \"$BASH\"","plain-pipe-echo-exec"]
+[2,"echo env | { exec; bash; }","plain-pipe-echo-group"]
+[0,"cat <<< 'env' | cat","plain-pipe-cat-data-cat"]
+[0,"cat <<< 'env' | grep env","plain-pipe-cat-data-grep"]
+[0,"cat <<< 'env' | sed ''","plain-pipe-cat-data-sed"]
+[0,"echo env | cat","plain-pipe-echo-data-cat"]
+[0,"echo env | grep env","plain-pipe-echo-data-grep"]
+[0,"echo env | sed ''","plain-pipe-echo-data-sed"]
+[0,"echo env","plain-echo-data"]
+[0,"echo printf done | exec \"$BASH\"","plain-pipe-echo-safe-exec"]
+[0,"echo printf done | { exec; bash; }","plain-pipe-echo-safe-group"]
+[0,"echo printenv NAME | exec \"$BASH\"","plain-pipe-echo-named-read"]
+[0,"tee <<< $'a\\tb' | exec \"$BASH\"","escaped-pipe-exec-data"]
+[0,"tee <<< $'a\\tb' | builtin \"$RECEIVER\"","escaped-pipe-builtin-data"]
+[0,"tee <<< $'a\\tb' | { exec; bash; }","escaped-pipe-group-data"]
 [0, "bash -c 'cat \u007c& cat' <<< 'printenv NAME'", "inherited-merged-here-string-main-refusal"]
 [0,"bash <<'EOF'\nset -euo pipefail\nprintf done\nEOF","safe-heredoc-shell-program"]
 [0,"bash <<'EOF'\nprintenv NAME\nEOF","named-heredoc-shell-program"]
@@ -1644,7 +1661,8 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       defect == "heredoc-program" { swap("[ -n \"${stage_stdin[$stage]}\" ] || data_source=", "data_source=") }
       defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
       defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
-      defect == "heredoc-pipe" { swap("data_source=\"$data_source$piped_source\"", "data_source=\"$data_source\"") }
+      defect == "heredoc-pipe" { swap("if [ \"$stage\" -gt 0 ] && [ \"${separators[$((stage - 1))]}\" = '\''|'\'' ]; then", "if false && [ \"$stage\" -gt 0 ] && [ \"${separators[$((stage - 1))]}\" = '\''|'\'' ]; then") }
+      defect == "plain-pipe-late" { swap("if [ \"${literal_kinds[$doc]}\" = literal ]; then", "if false && [ \"${literal_kinds[$doc]}\" = literal ]; then") }
       defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
       defect == "body-separation" { swap("local command_text=${literal_inputs[$doc]}", "local command_text=${literal_inputs[0]}${literal_inputs[$doc]}") }
       defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
@@ -1765,6 +1783,10 @@ heredoc-program|FAIL environment: shell-heredoc-bodies-have-independent-quotes: 
 body-evidence|FAIL environment: unread-shell-heredoc-body-without-marker: exit=0 expected=2
 descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
 heredoc-pipe|FAIL environment: piped-here-string-program: exit=0 expected=2
+plain-pipe-late|FAIL environment: plain-pipe-cat-exec: exit=0 expected=2
+plain-pipe-late|FAIL environment: plain-pipe-cat-group: exit=0 expected=2
+plain-pipe-late|FAIL environment: plain-pipe-echo-exec: exit=0 expected=2
+plain-pipe-late|FAIL environment: plain-pipe-echo-group: exit=0 expected=2
 missing-identifier-cut|FAIL environment: dump-before-unregistered-heredoc-redirect: exit=0 expected=2
 body-separation|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
 empty-copies|FAIL environment: empty-case-stage-before-dump: exit=0 expected=2
