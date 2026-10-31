@@ -13,6 +13,7 @@
 - A crate-private readback with no production effect is not a reason for a standalone refactor. When changing it, use `cfg(test)` instead of suppressing dead-code warnings.
 - A test never calls `std::env::set_var` or `std::env::remove_var`. A fixture mutex does not protect other environment readers. Pass configuration as input; test environment parsing in a child with an explicit environment.
 - Bind a temporary directory's canonical root at creation before passing it to code that resolves symlinks. Gate platform-only test APIs with `cfg`; give a portable property a portable test too.
+- Build a must-fail control with `CARGO_TARGET_DIR` set on the control's own build and test commands, never exported into the session's environment: a later build in the session would point at the directory the control removed.
 
 ## Selection and measurement
 
