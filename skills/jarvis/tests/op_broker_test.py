@@ -711,7 +711,7 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         self.addCleanup(os.close, ack)
         script = self.script("probe-script", 'op script-probe\n')
         output = self.root / "record"
-        # The OP_SESSION route never asks the app, so its work keeps today's launch with no terminal.
+        # The OP_SESSION route never asks the app: an op or @SCRIPT request leads a new session with no terminal.
         rows = (("app-integration", {"JARVIS_OP_APP_INTEGRATION": "1", "JARVIS_OP_KEEPALIVE_SECS": "1"},
                  {"read", "item", "script-probe", "vault"}, {"led": True, "terminal": True, "leader_exe": True}),
                 ("session", {"OP_SESSION": "fixture-session"}, {"item", "script-probe"}, {"terminal": False}))
