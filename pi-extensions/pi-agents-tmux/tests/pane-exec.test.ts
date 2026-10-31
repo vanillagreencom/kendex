@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
+import { inspect } from "node:util";
 import { execCapture } from "../extensions/subagent/pane.js";
 import { cleanupTempRuntimes, importRuntimeCopy, tempRuntime, writeRuntimeCopy } from "./browser-fixture.js";
 
@@ -46,7 +47,7 @@ test("command capture requires a fixed probe or a resolver-approved bridge", asy
       assert.equal(result.code, 0);
       assert.equal(result.stdout.trim(), "resolved bridge");
       const bridgeArgs = await execCapture(bridge, ["-e", 'console.log(process.argv[1])', "--", "-c"], options);
-      assert.equal(bridgeArgs.code, 0);
+      assert.equal(bridgeArgs.code, 0, inspect(bridgeArgs, { depth: null, maxStringLength: null }));
       assert.equal(bridgeArgs.stdout.trim(), "-c", "bridge arguments must stay data even when they match a shell flag");
    } finally {
       if (previous === undefined) delete process.env.PI_BRIDGE_BIN;
