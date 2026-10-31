@@ -24,6 +24,8 @@ Under a declared taxonomy, also run `linear.sh labels audit`. It lists the undec
 
 GitHub-tracked runs read `gh label list --repo [OWNER/REPO] --limit 200 --json name,description` instead.
 
+Read the consumer's label rules with them: `.agents/skills/orch/scripts/orch-env PM_LABEL_RULES ""`.
+
 Safe inventory row shape:
 
 ```json
@@ -70,7 +72,7 @@ Any failure halts before mutation and reports: the requested set, the missing la
 
 ## Creates Carry the Full Set
 
-A new issue needs a complete validated `labels[]`; `agent` / `agent_label` alone are never sufficient:
+A new issue needs a complete validated `labels[]`; `agent` / `agent_label` alone are never sufficient. The set is the item's own labels, each label of the issue's team or the workspace whose name and description fit the item, and each label `PM_LABEL_RULES` assigns it, at most one per exclusive category:
 
 ```json
 {"title": "Implement: example scope", "labels": ["agent:example", "domain-example", "workflow-label"]}

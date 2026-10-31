@@ -1,0 +1,9 @@
+[env]
+
+# How new issues pick their labels.
+
+# Extra label rules for new issues, beyond each label's own name and
+# description: a fixed mapping or a rule, in plain words, such as
+# "design: any change to a view, layout or UI copy". Empty = labels are
+# chosen from their names and descriptions alone.
+PM_LABEL_RULES = ""

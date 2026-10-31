@@ -137,13 +137,18 @@ reject() {
     jq -e '.error' "$TMP_ROOT/err"
 }
 
+# STORED is the blocking relation Linear is sent, BLOCKER>BLOCKED by number:
+# --blocked-by names the blocker second, and the stored pair still leads with it.
 accept() {
-  local label="$1"
-  shift
+  local label="$1" stored="$2"
+  shift 2
   assert "$label: the relation is accepted" \
     run_add_relation "$TMP_ROOT/payloads.jsonl" "$@" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err"
-  assert "$label: the accepted relation sent issueRelationCreate" \
-    jq -s -e 'any(.[]; .query | contains("issueRelationCreate"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
+  assert "$label: issueRelationCreate stores $stored" \
+    jq -s -e --arg blocker "uuid-${stored%%>*}" --arg blocked "uuid-${stored#*>}" '
+      [.[] | select(.query | contains("issueRelationCreate")) | .variables.input]
+      == [{issueId: $blocker, relatedIssueId: $blocked, type: "blocks"}]' \
+    "$TMP_ROOT/payloads.jsonl" >/dev/null
 }
 
 # This suite consumes the CLI JSON error category: only the stable prefix
@@ -151,10 +156,10 @@ accept() {
 # --- the rule's outcomes ---
 
 # Peers of one bundle: the pair the parent one level up makes valid.
-accept "siblings (CC-763 --blocks CC-764)" CC-763 --blocks CC-764
-accept "leaf siblings (CC-766 --blocks CC-768)" CC-766 --blocks CC-768
-accept "top-level (CC-761 --blocks CC-780)" CC-761 --blocks CC-780
-accept "blocked-by siblings (CC-764 --blocked-by CC-763)" CC-764 --blocked-by CC-763
+accept "siblings (CC-763 --blocks CC-764)" "763>764" CC-763 --blocks CC-764
+accept "leaf siblings (CC-766 --blocks CC-768)" "766>768" CC-766 --blocks CC-768
+accept "top-level (CC-761 --blocks CC-780)" "761>780" CC-761 --blocks CC-780
+accept "blocked-by siblings (CC-764 --blocked-by CC-763)" "763>764" CC-764 --blocked-by CC-763
 
 # A parent/child pair: the hierarchy already carries the dependency.
 for args in "CC-766 --blocks CC-763" "CC-763 --blocks CC-766" "CC-763 --blocked-by CC-766"; do
@@ -172,9 +177,9 @@ for args in "CC-766 --blocks CC-761" "CC-761 --blocks CC-766"; do
     jq -e '.error | startswith("Hierarchy violation:")' "$TMP_ROOT/err" >/dev/null
 done
 
-accept "cross-bundle leaf (CC-766 --blocks CC-767)" CC-766 --blocks CC-767
-accept "top-level leaf (CC-766 --blocks CC-780)" CC-766 --blocks CC-780
-accept "blocked-by cross-bundle leaf" CC-767 --blocked-by CC-766
+accept "cross-bundle leaf (CC-766 --blocks CC-767)" "766>767" CC-766 --blocks CC-767
+accept "top-level leaf (CC-766 --blocks CC-780)" "766>780" CC-766 --blocks CC-780
+accept "blocked-by cross-bundle leaf" "766>767" CC-767 --blocked-by CC-766
 assert "blocking query reads child status and nested ancestry" \
   jq -s -e '[.[] | select(.query | contains("ValidateBlocking")) | .query] | all(.[]; contains("children(first: 1,") and contains("pageInfo { hasNextPage }") and contains("parent { identifier parent {"))' "$TMP_ROOT/payloads.jsonl" >/dev/null
 reject "cross-bundle container (CC-766 --blocks CC-769)" CC-766 --blocks CC-769
@@ -206,7 +211,7 @@ assert_ne "project-spanning control: CC-870 carries a project" "${FIXTURE_PROJEC
 assert_ne "project-spanning control: CC-870 and CC-871 carry distinct projects" \
   "${FIXTURE_PROJECT_A:-}" "${FIXTURE_PROJECT_B:-}"
 
-accept "top-level across two projects" CC-870 --blocks CC-871
-accept "top-level across two projects (blocked-by)" CC-871 --blocked-by CC-870
-accept "top-level, one project and one without" CC-872 --blocks CC-873
-accept "top-level, one project and one without (blocked-by)" CC-873 --blocked-by CC-872
+accept "top-level across two projects" "870>871" CC-870 --blocks CC-871
+accept "top-level across two projects (blocked-by)" "870>871" CC-871 --blocked-by CC-870
+accept "top-level, one project and one without" "872>873" CC-872 --blocks CC-873
+accept "top-level, one project and one without (blocked-by)" "872>873" CC-873 --blocked-by CC-872
