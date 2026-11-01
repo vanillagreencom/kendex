@@ -182,21 +182,6 @@ else
   gg_lane_incomplete "$BATCH" "${SCRIPT_DIR%/scripts}"
 fi
 
-local_paths_touched() { # 0 when the commit touches a path LOCAL_PATHS matches
-  local f
-  # Every path the commit touches, a deletion and both sides of a rename
-  # included, against the parent the commit will have: the commit-msg
-  # gate's own list, so the two hooks cannot disagree about what a commit
-  # changes.
-  gg_commit_paths
-  while IFS= read -r -d '' f; do
-    # The globs expand unquoted to act as patterns, under set -f.
-    # shellcheck disable=SC2086
-    if gg_path_matches "$f" $LOCAL_PATHS; then return 0; fi
-  done <"$GG_TMP/staged.z"
-  return 1
-}
-
 LOCAL_RAW="$(gg_setting COMMIT_GUARDS_PRE_COMMIT_LOCAL "")" || exit 2
 if [ -n "$LOCAL_RAW" ]; then
   LOCAL_ENTRY="$(gg_config_path "$LOCAL_RAW" COMMIT_GUARDS_PRE_COMMIT_LOCAL)" || exit 2
@@ -205,7 +190,26 @@ if [ -n "$LOCAL_RAW" ]; then
   # The globs match the commit's paths, never the work tree.
   set -f
   LOCAL_PATHS="$(gg_config_path_list "$LOCAL_PATHS_RAW" COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS)" || exit 2
-  if [ -z "$LOCAL_PATHS" ] || local_paths_touched; then
+  local_run=1
+  if [ -n "$LOCAL_PATHS" ]; then
+    # Every path the commit touches, a deletion and both sides of a rename
+    # included, against the parent the commit will have: the commit-msg
+    # gate's own list, so the two hooks cannot disagree about what a commit
+    # changes. Collected and read outside any condition, where errexit
+    # holds: a scratch list that cannot be written or read blocks the commit
+    # rather than reading as a commit that touches nothing.
+    gg_commit_paths
+    local_run=0
+    while IFS= read -r -d '' f; do
+      # The globs expand unquoted to act as patterns, under set -f.
+      # shellcheck disable=SC2086
+      if gg_path_matches "$f" $LOCAL_PATHS; then
+        local_run=1
+        break
+      fi
+    done <"$GG_TMP/staged.z"
+  fi
+  if [ "$local_run" -eq 1 ]; then
     # The family contract applies: 0 clean, 1 violations, anything else
     # "could not complete". Every nonzero blocks either way.
     run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
