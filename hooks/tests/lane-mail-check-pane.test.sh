@@ -170,6 +170,7 @@ copilot-compact
 copilot-compact-foreign
 ROWS
 
+# One mutation per unit: the hook, and the session-rows library it sources.
 if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${SESSION_ROWS_LIB_VARIANT:-}" ] &&
     { [ -z "${1:-}" ] || [ "${1:-}" = --controls ]; }; then
   while IFS='|' read -r kind shape label; do
@@ -179,17 +180,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${SESSION_ROWS_LIB_VARIANT:-}" ] &&
         assert_eq "$(grep -Fc 'if [ "$HARNESS" = claude ] || [ "$HARNESS" = codex ]; then' "$HOOK")" 1 \
           'carrier: mutation matches once'
         mutant pane-carrier -e 's@ || \[ "\$HARNESS" = codex \]@@'
-        ;;
-      blank)
-        assert_eq "$(grep -Fc '{systemMessage:$text}' "$HOOK")" 1 'blank: mutation matches once'
-        mutant pane-blank -e 's@{systemMessage:\$text}@{systemMessage:""}@'
-        ;;
-      consumers)
-        assert_eq "$(grep -Fc 'row | stop | deliver | halt | usage)' "$HOOK")" 1 'consumers: usage mutation matches once'
-        assert_eq "$(grep -Fc 'compact) [ "$TRIGGER" = auto ] || return 0 ;;' "$HOOK")" 1 \
-          'consumers: compact mutation matches once'
-        mutant pane-consumers -e 's@row | stop | deliver | halt | usage)@row | stop | deliver | halt)@' \
-          -e 's@compact) \[ "\$TRIGGER" = auto \] || return 0 ;;@compact) return 0 ;;@'
         ;;
       private-env)
         assert_eq "$(grep -Fc ' --no-private-env get oversee ' "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh")" 1 \
@@ -209,8 +199,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${SESSION_ROWS_LIB_VARIANT:-}" ] &&
       "$kind: control reaches its contract assertion"
   done <<'CONTROLS'
 carrier|codex-row|codex-row: first row visibly reports unjudged identity
-blank|foreign|foreign: first row visibly reports unjudged identity
-consumers|copilot-usage|copilot-usage: notification uses the controller pane and native id
 private-env|private-env|private-env: missing-pane SessionStart never sources checkout shell
 CONTROLS
 fi

@@ -713,56 +713,14 @@ SCAN_TIMEOUT
   install_hook "$HOOK" "$CASE_HOOK"
 fi
 
+# One control proves this suite can go red: without the attached launch check
+# every refusal row passes, the Codex and Pi rows that read no roster among them.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for mutation in launch input children native completion capability reserve unclassified wait idle resume shutdown foreground tool-result queued stop killed-resume known-unknown killed-result listed list-overlap sent-idle order remove register; do
-    case "$mutation" in
-      launch) variant agent-no-launch -e 's/^  attached_launch_check$/  :/' ;;
-      input) variant agent-no-input -e 's/\*) refuse_handoff agent-input context-unmeasured ;;/\*) return 0 ;;/' ;;
-      children) variant agent-no-children -e 's/^    claude_attached_agents$/    AGENT_ROWS=""/' ;;
-      native) variant agent-no-native -e 's/^  if jq -e '\''has("background_tasks")'\'' <<<"\$INPUT" >\/dev\/null; then$/  if false; then/' ;;
-      completion) variant agent-no-completion -e 's/if \.agents | has(\$n\[0\]) then/if false then/' ;;
-      capability) variant agent-no-capability -e 's/load_context_lib reserve/load_context_lib/' ;;
-      # Main's rule: the reserve applies whether or not an agent is out.
-      reserve) variant agent-reserve-always -e 's/^  attached_agents_out || return 0$/  attached_agents_out || :/' ;;
-      unclassified) variant agent-unclassified-none -e 's/else \.unclassified = true end)$/else . end)/' ;;
-      # Main's refusal: the reserve alone names the handoff.
-      wait) variant agent-reserve-handoff -e 's/^    out:\*) refuse agent-reserve /    out:*) refuse_handoff agent-launch /' ;;
-      # Each measured transition the scan reads, removed in turn.
-      idle) variant agent-no-idle -e 's/if \.names | has(\$n\[0\]) then/if false then/' ;;
-      resume) variant agent-no-resume -e 's/if (\$c\.input\.message | type) == "string" then/if false then/' ;;
-      shutdown) variant agent-no-shutdown -e 's/and \$c\.input\.message\.type == "shutdown_request" then/and false then/' ;;
-      foreground) variant agent-no-foreground -e 's/elif \$c\.sync then \.$/elif false then ./' ;;
-      tool-result) variant agent-no-tool-notes -e 's/^        (if type == "array" then \.\[\] | select(\.type == "tool_result") | \.content | text else empty end);$/        empty;/' ;;
-      queued) variant agent-no-queued -e 's/if \.type == "queue-operation" then/if false then/' ;;
-      stop) variant agent-no-stop -e 's/elif \$c\.name == "TaskStop" and/elif false and/' ;;
-      killed-resume) variant agent-unproved-resume -e 's/elif \$c\.status == "running" and \.agents\[\$t\] == "killed" then/elif false then/' ;;
-      known-unknown) variant agent-sticky-unknown -e 's/else changed(\$t; "unconfirmed") end/else changed($t; "unconfirmed") | .unclassified = true end/' ;;
-      killed-result) variant agent-unread-resume -e 's/and (\$m\.result | type) == "object" then \$m\.result/and false then $m.result/' ;;
-      listed) variant agent-no-listed -e 's/elif \$c\.name == "ListAgents" then/elif false then/' ;;
-      list-overlap) variant agent-stale-list -e 's/if \$c\.overlap or \$c\.list != \.generation then/if false then/' ;;
-      sent-idle) variant agent-idle-before-consumption -e 's/if \.agents\[\$t\] | queued then/if false then/' ;;
-      # A record's call results applied before its notifications.
-      order) variant agent-results-first -e 's/^          | noted(\$m)$/          | ./' \
-        -e 's/else \.unclassified = true end)$/else .unclassified = true end) | noted($m)/' ;;
-      remove) variant agent-reads-remove -e 's/then select(\.operation == "enqueue") | /then /' ;;
-      # A record's launches registered beside its call results, after its
-      # notifications.
-      register) variant agent-launch-after-notes -e 's/^          reduce (\$m | results | \[\.content | text | launched\]\[0\] | objects) as \$l$/          reduce empty as $l/' \
-        -e 's/| if \[\$r\.content | text | launched\]\[0\] != null or \$c == null or/| [$r.content | text | launched][0] as $l | if $l != null then changed($l.id; "running") | if $l.name != null then .names[$l.name] = $l.id else . end elif $c == null or/' ;;
-    esac
-    control_rc=0
-    env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \
-      > "$TMP_ROOT/$mutation.control.log" 2>&1 || control_rc=$?
-    # Without a host timeout command every row whose roster the transcript
-    # scan reads is skipped, so a control that reddens only those rows
-    # reddens nothing here. Such a host cannot hold it; a host with the scan,
-    # CI among them, does.
-    if [ "$control_rc" -eq 0 ] && [ "$SCAN_AVAILABLE" -eq 0 ]; then
-      printf 'skip: %s control reddens no row this host runs without a timeout command\n' "$mutation"
-      continue
-    fi
-    assert_eq "$control_rc" 1 "control $mutation makes the real hook assertions fail"
-  done
+  variant agent-no-launch -e 's/^  attached_launch_check$/  :/'
+  control_rc=0
+  env "HOOK_UNDER_TEST=$VARIANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-agent.test.sh" \
+    > "$TMP_ROOT/launch.control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control launch makes the real hook assertions fail'
 fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

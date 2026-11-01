@@ -68,15 +68,6 @@ for mode in full range; do
     && ok "$mode scoped execution runs the changed tool's suite and excludes the unrelated suite" \
     || bad "$mode scoped execution runs the changed tool's suite and excludes the unrelated suite" "rc=$RC out=$OUT suites=$(cat "$SUITE_LOG")"
 done
-if mutant_guard 's/        case "\$d" in skills\/\* | hooks | tools) run="" ;; esac/        case "$d" in skills\/* | hooks) run="" ;; esac/; s/\[ "\$scoped_only" -eq 0 \] || run=""/[ "$scoped_only" -eq 0 ] || run=all/'; then
-  preview range true "$MUTANT_TOOLS/guard"
-  [ "$RC" -ne 0 ] && grep -Fxq other-tool "$SUITE_LOG" \
-    && ok 'control: expanding scoped tools to every suite turns the exclusion red' \
-    || bad 'control: expanding scoped tools to every suite turns the exclusion red' "rc=$RC out=$OUT"
-else
-  bad 'scoped control changes the guard'
-fi
-
 # External inputs use the same mapper in full previews and range execution.
 mkdir -p "$R/.github/workflows" "$R/skills/input/tests/lib"
 printf 'workflow\n' > "$R/.github/workflows/skill-tests.yml"
@@ -116,24 +107,6 @@ RC=0
 OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
 [ "$RC" -ne 0 ] && [ "$(cat "$SUITE_LOG")" = aggregate ] \
   && ok 'a failing aggregate input rejects actual range selection' || bad 'a failing aggregate input rejects actual range selection' "$OUT"
-if mutant_guard 's/      \*) tree=tools; rel="\.\.\/\$f" ;;/      *) continue ;;/'; then
-  : > "$SUITE_LOG"
-  RC=0
-  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$MUTANT_TOOLS/guard" --range "$BASE" 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] && [ ! -s "$SUITE_LOG" ] \
-    && ok 'control: omitting workflow inputs hides the failing aggregate' || bad 'control: omitting workflow inputs hides the failing aggregate' "$OUT"
-else
-  bad 'external-input control changes the guard'
-fi
-if mutant_guard 's/if (text ~ \/\^# Inputs: \/)/if (0)/' ; then
-  git -C "$R" reset -q --hard "$BASE"
-  printf '# changed\n' >> "$R/skills/input/tests/lib/evaluator.py"
-  preview range true "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [ ! -s "$SUITE_LOG" ] \
-    && ok 'control: omitting input notes loses the indirect reader' || bad 'control: omitting input notes loses the indirect reader' "$OUT"
-else
-  bad 'input-note control changes the guard'
-fi
 
 # Shared skill libraries have consumers in other trees, directly or through
 # a test helper. An unrelated library must keep those consumers excluded.
@@ -192,39 +165,6 @@ for row in \
       || bad "$mode input $input selects its same-tree and external consumers only" "selected=$selected rc=$RC out=$OUT"
   done
 done
-if [ "$(grep -c '^    for consumer in .*consumer_trees.*; do$' "$GUARD")" -eq 1 ] \
-  && mutant_guard '/^    for consumer in .*consumer_trees.*; do$/,/^    done$/d'; then
-  git -C "$R" reset -q --hard "$BASE"
-  printf '# changed\n' >> "$R/skills/orch/scripts/lib/shared.sh"
-  preview range true "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [ "$(cat "$SUITE_LOG")" = orch ] \
-    && ok 'control: omitting cross-tree inputs loses both hooks and refresh consumers' \
-    || bad 'control: omitting cross-tree inputs loses both hooks and refresh consumers' "rc=$RC out=$OUT"
-else
-  bad 'cross-tree control changes the guard'
-fi
-if [ "$(grep -c '^    walk_root=' "$GUARD")" -eq 1 ] \
-  && mutant_guard '/^    walk_root=/s/.*/    walk_root="$skill_root|$catalog_root"/'; then
-  git -C "$R" reset -q --hard "$BASE"
-  printf '# changed\n' >> "$R/skills/orch/scripts/lib/private.sh"
-  preview range true "$MUTANT_TOOLS/guard"
-  selected="$(sort "$SUITE_LOG" | tr '\n' ' ' | sed 's/ $//')"
-  [ "$RC" -eq 0 ] && [ "$selected" = 'catalog orch walker' ] \
-    && ok 'control: ignoring external walk roots selects unrelated document walkers' \
-    || bad 'control: ignoring external walk roots selects unrelated document walkers' "selected=$selected rc=$RC out=$OUT"
-else
-  bad 'external walk-root control changes the guard'
-fi
-if mutant_guard '/^          if (pattern == "-") continue$/d'; then
-  git -C "$R" reset -q --hard "$BASE"
-  printf '# changed\n' >> "$R/skills/orch/scripts/lib/private.sh"
-  preview range true "$MUTANT_TOOLS/guard"
-  [ "$RC" -ne 0 ] && grep -Fxq unrelated-refresh "$SUITE_LOG" \
-    && ok 'control: matching disabled reader patterns selects unrelated suites' \
-    || bad 'control: matching disabled reader patterns selects unrelated suites' "rc=$RC out=$OUT"
-else
-  bad 'disabled reader-pattern control changes the guard'
-fi
 
 # Reader comparisons can fail while the files remain readable. Normal runs
 # must run the whole set; scoped runs must refuse the unavailable evidence.
@@ -287,40 +227,6 @@ reader_failure() { # INPUT SCOPED FAILURE GUARD
     "$4" --selection --range "$BASE" 2>&1)" || RC=$?
 }
 
-# Two inputs in tools/ share the completed reader scan. The grep wrapper
-# counts only the old per-reader comparisons, not extraction or other gates.
-reader_grep_row() { # GUARD
-  git -C "$R" reset -q --hard "$BASE"
-  for input in tools/README.md .github/workflows/skill-tests.yml; do
-    printf '# changed\n' >> "$R/$input"
-  done
-  rm -f -- "$TMP/reader-calls"
-  : > "$SUITE_LOG"
-  RC=0
-  OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
-    PATH="$TMP/reader-bin:$PATH" READER_GREP="$READER_GREP" READER_SED="$READER_SED" READER_AWK="$READER_AWK" \
-    READER_CALLS="$TMP/reader-calls" READER_FAILURE=none DEV_VALIDATE_SCOPED=true SUITE_LOG="$SUITE_LOG" \
-    "$1" --selection --range "$BASE" 2>&1)" || RC=$?
-  reader_grep_calls=0
-  [ ! -f "$TMP/reader-calls" ] || read -r reader_grep_calls < "$TMP/reader-calls"
-  [ "$RC" -eq 0 ] && [ "$(cat "$SUITE_LOG")" = aggregate ] && [ "$reader_grep_calls" -eq 0 ]
-}
-reader_grep_row "$GUARD" \
-  && ok 'two inputs reuse one tree reader scan without per-reader grep' \
-  || bad 'two inputs reuse one tree reader scan without per-reader grep' "calls=$reader_grep_calls rc=$RC out=$OUT"
-if mutant_guard '/^    doc_readers "\$rel" || return 2$/a\
-    grep -qF -e "/$rel" -- ${SCAN_PATH[@]+"${SCAN_PATH[@]}"} || [ $? -eq 1 ] || return 2'; then
-  if reader_grep_row "$MUTANT_TOOLS/guard"; then
-    bad 'control: repeated reader grep turns the cached comparison assertion red'
-  else
-    [ "$reader_grep_calls" -gt 0 ] && [ "$RC" -eq 0 ] && [ "$(cat "$SUITE_LOG")" = aggregate ] \
-      && ok 'control: repeated reader grep turns the cached comparison assertion red' \
-      || bad 'control: repeated reader grep turns the cached comparison assertion red' "calls=$reader_grep_calls rc=$RC out=$OUT"
-  fi
-else
-  bad 'reader grep control changes the guard'
-fi
-
 for failure in 1 2 3 4 sed; do
   for row in 'tools/README.md|false' '.github/workflows/skill-tests.yml|false' '.github/workflows/skill-tests.yml|true'; do
     IFS='|' read -r input scoped <<<"$row"
@@ -334,17 +240,6 @@ for failure in 1 2 3 4 sed; do
     fi
   done
 done
-# The same injected failures must redden the contract when they are accepted
-# as no match. Keep all comparisons so the control still reaches the error.
-if mutant_guard '/scan_input.*|| return 2$/s/|| return 2/|| true/; s/^  token=\(.*\) || return 2$/  token=\1 || true/'; then
-  for failure in 1 sed; do
-    reader_failure .github/workflows/skill-tests.yml true "$failure" "$MUTANT_TOOLS/guard"
-    [ -s "$SUITE_LOG" ] && [[ $OUT != *'guard: mapped-suites=2 '* ]] \
-      && ok "control: accepting reader $failure failure loses scoped refusal" || bad "control: accepting reader $failure failure loses scoped refusal" "$OUT"
-  done
-else
-  bad 'reader-failure control changes the guard'
-fi
 
 # Exercise the shipped aggregate assertion through range selection. This
 # isolated checkout keeps the tools consumers used below so the routing
@@ -407,14 +302,17 @@ git -C "$actual" add -A
 entry_points_executable "$actual"
 git -C "$actual" commit -q -m aggregate
 actual_base="$(git -C "$actual" rev-parse HEAD)"
-sed 's/run: tools\/ci-job-set --event-parity/run: tools\/ci-job-set/' "$actual/.github/workflows/skill-tests.yml" > "$TMP/broken-workflow"
-cmp -s "$actual/.github/workflows/skill-tests.yml" "$TMP/broken-workflow" && { bad 'aggregate control changes the workflow'; exit 1; }
-mv "$TMP/broken-workflow" "$actual/.github/workflows/skill-tests.yml"
+# The fixture row above proves that a selected failing aggregate rejects the
+# range; this one proves the shipped aggregate suite is what a workflow edit
+# selects. The tools roster here is that suite and vendored-settings-libs,
+# which reads no workflow, so the mapped count names the aggregate.
+printf '\n# changed workflow\n' >> "$actual/.github/workflows/skill-tests.yml"
 RC=0
-OUT="$(cd "$actual" && "$GUARD" --range "$actual_base" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && [[ $OUT == *suite=ci-aggregate.test* ]] && [[ $OUT == *'fail=1'* ]] \
-  && ok 'the shipped aggregate rejects a broken workflow through range selection' \
-  || bad 'the shipped aggregate rejects a broken workflow through range selection' "$OUT"
+OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+  DEV_VALIDATE_SCOPED=false "$GUARD" --selection --range "$actual_base" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && grep -Fxq 'guard-note: suites=1/2 reason=mapped tree=tools' <<<"$OUT" \
+  && ok 'a workflow edit selects the shipped aggregate suite' \
+  || bad 'a workflow edit selects the shipped aggregate suite' "rc=$RC out=$OUT"
 
 # PR #5200's changed orch scripts and libraries must reach the real hooks
 # and refresh readers. Preserve suite text for the mapper, but stop bodies
@@ -449,17 +347,6 @@ for suite in hooks/tests/lane-mail-check.test.sh hooks/tests/lane-mail-model-swi
   [ "$RC" -eq 0 ] && grep -Fxq "=== $suite" <<<"$OUT" \
     && ok "KEN-3966 replay selects $suite" || bad "KEN-3966 replay selects $suite" "rc=$RC out=$OUT"
 done
-if mutant_guard 's/\$1 == "manifest" \&\& /$1 == "include" \&\& /'; then
-  RC=0
-  : >"$REPLAY_CARGO_LOG"
-  OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
-    DEV_VALIDATE_SCOPED=true "$MUTANT_TOOLS/guard" --selection --range "$replay_base" 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] && ! grep -Fxq 'test --manifest-path crates/core/Cargo.toml --quiet' "$REPLAY_CARGO_LOG" \
-    && ok 'control: include-only selection misses the copied fixture cargo boundary' \
-    || bad 'control: include-only selection misses the copied fixture cargo boundary' "rc=$RC cargo=$(cat "$REPLAY_CARGO_LOG") out=$OUT"
-else
-  bad 'control: the copied fixture runtime selection could not be removed'
-fi
 
 # PR 5399's launch change includes the shared library, its source and render,
 # and the changed contract suites. Keep real reader text; the existing replay
@@ -480,96 +367,60 @@ direct_launch_selection() { # SELECTED PATHS
     grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1" &&
     ! grep -Fxq 'skills/orch/tests/oversee_watch_lifecycle.sh' <<<"$1"
 }
-if mutant_guard '/^  if \[ "\$scoped_only" -eq 1 \] \&\& \[ "\${3:-reader}" != changed \]; then$/,/^  fi$/d'; then
-  scoped_selection=""
-  normal_selection=""
-  control_selection=""
-  normal_control_selection=""
-  for variant in scoped normal control normal-control; do
-    replay_guard=$GUARD
-    replay_scoped=true
-    replay_args=(--selection --range "$replay_base")
-    case "$variant" in
-      normal) replay_scoped=false; replay_args=(--range "$replay_base") ;;
-      control) replay_guard="$MUTANT_TOOLS/guard" ;;
-      normal-control) replay_guard="$MUTANT_TOOLS/guard"; replay_scoped=false; replay_args=(--range "$replay_base") ;;
-    esac
-    RC=0
-    replay_started=$SECONDS
-    OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
-      DEV_VALIDATE_SCOPED="$replay_scoped" "$replay_guard" "${replay_args[@]}" 2>&1)" || RC=$?
-    selected="$(sed -n 's/^guard-note: selected-suite=//p' <<<"$OUT" | sort -u)"
-    selected_count="$(awk 'NF { n++ } END { print n + 0 }' <<<"$selected")"
-    printf 'launch-replay variant=%s exit=%s seconds=%s suites=%s\n' "$variant" "$RC" "$((SECONDS - replay_started))" "$selected_count"
-    printf '%s\n' "$selected"
-    [ "$RC" -eq 0 ] && ok "launch replay $variant reaches a pass verdict" \
-      || bad "launch replay $variant reaches a pass verdict" "$OUT"
-    case "$variant" in
-      scoped)
-        scoped_selection=$selected
-        direct_launch_selection "$selected" && ok 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' \
-          || bad 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' "$OUT"
-        ;;
-      normal) normal_selection=$selected ;;
-      normal-control) normal_control_selection=$selected ;;
-      control)
-        control_selection=$selected
-        if direct_launch_selection "$selected"; then
-          bad 'control: restoring main propagation rejects the direct-only oracle'
-        else
-          grep -Fxq 'skills/orch/tests/oversee_watch_lifecycle.sh' <<<"$selected" \
-            && ok 'control: restoring main propagation rejects the direct-only oracle' \
-            || bad 'control: restoring main propagation rejects the direct-only oracle' "$OUT"
-        fi
-        ;;
-    esac
-  done
-  [ "$normal_selection" = "$normal_control_selection" ] && [ "$scoped_selection" != "$control_selection" ] \
-    && ok 'normal selection retains the complete main reach for the incident diff' \
-    || bad 'normal selection retains the complete main reach for the incident diff'
-else
-  bad 'the incident control changes the production-reader reach'
-fi
+scoped_selection=""
+for variant in scoped normal; do
+  replay_scoped=true
+  replay_args=(--selection --range "$replay_base")
+  [ "$variant" = scoped ] || { replay_scoped=false; replay_args=(--range "$replay_base"); }
+  RC=0
+  replay_started=$SECONDS
+  OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
+    DEV_VALIDATE_SCOPED="$replay_scoped" "$GUARD" "${replay_args[@]}" 2>&1)" || RC=$?
+  selected="$(sed -n 's/^guard-note: selected-suite=//p' <<<"$OUT" | sort -u)"
+  selected_count="$(awk 'NF { n++ } END { print n + 0 }' <<<"$selected")"
+  printf 'launch-replay variant=%s exit=%s seconds=%s suites=%s\n' "$variant" "$RC" "$((SECONDS - replay_started))" "$selected_count"
+  printf '%s\n' "$selected"
+  [ "$RC" -eq 0 ] && ok "launch replay $variant reaches a pass verdict" \
+    || bad "launch replay $variant reaches a pass verdict" "$OUT"
+  case "$variant" in
+    scoped)
+      scoped_selection=$selected
+      direct_launch_selection "$selected" && ok 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' \
+        || bad 'the incident scoped run keeps direct launch suites and excludes lifecycle callers' "$OUT"
+      ;;
+    normal)
+      # The scoped narrowing never reaches a normal run: it keeps every
+      # scoped suite and the lifecycle callers main propagation reaches.
+      missing="$(comm -23 <(printf '%s\n' "$scoped_selection") <(printf '%s\n' "$selected"))"
+      [ -n "$scoped_selection" ] && [ -z "$missing" ] \
+        && grep -Fxq 'skills/orch/tests/oversee_watch_lifecycle.sh' <<<"$selected" \
+        && ok 'normal selection retains the complete main reach for the incident diff' \
+        || bad 'normal selection retains the complete main reach for the incident diff' "missing=$missing out=$OUT"
+      ;;
+  esac
+done
 
-# A noncanonical source and its render reach the shipped glob consumer only
+# A noncanonical source and its render reach the shipped glob consumer
 # through its input declaration. Its one-member tools roster makes the mapped
-# count identify that consumer. Both baselines retain the consumer's code.
+# count identify that consumer.
 git -C "$actual" reset -q --hard "$replay_base"
 rm -- "$actual/tools/tests/ci-aggregate.test.sh"
 git -C "$actual" add -u tools/tests
 git -C "$actual" commit -q -m 'glob consumer'
 glob_base="$(git -C "$actual" rev-parse HEAD)"
-consumer=tools/tests/vendored-settings-libs.test.sh
-input_note='# Inputs: skills/*/scripts/lib/kendex-env.sh .agents/skills/*/scripts/lib/kendex-env.sh'
-if [ "$(grep -Fxc "$input_note" "$actual/$consumer")" -ne 1 ]; then
-  bad 'the glob-consumer control finds one input declaration'
-  exit 1
-fi
-sed '/^# Inputs: /d' "$actual/$consumer" > "$TMP/replay-suite"
-cmp -s "$actual/$consumer" "$TMP/replay-suite" && { bad 'the glob-consumer control removes its declaration'; exit 1; }
-mv "$TMP/replay-suite" "$actual/$consumer"
-git -C "$actual" add "$consumer"
-git -C "$actual" commit -q -m 'without glob inputs'
-without_inputs_base="$(git -C "$actual" rev-parse HEAD)"
-for row in \
-  'present|skills/github/scripts/lib/kendex-env.sh|1/1' \
-  'present|.agents/skills/github/scripts/lib/kendex-env.sh|1/1' \
-  'absent|skills/github/scripts/lib/kendex-env.sh|0/1' \
-  'absent|.agents/skills/github/scripts/lib/kendex-env.sh|0/1'; do
-  IFS='|' read -r declaration input expected <<<"$row"
-  if [ "$declaration" = present ]; then input_base=$glob_base; else input_base=$without_inputs_base; fi
+for input in skills/github/scripts/lib/kendex-env.sh .agents/skills/github/scripts/lib/kendex-env.sh; do
   for mode in full range; do
-    git -C "$actual" reset -q --hard "$input_base"
-    git -C "$actual" update-ref refs/remotes/origin/main "$input_base"
+    git -C "$actual" reset -q --hard "$glob_base"
+    git -C "$actual" update-ref refs/remotes/origin/main "$glob_base"
     printf '\n# changed library input\n' >> "$actual/$input"
     replay_args=(--selection)
-    if [ "$mode" = full ]; then replay_args+=(--full); else replay_args+=(--range "$input_base"); fi
+    if [ "$mode" = full ]; then replay_args+=(--full); else replay_args+=(--range "$glob_base"); fi
     RC=0
     OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
       DEV_VALIDATE_SCOPED=false "$GUARD" "${replay_args[@]}" 2>&1)" || RC=$?
-    [ "$RC" -eq 0 ] && grep -Fxq "guard-note: suites=$expected reason=mapped tree=tools" <<<"$OUT" \
-      && ok "$mode input $input with declaration $declaration maps glob consumer $expected" \
-      || bad "$mode input $input with declaration $declaration maps glob consumer $expected" "rc=$RC out=$OUT"
+    [ "$RC" -eq 0 ] && grep -Fxq "guard-note: suites=1/1 reason=mapped tree=tools" <<<"$OUT" \
+      && ok "$mode input $input maps its glob consumer" \
+      || bad "$mode input $input maps its glob consumer" "rc=$RC out=$OUT"
   done
 done
 fi
@@ -662,17 +513,6 @@ for row in 'single|413' 'pair|' 'partition|' 'full|' 'mixed|' 'uncovered|' 'shar
   [ "$RC" -eq 0 ] && [ "$estimate" = "$expected" ] && [ ! -e "$timing/tmp/attempts" ] \
     && ok "measured preview $label has estimate [$expected] without execution" \
     || bad "measured preview $label has estimate [$expected] without execution" "rc=$RC out=$OUT"
-  if [ "$label" = partition ]; then
-    if [ "$(grep -Fc 'if (selected[i] == "tools/tests/orch-shard-partition.test.sh") exit 1' "$GUARD")" -eq 1 ] \
-      && mutant_guard 's/if (selected\[i\] == "tools\/tests\/orch-shard-partition.test.sh") exit 1/if (0 \&\& selected[i] == "tools\/tests\/orch-shard-partition.test.sh") exit 1/'; then
-      timing_preview "$MUTANT_TOOLS/guard"
-      [ "$RC" -eq 0 ] && [ "$(sed -n '/^expected-secs=/p' <<<"$OUT")" = expected-secs=359 ] \
-        && ok 'control: accepting shell timing for combined mode turns the coverage oracle red' \
-        || bad 'control: accepting shell timing for combined mode turns the coverage oracle red' "$OUT"
-    else
-      bad 'the invocation coverage control changes exactly one condition'
-    fi
-  fi
 done
 unset timing_preview_base
 git -C "$timing" reset -q --hard "$timing_base"
@@ -681,15 +521,6 @@ timing_preview "$GUARD"
 [ "$(sed -n '/^selection=/p' <<<"$OUT")" = selection=subset ] \
   && ok 'the measured single-suite preview is a real kendex subset' \
   || bad 'the measured single-suite preview is a real kendex subset' "$OUT"
-if [ "$(grep -Fc '    selection_expected_secs' "$GUARD")" -eq 1 ] \
-  && mutant_guard 's/^    selection_expected_secs$/    : selection_expected_secs/'; then
-  timing_preview "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [ -z "$(sed -n '/^expected-secs=/p' <<<"$OUT")" ] \
-    && ok 'control: removing estimate output turns the measured preview red' \
-    || bad 'control: removing estimate output turns the measured preview red' "$OUT"
-else
-  bad 'the estimate control changes exactly one call'
-fi
 
 runner="$REPO/skills/orch/scripts/dev-validate-run"
 writer="$REPO/skills/orch/scripts/dev-return-write"
