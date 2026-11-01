@@ -110,7 +110,7 @@ Prepare dependent repository corrections before the label change. After an autho
 
 ## Issue Creation Routing
 
-Orchestration and review sessions file through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations. An owner-authorized single filing, outcome, Done-when and reach written, is judged in its own session (project-management SKILL.md § Disposition): `issues list --search` for duplicates, `issues create` and its label, project and team checks, `issues bulk-get` read-back; no analysis agent or audit JSON. Audits, batches and unclear splits stay delegated.
+Orchestration and review sessions file through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations. An owner-authorized, well-specified single filing is judged in the filing session, with no analysis agent or audit JSON: project-management workflows/audit-issues.md § 4.1.
 
 `issues create` needs a `LINEAR_AGENT_LABELS` label before API calls when set; `--no-agent-label` allows bare creates. Unless `LINEAR_REQUIRE_REACH` is set empty, create needs `Reached by:` and, with `--review-born --priority 2`, `Symptom:`; placeholders and null tokens are absent. Under that key, authored create/update/bulk-update bodies refuse an invalid `Post-merge:` trigger or Deadline; a missing quoted `> **Story:**` and `> **Why this matters:**` opening or a header over 500 characters prints a `linear: advisory=` line and writes (`issues --help`). Filing-line and review-born rules: project-management SKILL.md § Disposition, **Name what reaches it**.
 
