@@ -71,9 +71,21 @@ test("fixture marker discovery and cleanup keep another world's marker alive", {
 	assert.deepEqual(world.runningMarkers(), [owned.child.pid]);
 	// A pid record alone must not let this world's cleanup kill another marker.
 	writeFileSync(world.markers.late, `${foreign.child.pid}\n`);
-	await world.close();
+	// Signal delivery can precede observable exit. Record real sends as well as liveness.
+	const kill = process.kill;
+	const signalled = [];
+	process.kill = function (pid, ...args) {
+		signalled.push(pid);
+		return kill.call(process, pid, ...args);
+	};
+	try {
+		await world.close();
+	} finally {
+		process.kill = kill;
+	}
 	closed = true;
 	await owned.exited;
+	assert.equal(signalled.includes(foreign.child.pid), false);
 	assert.equal(alive(foreign.child.pid), true);
 });
 
