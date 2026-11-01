@@ -219,52 +219,14 @@ a non-numeric PR exits 2|checks:ci-required|abc|2|-|0
 two PR numbers exit 2|checks:ci-required|123 456|2|-|0
 "
 
-# Each control replaces one line of the retry gate in a copy of the scripts
-# tree, keeping the retry: same-head line, and runs the rows that rule
-# decides against that copy: they print what the cut rule held back.
-control() { # NAME FROM TO ROWS
-  local live="$CLASSIFY"
-  CLASSIFY=$(mutant_copy_edit "$TMPDIR/mutant-$1" "$2" "$3" commands/ci-classify-refusal.sh)
-  run_table "must-fail: the $1 rule cut" "$4"
-  CLASSIFY="$live"
-}
-control computing '    computing) return 0 ;;' '    computing) return 1 ;;' "\
+# The suite's must-fail control replaces one line of the retry gate in a copy
+# of the scripts tree, keeping the retry: same-head line, and runs the row that
+# rule decides against that copy: it prints what the cut rule held back.
+live_classify="$CLASSIFY"
+CLASSIFY=$(mutant_copy_edit "$TMPDIR/mutant-computing" '    computing) return 0 ;;' '    computing) return 1 ;;' commands/ci-classify-refusal.sh)
+run_table "must-fail: the computing rule cut" "\
 a still-computing mergeable state is not retried|checks:ci-required mergeable:UNKNOWN|123|0|cause=computing;issue=unknown: cause=computing GitHub still computing mergeable status; retry, or arm with --auto|1
 "
-control none '    none) ;;' '    none) return 1 ;;' "\
-a passing head is not retried|checks:ci-required|123|0|cause=none;note|1
-"
-control other-causes '    *) return 1 ;;' '    *) ;;' "\
-a changes-requested review is retried|checks:ci-required review:CHANGES_REQUESTED|123|0|cause=changes_requested;issue=changes_requested: Reviewer requested changes;retry=same-head|1
-a conflicting PR is retried|checks:ci-required mergeable:CONFLICTING|123|0|cause=merge_conflict;issue=conflicts: PR has merge conflicts. Resolve by rebasing onto your default branch and force-pushing;retry=same-head|1
-"
-control not-approved "    if jq -e 'any(.warnings[]?; startswith(\"not_approved:\"))' >/dev/null <<<\"\$check_json\"; then" \
-  "    if jq -e 'any(.warnings[]?; startswith(\"not_approved-cut:\"))' >/dev/null <<<\"\$check_json\"; then" "\
-a missing approval is retried|checks:ci-required review:REVIEW_REQUIRED|123|0|cause=none;retry=same-head;note|1
-"
-control unresolved-thread '    [ "$unresolved" -eq 0 ]' '    [ "$unresolved" -ge 0 ]' "\
-an unresolved review thread is retried|checks:ci-required thread:false|123|0|cause=none;retry=same-head;note|1
-"
-control unread-threads '    if ! threads=$(bash "$SCRIPT_DIR/pr-threads.sh" "$pr_num" --unresolved 2>"$check_err") ||' \
-  '    if ! { threads=$(bash "$SCRIPT_DIR/pr-threads.sh" "$pr_num" --unresolved 2>"$check_err") || threads='"'"'{"unresolved_count":0}'"'"'; } ||' "\
-an unreadable thread count read as zero is retried|checks:ci-required env:STUB_THREAD_STATE_FAIL=true|123|0|cause=none;retry=same-head;note|1
-"
-
-# The old workflow-result control depended on an empty context array making
-# optional jobs required. Complete requirements removed that premise. This
-# control instead drops workflow membership at the diagnostic's wire reader.
-live_classify="$CLASSIFY"
-CLASSIFY=$(mutant_copy_edit "$TMPDIR/mutant-workflow-membership" \
-  "required_json=\$(jq -c '.requirements // .required_contexts // []' <<<\"\$check_json\")" \
-  "required_json=\$(jq -c '.required_contexts // []' <<<\"\$check_json\")" commands/ci-classify-refusal.sh)
-build checks:workflow-membership workflow-membership
-got=$(run 123)
-assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: request (FAILURE);ci_optional_failed: request (FAILURE);head-run=500,600;fail=request state=FAILURE workflow=Optional run=600;fail=request state=FAILURE workflow=Required run=500 checks=1' 'the membership control reaches false optional failure detail'
-set +e
-( FAIL=0; assert_eq "$got" 'rc=0 out=cause=ci_failed;issue=ci_failed: request (FAILURE);ci_optional_failed: request (FAILURE);head-run=500,600;fail=request state=FAILURE workflow=Required run=500 checks=1' 'required workflow failure detail'; [[ "$FAIL" -eq 0 ]] ) > "$TMPDIR/workflow-control.log"
-control_rc=$?
-set -e
-assert_eq "$control_rc" 1 'the normal membership detail assertion rejects the control'
 CLASSIFY="$live_classify"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

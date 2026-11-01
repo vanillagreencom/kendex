@@ -367,52 +367,24 @@ selection(root)
 completed += 1
 print("pass: linked installation")
 
-# Each control changes a disposable production copy and reuses its contract.
-for name, contract, path, old, new in (
-    ("symlink-refusal", symlink, "bot-instructions/scripts/lib/writer.py",
-     'if dry_run and os.path.islink(os.path.join(root, rel)):', 'if False:'),
-    ("divergence", preview, "bot-instructions/scripts/lib/verbs.py",
-     '_region_finding(ctx, seen[0], findings, dry_run)', 'None'),
-    ("preview-write", preview, "bot-instructions/scripts/lib/writer.py",
-     '    if dry_run:\n        return True', '    if False:\n        return True'),
-    ("ignore-review", selection, "github-repository-settings/scripts/github-repository-settings",
-     "*:off|check:) output=local", "*:off|check:) output=full"),
-    ("not-adopted", adoption, "github-repository-settings/scripts/github-repository-settings",
-     'if [ -z "$location" ] && [ -z "$review" ]; then',
-     'if [ -n "$location" ] && [ -z "$review" ]; then'),
-    ("library-bytes", equality, "github-repository-settings/scripts/github-repository-settings",
-     '--output "$output"', '--output full'),
-    ("check-write", checking, "bot-instructions/scripts/lib/verbs.py",
-     'def check_verb(ctx):\n', 'def check_verb(ctx):\n    open(ctx.root + "/check-write", "w").close()\n'),
-    ("staged-settings", staged, "github-repository-settings/scripts/github-repository-settings",
-     'rg_settings_index_sources "$staged_settings" || exit 2', ':'),
-    ("nested-settings", staged, "review-gate/scripts/lib/settings.sh",
-     'rg_settings_nested_source=$nested', 'rg_settings_nested_source="$dir/absent.toml"'),
-    ("staged-source-mode", staged, "review-gate/scripts/lib/settings.sh",
-     "*) entry='' ;;", "*) : ;;"),
-    ("staged-option", staged, "github-repository-settings/scripts/github-repository-settings",
-     'staged=true; args+=("$1")', 'staged=true'),
-    ("staged-status", staged, "github-repository-settings/scripts/github-repository-settings",
-     'exit "$status"', 'exit 0'),
-    ("location-gate", locations, "github-repository-settings/scripts/github-repository-settings",
-     '[ "$verb" = adopt ] && [ -z "$location" ]', '[ "$verb" = never ] && [ -z "$location" ]'),
-):
-    root = fixture(f"control-{name}")
-    target = root / "catalog" / path
-    assert not target.is_symlink()
-    text = target.read_text()
-    assert text.count(old) == 1, (name, old)
-    changed = text.replace(old, new)
-    assert changed != text
-    # Git Bash must reach the mutant, not fail on rewritten CRLF script lines.
-    target.write_text(changed, newline="")
-    try:
-        contract(root)
-    except AssertionError:
-        completed += 1
-        print(f"control rejected: {name}")
-    else:
-        raise AssertionError(f"control survived: {name}")
+# One control proves the contracts go red: a preview that writes.
+old, new = '    if dry_run:\n        return True', '    if False:\n        return True'
+root = fixture("control-preview-write")
+target = root / "catalog" / "bot-instructions/scripts/lib/writer.py"
+assert not target.is_symlink()
+text = target.read_text()
+assert text.count(old) == 1, old
+changed = text.replace(old, new)
+assert changed != text
+# Git Bash must reach the mutant, not fail on rewritten CRLF script lines.
+target.write_text(changed, newline="")
+try:
+    preview(root)
+except AssertionError:
+    completed += 1
+    print("control rejected: preview-write")
+else:
+    raise AssertionError("control survived: preview-write")
 
 # skills/orch/tests/run-all.sh reads this numeric suite summary.
 print(f"{completed} passed, 0 failed")

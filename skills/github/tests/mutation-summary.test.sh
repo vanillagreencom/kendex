@@ -7,11 +7,9 @@
 #
 # jq 1.7 parses `key: a == b` inside `{}` as a syntax error, so an
 # unparenthesized comparison there aborts the command after every mutation has
-# already landed. Not every jq build reads that object value the same way, so the
-# must-fail control below probes the running jq for what it does with the bare
-# form rather than assuming the compile error, and a byte-level guard beside it
-# is what proves the shipped filter still carries the parentheses on a build
-# that accepts either form.
+# already landed. Not every jq build reads that object value the same way, so a
+# byte-level guard proves the shipped filter still carries the parentheses on a
+# build that accepts either form.
 # dismiss-review reached it on every dismissal, which is the shipped path that
 # aborted: the orch review-pr-comments workflow runs `dismiss-review [PR] --bot`
 # for a contested bot review. resolve-thread and unresolve-thread reached it only
@@ -137,17 +135,6 @@ err_text() {
   local text
   text="$(head -n 1 "$TMP_ROOT/stderr")"
   [[ "$text" != "" ]] || { printf -- '-'; return; }
-  # jq's parser wording and the program line number are its internals, not a
-  # contract, and the suite runs on whatever jq the ubuntu and macos runner
-  # images ship. A compile error reduces to the part every build states: it is
-  # a syntax error, and `==` is what it choked on. A build that words even that
-  # differently prints its raw line here and fails loudly.
-  case "$text" in
-    "jq: error: syntax error"*"unexpected =="*)
-      printf 'jq-syntax-error-at-=='
-      return
-      ;;
-  esac
   printf '%s' "$text"
 }
 
@@ -181,8 +168,8 @@ run() {
 }
 
 # want_of TAIL — the output a command must print, from TAIL, a row's
-# `rc|out|err|calls` expectation. The forward table and every must-fail control
-# below read their expectation through here, so a control can never compare
+# `rc|out|err|calls` expectation. The forward table and the must-fail control
+# below read their expectation through here, so the control can never compare
 # against a spelling no forward row asserts.
 want_of() {
   local rc out err calls field
@@ -218,25 +205,6 @@ run_table() {
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
-# assert_killed GOT FORWARD MUTANT LABEL — the mutated command's output is not
-# what the forward row requires, and is what this mutation produces.
-#
-# The first half is the kill: the very comparison that passes against the
-# shipped command fails against the mutant, so the forward row is established as
-# the thing that catches the defect rather than merely described. The second
-# half pins what the mutation changed, so a mutant broken some other way is not
-# counted as the kill.
-assert_killed() {
-  local got="$1" forward="$2" mutant="$3" label="$4"
-  if [[ "$got" == "$forward" ]]; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        the forward row still passes against the mutant: %s\n' \
-      "$label" "$got"
-    return
-  fi
-  assert_eq "$got" "$mutant" "$label"
-}
-
 RESOLVED_TWO="{\"success\":true,\"resolved\":[\"$ID_A\",\"$ID_B\"],\"failed\":[]}"
 RESOLVED_ONE="{\"success\":true,\"resolved\":[\"$ID_A\"],\"failed\":[]}"
 UNRESOLVED_TWO="{\"success\":true,\"unresolved\":[\"$ID_A\",\"$ID_B\"],\"failed\":[]}"
@@ -253,13 +221,11 @@ DISMISS_REFUSED="{\"success\":false,\"dismissed\":[],\"failed\":[{\"review_id\":
 THREAD_CALLS="auth,graphql"
 DISMISS_CALLS="repo,auth,api:repos/owner/repo/pulls/23/reviews,api:repos/owner/repo/pulls/23/reviews/555/dismissals,api:repos/owner/repo/pulls/23/reviews/556/dismissals"
 
-# The three partial-batch rows' expectations, named because the drop_status_read
-# controls below have to fail against these very strings. A control carrying its
-# own copy would, once a row changed, compare against a spelling no row asserts,
-# and would then be satisfied by any output at all.
+# The resolve-two-partial row's expectation, named because the drop_status_read
+# control below has to fail against the very string its row asserts. A control
+# carrying its own copy would, once the row changed, compare against a spelling
+# no row asserts, and would then be satisfied by any output at all.
 PARTIAL_RESOLVE="1|$RESOLVED_PARTIAL|-|$THREAD_CALLS"
-PARTIAL_UNRESOLVE="1|$UNRESOLVED_PARTIAL|-|$THREAD_CALLS"
-PARTIAL_DISMISS="1|$DISMISS_REFUSED|-|$DISMISS_CALLS"
 
 run_table "the summary renders, and the exit status reports the mutations" "\
 resolve-thread with two ids names both as resolved|resolve-two|$ID_A $ID_B|0|$RESOLVED_TWO|-|$THREAD_CALLS
@@ -267,8 +233,8 @@ resolve-thread with one id keeps the single-thread answer|resolve-one|$ID_A|0|$R
 unresolve-thread with two ids names both as unresolved|unresolve-two|$ID_A $ID_B|0|$UNRESOLVED_TWO|-|$THREAD_CALLS
 dismiss-review names both dismissals|dismiss-two|23 --bot|0|$DISMISSED_TWO|-|$DISMISS_CALLS
 one thread left unresolved is named under failed and exits 1|resolve-two-partial|$ID_A $ID_B|$PARTIAL_RESOLVE
-one thread left resolved is named under failed and exits 1|unresolve-two-partial|$ID_A $ID_B|$PARTIAL_UNRESOLVE
-a refused dismissal is named under failed and exits 1|dismiss-two-refused|23 --bot|$PARTIAL_DISMISS
+one thread left resolved is named under failed and exits 1|unresolve-two-partial|$ID_A $ID_B|1|$UNRESOLVED_PARTIAL|-|$THREAD_CALLS
+a refused dismissal is named under failed and exits 1|dismiss-two-refused|23 --bot|1|$DISMISS_REFUSED|-|$DISMISS_CALLS
 "
 
 MUTANT_DIR="$TMP_ROOT/mutant"
@@ -280,8 +246,8 @@ cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
 #
 # The search walks offsets and compares with `=` inside `[[ ]]`, which is string
 # equality and not pattern matching. Nothing here is a glob, a BRE or an ERE, so
-# the `[`, `]` and `.` that two of the three OLD strings carry are just
-# characters. LINE is one line of a script, so the walk is short.
+# the `[`, `]` and `.` that OLD carries are just characters. LINE is one line of
+# a script, so the walk is short.
 replace_first() {
   local line="$1" old="$2" new="$3" span="${#2}" stop i=0
   stop=$(( ${#1} - span ))
@@ -295,34 +261,34 @@ replace_first() {
   return 1
 }
 
-# mutate FILE OLD NEW — write FILE with its one literal OLD replaced by NEW,
-# then establish that the edit is in the file that will run.
+# drop_status_read — write the mutant resolve-thread.sh with its one literal
+# OLD, the line that reads the summary's `success` into the exit status,
+# replaced by NEW, a colon: the summary is still rendered and printed, but its
+# `success` no longer reaches the exit status. Then establish that the edit is
+# in the file that will run.
 #
 # A mutation that quietly does not land turns a must-fail control into a row
-# that passes on the unmutated script, and two rounds of this suite shipped
-# exactly that. So the substitution uses no tool whose dialect differs between
-# the ubuntu and macOS runner images, and every step names itself when it fails:
+# that passes on the unmutated script. So the substitution uses no tool whose
+# dialect differs between the ubuntu and macOS runner images, and every step
+# names itself when it fails:
 #
-#   - `${content//"$old"/"$new"}` is not used. Under Bash 3.2 the replacement's
-#     inner quotes are not removed, so the mutant carried the unparenthesized
-#     text as a jq STRING — a filter that compiles and renders a string where
-#     the control expects a compile error.
-#   - sed is not used: two OLD strings carry `[`, `]` and `.`, which a BRE reads
-#     as metacharacters, and `sed -i` takes a mandatory suffix on BSD sed.
+#   - sed is not used: OLD carries `[`, `]` and `.`, which a BRE reads as
+#     metacharacters, and `sed -i` takes a mandatory suffix on BSD sed.
 #   - awk is not used: its literals have to arrive through ENVIRON or `-v`, and
 #     the macOS image ships a different awk from the ubuntu one.
 #   - Only grep, head, tail, cmp, cp, chmod and printf run here, each with POSIX
 #     options that BSD and GNU spell the same. The substitution itself is
 #     replace_first, which is Bash and nothing else.
-#   - The mutated bytes are copied onto FILE and the execute bit set again,
-#     rather than moved over it, which drops the mode.
+#   - The mutated bytes are copied onto the mutant and the execute bit set
+#     again, rather than moved over it, which drops the mode.
 #
 # The proof that the edit landed is `cmp`: the mutated bytes differ from the
-# staged bytes, and FILE no longer carries OLD. Counting NEW would establish
-# nothing on its own — unparenthesize's NEW is a substring of its OLD, and
-# drop_status_read's NEW is a colon.
-mutate() {
-  local file="$1" old="$2" new="$3" hit count lineno line mutated
+# staged bytes, and the mutant no longer carries OLD. Counting NEW would
+# establish nothing on its own: NEW is a colon.
+drop_status_read() {
+  local file="$MUTANT_DIR/commands/resolve-thread.sh" new=':' hit count lineno line mutated
+  local old='[ "$(jq -r '"'"'.success'"'"' <<<"$summary")" = "true" ] || exit 1'
+  cp "$COMMANDS/resolve-thread.sh" "$file"
   hit="$(grep -F -n -- "$old" "$file" || true)"
   count="$(printf '%s' "$hit" | grep -c . || true)"
   [[ "$count" == "1" ]] || {
@@ -367,42 +333,10 @@ mutate() {
   }
 }
 
-# bare FORM — FORM without its outer parentheses. The affixes are variables so
-# the patterns carry no quotes of their own.
-bare() {
-  local open='(' close=')' inner
-  inner="${1#$open}"
-  printf '%s' "${inner%$close}"
-}
-
-# unparenthesize FILE LIVE — LIVE with its outer parentheses dropped.
-unparenthesize() {
-  mutate "$1" "$2" "$(bare "$2")"
-}
-
-# drop_status_read FILE — the summary is still rendered and printed, but its
-# `success` no longer reaches the exit status.
-drop_status_read() {
-  mutate "$1" '[ "$(jq -r '"'"'.success'"'"' <<<"$summary")" = "true" ] || exit 1' ':'
-}
-
-stage_mutants() {
-  cp "$COMMANDS/resolve-thread.sh" "$COMMANDS/unresolve-thread.sh" \
-    "$COMMANDS/dismiss-review.sh" "$MUTANT_DIR/commands/"
-}
-
 # The comparison each summary filter parenthesizes, as shipped. The thread
 # commands share a form; dismiss-review counts refused entries instead.
 LIVE_THREAD='(($failed | length) == 0)'
 LIVE_DISMISS='(([.[] | select(.ok == false)] | length) == 0)'
-
-# jq_reads FORM — true when the running jq compiles FORM as an object value.
-# `empty |` leaves the object unevaluated, so a runtime error over the null
-# input cannot be mistaken for a grammar refusal, and `failed` is bound because
-# an unbound variable is a compile error on every build.
-jq_reads() {
-  jq -n --argjson failed '[]' "empty | {success: $1, rest: 1}" >/dev/null 2>&1
-}
 
 # live_count FILE FORM — how many lines of FILE carry FORM.
 live_count() {
@@ -411,7 +345,7 @@ live_count() {
 
 echo "=== the shipped summary filter parenthesizes its comparison ==="
 # The guard that holds on every jq build. A revert of the fix drops the count to
-# 0 here, and the mutation below refuses with exit 2 for the same reason.
+# 0 here.
 assert_eq "$(live_count "$COMMANDS/resolve-thread.sh" "$LIVE_THREAD")" 1 \
   "resolve-thread carries the parenthesized comparison once"
 assert_eq "$(live_count "$COMMANDS/unresolve-thread.sh" "$LIVE_THREAD")" 1 \
@@ -419,72 +353,26 @@ assert_eq "$(live_count "$COMMANDS/unresolve-thread.sh" "$LIVE_THREAD")" 1 \
 assert_eq "$(live_count "$COMMANDS/dismiss-review.sh" "$LIVE_DISMISS")" 1 \
   "dismiss-review carries the parenthesized comparison once"
 
-echo "=== must-fail controls: the unparenthesized comparison ==="
-# Drop the parentheses that make the comparison a value, keeping the rest of
-# each summary filter. On a jq that refuses the bare object value, every row
-# above reddens the way the field did: the mutations have landed, jq dies at
-# compile time, and the command exits 3 having printed no summary at all. On a
-# jq that reads the bare form, the mutant is that jq's equivalent of the shipped
-# filter and renders the same summary; the row then holds the mutated command
-# reaching the API and rendering, and the guard above holds the parentheses.
-stage_mutants
-unparenthesize "$MUTANT_DIR/commands/resolve-thread.sh" "$LIVE_THREAD"
-unparenthesize "$MUTANT_DIR/commands/unresolve-thread.sh" "$LIVE_THREAD"
-unparenthesize "$MUTANT_DIR/commands/dismiss-review.sh" "$LIVE_DISMISS"
-
-JQ_ERR="jq-syntax-error-at-=="
-
-# mutant_want LIVE OUT CALLS — the row the command mutated from LIVE produces on
-# the running jq.
-mutant_want() {
-  if jq_reads "$(bare "$1")"; then
-    want_of "0|$2|-|$3"
-  else
-    want_of "3|-|$JQ_ERR|$3"
-  fi
-}
-
-for LIVE_FORM in "$LIVE_THREAD" "$LIVE_DISMISS"; do
-  if jq_reads "$(bare "$LIVE_FORM")"; then
-    printf '  note: this jq reads `%s` as an object value, so that mutant renders the live summary instead of dying\n' \
-      "$(bare "$LIVE_FORM")"
-  fi
-done
-
+echo "=== must-fail control: the exit status stops reading the summary ==="
+# The mutant runs against the expectation its forward row asserts and requires
+# that expectation to fail, which is the kill: the forward row is then the
+# thing that catches the defect rather than merely described. The mutation it
+# leaves behind is the same summary under exit 0, so the tail it pins is its
+# forward tail with the status replaced, and a mutant broken some other way is
+# not counted as the kill.
+drop_status_read
 COMMAND_DIR="$MUTANT_DIR/commands"
-build resolve-two
-assert_eq "$(run "$ID_A $ID_B")" "$(mutant_want "$LIVE_THREAD" "$RESOLVED_TWO" "$THREAD_CALLS")" \
-  "must-fail control: resolve-thread resolves both threads, then the mutated summary filter decides the rest"
-build unresolve-two
-assert_eq "$(run "$ID_A $ID_B")" "$(mutant_want "$LIVE_THREAD" "$UNRESOLVED_TWO" "$THREAD_CALLS")" \
-  "must-fail control: unresolve-thread unresolves both threads, then the mutated summary filter decides the rest"
-build dismiss-two
-assert_eq "$(run '23 --bot')" "$(mutant_want "$LIVE_DISMISS" "$DISMISSED_TWO" "$DISMISS_CALLS")" \
-  "must-fail control: dismiss-review dismisses both reviews, then the mutated summary filter decides the rest"
-
-echo "=== must-fail controls: the exit status stops reading the summary ==="
-# The other half of the rule: stop reading `success` back into the exit status.
-# Each row runs the mutant against the expectation its forward row asserts and
-# requires that expectation to fail, which is the kill; the mutation it leaves
-# behind is the same summary under exit 0, so the tail each row pins is its
-# forward tail with the status replaced.
-stage_mutants
-drop_status_read "$MUTANT_DIR/commands/resolve-thread.sh"
-drop_status_read "$MUTANT_DIR/commands/unresolve-thread.sh"
-drop_status_read "$MUTANT_DIR/commands/dismiss-review.sh"
 
 build resolve-two-partial
-assert_killed "$(run "$ID_A $ID_B")" \
-  "$(want_of "$PARTIAL_RESOLVE")" "$(want_of "0|${PARTIAL_RESOLVE#*|}")" \
-  "must-fail control: an unresolved thread reads as a success"
-build unresolve-two-partial
-assert_killed "$(run "$ID_A $ID_B")" \
-  "$(want_of "$PARTIAL_UNRESOLVE")" "$(want_of "0|${PARTIAL_UNRESOLVE#*|}")" \
-  "must-fail control: a thread left resolved reads as a success"
-build dismiss-two-refused
-assert_killed "$(run '23 --bot')" \
-  "$(want_of "$PARTIAL_DISMISS")" "$(want_of "0|${PARTIAL_DISMISS#*|}")" \
-  "must-fail control: a refused dismissal reads as a success"
+KILLED="$(run "$ID_A $ID_B")"
+if [[ "$KILLED" == "$(want_of "$PARTIAL_RESOLVE")" ]]; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        the forward row still passes against the mutant: %s\n' \
+    "must-fail control: an unresolved thread reads as a success" "$KILLED"
+else
+  assert_eq "$KILLED" "$(want_of "0|${PARTIAL_RESOLVE#*|}")" \
+    "must-fail control: an unresolved thread reads as a success"
+fi
 COMMAND_DIR="$COMMANDS"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

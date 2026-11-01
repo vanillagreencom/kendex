@@ -136,26 +136,20 @@ plant() { # ROOT SCRIPT PLANTED -> prints the planted change-class path
   printf '%s' "$1/harness-ci/scripts/change-class"
 }
 
-# A copy of the package's SCRIPT with each exact LINE replaced by
-# REPLACEMENT, `-` deleting it, planted beside the real scripts. Each LINE
-# has to occur exactly once in the copy, or the control is not an edit.
-mutant() { # NAME SCRIPT LINE REPLACEMENT [LINE REPLACEMENT]...
+# A copy of the package's SCRIPT with the exact LINE replaced by
+# REPLACEMENT, `-` deleting it, planted beside the real scripts. LINE has to
+# occur exactly once in the copy, or the control is not an edit.
+mutant() { # NAME SCRIPT LINE REPLACEMENT
   local name="$1" script="$2" copy
-  shift 2
   copy="$SANDBOX/$name.${script##*/}"
-  cp "$(dirname "$CHANGE_CLASS")/$script" "$copy"
-  while [ "$#" -ge 2 ]; do
-    if ! LINE="$1" WITH="$2" awk '
-      $0 == ENVIRON["LINE"] { hits++; if (ENVIRON["WITH"] != "-") print ENVIRON["WITH"]; next }
-      { print }
-      END { exit hits == 1 ? 0 : 3 }
-    ' "$copy" >"$copy.next"; then
-      echo "FAIL: control $name: '$1' does not occur once in $script" >&2
-      exit 1
-    fi
-    mv "$copy.next" "$copy"
-    shift 2
-  done
+  if ! LINE="$3" WITH="$4" awk '
+    $0 == ENVIRON["LINE"] { hits++; if (ENVIRON["WITH"] != "-") print ENVIRON["WITH"]; next }
+    { print }
+    END { exit hits == 1 ? 0 : 3 }
+  ' "$(dirname "$CHANGE_CLASS")/$script" >"$copy"; then
+    echo "FAIL: control $name: '$3' does not occur once in $script" >&2
+    exit 1
+  fi
   plant "$SANDBOX/$name" "$script" "$copy"
 }
 

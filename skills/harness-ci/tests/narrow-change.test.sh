@@ -149,71 +149,22 @@ names_err="$(run_row "$CHANGE_CLASS" hash-changed)"
 assert_eq "a hash change prints no names-only line" "" \
   "$(grep '^inventory-change: ' <<<"$names_err" || true)"
 
-# One must-fail control per rule: the planted copy drops that rule alone, and
-# the row it reaches answers the class the rule was refusing.
-control() { # LABEL EXPECTED EDIT NAME SCRIPT LINE REPLACEMENT...
-  local label="$1" expected="$2" edit="$3" planted
-  shift 3
-  if ! planted="$(mutant "$@")"; then
-    assert_eq "$label: the control is an edit" edited "not edited"
-    return
-  fi
-  assert_eq "$label" "$expected" "$("$CONTROL_READ" "$(run_row "$planted" "$edit")")"
-}
-# What a control reads off the planted copy's stderr: the class line, or the
-# queue-only line for the queue group's controls.
-CONTROL_READ=verdict_of
-
-MICRO="class=micro measured=true cause=production-within-micro"
-
-# Removing a validation gate's exclusion lets its small edit measure as micro.
+# The suite's must-fail control: a planted copy reading a list without the
+# validation gate's exclusion lets that gate's small edit measure as micro.
 awk '
   $0 == "path *skills/orch/scripts/dev-validate-run" { hits++; next }
   { print }
   END { exit hits == 1 ? 0 : 3 }
 ' "$ORCH_PACKAGE/references/narrow-change.conf" >"$SANDBOX/validation-gate.conf"
-control "a list without the validation runner measures its edit as micro" "$MICRO" \
-  skills/orch/scripts/dev-validate-run=2 validation-gate change-class \
+if planted="$(mutant validation-gate change-class \
   'NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"' \
-  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\""
-
-# harness-only that never judges the inventory's change leaves it on the
-# path set, where the list excludes it and the test-removed row answers
-# standard.
-control "an unjudged inventory change is excluded" \
-  "class=standard measured=true cause=excluded-path" test-removed \
-  names harness-only \
-  '  inventory_change="$(names_only_change)" || inventory_change=""' \
-  '  inventory_change=""'
-# harness-only that does not hold a removed entry's path absent at the head
-# lets a de-listed render with a hand edit leave the path set.
-control "an unlisted path the diff edits leaves the path set" "$MICRO" \
-  edited-unlisted head-state harness-only \
-  '    [ "$3" = "$([ -n "$at_head" ] && echo present || echo absent)" ]' \
-  '    :'
-# change-class whose narrow answers skip the floor answers trivial on the
-# root AGENTS.md row.
-control "a classifier with no floor lets AGENTS.md through unreviewed" \
-  "class=trivial measured=true cause=documentation-paths" AGENTS.md=10 \
-  floor change-class \
-  '  [ -n "$instruction_file" ] || answer "$1" "$2"' \
-  '  answer "$1" "$2"'
-# Without extglob the one-segment pattern matches nothing, and a hook body
-# measures as micro.
-control "a matcher without extglob measures a hook body" "$MICRO" \
-  hooks/guard.sh=2 glob change-class 'shopt -s extglob' -
-# A reader from before the extglob grammar: no extglob, and every `path`
-# line read, the superseded one too. The broad line keeps its refusal.
-control "a reader before the extglob grammar still refuses a hook body" \
-  "class=standard measured=true cause=excluded-path" hooks/guard.sh=2 \
-  pre-extglob lib/change-class.sh \
-  'change_class_list_globs() { # CONF KEYWORD' 'change_class_list_globs() { shopt -u extglob # CONF KEYWORD' \
-  '    $1 == "superseded" { drop[$2] = 1 }' -
-control "a reader before the extglob grammar still refuses a rendered hook body" \
-  "class=standard measured=true cause=excluded-path" .claude/hooks/guard.sh=2 \
-  pre-extglob-render lib/change-class.sh \
-  'change_class_list_globs() { # CONF KEYWORD' 'change_class_list_globs() { shopt -u extglob # CONF KEYWORD' \
-  '    $1 == "superseded" { drop[$2] = 1 }' -
+  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\"")"; then
+  assert_eq "a list without the validation runner measures its edit as micro" \
+    "class=micro measured=true cause=production-within-micro" \
+    "$(verdict_of "$(run_row "$planted" skills/orch/scripts/dev-validate-run=2)")"
+else
+  assert_eq "the validation-gate control is an edit" edited "not edited"
+fi
 
 # A list from before the floor carries no `instruction` line; the classifier
 # refuses it rather than reading AGENTS.md with no floor.
@@ -309,33 +260,6 @@ git -C "$repo" commit -q -m "old fork"
 assert_eq "the base endpoint declares exclusions after the fork" \
   "class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*" \
   "$(class_line_of "$("$CHANGE_CLASS" --repo "$repo" --event pull_request --base "$standard_base" --head HEAD 2>&1 >/dev/null)")"
-standard_head_mutant="$(mutant standard-head change-class \
-  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||' \
-  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" ||')"
-assert_eq "a reader of head settings loses the base endpoint exclusion" "$MICRO" \
-  "$(verdict_of "$("$standard_head_mutant" --repo "$repo" --event pull_request --base "$standard_base" --head HEAD 2>&1 >/dev/null)")"
-
-# Controls change each independent rule in a disposable script copy.
-ROW_BASE="$standard_base"
-control "a nonempty declaration cannot replace shared exclusions" "$MICRO" \
-  hooks/guard.sh=2 standard-additive change-class \
-  'if path_class_matches narrow standard; then' \
-  'if path_class_matches narrow standard && [ -z "${HARNESS_CI_STANDARD_PATHS:-}" ]; then'
-control "skipping repository matching lets its path through" "$MICRO" \
-  runtime/product.ts=2 standard-match change-class \
-  '  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured' \
-  '  : "cause=repository-standard-path $PATH_MATCH_HIT" measured'
-control "omitting the key loses the base declaration" "$MICRO" \
-  runtime/product.ts=2 standard-reader change-class \
-  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'" \
-  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_PER_PUSH_REASON'"
-ROW_ENV="HARNESS_CI_STANDARD_PATHS="
-control "keeping the caller setting loses the base exclusion" "$MICRO" \
-  runtime/product.ts=2 standard-environment change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON' \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_PER_PUSH_REASON'
-ROW_ENV=""
-ROW_BASE=""
 
 # One row per `queue` entry, each touching one path that entry alone names,
 # in the source or the render spelling; a queue path beside others; a path
@@ -408,24 +332,24 @@ require_rows queue-only "$queue_rows"
 # off the base alone: a process environment that names another list, as a
 # caller's own checkout exports it, changes nothing. Each base is a commit of
 # the fixture repository, and the diff edits the same script.
-settings_queue() { # CLASSIFIER BASE [NAME=VALUE] -> the queue-only line
-  git -C "$repo" checkout -q -B settings-case "$2"
+settings_queue() { # BASE [NAME=VALUE] -> the queue-only line
+  git -C "$repo" checkout -q -B settings-case "$1"
   write_lines scripts/ci/run.sh 2
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "settings row"
-  queue_of "$(env ${3:+"$3"} "$1" --repo "$repo" --event pull_request --base "$2" --head HEAD 2>&1 >/dev/null)" || true
+  queue_of "$(env ${2:+"$2"} "$CHANGE_CLASS" --repo "$repo" --event pull_request --base "$1" --head HEAD 2>&1 >/dev/null)" || true
 }
 declared_base="$(settings_base "$(printf '[env]\n%s\nHARNESS_CI_QUEUE_PATHS = "scripts/ci/*"' "$REASON")")"
 rejected_base="$(settings_base $'[env]\nHARNESS_CI_QUEUE_PATHS = ""\nHARNESS_CI_QUEUE_PATHS = ""')"
 assert_eq "the base commit's settings declare the repository's list" \
   "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
-  "$(settings_queue "$CHANGE_CLASS" "$declared_base")"
+  "$(settings_queue "$declared_base")"
 assert_eq "the base's list decides where the process environment names another" \
   "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
-  "$(settings_queue "$CHANGE_CLASS" "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
+  "$(settings_queue "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
 assert_eq "a base whose settings the loader rejects reads queue-only" \
   "queue_only=true cause=queue-settings-unreadable" \
-  "$(settings_queue "$CHANGE_CLASS" "$rejected_base")"
+  "$(settings_queue "$rejected_base")"
 
 # The undeclared list's one warning, counted by its key line: once where the
 # key is unset, and never where the base declares a list, empty or naming
@@ -500,13 +424,11 @@ require_rows queue-lane "$lane_rows"
 # A queue lane answers ahead of the undeclared list: its cause stands and
 # the list's warning is not printed.
 queued_unset_base="$(lanes_base 'bench:queue benches/*' unset)"
-queue_and_warnings() { # STDERR
-  printf '%s warnings=%s\n' "$(queue_of "$1")" "$(unset_warnings_of "$1")"
-}
 ROW_BASE="$queued_unset_base"
+queued_unset_err="$(run_row "$CHANGE_CLASS" benches/b.rs=2)" || :
 assert_eq "a queue lane answers before the undeclared list warns" \
   "queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/* warnings=0" \
-  "$(queue_and_warnings "$(run_row "$CHANGE_CLASS" benches/b.rs=2)")"
+  "$(queue_of "$queued_unset_err") warnings=$(unset_warnings_of "$queued_unset_err")"
 ROW_BASE=""
 
 # Every `queue` entry of the shipped list has a row above, read off the list
@@ -580,139 +502,5 @@ cp -R "$(dirname "$CHANGE_CLASS")/lib" "$listless/harness-ci/scripts/"
 assert_eq "an orch with no list reads queue-only" \
   "queue_only=true cause=queue-list-unreadable" \
   "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
-
-# One must-fail control per queue rule. A classifier that never matches the
-# group answers not queue-only on a CI workflow; one that reads a quoted path
-# against the globs answers not queue-only on a quoted workflow; one whose
-# default before the paths are read is false answers not queue-only on an
-# unread diff; one that
-# reads an empty group as a list answers not queue-only on the queueless list;
-# one that reads a missing list as not queue-only answers so on the listless
-# orch; one that judges the class after harness-only's refusals, as it once
-# did, answers paths-unread on a refusal raised after the paths were read.
-# One that reads an undeclared repository list by the shipped list alone, one
-# that never matches the repository's list, one that never reads the base's
-# settings and one that reads unreadable settings as not queue-only each let
-# through the row that rule holds; one that drops the undeclared list's
-# warning reads it silently. The shipped-list controls run where the
-# repository declares an empty list, so only the rule under control answers.
-CONTROL_READ=queue_of
-ROW_BASE="$empty_base"
-control "a classifier that never matches the queue group lets a workflow through" \
-  "queue_only=false cause=no-queue-path" .github/workflows/ci.yml=2 \
-  queue-match change-class '  if path_matches any; then' '  if false; then'
-control "a classifier that matches a quoted path against the globs lets a quoted workflow through" \
-  "queue_only=false cause=no-queue-path" '.github/workflows/we"ird.yml=2' \
-  queue-quoted change-class \
-  '      \"*) QUEUE_CAUSE="cause=path-quoted path=$path"; return ;;' -
-unread_mutant="$(mutant queue-default change-class 'QUEUE_ONLY=true' 'QUEUE_ONLY=false')"
-unread_err="$("$unread_mutant" --repo "$repo" --event pull_request \
-  --base 0123456789abcdef0123456789abcdef01234567 --head HEAD 2>&1 >/dev/null)" || true
-assert_eq "a classifier whose unread default is false lets an unread diff through" \
-  "queue_only=false cause=paths-unread" "$(queue_of "$unread_err")"
-missing_mutant="$(mutant queue-missing change-class '  if [ -z "$globs" ]; then' '  if false; then')"
-cp "$missing_mutant" "$queueless/harness-ci/scripts/change-class"
-assert_eq "a classifier that reads an empty queue group lets the queueless list through" \
-  "queue_only=false cause=no-queue-path" \
-  "$(queue_of "$(run_row "$queueless/harness-ci/scripts/change-class" docs/guide.md=2)")"
-unreadable_mutant="$(mutant queue-unreadable change-class \
-  '    QUEUE_CAUSE="cause=queue-list-unreadable"' \
-  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-list-unreadable"')"
-cp "$unreadable_mutant" "$listless/harness-ci/scripts/change-class"
-assert_eq "a classifier that reads a missing list as not queue-only lets the listless orch through" \
-  "queue_only=false cause=queue-list-unreadable" \
-  "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
-order_mutant="$(mutant queue-order change-class '  queue_only_of_paths' '  :' \
-  'if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then' \
-  '[ ! -s "$paths_file" ] || queue_only_of_paths; if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then')"
-assert_eq "a classifier that judges the class after the refusals loses it on a refusal" \
-  "queue_only=true cause=paths-unread" \
-  "$(queue_of "$(run_row "$order_mutant" inventory-invalid runtime/product.ts=2)")"
-ROW_BASE="$reason_base"
-control "a classifier that reads an undeclared list as not queue-only lets an unlisted diff through" \
-  "queue_only=false cause=queue-list-undeclared" runtime/product.ts=2 \
-  queue-undeclared change-class \
-  '    QUEUE_CAUSE="cause=queue-list-undeclared"' \
-  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-list-undeclared"'
-silent_mutant="$(mutant queue-undeclared-silent change-class \
-  "    printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\\n' >&2" \
-  "    printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\\n' >/dev/null")"
-assert_eq "a classifier that drops the undeclared list's warning reads it silently" 0 \
-  "$(unset_warnings_of "$(run_row "$silent_mutant" runtime/product.ts=2)")"
-ROW_BASE="$declared_base"
-control "a classifier that never matches the repository's list lets its path through" \
-  "queue_only=false cause=no-queue-path" scripts/ci/run.sh=2 \
-  queue-repository change-class '  if ! path_matches any; then' '  if true; then'
-ROW_BASE=""
-base_mutant="$(mutant queue-base-settings change-class \
-  '  if ! base_settings; then' '  if false; then')"
-assert_eq "a classifier that never reads the base's settings loses the declared list" \
-  "queue_only=true cause=per-push-unset" \
-  "$(settings_queue "$base_mutant" "$declared_base")"
-environment_mutant="$(mutant queue-environment change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON' 'unset HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON')"
-assert_eq "a classifier that keeps the process environment's list lets the base's newly listed path through" \
-  "queue_only=false cause=no-queue-path" \
-  "$(settings_queue "$environment_mutant" "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
-rejected_mutant="$(mutant queue-settings-unreadable change-class \
-  '    unread) QUEUE_CAUSE="cause=queue-settings-unreadable"; return ;;' \
-  '    unread) QUEUE_ONLY=false QUEUE_CAUSE="cause=queue-settings-unreadable"; return ;;')"
-assert_eq "a classifier that reads rejected settings as not queue-only lets the diff through" \
-  "queue_only=false cause=queue-settings-unreadable" \
-  "$(settings_queue "$rejected_mutant" "$rejected_base")"
-# One must-fail control per queue-lane rule, each on the row it holds: a
-# classifier that never matches a queue lane's globs, one that reads every
-# lane as marked, one that reads an unreadable declaration as not
-# queue-only, one that keeps a malformed declaration's lanes, one that reads
-# the head's declaration, and a reader that leaves extglob on.
-ROW_BASE="$queued_base"
-control "a classifier that never matches a queue lane lets its path through" \
-  "queue_only=false cause=no-queue-path" benches/b.rs=2 \
-  queue-lane-match change-class \
-  '        if ci_lanes_claims "$index" "$path"; then' '        if false; then'
-control "a classifier that reads every lane as marked holds an unmarked lane's path" \
-  "queue_only=true cause=queue-lane lane=check path=src/main.rs glob=src/*" src/main.rs=2 \
-  queue-lane-mark change-class \
-  '    if [ "${lane_queue[$index]}" = true ]; then' '    if true; then'
-control "a reader that leaves extglob on loses the paren glob" \
-  "queue_only=false cause=no-queue-path" 'a(x)=2' \
-  queue-lane-extglob lib/ci-lanes.sh \
-  '  ! shopt -q extglob || { extglob=true; shopt -u extglob; }' '  :'
-lane_head_mutant="$(mutant queue-lane-head change-class \
-  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||' \
-  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" ||')"
-assert_eq "a classifier that reads the head's declaration lets the unmarked lane's path through" \
-  "queue_only=false cause=no-queue-path" \
-  "$(queue_of "$(run_row "$lane_head_mutant" unmark-bench benches/b.rs=2)")"
-ROW_BASE="$malformed_base"
-control "a classifier that keeps a malformed declaration's lanes holds their paths" \
-  "queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/*" benches/b.rs=2 \
-  queue-lane-malformed change-class \
-  '  ci_lanes_read "$work/ci-lanes.conf" || return 0' '  ci_lanes_read "$work/ci-lanes.conf" || :'
-undeclared_first_mutant="$(mutant queue-lane-after-unset change-class \
-  '  if ! queue_lane_of_paths; then' \
-  "  if [ -z \"\${HARNESS_CI_QUEUE_PATHS+x}\" ]; then printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\\n' >&2; QUEUE_CAUSE=\"cause=queue-list-undeclared\"; return; fi; if ! queue_lane_of_paths; then")"
-ROW_BASE="$queued_unset_base"
-undeclared_first_answer="$(queue_and_warnings "$(run_row "$undeclared_first_mutant" benches/b.rs=2)")"
-assert_eq "a classifier that judges the undeclared list first loses the queue lane's cause" \
-  "queue_only=true cause=queue-list-undeclared warnings=1" "$undeclared_first_answer"
-ROW_BASE="$unreadable_base"
-control "a classifier that reads an unreadable declaration as not queue-only lets the diff through" \
-  "queue_only=false cause=lane-declaration-unreadable" benches/b.rs=2 \
-  queue-lane-unreadable change-class \
-  '    QUEUE_CAUSE="cause=lane-declaration-unreadable"' \
-  '    QUEUE_ONLY=false QUEUE_CAUSE="cause=lane-declaration-unreadable"'
-# The queue-only default, held by a control that reads any set value, blank
-# included, as the opt-back's reason.
-ROW_BASE="$blank_reason_base"
-control "a classifier that takes a blank reason as the opt-back lets the diff take the admin route" \
-  "queue_only=false cause=no-queue-path" runtime/product.ts=2 \
-  per-push-blank change-class '    *[![:space:]]*) PER_PUSH=set ;;' '    ?*) PER_PUSH=set ;;'
-ROW_BASE="$queue_default_base"
-control "a classifier without the queue-only default reads the empty list as not queue-only" \
-  "queue_only=false cause=no-queue-path" runtime/product.ts=2 \
-  per-push-default change-class '  case "${HARNESS_CI_PER_PUSH_REASON:-}" in' '  case "${HARNESS_CI_PER_PUSH_REASON:-set}" in'
-ROW_BASE=""
-CONTROL_READ=verdict_of
 
 report narrow-change

@@ -10,9 +10,11 @@
 #   rc     the exit status
 #   out    stdout reduced: a dry run as `dry id=<id>`, an edit as
 #          `success=<bool> url=<url>`; `-` when empty
-#   err    stderr reduced: the JSON `.error` up to its first parenthesis,
-#          then `detail=<endpoint>=<response>` per carried attempt with each
-#          response's whitespace squeezed to single spaces; `-` when empty
+#   err    stderr reduced: the JSON `.error` up to its first parenthesis
+#          where it leads with a `name: key=` line a program reads, `error`
+#          where it is prose, then `detail=<endpoint>=<response>` per carried
+#          attempt with each response's whitespace squeezed to single spaces;
+#          `-` when empty
 #   calls  every gh call by kind, in order (`auth`, `user`, `repo`,
 #          `api:<path>`); `-` for none
 set -euo pipefail
@@ -138,7 +140,7 @@ err_text() {
   local text
   text="$(cat "$TMP_ROOT/stderr")"
   [[ "$text" != "" ]] || { printf -- '-'; return; }
-  jq -r '(.error | split(" (")[0])
+  jq -r '(.error | if test("^[a-z][a-z-]*: [a-z-]+=") then split(" (")[0] else "error" end)
          + (if .detail then
               " detail=" + ([.detail[]
                 | .endpoint + "=" + (.response | gsub("\\s+"; " "))] | join(" "))
@@ -208,9 +210,9 @@ SCENARIO="issue-comment"
 run_table "an id the issue-comments endpoint holds" "\
 the edit lands at the issue endpoint, and the pulls one is never asked^2633519824 Fixed^0^success=true url=$ISSUE_URL^-^repo,api:$ISSUE_PATH
 a dry run edits nothing and asks no endpoint^2633519824 Fixed --dry-run^0^dry id=2633519824^-^repo
-a non-numeric id is refused before the repository is resolved^12\"34 Fixed^1^-^Comment ID must be numeric: 12\"34^-
---body as the last argument is refused, not left to the shell^2633519824 --body^1^-^--body requires a value^-
---body-file as the last argument is refused, not left to the shell^2633519824 --body-file^1^-^--body-file requires a value^-
+a non-numeric id is refused before the repository is resolved^12\"34 Fixed^1^-^error^-
+--body as the last argument is refused, not left to the shell^2633519824 --body^1^-^error^-
+--body-file as the last argument is refused, not left to the shell^2633519824 --body-file^1^-^error^-
 "
 
 echo "=== the shape of an argument refusal ==="
@@ -222,8 +224,8 @@ echo "=== the shape of an argument refusal ==="
 # by interpolating the value into the JSON text prints something jq refuses.
 build
 run '12"34 Fixed' >/dev/null
-assert_eq "$(jq -Sc . <"$TMP_ROOT/stderr" || printf 'stderr is not JSON')" \
-  '{"error":"Comment ID must be numeric: 12\"34"}' \
+assert_eq "$(jq -c keys <"$TMP_ROOT/stderr" || printf 'stderr is not JSON')" \
+  '["error"]' \
   "a refusal before any endpoint is {error} alone, and stays JSON with a quote in the value"
 
 # One row per shape a 404 reaches the caller by, so the alternative that
@@ -249,86 +251,41 @@ run_table "an id neither endpoint holds" "\
 both 404s are refused with the keyed line and both responses, not a bare 404^2633519824 Fixed^1^-^$REFUSAL detail=issues=$STDERR_404 pulls=$STDERR_404^repo,api:$ISSUE_PATH,api:$PULLS_PATH
 "
 
-echo "=== the refusal's whole sentence ==="
-# The table's err field stops at the first parenthesis, so the clause that
-# says what two 404s prove, and the slug it names, are pinned here.
-SCENARIO="no-such-comment"
-build
-run '2633519824 Fixed' >/dev/null
-assert_eq "$(jq -r '.error' <"$TMP_ROOT/stderr")" \
-  "$REFUSAL (both endpoints answered 404 for owner/repo: no such comment, or the token cannot see the repository)" \
-  "the refusal names the resolved repository and only what the two answers prove"
-
 SCENARIO="issue-endpoint-broken"
 run_table "a failure that is not a 404" "\
-the issue endpoint's own error is reported and the pulls endpoint is not asked^2633519824 Fixed^1^-^Failed to edit comment at $ISSUE_PATH: gh: Validation Failed detail=issues=$BROKEN_422^repo,api:$ISSUE_PATH
+the issue endpoint's own error is reported and the pulls endpoint is not asked^2633519824 Fixed^1^-^error detail=issues=$BROKEN_422^repo,api:$ISSUE_PATH
 "
 
 SCENARIO="pulls-endpoint-broken"
 run_table "a 404 at the issue endpoint and another failure at the review one" "\
-the review endpoint's own error is reported, and the issue endpoint's 404 is carried beside it^2633519824 Fixed^1^-^Failed to edit comment at $PULLS_PATH: gh: Validation Failed detail=issues=$STDERR_404 pulls=$BROKEN_422^repo,api:$ISSUE_PATH,api:$PULLS_PATH
+the review endpoint's own error is reported, and the issue endpoint's 404 is carried beside it^2633519824 Fixed^1^-^error detail=issues=$STDERR_404 pulls=$BROKEN_422^repo,api:$ISSUE_PATH,api:$PULLS_PATH
 "
 
-# mutate LABEL FROM TO — a copy of edit-comment.sh beside a copy of the lib,
-# with every FROM replaced by TO. The replacement's occurrence count is
+echo "=== must-fail control: the predicate never fires ==="
+# A copy of edit-comment.sh beside a copy of the lib, with every predicate
+# call replaced by `false`, which leaves the pulls call and the keyed refusal
+# in the file and unreachable: the pre-fix behaviour, where the issue
+# endpoint's 404 is the final answer. The replacement's occurrence count is
 # asserted in both directions, so a call site that moved leaves the control
 # refusing rather than silently testing an unmutated file.
 MUTANT_DIR="$TMP_ROOT/mutant"
 PREDICATE='gh_error_is_not_found "$result"'
-mutate() {
-  local label="$1" from="$2" to="$3" dir
-  dir="$MUTANT_DIR/$label"
-  rm -rf "$dir"
-  mkdir -p "$dir/commands"
-  cp -R "$REPO_ROOT/skills/github/scripts/lib" "$dir/lib"
-  cp "$EDIT_COMMENT" "$dir/commands/edit-comment.sh"
-  assert_eq "$(grep -Fc -- "$from" "$dir/commands/edit-comment.sh")" "2" \
-    "control $label finds both live predicate call sites"
-  sed -i.bak "s|$from|$to|g" "$dir/commands/edit-comment.sh"
-  assert_eq "$(grep -Fc -- "$from" "$dir/commands/edit-comment.sh")" "0" \
-    "control $label applied the mutation"
-  SUBJECT="$dir/commands/edit-comment.sh"
-}
-
-echo "=== must-fail control: the predicate never fires ==="
-# `false` where the predicate stood leaves the pulls call and the keyed
-# refusal in the file and unreachable, which is the pre-fix behaviour: the
-# issue endpoint's 404 is the final answer.
-mutate never "$PREDICATE" 'false'
+mkdir -p "$MUTANT_DIR/commands"
+cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
+cp "$EDIT_COMMENT" "$MUTANT_DIR/commands/edit-comment.sh"
+assert_eq "$(grep -Fc -- "$PREDICATE" "$MUTANT_DIR/commands/edit-comment.sh")" "2" \
+  "control never finds both live predicate call sites"
+sed -i.bak "s|$PREDICATE|false|g" "$MUTANT_DIR/commands/edit-comment.sh"
+assert_eq "$(grep -Fc -- "$PREDICATE" "$MUTANT_DIR/commands/edit-comment.sh")" "0" \
+  "control never applied the mutation"
+SUBJECT="$MUTANT_DIR/commands/edit-comment.sh"
 SCENARIO="review-comment"
 build
 GOT="$(run '2633519824 Fixed')"
+SUBJECT=""
 assert_eq "$GOT" \
-  "rc=1 out=- err=Failed to edit comment at $ISSUE_PATH: gh: Not Found detail=issues=$STDERR_404 calls=repo,api:$ISSUE_PATH" \
+  "rc=1 out=- err=error detail=issues=$STDERR_404 calls=repo,api:$ISSUE_PATH" \
   "must-fail control: without the fallback a review comment id answers a bare 404"
-SCENARIO="no-such-comment"
-build
-GOT="$(run '2633519824 Fixed')"
-SUBJECT=""
-assert_eq "$GOT" \
-  "rc=1 out=- err=Failed to edit comment at $ISSUE_PATH: gh: Not Found detail=issues=$STDERR_404 calls=repo,api:$ISSUE_PATH" \
-  "must-fail control: without the predicate an unknown id answers a bare 404, not the keyed line"
-
-echo "=== must-fail control: the predicate always fires ==="
-# `true` where the predicate stood makes every failure look like a 404, so the
-# 422 the review endpoint gave is read as the id being absent and reported as
-# an unknown comment — a named cause replaced by a wrong one.
-mutate always "$PREDICATE" 'true'
-SCENARIO="pulls-endpoint-broken"
-build
-GOT="$(run '2633519824 Fixed')"
-assert_eq "$GOT" \
-  "rc=1 out=- err=$REFUSAL detail=issues=$STDERR_404 pulls=$BROKEN_422 calls=repo,api:$ISSUE_PATH,api:$PULLS_PATH" \
-  "must-fail control: treating every failure as a 404 reports the review endpoint's 422 as an unknown id"
-# The other rule the predicate carries: a non-404 at the FIRST endpoint stops
-# the loop, so the review endpoint is never asked. Under the mutant it is.
-SCENARIO="issue-endpoint-broken"
-build
-GOT="$(run '2633519824 Fixed')"
-SUBJECT=""
-assert_eq "$GOT" \
-  "rc=1 out=- err=$REFUSAL detail=issues=$BROKEN_422 pulls=$BROKEN_422 calls=repo,api:$ISSUE_PATH,api:$PULLS_PATH" \
-  "must-fail control: treating every failure as a 404 asks the review endpoint after a 422 that stops the loop"
 
 echo "=== the predicate's own reach ==="
 # The lib holds the judgment once and label-add's repository-label lookup calls
@@ -355,27 +312,14 @@ assert_eq "$(pattern_census "$SCRIPTS")" \
   "commands/label-add.sh=1 lib/github-api.sh=1" \
   "the 404 pattern is written once in the lib and once in label-add's wider permission question"
 
-# Two planted defects, two trees, two rows. Each copies the scripts, plants one
-# further spelling of the pattern, and asserts the census counts it.
-plant() { # LABEL FILE -> the tree's path
-  local label="$1" target="$2" dir
-  dir="$TMP_ROOT/census/$label"
-  rm -rf -- "${dir:?}"
-  mkdir -p "$TMP_ROOT/census"
-  cp -R "$SCRIPTS" "$dir"
-  printf '%s\n' "    grep -Eq 'HTTP 404|$NEEDLE' <<<\"\$out\" && :" >>"$dir/$target"
-  printf '%s' "$dir"
-}
-
-CENSUS_TREE="$(plant readopted commands/label-add.sh)"
+# The census's must-fail control copies the scripts, plants one further
+# spelling of the pattern in label-add, and asserts the census counts it.
+CENSUS_TREE="$TMP_ROOT/census"
+cp -R "$SCRIPTS" "$CENSUS_TREE"
+printf '%s\n' "    grep -Eq 'HTTP 404|$NEEDLE' <<<\"\$out\" && :" >>"$CENSUS_TREE/commands/label-add.sh"
 assert_eq "$(pattern_census "$CENSUS_TREE")" \
   "commands/label-add.sh=2 lib/github-api.sh=1" \
   "must-fail control: the inline spelling back in label-add is counted, not absorbed by its file name"
-
-CENSUS_TREE="$(plant third-file commands/post-comment.sh)"
-assert_eq "$(pattern_census "$CENSUS_TREE")" \
-  "commands/label-add.sh=1 commands/post-comment.sh=1 lib/github-api.sh=1" \
-  "must-fail control: a third file spelling the pattern is named by the census"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

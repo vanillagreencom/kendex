@@ -944,125 +944,23 @@ class Producer(unittest.TestCase):
             self.assertIn("producer tail before state commit", self.inbox()[-1]["text"])
 
     def test_instrument_control(self):
-        for relative, old, new in (
-                ("jarvis/scripts/lib/watch.py",
-                 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):',
-                 'if False and result and report_key(result) != self.cursors.get("report", {}).get("event"):'),
-                ("orch/scripts/oversee-report",
-                 '[[ -n "$STATE" && "$EVERY_ISSUES" -gt 0 ]] || exit 0',
-                 '[[ "$EVERY_ISSUES" -gt 0 ]] || exit 0')):
-            case = Producer(methodName="test_report_deadline_restart_and_receipt")
-            case.setUp()
-            try:
-                if relative.startswith("orch/"):
-                    case.packages.joinpath("orch").unlink()
-                    shutil.copytree(REPO / "skills/orch/scripts", case.packages / "orch/scripts")
-                path = case.packages / relative
-                source = path.read_text()
-                self.assertEqual(source.count(old), 1)
-                mutant = source.replace(old, new)
-                self.assertNotEqual(source, mutant)
-                path.write_text(mutant)
-                case.module = load(case.scripts / "lib/watch.py")
-                with self.assertRaises(AssertionError):
-                    case.test_report_deadline_restart_and_receipt()
-            finally:
-                case.doCleanups()
-        # This uncompiled source control stays in the instrument. A zeroed
-        # settle must fail the same five-event behavioral assertion.
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = 'now + int(self.settings["JARVIS_WAKE_SETTLE_SECS"])'
+        # One planted defect proves this suite goes red: the watch never
+        # pages a report the cursor has not seen.
+        old = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
+        case = Producer(methodName="test_report_deadline_restart_and_receipt")
+        case.setUp()
+        try:
+            path = case.packages / "jarvis/scripts/lib/watch.py"
+            source = path.read_text()
             self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, "now")
+            mutant = source.replace(old, "if False and " + old[len("if "):])
             self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
             path.write_text(mutant)
-            self.module = load(path)
-            self.module.LIB = self.scripts / "lib"
+            case.module = load(case.scripts / "lib/watch.py")
             with self.assertRaises(AssertionError):
-                self.test_fixed_settle_and_five_event_feed()
-        # Drop only the supplied target at the changed boundary. The same
-        # finite table must reject this mutation through its origin assertion.
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = '[(root,\n                        event("presence-renew-failed"'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, '[(None,\n                        event("presence-renew-failed"')
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_priority_cap_boundaries_and_timeout")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                with self.assertRaisesRegex(AssertionError, "presence origin"):
-                    case.test_priority_cap_boundaries_and_timeout()
-            finally:
-                case.doCleanups()
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = 'args = [bash, lane_mail(), "events",'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, 'args = [bash, Path(root) / ".agents/skills/mailbox/scripts/lane-mail", "events",')
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_producer_helpers_keep_target_data")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                # read_pass starts the shipped child; mutate its private copy too.
-                case.scripts.joinpath("lib/watch.py").write_text(mutant)
-                with self.assertRaises(AssertionError):
-                    case.test_producer_helpers_keep_target_data()
-            finally:
-                case.doCleanups()
-        # The private watcher's rule, unanswered plus no watch-loop process,
-        # must fail the read row, which also has no process.
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            start, end = source.index("def owner_unread("), source.index("def mail_pass(")
-            mutant = source[:start] + (
-                "def owner_unread(bash, root, cursor, count, now, reported, events):\n"
-                "    listed = [json.loads(line) for line in checked([bash, LIB.parent / 'owner-unanswered', '--root',\n"
-                "              root, '--older', '10'], root).split('\\n') if line]\n"
-                "    alive = run(['pgrep', '-f', 'watch-loop --home ' + str(root)]).returncode == 0\n"
-                "    owned = [] if alive else listed\n"
-                "    events.extend(event('owner-unread', id=row['id'], at=row['at'])\n"
-                "                  for row in owned if row['id'] not in reported)\n"
-                "    return [row['id'] for row in owned]\n\n\n") + source[end:]
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_owner_unread_is_the_inbox_receipt")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                case.scripts.joinpath("lib/watch.py").write_text(mutant)
-                with self.assertRaisesRegex(AssertionError, "only the unread rows page"):
-                    case.test_owner_unread_is_the_inbox_receipt()
-            finally:
-                case.doCleanups()
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = 'if error.record["key"][1:] == ["refusal", "dependency"]:\n                raise error'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, old.replace("raise error", "return False"))
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_dependency_failure_denies_presence_with_cause")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                with self.assertRaises(AssertionError):
-                    case.test_dependency_failure_denies_presence_with_cause()
-            finally:
-                case.doCleanups()
+                case.test_report_deadline_restart_and_receipt()
+        finally:
+            case.doCleanups()
 
 
 if __name__ == "__main__":

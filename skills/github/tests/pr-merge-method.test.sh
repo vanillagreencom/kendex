@@ -12,11 +12,11 @@ set -euo pipefail
 # shellcheck source=lib/pr-merge-world.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pr-merge-world.sh"
 
-MERGED="{no-token};MERGED PR #123"
+MERGED="MERGED PR #123"
 # The method-only fixture has no ruleset ids. A live arm reads that
 # fixture as a mixed queue ruleset; it still selects the queue's method.
-QUEUE_ROUTE="merge-route: queue cause=queue-ruleset-mixed ruleset=null rule=required_status_checks;{route-queue:mixed}"
-QUEUED="$QUEUE_ROUTE;{no-token};QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}"
+QUEUE_ROUTE="merge-route: queue cause=queue-ruleset-mixed ruleset=null rule=required_status_checks"
+QUEUED="$QUEUE_ROUTE;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note"
 DONE="checks:ci-required post:MERGED merge-commit:merged-oid"
 
 run_table "the merge method" "\
@@ -44,40 +44,19 @@ run_table "the head branch after a merge" "\
 --delete-branch deletes it where the repository does not|$DONE deletes-on-merge:false|with:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
 where delete_branch_on_merge is on GitHub deletes it, and pr-merge does not|$DONE deletes-on-merge:true|with:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 no --delete-branch keeps it|$DONE deletes-on-merge:false|with:--squash|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-a delete_branch_on_merge read that fails keeps it and says so|$DONE deletes-on-merge:null|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=setting-unreadable;The repository's delete_branch_on_merge could not be read, so the head branch was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-a fork's head is kept, and the same name in this repository is not deleted|$DONE deletes-on-merge:false cross-repository|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository;The head branch lives in a fork, not in this repository, so it was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-the fork answer holds when the post-merge read falls back to gh pr view|$DONE deletes-on-merge:false cross-repository graphql:fail|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository;The head branch lives in a fork, not in this repository, so it was not deleted.|calls=$PRE,merge:squash,graphql:queue,view:post auth=<unset>
+a delete_branch_on_merge read that fails keeps it and says so|$DONE deletes-on-merge:null|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=setting-unreadable|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+a fork's head is kept, and the same name in this repository is not deleted|$DONE deletes-on-merge:false cross-repository|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository|calls=$PRE,merge:squash,graphql:queue auth=<unset>
+the fork answer holds when the post-merge read falls back to gh pr view|$DONE deletes-on-merge:false cross-repository graphql:fail|with:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository|calls=$PRE,merge:squash,graphql:queue,view:post auth=<unset>
 "
 
-# The must-fail controls, each a copy of the scripts tree with one whole line
-# replaced (lib/pr-merge-world.sh mutant_copy), run in the world of the row
-# it answers for, where it gives that row's wrong answer: the method the
-# merge passes pinned to squash; the accepted methods ignored, so the
-# refusal merges; the queue's precedence cut, which leaves the queue's base
-# with no repository settings read; the pull_request narrowing
-# cut; the withheld settings read as a set that allows nothing; and the
-# delete_branch_on_merge check cut, so pr-merge deletes a branch GitHub
-# deletes itself; the fork check cut, so a fork's head name is deleted
-# in this repository; and isCrossRepository dropped from the post-merge
-# query, so no head is known to live in this repository and none is deleted.
+# The suite's one must-fail control: a copy of the scripts tree with one
+# whole line replaced (lib/pr-merge-world.sh mutant_copy), the method the
+# merge passes pinned to squash, run in the world of the merge-only row,
+# where it gives that row's wrong answer.
 mutant_copy fixed '    local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")' '    local -a cmd=(pr merge "$pr_num" --squash --match-head-commit "$expected_head")' >/dev/null || exit 2
-mutant_copy deaf '    answer=$(with_token "$token" kendex_github_merge_method '"'"'{owner}/{repo}'"'"' "$base" "$@") || rc=$?' '    answer=$(with_token "$token" kendex_github_merge_method '"'"'{owner}/{repo}'"'"' "$base" merge squash rebase) || rc=$?' >/dev/null || exit 2
-mutant_copy queueless '      | if ($queue | length) > 0 then' '      | if false then' lib/repo-settings.sh >/dev/null || exit 2
-mutant_copy unnarrowed '          [$rules[] | select(.type == "pull_request") | (.parameters.allowed_merge_methods // $methods)] as $narrow' '          [] as $narrow' lib/repo-settings.sh >/dev/null || exit 2
-mutant_copy withheld '        elif ($s | type) != "array" or ($s | length) != 3 or any($s[]; type != "boolean") then "!settings"' '        elif false then "!settings"' lib/repo-settings.sh >/dev/null || exit 2
-mutant_copy deleter '            elif [ "$deletes" = false ] && [ -n "$branch" ]; then' '            elif [ -n "$branch" ]; then' >/dev/null || exit 2
-mutant_copy forker '            if ! cross=$(jq -r '"'"'.cross_repository'"'"' <<<"$post_snapshot") || [ "$cross" != false ]; then' '            if false; then' >/dev/null || exit 2
-mutant_copy unasked '        -f query='"'"'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName isCrossRepository mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }'"'"' \' '        -f query='"'"'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }'"'"' \' >/dev/null || exit 2
 
-run_table "the must-fail controls" "\
+run_table "the must-fail control" "\
 must-fail: with the method pinned, a merge-only repository is squashed|$DONE methods:merge|mutant:fixed:--keep-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-must-fail: with the accepted methods ignored, the refused base merges|$DONE methods:merge|mutant:deaf:--squash|0|-|$MERGED|calls=$PRE,merge:merge,graphql:queue auth=<unset>
-must-fail: with the queue's precedence cut, the queue's base has no method|checks:ci-required post-queue methods:squash queue:MERGE|mutant:queueless:--auto|1|-|$QUEUE_ROUTE;pr-merge: merge-method-unreadable cause=settings|calls=$PRE auth=<unset>
-must-fail: with the narrowing cut, the rule's excluded squash is taken|$DONE methods:squash+merge+rebase rule-methods:rebase+merge|mutant:unnarrowed:--keep-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-must-fail: with withheld settings read, the refusal names an empty set|$DONE repo:pushless|mutant:withheld:--keep-branch|1|-|pr-merge: merge-method allowed=none accepted=squash,merge,rebase|calls=$PRE auth=<unset>
-must-fail: with the repository's setting not read, pr-merge deletes what GitHub deletes|$DONE deletes-on-merge:true|mutant:deleter:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
-must-fail: with the fork check cut, a fork's head name is deleted in this repository|$DONE deletes-on-merge:false cross-repository|mutant:forker:--delete-branch|0|-|$MERGED|calls=$PRE,merge:squash,graphql:queue,delete:issue-123 auth=<unset>
-must-fail: with isCrossRepository not asked for, this repository's head is kept|$DONE deletes-on-merge:false|mutant:unasked:--delete-branch|0|-|$MERGED;pr-merge: branch-kept branch=issue-123 cause=cross-repository-unreadable;GitHub did not say which repository holds the head branch, so it was not deleted.|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
 
 echo

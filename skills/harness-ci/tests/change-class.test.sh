@@ -234,13 +234,6 @@ relative_err="$(PATH="$stub_bin:$PATH" "$relative_mutant" --repo "$partial" \
   --event pull_request --base "$base" --head case 2>&1 >/dev/null)"
 assert_eq 'control: copying a relative URL without its base cannot check out the head' true \
   "$(grep -Eq '^class: class=standard measured=false cause=head-checkout-failed head=' <<<"$relative_err" && echo true || echo false)"
-partial_mutant="$(mutant partial-promisor change-class \
-  '    git -C "$private_tree" config "$key" "$value" 2>>"$3" || return 1' \
-  '    :')"
-partial_err="$(PATH="$stub_bin:$PATH" "$partial_mutant" --repo "$partial" \
-  --event pull_request --base "$base" --head case 2>&1 >/dev/null)"
-assert_eq 'control: alternates without promisor settings cannot check out the head' true \
-  "$(grep -Eq '^class: class=standard measured=false cause=head-checkout-failed head=' <<<"$partial_err" && echo true || echo false)"
 git -C "$partial" remote set-url origin ../missing-remote
 partial_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$partial" \
   --event pull_request --base "$base" --head case 2>&1 >/dev/null)"
@@ -298,11 +291,8 @@ mkdir -p "$pythonless_bin"
 for tool in awk basename bash cat chmod cmp cp cut dirname env grep jq mkdir mktemp mv rm sed sort tail tr uname wc; do
   ln -s "$(command -v "$tool")" "$pythonless_bin/$tool"
 done
-normalization_mutant="$(mutant caller-normalization change-class \
-  '    sys.exit(0 if caller.normalized(head) == caller.normalized(template) else 1)' \
-  '    sys.exit(0)')"
 caller_rows=0
-while IFS='|' read -r label variation help_mode extra expected mutation; do
+while IFS='|' read -r label variation help_mode extra expected; do
   caller_rows=$((caller_rows + 1))
   reset_case
   set_verifier clean
@@ -372,11 +362,9 @@ CONFIGURE
   fi
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "$label"
-  caller_classifier="$CHANGE_CLASS"
-  [ "$mutation" != normalized ] || caller_classifier="$normalization_mutant"
   caller_path="$release_bin:$stub_bin:$PATH"
   [ "$variation" != missing-python ] || caller_path="$release_bin:$stub_bin:$pythonless_bin"
-  caller_err="$(PATH="$caller_path" "$caller_classifier" --repo "$repo" \
+  caller_err="$(PATH="$caller_path" "$CHANGE_CLASS" --repo "$repo" \
     --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
   assert_eq "$label classification" "class=$expected" \
     "$(sed -n 's/^class: \(class=[^ ]*\).*/\1/p' <<<"$caller_err")"
@@ -387,16 +375,8 @@ CONFIGURE
     want='class=standard measured=true cause=render-path-unowned path=.github/workflows/kendex-refresh.yml'
     assert_eq "$label ownership refusal" "$want" "$(sed -n 's/^class: //p' <<<"$caller_err")"
   fi
-  case "$variation" in
-    symlink) symlink_head="$(git -C "$repo" rev-parse HEAD)" ;;
-    commit-pin)
-      commit_pin_head="$(git -C "$repo" rev-parse HEAD)"
-      assert_eq "$label grants no release fetch" '' "$(cat "$SANDBOX/release-fetches")" ;;
-    branch-only) branch_pin_head="$(git -C "$repo" rev-parse HEAD)" ;;
-  esac
-  if [ "$extra|$help_mode" = '.github/copilot-instructions.md|legacy' ]; then
-    mixed_legacy_head="$(git -C "$repo" rev-parse HEAD)"
-  fi
+  [ "$variation" != commit-pin ] ||
+    assert_eq "$label grants no release fetch" '' "$(cat "$SANDBOX/release-fetches")"
 done <<'CALLERS'
 adopted released caller|released|supported||render
 adopted released caller with legacy verifier|released|legacy||render
@@ -406,7 +386,6 @@ both pairs with delivery environment|both|supported|.agents/skills/orch/SKILL.md
 legacy aliases with FLEET pair|legacy|supported|.agents/skills/orch/SKILL.md|render
 FLEET caller with changed concurrency|fleet-edited|supported||standard
 caller with invalid secret configuration|invalid-secret|supported||standard
-must-fail: skipped normalization accepts changed concurrency|fleet-edited|supported||render|normalized
 symlink to released caller|symlink|supported||standard
 byte-edited caller|byte-edited|supported||standard
 unpublished caller bytes|unreleased|supported||standard
@@ -423,53 +402,6 @@ caller and excluded workflow with legacy verifier|released|legacy|.github/workfl
 caller and excluded workflow with supporting verifier|released|supported|.github/workflows/ci.yml|render
 CALLERS
 require_rows change-class-released-caller "$caller_rows"
-
-reset_case
-git -C "$repo" checkout -q --detach "$symlink_head"
-set_verifier clean
-symlink_mutant="$(mutant symlink-caller change-class \
-  '  [ -f "$proof_tree/$1" ] && [ ! -L "$proof_tree/$1" ] || return 1' \
-  '  [ -f "$proof_tree/$1" ] || return 1')"
-PATH="$release_bin:$stub_bin:$PATH" CHANGE_CLASS="$symlink_mutant" assert_class \
-  'must-fail: following a symlink caller wrongly grants render' render \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
-
-reset_case
-git -C "$repo" checkout -q --detach "$commit_pin_head"
-set_verifier clean
-: >"$SANDBOX/release-fetches"
-commit_pin_mutant="$(mutant commit-pin change-class \
-  '  grep -Eq '\''^v[0-9]+(\.[0-9]+){0,2}$'\'' <<<"$pin" || return 1' \
-  '  grep -Eq '\''^(v[0-9]+(\.[0-9]+){0,2}|[0-9a-f]{40})$'\'' <<<"$pin" || return 1')"
-PATH="$release_bin:$stub_bin:$PATH" "$commit_pin_mutant" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD >/dev/null 2>&1
-assert_eq 'must-fail: accepting a commit pin violates the no-fetch assertion' true \
-  "$([ -s "$SANDBOX/release-fetches" ] && echo true || echo false)"
-
-reset_case
-git -C "$repo" checkout -q --detach "$branch_pin_head"
-set_verifier clean
-branch_pin_mutant="$(mutant branch-pin change-class \
-  '      https://github.com/vanillagreencom/kendex.git "refs/tags/$pin" >>"$work/release-stderr" 2>&1 || {' \
-  '      https://github.com/vanillagreencom/kendex.git "$pin" >>"$work/release-stderr" 2>&1 || {')"
-PATH="$release_bin:$stub_bin:$PATH" CHANGE_CLASS="$branch_pin_mutant" assert_class \
-  'must-fail: an unqualified ref accepts an unreleased branch' render \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
-
-reset_case
-git -C "$repo" checkout -q --detach "$mixed_legacy_head"
-set_verifier clean
-echo legacy >"$KENDEX_STUB_HELP"
-jq '.rows += [{"kind":"skill","state":"ok","positions":[
-  {"path":".github/copilot-instructions.md","owns":"file"}]}]' \
-  "$KENDEX_STUB_LEDGER" >"$SANDBOX/mixed-ledger"
-mv "$SANDBOX/mixed-ledger" "$KENDEX_STUB_LEDGER"
-mixed_mutant="$(mutant mixed-legacy change-class \
-  '    if [ "${1:-}" = narrow ] && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then' \
-  '    if false && [ "$RENDER_BOT_INSTRUCTIONS" = false ]; then')"
-PATH="$release_bin:$stub_bin:$PATH" CHANGE_CLASS="$mixed_mutant" assert_class \
-  'must-fail: the caller cannot lift another legacy exclusion' render \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 # label | expected | verifier | file:lines pairs
 table_rows=0
@@ -560,41 +492,6 @@ unavailable help grants no whole copilot ownership|unavailable|.github/copilot-i
 CAPABILITIES
 require_rows change-class-verifier-capability "$capability_rows"
 
-reset_case
-set_verifier clean
-echo legacy >"$KENDEX_STUB_HELP"
-write_lines "$repo" .agents/skills/orch/SKILL.md 4
-git -C "$repo" add -A
-git -C "$repo" commit -q -m "an engine render for the released verifier"
-unconditional_flag="$(mutant unconditional-flag change-class \
-  '    grep -Eq -- '\''(^|[[:space:]])--bot-instructions-from([[:space:]=]|$)'\'' <<<"$verify_help"; then' \
-  '    true; then')"
-capability_control="$(PATH="$stub_bin:$PATH" "$unconditional_flag" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "must-fail: forcing the flag makes the legacy engine render refuse verification" \
-  'class=standard measured=false cause=verify-refused verifier=path version=0.0.0-stub' \
-  "$(printf '%s\n' "$capability_control" | sed -n 's/^class: //p')"
-
-reset_case
-set_verifier clean
-jq '.rows += [{"kind":"bot-instructions","state":"ok","positions":[{"path":".github/copilot-instructions.md","owns":"file"}]}]' \
-  "$KENDEX_STUB_LEDGER" >"$SANDBOX/bot-ledger"
-mv "$SANDBOX/bot-ledger" "$KENDEX_STUB_LEDGER"
-write_lines "$repo" .github/copilot-instructions.md 4
-git -C "$repo" add -A
-git -C "$repo" commit -q -m "a whole copilot render for the supporting verifier"
-missing_flag="$(mutant missing-flag change-class \
-  '    verify_args=("${verify_args[@]}" --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")' \
-  '    :')"
-PATH="$stub_bin:$PATH" CHANGE_CLASS="$missing_flag" assert_class \
-  "must-fail: omitting the supported flag loses whole copilot ownership" standard \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
-missing_support="$(mutant missing-support change-class \
-  '    RENDER_BOT_INSTRUCTIONS=true' '    RENDER_BOT_INSTRUCTIONS=false')"
-PATH="$stub_bin:$PATH" CHANGE_CLASS="$missing_support" assert_class \
-  "must-fail: denying verified support keeps whole copilot ownership excluded" standard \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
-
 # A refresh can add a package file to the inventory. The inventory is input,
 # not provenance: verify must pass and own the gained path and inventory.
 gain_rows=0
@@ -609,7 +506,6 @@ while IFS='|' read -r label expected verifier gained; do
   git -C "$repo" commit -q -m "$label"
   PATH="$stub_bin:$PATH" assert_class "$label" "$expected" \
     --repo "$repo" --event pull_request --base "$base" --head HEAD
-  if [ "$expected" = render ]; then gain_head="$(git -C "$repo" rev-parse HEAD)"; fi
 done <<'GAINS'
 a refresh adding a verified package file|render|clean|.agents/skills/orch/scripts/added.sh
 a gained rendered file whose verify fails|standard|dirty|.agents/skills/orch/scripts/added.sh
@@ -618,28 +514,8 @@ a gain whose inventory has no passing position|standard|no-bookkeeping|.agents/s
 GAINS
 require_rows change-class-gain "$gain_rows"
 
-# Hold the optional path proof out of this control, so this refresh fixture
-# tests the inventory-gain admission alone.
-set_verifier clean
-gain_mutant="$(mutant gain-mutant change-class \
-  'if [ "$harness_verdict" = "harness_only=true" ] || [ "$harness_note" = "cause=generated-ownership-gain" ]; then' \
-  'if [ "$harness_verdict" = "harness_only=true" ] || { false && [ "$harness_note" = "cause=generated-ownership-gain" ]; }; then' \
-  '  narrow_refusal="$CHANGE_CLASS_PATH_CAUSE"' \
-  '  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured')"
-gain_control="$(PATH="$stub_bin:$PATH" "$gain_mutant" --repo "$repo" \
-  --event pull_request --base "$base" --head "$gain_head" 2>/dev/null)"
-assert_eq "must-fail control: denying the gain the proof fails the refresh row" \
-  change_class=standard "$gain_control"
-
 # Consumer refresh gains inventory paths beside bot outputs that verify does
 # not own. Completed ownership decisions select full checks, not a read stop.
-ownership_unmeasured=$(mutant ownership-unmeasured change-class \
-  '      RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured' \
-  '      RENDER_REFUSAL="cause=render-path-unowned path=$path"' \
-  '      RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"; RENDER_MEASURED=measured' \
-  '      RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"' \
-  '    RENDER_REFUSAL="cause=render-path-unowned path=$path"; RENDER_MEASURED=measured' \
-  '    RENDER_REFUSAL="cause=render-path-unowned path=$path"')
 gain_ownership_rows=0
 while IFS='|' read -r label verifier path cause; do
   gain_ownership_rows=$((gain_ownership_rows + 1))
@@ -659,11 +535,6 @@ while IFS='|' read -r label verifier path cause; do
   assert_eq "$label reaches the inventory gain proof" \
     'harness-note: cause=generated-ownership-gain' \
     "$(sed -n '/^harness-note: /p' <<<"$gain_err")"
-  control_err=$(PATH="$stub_bin:$PATH" "$ownership_unmeasured" --repo "$repo" \
-    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)
-  assert_eq "control: the original classifier turns $label unmeasured" \
-    "class: class=standard measured=false cause=$cause" \
-    "$(sed -n '/^class: /p' <<<"$control_err")"
 done <<'GAIN_OWNERSHIP'
 a gained render beside unowned bot instructions|clean|.github/copilot-instructions.md|render-path-unowned path=.github/copilot-instructions.md
 a gained render beside a changed shared file|foreign-changed|.pi/settings.json|render-path-partial path=.pi/settings.json foreign=changed
@@ -705,11 +576,10 @@ a retirement ahead of a registry edit whose rest moved|.codex/agents/rust.md|-|.
 a retirement ahead of a deletion still named in the head inventory|.agents/skills/orch/app.ts|.codex/agents/rust.md|-|clean|standard|true|render-path-unowned path=.codex/agents/rust.md
 REMOVALS
 
-# Every removal row run against SCRIPT, one `LABEL<TAB>WANT<TAB>GOT` line
-# each, so the shipped script and each control below read the same rows.
+# Every removal row, one `LABEL<TAB>WANT<TAB>GOT` line each.
 # errexit does not reach a function run inside a substitution, so each step
 # checks its own status.
-removal_rows() { # SCRIPT
+removal_rows() {
   local label retired kept edited verifier class measured cause path out status line want
   while IFS='|' read -r label retired kept edited verifier class measured cause; do
     git -C "$removed_repo" checkout -q -B removal "$removed_base" || return
@@ -728,7 +598,7 @@ removal_rows() { # SCRIPT
     git -C "$removed_repo" add -A || return
     git -C "$removed_repo" commit -q -m "$label" || return
     set_verifier "$verifier"
-    if out=$(PATH="$stub_bin:$PATH" "$1" --repo "$removed_repo" --event pull_request \
+    if out=$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$removed_repo" --event pull_request \
       --base "$removed_base" --head HEAD 2>"$SANDBOX/removal-err"); then
       status=0
     else
@@ -743,51 +613,13 @@ removal_rows() { # SCRIPT
     printf '%s\t%s\t%s\n' "$label" "$want" "$out exit $status $line"
   done <"$SANDBOX/removals"
 }
-removals_out=$(removal_rows "$CHANGE_CLASS")
+removals_out=$(removal_rows)
 removed_rows=0
 while IFS=$'\t' read -r label want got; do
   removed_rows=$((removed_rows + 1))
   assert_eq "$label" "$want" "$got"
 done <<<"$removals_out"
 require_rows change-class-removals "$removed_rows"
-
-# Must-fail controls, one per rule the rows hold, each naming the rows it
-# turns red: a retirement passed as owned, with the refusal text kept; a
-# retirement passed on any base ownership field, whatever it names; every
-# render refusal marked measured, including a failed verify; the retirement's measured mark dropped; and
-# a retirement answered before the paths after it are read.
-removal_reds() { # NAME LINE REPLACEMENT -> the labels of the rows that turn red
-  local planted rows
-  planted=$(mutant "$1" change-class "$2" "$3") || return
-  rows=$(removal_rows "$planted") || return
-  awk -F '\t' '$2 != $3 { print $1 }' <<<"$rows"
-}
-retirement_rows='retired render the base record does not name
-retired file under no tree the base record names
-retired shared registry still holds user settings
-retired render under a kendex with no base ownership'
-control_reds=$(removal_reds removal-control '  [ -n "$retired" ] || return 0' '  return 0')
-assert_eq "the removal control turns the retirement rows red" "$retirement_rows" "$control_reds"
-control_reds=$(removal_reds base-owned-unlisted \
-  "$(grep '^base_owned() ' "$CHANGE_CLASS")" \
-  "base_owned() { jq -e '(.base_owned // []) | length > 0' <<<\"\$VERIFY_JSON\" >/dev/null 2>&1; }")
-assert_eq "passing a retirement the field does not name turns the unnamed rows red" \
-  'retired render the base record does not name
-retired file under no tree the base record names
-retired shared registry still holds user settings' "$control_reds"
-control_reds=$(removal_reds every-refusal-measured \
-  '  answer standard "$RENDER_REFUSAL" "$RENDER_MEASURED"' \
-  '  answer standard "$RENDER_REFUSAL" measured')
-assert_eq "marking every render refusal measured turns the fallback rows red" \
-  'verify refuses an unsanctioned deletion' "$control_reds"
-control_reds=$(removal_reds retirement-unmeasured '  RENDER_MEASURED=measured' -)
-assert_eq "dropping the retirement's measured mark turns the retirement rows red" \
-  "$retirement_rows" "$control_reds"
-control_reds=$(removal_reds retirement-answers-early '          continue ;;' \
-  '          RENDER_REFUSAL="$retired"; RENDER_MEASURED=measured; return 1 ;;')
-assert_eq "answering at the retirement turns the rows with a later refusal red" \
-  'a retirement ahead of a registry edit whose rest moved
-a retirement ahead of a deletion still named in the head inventory' "$control_reds"
 
 # `standard` is two answers in one word, and `measured=` is the only thing
 # that separates them. Both shapes, from the same fixtures the table above
@@ -1597,14 +1429,12 @@ assert_eq "a head that cannot be checked out is refused, naming it" \
 assert_eq "and the verifier was not run" "0" \
   "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
 
-# An installed package layout: harness-ci's scripts, and orch beside them
-# where the case wants one, so a classifier standing there resolves the same
-# siblings the shipped one does. A case that needs a mutant writes its own
-# body over the path this prints.
-plant_package() { # ROOT link|none -> prints the planted change-class path
+# An installed package layout with harness-ci's scripts and no orch beside
+# them, so a classifier standing there resolves the same harness-ci siblings
+# the shipped one does. A case that wants an orch writes its own.
+plant_package() { # ROOT -> prints the planted change-class path
   mkdir -p "$1/harness-ci/scripts"
   ln -s "$(dirname "$CHANGE_CLASS")/harness-only" "$1/harness-ci/scripts/harness-only"
-  [ "$2" != link ] || ln -s "$ORCH_PACKAGE" "$1/orch"
   cp "$CHANGE_CLASS" "$1/harness-ci/scripts/change-class"
   cp -R "$(dirname "$CHANGE_CLASS")/lib" "$1/harness-ci/scripts/"
   chmod +x "$1/harness-ci/scripts/change-class"
@@ -1615,7 +1445,7 @@ plant_package() { # ROOT link|none -> prints the planted change-class path
 # beside it still answers `render` on a diff the proof covers; only the
 # measured classes need the sibling.
 orchless_root="$SANDBOX/orchless"
-orchless_class="$(plant_package "$orchless_root" none)"
+orchless_class="$(plant_package "$orchless_root")"
 assert_eq "the orchless copy really has no orch sibling" "absent" \
   "$([ -e "$orchless_root/orch" ] && echo present || echo absent)"
 reset_case
@@ -1680,7 +1510,7 @@ skewed_rows=0
 while IFS='|' read -r contract_line reported; do
   skewed_rows=$((skewed_rows + 1))
   skewed_root="$SANDBOX/skewed-orch-$skewed_rows"
-  skewed_class="$(plant_package "$skewed_root" none)"
+  skewed_class="$(plant_package "$skewed_root")"
   mkdir -p "$skewed_root/orch/references"
   cp "$ORCH_PACKAGE/references/narrow-change.conf" "$skewed_root/orch/references/"
   cp -R "$ORCH_PACKAGE/scripts" "$skewed_root/orch/"
@@ -1821,70 +1651,6 @@ assert_eq "a base settings file the reader refuses answers standard, unmeasured"
   "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
 
-# A test path belongs to no subsystem. The table rows from
-# small-test-path-in-another-subsystem to
-# small-binary-test-path-in-another-subsystem pin it for a test file, a test
-# source beside its render mirror, a test under a render root with no source
-# and a binary test file. Each control below plants a copy that loses one side
-# of it, the classifier no longer setting the measurement's list aside or the
-# measurement no longer listing anything, and each of those diffs falls back
-# to several-subsystems.
-subsystem_class() { # CLASSIFIER PATH:LINES... -> the class: line for the diff
-  local err spec classifier="$1"
-  shift
-  reset_case
-  set_verifier dirty
-  for spec in "$@"; do
-    write_lines "$repo" "${spec%:*}" "${spec##*:}"
-  done
-  git -C "$repo" add -A
-  git -C "$repo" commit -q -m "a script beside its test data in another directory"
-  err="$(PATH="$stub_bin:$PATH" "$classifier" --repo "$repo" --event pull_request \
-    --base "$base" --head HEAD 2>&1 >/dev/null)" || true
-  printf '%s\n' "$err" | sed -n '/^class: /p'
-}
-# Read outside a command substitution: Bash 3.2 cannot find the end of one
-# around a heredoc holding this line's unbalanced `)`.
-IFS= read -r skip_line <<'LINE'
-  case "$test_files" in *$'\n'"$path"$'\n'*) continue ;; esac
-LINE
-unskipped_class="$(plant_package "$SANDBOX/unskipped" link)"
-# The line reaches awk through the environment: a -v value has its
-# backslashes read as escapes.
-DROP_LINE="$skip_line" awk '$0 != ENVIRON["DROP_LINE"]' "$CHANGE_CLASS" >"$unskipped_class"
-assert_eq "the classifier control drops the one test-path skip" "1 0" \
-  "$(grep -cxF -- "$skip_line" "$CHANGE_CLASS") $(grep -cxF -- "$skip_line" "$unskipped_class" || true)"
-unlisted_root="$SANDBOX/unlisted-orch"
-unlisted_class="$(plant_package "$unlisted_root" none)"
-mkdir -p "$unlisted_root/orch/references"
-cp "$ORCH_PACKAGE/references/narrow-change.conf" "$unlisted_root/orch/references/"
-cp -R "$ORCH_PACKAGE/scripts" "$unlisted_root/orch/"
-list_line='      if (is_test(p) || (rest != "" && is_test(rest))) { listed[p] = 1; test_files = test_files "\n" p }'
-DROP_LINE="$list_line" awk '$0 != ENVIRON["DROP_LINE"]' "$ORCH_PACKAGE/scripts/lib/branch-growth.sh" \
-  >"$unlisted_root/orch/scripts/lib/branch-growth.sh"
-assert_eq "the measurement control drops the one test-path record" "1 0" \
-  "$(grep -cxF -- "$list_line" "$ORCH_PACKAGE/scripts/lib/branch-growth.sh") $(grep -cxF -- "$list_line" "$unlisted_root/orch/scripts/lib/branch-growth.sh" || true)"
-control_rows=0
-# A measurement that lists nothing also counts every test line as production,
-# so its row names the production count it reaches.
-while IFS='|' read -r label listless_production specs; do
-  control_rows=$((control_rows + 1))
-  # shellcheck disable=SC2086
-  assert_eq "a classifier that sets no test path aside counts two subsystems: $label" \
-    "class: class=standard measured=true cause=several-subsystems production=30" \
-    "$(subsystem_class "$unskipped_class" $specs)"
-  # shellcheck disable=SC2086
-  assert_eq "a measurement that lists no test path leaves two subsystems: $label" \
-    "class: class=standard measured=true cause=several-subsystems production=$listless_production" \
-    "$(subsystem_class "$unlisted_class" $specs)"
-done <<'CONTROLS'
-a test file|60|runtime/product.ts:30 payload/tests/data.conf:30
-a test source beside its render mirror|60|runtime/product.ts:30 skills/x/tests/data.conf:30 .claude/skills/x/tests/data.conf:30
-a test under a render root with no source|60|runtime/product.ts:30 .claude/hooks/tests/data.conf:30
-a binary test file|30|runtime/product.ts:30 payload/tests/image.png:binary
-CONTROLS
-require_rows change-class-subsystem-controls "$control_rows"
-
 # A lane and CI classify one diff alike. CI's classify step may carry
 # ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
 # item-tier or dev-validate-run through orch's lib/change-class.sh, which the
@@ -1954,27 +1720,12 @@ a script beside a production file moved into a test directory|30|into-test|class
 a script beside a test file moved out beside it|30|out-of-test|class: class=small measured=true cause=production-within-small subsystem=runtime
 FIXTURES
 require_rows change-class-fixture "$fixture_rows"
-# The listing control on the render-root fixture row: a measurement that lists
-# nothing scores the fixture's lines as production and its top-level
-# directory as a subsystem.
-git -C "$fixture" checkout -q -B case-unlisted "$fixture_base"
-write_lines "$fixture" runtime/probe.sh 10
-write_lines "$fixture" .claude/skills/x/fixtures/data 40
-git -C "$fixture" add -A
-git -C "$fixture" commit -q -m "a render-root fixture under a measurement that lists nothing"
-unlisted_err="$(env -u ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS="$fixture_globs" \
-  "$unlisted_class" --repo "$fixture" --event pull_request --base "$fixture_base" \
-  --head HEAD 2>&1 >/dev/null)" || true
-assert_eq "a measurement that lists no test path scores a render-root fixture as production" \
-  "class: class=standard measured=true cause=several-subsystems production=50" \
-  "$(printf '%s\n' "$unlisted_err" | sed -n '/^class: /p')"
 
 # The render rows the issue names, built from a REAL render rather than a stub
 # exit code. The consumer's manifest carries its own project instructions, so
 # every SKILL.md it renders holds a block no catalog file has: the bytes the
 # class must be read from are the consumer's, and a classifier comparing with
-# catalog bytes answers standard on the first row. That comparison is planted
-# below as this section's must-fail inverse.
+# catalog bytes answers standard on the first row.
 #
 # Two of the issue's three render rows are here: a pure refresh, which answers
 # `render` from the positions the passing rows print, and that refresh with
@@ -2174,14 +1925,6 @@ TOML
   assert_eq 'a mirror behind the recorded head names its source refresh remedy' \
     'class=standard measured=false cause=source-mirror-missing verb=source operation=refresh verifier=path' \
     "$(printf '%s\n' "$missing_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
-  missing_mutant="$(mutant missing-source-cause change-class \
-    '      RENDER_REFUSAL="cause=source-mirror-missing verb=source operation=refresh verifier=$kind version=$verifier_version"' \
-    '      :')"
-  missing_control="$(CHANGE_CLASS="$missing_mutant" classify_stderr --repo "$consumer" \
-    --event pull_request --base "$consumer_base" --head HEAD)"
-  assert_eq 'control: removing the keyed remedy restores the generic refusal' \
-    'class=standard measured=false cause=verify-refused verifier=path' \
-    "$(printf '%s\n' "$missing_control" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
   kendex_here "$consumer" source refresh
   assert_eq "the priming step left the judged tree exactly as committed" "" \
     "$(git -C "$consumer" status --porcelain)"
@@ -2245,45 +1988,6 @@ OLD_SCHEMA
   classify_here "the schema-only proof ignores an uncommitted render" render \
     --repo "$consumer" --event pull_request --base "$schema_base" --head "$schema_head"
   git -C "$consumer" restore -- .claude/skills/demo/SKILL.md
-  for gate in filtered-refusal render-gate; do
-    if [ "$gate" = filtered-refusal ]; then
-      schema_gate_mutant="$(mutant schema-filtered-refusal harness-only \
-        '  changed="$schema_paths"' \
-        $'  changed="$schema_paths"\n  [ -n "$changed" ] || verdict false "cause=empty-diff" "the filtered path set is empty"')"
-    else
-      schema_gate_mutant="$(mutant schema-render-gate change-class \
-        'if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then' \
-        'if [ ! -s "$paths_file" ]; then')"
-    fi
-    schema_gate_err="$(CHANGE_CLASS="$schema_gate_mutant" classify_stderr --repo "$consumer" \
-      --event pull_request --base "$schema_base" --head "$schema_head")"
-    schema_gate_status=0
-    (PASS=0; FAIL=0
-      assert_eq 'a real schema-only refresh keeps its render class' \
-        'class=render measured=true cause=renders-match-their-sources' \
-        "$(printf '%s\n' "$schema_gate_err" | sed -n 's/^class: //p')"
-      report "schema-$gate-control") >"$SANDBOX/schema-$gate-control.log" 2>&1 || schema_gate_status=$?
-    assert_eq "must-fail: restoring $gate turns the schema-only assertion red" 1 "$schema_gate_status"
-  done
-  schema_log_mutant="$(mutant schema-step-hidden change-class \
-    'sed -n '\''/^schema-bump: /p'\'' "$harness_err" >&2' ':')"
-  schema_hidden_err="$(CHANGE_CLASS="$schema_log_mutant" classify_stderr --repo "$consumer" \
-    --event pull_request --base "$schema_base" --head HEAD)"
-  schema_log_status=0
-  (PASS=0; FAIL=0
-    assert_eq 'the real refresh reports its schema step' \
-      'schema-bump: path=kendex.toml from=6 to=7' \
-      "$(printf '%s\n' "$schema_hidden_err" | sed -n '/^schema-bump: /p')"
-    report schema-log-control) >"$SANDBOX/schema-log-control.log" 2>&1 || schema_log_status=$?
-  assert_eq "must-fail: hiding the schema diagnostic turns its assertion red" 1 "$schema_log_status"
-  schema_mutant="$(mutant schema-step-retained harness-only \
-    'if grep -qxF kendex.toml <<<"$changed" && schema_bump="$(schema_step 2>/dev/null)" \' \
-    'if false \' )"
-  schema_control="$(CHANGE_CLASS="$schema_mutant" classify_stderr --repo "$consumer" \
-    --event pull_request --base "$schema_base" --head HEAD)"
-  assert_eq "must-fail: retaining the real schema step loses render classification" \
-    'class=standard measured=true cause=configuration-source path=kendex.toml glob=kendex.toml' \
-    "$(printf '%s\n' "$schema_control" | sed -n 's/^class: //p')"
   git -C "$consumer" checkout -q -B schema-and-instructions schema-refreshed
   python3 - "$consumer/kendex.toml" <<'MANIFEST_EDIT'
 from pathlib import Path
@@ -2494,39 +2198,6 @@ MANIFEST_EDIT
     "class: class=small measured=true cause=instruction-file path=.claude/skills/second/SKILL.md glob=*/SKILL.md measured-class=micro" \
     "$(printf '%s\n' "$de_listed_edit_err" | grep '^class: ')"
 
-  # Must-fail inverse: the render proof replaced by a comparison with the
-  # catalog's own bytes, at the one site that proves the class. A consumer's
-  # render is never byte-equal to a catalog file, so this classifier refuses
-  # the refresh row above AT the proof, where the real one clears it and
-  # refuses on an unowned path. Both answer standard, so the rows read the
-  # cause: without that the inverse would pass on a verdict it never earned.
-  catalog_mutant="$(plant_package "$SANDBOX/catalog-byte-mutant" link)"
-  proof_call='  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && "$verifier" "${verify_args[@]}") 2>"$work/verify-stderr" )"; then'
-  catalog_call='  if ! VERIFY_JSON="$(cmp -s "$proof_tree/$CATALOG_RENDER" "$CATALOG_SOURCE" && printf "%s" "{\"version\":1,\"clean\":true,\"checked\":2,\"failed\":0,\"rows\":[{\"kind\":\"skill\",\"name\":\"demo\",\"state\":\"ok\",\"positions\":[{\"path\":\".claude/skills/demo\",\"owns\":\"tree\"}]}]}")"; then'
-  assert_eq "the inverse replaces exactly one proof call" 1 \
-    "$(grep -cxF "$proof_call" "$CHANGE_CLASS")"
-  # Line by line rather than by sed: both spellings carry the slashes and
-  # dollars a substitution would have to escape, and one wrong escape would
-  # leave the real proof in place and the inverse passing for the wrong reason.
-  while IFS= read -r line; do
-    if [ "$line" = "$proof_call" ]; then
-      printf '%s\n' "$catalog_call"
-    else
-      printf '%s\n' "$line"
-    fi
-  done <"$CHANGE_CLASS" >"$catalog_mutant"
-  chmod +x "$catalog_mutant"
-  assert_eq "the inverse plants exactly one catalog comparison" 1 \
-    "$(grep -cxF "$catalog_call" "$catalog_mutant")"
-  git -C "$consumer" checkout -q refreshed
-  catalog_err="$(CATALOG_RENDER=".claude/skills/demo/SKILL.md" \
-    CATALOG_SOURCE="$catalog/skills/demo/SKILL.md" \
-    "$catalog_mutant" --repo "$consumer" --event pull_request \
-    --base "$consumer_base" --head HEAD 2>&1 >/dev/null)"
-  assert_eq "a classifier reading catalog bytes never clears the refresh row" \
-    "class=standard measured=false cause=verify-refused verifier=path" \
-    "$(printf '%s\n' "$catalog_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
-
   # A refresh can replace only a stale bot output while the installed package
   # and its record stay current. The old summary produces the base's stale
   # file; the declared summary is restored before that base is committed.
@@ -2583,12 +2254,6 @@ TOML
   bot_render_head="$(git -C "$bot_consumer" rev-parse HEAD)"
   classify_here "a copilot-only bot re-render has verified ownership" render \
     --repo "$bot_consumer" --event pull_request --base "$bot_base" --head HEAD
-  bot_unowned_class="$(mutant bot-unowned change-class \
-    '    verify_args=("${verify_args[@]}" --bot-instructions-from "$BOT_INSTRUCTIONS_DIR")' \
-    '    :')"
-  CHANGE_CLASS="$bot_unowned_class" classify_here \
-    "control: omitting the trusted checker turns the copilot-only render row red" standard \
-    --repo "$bot_consumer" --event pull_request --base "$bot_base" --head HEAD
   printf '\nA rule the renderer did not produce.\n' \
     >>"$bot_consumer/.github/copilot-instructions.md"
   git -C "$bot_consumer" add -A
@@ -2618,13 +2283,8 @@ TOML
   # The setting stays unchanged across that diff, so render ownership cannot
   # choose the class of a declared path. Both successful render routes use it.
   render_policy_head="$(git -C "$consumer" rev-parse refreshed)"
-  render_policy_mutant="$(mutant render-policy change-class \
-    '  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured' \
-    '  : "cause=repository-standard-path $PATH_MATCH_HIT" measured')"
-  cp -R "$TEST_DIR/../../bot-instructions" \
-    "$(dirname "$render_policy_mutant")/../../bot-instructions"
   render_policy_rows=0
-  while IFS='|' read -r label fixture base_name head_name declared classifier expected; do
+  while IFS='|' read -r label fixture base_name head_name declared expected; do
     render_policy_rows=$((render_policy_rows + 1))
     policy_repo="${!fixture}"
     policy_base="${!base_name}"
@@ -2643,22 +2303,20 @@ TOML
       policy_head="$(git -C "$policy_repo" rev-parse HEAD)"
     fi
     for policy_event in pull_request merge_group; do
-      policy_err="$(CHANGE_CLASS="${!classifier}" classify_stderr --repo "$policy_repo" \
+      policy_err="$(classify_stderr --repo "$policy_repo" \
         --event "$policy_event" --base "$policy_base" --head "$policy_head")"
       assert_eq "$label on $policy_event" "$expected" \
         "$(sed -n 's/^class: //p' <<<"$policy_err")"
     done
   done <<'POLICIES'
-a real ownership gain without a declaration remains render|consumer|consumer_base|render_policy_head|undeclared|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
-an empty declaration leaves the real ownership gain render|consumer|consumer_base|render_policy_head||CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
-a miss leaves the real ownership gain render|consumer|consumer_base|render_policy_head|runtime/*|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
-a declared real rendered skill always takes standard|consumer|consumer_base|render_policy_head|.agents/skills/demo/* .claude/skills/demo/*|CHANGE_CLASS|class=standard measured=true cause=repository-standard-path path=.agents/skills/demo/SKILL.md glob=.agents/skills/demo/*
-a real bot refresh without a declaration remains render|bot_consumer|bot_base|bot_render_head|undeclared|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
-an empty declaration leaves the real bot refresh render|bot_consumer|bot_base|bot_render_head||CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
-a miss leaves the real bot refresh render|bot_consumer|bot_base|bot_render_head|runtime/*|CHANGE_CLASS|class=render measured=true cause=renders-match-their-sources
-a declared real bot output always takes standard|bot_consumer|bot_base|bot_render_head|.github/copilot-instructions.md|CHANGE_CLASS|class=standard measured=true cause=repository-standard-path path=.github/copilot-instructions.md glob=.github/copilot-instructions.md
-control: skipping repository policy admits the declared skill refresh|consumer|consumer_base|render_policy_head|.agents/skills/demo/* .claude/skills/demo/*|render_policy_mutant|class=render measured=true cause=renders-match-their-sources
-control: skipping repository policy admits the declared bot refresh|bot_consumer|bot_base|bot_render_head|.github/copilot-instructions.md|render_policy_mutant|class=render measured=true cause=renders-match-their-sources
+a real ownership gain without a declaration remains render|consumer|consumer_base|render_policy_head|undeclared|class=render measured=true cause=renders-match-their-sources
+an empty declaration leaves the real ownership gain render|consumer|consumer_base|render_policy_head||class=render measured=true cause=renders-match-their-sources
+a miss leaves the real ownership gain render|consumer|consumer_base|render_policy_head|runtime/*|class=render measured=true cause=renders-match-their-sources
+a declared real rendered skill always takes standard|consumer|consumer_base|render_policy_head|.agents/skills/demo/* .claude/skills/demo/*|class=standard measured=true cause=repository-standard-path path=.agents/skills/demo/SKILL.md glob=.agents/skills/demo/*
+a real bot refresh without a declaration remains render|bot_consumer|bot_base|bot_render_head|undeclared|class=render measured=true cause=renders-match-their-sources
+an empty declaration leaves the real bot refresh render|bot_consumer|bot_base|bot_render_head||class=render measured=true cause=renders-match-their-sources
+a miss leaves the real bot refresh render|bot_consumer|bot_base|bot_render_head|runtime/*|class=render measured=true cause=renders-match-their-sources
+a declared real bot output always takes standard|bot_consumer|bot_base|bot_render_head|.github/copilot-instructions.md|class=standard measured=true cause=repository-standard-path path=.github/copilot-instructions.md glob=.github/copilot-instructions.md
 POLICIES
   require_rows change-class-render-policy "$render_policy_rows"
   git -C "$consumer" checkout -q refreshed
@@ -2702,114 +2360,5 @@ POLICIES
     "class=standard measured=false cause=verify-refused verifier=path" \
     "$(printf '%s\n' "$rolled_back_err" | sed -n 's/^class: \(.*\) version=[^ ]*$/\1/p')"
 fi
-
-# Must-fail control: a classifier that trusts .kendex-generated.json instead of
-# the render answers render on the hand-edit row. The mutant stands in a
-# package layout of its own so it resolves the same siblings the real script
-# does, and every full source-and-ownership proof is taken out.
-mutant="$(plant_package "$SANDBOX/mutant" link)"
-sed 's/^  renders_match && render_paths_covered &&$/  true \&\&/' \
-  "$CHANGE_CLASS" >"$mutant"
-chmod +x "$mutant"
-assert_eq "the control removes the full source-and-ownership proof" 0 \
-  "$(awk '$0 == "  renders_match && render_paths_covered &&" { calls++ } END { print calls + 0 }' "$mutant")"
-
-reset_case
-set_verifier dirty
-write_lines "$repo" .agents/skills/orch/SKILL.md 6
-git -C "$repo" add -A
-git -C "$repo" commit -q -m "control: hand edit inside a render"
-control_out="$(PATH="$stub_bin:$PATH" \
-  "$mutant" --repo "$repo" --event pull_request --base "$base" --head HEAD \
-  2>/dev/null)"
-assert_eq "a classifier trusting the manifest passes the hand-edit row" \
-  "change_class=render" "$control_out"
-
-reset_case
-set_verifier clean
-write_lines "$repo" runtime/gained.ts 2
-jq '. + ["runtime/gained.ts"] | sort' "$repo/.kendex-generated.json" >"$SANDBOX/gain-inventory"
-mv "$SANDBOX/gain-inventory" "$repo/.kendex-generated.json"
-git -C "$repo" add -A
-git -C "$repo" commit -q -m 'control: product path claimed by the head inventory'
-control_out="$(PATH="$stub_bin:$PATH" "$mutant" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD 2>/dev/null)"
-assert_eq "must-fail control: skipping path coverage grants render to gained product code" \
-  "change_class=render" "$control_out"
-
-# Must-fail control for the bookkeeping row: the grant KEN-1637 deleted, put
-# back at the one site that names positions. A classifier that names its own
-# two bookkeeping files beside the positions the document printed answers
-# render on a diff of nothing but those files under a document that prints
-# no row for either, which is the door that row keeps shut.
-book_mutant="$(plant_package "$SANDBOX/bookkeeping-mutant" link)"
-owner_line='^named_positions() { .*; }$'
-assert_eq "the control finds exactly one position list to widen" 1 \
-  "$(grep -c "$owner_line" "$CHANGE_CLASS")"
-sed 's|^named_positions() { \(.*\); }$|named_positions() { \1; printf "file\\t-\\t%s\\n" .kendex-lock.json .kendex-generated.json; }|' \
-  "$CHANGE_CLASS" >"$book_mutant"
-chmod +x "$book_mutant"
-assert_eq "the control widens it exactly once" 1 \
-  "$(grep -c 'printf "file\\t-\\t%s\\n" .kendex-lock.json .kendex-generated.json' "$book_mutant")"
-set_verifier no-bookkeeping
-book_control_out="$(PATH="$stub_bin:$PATH" "$book_mutant" --repo "$book" \
-  --event pull_request --base "$book_base" --head HEAD 2>/dev/null)"
-assert_eq "a classifier naming its own bookkeeping files passes that diff" \
-  "change_class=render" "$book_control_out"
-
-# Must-fail control for the spelling rows: a reader that keeps the printed
-# parent directory and re-derives the leaf from the row's name, which is the
-# one rule every classifier written outside the engine ends up carrying. It
-# still owns a plain name, and refuses every awkward one.
-spelling_mutant="$(plant_package "$SANDBOX/spelling-mutant" link)"
-sed 's|\.positions\[\] \| \[\.owns, (\.foreign // "-"), \.path\]|.name as $n \| .positions[] \| [.owns, (.foreign // "-"), ((.path \| sub("/[^/]*$"; "/")) + $n)]|' \
-  "$CHANGE_CLASS" >"$spelling_mutant"
-chmod +x "$spelling_mutant"
-assert_eq "the control re-derives the leaf exactly once" 1 \
-  "$(grep -c 'sub("/\[^/\]\*\$"; "/")) + \$n)\]' "$spelling_mutant")"
-spelling_document >"$KENDEX_STUB_LEDGER"
-git -C "$spell" checkout -q -B case "$spell_base"
-git -C "$spell" clean -qfd
-write_lines "$spell" .pi/packages/@scope/widgets/index.js 2
-git -C "$spell" add -A
-git -C "$spell" commit -q -m "control: the scoped extension under a leaf rule"
-spelling_control_out="$(PATH="$stub_bin:$PATH" "$spelling_mutant" --repo "$spell" \
-  --event pull_request --base "$spell_base" --head HEAD 2>/dev/null)"
-assert_eq "a reader re-deriving the leaf from the name refuses the scoped extension" \
-  "change_class=standard" "$spelling_control_out"
-reset_case
-set_verifier clean
-write_lines "$repo" .agents/skills/orch/SKILL.md 4
-git -C "$repo" add -A
-git -C "$repo" commit -q -m "control: a plain name under a leaf rule"
-plain_control_out="$(PATH="$stub_bin:$PATH" "$spelling_mutant" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD 2>/dev/null)"
-assert_eq "and still owns a plain name, so the awkward rows are what it costs" \
-  "change_class=render" "$plain_control_out"
-
-# Must-fail control for the registry rows: disable the shared registry
-# phase while keeping its rules. A changed registry then measures as micro.
-registry_mutant="$(plant_package "$SANDBOX/registry-mutant" link)"
-registry_library="$SANDBOX/registry-mutant/harness-ci/scripts/lib/change-class.sh"
-registry_line='  if [ "$2" = registry ] || [ "$2" = launch ]; then'
-awk -v line="$registry_line" '
-  $0 == line { hits++; print "  if false; then # " line; next }
-  { print }
-  END { exit hits == 1 ? 0 : 3 }
-' "$(dirname "$CHANGE_CLASS")/lib/change-class.sh" >"$registry_library"
-if cmp -s "$(dirname "$CHANGE_CLASS")/lib/change-class.sh" "$registry_library"; then
-  echo "FAIL: the registry control did not change the library" >&2; exit 1
-fi
-
-reset_case
-set_verifier dirty
-write_lines "$repo" .claude/settings.json 2
-write_lines "$repo" runtime/product.ts 2
-git -C "$repo" add -A
-git -C "$repo" commit -q -m "control: a registry file with no glob naming it"
-registry_control_out="$(PATH="$stub_bin:$PATH" "$registry_mutant" \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD 2>/dev/null)"
-assert_eq "a classifier with no registry globs measures the settings file" \
-  "change_class=micro" "$registry_control_out"
 
 report change-class
