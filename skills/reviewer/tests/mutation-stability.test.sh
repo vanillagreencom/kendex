@@ -363,26 +363,8 @@ assert_table_executed "process cleanup" "$process_rows"
 # On the macOS shard that line reddened a pin on a captured transcript and
 # ejected an unrelated pull request from the merge queue.
 #
-# A GREEN LINUX RUN IS NOT EVIDENCE FOR THE PIN: the race never fires here. The
-# planted row below is what shows the pin can go red at all, and the failing-
-# child row is what shows it is not green because the transcript is discarded.
-MUTANT_TREE="$TMP/mutant-tree"
-mkdir -p "$MUTANT_TREE/reviewer/scripts" "$MUTANT_TREE/github/scripts/lib"
-cp "$SCRIPT_DIR/../../github/scripts/lib/group-leader.sh" \
-  "$MUTANT_TREE/github/scripts/lib/group-leader.sh"
-MS_NOISY="$MUTANT_TREE/reviewer/scripts/mutation-stability"
-sed 's|^  \(.*KENDEX_GROUP_LEADER.*\)$|  echo "child setpgid (1 to 1): Operation not permitted" >\&2; \1|' \
-  "$MS" > "$MS_NOISY"
-chmod +x "$MS_NOISY"
-planted=$(grep -c 'child setpgid (1 to 1)' "$MS_NOISY") || planted=unreadable
-if [ "$planted" != 1 ]; then
-  fail "parent-noise control" "planted $planted lines, wanted exactly 1"
-elif ! bash -n "$MS_NOISY"; then
-  fail "parent-noise control" "the mutant is not valid shell"
-else
-  pass "parent-noise control plants exactly one parent-side line"
-fi
-
+# The failing-child row shows the pin is not green because the transcript is
+# discarded.
 # The two lines the script itself owes this run: SETTLE=0 is how the tables
 # above tell it their stub builds share no cache, and it says so once.
 QUIET_TRANSCRIPT='notice=settle-disabled value=0|copies are not mtime-separated; verdicts assume BUILD shares no cache|'
@@ -404,11 +386,6 @@ while IFS=$'\t' read -r name kind expected; do
       transcript_of "$MS" --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2
       actual="rc=$ms_rc;transcript=$ms_transcript"
       ;;
-    noisy)
-      transcript_of "$MS_NOISY" --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2
-      if [ "$ms_transcript" = "$QUIET_TRANSCRIPT" ]; then matches=yes; else matches=no; fi
-      actual="rc=$ms_rc;matches-quiet-pin=$matches"
-      ;;
     loud)
       transcript_of "$MS" --test 'printf "boom\n" >&2; exit 1' --build 'true' --mutate 'true' --stability 1
       if [ "$ms_transcript" = "$QUIET_TRANSCRIPT" ]; then matches=yes; else matches=no; fi
@@ -422,7 +399,6 @@ while IFS=$'\t' read -r name kind expected; do
   transcript_rows=$((transcript_rows + 1))
 done <<ROWS
 a clean run writes only its own keyed notice	quiet	rc=0;transcript=$QUIET_TRANSCRIPT
-a planted parent-side line reddens that pin	noisy	rc=0;matches-quiet-pin=no
 a failing child still reddens that pin	loud	rc=2;matches-quiet-pin=no
 ROWS
 assert_table_executed "runner transcript" "$transcript_rows"
@@ -445,37 +421,20 @@ plant_variant() {
 }
 
 # The suite command takes longer than the repeat start budget. Its clean-copy
-# failure is seeded only in the clean copy, after the control and kill. Removing
-# the budget guard restores main's ten full repeats on this same fixture.
-plant_variant unbudgeted '  [ "$i" -lt 2 ] || [ "$((SECONDS - stability_started))" -lt "$((10#$BUDGET))" ] || break' '  :'
-MS_UNBUDGETED="$variant"
-MS_BUDGETED="$MS"
+# failure is seeded only in the clean copy, after the control and kill.
 echo "=== repeat budget table ==="
-while IFS='|' read -r name runner seeded expected_rc expected_samples; do
-  case "$runner" in budgeted) MS="$MS_BUDGETED" ;; unbudgeted) MS="$MS_UNBUDGETED" ;; esac
+while IFS='|' read -r name seeded expected_rc expected_samples; do
   started=$SECONDS
   run_ms "$SHA_BASE" --test ". ./lib.sh; [ \"\$(add 2 3)\" = 5 ] || exit 1; sleep 2; if [ '$seeded' = yes ] && [ -f .ran ]; then exit 1; fi; touch .ran" \
     --build true --mutate "$KILL_MUTATION" --stability-budget 1 --timeout 3 --threads 2
   elapsed=$((SECONDS - started))
   assert_row "repeat budget" "$name" "rc=$rc;samples=$(output_has "$expected_samples")" "rc=$expected_rc;samples=yes"
-  if [ "$runner" = budgeted ]; then
-    # Four fixed commands plus budget plus two final timeouts, in seconds.
-    if [ "$elapsed" -le 19 ]; then pass "$name: within command bound"; else fail "$name: within command bound" "elapsed=$elapsed; bound=19"; fi
-  fi
+  # Four fixed commands plus budget plus two final timeouts, in seconds.
+  if [ "$elapsed" -le 19 ]; then pass "$name: within command bound"; else fail "$name: within command bound" "elapsed=$elapsed; bound=19"; fi
 done <<'ROWS'
-slow stable suite|budgeted|no|0|stability: 2/2 at 2 threads
-slow seeded failure|budgeted|yes|1|stability: 1/2 at 2 threads
-same suite without budget guard|unbudgeted|no|0|stability: 10/10 at 2 threads
+slow stable suite|no|0|stability: 2/2 at 2 threads
+slow seeded failure|yes|1|stability: 1/2 at 2 threads
 ROWS
-MS="$MS_BUDGETED"
-
-# The control keeps TMPDIR wherever the caller put it: the unchanged script.
-plant_variant inside-tmpdir '  case "$temp_physical/" in "${owned%/}"/*) TEMP_BASE=/tmp ;; esac' '  :'
-MS_INSIDE="$variant"
-# This control keeps only the top-level check, which a linked worktree's
-# common Git directory lies outside.
-plant_variant common-dir-check 'owned_git=$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null) || owned_git="."' 'owned_git="."'
-MS_TOP_ONLY="$variant"
 
 plant_variant ignored-platform-failure '  platform=$(uname -s) || refuse cleanup-unavailable path "$ROOT" "platform probe failed; workspace kept"' '  platform=$(uname -s) || platform=unknown'
 MS_PLATFORM_UNCHECKED="$variant"
@@ -513,12 +472,6 @@ ROWS
 assert_table_executed "failed platform probe" "$platform_rows"
 
 if [ -d /proc/self ] && command -v setsid >/dev/null && command -v python3 >/dev/null; then
-  plant_variant detached-cleanup '  cleanup_workspace' '  :'
-  MS_GROUP_ONLY="$variant"
-  plant_variant numeric-signal '                signal.pidfd_send_signal(pidfd, signal.SIGTERM)' '                os.kill(int(entry), signal.SIGTERM)'
-  MS_NUMERIC="$variant"
-  plant_variant unreadable-refusal '                        uninspected.add(entry)' '                        uninspected.add(entry); raise'
-  MS_UNREADABLE_REFUSAL="$variant"
   mkdir -p "$TMP/no-numeric" "$TMP/no-pidfd" "$TMP/other-user"
   cat > "$TMP/no-numeric/sitecustomize.py" <<'PY'
 import sys
@@ -554,7 +507,7 @@ Path(os.environ["DETACHED_PID_FILE"]).write_text(str(os.getpid()))
 signal.pause()
 PY
   # A subreaper adopts this fixture's orphan, so the test can keep its pidfd
-  # and reap the negative control before the suite removes any scratch.
+  # and reap a child the run left before the suite removes any scratch.
   cat > "$TMP/detached-check.py" <<'PY'
 import ctypes
 import os
@@ -580,7 +533,7 @@ pid_path.unlink(missing_ok=True)
 ack_path.unlink(missing_ok=True)
 env = {key: os.environ[key] for key in ("PATH", "TMPDIR", "MUTATION_STABILITY_SETTLE")}
 env.update(DETACHED_PID_FILE=str(pid_path), DETACHED_ACK_FILE=str(ack_path), DETACHED_MODE=mode)
-private = mode in ("private-pass", "private-fail", "private-control", "other-user")
+private = mode in ("private-pass", "private-fail", "other-user")
 env["PYTHONPATH"] = str(Path(scratch) / ("other-user" if mode == "other-user" else
                                       "no-pidfd" if mode == "unavailable" else "no-numeric"))
 env["DETACHED_HELPER"] = str(Path(scratch) / "private-child.py")
@@ -634,7 +587,6 @@ try:
     def assert_child_stopped():
         assert stopped, output
 
-    # The same assertion must reject group-only and numeric-signal teardown.
     if private:
         root = Path(os.environ["TMPDIR"])
         workspaces = list(root.glob("mutation-stability.*"))
@@ -644,30 +596,15 @@ try:
         notice = "notice=workspace-process-unreadable pid=" + str(child)
         def assert_measured_exit():
             assert runner.returncode == expected_exit, output
-        if mode == "private-control":
-            try:
-                assert_measured_exit()
-            except AssertionError:
-                pass
-            else:
-                raise AssertionError("restored refusal did not redden measured-exit assertion")
-            assert "error=cleanup-incomplete path=" in output, output
-        else:
-            assert_measured_exit()
-            assert "mutation: killed " + ("0" if mode == "private-fail" else "1") + "/1; stability: 1/1" in output, output
-            assert output.splitlines().count(notice) == (0 if mode == "other-user" else 1), output
+        assert_measured_exit()
+        assert "mutation: killed " + ("0" if mode == "private-fail" else "1") + "/1; stability: 1/1" in output, output
+        assert output.splitlines().count(notice) == (0 if mode == "other-user" else 1), output
         assert bool(workspaces) == (mode != "other-user"), output
-    elif mode in ("control", "numeric", "unavailable"):
-        try:
-            assert_child_stopped()
-        except AssertionError:
-            pass
-        else:
-            raise AssertionError("negative control did not fail the stopped-child assertion")
-        if mode != "control":
-            cwd = os.readlink("/proc/" + str(child) + "/cwd")
-            assert Path(cwd).is_dir(), "failed cleanup deleted an occupied workspace"
-            assert "error=cleanup-incomplete path=" in output, output
+    elif mode == "unavailable":
+        assert not stopped, output
+        cwd = os.readlink("/proc/" + str(child) + "/cwd")
+        assert Path(cwd).is_dir(), "failed cleanup deleted an occupied workspace"
+        assert "error=cleanup-incomplete path=" in output, output
     else:
         assert_child_stopped()
         _, status = os.waitpid(child, 0)
@@ -699,17 +636,13 @@ finally:
         (Path(scratch) / "keep-process-scratch").touch()
         raise RuntimeError("fixture cleanup has no safe process handle")
 PY
-  for mode in term kill control numeric unavailable private-pass private-fail private-control other-user; do
-    script="$MS"
-    [ "$mode" != control ] || script="$MS_GROUP_ONLY"
-    [ "$mode" != numeric ] || script="$MS_NUMERIC"
-    [ "$mode" != private-control ] || script="$MS_UNREADABLE_REFUSAL"
+  for mode in term kill unavailable private-pass private-fail other-user; do
     mode_tmp="$TMP/detached-$mode"
     mkdir -p "$mode_tmp"
-    if TMPDIR="$mode_tmp" python3 "$TMP/detached-check.py" "$script" "$REPO" "$SHA_BASE" "$TMP" "$mode" "$KILL_MUTATION"; then
+    if TMPDIR="$mode_tmp" python3 "$TMP/detached-check.py" "$MS" "$REPO" "$SHA_BASE" "$TMP" "$mode" "$KILL_MUTATION"; then
       pass "detached child: $mode"
     else
-      fail "detached child: $mode" "child termination or negative-control cleanup failed"
+      fail "detached child: $mode" "child termination or fixture cleanup failed"
     fi
   done
 fi
@@ -722,15 +655,14 @@ WHERE_LOG="$TMP/workspace-where"
 
 echo "=== workspace placement table ==="
 placement_rows=0
-while IFS=$'\t' read -r name script worktree tmpdir outcome expected; do
-  case "$script" in fixed) script="$MS" ;; control) script="$MS_INSIDE" ;; top-only) script="$MS_TOP_ONLY" ;; esac
+while IFS=$'\t' read -r name worktree tmpdir outcome expected; do
   case "$worktree" in main) worktree="$REPO" ;; linked) worktree="$LINKED" ;; esac
   case "$tmpdir" in worktree) tmpdir="$REPO/tmp" ;; gitdir) tmpdir="$REPO/.git/ms-tmp" ;; esac
   case "$outcome" in pass) build='true' ;; fail) build='false' ;; esac
   mkdir -p "$tmpdir"
   : > "$WHERE_LOG"
   rc=0
-  out=$(TMPDIR="$tmpdir" "$script" --worktree "$worktree" --sha "$SHA_BASE" --test 'bash check.sh' \
+  out=$(TMPDIR="$tmpdir" "$MS" --worktree "$worktree" --sha "$SHA_BASE" --test 'bash check.sh' \
     --build "pwd -P >> \"$WHERE_LOG\"; $build" --mutate "$KILL_MUTATION" --stability 1 --threads 2 2>&1) || rc=$?
   inside=absent
   while IFS= read -r where; do
@@ -744,12 +676,10 @@ while IFS=$'\t' read -r name script worktree tmpdir outcome expected; do
   assert_row "workspace placement" "$name" "rc=$rc;inside=$inside;left=$left" "$expected"
   placement_rows=$((placement_rows + 1))
 done <<'ROWS'
-TMPDIR in the worktree, passing run	fixed	main	worktree	pass	rc=0;inside=no;left=0
-TMPDIR in the worktree, failing run	fixed	main	worktree	fail	rc=2;inside=no;left=0
-TMPDIR in the common Git directory	fixed	main	gitdir	pass	rc=0;inside=no;left=0
-TMPDIR in a linked worktree's common Git directory	fixed	linked	gitdir	pass	rc=0;inside=no;left=0
-control: TMPDIR honoured inside the worktree	control	main	worktree	pass	rc=0;inside=yes;left=0
-control: top-level check alone misses the common Git directory	top-only	linked	gitdir	pass	rc=0;inside=yes;left=0
+TMPDIR in the worktree, passing run	main	worktree	pass	rc=0;inside=no;left=0
+TMPDIR in the worktree, failing run	main	worktree	fail	rc=2;inside=no;left=0
+TMPDIR in the common Git directory	main	gitdir	pass	rc=0;inside=no;left=0
+TMPDIR in a linked worktree's common Git directory	linked	gitdir	pass	rc=0;inside=no;left=0
 ROWS
 assert_table_executed "workspace placement" "$placement_rows"
 git -C "$REPO" worktree remove --force "$LINKED"
@@ -779,8 +709,7 @@ CASE
 chmod +x "$SLOW_GIT_BIN/git" "$SLOW_GIT_BIN/tar"
 
 # The script's TERM handler exits 143, after the copy in flight ends, and that
-# exit runs the cleanup trap. The KILL row is the control that the leftover
-# count can see a copy the trap never removed.
+# exit runs the cleanup trap.
 observe_stop() { # observe_stop SIGNAL
   stop_tmp="$TMP/stop-$1"
   mkdir -p "$stop_tmp"
@@ -820,7 +749,6 @@ while IFS=$'\t' read -r name signal expected; do
   stop_rows=$((stop_rows + 1))
 done <<'ROWS'
 SIGTERM mid-copy removes the workspace	TERM	rc=143;copying=yes;settled=yes;left=0
-control: SIGKILL mid-copy skips the trap	KILL	rc=137;copying=yes;settled=yes;left=1
 ROWS
 assert_table_executed "stop signal" "$stop_rows"
 

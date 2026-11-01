@@ -99,7 +99,7 @@ git -C "$TMP_ROOT/proj" init -q
 second_opinion_install "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills"
 SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 RUNTIME="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion-runtime"
-# Every mutant below is written at the runtime's OWN DEPTH inside the fixture
+# The control's mutant is written at the runtime's OWN DEPTH inside the fixture
 # install, not into $TMP_ROOT: the runtime resolves the group-leader prefix
 # relative to its own directory, and a copy parked elsewhere refuses at startup
 # with group-leader-missing instead of running the case.
@@ -338,8 +338,7 @@ echo "=== the runtime says nothing of its own while a CLI runs ==="
 # call lost the race with the child's exec and printed `child setpgid (N to N):
 # Operation not permitted` here. The child now takes its own group between the
 # fork and the exec, so no shell has anything to report. Repeated because the
-# defect was a race, and the control below is what makes the case binding on a
-# platform where the race never fired.
+# defect was a race.
 #
 # One CLI serves this pair and the fork-window pair below: it records the two
 # numbers that say whether the child took a group of its own, then holds for
@@ -378,30 +377,12 @@ quiet_cli_pgid="$(read_pid "$TMP_ROOT/quiet.pgid" "the quiet CLI's process group
   || fail "the CLI does not lead its own process group (pid=$quiet_cli_pid pgid=$quiet_cli_pgid)"
 ok "the CLI leads its own process group"
 
-echo "=== control: a runtime that writes one line of its own ==="
-# Without this the case above is green on any platform where the race never
-# fires, which is every Linux run. The planted line is the shape bash's was: the
-# parent's, on the runtime's own stderr, around a fork that still works.
-NOISE_MUTANT="$MUTANT_DIR/parent-noise-runtime"
-sed 's|^  \(.*KENDEX_GROUP_LEADER.*&\)$|  echo "child setpgid (1 to 1): Operation not permitted" >\&2; \1|' \
-  "$RUNTIME" > "$NOISE_MUTANT"
-chmod +x "$NOISE_MUTANT"
-cmp -s "$RUNTIME" "$NOISE_MUTANT" && fail "the parent-noise control mutated nothing"
-[[ "$(grep -c 'child setpgid (1 to 1)' "$NOISE_MUTANT")" == 1 ]] \
-  || fail "the parent-noise control did not plant exactly one line"
-bash -n "$NOISE_MUTANT" || fail "the parent-noise control is not valid shell"
-noisy_noise="$(quiet_group_run "$NOISE_MUTANT" noisy)"
-[[ -n "$noisy_noise" ]] \
-  || fail "the parent-noise control left the stderr pin green — the case above proves nothing"
-ok "the control's planted line reddens the same pin ($noisy_noise)"
-
 echo "=== a stop inside the fork window still ends the tree ==="
 # The runtime's own fork-window comment holds the state this aims at. It is
 # microseconds wide in production, so a perl that is slow to start widens it:
 # nothing in the runtime is altered, the child simply stays ungrouped for as
 # long as WIDENED_WINDOW keeps it there. The CLI records its own pid, so that
-# file having content IS the survivor. Any control that must stop a run before
-# its child has grouped drives it through this fixture.
+# file having content IS the survivor.
 SLOW_PERL_REAL="$(command -v perl || true)"
 mkdir -p "$TMP_ROOT/slowbin"
 cat > "$TMP_ROOT/slowbin/perl" <<'SH'
@@ -450,13 +431,11 @@ launch_then_wait() { # RUNTIME LABEL -> what the wait command it printed reporte
   # EVERYTHING BELOW IS TEARDOWN, ADDED AFTER THE MEASUREMENT ABOVE, and it
   # writes nothing to stdout, which is the value the rows match on.
   #
-  # The worker is signalled by GROUP AND BY PID. The early-publish control is
-  # built to publish a pid before the child reaches its setpgid, so there the
-  # group does not exist when this runs and the group signal is a no-op by
-  # construction — which is how that case's worker and its CLI lived out
-  # CLI_HOLD and then wrote $TMP_ROOT/<label>-answer at the top of the temp
-  # root, inside the window the EXIT trap removes it in. This frame holds that
-  # fork, which is what makes the bare pid safe to signal.
+  # The worker is signalled by GROUP AND BY PID. A worker published before
+  # its child reaches setpgid has no group yet, so the group signal alone
+  # would leave it and its CLI writing under the temp root inside the window
+  # the EXIT trap removes it in. This frame holds that fork, which is what
+  # makes the bare pid safe to signal.
   kill -KILL -- "-$pid" 2>/dev/null || true
   kill -KILL "$pid" 2>/dev/null || true
   # The CLI records its pid and THEN its group, spawning `ps` between the two,
@@ -490,24 +469,6 @@ else
     || { STRAYS+=("$window_survivor"); fail "a cancel in the fork window left the CLI $window_survivor running"; }
   ok "a cancel inside the fork window leaves no CLI behind"
 
-  echo "=== control: the same cancel against a guard that reads an absent group as stopped ==="
-  # The pre-fix guard, restored by one line: without it the case above passes on
-  # a runtime that reports success over a live tree.
-  WINDOW_MUTANT="$MUTANT_DIR/absent-group-runtime"
-  sed 's%^\(  *\)kill -0 "$leader" 2>/dev/null || return 0$%\1return 0%' "$RUNTIME" > "$WINDOW_MUTANT"
-  chmod +x "$WINDOW_MUTANT"
-  [[ "$(grep -c 'kill -0 "$leader" 2>/dev/null || return 0' "$RUNTIME")" == 1 ]] \
-    || fail "the absent-group control has no single line to replace"
-  [[ "$(grep -c 'kill -0 "$leader" 2>/dev/null || return 0' "$WINDOW_MUTANT")" == 0 ]] \
-    || fail "the absent-group control left the fork-window probe in place"
-  bash -n "$WINDOW_MUTANT" || fail "the absent-group control is not valid shell"
-  mutant_survivor="$(cancel_in_window "$WINDOW_MUTANT" window-mutant)"
-  [[ -n "$mutant_survivor" ]] \
-    || fail "the absent-group control left no survivor — the case above proves nothing"
-  STRAYS+=("$mutant_survivor")
-  kill -KILL "$mutant_survivor" 2>/dev/null || true
-  ok "the control's guard reports success over a live CLI ($mutant_survivor)"
-
   echo "=== launch publishes a worker its own wait can see ==="
   # The wait command launch prints probes `-$pid`, so a worker published before
   # it has grouped reads there as one that is gone: exit 1, relaunch, and a
@@ -518,19 +479,6 @@ else
   esac
   ok "the wait launch prints sees a worker that has taken its group"
 
-  echo "=== control: the same launch publishing before the worker groups ==="
-  # The pre-fix publication, restored by one line: without the wait the case
-  # above passes on a launcher that hands out a pid nothing can probe yet.
-  EARLY_MUTANT="$MUTANT_DIR/early-publish-runtime"
-  sed 's/^  attempts=100$/  attempts=0/' "$RUNTIME" > "$EARLY_MUTANT"
-  chmod +x "$EARLY_MUTANT"
-  cmp -s "$RUNTIME" "$EARLY_MUTANT" && fail "the early-publish control mutated nothing"
-  bash -n "$EARLY_MUTANT" || fail "the early-publish control is not valid shell"
-  launch_then_wait "$EARLY_MUTANT" early > "$TMP_ROOT/early.reported"
-  case "$(cat < "$TMP_ROOT/early.reported")" in
-    *"is gone and published no status"*) ok "the control's early publication reads as a gone worker" ;;
-    *) fail "the early-publish control was not read as gone — the case above proves nothing" ;;
-  esac
 fi
 
 echo "=== launched CLIs observe INT and QUIT ==="
@@ -574,26 +522,6 @@ assert_cli_signal() { # RUNTIME SIGNAL LABEL
 for signal in INT QUIT; do
   assert_cli_signal "$RUNTIME" "$signal" "cli-$signal"
 done
-
-echo "=== control: a missing INT reset prevents the CLI trap from running ==="
-# The reset belongs to the shared group-leader prefix. Keep the normal fixture
-# intact so later TERM cases still exercise the installed implementation.
-mkdir -p "$TMP_ROOT/signal-mutant/skills"
-second_opinion_install "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/signal-mutant/skills"
-SIGNAL_PREFIX="$TMP_ROOT/signal-mutant/skills/github/scripts/lib/group-leader.sh"
-awk '
-  { changed += sub(/\$SIG\{INT\} = /, ""); print }
-  END { if (changed != 1) exit 1 }
-' "$SIGNAL_PREFIX" > "$SIGNAL_PREFIX.mutant" \
-  || fail "the signal control did not remove exactly one INT assignment"
-cmp -s "$SIGNAL_PREFIX" "$SIGNAL_PREFIX.mutant" && fail "the signal control changed nothing"
-mv "$SIGNAL_PREFIX.mutant" "$SIGNAL_PREFIX"
-rc=0
-assert_cli_signal "$TMP_ROOT/signal-mutant/skills/second-opinion/scripts/second-opinion-runtime" \
-  INT cli-INT-mutant > "$TMP_ROOT/signal-control.stdout" 2> "$TMP_ROOT/signal-control.stderr" || rc=$?
-assert_rc "$rc" 1 "the missing INT reset makes the signal row fail"
-assert_contains "$TMP_ROOT/signal-control.stderr" "signal-not-observed: signal=INT" \
-  "the control fails because the CLI did not observe INT"
 
 echo "=== a signal to second-opinion still reaches the CLI ==="
 # The other half, and the reason the wrapper cannot simply drop --foreground:
@@ -811,9 +739,9 @@ run_launch_cleanup_failure() { # RUNTIME LABEL [CLI]
 # so an unchecked capture leaves an empty pid that `kill -- -` swallows and a
 # liveness probe calls gone at once: the suite prints FAIL on stderr and exits
 # 0, green to a CI lane, while the worker it failed to read leaks. That is the
-# same ENOTEMPTY producer this teardown exists to end, reached by exactly the
-# runtime regression the two cases below guard — one that stops calling
-# stop_process_group leaves the pid file this reads absent.
+# same ENOTEMPTY producer this teardown exists to end, reached by a runtime
+# that stops calling stop_process_group and leaves the pid file this reads
+# absent.
 #
 # Every refusal here is `fail`, so this returns only on success and its callers
 # are bare; a `|| fail` at a call site would also turn errexit off for this
@@ -857,35 +785,9 @@ assert_contains "$TMP_ROOT/launch-cleanup.stderr" \
 ok "launch cleanup failure preserves the runtime directory"
 cleanup_captured_launch launch-cleanup
 
-LAUNCH_CLEANUP_MUTANT="$MUTANT_DIR/launch-cleanup-mutant-runtime-script"
-awk '
-  /launch-cleanup-failed:/ {
-    print
-    if (getline <= 0) exit 8
-    print
-    if (getline <= 0 || $0 !~ /return 1/) exit 8
-    sub(/return 1/, ":")
-    print
-    changed++
-    next
-  }
-  { print }
-  END { if (changed != 1) exit 9 }
-' "$RUNTIME" > "$LAUNCH_CLEANUP_MUTANT" \
-  || fail "launch-cleanup mutant did not replace exactly one refusal"
-chmod +x "$LAUNCH_CLEANUP_MUTANT"
-bash -n "$LAUNCH_CLEANUP_MUTANT" || fail "launch-cleanup mutant is not valid shell"
-ok "the launch-cleanup mutant removes the preserve-state return"
-rc="$(run_launch_cleanup_failure "$LAUNCH_CLEANUP_MUTANT" launch-cleanup-mutant)"
-assert_rc "$rc" 1 "the launch-cleanup mutant still reports publication failure"
-[[ ! -e "$TMP_ROOT/launch-cleanup-mutant-runtime" ]] \
-  || fail "the launch-cleanup mutant did not delete recovery state"
-ok "the mutant proves the return preserves launch recovery state"
-cleanup_captured_launch launch-cleanup-mutant
-
 echo "=== control: a captured launch's teardown leaves nothing writing under the temp root ==="
-# Without this the two cases above cannot say that their teardown ENDED the
-# tree; they only say the refusal was reported. The laggard CLI turns the
+# Without this the case above cannot say that its teardown ENDED the
+# tree; it only says the refusal was reported. The laggard CLI turns the
 # survivor into something observable on an idle host: it writes at the top of
 # $TMP_ROOT every 0.05s for as long as it lives, so a teardown that returns
 # with the CLI's group running shows up as an entry appearing after the

@@ -284,8 +284,12 @@ print(json.dumps({"config_dir": row["account"]}))
         event = self.root / "checkpoint.json"
         release = self.root / "release"
         phases = ("saved", "waiting", "predecessor-ended", "confirmed", "brief-delivered", "complete")
+        # The transition writes are one code path for every harness. One
+        # harness per launch shape, without and with a kickoff turn before
+        # the brief, reaches each write; test_succession_contract launches
+        # every harness.
         with patch.object(session_test, "SCRIPT", script):
-            for harness in ("claude", "codex", "copilot", "pi"):
+            for harness in ("claude", "codex"):
                 for phase in phases:
                     for edge in ("before", "after"):
                         with self.subTest(harness=harness, phase=phase, edge=edge):

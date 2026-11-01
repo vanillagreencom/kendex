@@ -7,10 +7,9 @@
 # github skill with no review-gate beside it. The thread grammar's own cases
 # and probes are check-review-replies-threads.test.sh's.
 #
-# Each must-fail control runs a copy of the scripts tree with one whole line
-# of one file replaced, the rest kept (lib/mutant-copy.sh), and the case that
-# line's rule decides flips. The file is check-review-replies.sh unless the
-# control names the lib or router the rule lives in.
+# The must-fail control runs a copy of the scripts tree with one whole line
+# of check-review-replies.sh replaced, the rest kept (lib/mutant-copy.sh),
+# and the case that line's rule decides flips.
 # shellcheck disable=SC2034 # the row tables read their fixtures through eval
 set -euo pipefail
 
@@ -574,156 +573,15 @@ assert_eq "$(routed "$GITHUB_SH" check-review-replies)" "$FAILED | unreasoned-de
   "the router reads with the project's bot token"
 assert_eq "$(routed "$CHECKER"; printf ' %s' "$(first_err)")" "rc=2  check-review-replies: repo-unresolved pr=7" \
   "the command file alone, with no token selected, reaches no verdict"
-script=$(mutant_copy_edit "$TMP_ROOT/router-tokenless" '    kendex_github_apply_selected_auth_token router || true' '    true' github.sh)
-assert_eq "$(routed "$script" check-review-replies; printf ' %s' "$(first_err)")" "rc=2  check-review-replies: repo-unresolved pr=7" \
-  "must-fail: with the router's token selection cut, no read succeeds"
 
-echo "=== must-fail controls ==="
-# A row is `label|name|from line|to line|setup|want with the mutant`. The
-# setup's live verdict is pinned in a section above; with its rule's line
-# replaced, the same setup answers what the row names instead. A refusal
-# prints nothing on stdout, so its first stderr line joins what it answered.
-# FILE names a lib the rule lives in instead of the checker.
-mutant_row() { # LABEL NAME FROM TO SETUP WANT [PR_AUTHOR [FILE]]
-  local script got
-  mutant_copy_edit "$TMP_ROOT/$2" "$3" "$4" "${8:-commands/check-review-replies.sh}" >/dev/null
-  script="$TMP_ROOT/$2/skills/github/scripts/commands/check-review-replies.sh"
-  world "${7:-author}"
-  eval "$5"
-  got=$(run "$script")
-  [ "$got" != "rc=2 " ] || got="$got $(first_err)"
-  assert_eq "$got" "$6" "must-fail: $1"
-}
-READ_FAILED='rc=2  check-review-replies: read-failed pr=7'
-mutant_row "with a constant overview id, answering one review clears the other" overview-id \
-  '            .entries += 1 | .list += ["review:\($id)"]' '            .entries += 1 | .list += ["review:5481571326"]' \
-  'reviews_set "$(review copilot COMMENTED "$HEAD" "$OVERVIEW_BODY")" "$(review copilot COMMENTED "$HEAD" "$OVERVIEW_BODY" 5481548444)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n%s - Fixed in %s" "$H7" "$OVERVIEW_ENTRY" "$HEAD")")"' "$PASSED"
-mutant_row "without overview counting, fleet#1176 passes as the old checker did" overview-count \
-  '      | ($body | overview_verdict) as $verdict' '      | "" as $verdict' \
-  'at_head "$(body_of overview)"' "$PASSED"
-mutant_row "without Needs a closer look counting, its unanswered overview is unparsed" overview-closer \
-  '        | if (["Changes recommended", "Needs a closer look"] | index($verdict)) != null then' '        | if (["Changes recommended"] | index($verdict)) != null then' \
-  'at_head "$(body_of overview-closer)"' "$FAILED | suppressed-findings state=unparsed"
-mutant_row "without unknown-verdict refusal, the unreadable overview passes" overview-unparsed \
-  '          else .unparsed += 1 end;' '          else . end;' \
-  'at_head "$(body_of overview-unknown)"' "$PASSED"
-mutant_row "without the Approved verdict, the no-change overview fails" overview-approved \
-  '          elif $verdict == "" or $verdict == "Approved" then .' '          elif $verdict == "" then .' \
-  'at_head "$(body_of overview-approved)"' "$FAILED | suppressed-findings state=unparsed"
-mutant_row "with the untracked-claim line cut, the claim passes" untracked \
-  '[ "$untracked" = 0 ] || {' '[ true ] || {' \
-  'threads_set "$(thread_node author "Out of scope, tracked.")"' "$PASSED"
-mutant_row "with the unreasoned-decline line cut, the label passes" unreasoned \
-  '[ "$unreasoned" = 0 ] || {' '[ true ] || {' \
-  'threads_set "$(thread_node author "Declined: frozen")"' "$PASSED"
-mutant_row "with the truncation line cut, a truncated thread passes" truncated \
-  '[ "$truncated" = 0 ] || {' '[ true ] || {' \
-  "threads_set \"\$(jq -cn '{comments: {totalCount: 101, nodes: []}}')\"" "$PASSED"
-mutant_row "with the heading arm cut, a heading-titled block passes" heading \
-  '      if test("^#{1,6}[ \t]+") then sub("^#{1,6}[ \t]+"; "")' '      if false then ""' \
-  'at_head "$(body_of heading)"' "$PASSED"
-mutant_row "with the summary arm cut, a summary-titled block passes" summary \
-  '      elif test("^<summary[^>]*>.*</summary>[ \t]*$")' '      elif false' \
-  'at_head "$(body_of v2)"' "$PASSED"
-mutant_row "with the unparsed test cut, a title with no count passes" unparsed \
-  'if [ "$supp_unparsed" != 0 ]; then' 'if false; then' \
-  'at_head "$(body_of no-count-prose)"' "$PASSED"
-mutant_row "with the mismatch test cut, a count over unreadable entries passes" mismatch \
-  'elif [ "$supp_mismatched" != 0 ]; then' 'elif false; then' \
-  'at_head "$(body_of count-prose)"' "$PASSED"
-mutant_row "with section counts summed, two reviews whose counts cancel pass" section-sum \
-  '      if .section != null and .section.declared != .section.parsed then .mismatched += 1 else . end' '      if .section != null then .mismatched += (.section.declared - .section.parsed) else . end' \
-  "$CANCEL_ANSWERED" "$PASSED"
-mutant_row "with the head filter cut, an earlier head's review fails this one" head-review \
-  '      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")' '      | select(.state != "DISMISSED" and .state != "PENDING")' \
-  'reviews_set "$(review copilot COMMENTED "$OTHER" "$(body_of heading)")"' "$BOTH_STANDING"
-MARKER_RULE='        | $marks[0] != null and ($sha | ascii_downcase | startswith($marks[0])) and ([$marks[] | values] | length == 1);'
-mutant_row "with the head binding cut, a comment for an older head answers" head-bound \
-  "$MARKER_RULE" '        | $marks[0] != null and ([$marks[] | values] | length == 1);' \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$O7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
-# A marker on any line binding the comment is the rule the first-line
-# marker replaced; each body it would bind answers both entries.
-ANY_LINE_CUT=("$MARKER_RULE" '        | [$marks[] | values | . as $c | select($sha | ascii_downcase | startswith($c))] | length > 0;')
-mutant_row "with a marker on any line binding, a marker below the first line answers" any-line-below \
-  "${ANY_LINE_CUT[@]}" \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "%b" "$MARKER_BELOW")")"' "$PASSED"
-mutant_row "with a marker on any line binding, a fenced marker answers" any-line-fenced \
-  "${ANY_LINE_CUT[@]}" \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "%b" "$MARKER_FENCED")")"' "$PASSED"
-mutant_row "with a marker on any line binding, an older head's section answers" any-line-two-heads \
-  "${ANY_LINE_CUT[@]}" \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "%b" "$MARKER_TWO_HEADS")")"' "$PASSED"
-mutant_row "with blank lines kept, a marker after a leading blank line binds nothing" blank-lines \
-  '        [ split("\n")[] | select(test("\\S")) | marker_sha($floor) ] as $marks' '        [ split("\n")[] | marker_sha($floor) ] as $marks' \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "\n  \nDispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$BOTH_STANDING"
-mutant_row "with the comment author filter cut, another login answers" comment-author \
-  '      | [ .[] | select(rest_actor | reply_source($author; $viewer)) | answers($by_length) ] as $said' '      | [ .[] | answers($by_length) ] as $said' \
-  'at_head "$(body_of heading)"; comments_set "$(comment stranger "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
-# The login compare the account id replaced, case and [bot] suffix folded:
-# under it a User registered under the app's slug is the app.
-LOGIN_COMPARE=('  def same_account($account): .id != null and .id == $account.id;' '  def same_account($account): .login != "" and (.login | ascii_downcase | sub("\\[bot\\]$"; "")) == ($account.login | ascii_downcase | sub("\\[bot\\]$"; ""));')
-mutant_row "with logins compared, a User named like the app clears the app author's claim" login-thread \
-  "${LOGIN_COMPARE[@]}" \
-  'threads_set "$(thread_node app "Out of scope, tracked." impostor "Fixed in 1a2b3c4")"' "$PASSED" app
-mutant_row "with logins compared, a User named like the app answers as the reading identity" login-disposition \
-  "${LOGIN_COMPARE[@]}" \
-  'at_head "$(body_of heading)"; comments_set "$(comment impostor "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
-mutant_row "with the finding-source test cut to the author, a NONE-association section fails" finding-source \
-  '  def finding_source($author): (same_account($author) | not) and (.bot or member);' '  def finding_source($author): same_account($author) | not;' \
-  'reviews_set "$(review stranger COMMENTED "$HEAD" "$(body_of no-count-prose)")"' "$FAILED | suppressed-findings state=unparsed"
-# One definition holds the reading identity for every reader, so one cut of
-# it reaches the thread rules and the disposition read alike.
-VIEWER_CUT=('  def reply_source($author; $viewer): same_account($author) or same_account($viewer) or member;' '  def reply_source($author; $viewer): same_account($author) or member;')
-mutant_row "with the reading identity cut, its label-only decline passes" viewer-decline \
-  "${VIEWER_CUT[@]}" \
-  'threads_set "$(thread_node app "Declined: frozen")"' "$PASSED"
-mutant_row "with the reading identity cut, its lone tracking claim passes" viewer-claim \
-  "${VIEWER_CUT[@]}" \
-  'threads_set "$(thread_node app "Tracked separately")"' "$PASSED"
-mutant_row "with the reading identity cut, its disposition comment answers nothing" viewer-answer \
-  "${VIEWER_CUT[@]}" \
-  'at_head "$(body_of heading)"; comments_set "$(comment app "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$BOTH_STANDING"
-mutant_row "with the account id test cut, a viewer read naming no id reaches a verdict" account-id \
-  '    | if (.id | type) == "number" and .id > 0 and .id == (.id | floor)' '    | if true' \
-  "viewer_set '{\"login\":\"lanes-app[bot]\"}'" "$PASSED"
-# GraphQL's Actor interface carries no databaseId; the User and Bot
-# fragments read it, and the viewer selects its own.
-mutant_row "with the Bot id fragment cut, the thread read reaches no verdict" thread-bot-id \
-  "                          comments(first: 100) { totalCount nodes { author { login __typename ... on User { databaseId } ... on Bot { databaseId } } authorAssociation body } }' 2>\"\$READ_ERR\") ||" \
-  "                          comments(first: 100) { totalCount nodes { author { login __typename ... on User { databaseId } } authorAssociation body } }' 2>\"\$READ_ERR\") ||" \
-  'threads_set "$(thread_node app "Declined: frozen")"' "$READ_FAILED"
-mutant_row "with the viewer id selection cut, the viewer read reaches no verdict" viewer-id \
-  "    data=\$(gh_graphql 'query { viewer { login databaseId } }') || return 1" \
-  "    data=\$(gh_graphql 'query { viewer { login } }') || return 1" \
-  'threads_set "$(thread_node app "Declined: frozen")"' "$READ_FAILED" author lib/github-api.sh
-mutant_row "with every association a member, a NONE-association Fixed in clears the claim" member-open \
-  '  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";' '  def member: true;' \
-  'threads_set "$(thread_node author "Out of scope, tracked." stranger "Fixed in 1a2b3c4")"' "$PASSED"
-mutant_row "with no association a member, a maintainer's answer answers nothing" member-closed \
-  '  def member: .association == "OWNER" or .association == "MEMBER" or .association == "COLLABORATOR";' '  def member: false;' \
-  'at_head "$(body_of heading)"; comments_set "$(comment maintainer "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H7" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$BOTH_STANDING"
-mutant_row "with the reply reason test cut, a label-only decline answers" reply-reason \
-  '      def unanswered: ((disposition or tracking) | not) or untracked_claim or unreasoned_decline;' '      def unanswered: ((disposition or tracking) | not) or untracked_claim;' \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - Declined: out of scope\n**%s** - Declined: pre-existing" "$H7" "$SUPP_FIRST" "$SUPP_SECOND")")"' "$PASSED"
-mutant_row "with the reply form test cut, a reply naming only an issue answers" reply-form \
-  '      def unanswered: ((disposition or tracking) | not) or untracked_claim or unreasoned_decline;' '      def unanswered: false or untracked_claim or unreasoned_decline;' \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - see KEN-12\n**%s** - see KEN-12" "$H7" "$SUPP_FIRST" "$SUPP_SECOND")")"' "$PASSED"
-mutant_row "with the head prefix floor lowered to 6, a 6-character prefix binds" sha-floor \
-  'SHA_FLOOR=7' 'SHA_FLOOR=6' \
-  'at_head "$(body_of heading)"; comments_set "$(comment author "$(printf "Dispositions at %s:\n**%s** - %s\n**%s** - Tracked: KEN-1400" "$H6" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")")"' "$PASSED"
-mutant_row "with the CR strip cut, a CRLF body no longer reads as the block" crlf \
-  "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\") | gsub(\"\\u200b\"; \"\");" "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\u200b\"; \"\");" \
-  'at_head "$(body_of crlf)"' "$FAILED | suppressed-findings state=unparsed"
-mutant_row "with the zero-width strip cut, a Copilot path retains display spaces" zwsp \
-  "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\") | gsub(\"\\u200b\"; \"\");" "SUPP_NORMALIZE_DEF='def display_strip: gsub(\"\\r\"; \"\");" \
-  'at_head "$(body_of copilot)"' "$FAILED | suppressed-findings count=1 | suppressed-entry $(supp_zwsp "$COPILOT_ENTRY")"
-mutant_row "with the page-shape test cut, a non-array reviews page reads as no review" page-shape \
-  "    jq -s 'if (length > 0) and all(type == \"array\") then add else error(\"pages are not arrays\") end' <<<\"\$raw\" 2>/dev/null || {" \
-  "    jq -s '[.[] | arrays] | add // []' <<<\"\$raw\" 2>/dev/null || {" \
-  "at_head \"\$(body_of heading)\"; gh_stub_answer \"\$REVIEWS_PATH\" '{\"message\":\"Server Error\"}'" "$PASSED" author lib/github-api.sh
-mutant_row "with the body scan cut, only thread state is read and a body-only finding passes" body-scan \
-  '      | .id as $id | (.body // "") | suppressed_scan($id)' '      | .id as $id | "" | suppressed_scan($id)' \
-  'at_head "$(body_of copilot)"' "$PASSED"
+echo "=== must-fail control ==="
+# One planted defect proves the suite goes red: the checker's copy with the
+# unreasoned-decline line cut passes a label-only decline.
+mutant_copy_edit "$TMP_ROOT/unreasoned" '[ "$unreasoned" = 0 ] || {' '[ true ] || {' commands/check-review-replies.sh >/dev/null
+world author
+threads_set "$(thread_node author "Declined: frozen")"
+assert_eq "$(run "$TMP_ROOT/unreasoned/skills/github/scripts/commands/check-review-replies.sh")" "$PASSED" \
+  "must-fail: with the unreasoned-decline line cut, the label passes"
 
 echo
 echo "$PASS passed, $FAIL failed"

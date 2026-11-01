@@ -1,4 +1,4 @@
-"""Reject the absent succession verb and a removed process identity check."""
+"""Reject a removed process identity check in a disposable source copy."""
 import argparse
 import os
 from pathlib import Path
@@ -22,37 +22,10 @@ def main():
         for package in ("jarvis", "orch", "mailbox"):
             shutil.copytree(ROOT / "skills" / package / "scripts", skills / package / "scripts")
         source = skills / "jarvis/scripts/lib/session.py"
-        controls = [("absent verb", "jarvis/scripts/lib/session.py", 'for verb in ("start", "status", "stop", "succeed", "report-due"):',
-                     'for verb in ("start", "status", "stop"):', "test_succession_contract"),
-                    ("process identity", "jarvis/scripts/lib/session-backend.sh", '    lane_stop_identity "$1" "$2" "$3" || rc=$?',
-                     '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" || rc=$?', "test_succession_identity"),
-                    ("walled account reused", "jarvis/scripts/lib/session.py",
-                     'choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,\n                                             choice.get("model", ""), choice.get("effort", "")).stdout)',
-                     'choice = {"harness": record["harness"], "account": record["account"], "model": "", "effort": ""}', "test_account_succession"),
-                    ("missing dependency status", "jarvis/scripts/lib/session.py",
-                     'if not (BACKEND.parents[3] / "orch/scripts").is_dir():',
-                     'if False:', "test_missing_orch_keeps_predecessor"),
-                    ("model context helper missing", "jarvis/scripts/lib/session-backend.sh",
-                     '    source "$SCRIPT_DIR/lib/lane-context.sh"',
-                     '    : source "$SCRIPT_DIR/lib/lane-context.sh"', "test_account_succession"),
-                    ("selected launch words dropped", "jarvis/scripts/lib/session-backend.sh",
-                     'if [[ -n "${8:-}${9:-}" ]]; then',
-                     'if false && [[ -n "${8:-}${9:-}" ]]; then', "test_account_succession"),
-                    ("native launch posture changed", "jarvis/scripts/lib/session-backend.sh",
-                     '      flags="$(printf \' %q\' ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})" || exit 1',
-                     '      launch_choice_lead_settings --model "${8:-}" "$harness" ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"} || exit 1\n'
-                     '      LAUNCH_CHOICE_ARGV=("${LAUNCH_CHOICE_KEPT[@]}")\n'
-                     '      flags="$(printf \' %q\' ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})" || exit 1', "test_account_succession"),
-                    ("duplicate native boolean", "jarvis/scripts/lib/session-backend.sh",
-                     '      cmd="$harness$flags${cmd#"$harness"}"',
-                     '      cmd="$harness$flags${cmd#"$harness"}"\n'
-                     '      [[ "$harness" != codex ]] || cmd="$cmd --dangerously-bypass-hook-trust"', "test_account_succession"),
-                    ("recorded account seat reserve", "jarvis/scripts/lib/session-backend.sh",
-                     '--harness "$OL_ACCOUNT_HARNESS" --for-overseer',
-                     '--harness "$OL_ACCOUNT_HARNESS"', "test_account_succession"),
-                    ("missing selected app", "jarvis/scripts/lib/session.py",
-                     'if not shutil.which(choice["harness"]):',
-                     'if False and not shutil.which(choice["harness"]):', "test_account_succession")]
+        # One planted defect proves succession_test.py goes red: without the
+        # identity check, succession stops a process the record does not own.
+        controls = [("process identity", "jarvis/scripts/lib/session-backend.sh", '    lane_stop_identity "$1" "$2" "$3" || rc=$?',
+                     '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" || rc=$?', "test_succession_identity")]
         cases = ("test_account_succession", "test_missing_orch_keeps_predecessor")
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}

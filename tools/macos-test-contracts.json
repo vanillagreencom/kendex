@@ -172,7 +172,6 @@
     "skills/harness-ci/tests/wiring-errors.test.sh": "linux-duplicate",
     "skills/harness-ci/tests/wiring-shapes.test.sh": "linux-duplicate",
     "skills/iced-rs/tests/mouse-area-no-on-press-maybe.test.sh": "linux-duplicate",
-    "skills/jarvis/tests/controls-2.test.sh": "mixed",
     "skills/jarvis/tests/controls.test.sh": "mixed",
     "skills/jarvis/tests/session.test.sh": "mixed",
     "skills/linear/tests/must-fail-controls.sh": "linux-only",

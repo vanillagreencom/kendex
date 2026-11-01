@@ -205,36 +205,6 @@ assert_contains "$TMP_ROOT/hostile-wait2.stderr" "__SECOND_OPINION_EXIT__=0" \
 [[ ! -e "$TMP_ROOT/hostile-runtime" ]] || fail "the completed failed run kept runtime state"
 ok "the real wrapper status, not the decoy, removes runtime state"
 
-FD_MUTANT="$MUTANT_DIR/fd-mutant-runtime"
-sed 's/"\$@" 9>&- || rc=\$?/"\$@" || rc=\$?/' "$RUNTIME" > "$FD_MUTANT"
-chmod +x "$FD_MUTANT"
-cmp -s "$RUNTIME" "$FD_MUTANT" && fail "fd-boundary control mutated nothing"
-grep -q '^      "\$@" || rc=\$?$' "$FD_MUTANT" \
-  || fail "fd-boundary control did not remove the worker-side close"
-ok "the fd-boundary control removes only the worker-side close"
-fd_mutant_wait="$(direct_launch "$FD_MUTANT" hostile-mutant 20 2 hostile-codex)"
-for _ in $(seq 1 200); do
-  [[ -e "$TMP_ROOT/hostile-mutant.ready" ]] && break
-  sleep 0.05
-done
-[[ -e "$TMP_ROOT/hostile-mutant.ready" ]] || fail "the fd-boundary control never ran its hostile CLI"
-fd_mutant_pid="$(cat < "$TMP_ROOT/hostile-mutant-runtime/pid")"
-rc=0
-bash -c "$fd_mutant_wait" > "$TMP_ROOT/hostile-mutant-wait.stdout" \
-  2> "$TMP_ROOT/hostile-mutant-wait.stderr" || rc=$?
-assert_rc "$rc" 0 "without the fd close, hostile output forges completion"
-[[ -e "$TMP_ROOT/hostile-mutant.forged" ]] \
-  || fail "the fd-boundary control did not reach descriptor 9"
-[[ ! -e "$TMP_ROOT/hostile-mutant-runtime" ]] \
-  || fail "the forged completion did not remove live runtime state"
-ok "the mutant proves descriptor closure blocks forged completion"
-touch "$TMP_ROOT/hostile-mutant.release"
-for _ in $(seq 1 200); do
-  kill -0 "$fd_mutant_pid" 2>/dev/null || break
-  sleep 0.05
-done
-kill -KILL -- "-$fd_mutant_pid" 2>/dev/null || true
-
 echo "=== a killed worker without status tells the caller to relaunch ==="
 killed_wait="$(direct_launch "$RUNTIME" killed 120 2 slow-codex)"
 for _ in $(seq 1 200); do

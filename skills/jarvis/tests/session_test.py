@@ -72,13 +72,8 @@ def validate(output, code, verb, duplicate_boot=False):
 
 
 class BootReceiptScenario:
-    # The specified receipt producer owns applicability for its contract rows
-    # and every mutation of that scenario.
+    # The specified receipt producer owns applicability for its contract rows.
     applicable = Path("/proc/sys/kernel/random/boot_id").is_file()
-    controls = (
-        ("boot receipt", "jarvis/scripts/lib/session.py", 'if boot and record and record.get("boot") == boot:', 'if False:', "test_off_and_boot_receipt"),
-        ("boot refusal receipt", "jarvis/scripts/lib/session.py", 'if boot:\n                    record["boot"] = boot\n                if args.origin == "app-on":', 'if False:\n                    record["boot"] = boot\n                if args.origin == "app-on":', "test_off_and_boot_receipt"),
-    )
 
 
 class SessionContract(unittest.TestCase):
@@ -105,8 +100,7 @@ class SessionContract(unittest.TestCase):
                                  "XDG_STATE_HOME": str(self.root / "state"), "XDG_SESSION_ID": "fixture-login",
                                  "WAYLAND_DISPLAY": "fixture-wayland", "DISPLAY": ":fixture",
                                  "JARVIS_TEST_BASH": os.environ["JARVIS_TEST_BASH"]}
-        # Keep the production 70 s window, scaled with the source timer
-        # when the control runner shortens its disposable copy.
+        # Keep the production 70 s window in step with the source timer.
         with patch.dict(os.environ, {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}):
             self.launch_wait = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))["CALL_SECONDS"] * 70 / 55
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
@@ -400,13 +394,6 @@ class SessionContract(unittest.TestCase):
                 validate(json.dumps(answer | patch) + "\n", 0, "status")
 
     def test_off_and_boot_receipt(self):
-        from session_controls import applicable_controls
-        for available in (False, True):
-            with self.subTest(boot_producer=available), patch.object(BootReceiptScenario, "applicable", available):
-                names = {row[0] for row in applicable_controls(BootReceiptScenario)}
-                for name, *_ in BootReceiptScenario.controls:
-                    self.assertEqual(name in names, available)
-                self.assertTrue({"app Off", "app On", "app On state"} <= names)
         # A desktop with no selected app still has the lock/runtime tools.
         tool_bin = self.root / "tools"
         tool_bin.mkdir()

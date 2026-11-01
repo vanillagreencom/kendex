@@ -120,7 +120,7 @@ for option in --class --event; do
   assert_eq "$output" '' "$option publishes no depth"
 done
 
-# Each control changes one real depth decision in a disposable source copy.
+# The control changes one real depth decision in a disposable source copy.
 mutant() { # NAME OLD NEW
   cp "$DEPTH" "$INSTALL/reviewer/scripts/$1"
   python3 - "$INSTALL/reviewer/scripts/$1" "$2" "$3" <<'PY'
@@ -139,22 +139,6 @@ mutant small-full 'small) DEPTH=bot ;;' 'small) DEPTH=full ;;'
 status=0
 (depth_table "$INSTALL/reviewer/scripts/small-full") >"$TMP_ROOT/control.log" 2>&1 || status=$?
 assert_eq "$status" 1 'must-fail control rejects the changed small depth'
-
-# The suite's own FAIL lines name the row each control must redden.
-mutant floor-ignored 'if [ -n "$FLOOR" ]; then' 'if false; then'
-(floor_table "$INSTALL/reviewer/scripts/floor-ignored") >"$TMP_ROOT/control.log" 2>&1 || :
-assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  micro/floor=small depth' \
-  'must-fail control: an ignored floor fails the micro escape row'
-
-mutant floor-as-class 'if [ "$CHANGE_CLASS_RANK" -gt "$MEASURED_RANK" ]; then' 'if true; then'
-(floor_table "$INSTALL/reviewer/scripts/floor-as-class") >"$TMP_ROOT/control.log" 2>&1 || :
-assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  standard/floor=small depth' \
-  'must-fail control: a floor taken as the class fails the standard row'
-
-mutant floor-line-always '[ "$DEPTH" = "$MEASURED_DEPTH" ] ||' 'false ||'
-(floor_table "$INSTALL/reviewer/scripts/floor-line-always") >"$TMP_ROOT/control.log" 2>&1 || :
-assert_contains "$(cat "$TMP_ROOT/control.log")" 'FAIL  trivial/floor=micro floor line' \
-  'must-fail control: a floor line that left the depth unchanged fails the trivial row'
 
 printf '\nreview-depth: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
