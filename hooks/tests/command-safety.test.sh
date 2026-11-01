@@ -211,6 +211,13 @@ oracle_runs_env() { # COMMAND: whether real bash runs env with no operands
 # the hook classifies it without executing the command or opening its log.
 # The Python replacement-source row models KEN-4586's attributed edit; its
 # pathlib and environment text are submitted data, never executed here.
+# The vgs-waiter-* rows are the kendex#5631 command, reported against source
+# 4c265f7. The fleet-waiter-* rows keep the command, wrapper and assignment
+# roles of FLT-1406's refused accounts start, whose raw packet stays on
+# Fleet's tracker, with safe paths in place of its real ones. Before KEN-4728
+# a word test on unclassified forwarded operands refused the bash -lc form of
+# both and the plain form of Fleet's; the forwarded-word-test control below
+# plants that test back and requires these rows to fail.
 environment_rows() {
   local rows expected command_json label world payload payload_cwd status output
   local want first_key keyed want_keyed invalid shape_kind diagnostics_safe refusal reason before=$((passed + failed))
@@ -602,6 +609,14 @@ environment_rows() {
 [0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env -u A -u B VAR=1 bash test.sh' --build 'bash -n build.sh'","waiter-quoted-unset-command"]
 [0,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'unset A B; export VAR=1; exec bash test.sh' --build 'bash -n build.sh'","waiter-quoted-setup-command"]
 [0,"env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE sh tmp/waiter.X/launch.sh bash -c 'scripts/validate logic --changed c18e; scripts/validate manifests --changed c18e; scripts/validate boundary --changed c18e; scripts/validate tools --changed c18e; scripts/validate repo --changed c18e'","outer-unset-waiter-literal-validation"]
+[0,"sh tmp/waiter.RUN/launch.sh /abs/tmp/waiter.RUN/logic env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE scripts/validate logic","vgs-waiter-unset-validation"]
+[0,["bash","-lc","sh tmp/waiter.RUN/launch.sh /abs/tmp/waiter.RUN/logic env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE scripts/validate logic"],"vgs-waiter-unset-validation-bash-lc"]
+[2,"sh tmp/waiter.RUN/launch.sh /abs/tmp/waiter.RUN/logic env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE","vgs-waiter-unset-without-program"]
+[0,"sh /work/fleet/tmp/waiter.RUN/launch.sh /work/fleet/tmp/waiter.RUN/accounts /usr/bin/timeout --foreground -k 10 3600 env -i HOME=/scratch/home FLEET_DIR=/scratch/home/.fleet 'PATH=/opt/tool/bin:/usr/bin:/bin' PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/work/fleet/bin/fixtures python3 bin/fixtures/check-lane-host/lane-host-accounts.py bin/lane-host-daytona /scratch/state","fleet-waiter-timeout-empty-env-fixture"]
+[0,["bash","-lc","sh /work/fleet/tmp/waiter.RUN/launch.sh /work/fleet/tmp/waiter.RUN/accounts /usr/bin/timeout --foreground -k 10 3600 env -i HOME=/scratch/home FLEET_DIR=/scratch/home/.fleet 'PATH=/opt/tool/bin:/usr/bin:/bin' PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/work/fleet/bin/fixtures python3 bin/fixtures/check-lane-host/lane-host-accounts.py bin/lane-host-daytona /scratch/state"],"fleet-waiter-timeout-empty-env-fixture-bash-lc"]
+[2,"sh /work/fleet/tmp/waiter.RUN/launch.sh /work/fleet/tmp/waiter.RUN/accounts /usr/bin/timeout --foreground -k 10 3600 env -i HOME=/scratch/home 'PATH=/opt/tool/bin:/usr/bin:/bin'","fleet-waiter-timeout-empty-env-without-program"]
+[2,"sh /work/fleet/tmp/waiter.RUN/launch.sh /work/fleet/tmp/waiter.RUN/accounts /usr/bin/timeout --foreground -k 10 3600 env -i HOME=/scratch/home printenv","fleet-waiter-timeout-empty-env-dump-target"]
+[2,["bash","-lc","sh /work/fleet/tmp/waiter.RUN/launch.sh /work/fleet/tmp/waiter.RUN/accounts /usr/bin/timeout --foreground -k 10 3600 env -i HOME=/scratch/home printenv"],"fleet-waiter-timeout-empty-env-dump-target-bash-lc"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'env' --build 'bash -n build.sh'","waiter-quoted-env-dump"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'printenv' --build 'bash -n build.sh'","waiter-quoted-printenv-dump"]
 [2,"sh LAUNCH.sh WAIT env VAR=1 TOOL --test 'unset A B; export VAR=1; exec bash test.sh; env'","waiter-quoted-setup-followed-by-dump"]
@@ -1561,29 +1576,40 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   [[ -d $environment_controls && ! -L $environment_controls ]] || { echo 'command-safety-test: control-scratch=not-a-directory' >&2; exit 1; }
   environment_controls="$(cd -- "$environment_controls" && pwd -P)" || { echo 'command-safety-test: control-scratch=resolve-failed' >&2; exit 1; }
   trap 'rm -rf -- "$scratch" "${environment_controls:?}"' EXIT
-  # One planted defect proves the table can go red: with the check cut, a
-  # command that dumps the environment passes.
-  mutant="$environment_controls/environment-no-check.sh"
-  awk '
-    { at = index($0, "if environment_dump \"$command_kind\"; then")
-      if (at) { $0 = substr($0, 1, at - 1) "if false; then" substr($0, at + length("if environment_dump \"$command_kind\"; then")); changed++ } }
-    { print }
-    END { if (changed != 1) exit 1 }
-  ' "$hook_source" >"$mutant" || exit 1
-  if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control no-check changed no bytes"; exit 1; fi
-  control_status=0
-  (
-    passed=0; failed=0
-    cp -- "$mutant" "$hook"
-    environment_rows incident
-    [ "$failed" -eq 0 ]
-  ) >"$scratch/environment-no-check.log" 2>&1 || control_status=$?
-  cp -- "$hook_source" "$hook"
-  if [ "$control_status" -eq 1 ] && grep -F -- 'FAIL environment: incident: exit=0 expected=2' "$scratch/environment-no-check.log" >/dev/null; then
-    printf 'PASS environment control no-check rejects its planted rule failure\n'; passed=$((passed + 1))
-  else
-    printf 'FAIL environment control no-check: exit=%s\n' "$control_status"; failed=$((failed + 1))
-  fi
+  # Each planted defect proves its rows can go red. no-check cuts the check,
+  # so a command that dumps the environment passes. forwarded-word-test
+  # judges each unclassified forwarded operand and the words after it by the
+  # word test, as before KEN-4728, so an env operand of a waiter refuses
+  # whatever program it launches.
+  while IFS='|' read -r defect from to want rows; do
+    mutant="$environment_controls/environment-$defect.sh"
+    awk -v from="$from" -v to="$to" '
+      { at = index($0, from)
+        if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ } }
+      { print }
+      END { if (changed != 1) exit 1 }
+    ' "$hook_source" >"$mutant" || exit 1
+    if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control $defect changed no bytes"; exit 1; fi
+    control_status=0
+    # shellcheck disable=SC2086 # rows is a space-separated label list
+    (
+      passed=0; failed=0
+      cp -- "$mutant" "$hook"
+      environment_rows $rows
+      [ "$failed" -eq 0 ]
+    ) >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
+    cp -- "$hook_source" "$hook"
+    for row in $rows; do
+      if [ "$control_status" -eq 1 ] && grep -F -- "FAIL environment: $row: $want" "$scratch/environment-$defect.log" >/dev/null; then
+        printf 'PASS environment control %s fails %s\n' "$defect" "$row"; passed=$((passed + 1))
+      else
+        printf 'FAIL environment control %s: exit=%s; %s did not fail with %s\n' "$defect" "$control_status" "$row" "$want"; failed=$((failed + 1))
+      fi
+    done
+  done <<'ENVIRONMENT_CONTROLS'
+no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
+forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc
+ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in
 # docs/authoring/command-safety.md, is its content rather than this hook's
