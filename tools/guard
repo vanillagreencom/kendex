@@ -384,12 +384,7 @@ case "${1:-}" in
       '        the same suite mapper, leaving the full record to merge-group CI;' \
       '        a skill package'"'"'s Markdown, source or render, selects no suite there,' \
       '        nor does a .kendex-generated.json change only to their rows, save' \
-      '        in a tree whose suites tools/ci-job-set runs in no shard.' \
-      '        A kendex.settings.toml change to [env] values whose keys a' \
-      '        package'"'"'s settings example declares selects the suites naming' \
-      '        each key, or that package'"'"'s whole set where no test names it;' \
-      '        any other settings change maps the file by path. A path whose' \
-      '        readers it cannot identify runs its tree'"'"'s whole set.'
+      '        in a tree whose suites tools/ci-job-set runs in no shard.'
     exit 0
     ;;
 esac
