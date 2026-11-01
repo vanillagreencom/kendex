@@ -1,6 +1,6 @@
 ---
 name: docs-writing
-description: "Load to write, rewrite, or review repository markdown or documentation HTML: README, DEVELOPMENT, architecture docs, reference docs, SKILL.md and AGENTS.md."
+description: "States the writing standard, the repository layout, and the rules and finished example for each Markdown file type. Load when creating or editing any Markdown file or documentation HTML, such as README, DEVELOPMENT, architecture docs, reference docs, SKILL.md and AGENTS.md, and when rewriting or reviewing one."
 summary: "The writing standard, the repository layout, what each document holds, and a finished example per file type, with a blank-page rewrite workflow."
 license: MIT
 user-invocable: true
@@ -60,7 +60,7 @@ This is the default repository layout. A rewrite moves what it finds onto it. A 
 
 | Path | Reader | Holds | Required |
 |---|---|---|---|
-| `README.md` | a person choosing or using it | the sections § `README.md` orders | yes |
+| `README.md` | a person choosing or using it | the sections [references/readme.md](references/readme.md) orders | yes |
 | `AGENTS.md` | every agent, at session start | what the repo is, the commands, the conventions, and task routes to principle docs, directly or through named nested instructions | yes |
 | `DEVELOPMENT.md` | a maintainer | build, run, test and debug: only what the tooling does not show | where needed |
 | `LICENSE` | a person | the licence | yes |
@@ -88,52 +88,21 @@ Nothing else lives under `docs/`. A software implementation plan, research repor
 
 ## Per file type
 
-Each section says who reads the file, what it holds, and what it never carries. The finished example for each type is under [examples/](examples/); read it before writing one. Each example ends with a contrast drawn from a real failure and one sentence on why that failure fails the reader.
+Each section says who reads the file, what it holds, and what it never carries. Each finished example under [examples/](examples/) ends with a contrast drawn from a real failure and one sentence on why that failure fails the reader.
 
-### `README.md`
+Before writing a file, find its type in this table, then read its section and its example. The first row whose path matches wins; `*` matches across `/`. Shape names the structural rules that apply to the type: `order` is the numbered section order, and `value-table` is the rule against a value table.
 
-Read by a person choosing or using the repository, package, skill, plugin or Pi extension. Its sections, in this order, each only where the thing needs it:
-
-1. A brief description: what it is and who it is for.
-2. A screenshot, where the thing has a screen.
-3. Features: one direct line each.
-4. Install: paste lines per route, no prose.
-5. How it works: high level, in plain words, with no engineering terms.
-6. Sub-packages, where they exist: a table, one line each.
-7. Setup or customise: only the must-know settings.
-8. Licence.
-
-Another section only where the thing needs it. Never: internal vocabulary, invariants, internals, rationale, history, engineering detail, or a command listing `--help` already gives. Example: [examples/readme.md](examples/readme.md).
-
-### `AGENTS.md`
-
-Read by every harness at the start of every session. What the repo is in two or three sentences; the commands not discoverable from the tooling; the conventions that differ from a tool default or a language norm; task triggers for principle docs, directly or through named nested `AGENTS.md` files. Keep only rules no linked principle doc owns; route to that doc instead of repeating its rules. Codex reads only the root-to-cwd chain of `AGENTS.md` files. Before changing a directory, read its applicable nested instructions even when the harness did not load them. Never: anything derivable from the code, rationale, history. Example: [examples/root-agents.md](examples/root-agents.md).
-
-Repository agent instructions live in `AGENTS.md` alone. A repository keeps no `CLAUDE.md`: no root or nested `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md`. [Claude Code reads `AGENTS.md` natively](https://code.claude.com/docs/en/memory#agents-md) from [v2.1.277](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21277). The user-scope `~/.claude/CLAUDE.md` is a harness setting, not a repository document.
-
-### `<dir>/AGENTS.md`
-
-Read by an agent working in that folder. Keep the folder's commands and rules no linked principle doc owns, with no rationale. Give a task trigger for that doc instead of repeating its rules. An approach belongs in architecture when one reader's task needs it to prevent a harmful mistake, whatever folders the task crosses. Examples: [examples/nested-agents-plugins.md](examples/nested-agents-plugins.md), [examples/nested-agents-components.md](examples/nested-agents-components.md).
-
-### `docs/architecture/<name>.md`
-
-Optional. Read by an agent about to do the work the doc governs. A doc exists for one reader's task and the harmful mistake it prevents: name the work an agent does with the doc open, and what that agent breaks without it. A subsystem name alone is no reason for a file, and the rules one reader uses for one task are one doc, whatever folders they cross. No file count, size or line limit holds. It holds the approach, why, the rules as do and never lines that name the check enforcing a rule where one exists, the boundary an agent could break unknowingly, one canonical code example to copy, when to read it, the condition that reopens the approach, and what the principle does not govern. A value table, such as tokens, sizes or manifest keys, lives in code; the doc points to the file. No overview is required: the root `AGENTS.md` gives task triggers or routes to named nested instructions, and every retained doc has a trigger line at the root or in those nested instructions. Never: code walkthroughs, file or function inventories, test-row or fixture narration, run order, measurements, dates, upstream line numbers, task history.
-
-The contrast, a journal paragraph against the principle it should be:
-
-| Journal | Principle |
-|---|---|
-| `trash.rs::move_to_trash` is the one writer: the apply engine's `Trash` op, the project restore and a Pi package's replacement land through it, under a name that opens with the moment it was moved. Enforced by the tests `a_name_is_dated_by_the_stamp_it_opens_with` and `a_listing_reports_name_age_and_bytes_newest_first` in `trash/tests.rs`. | Removal never deletes. Every removed file goes to the trash through one writer, `trash::move_to_trash`, so a person can get it back; a second writer would be a removal nobody can undo. |
-
-Three lines that read as rules and are not:
-
-| Rule | Not a rule |
-|---|---|
-| A pointer to the enforcing check: "Never name a plugin id in the core; `scripts/check-plugin-boundary.py` refuses it." | Test-case narration: "Enforced by `test_attribution.py::two_speakers_one_microphone`, whose control removes the second speaker, and by `::no_transcript` for an empty recording." The reader learns which tests exist, not what the code must never do, and every test name goes stale at the next rename. |
-| A contract: "One judge, `manifest.py::validate`, decides every manifest; a key it does not list refuses the manifest." | A field inventory: a table of every manifest key with its type, whether it is required and what it means. The judge's declaration owns the shape and defaults; the reference links to it and explains semantics. A hand-copied table is wrong the day a key changes. |
-| A high-level rule: "A release is built once; every stage deploys that one artifact and never rebuilds." | A call sequence: "`make release` runs `scripts/bundle.sh`, which writes `dist/app.tar`; `deploy staging` uploads it, restarts the service and runs `smoke.sh`; `deploy prod` repeats the steps." The reader is walked through the scripts and still does not know what a change to them must preserve. |
-
-Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), [examples/architecture-design-system.md](examples/architecture-design-system.md).
+| Path | Section | Example | Shape |
+|---|---|---|---|
+| `docs/decisions/*.md` | § Decision records | [decision.md](examples/decision.md) | none |
+| `docs/architecture/*.md` | [architecture.md](references/architecture.md) | [architecture-plugins.md](examples/architecture-plugins.md) | `value-table` |
+| `AGENTS.md` | [agents.md](references/agents.md) | [root-agents.md](examples/root-agents.md) | none |
+| `*/AGENTS.md` | [agents.md](references/agents.md) | [nested-agents-plugins.md](examples/nested-agents-plugins.md) | none |
+| `SKILL.md`, `*/SKILL.md`, `*/workflows/*.md`, `agents/*.md`, `*/agents/*.md` | [skill-files.md](references/skill-files.md) | [skill-entry.md](examples/skill-entry.md) | none |
+| `*/references/*.md`, `*/schemas/*.md`, `*/patterns/*.md`, `CHECKS.md`, `*/CHECKS.md` | [reference-docs.md](references/reference-docs.md) | [reference.md](examples/reference.md) | none |
+| `DEVELOPMENT.md`, `*/DEVELOPMENT.md` | [development.md](references/development.md) | [development.md](examples/development.md) | none |
+| `README.md`, `*/README.md` | [readme.md](references/readme.md) | [readme.md](examples/readme.md) | `order`, `value-table` |
+| none: the product content directory a repository names | [human-page.md](references/human-page.md) | [human-page.md](examples/human-page.md) | none |
 
 ### One home per fact
 
@@ -147,35 +116,9 @@ For an internal design claim, ask the questions below in order and stop at the f
 
 Read by a reviewer or agent about to reverse a choice. The bar, the format and the workflows are the [decider](../decider/SKILL.md) skill's; this skill ships no second format. A principle doc states the current actionable rule and cites the decision ID. It does not repeat the decision's reasons or alternatives. Example: [examples/decision.md](examples/decision.md).
 
-### `DEVELOPMENT.md`
-
-Read by a maintainer, human or agent, working on the package itself. How to build, run, test and debug it, and only what the tooling does not show. Never: anything the code, the tests, `--help` or the README state, and architecture narration. A file left with nothing load-bearing is deleted. Example: [examples/development.md](examples/development.md).
-
-### `SKILL.md`, `workflows/*.md`, `agents/*.md`
-
-Read by an agent when the task loads the file. `SKILL.md` gives activation, essential rules and reading routes.
-
-`workflows/` holds the steps an agent follows, in order, to finish one job.
-
-`references/` holds contracts and detail an agent looks up while doing a job.
-
-Agent files hold the role's rules. Worked examples live in named supporting files.
-
-To choose a folder, name the file's job and its reader. If the reader runs it from first line to last to finish that job, it is a workflow. If the reader opens it at one section while doing another job, it is a reference. Split a file that does both: put the steps in a workflow and keep the contract in a reference. One cites the other.
-
-Give each supporting file an explicit reading trigger. Cite a rule another file owns. Never: implementation narration, rationale or history. Rationale belongs in an admitted principle doc, a decision under decider's bar or a comment at the code. Example: [examples/skill-entry.md](examples/skill-entry.md).
-
-### Reference docs
-
-Read by an agent or maintainer looking up a contract or task detail: `references/`, `schemas/`, `patterns/`, or a named file such as `CHECKS.md`. Use tables, lists, schemas and necessary examples. A reference owns a contract not declared elsewhere, or explains its meaning beside a link to the declaration that owns the machine shape and defaults. A generated reference may show those declared values. Include only the semantics and conditional instructions its named task needs. Never: rationale, or narrative that defines nothing. A file under `references/` exists only where a named reader loads it: a skill, an agent, a workflow or a maintainer task that names the file. Example: [examples/reference.md](examples/reference.md).
-
 ### Documentation HTML
 
 Read in a browser. An offline page a skill or repository ships beside its markdown, opening with no build step, under the rules of the equivalent markdown type, with local styles only and no framework or external asset. Inline SVG is available where a diagram shows a relationship more clearly than prose. Never: a page served from a web root or built by an application bundler; that is a product file.
-
-### Human architecture page
-
-Read by a person asking how the system works, on a help site or in another product content directory the repository ships. Its title is the reader's question, its first paragraph answers it in plain words, and one diagram shows the answer. It is product content: `AGENTS.md` names its directory as such, no "Read when" line routes an agent through it, and the rules an agent follows stay in `docs/architecture/`. Never: do and never lines, decision IDs, code paths, or a sentence written for an agent. Example: [examples/human-page.md](examples/human-page.md).
 
 ### `CHANGELOG.md` and `changelog.d/`
 
@@ -200,4 +143,4 @@ A software implementation plan, research report, measurement or handoff is not r
 
 ## Writing
 
-A focused change edits the affected text and verifies each claim against its owning source. Use code where code owns the claim. Preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example of the file type: [readme.md](examples/readme.md), [development.md](examples/development.md), [root-agents.md](examples/root-agents.md), [nested-agents-plugins.md](examples/nested-agents-plugins.md), [nested-agents-components.md](examples/nested-agents-components.md), [architecture-plugins.md](examples/architecture-plugins.md), [architecture-design-system.md](examples/architecture-design-system.md), [behaviour-spec.md](examples/behaviour-spec.md), [human-page.md](examples/human-page.md), [skill-entry.md](examples/skill-entry.md), [reference.md](examples/reference.md), [decision.md](examples/decision.md).
+A focused change edits the affected text and verifies each claim against its owning source. Use code where code owns the claim. Preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example its table names for the file type.
