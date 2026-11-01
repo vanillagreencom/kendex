@@ -1,4 +1,4 @@
-"""owner-unanswered judges real lane-mail rows against replies, closes and progress records."""
+"""owner-unanswered judges real lane-mail rows against replies, threads, closes and progress records."""
 import datetime
 import json
 from pathlib import Path
@@ -90,6 +90,33 @@ class OwnerUnanswered(MailWorld):
         at(-300)
         quiet = self.owner("request handled with no reply", "--directive", "--delivery-id", next(key))
         self.owner("same second as a handled request", "--directive", "--delivery-id", next(key))
+        at(-290)
+        root = next(key)
+        self.owner("thread root", "--directive", "--delivery-id", root)
+        at(-280)
+        followed = self.threaded("thread follow-up", root, next(key))
+        at(-270)
+        self.mail(self.home, "notice", "followed up", "--to", "owner", "--ref", followed)
+        at(-260)
+        self.threaded("thread correction", root, next(key))
+        # Each pair case has its own channel, so no other text is near.
+        at(-250)
+        self.owner("caption", "--directive", "--delivery-id", "C2:1.0")
+        self.owner("late caption", "--directive", "--delivery-id", "C3:1.0")
+        self.threaded("thread text", "C4:1.0", "C4:2.0")
+        at(-240)
+        other_thread = str(self.home / "tmp/slack/files/F3-other.png")
+        self.threaded(other_thread, "C4:9.0", "C4:3.0")
+        at(-220)
+        self.owner(str(self.home / "tmp/slack/files/F1-photo.png") + "\nfile F4 not fetched: no download url",
+                   "--directive", "--delivery-id", "C2:2.0")
+        at(-219)
+        self.owner("file F2 not fetched: no download url", "--directive", "--delivery-id", "C3:2.0")
+        at(-210)
+        legacy = self.owner("legacy archived", "--directive", "--delivery-id", next(key))
+        current = self.owner("legacy in the handoff", "--directive", "--delivery-id", next(key))
+        delegated = self.owner("delegate logged", "--directive", "--delivery-id", next(key))
+        delegate_archived = self.owner("delegate archived", "--directive", "--delivery-id", next(key))
         at(-200)
         self.owner("no delivery id", "--directive")
         self.owner("watch-loop batch", "--directive", "--delivery-id", "jarvis-0123abcd")
@@ -100,21 +127,65 @@ class OwnerUnanswered(MailWorld):
         self.env = plain
         state = self.home / "state"
         (state / "archive/2026").mkdir(parents=True)
+        (state / "delegate/archive").mkdir(parents=True)
         (state / "handoff.md").write_text("## Progress log\n\n" + record("1", "Read " + logged, "apply it") +
                                           record("2", "Handled " + request, "done") +
-                                          record("3", "Handled " + quiet, "done, No reply needed"))
+                                          record("3", "Handled " + quiet, "done, No reply needed") +
+                                          "- 23:00Z Handled %s, no reply\n" % current)
         (state / "archive/2026/handoff.md").write_text(record("4", "Ruling " + archived, "kept"))
-        return ["same second as the reply", "correction after the reply", "same second as a handled request", "unanswered",
-                "request handled without no reply"]
+        (state / "archive/2026/legacy.md").write_text("## Progress log\n\n- 22:59Z Started\n- 23:00Z Handled\n"
+                                                      "  %s, no reply\n" % legacy)
+        (state / "delegate/handoff.md").write_text(record("5", "Handled " + delegated, "no reply"))
+        (state / "delegate/archive/handoff.md").write_text(record("6", "Handled " + delegate_archived, "no reply"))
+        # Every owner row in inbox order: listed with the default handoff, listed with state/delegate/handoff.md.
+        table = (("answered by ref", False, False),
+                 ("yes", False, False),
+                 ("no, sibling", False, False),
+                 ("same second as the reply", True, True),
+                 ("correction after the reply", True, True),
+                 ("closed answer", False, False),
+                 ("logged answer", False, True),
+                 ("archived answer", False, True),
+                 ("request handled with no reply", False, True),
+                 ("same second as a handled request", True, True),
+                 ("thread root", False, False),
+                 ("thread follow-up", False, False),
+                 ("thread correction", True, True),
+                 ("caption", True, True),
+                 ("late caption", True, True),
+                 ("thread text", True, True),
+                 (other_thread, True, True),
+                 ("file F2 not fetched: no download url", True, True),
+                 ("legacy archived", False, True),
+                 ("legacy in the handoff", True, True),
+                 ("delegate logged", True, False),
+                 ("delegate archived", True, False),
+                 ("unanswered", True, True),
+                 ("request handled without no reply", True, True))
+        return [text for text, listed, _ in table if listed], [text for text, _, listed in table if listed]
+
+    def threaded(self, text, root, delivery):
+        """An owner directive the relay delivered as delivery in the Slack thread under root, both `channel:ts`."""
+        stamp = root.split(":")[1]
+        parent = self.root / "parent"
+        parent.write_text(json.dumps({"ts": stamp, "author": "owner", "excerpt": "root"}))
+        return self.owner(text, "--directive", "--delivery-id", delivery, "--thread-ts", stamp, "--parent", parent)
 
     def test_table(self):
-        expected = self.world()
-        past, future = (datetime.datetime.fromtimestamp(self.base + hours * 3600, datetime.timezone.utc)
-                        .strftime("%Y-%m-%dT%H:%M:%SZ") for hours in (-1, 1))
+        plain, self.env = self.env, self.clocked(-25 * 3600)
+        self.owner("a day old", "--directive", "--delivery-id", "C5:1.0")
+        self.env = plain
+        expected, delegate = self.world()
+        past, future, earlier = (datetime.datetime.fromtimestamp(self.base + hours * 3600, datetime.timezone.utc)
+                                 .strftime("%Y-%m-%dT%H:%M:%SZ") for hours in (-1, 1, -26))
+        selected = str(self.home / "state/delegate/handoff.md")
         runs = (("listed", ["--older", "10", "--since", past], 11 * 60, expected),
                 ("younger than --older", ["--older", "11"], 0, []),
                 ("older than --older", ["--older", "1"], 0, expected[:-1]),
-                ("older than --since", ["--since", future], 0, []))
+                ("older than --since", ["--since", future], 0, []),
+                ("earlier --since than the default day", ["--since", earlier], 0, ["a day old"] + expected),
+                ("relative --handoff", ["--handoff", "state/delegate/handoff.md"], 0, delegate),
+                ("absolute --handoff", ["--handoff", selected], 0, delegate))
         for name, args, offset, listed in runs:
             with self.subTest(run=name):
                 self.assertEqual(self.check(*args, offset=offset), listed)
@@ -142,27 +213,85 @@ class OwnerUnanswered(MailWorld):
         self.assertEqual(result.stderr.splitlines()[:2], ["owner-unanswered: mailbox-unreadable=to-lane",
                                                           "lane-mail: mailbox-unsafe=/x"])
 
+    def test_unreadable_evidence(self):
+        """Evidence that cannot be read refuses; evidence that is gone only lists more."""
+        plain, self.env = self.env, self.clocked(-60)
+        identity = self.owner("waiting", "--directive", "--delivery-id", "C1:1.0")
+        self.env = plain
+        state, archive = self.home / "state", self.home / "state/archive"
+        now, old = (datetime.datetime.fromtimestamp(self.base + hours * 3600, datetime.timezone.utc)
+                    .strftime("%Y-%m-%dT%H:%MZ") for hours in (0, -48))
+        covering = record("1", "Handled " + identity, "no reply").encode()
+        # name, files under the home, arguments, exit, stderr lines, listed.
+        cases = (("default handoff missing", {}, [], 0, [], ["waiting"]),
+                 ("selected handoff missing", {}, ["--handoff", "state/none.md"], 1,
+                  ["owner-unanswered: handoff-missing=%s" % (state / "none.md")], None),
+                 ("unreadable handoff", {"state/handoff.md": b"\xff"}, [], 1,
+                  ["owner-unanswered: handoff-unreadable=%s" % (state / "handoff.md")], None),
+                 ("unreadable archive in the window", {"state/archive/a.md": b"\xff"}, [], 1,
+                  ["owner-unanswered: handoff-unreadable=%s" % (archive / "a.md")], None),
+                 ("unreadable INDEX", {"state/archive/INDEX.md": b"\xff"}, [], 1,
+                  ["owner-unanswered: handoff-unreadable=%s" % (archive / "INDEX.md")], None),
+                 ("archive the INDEX ends before the window", {
+                     "state/archive/a.md": b"\xff",
+                     "state/archive/INDEX.md": ("- a.md dates=%s..%s\n" % (old, old)).encode()}, [], 0, [], ["waiting"]),
+                 ("archive with an unread START the INDEX ends before the window", {
+                     "state/archive/a.md": b"\xff",
+                     "state/archive/INDEX.md": ("- a.md dates=unread..%s\n" % old).encode()}, [], 0, [], ["waiting"]),
+                 ("archive the writer could not date", {
+                     "state/archive/a.md": b"\xff",
+                     "state/archive/INDEX.md": b"- a.md dates=unread..unread\n"}, [], 1,
+                  ["owner-unanswered: handoff-unreadable=%s" % (archive / "a.md")], None),
+                 ("archive the INDEX places in the window", {
+                     "state/archive/a.md": covering,
+                     "state/archive/INDEX.md": ("# Archive\n\n- a.md kind=x dates=%s..%s\n" % (old, now)).encode()},
+                  [], 0, [], []),
+                 ("pruned in the window", {"state/archive/INDEX.md": ("- gone.md dates=%s..%s\n" % (old, now)).encode()},
+                  [], 0, ["owner-unanswered: archive-pruned=%s" % (archive / "gone.md")], ["waiting"]),
+                 ("pruned with an unread end", {"state/archive/INDEX.md": b"- gone.md dates=soon\n"},
+                  [], 0, ["owner-unanswered: archive-pruned=%s" % (archive / "gone.md")], ["waiting"]),
+                 ("pruned before the window", {"state/archive/INDEX.md": ("- gone.md dates=%s..%s\n" % (old, old)).encode()},
+                  [], 0, [], ["waiting"]))
+        for name, files, args, code, stderr, listed in cases:
+            with self.subTest(case=name):
+                shutil.rmtree(state, ignore_errors=True)
+                for path, data in files.items():
+                    (self.home / path).parent.mkdir(parents=True, exist_ok=True)
+                    (self.home / path).write_bytes(data)
+                result = self.command([BASH, self.scripts / "owner-unanswered", *args], self.home, self.clocked(0))
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(result.stderr.splitlines()[:len(stderr)] if code else result.stderr.splitlines(),
+                                 stderr)
+                if listed is not None:
+                    self.assertEqual([json.loads(line)["text"] for line in result.stdout.splitlines()], listed)
+
     def test_instrument_control(self):
-        # A reader of the box files themselves, in place of lane-mail events,
-        # must fail the table, including its compacted rows.
-        with tempfile.TemporaryDirectory() as folder:
-            copy = Path(folder) / "jarvis/scripts"
-            shutil.copytree(SCRIPTS, copy)
-            Path(folder, "mailbox").symlink_to(REPO / "skills/mailbox", target_is_directory=True)
-            path = copy / "lib/owner_unanswered.py"
-            source = path.read_text()
-            old = "        return watch.mailbox_events(bash, home, name)[1]\n"
-            self.assertEqual(source.count(old), 1)
-            path.write_text(source.replace(old, "        box = home / 'tmp/lane-mail/overseer' / (name + '.jsonl')\n"
-                                           "        return [json.loads(row) for row in box.read_text().splitlines()]\n"))
-            case = OwnerUnanswered(methodName="test_table")
-            case.scripts = copy
-            case.setUp()
-            try:
-                with self.assertRaises(AssertionError):
-                    case.test_table()
-            finally:
-                case.doCleanups()
+        # Each planted defect, in a disposable copy, must fail the table:
+        # a reader of the box files themselves, in place of lane-mail events,
+        # including its compacted rows; and a thread reply that covers its
+        # thread's rows whatever their time, which covers the correction
+        # after the reply.
+        reader = ("        return watch.mailbox_events(bash, home, name)[1]\n",
+                  "        box = home / 'tmp/lane-mail/overseer' / (name + '.jsonl')\n"
+                  "        return [json.loads(row) for row in box.read_text().splitlines()]\n")
+        order = ('key == reply_key and at > row.get("at", ""))', "key == reply_key)")
+        for old, new in (reader, order):
+            with self.subTest(planted=new), tempfile.TemporaryDirectory() as folder:
+                copy = Path(folder) / "jarvis/scripts"
+                shutil.copytree(SCRIPTS, copy)
+                Path(folder, "mailbox").symlink_to(REPO / "skills/mailbox", target_is_directory=True)
+                path = copy / "lib/owner_unanswered.py"
+                source = path.read_text()
+                self.assertEqual(source.count(old), 1)
+                path.write_text(source.replace(old, new))
+                case = OwnerUnanswered(methodName="test_table")
+                case.scripts = copy
+                case.setUp()
+                try:
+                    with self.assertRaises(AssertionError):
+                        case.test_table()
+                finally:
+                    case.doCleanups()
 
 
 if __name__ == "__main__":

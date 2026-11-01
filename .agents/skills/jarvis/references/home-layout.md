@@ -11,6 +11,7 @@ Read when setting up an assistant home, choosing a home path or starting a conti
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](memory.md). |
 | `state/handoff.md` | Committed | Default current handoff; a consumer's home contract may select another path under [Handoff](long-session.md#handoff). |
 | `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](long-session.md#handoff). |
+| `state/archive/INDEX.md` | Committed | `progress-log --archived` adds one dated line per archived file under [Handoff](long-session.md#handoff). |
 | Other files under `state/` | Committed | A consumer's file and shell tools write its work here. An app-managed home limits model file and shell writes to this folder. |
 | `${XDG_STATE_HOME:-$HOME/.local/state}/kendex/jarvis/<canonical-home-key>/jarvis-session.json` | Outside the home | The session runtime and the native SessionStart hook write the local controller record. The runtime writes no start-critical record under `state/`. |
 | `.agents/skills/` and each harness's skill and agent directories, such as `.claude/skills/`, `.claude/agents/` and `.codex/agents/` | Committed | kendex renders or links installed skills and agents here so a clone has them. In a home where kendex did not install Jarvis, an assistant app such as VGS can copy a kendex-rendered package to these same paths. |

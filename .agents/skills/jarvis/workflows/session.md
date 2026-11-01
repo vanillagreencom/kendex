@@ -85,7 +85,7 @@ A consumer's own rule files keep their content. Its start instructions load only
 
 - After the initial reads and first decision, read every section of the predecessor handoff and its progress log. Include records in Owed and open, Context, Agent contact, Verify and Open requests when those sections exist.
 - For every record outside session state, write it to its home under [Homes](../references/long-session.md#homes), or confirm that its home already retains it. Preserve its contents, durable id and recorded time. Read each destination to confirm retention before replacing the handoff or clearing the progress log. A failed destination read or write leaves the predecessor handoff and progress log untouched and stops replacement.
-- Archive the predecessor's handoff and progress log under `state/archive/` in the [home layout](../references/home-layout.md) before replacing them. Use the retention rule in [accounts-and-secrets.md:Retention](../references/accounts-and-secrets.md#retention). An archive failure stops replacement.
+- Archive the predecessor's handoff and progress log in the `archive/` directory beside the current handoff, `state/archive/` in the [home layout](../references/home-layout.md), before replacing them. Then index each archived file with `.agents/skills/jarvis/scripts/progress-log --archived FILE`, adding the `--handoff PATH` that selects the current handoff when it is not the default. Use the retention rule in [accounts-and-secrets.md:Retention](../references/accounts-and-secrets.md#retention). An archive or index failure stops replacement.
 
 ## Succession
 
