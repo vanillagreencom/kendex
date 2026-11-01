@@ -67,8 +67,8 @@ class Report(World):
         self.git(repo, "commit", "-qm", "fixture", env=env)
         return self.git(repo, "rev-parse", "HEAD").decode().strip()
 
-    def audit(self, *repos, since=START, until=END, extra=()):
-        return subprocess.run([self.bash, str(SCRIPTS / "docs-audit"), "--since", since,
+    def audit(self, *repos, since=START, until=END, extra=(), script=SCRIPTS / "docs-audit"):
+        return subprocess.run([self.bash, str(script), "--since", since,
                                "--until", until, *extra, *map(str, repos or (self.repo,))],
                               env=self.env, capture_output=True, text=True, timeout=30)
 
@@ -184,6 +184,20 @@ class Report(World):
                         {"since": END, "until": START}, {"extra": ("--top", "-1")}):
             with self.subTest(options=options):
                 self.assertEqual(self.audit(**options).returncode, 2)
+
+    def test_top_level_state_exclusion_control(self):
+        self.commit(self.repo, {".kendex-generated.json": b"[]"}, START)
+        self.commit(self.repo, {"state/delegate/s.md": b"top state\n", "deep/state/s.md": b"nested state\n"}, END)
+        source = (SCRIPTS / "docs-audit").read_text()
+        self.assertEqual(source.count("|state)/"), 1)
+        control = self.root / "control-docs-audit"
+        control.write_text(source.replace("|state)/", ")/"))
+        for script, paths in ((SCRIPTS / "docs-audit", ["deep/state/s.md"]),
+                              (control, ["deep/state/s.md", "state/delegate/s.md"])):
+            with self.subTest(script=script.name):
+                result = self.audit(script=script)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual([row["path"] for row in rows(result.stdout)[1:]], paths)
 
     def test_generated_exclusion_control(self):
         copy = self.root / "control"
