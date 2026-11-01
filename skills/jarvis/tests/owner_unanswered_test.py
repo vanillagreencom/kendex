@@ -10,9 +10,9 @@ import unittest
 from mail_world import BASH, LANE_MAIL, REPO, SCRIPTS, MailWorld, make_project
 
 
-def record(identity, operation, decision):
+def record(identity, operation, decision, at="2026-10-18T23:00:00Z"):
     return ("- Id and time: P-20261018T23000%sZ %s\n  - Operation: %s\n  - Observed result and source: read\n"
-            "  - Decision: %s\n  - State change: none\n") % (identity, "2026-10-18T23:00:00Z", operation, decision)
+            "  - Decision: %s\n  - State change: none\n") % (identity, at, operation, decision)
 
 
 class OwnerUnanswered(MailWorld):
@@ -62,6 +62,10 @@ class OwnerUnanswered(MailWorld):
 
         def at(offset):
             self.env = self.clocked(offset)
+
+        def stamp(offset):
+            return datetime.datetime.fromtimestamp(self.base + offset, datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
 
         at(-900)
         asks = [self.mail(self.home, "ask", "question %d" % n, "--to", "owner", "--options", "yes,no",
@@ -122,6 +126,19 @@ class OwnerUnanswered(MailWorld):
         self.owner(str(self.home / "tmp/slack/files/F5-covered.png"), "--directive", "--delivery-id", "C6:1010.0")
         captioned_file = "and here is the log\n" + str(self.home / "tmp/slack/files/F6-log.txt")
         self.owner(captioned_file, "--directive", "--delivery-id", "C7:1010.0")
+        # A relay catch-up delivers a file after its text was answered: the
+        # reply or record that names the text alone does not cover the file.
+        at(-245)
+        answered_text = self.owner("text answered before its file", "--directive", "--delivery-id", "C9:1000.0")
+        recorded_text = self.owner("text a record handled before its file", "--directive",
+                                   "--delivery-id", "C10:1000.0")
+        at(-244)
+        self.mail(self.home, "notice", "on it", "--to", "owner", "--ref", answered_text)
+        at(-243)
+        late_file = str(self.home / "tmp/slack/files/F7-late.png")
+        self.owner(late_file, "--directive", "--delivery-id", "C9:1015.0")
+        late_recorded_file = str(self.home / "tmp/slack/files/F8-late.png")
+        self.owner(late_recorded_file, "--directive", "--delivery-id", "C10:1015.0")
         at(-240)
         other_thread = str(self.home / "tmp/slack/files/F3-other.png")
         self.threaded(other_thread, "C4:9.0", "C4:1003.0")
@@ -147,7 +164,8 @@ class OwnerUnanswered(MailWorld):
         (state / "handoff.md").write_text("## Progress log\n\n" + record("1", "Read " + logged, "apply it") +
                                           record("2", "Handled " + request, "done") +
                                           record("3", "Handled " + quiet, "done, No reply needed") +
-                                          record("7", "Handled " + covered_caption, "no reply") +
+                                          record("7", "Handled " + covered_caption, "no reply", stamp(-248)) +
+                                          record("8", "Handled " + recorded_text, "no reply", stamp(-244)) +
                                           "- 23:00Z Handled %s, no reply\n" % current)
         (state / "archive/2026/handoff.md").write_text(record("4", "Ruling " + archived, "kept"))
         (state / "archive/2026/legacy.md").write_text("## Progress log\n\n- 22:59Z Started\n- 23:00Z Handled\n"
@@ -178,6 +196,10 @@ class OwnerUnanswered(MailWorld):
                  ("file F2 not fetched: no download url", True, True),
                  (str(self.home / "tmp/slack/files/F5-covered.png"), False, False),
                  (captioned_file, True, True),
+                 ("text answered before its file", False, False),
+                 ("text a record handled before its file", False, True),
+                 (late_file, True, True),
+                 (late_recorded_file, True, False),
                  (other_thread, True, True),
                  ("legacy archived", False, True),
                  ("legacy in the handoff", True, True),
@@ -305,7 +327,7 @@ class OwnerUnanswered(MailWorld):
         reader = ("        return watch.mailbox_events(bash, home, name)[1]\n",
                   "        box = home / 'tmp/lane-mail/overseer' / (name + '.jsonl')\n"
                   "        return [json.loads(row) for row in box.read_text().splitlines()]\n")
-        order = ('key == reply_key and at > row.get("at", ""))', "key == reply_key)")
+        order = ("key == reply_key and after(at))", "key == reply_key)")
         for old, new in (reader, order):
             with self.subTest(planted=new), tempfile.TemporaryDirectory() as folder:
                 copy = Path(folder) / "jarvis/scripts"

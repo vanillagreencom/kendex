@@ -193,6 +193,9 @@ def unanswered(lane, over, logged):
     closed = {row.get("re") for row in lane if row.get("mail_class") == "close"}
     paired = pairs(list(owners.values()))
     # A pair is one message: its ids cover together and it keys as its text.
+    # A relay catch-up can deliver one member hours after the other, so a
+    # cover that names only the other member counts once this row was
+    # delivered, the order the thread reply check compares.
     members = {}
     for identity, text in paired.items():
         members.setdefault(text["id"], {text["id"]}).add(identity)
@@ -202,16 +205,24 @@ def unanswered(lane, over, logged):
     def covered(row):
         identities = members.get(row["id"], {row["id"]})
         key = thread_key(paired.get(row["id"], row), owners)
+
+        def after(at):
+            # Stamps are whole seconds and the boxes and the handoff share no
+            # order, so a cover in the row's own second is not after it. A
+            # legacy entry carries no date, so it is never after.
+            return at > row.get("at", "")
+
+        def reaches(identity, at):
+            return identity == row["id"] or (identity in identities and after(at))
+
         if row["mail_class"] == "resolution" and row.get("re") in closed:
             return True
-        # Stamps are whole seconds and the two boxes share no order, so a
-        # reply in the row's own second covers nothing; a direct ref does.
-        if any(ref in identities or (key is not None and key == reply_key and at > row.get("at", ""))
+        if any(reaches(ref, at) or (key is not None and key == reply_key and after(at))
                for ref, reply_key, at in replies):
             return True
         request = row["mail_class"] == "owner-note"
         return any(any(names(record.get("Operation", "") + "\n" + record.get("Decision", ""), identity)
-                       for identity in identities)
+                       and reaches(identity, record.get("at", "")) for identity in identities)
                    and (not request or "no reply" in record.get("Decision", "").lower())
                    for record in logged)
 
@@ -226,7 +237,8 @@ def main():
         "Print one JSON line {id, at, kind, text} per owner message in the Jarvis home's overseer inbox "
         "that no reply reference, later reply in its thread, closed ask or progress record covers. "
         "A file the owner sent as its own message within %d seconds of its text, in the same thread or "
-        "both top level, counts as that message." % PAIR_SECS), epilog=(
+        "both top level, counts as that message; a cover that names only the other message counts for it once "
+        "it has arrived." % PAIR_SECS), epilog=(
         "Records come from the selected handoff and the archive beside it, whose INDEX.md skips files that "
         "ended before the window. A file INDEX.md lists inside the window that is gone prints "
         "`owner-unanswered: archive-pruned=PATH` on stderr and the run goes on: the messages that file "
