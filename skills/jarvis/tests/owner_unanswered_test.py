@@ -99,25 +99,41 @@ class OwnerUnanswered(MailWorld):
         self.mail(self.home, "notice", "followed up", "--to", "owner", "--ref", followed)
         at(-260)
         self.threaded("thread correction", root, next(key))
-        # Each pair case has its own channel, so no other text is near.
+        # An ask that names a thread root posts its own top-level question:
+        # it answers the root alone, not the follow-up in the root's thread.
+        at(-255)
+        asked = self.owner("asked about root", "--directive", "--delivery-id", "C8:1.0")
+        at(-254)
+        self.threaded("follow-up an ask does not answer", "C8:1.0", "C8:2.0")
+        at(-253)
+        self.mail(self.home, "ask", "about the root", "--to", "owner", "--options", "yes,no", "--recommend", "yes",
+                  "--ref", asked)
+        # Each pair case has its own channel, so no other text is near. A
+        # pair is judged on the Slack stamps in the delivery ids, which the
+        # owner sent; at is the relay's delivery, which a catch-up bunches.
         at(-250)
-        self.owner("caption", "--directive", "--delivery-id", "C2:1.0")
-        self.owner("late caption", "--directive", "--delivery-id", "C3:1.0")
-        self.threaded("thread text", "C4:1.0", "C4:2.0")
+        self.owner("caption", "--directive", "--delivery-id", "C2:1000.0")
+        self.owner("late caption", "--directive", "--delivery-id", "C3:1000.0")
+        self.threaded("thread text", "C4:1.0", "C4:1002.0")
+        covered_caption = self.owner("caption a record handled", "--directive", "--delivery-id", "C6:1000.0")
+        self.owner("text before a captioned file", "--directive", "--delivery-id", "C7:1000.0")
+        at(-249)
+        self.owner("file F2 not fetched: no download url", "--directive", "--delivery-id", "C3:1031.0")
+        self.owner(str(self.home / "tmp/slack/files/F5-covered.png"), "--directive", "--delivery-id", "C6:1010.0")
+        captioned_file = "and here is the log\n" + str(self.home / "tmp/slack/files/F6-log.txt")
+        self.owner(captioned_file, "--directive", "--delivery-id", "C7:1010.0")
         at(-240)
         other_thread = str(self.home / "tmp/slack/files/F3-other.png")
-        self.threaded(other_thread, "C4:9.0", "C4:3.0")
-        at(-220)
+        self.threaded(other_thread, "C4:9.0", "C4:1003.0")
+        at(-200)
         self.owner(str(self.home / "tmp/slack/files/F1-photo.png") + "\nfile F4 not fetched: no download url",
-                   "--directive", "--delivery-id", "C2:2.0")
-        at(-219)
-        self.owner("file F2 not fetched: no download url", "--directive", "--delivery-id", "C3:2.0")
-        at(-210)
+                   "--directive", "--delivery-id", "C2:1020.0")
+        at(-199)
         legacy = self.owner("legacy archived", "--directive", "--delivery-id", next(key))
         current = self.owner("legacy in the handoff", "--directive", "--delivery-id", next(key))
         delegated = self.owner("delegate logged", "--directive", "--delivery-id", next(key))
         delegate_archived = self.owner("delegate archived", "--directive", "--delivery-id", next(key))
-        at(-200)
+        at(-198)
         self.owner("no delivery id", "--directive")
         self.owner("watch-loop batch", "--directive", "--delivery-id", "jarvis-0123abcd")
         at(-100)
@@ -131,6 +147,7 @@ class OwnerUnanswered(MailWorld):
         (state / "handoff.md").write_text("## Progress log\n\n" + record("1", "Read " + logged, "apply it") +
                                           record("2", "Handled " + request, "done") +
                                           record("3", "Handled " + quiet, "done, No reply needed") +
+                                          record("7", "Handled " + covered_caption, "no reply") +
                                           "- 23:00Z Handled %s, no reply\n" % current)
         (state / "archive/2026/handoff.md").write_text(record("4", "Ruling " + archived, "kept"))
         (state / "archive/2026/legacy.md").write_text("## Progress log\n\n- 22:59Z Started\n- 23:00Z Handled\n"
@@ -151,11 +168,17 @@ class OwnerUnanswered(MailWorld):
                  ("thread root", False, False),
                  ("thread follow-up", False, False),
                  ("thread correction", True, True),
+                 ("asked about root", False, False),
+                 ("follow-up an ask does not answer", True, True),
                  ("caption", True, True),
                  ("late caption", True, True),
                  ("thread text", True, True),
-                 (other_thread, True, True),
+                 ("caption a record handled", False, True),
+                 ("text before a captioned file", True, True),
                  ("file F2 not fetched: no download url", True, True),
+                 (str(self.home / "tmp/slack/files/F5-covered.png"), False, False),
+                 (captioned_file, True, True),
+                 (other_thread, True, True),
                  ("legacy archived", False, True),
                  ("legacy in the handoff", True, True),
                  ("delegate logged", True, False),
@@ -222,6 +245,10 @@ class OwnerUnanswered(MailWorld):
         now, old = (datetime.datetime.fromtimestamp(self.base + hours * 3600, datetime.timezone.utc)
                     .strftime("%Y-%m-%dT%H:%MZ") for hours in (0, -48))
         covering = record("1", "Handled " + identity, "no reply").encode()
+        # The watch passes the oldest waiting row's exact second as --since; a
+        # file whose last record is in that minute is read.
+        edge = datetime.datetime.fromtimestamp((self.base - 3600) // 60 * 60, datetime.timezone.utc)
+        mid_minute = (edge + datetime.timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
         # name, files under the home, arguments, exit, stderr lines, listed.
         cases = (("default handoff missing", {}, [], 0, [], ["waiting"]),
                  ("selected handoff missing", {}, ["--handoff", "state/none.md"], 1,
@@ -238,6 +265,10 @@ class OwnerUnanswered(MailWorld):
                  ("archive with an unread START the INDEX ends before the window", {
                      "state/archive/a.md": b"\xff",
                      "state/archive/INDEX.md": ("- a.md dates=unread..%s\n" % old).encode()}, [], 0, [], ["waiting"]),
+                 ("archive the INDEX ends in the minute of --since", {
+                     "state/archive/a.md": b"\xff",
+                     "state/archive/INDEX.md": ("- a.md dates=%s..%s\n" % (old, edge.strftime("%Y-%m-%dT%H:%MZ"))).encode()},
+                  ["--since", mid_minute], 1, ["owner-unanswered: handoff-unreadable=%s" % (archive / "a.md")], None),
                  ("archive the writer could not date", {
                      "state/archive/a.md": b"\xff",
                      "state/archive/INDEX.md": b"- a.md dates=unread..unread\n"}, [], 1,

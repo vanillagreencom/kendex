@@ -114,12 +114,26 @@ def names(text, identity):
 
 
 def place(row):
-    """Where the relay delivered an owner row: (channel, thread root stamp, threaded), or None."""
+    """Where and when the owner sent a relay-delivered row: (channel, thread root stamp, threaded, sent), or None.
+
+    sent is the Slack stamp in seconds. The row's own `at` is when the relay
+    delivered it, and a catch-up delivers a backlog hours old in seconds.
+    """
     key = SLACK_KEY.fullmatch(row.get("delivery_id") or "")
     if key is None:
         return None
     thread = row.get("thread_ts")
-    return key[1], thread or key[2], bool(thread)
+    return key[1], thread or key[2], bool(thread), float(key[2])
+
+
+def in_thread(row):
+    """Whether the relay posts a to-overseer row with ref in its target's thread.
+
+    skills/slack relay.py `routes` and `post_notice` post an owner notice
+    there. `post_ask` posts a new top-level question that only links the
+    target, so an ask answers its ref alone, not the rest of that thread.
+    """
+    return row.get("kind") == "notice" and row.get("to") == "owner"
 
 
 def thread_key(row, owners):
@@ -127,7 +141,7 @@ def thread_key(row, owners):
 
     An owner answer keys on its ask. A relay-delivered directive keys on its
     Slack thread: the thread it was posted in, or its own stamp at top level,
-    the root replies to it are posted under. A reply (a to-overseer row with
+    the root replies to it are posted under. A reply (an owner notice with
     ref) keys as its ref target does, where the relay posts it; a ref naming
     no owner row names an owner ask.
     """
@@ -147,16 +161,16 @@ def files_only(row):
 
 
 def pairs(rows):
-    """Each files-only directive's text directive: the nearest one in the same place, PAIR_SECS apart at most.
+    """Each files-only directive's text directive: the nearest one in the same place, sent PAIR_SECS apart at most.
 
     The same place is one Slack thread, or both top level in one channel.
     """
     def spot(where):
-        channel, root, threaded = where
+        channel, root, threaded, _ = where
         return channel, root if threaded else None
 
     def seconds(row):
-        return watch.instant(row["at"]).timestamp()
+        return place(row)[3]
 
     texts = [(spot(place(row)), row) for row in rows
              if row["mail_class"] == "owner-note" and not files_only(row) and place(row) is not None]
@@ -174,7 +188,8 @@ def pairs(rows):
 
 def unanswered(lane, over, logged):
     owners = {row["id"]: row for row in lane if watch.owner_row(row)}
-    replies = [(row["ref"], thread_key(row, owners), row.get("at", "")) for row in over if row.get("ref")]
+    replies = [(row["ref"], thread_key(row, owners) if in_thread(row) else None, row.get("at", ""))
+               for row in over if row.get("ref")]
     closed = {row.get("re") for row in lane if row.get("mail_class") == "close"}
     paired = pairs(list(owners.values()))
     # A pair is one message: its ids cover together and it keys as its text.
