@@ -12,6 +12,7 @@
 #     passes it to the one under it, and the timed suite's own handler names
 #     the suite it stops, so the row reads the runner's acknowledgement and
 #     the suite's end rather than when a handler in the suite ran
+#   - an identity read that does not answer is no proof the suite stopped
 #   - a missed stop names the first level whose TERM handler never ran, and
 #     prints the runner's trace, the inner run's log and the suite's identity
 set -uo pipefail
@@ -20,8 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
 source "$SCRIPT_DIR/lib/control-runner.sh"
-# started_at: the runner's own process identity reader, which a zombie and a
-# reused pid both fail.
+# started_at and lane_identity_status: the runner's own process identity
+# readers, which a zombie and a reused pid both fail. Only status 3 from
+# lane_identity_status is a suite that ended; 1 is a read that did not answer.
 source "$SCRIPT_DIR/../../orch/tests/lib/suite-process.sh" || exit 2
 assert_tmpdir TMP
 # The runner's TERM handlers append their entries here; an empty file is a
@@ -86,28 +88,47 @@ waited="$(clock)"
 # suite_stopped — the timed suite's handler acknowledged the TERM for this
 # suite, and this suite has ended, by that TERM or by the KILL after its grace.
 suite_stopped() {
-    grep -Fq -- " timed_suite TERM suite=[$suite_pid]" "$CONTROL_TRACE" &&
-        [ "$(started_at "$suite_pid")" != "$suite_start" ]
+    local rc=0
+    grep -Fq -- " timed_suite TERM suite=[$suite_pid]" "$CONTROL_TRACE" || return 1
+    lane_identity_status "$suite_pid" "$suite_start" || rc=$?
+    [ "$rc" -eq 3 ]
 }
 
 stopped=no
 wait_for suite_stopped && stopped=yes
 assert_eq "a TERM to the runner stops the suite it is running" "$stopped" yes
 
+# The same check against a trace holding this suite's acknowledgement and a
+# state read that fails: a read with no answer leaves the stop unproved.
+printf -- '- timed_suite TERM suite=[%s]\n' "$suite_pid" >"$TMP/planted-trace"
+unread=proved
+(
+    CONTROL_TRACE="$TMP/planted-trace"
+    lane_process_state() { return 2; }
+    suite_stopped
+) || unread=unproved
+assert_eq "an unreadable identity read does not prove the suite stopped" "$unread" unproved
+
 # The stop chain's levels in order, each as the trace line its TERM handler
 # writes on entry. The first one missing is the level the stop never reached.
-# With every handler entered, the suite still running is the rest: the tree
-# stop or the identity reader under the timed suite missed it.
+# With every handler entered, the suite's identity names the rest: still
+# running, the tree stop under the timed suite missed it; ended, it ended
+# after the wait; unread, the identity read gave no answer.
 if [ "$stopped" != yes ]; then
     step=trace-unread
-    now="$(started_at "$suite_pid")" || now=ended
+    identity=0
+    lane_identity_status "$suite_pid" "$suite_start" || identity=$?
     capture=(
         "test: kill=$kill_rc wait=$wait_rc waited=$waited gave-up=$(clock)"
         "marks: started=$(mark_time "$marks/started")"
-        "suite: pid=$suite_pid start=$suite_start now=$now"
+        "suite: pid=$suite_pid start=$suite_start identity=$identity cause=${LANE_IDENTITY_CAUSE:--}"
     )
     if [ -r "$CONTROL_TRACE" ]; then
-        step=suite-alive
+        case "$identity" in
+        0) step=suite-alive ;;
+        3) step=late ;;
+        *) step=identity-unread ;;
+        esac
         for entry in "runner-term| runner TERM pid=" "job-term| job TERM body=" \
             "timed-suite-term| timed_suite TERM suite=[$suite_pid]"; do
             grep -Fq -- "${entry#*|}" "$CONTROL_TRACE" || { step="${entry%%|*}"; break; }
