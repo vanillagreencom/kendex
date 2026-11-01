@@ -485,7 +485,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "jarvis", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "worktree-restack", "rest", "jarvis", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: guards 9m09s
@@ -1035,16 +1035,11 @@ jobs:
             --battery skills/bot-instructions/tests --alone fsutil.test --alone globs.test \
             --battery skills/preflight/tests "${linear[@]}" "${bot[@]}" "${preflight[@]}" || fail=1
           exit "$fail"
-      # ---- shards: linear-controls-a, linear-controls-b: the linear control
-      # battery, which the step above skips. Stem cksum parity assigns each
-      # control to a or b without weighting its work time.
-      # Both need Bash 4, so the macOS leg excludes them.
+      # ---- shard: linear-controls: the linear control battery, which the
+      # step above skips. It needs Bash 4, so the macOS leg excludes it.
       - name: linear must-fail controls
-        if: matrix.shard == 'linear-controls-a'
-        run: bash skills/linear/tests/must-fail-controls.sh --shard 0
-      - name: linear must-fail controls
-        if: matrix.shard == 'linear-controls-b'
-        run: bash skills/linear/tests/must-fail-controls.sh --shard 1
+        if: matrix.shard == 'linear-controls'
+        run: bash skills/linear/tests/must-fail-controls.sh
 
       # ---- shard: worktree — the roster that held half of `rest`'s time.
       # `rest` ran 735-845s on the macOS leg over 79 files, 780s of it on run
@@ -1444,9 +1439,7 @@ jobs:
           - os: macos-latest
             shard: pi-claude-bridge
           - os: macos-latest
-            shard: linear-controls-a
-          - os: macos-latest
-            shard: linear-controls-b
+            shard: linear-controls
           - os: macos-latest
             shard: worktree-restack
           - os: macos-latest

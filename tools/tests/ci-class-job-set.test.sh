@@ -33,9 +33,9 @@ micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  +guards-tool
 micro|false|skills/jarvis/scripts/task|$SHARD_CODE|+jarvis +rest
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  -guards-scans
 micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox  +slack +guards-tools
-micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls-a +linear-controls-b
-micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls-a +linear-controls-b +guards-tools
-micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls-a -linear-controls-b +guards-commit
+micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls
+micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls +guards-tools
+micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls +guards-commit
 micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
 micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
 micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest

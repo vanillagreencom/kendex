@@ -19,7 +19,7 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -refresh -guards-commit -guards-commit-tail -linear -linear-controls-a -linear-controls-b -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
+NO_SKILL="-review-gate -refresh -guards-commit -guards-commit-tail -linear -linear-controls -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
 # `+shard` members it must hold and `-shard` members it must not. Empty

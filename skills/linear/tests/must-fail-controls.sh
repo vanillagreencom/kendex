@@ -27,8 +27,6 @@
 #
 #   skills/linear/tests/must-fail-controls.sh                     # all
 #   skills/linear/tests/must-fail-controls.sh estimate-clear      # one, by stem
-#   skills/linear/tests/must-fail-controls.sh --shard 0           # checksum even
-#   skills/linear/tests/must-fail-controls.sh --shard 1           # checksum odd
 
 set -uo pipefail
 
@@ -579,12 +577,6 @@ mutate_one() {
 }
 
 main() {
-	local shard="" checksum
-	if [[ "${1-}" == --shard ]]; then
-		[[ "$#" -ge 2 && "$2" =~ ^[01]$ ]] || die "--shard requires 0 or 1"
-		shard="$2"
-		shift 2
-	fi
 	local -a wanted=("$@") stems=()
 	timeout --version || die "cannot read the timeout implementation"
 	local suite_path control_path suite stem want k total=0 orphans=0
@@ -618,12 +610,6 @@ main() {
 		suite="$stem.test.sh"
 		if [[ ${#wanted[@]} -gt 0 ]] && [[ " ${wanted[*]} " != *" $stem "* ]]; then
 			continue
-		fi
-		# CI runs both checksum parities. New stems join one half without
-		# moving existing controls, and explicit stem runs keep their selection.
-		if [[ -n "$shard" ]]; then
-			checksum="$(printf '%s' "$stem" | cksum)" || die "cannot partition control: $stem"
-			[[ "$(( ${checksum%% *} % 2 ))" -eq "$shard" ]] || continue
 		fi
 		total=$((total + 1))
 		SELECTED+=("$stem")
