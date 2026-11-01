@@ -227,10 +227,12 @@ done
 # suites naming it. skills/settings declares FIXTURE_READ_KEY and holds its
 # reader and a suite writing a settings file of its own; skills/area
 # declares FIXTURE_AREA_KEY, commented out, and no test of it names the key;
-# no example declares FIXTURE_LOOSE_KEY. tools/ holds a copier noting the file
-# alone and one noting it first in a comma list.
+# no example declares FIXTURE_LOOSE_KEY. skills/second-opinion declares its
+# reviewer key family alone, and no test of it names a key. tools/ holds a
+# copier noting the file alone and one noting it first in a comma list.
 printf '\nFIXTURE_READ_KEY = "a"\nFIXTURE_AREA_KEY = "b"\nFIXTURE_LOOSE_KEY = "c"\n' >> "$R/kendex.settings.toml"
-mkdir -p "$R/skills/settings/tests" "$R/skills/area/tests"
+mkdir -p "$R/skills/settings/tests" "$R/skills/area/tests" "$R/skills/second-opinion/tests"
+printf '[env]\n# keys: SECOND_OPINION_<NAME>_CMD SECOND_OPINION_<NAME>_MODEL\n' > "$R/skills/second-opinion/kendex.settings.toml.example"
 printf '[env]\nFIXTURE_READ_KEY = "a"\n' > "$R/skills/settings/kendex.settings.toml.example"
 printf '[env]\n# FIXTURE_AREA_KEY = "b"\n' > "$R/skills/area/kendex.settings.toml.example"
 printf 'grep -q FIXTURE_READ_KEY "$PWD/kendex.settings.toml"\nprintf "reader\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/reader.sh"
@@ -238,6 +240,7 @@ printf 'own=$(mktemp -d)\nprintf "[env]\\nOWN = \\"1\\"\\n" > "$own/kendex.setti
 printf '# Inputs: skills/settings/kendex.settings.toml.example\nprintf "example-noted\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/example-noted.sh"
 for name in one two; do
   printf 'printf "%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/area/tests/$name.sh"
+  printf 'printf "review-%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/second-opinion/tests/$name.sh"
 done
 printf '# Inputs: kendex.settings.toml\ncat "$PWD/kendex.settings.toml" >/dev/null\nprintf "copy\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-copy.sh"
 printf '# Inputs: kendex.settings.toml, skills/demo/scripts/demo.sh\nprintf "listed\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-listed.sh"
@@ -250,6 +253,7 @@ settings_change() { # CHANGE: one edit of the settings world, then a clean SUITE
     read-key) sed -i.bak 's/^FIXTURE_READ_KEY = "a"$/FIXTURE_READ_KEY = "z"/' "$R/kendex.settings.toml" ;;
     area-key) sed -i.bak 's/^FIXTURE_AREA_KEY = "b"$/FIXTURE_AREA_KEY = "z"/' "$R/kendex.settings.toml" ;;
     loose-key) sed -i.bak 's/^FIXTURE_LOOSE_KEY = "c"$/FIXTURE_LOOSE_KEY = "z"/' "$R/kendex.settings.toml" ;;
+    family-key) sed -i.bak 's/^SECOND_OPINION_PI_COPILOT_GPT_CMD = "/&z /' "$R/kendex.settings.toml" ;;
     foreign-table) printf '[other]\nFIXTURE_READ_KEY = "z"\n' >> "$R/kendex.settings.toml" ;;
     comment) printf '# changed\n\n' >> "$R/kendex.settings.toml" ;;
     noted-example) printf '# changed\n' >> "$R/skills/settings/kendex.settings.toml.example" ;;
@@ -265,6 +269,7 @@ NOTED='tools/tests/settings-copy.sh tools/tests/settings-listed.sh '
 for row in \
   "a changed key selects its reader and the noted copiers, not a suite writing its own file|read-key|$KEY_READERS" \
   "a declared key no test of its tree names selects that tree's whole set|area-key|skills/area/tests/one.sh skills/area/tests/two.sh $NOTED" \
+  "a key of a declared family selects that tree's whole set, not the file's path readers|family-key|skills/second-opinion/tests/one.sh skills/second-opinion/tests/two.sh $NOTED" \
   "a changed key no example declares maps the file by path|loose-key|$PATH_READERS" \
   "a foreign table maps the file by path|foreign-table|$PATH_READERS" \
   "comments and blank lines select only the noted copiers|comment|$NOTED" \

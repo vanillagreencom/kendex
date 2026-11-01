@@ -369,6 +369,8 @@ case "${1:-}" in
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
       '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.' \
       '--selection: report selection=all|subset without running checks or suites.' \
+      '  With DEV_VALIDATE_SCOPED=true it runs the checks and executes the selected' \
+      '  suites, then reports selection=subset and scoped=true.' \
       '  Emits expected-secs=N only with measured coverage of every selected suite,' \
       '  including a selector-owned 25% margin, rounded up.' \
       '--released-packages BINARY [--part K/N] --range BASE: in each changed shell package' \
@@ -1933,9 +1935,10 @@ reach_join() { # ROLE PATH [changed]
 # suite, its readers are unidentified and its tree's whole set runs.
 # Scoped, a kendex.settings.toml change settings_change narrows to [env]
 # keys seeds, per key, the files doc_readers finds naming it. A tree whose
-# skills/<name>/kendex.settings.toml.example declares a key that no suite,
-# helper, test module or test program of the tree names runs its whole set:
-# the key's readers there are unidentified. A tree that does not declare the
+# skills/<name>/kendex.settings.toml.example declares a key, by name or by its
+# key family (settings_declared), that no suite, helper, test module or test
+# program of the tree names runs its whole set: the key's readers there are
+# unidentified. A tree that does not declare the
 # key and does not name it runs nothing for it. A change to comments alone
 # seeds only the file's input notes. Any other settings change seeds by path
 # as an unscoped run does.
@@ -2152,13 +2155,23 @@ settings_shape() { # FILE
   ' "$1"
 }
 # `<key> TREE` for each key the settings example on stdin declares, as an
-# assignment or a commented-out one.
+# assignment or a commented-out one, and for each key family a `# keys:`
+# comment line names: an item spelled as a key with one `<NAME>` in it after
+# its first character, such as SECOND_OPINION_<NAME>_CMD, printed as written.
+# A comment line seeds nothing into a consumer's settings, so the placeholder
+# never becomes a key there; any other item of the line declares nothing.
 settings_declared() { # TREE
   awk -v tree="$1" '
     match($0, /^[ \t]*(#[ \t]*)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) {
       key = substr($0, 1, RLENGTH - 1)
       gsub(/^[ \t#]+|[ \t]+$/, "", key)
       print key " " tree
+      next
+    }
+    match($0, /^[ \t]*#[ \t]*keys:/) {
+      n = split(substr($0, RLENGTH + 1), items, /[ \t,]+/)
+      for (i = 1; i <= n; i++)
+        if (items[i] ~ /^[A-Z_][A-Z0-9_]*<NAME>[A-Z0-9_]*$/) print items[i] " " tree
     }
   '
 }
@@ -2177,8 +2190,9 @@ settings_values() { # FILE KEY...
 # the one reading doc_readers and mapped_suites take of it. The first line is
 #   keys           then one `<key> <tree>` line for each changed [env] key and
 #                  each skills/<name> whose kendex.settings.toml.example, at
-#                  either endpoint, declares it, as an assignment or a
-#                  commented-out one;
+#                  either endpoint, declares it, as an assignment, a
+#                  commented-out one or a key family its <NAME> stands in
+#                  for with one or more characters (settings_declared);
 #   inert          no [env] value changed, so only comments and blanks did;
 #   broad <cause>  no key can be named: an endpoint is absent (absent), has
 #                  a line settings_shape refuses (shape) or fails the loader
@@ -2236,8 +2250,17 @@ settings_change() { # REV
     declared+="$text"$'\n'
   done
   while IFS= read -r key; do
-    hit=$(grep -- "^$key " <<<"$declared" | sort -u) || { echo 'broad undeclared'; return 0; }
-    areas+="$hit"$'\n'
+    hit=""
+    while read -r name example; do
+      case "$name" in
+        "$key") ;;
+        *'<NAME>'*) case "$key" in "${name%%<NAME>*}"?*"${name#*<NAME>}") ;; *) continue ;; esac ;;
+        *) continue ;;
+      esac
+      hit+="$key $example"$'\n'
+    done <<<"$declared"
+    [ -n "$hit" ] || { echo 'broad undeclared'; return 0; }
+    areas+=$(sort -u <<<"$hit")$'\n'
   done <<<"$changed"
   printf 'keys\n%s' "$areas"
 }
