@@ -931,7 +931,7 @@ MAP_CONTROLS=(
   "control: with skill_files missing tests/lib the helper's suite goes unreached~append~skills/mapped/scripts/driven~s| \"\$1\"/tests/lib/\* \"\$1\"/tests/\*.sh| \"\$1\"/tests/*.sh|~wrap"
   "control: without tests/lib in the scanned-path arm a changed helper runs the whole set~append~skills/mapped/tests/lib/helper.sh~/^    \*:tests\/lib\/\*.sh | \*:tests\/lib\/\*.bash) echo helper ;;$/d~$MAPPED_ALL"
   "control: without a module's folder seed only its file readers run~append~skills/mapped/scripts/plugin/hooks/x.js~/^      next_any+=(\"\${name%%\/\*}\")$/d~"
-  "control: with module rejection restored a module runs the whole set~append~skills/mapped/scripts/unused/data.json~s/^    test-module) return 1 ;;$/    module | test-module) return 1 ;;/~$MAPPED_ALL"
+  "control: with module rejection restored a module runs the whole set~append~skills/mapped/scripts/unused/data.json~s/in test-module) return 1/in module | test-module) return 1/~$MAPPED_ALL"
   "control: without the hook doc role README runs the whole hooks set~append~hooks/README.md~/^    hooks:\*.md) echo doc ;;$/d~$HOOKS_ALL"
   "control: without the script read filter a printed brief reaches its suites~append~skills/mapped/SKILL.md~s/if (role != \"script\" && role != \"lib\")/if (1)/~brief catalogscan rootglob skillmd walker"
   "control: with bare for recognized as a read command the shipped launch briefs reach their suite~append~skills/mapped/SKILL.md~s/(cat|grep|sed|awk|head|tail|read|find)/(cat|grep|sed|awk|head|tail|read|find|for)/~brief catalogscan rootglob skillmd walker"

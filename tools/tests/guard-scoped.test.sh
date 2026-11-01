@@ -198,13 +198,15 @@ git -C "$R" checkout -q -- .kendex-generated.json
 
 # Python test programs directly under a skill's tests/, as skills/jarvis
 # keeps them: each suite wrapper runs one by path. mod_test.py names the
-# module by path; importer_test.py and from_test.py import mod_test by module
-# name; other_test.py names another module of the same scripts/lib/ folder.
+# module and the script pytool by path; importer_test.py and from_test.py
+# import mod_test by module name; other_test.py names another module of the
+# same scripts/lib/ folder.
 mkdir -p "$R/skills/pyreach/scripts/lib" "$R/skills/pyreach/tests"
 printf '#!/usr/bin/env bash\nexec python3 "${0%%/*}/lib/mod.py"\n' > "$R/skills/pyreach/scripts/pyreach"
 printf 'VALUE = 1\n' > "$R/skills/pyreach/scripts/lib/mod.py"
+printf '#!/usr/bin/env bash\n:\n' > "$R/skills/pyreach/scripts/pytool"
 printf 'VALUE = 2\n' > "$R/skills/pyreach/scripts/lib/other.py"
-printf 'SOURCE = "skills/pyreach/scripts/lib/mod.py"\n' > "$R/skills/pyreach/tests/mod_test.py"
+printf 'SOURCE = "skills/pyreach/scripts/lib/mod.py"\nTOOL = "skills/pyreach/scripts/pytool"\n' > "$R/skills/pyreach/tests/mod_test.py"
 printf 'SOURCE = "skills/pyreach/scripts/lib/other.py"\n' > "$R/skills/pyreach/tests/other_test.py"
 printf 'import mod_test\n' > "$R/skills/pyreach/tests/importer_test.py"
 printf 'from mod_test import SOURCE\n' > "$R/skills/pyreach/tests/from_test.py"
@@ -223,7 +225,7 @@ python_change() { # PATH GUARD: append to PATH, then take the scoped selection
   doc_selection "$2"
   git -C "$R" checkout -q -- "$1"
 }
-for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/tests/mod_test.py; do
+for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/scripts/pytool skills/pyreach/tests/mod_test.py; do
   python_change "$path" "$GUARD"
   [ "$RC" -eq 0 ] && [ "$PLAN" = "$PY_SELECTED" ] && [ "$SELECTED" = 'from importer mod ' ] \
     && ok "scoped: $path selects the wrappers of the Python tests naming or importing it" \
@@ -231,7 +233,7 @@ for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/tests/mod_test.py; 
 done
 # Without the test-program role, tests/*.py has no role, so no scan reads it
 # and a changed one is skipped.
-if mutant_guard '/^    \*:tests\/\*\.py) echo test-program ;;$/d'; then
+if mutant_guard '/^    \*:tests\/\*\.py)$/,/^      ;;$/d'; then
   for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/tests/mod_test.py; do
     python_change "$path" "$MUTANT_TOOLS/guard"
     [ "$RC" -eq 0 ] && [ -z "$PLAN" ] \
@@ -257,26 +259,31 @@ if mutant_guard '/^        \[ "\$n:\${SCAN_ROLE\[i\]}" != "\$folder:test-program
 else
   bad 'control removes the folder exception'
 fi
-# Outside a scoped run a changed test program runs the whole set.
-python_range() { # GUARD: append to mod_test.py, then run the normal range
-  printf '# changed\n' >> "$R/skills/pyreach/tests/mod_test.py"
+# Outside a scoped run no scan reads a test program: a changed one, or a
+# changed script only a test program names, runs the whole set.
+python_range() { # PATH GUARD: append to PATH, then run the normal range
+  printf '# changed\n' >> "$R/$1"
   : > "$SUITE_LOG"
   RC=0
-  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$1" --range "$BASE" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$2" --range "$BASE" 2>&1)" || RC=$?
   SELECTED="$(sort "$SUITE_LOG" | tr '\n' ' ')"
-  git -C "$R" checkout -q -- skills/pyreach/tests/mod_test.py
+  git -C "$R" checkout -q -- "$1"
 }
-python_range "$GUARD"
-[ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod other ' ] \
-  && ok 'normal range: a changed test program runs the whole set' \
-  || bad 'normal range: a changed test program runs the whole set' "rc=$RC selected=$SELECTED out=$OUT"
-if mutant_guard '/^    test-program) \[ "\$scoped_only" -eq 1 \] || return 1 ;;$/d'; then
-  python_range "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod ' ] \
-    && ok 'control: with test programs mapped by reach outside a scoped run the other test goes unrun' \
-    || bad 'control: with test programs mapped by reach outside a scoped run the other test goes unrun' "rc=$RC selected=$SELECTED out=$OUT"
+for path in skills/pyreach/tests/mod_test.py skills/pyreach/scripts/pytool; do
+  python_range "$path" "$GUARD"
+  [ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod other ' ] \
+    && ok "normal range: $path runs the whole set" \
+    || bad "normal range: $path runs the whole set" "rc=$RC selected=$SELECTED out=$OUT"
+done
+if mutant_guard '/^      \[ "\$scoped_only" -eq 1 \] || return 1$/d'; then
+  for path in skills/pyreach/tests/mod_test.py skills/pyreach/scripts/pytool; do
+    python_range "$path" "$MUTANT_TOOLS/guard"
+    [ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod ' ] \
+      && ok "control: with the test-program role outside a scoped run $path leaves the other test unrun" \
+      || bad "control: with the test-program role outside a scoped run $path leaves the other test unrun" "rc=$RC selected=$SELECTED out=$OUT"
+  done
 else
-  bad 'control maps test programs by reach outside a scoped run'
+  bad 'control gives tests/*.py the test-program role outside a scoped run'
 fi
 
 # A real cancellation must also name suites in batteries not yet entered.

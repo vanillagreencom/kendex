@@ -1465,8 +1465,10 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #   helper       a shell file under tests/lib/, which suites source
 #   module       any other file below scripts/<dir>/
 #   test-module  any other file under tests/lib/
-#   test-program a Python file directly under tests/, which a suite
-#                wrapper runs by path or a sibling imports
+#   test-program in a DEV_VALIDATE_SCOPED=true run only, a Python file
+#                directly under tests/, which a suite wrapper runs by
+#                path or a sibling imports; in any other run it is a
+#                path of no role
 #   suite        a member of the tree's whole set: tests/*.sh but
 #                run-all.sh, and tests/*.test.mjs where no run-all.sh runs
 #                the set
@@ -1475,10 +1477,10 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # A module is scanned as a lib is, and a test module or test program as a
 # helper is, but a changed module seeds its enclosing folder and file name.
 # A changed test module maps to no suite: an import can spell no path. A
-# changed test program seeds its file name; mapped_suites' header says when.
+# changed test program seeds its file name.
 # Status 1 is a path of no role:
-# run-all.sh, any other file under tests/<dir>/, a file of hooks/ that is no
-# hook, and anything else.
+# run-all.sh, any other file under tests/<dir>/, tests/*.py outside a scoped
+# run, a file of hooks/ that is no hook, and anything else.
 path_role() { # DIR REL
   case "$1:$2" in
     *:tests/run-all.sh) return 1 ;;
@@ -1487,7 +1489,10 @@ path_role() { # DIR REL
     *:scripts/*/*) echo module ;;
     *:tests/lib/*) echo test-module ;;
     *:tests/*/*) return 1 ;;
-    *:tests/*.py) echo test-program ;;
+    *:tests/*.py)
+      [ "$scoped_only" -eq 1 ] || return 1
+      echo test-program
+      ;;
     *:tests/*.sh) echo suite ;;
     *:tests/*.test.mjs)
       if [ -f "$1/tests/run-all.sh" ]; then return 1; fi
@@ -1858,10 +1863,10 @@ reach_join() { # ROLE PATH [changed]
 # or tools/: REL is inside the tree, or ../ followed by a repository input.
 # This comment, with path_role's table and
 # doc_readers' for a doc, is the one statement of the rule.
-#   - A changed or deleted script, lib, helper, or in a scoped run a test
-#     program, starts a scan over skill_files with its name as the first
-#     needle. A file joins the reach when its code, comment lines dropped,
-#     names a needle as `/<name>`, the whole name; a test program also
+#   - A changed or deleted script, lib, helper or test program starts a
+#     scan over skill_files with its name as the first needle. A file
+#     joins the reach when its code, comment lines dropped, names a needle
+#     as `/<name>`, the whole name; a test program also
 #     names `/<module>.py` for each module an `import` or `from` line of it
 #     imports. A lib, helper, module, test module or test program that
 #     joins adds a needle any file may name. A script, the changed one or
@@ -1878,16 +1883,13 @@ reach_join() { # ROLE PATH [changed]
 #     doc_readers names, each adding its needle by its role. A doc no file
 #     reads runs nothing.
 #   - A deleted suite whose reach holds no suite runs nothing, and so does
-#     a deleted test program in a scoped run.
+#     a deleted test program.
 #   - A changed module seeds its scripts/<dir> folder and its file name.
 #     The folder needle reaches no test program: the folder a test program
 #     spells is part of a module path it names, which the file name reaches.
 #     A module no suite names runs nothing.
-#   - A path of no role, a changed test module, a changed or deleted test
-#     program outside a DEV_VALIDATE_SCOPED=true run, and a path whose
-#     reach holds no suite map to no suite. A control can run a test program
-#     through a bare quoted file name or a sibling suite, which no needle
-#     follows.
+#   - A path of no role, a changed test module, and a path whose
+#     reach holds no suite map to no suite.
 #   - Every tree also scans repository inputs outside its tree. Whole paths in
 #     code and `# Inputs:` path patterns seed the same reader reach. Input
 #     notes name indirect reads that the text scan cannot resolve.
@@ -1895,6 +1897,10 @@ reach_join() { # ROLE PATH [changed]
 # production needles. Readers under tests/ still extend the reach, so a
 # suite can cover the file through its test helpers. Other production
 # readers add no needles or named suites. Merge-group CI keeps the full reach.
+# Only a scoped run gives tests/*.py the test-program role (path_role): a
+# control can run a test program through a bare quoted file name or a sibling
+# suite, which no needle follows. In any other run no scan reads a test
+# program, and a changed one is a path of no role.
 # Scoped too, a changed .md file of a skill package, a source under
 # skills/<name>/ or its render under .agents/skills/<name>/, seeds no suite,
 # neither in its own tree nor as a ../ repository input of tools/ or a
@@ -1927,10 +1933,7 @@ mapped_suites() { # DIR REL
     ../*) role=doc ;;
     *) role=$(path_role "$dir" "$rel") || return 1 ;;
   esac
-  case "$role" in
-    test-module) return 1 ;;
-    test-program) [ "$scoped_only" -eq 1 ] || return 1 ;;
-  esac
+  case "$role" in test-module) return 1 ;; esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
