@@ -3403,12 +3403,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "47bf5378331d6d82cf860c3c38150cb95b21f6b7d12841f7ee056c55622799e8",
+      "sourceHash": "b03fcc00947bd14fdeca808b20a49ab01be0456601f2a7311ffa1524db9c39cb",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "233deef5cd3013c045c33ac337b0a360621aa14d398d6282554418914a61382e",
+      "renderedHash": "3c9edd1561d5016a60271bb0230762825861715f980aaa69c0ea9d2f50dd747f",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3441,12 +3441,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "47bf5378331d6d82cf860c3c38150cb95b21f6b7d12841f7ee056c55622799e8",
+      "sourceHash": "b03fcc00947bd14fdeca808b20a49ab01be0456601f2a7311ffa1524db9c39cb",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "233deef5cd3013c045c33ac337b0a360621aa14d398d6282554418914a61382e",
+      "renderedHash": "3c9edd1561d5016a60271bb0230762825861715f980aaa69c0ea9d2f50dd747f",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -11142,7 +11142,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "b4a12d1c1bf74558badbc82341c51d8920ce4e6a"
+      "commit": "48b15d036135c206bd759e19df82ba3f7fac6f17"
     }
   },
   "claudeProjectDefault": "released"
