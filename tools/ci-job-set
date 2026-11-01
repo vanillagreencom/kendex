@@ -46,7 +46,7 @@
 # GITHUB_REPOSITORY and GH_TOKEN allow, and emits `shards=` and
 # `queue_macos_shards=`, the Linux roster and the macOS-capable roster, each
 # less the shards proved on that runner, with `shell_shards=` and `shell_os=`
-# derived from them as on a merge group, and no other lane. A shard is proved on a runner
+# as emit() derives them, and no other lane. A shard is proved on a runner
 # where at least one job named `Skill suites shard (<shard>, <runner>)`
 # exists across those runs and every such job completed with success; each
 # run and job is checked for the event, head and run it claims, because
@@ -86,8 +86,7 @@
 #   - `guards-scans` runs where a path under skills/, hooks/ or tools/
 #     changed, the trees its scans read. The CHECKOUT_KENDEX_SHARDS
 #     also run where a build input changed, because their consumer rows use
-#     kendex-cli built from the checkout. A diff that reaches no package selects no shard, and
-#     shell_shards is false exactly where the list is empty.
+#     kendex-cli built from the checkout. A diff that reaches no package selects no shard.
 #   - The platform selections (the macOS shell bit, cargo_macos,
 #     cargo_windows) are false on a diff whose every path is prose,
 #     whose content no platform reads differently, and true on any other
@@ -130,8 +129,9 @@
 #
 # The lanes:
 #
-#   shell_shards        true where the `shards=` and `shell_os=` lists are
-#                       non-empty. shell_os names the selected runners.
+#   shell_shards        the shell bit and, in shell_os, its runner list, both
+#                       derived by emit() from `shards=` and
+#                       `queue_macos_shards=`.
 #                       .github/workflows/skill-tests.yml owns the jobs and
 #                       events that consume these values.
 #   bot_instructions    the check of the rendered review-bot instruction
@@ -188,8 +188,9 @@ fi
 
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# A class selection is one `name=value` word per lane: the macOS shell bit,
-# `macos`, then one per gated job, JOBS, then `shards=`. emit() writes it.
+# select_row prints a class selection as one `name=value` word per lane: the
+# macOS shell bit, `macos`, then one per gated job, JOBS, then `shards=`.
+# emit() writes the step output derived from it.
 JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check catalog smoke"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
@@ -730,6 +731,9 @@ if [ "$parity" = true ]; then
 fi
 
 now_shards="$(sel_get "$now" shards)"
+# A plain assignment, so a row that omits the bit ends the step here: read
+# inside a test, the refusal would end only the substitution.
+macos_on="$(sel_get "$now" macos)"
 jobs=""
 for lane in $JOBS; do
   value="$(sel_get "$now" "$lane")"
@@ -738,7 +742,7 @@ done
 
 # The merge group's macOS legs.
 queue=""
-if [ "$(sel_get "$now" macos)" = true ]; then
+if [ "$macos_on" = true ]; then
   for shard in $MACOS_SHARDS; do
     case "$now_shards" in *"\"$shard\""*) queue="${queue:+$queue,}\"$shard\"" ;; esac
   done
