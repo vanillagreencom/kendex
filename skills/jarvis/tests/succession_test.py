@@ -116,8 +116,12 @@ print(json.dumps({"config_dir": row["account"]}))
 
     def test_account_succession(self):
         # The preference walks claude, codex, then copilot, and the recorded
-        # account comes last. target is the one harness with an account the
-        # walk can pick; none names no such harness. The recorded account has
+        # account comes last: kept as it is when it has room, and otherwise
+        # replaced by another account of its harness, or none, which refuses
+        # before the predecessor ends. target is the one harness with an
+        # account the walk can pick; none names no such harness. A Copilot
+        # account whose owner turned extensions off stays untouched when it is
+        # kept, since its session already runs there. The recorded account has
         # room above the trigger, 5%, and below the work-item reserve, 50%,
         # that an overseer reading does not take. unattended is the home's
         # setting: a successor carries its own harness's permission words only
@@ -126,6 +130,7 @@ print(json.dumps({"config_dir": row["account"]}))
                 ("walled", "claude", 0, "claude", ""), ("walled", "claude", 0, "codex", "codex"),
                 ("low", "claude", 4, "codex", "claude"), ("walled", "claude", 0, "copilot", "copilot"),
                 ("room-first-entry", "codex", 20, "claude", ""), ("room-no-entry", "claude", 20, "none", ""),
+                ("room-no-entry", "copilot", 20, "none", ""), ("walled-no-entry", "claude", 0, "none", ""),
                 ("app-missing", "claude", 0, "codex", "")):
             with self.subTest(state=state, start=start, target=target):
                 self.call("start", harness=start, mode="new")
@@ -134,9 +139,9 @@ print(json.dumps({"config_dir": row["account"]}))
                 native_count = len(self.started())
                 predecessor_argv = self.started()[-1]["argv"]
                 contents = self.handoff()
-                account = self.root / ("next-" + state + "-" + target)
+                account = self.root / ("next-" + state + "-" + start + "-" + target)
                 account.mkdir()
-                calls = self.root / ("picks-" + state + "-" + target)
+                calls = self.root / ("picks-" + state + "-" + start + "-" + target)
                 (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom,
                                                                           "shared": True}))
                 (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high,copilot:standard:high"\n'
@@ -167,11 +172,34 @@ print(json.dumps({"config_dir": row["account"]}))
                     self.wait("stopped", persisted_stop=True)
                     (self.home / ".lane-fixture.json").unlink()
                     continue
+                kept = target == "none"
+                refused = headroom <= 5
+                order = ["claude", "codex", "copilot"]
+                settings = self.account / "settings.json"
+                if start == "copilot":
+                    settings.write_text('{"enabledFeatureFlags":{"EXTENSIONS":false}}\n')
+                if kept and refused:
+                    saved = self.record.read_bytes()
+                    answer, code = self.call("succeed")
+                    self.assertEqual((answer["state"], code), ("failed", 1))
+                    self.assertEqual(self.record.read_bytes(), saved)
+                    self.assertEqual(self.call("status")[0]["terminal"], previous["terminal"])
+                    self.assertEqual(len(self.started()), native_count)
+                    # The caller entry's own pick leaves the spent account out.
+                    queries = [json.loads(line) for line in calls.read_text().splitlines()]
+                    self.assertEqual([query[query.index("--harness") + 1] for query in queries[1:]], order + [start])
+                    self.assertEqual(queries[-1][queries[-1].index("--exclude-lane") + 1], str(self.account))
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+                    (self.home / ".lane-fixture.json").unlink()
+                    continue
                 self.call("succeed")
                 current = self.wait()
                 after = json.loads(self.record.read_text())
-                kept = target == "none"
-                refused = headroom <= 5
+                if start == "copilot":
+                    self.assertEqual(settings.read_text(), '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n')
+                    self.assertFalse((self.account / "extensions").exists())
+                    settings.unlink()
                 self.assertEqual((current["home"], current["harness"], current["account"]),
                                  (str(self.home), start if kept else target, str(self.account if kept else account)))
                 self.assertNotEqual(current["terminal"]["window"], previous["terminal"]["window"])
@@ -182,7 +210,6 @@ print(json.dumps({"config_dir": row["account"]}))
                 self.assertIn("--for-overseer", queries[0])
                 # Every named entry is asked, in order, until one qualifies.
                 walked = [query[query.index("--harness") + 1] for query in queries[1:]]
-                order = ["claude", "codex", "copilot"]
                 self.assertEqual(walked, order if kept else order[:order.index(target) + 1])
                 for query in queries[1:]:
                     self.assertEqual("--exclude-lane" in query and query[query.index("--exclude-lane") + 1], str(self.account) if refused else False)

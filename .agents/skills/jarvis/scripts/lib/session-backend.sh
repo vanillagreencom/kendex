@@ -64,19 +64,21 @@ case "$verb" in
     fi
     # The preference names the first choice and the recorded account the last
     # resort, the order an overseer succession walks. An account with room, or
-    # one nothing measured, is kept once no named entry qualifies; a handover
-    # with room is a context mark, so an unset preference keeps it. An account
-    # whose reading refuses headroom is left out of the walk.
-    exclude="" mark=context OL_WALK_CALLER_KEEP=1 OL_WALK_REFUSE_ID=""
+    # one nothing measured, is kept as it is once no named entry qualifies,
+    # outside ol_walk: its caller entry would set up and could refuse an
+    # account the session already runs on. A handover with room is a context
+    # mark, so an unset preference keeps it. An account whose reading refuses
+    # headroom is left out, and the caller entry picks another of its harness.
+    exclude="" mark=context caller="" OL_WALK_REFUSE_ID=""
     case "$rc" in
       0|4|5) ;;
-      3) exclude="$account" mark="" OL_WALK_CALLER_KEEP=0 OL_WALK_REFUSE_ID="$(ol_account_id "$account")" ;;
+      3) exclude="$account" mark="" caller=caller OL_WALK_REFUSE_ID="$(ol_account_id "$account")" ;;
       *) printf 'jarvis-session: selection-failed account=%s exit=%s\n' "$account" "$rc" >&2
          [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
          exit 1 ;;
     esac
-    # A pi model naming no provider names no account to keep or leave, and
-    # the walk refuses its caller entry, so that session stays as it is.
+    # A pi model naming no provider names no account any reading judges, so
+    # that session keeps its account without a walk.
     if [[ "$caller_account" != unknown ]]; then
       ol_preference_entries "$(ol_preference "$mark")" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
       OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
@@ -101,17 +103,19 @@ case "$verb" in
         entries+=("$entry")
       done
       walk_rc=0
-      ol_walk "$trigger" "$exclude" ${entries[@]+"${entries[@]}"} caller || walk_rc=$?
+      [[ -z "$caller" ]] || entries+=("$caller")
+      ol_walk "$trigger" "$exclude" ${entries[@]+"${entries[@]}"} || walk_rc=$?
       for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
         IFS=$'\t' read -r -a fields <<<"$skip"
         printf 'jarvis-session: %s\n' "${fields[*]}" >&2
       done
-      if (( walk_rc != 0 )); then
+      if (( walk_rc == 0 )); then
+        harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
+      elif [[ -n "$caller" || "$walk_rc" != 3 ]]; then
         printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
         [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
         exit 1
       fi
-      harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
     fi
     jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" \
       '{harness:$harness,account:$account,model:$model,effort:$effort}' ;;
