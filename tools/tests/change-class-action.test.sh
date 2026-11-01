@@ -926,7 +926,6 @@ pr-unclaimed|pull_request|queued|both|true|inputs=declared cause=per-push-unset|
 pr-unclaimed-settings|pull_request|queued|reader|true|inputs=declared cause=repository-queue-path|set|Makefile|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench nightly
 pr-unclaimed-selector-failed|pull_request|queued|both|true|inputs=run cause=queue-selector-failed|set|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
 pr-unclaimed-settings-unread|pull_request|queued|both|true|inputs=run cause=queue-settings-unreadable|unread|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
-pr-unclaimed-shipped-list|pull_request|queued|both|true|inputs=run cause=queue-path|set|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
 pr-unclaimed-unmarked|pull_request|queued|both|true|cause=repository-queue-path|set|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
 pr-unclaimed-old-render|pull_request|queued-old|both|true|inputs=declared cause=per-push-unset|unset|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
 pr-unclaimed-nightly|pull_request|queued-nightly|reader|false|inputs=declared cause=no-queue-path|set|Makefile|lane_verdicts=lane_check=true,lane_slow=false deferred=
@@ -1041,7 +1040,7 @@ done <<'ROWS'
       if [ "$reach_kind" = unclaimed-path ] && [ -n "$unclaimed_unproved" ]; then@      if [ -n "$unclaimed_unproved" ]; then@pr-deferred@classify
       if [ "$reach_kind" = unclaimed-path ] && [ -n "$unclaimed_unproved" ]; then@      if false; then@pr-unclaimed-selector-failed@classify
   [ "$queue_inputs" = declared ] || printf@  false || printf@pr-unclaimed-settings@classify
-  [ "$queue_inputs" = declared ] || printf@  [ -n "$queue_inputs" ] || printf@pr-unclaimed-shipped-list@classify
+  [ "$queue_inputs" = declared ] || printf@  [ -n "$queue_inputs" ] || printf@pr-unclaimed-selector-failed@classify
   if [ "$per_push" = unset ]; then@  if false; then@pr-unclaimed-old-render@classify
   if [ "$per_push" = unset ]; then@  if [ "$per_push" != set ]; then@pr-unclaimed-settings-unread@classify
     missing="$(render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)"@    missing="$(render_reader_missing "$per_push_reader")"@pr-unclaimed-old-render@classify

@@ -150,11 +150,10 @@ opencode.jsonc'
 # and every declared lane true, cause=full-run, whatever the class.
 # QUEUE_DEFAULT is true where the workflow asked for the queue-only default;
 # the stand-down below states what it does. QUEUE_INPUTS is the `inputs=`
-# field of change-class's queue-only line; an older caller passes none,
-# which defers no lane only an unclaimed path reached. Positions 1 to 8 keep the
-# meaning an older caller gives them, since the merge-group run pairs this
-# tree's action with the default branch's library; a new argument is only
-# ever appended.
+# field of change-class's queue-only line, which unclaimed_queue_unproved
+# reads. Positions 1 to 8 keep the meaning an older caller gives them, since
+# the merge-group run pairs this tree's action with the default branch's
+# library; a new argument is only ever appended.
 change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT QUEUE_INPUTS
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
   local queue_only="$6" work="$7" lanes_from="$8" queue_default="${9:-false}"

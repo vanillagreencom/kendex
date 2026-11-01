@@ -108,13 +108,13 @@
 # --output FILE carries the same value as `queue_only=true|false` beside
 # `change_class=`. This paragraph is the one statement of when the line reads
 # true; other docs point here.
-# The line's `inputs=` marks whether a later run on the same change and base
-# reads the same answer, as `measured=` marks a fallback: declared where the
-# cause was read off the changed paths, the base's lane declaration and its
-# settings alone (no-changed-paths, path-quoted, per-push-unset, queue-lane,
-# queue-list-undeclared, repository-queue-path and the no-queue-path these
-# reach); run where it rests on a read that can fail, the shipped queue list
-# or the selector's run. The change-class action defers a lane on a declared
+# On a queue_only=true answer, the line's `inputs=` marks whether a later run
+# on the same change and base reads the same answer, as `measured=` marks a
+# fallback: declared where the cause was read off the changed paths, the
+# base's lane declaration and its settings alone (no-changed-paths,
+# path-quoted, per-push-unset, queue-lane, queue-list-undeclared and
+# repository-queue-path); run where it rests on a read that can fail, the
+# shipped queue list or the selector's run. The change-class action defers a lane on a declared
 # answer from any render carrying lib/ci-lanes.sh, and per-push-unset only
 # beside a render reading HARNESS_CI_PER_PUSH_REASON, so a declared cause a
 # render with lib/ci-lanes.sh would not reach needs that action's reader
