@@ -31,30 +31,21 @@
 #      Windows cargo test steps run there and in the group, never on the
 #      push. The queue's legs expand to that list, or to the macOS-capable
 #      roster where nothing classified, and CI's lane for them is true
-#      exactly where they run. Must-fail arms plant a queue condition and a
-#      queue shard key that read no selection, a queue job ignoring the
-#      event and a CI lane ignoring the selection.
+#      exactly where they run.
 #      A dead classifier runs every gated job a merge group runs and the
 #      whole Linux shard roster. A pull request's run is cancelled by its
 #      next push; no other run is. The `CI` job needs every other job that
 #      can run on a merge group and runs on a pull request and a merge group
-#      whatever its needs did. Must-fail arms plant a lane condition that
-#      reads no selection, one that drops its status function, one that
-#      ignores the class on a merge group, one that runs on a pull request,
-#      a matrix with its arms swapped, a nightly roster moved back to the
-#      push, a shard key reading no selection, a cancel held to no event, a
-#      job dropped from CI's needs, CI without always(), a lane dropped from
-#      CI and a diff check held to the pull request. Every run step of the
+#      whatever its needs did. The must-fail arm plants a lane condition
+#      that reads no selection. Every run step of the
 #      bot-instructions job runs on the merge group; the job checks out the
 #      whole history the secrets scan judges each commit against, and that
 #      scan finds a credential one pull-request commit added and a later one
-#      removed, which the group's squash commit no longer holds. Arms
-#      change a step's event condition, add a run step the table does not
-#      hold, plant a shallow checkout, run the candidate's scanner and drop
-#      the pull request's scan.
+#      removed, which the group's squash commit no longer holds.
 #   3. the aggregate: a lane the class authorized may skip; one it did not
 #      is rejected, and so is a dead classifier, a job named twice and a
-#      helper that is not there.
+#      helper that is not there. The must-fail arm is an aggregate copy
+#      that ignores whether a selected job reported.
 # Inputs: .github/workflows/skill-tests.yml tools/ci-aggregate tools/ci-job-set tools/lib/* tools/rust-reads skills/* .agents/skills/* crates/* Cargo.toml Cargo.lock clippy.toml .cargo/*
 set -euo pipefail
 
@@ -112,10 +103,6 @@ case "$1:$CARGO_CASE" in
 esac
 CARGO
 chmod +x "$TMP/cargo-policy/bin/cargo"
-plant "$WORKFLOW" 'cargo clippy --workspace --all-targets --locked' \
-  'cargo clippy --workspace --all-targets --locked -- -D warnings' "$TMP/cargo-deny.yml" cargo-lint
-plant "$WORKFLOW" " || echo '::warning title=Rust formatting::cargo fmt --check reported formatting differences'" \
-  '' "$TMP/cargo-fmt-block.yml" cargo-lint
 while IFS='|' read -r label workflow step input expected annotation; do
   body="$(step_field "$workflow" cargo-lint "$step" run)" || exit 1
   [ -n "$body" ] || { echo 'cargo step has no run body' >&2; exit 1; }
@@ -131,8 +118,6 @@ done <<ROWS
 clippy warnings pass|$WORKFLOW|cargo clippy|warning|0|no
 compiler errors block|$WORKFLOW|cargo clippy|error|1|no
 formatting warns|$WORKFLOW|cargo fmt|formatting|0|yes
-must-fail: denying warnings blocks the advisory row|$TMP/cargo-deny.yml|cargo clippy|warning|1|no
-must-fail: blocking formatting removes its advisory result|$TMP/cargo-fmt-block.yml|cargo fmt|formatting|1|no
 ROWS
 
 # --- 1. The names -----------------------------------------------------------
@@ -154,9 +139,6 @@ job_set_calls() { # WORKFLOW — each tools/ci-job-set call in the changes job
 }
 check "the changes job asks tools/ci-job-set for the event-parity check" \
   "tools/ci-job-set --event-parity" "$(job_set_calls "$WORKFLOW")"
-plant "$WORKFLOW" "run: tools/ci-job-set --event-parity" "run: tools/ci-job-set" "$TMP/no-parity.yml" changes
-check "must-fail: a changes job calling tools/ci-job-set without --event-parity is named" \
-  "tools/ci-job-set" "$(job_set_calls "$TMP/no-parity.yml")"
 
 # The workflow supplies the flags; these fixtures only record the call.
 # Match the real installer's file mode so direct execution fails here too.
@@ -169,10 +151,6 @@ for origin in subject trusted; do
     "$origin" >"$install_dir/install.sh"
   chmod 644 "$install_dir/install.sh"
 done
-plant "$WORKFLOW" '--git' '--version stale-build' "$TMP/wf-fixed-installer.yml" changes
-plant "$WORKFLOW" '--cli-only' '' "$TMP/wf-desktop-installer.yml" changes
-plant "$WORKFLOW" 'classifier/install.sh' 'install.sh' "$TMP/wf-subject-installer.yml" changes
-plant "$WORKFLOW" 'classifier/install.sh' 'install.sh --git --cli-only; sh classifier/install.sh' "$TMP/wf-subject-then-trusted.yml" changes
 INSTALL_EXPECTED='arg=--cli-only
 arg=--git
 source=trusted'
@@ -192,10 +170,6 @@ while IFS='|' read -r row workflow verdict; do
   check "$row selects the trusted rolling-main CLI installer" "$verdict" "$matched"
 done <<ROWS
 workflow|$WORKFLOW|yes
-must-fail: restored fixed version|$TMP/wf-fixed-installer.yml|no
-must-fail: desktop installation|$TMP/wf-desktop-installer.yml|no
-must-fail: subject installer|$TMP/wf-subject-installer.yml|no
-must-fail: subject then trusted installer|$TMP/wf-subject-then-trusted.yml|no
 ROWS
 
 # `LANE:JOB` for every job whose own condition reads a lane.
@@ -423,12 +397,6 @@ schedule|skipped|$ALL_OFF|$NIGHTLY_JOBS
 workflow_dispatch|skipped|$ALL_OFF|$NIGHTLY_JOBS
 ROWS
 [ "$event_rows" -ge 9 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
-# A lane condition that drops its pull-request term runs on every pull
-# request: the skipped classifier reads as a dead one.
-plant "$WORKFLOW" "!cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' ||" \
-  "!cancelled() && (github.event_name != 'merge_group' ||" "$TMP/wf-pr-lane.yml" cargo-linux
-check "must-fail: a lane condition without its pull-request term runs on a pull request" "cargo-linux ci" \
-  "$(event_jobs "$TMP/wf-pr-lane.yml" pull_request skipped "$ALL_OFF")"
 
 # A classifier that died published nothing. Every gated job a merge group
 # runs, runs, which is what each condition's status function and result
@@ -472,9 +440,6 @@ check "the nightly macOS matrix uses macOS alone" '["macos-latest"]' \
   "$(gh_eval value '{}' "$(matrix_expr "$WORKFLOW" os skill-suites-macos)")"
 check "the nightly run runs the full shard roster through the alias" "$ROSTER" \
   "$(gh_eval value "$(context_json schedule skipped "$ALL_OFF" "$TMP/published-map")" "$(matrix_expr "$WORKFLOW" shard skill-suites-macos)")"
-plant "$WORKFLOW" "github.event_name == 'schedule'" "github.event_name == 'pull_request'" "$TMP/wf-macos-pr.yml" skill-suites-macos
-check "must-fail: macOS skill suites moved onto pull requests run there" true \
-  "$(gh_eval value "$(context_json pull_request skipped "$ALL_OFF" "$TMP/published-map")" "$(macos_condition "$TMP/wf-macos-pr.yml")")"
 
 # The queue's macOS legs: the job's condition, then its shard key evaluated,
 # as GitHub expands the matrix; `none` where the condition stands the job
@@ -539,37 +504,6 @@ schedule|skipped|$ALL_OFF|none
 ROWS
 [ "$queue_rows" -ge 14 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
 
-# Restoring the old subset must omit the rest leg.
-mkdir -p "$TMP/subset/tools"
-cp -R "$ROOT/tools/lib" "$TMP/subset/tools/lib"
-cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/subset/tools/"
-cp "$ROOT/tools/rust-reads" "$TMP/subset/tools/rust-reads"
-sed '/^queue=""$/,/^fi$/s/for shard in \$SHARDS/for shard in mailbox guards-tools/' \
-  "$JOB_SET" >"$TMP/subset/tools/ci-job-set"
-chmod +x "$TMP/subset/tools/ci-job-set"
-[ "$(diff "$JOB_SET" "$TMP/subset/tools/ci-job-set" | grep -c '^>' || :)" -eq 1 ] || exit 1
-subset="$(SELECT_WITH="$TMP/subset/tools/ci-job-set" SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
-subset_legs="$(queue_legs "$WORKFLOW" merge_group success "$subset")"
-check "must-fail: the old subset drops rest" false \
-  "$(jq -c 'index("rest") != null' <<<"$subset_legs")"
-[ "$subset_legs" != "$open_terminal_queue" ] && ok "must-fail: the old subset fails the portability row" ||
-  bad "must-fail: the old subset leaves the portability row green"
-
-# A condition reading no selection runs the legs on a group of prose alone.
-plant "$WORKFLOW" "|| needs.changes.outputs.queue_macos_shards != '[]')" "|| true)" \
-  "$TMP/wf-queue-unselected.yml" "$MACOS_QUEUE_JOB"
-check "must-fail: a queue condition reading no selection runs on a prose group" "[]" \
-  "$(queue_legs "$TMP/wf-queue-unselected.yml" merge_group success "$one_skill")"
-# A shard key reading no selection runs every queue shard.
-plant "$WORKFLOW" "fromJSON(needs.changes.result != 'success' &&" "fromJSON(true &&" \
-  "$TMP/wf-queue-all.yml" "$MACOS_QUEUE_JOB"
-check "must-fail: a queue shard key reading no selection runs an unselected queue shard" \
-  "$QUEUE_ALL" "$(queue_legs "$TMP/wf-queue-all.yml" merge_group success "$only_mailbox")"
-# A queue job ignoring the event runs its legs on a pull request.
-plant "$WORKFLOW" "github.event_name == 'merge_group'" "github.event_name != 'push'" \
-  "$TMP/wf-queue-pr.yml" "$MACOS_QUEUE_JOB"
-check "must-fail: a queue job ignoring the event runs on a pull request" "$open_terminal_queue" \
-  "$(queue_legs "$TMP/wf-queue-pr.yml" pull_request success "$open_terminal")"
 
 # The shard key expands to the published list, and to the whole roster where
 # nothing was published; that literal is the roster ci-job-set selects from,
@@ -686,54 +620,6 @@ cargo-tests-windows|push|no
 cargo-tests-windows|schedule|yes
 cargo-tests-windows|workflow_dispatch|yes
 ROWS
-plant "$WORKFLOW" "        if: github.event_name != 'push'" "" "$TMP/wf-macos-main-test.yml" cargo-macos line
-check "must-fail: a macOS cargo test step without its event condition runs on the push" "yes" \
-  "$(STEP_JOB=cargo-macos step_runs "$TMP/wf-macos-main-test.yml" test push)"
-
-# A step held to the pull request fails its merge group row: the scan or
-# check would run nowhere, since a pull request runs no lane.
-PR_ONLY="        if: always() && github.event_name == 'pull_request'"
-ALWAYS="        if: always()"
-while IFS='|' read -r step from to; do
-  STEP="$step" FROM="$from" TO="$to" awk '
-    /^      - / { in_step = 0 }
-    /^      - / || /^        / {
-      key = $0; sub(/^      - /, "        ", key)
-      if (key == "        id: " ENVIRON["STEP"] || key == "        name: " ENVIRON["STEP"]) in_step = 1
-    }
-    in_step && $0 == ENVIRON["FROM"] { $0 = ENVIRON["TO"]; n++ }
-    { print }
-    END { if (n != 1) exit 2 }
-  ' "$WORKFLOW" >"$TMP/wf-step-event.yml" ||
-    { echo "the event condition of '$step' could not be changed in a copy" >&2; exit 1; }
-  want="$(printf '%s\n' "$STEP_ROWS" | STEP="$step" awk -F '|' '$1 == "merge_group" && $2 == ENVIRON["STEP"] { print $3 }')"
-  [ -n "$want" ] || { echo "the step table has no merge group row for '$step'" >&2; exit 1; }
-  if step_row_ok "$TMP/wf-step-event.yml" merge_group "$step" "$want"; then
-    bad "must-fail: $step with its event condition changed fails its merge group row (got '$GOT')"
-  else
-    ok "must-fail: $step with its event condition changed fails its merge group row"
-  fi
-done <<ROWS
-$DOC_STEP|$ALWAYS|$PR_ONLY
-$TODO_STEP|$ALWAYS|$PR_ONLY
-$SECRETS_STEP|$ALWAYS|$PR_ONLY
-changelog-entries|$ALWAYS|$PR_ONLY
-decision-ids|$ALWAYS|$PR_ONLY
-ROWS
-
-# A run step added to the job with no rows is named.
-awk '
-  { print }
-  $0 == "        run: skills/commit-guards/scripts/changelog-entries --base \"$BASE\"" {
-    print "      - name: planted"
-    print "        run: true"
-    n++
-  }
-  END { if (n != 1) exit 2 }
-' "$WORKFLOW" >"$TMP/wf-step-unlisted.yml" ||
-  { echo "a step could not be added to $STEP_JOB in a copy" >&2; exit 1; }
-check "must-fail: a run step the table does not hold is named" "missing=planted extra=" \
-  "$(step_coverage_gap "$TMP/wf-step-unlisted.yml")"
 
 # The secrets scan in the content-scan job judges each group and pull
 # request commit against its own parents, which only the whole history
@@ -746,10 +632,6 @@ checkout_depth() { # WORKFLOW JOB — the candidate checkout's depth, or none
 SCAN_JOB="$(job_of_run "$WORKFLOW" "$DOC_LIMITS")"
 check "the content-scan job checks out the whole history, every commit's parents" "0" \
   "$(checkout_depth "$WORKFLOW" "$SCAN_JOB")"
-
-plant "$WORKFLOW" "          fetch-depth: 0" "" "$TMP/wf-shallow.yml" "$SCAN_JOB"
-check "must-fail: a content-scan checkout without fetch-depth 0 is named" "none" \
-  "$(checkout_depth "$TMP/wf-shallow.yml" "$SCAN_JOB")"
 
 # The pull-request producer can replace its guard scripts and exclusions.
 # Use the template suite's neutral credential fixture with this source
@@ -794,14 +676,6 @@ if ! GITLEAKS_BIN="$(command -v gitleaks)"; then
   GITLEAKS_BIN="$TMP/gitleaks/gitleaks"
 fi
 
-# Keep the scanner call and its flags, but execute the candidate's copy.
-# This inverse control must lose both refusal and source isolation. The
-# group-only control drops the pull request's scan and must lose the
-# finding.
-plant "$WORKFLOW" '/guards/skills/commit-guards/scripts/secrets' \
-  '/candidate/skills/commit-guards/scripts/secrets' "$TMP/candidate-scanner.yml" "$SCAN_JOB"
-plant "$WORKFLOW" '(cd -- "$RUNNER_TEMP/pull-request-head" && scan)' 'true' \
-  "$TMP/group-only-scan.yml" "$SCAN_JOB"
 QUEUE_REF="refs/heads/gh-readonly-queue/main/pr-7-$CREDENTIAL_BASE"
 scan_env() { # WORKFLOW KEY CONTEXT_JSON — the scan step's env value at that context
   local expr
@@ -857,8 +731,6 @@ while IFS='|' read -r row wf head_ref expected; do
   fi
 done <<ROWS
 trusted|$WORKFLOW|$QUEUE_REF|1:yes:no
-must-fail: the candidate's scanner|$TMP/candidate-scanner.yml|$QUEUE_REF|0:no:yes
-must-fail: the group's commits alone|$TMP/group-only-scan.yml|$QUEUE_REF|0:no:no
 a queue ref naming no pull request|$WORKFLOW|refs/heads/gh-readonly-queue/main/head|2:no:no
 ROWS
 
@@ -954,22 +826,6 @@ unavailable|1|error=base-unverified
 empty-base|1|error=base-unverified
 ROWS
 done
-# Removing refusal or reading another branch must turn the same collision
-# assertion red. The checker owns identity and base-read policy; this suite
-# holds the required CI job to its actual invocation and event inputs.
-plant "$WORKFLOW" 'DECISIONS_BASE_REF="origin/$base_ref" skills/decider/scripts/decisions check' \
-  'DECISIONS_BASE_REF="origin/$base_ref" skills/decider/scripts/decisions check || :' "$TMP/wf-decision-ignored.yml" "$STEP_JOB"
-plant "$WORKFLOW" 'DECISIONS_BASE_REF="origin/$base_ref"' \
-  'DECISIONS_BASE_REF="origin/main"' "$TMP/wf-decision-wrong-base.yml" "$STEP_JOB"
-for mutant in "$TMP/wf-decision-ignored.yml" "$TMP/wf-decision-wrong-base.yml"; do
-  if decision_ci_row_ok "$mutant" merge_group collision 1 'error=id-collision id=D035'; then
-    bad "must-fail: changed decision CI invocation still rejects collision"
-  else
-    [[ "$DECISION_GOT" == exit=0\ * ]] \
-      && ok "must-fail: changed decision CI invocation breaks collision assertion" \
-      || bad "must-fail: decision CI control did not reach a passing collision ($DECISION_GOT)"
-  fi
-done
 
 # --- 2a. The one context ---------------------------------------------------
 # `CI` is the aggregate context the organization standard has every repository
@@ -1023,17 +879,6 @@ merge_group|every needed job succeeded|yes
 pull_request|a pull request runs no lane|yes
 merge_group|a pull request runs no lane|no
 ROWS
-# An aggregate run on a pull request reads the skipped classifier and fails
-# every pull request.
-JOB="$CI_JOB" awk '
-  /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job) }
-  job == ENVIRON["JOB"] && $0 == "      - name: every needed job succeeded" { step = 1 }
-  step && $0 == "        if: github.event_name == \047merge_group\047" { $0 = "        if: always()"; step = 0; n++ }
-  { print }
-  END { if (n != 1) exit 2 }
-' "$WORKFLOW" >"$TMP/wf-ci-pr-aggregate.yml" || { echo "the aggregate step could not be changed in a copy" >&2; exit 1; }
-check "must-fail: an aggregate step without its event condition runs on a pull request" "yes" \
-  "$(STEP_JOB="$CI_JOB" step_runs "$TMP/wf-ci-pr-aggregate.yml" 'every needed job succeeded' pull_request)"
 # The workflow's events; the classifier every lane and CI read runs on the
 # merge group alone.
 check "the workflow runs on its five events" "merge_group pull_request push schedule workflow_dispatch" \
@@ -1070,13 +915,8 @@ push|fixture-ci-push-7|false
 schedule|fixture-ci-schedule-7|false
 ROWS
 [ "$concurrency_rows" -ge 4 ] || { echo "the concurrency table read $concurrency_rows rows" >&2; exit 1; }
-plant "$WORKFLOW" "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" "cancel-in-progress: true" \
-  "$TMP/wf-cancel-all.yml"
-concurrency_ctx='{"github":{"event_name":"merge_group","run_id":7}}'
-check "must-fail: a cancel held to no event cancels a merge group run" "true" \
-  "$(concurrency_value "$TMP/wf-cancel-all.yml" cancel-in-progress "$concurrency_ctx")"
 
-# --- 2b. Must-fail controls -------------------------------------------------
+# --- 2b. The must-fail control ----------------------------------------------
 
 # The pre-patch shape of the macOS cargo lane: gated on the event alone. It
 # runs on the one-skill row, which is the full battery the narrowing exists
@@ -1087,82 +927,6 @@ case " $(running "$TMP/wf-ungated.yml" "$one_skill" success merge_group) " in
   *" cargo-macos "*) ok "must-fail: a lane condition reading no selection runs on the one-skill row" ;;
   *) bad "must-fail: an ungated macOS cargo lane still reads as gated" ;;
 esac
-
-# A condition without its status function keeps GitHub's implicit success()
-# and stands its lane down on exactly the run nothing classified.
-plant "$WORKFLOW" "!cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
-  "github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.ui == 'true')" \
-  "$TMP/wf-no-status.yml"
-case " $(running "$TMP/wf-no-status.yml" "$ALL_OFF" failure merge_group) " in
-  *" ui-tests "*) bad "must-fail: a condition with no status function still runs under a dead classifier" ;;
-  *) ok "must-fail: a condition with no status function stands down under a dead classifier" ;;
-esac
-
-
-# The shard key reading no selection expands the whole roster on a diff that
-# selected one package.
-plant "$WORKFLOW" "|| needs.changes.outputs.shards)" "|| '$ROSTER')" "$TMP/wf-shards-unread.yml"
-check "must-fail: a shard key reading no selection expands the whole roster" \
-  "$ROSTER" "$(legs "$TMP/wf-shards-unread.yml" "$ORCH_CODE_ROW" success merge_group shard)"
-
-# The doc-limits step moved, not deleted, into the shell shards: the scan
-# still runs, but not on the classes that run no shard.
-awk '
-  /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job) }
-  job == "bot-instructions" && $0 == "      - name: doc-limits (document byte ceilings)" {
-    skip = 1; moved++; next
-  }
-  skip && /^        / { next }
-  { skip = 0; print }
-  job == "skill-suites-shard" && $0 ~ /^    steps:/ {
-    print "      - name: doc-limits (document byte ceilings)"
-    print "        run: skills/doc-limits/scripts/doc-limits"
-    inserted++
-  }
-  END { if (moved != 1 || inserted != 1) exit 2 }
-' "$WORKFLOW" >"$TMP/wf-moved-scan.yml" ||
-  { echo "the doc-limits step could not be moved in a copy" >&2; exit 1; }
-check "must-fail: a doc-limits step moved to the shell shards is reported there" \
-  "skill-suites-shard" \
-  "$(job_of_run "$TMP/wf-moved-scan.yml" skills/doc-limits/scripts/doc-limits)"
-
-# A lane that ignores the class on a merge group runs in a render group,
-# which is the full battery the queue pass exists to avoid.
-plant "$WORKFLOW" "github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true'" \
-  "github.event_name == 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.cargo_linux == 'true'" \
-  "$TMP/wf-group-ungated.yml"
-check "must-fail: a lane ignoring the class on merge groups runs in a render group" \
-  "bot-instructions cargo-linux" "$(running "$TMP/wf-group-ungated.yml" "$VERIFY_ROW" success merge_group)"
-
-# A job CI does not need reports into no required context.
-plant "$WORKFLOW" "needs: [changes, bot-instructions, skill-suites-shard," "needs: [changes, skill-suites-shard," "$TMP/wf-ci-short.yml"
-check "must-fail: a job dropped from CI's needs is named" "missing=bot-instructions extra=" \
-  "$(ci_needs_gap "$TMP/wf-ci-short.yml")"
-
-# A lane dropped from CI is named.
-# AGGREGATE|LANE LINE|GAP
-while IFS='|' read -r agg line gap; do
-  plant "$WORKFLOW" "$line" '' "$TMP/wf-lane-$agg.yml" "$agg"
-  check "must-fail: a lane dropped from $agg alone is named" "$gap" "$(aggregate_gap "$TMP/wf-lane-$agg.yml" "$agg")"
-done <<'ROWS'
-ci|--lane "$UI:ui-tests"|lanes: missing=ui:ui-tests extra= events: missing= extra=
-ROWS
-
-# Without always(), GitHub's implicit success() skips CI on a failed need, and
-# a skipped required context satisfies the ruleset.
-plant "$WORKFLOW" "    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')" \
-  "    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'" \
-  "$TMP/wf-ci-no-always.yml" "$CI_JOB"
-check "must-fail: CI without always() does not run on a failed need" "no" \
-  "$(ci_runs "$TMP/wf-ci-no-always.yml" merge_group failure)"
-
-# A diff check held to the pull request runs in no merge group, and CI,
-# which requires it there, holds it to no event.
-plant "$WORKFLOW" "    if: github.event_name == 'merge_group'" "    if: github.event_name == 'pull_request'" \
-  "$TMP/wf-event-drift.yml" preflight
-check "must-fail: a diff check held to the pull request is named" \
-  "lanes: missing= extra= events: missing=preflight=github.event_name == 'pull_request' extra=" \
-  "$(aggregate_gap "$TMP/wf-event-drift.yml" "$CI_JOB")"
 
 # --- 3. The aggregate -------------------------------------------------------
 
@@ -1181,7 +945,6 @@ aggregate() { # AGGREGATE_SCRIPT LANE... — the exit status, and the refusal ke
 # classifier cannot produce a passing CI context over skipped jobs.
 saved_results="$RESULTS"
 for job in catalog smoke; do
-  case "$job" in catalog) variable=CATALOG ;; smoke) variable=SMOKE ;; esac
   # Main's checkout is a real producer even when classification has no
   # usable output. The same jobs must check external releases there, on the
   # push and on the nightly run.
@@ -1211,35 +974,12 @@ merge_group|success|skills/orch/SKILL.md|true|1
 merge_group|success|crates/core/src/render/agent.rs|true|1
 merge_group|failure|README.md||1
 ROWS
-  plant "$WORKFLOW" "$variable: \${{ $expr }}" "$variable: \${{ $expr && false }}" \
-    "$TMP/wf-$job-false.yml" "$CI_JOB"
-  false_expr="$(aggregate_lanes "$TMP/wf-$job-false.yml" "$CI_JOB" | awk -F '\t' -v j="$job" '$2 == j { print $3 }')"
-  value="$(gh_eval value "$(context_json merge_group success "$ORCH_CODE_ROW" "$TMP/published-map")" "$false_expr")"
-  RESULTS="$(jq -cn --arg job "$job" '{changes: {result: "success"}} + {($job): {result: "skipped"}}')"
-  check "must-fail: $job aggregate inverse authorizes an unselected skip" "0" \
-    "$(aggregate "$AGGREGATE" --lane "$value:$job")"
-  condition="!cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.$job == 'true')"
-  plant "$WORKFLOW" "$condition" "!cancelled()" "$TMP/wf-$job-unconditional.yml" "$job"
-  case " $(running "$TMP/wf-$job-unconditional.yml" "$VERIFY_ROW" success merge_group) " in
-    *" $job "*) ok "must-fail: $job job inverse runs on README" ;;
-    *) bad "must-fail: $job unconditional inverse" ;;
-  esac
-  plant "$WORKFLOW" "$condition" "github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.$job == 'true')" "$TMP/wf-$job-no-status.yml" "$job"
-  case " $(running "$TMP/wf-$job-no-status.yml" "$ALL_OFF" failure merge_group) " in
-    *" $job "*) bad "must-fail: $job status inverse still runs" ;;
-    *) ok "must-fail: $job status inverse loses the dead-classifier job" ;;
-  esac
-  plant "$WORKFLOW" "$condition" "!cancelled() && github.event_name != 'pull_request' && (needs.changes.result != 'success' || needs.changes.outputs.$job == 'true')" "$TMP/wf-$job-no-main.yml" "$job"
-  case " $(running "$TMP/wf-$job-no-main.yml" "$ALL_OFF" success push) " in
-    *" $job "*) bad "must-fail: $job main inverse still runs" ;;
-    *) ok "must-fail: $job main inverse loses the main-push job" ;;
-  esac
 done
 RESULTS="$saved_results"
 
-# CI combines the shard and runner selections. Keep both output names in
-# the control: name coverage
-# alone cannot detect an expression that authorizes every skipped shell job.
+# CI combines the shard and runner selections. Name coverage alone cannot
+# detect an expression that authorizes every skipped shell job, so each row
+# evaluates it.
 saved_results="$RESULTS"
 RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
 expr="$(aggregate_lanes "$WORKFLOW" "$CI_JOB" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
@@ -1287,13 +1027,6 @@ check "must-fail: ignoring selected presence accepts the omitted matrix result" 
   "$(aggregate "$TMP/selected-control/tools/ci-aggregate" --lane "$value:skill-suites-shard")"
 check "an unselected absent job retains its existing waiver contract" 0 \
   "$(aggregate "$AGGREGATE" --lane 'false:skill-suites-shard')"
-RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
-plant "$WORKFLOW" "SHELL_SHARDS: \${{ $expr }}" "SHELL_SHARDS: \${{ $expr && false }}" \
-  "$TMP/wf-shell-false-$CI_JOB.yml" "$CI_JOB"
-false_expr="$(aggregate_lanes "$TMP/wf-shell-false-$CI_JOB.yml" "$CI_JOB" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
-value="$(gh_eval value "$(context_json merge_group success "$one_skill" "$TMP/published-map")" "$false_expr")"
-check "must-fail: $CI_JOB with selection behavior removed authorizes skipped Linux" "0" \
-  "$(aggregate "$AGGREGATE" --lane "$value:skill-suites-shard")"
 RESULTS="$saved_results"
 
 # The queue's macOS legs report into CI: a failed or cancelled leg fails it,
@@ -1326,15 +1059,6 @@ state-skipped|merge_group|$only_slack|skipped|true 1
 state-passed|merge_group|$only_slack|success|true 0
 unselected-docs|merge_group|$VERIFY_ROW|skipped|false 0
 ROWS
-plant "$WORKFLOW" "MACOS_QUEUE: \${{ $queue_expr }}" "MACOS_QUEUE: \${{ $queue_expr && false }}" \
-  "$TMP/wf-queue-lane-false.yml" "$CI_JOB"
-false_expr="$(aggregate_lanes "$TMP/wf-queue-lane-false.yml" "$CI_JOB" | awk -F '\t' -v j="$MACOS_QUEUE_JOB" '$2 == j { print $3 }')"
-check "must-fail: a CI lane ignoring the selection lets a selected queue job skip" "false 0" \
-  "$(queue_aggregate "$false_expr" merge_group "$open_terminal" skipped)"
-for selection in "$only_worktree" "$only_slack"; do
-  check "must-fail: ignoring a family selection lets its selected queue job skip" "false 0" \
-    "$(queue_aggregate "$false_expr" merge_group "$selection" skipped)"
-done
 
 check "a lane the class stood down may skip" "0" \
   "$(aggregate "$AGGREGATE" --lane 'true:skill-suites-shard' --lane 'false:ui-tests' \

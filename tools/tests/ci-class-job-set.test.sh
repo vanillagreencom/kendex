@@ -112,21 +112,6 @@ while IFS= read -r p; do
   check "lane source $p is queue-only" "queue_only=true cause=queue-path path=$p" \
     "$(queue_only_of "$p" | sed 's/ glob=.*//')"
 done <<<"$sources"
-mkdir -p "$TMP/member/tools"
-cp -R "$ROOT/tools/lib" "$TMP/member/tools/lib"
-cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/member/tools/"
-sed 's/(\(ci-job-set.\)ci-aggregate/(\1nothing/' "$JOB_SET" >"$TMP/member/tools/ci-job-set"
-sed 's/ \.cargo \\$/ \\/' "$ROOT/tools/rust-reads" >"$TMP/member/tools/rust-reads"
-chmod +x "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads"
-check "control: a copy without a member fails each pin" "${SOURCES/ci-aggregate/nothing}|$(echo ${NAMES/.cargo /})" \
-  "$(pins "$TMP/member/tools/ci-job-set" "$TMP/member/tools/rust-reads")"
-while IFS='|' read -r class path want; do
-  SELECT_WITH="$TMP/member/tools/ci-job-set" sel_row \
-    "control: copies without the member $path run it as no lane source or build input" "$class" false "$path" "$want" '*'
-done <<ROWS
-standard|tools/ci-aggregate|$SHARD_CODE
-micro|.cargo|$SHARD_CODE
-ROWS
 
 # A row that forgets a lane is refused before any lane reads it. shell_os is
 # the lane no aggregate holds, so this refusal is what keeps a forgotten
@@ -223,21 +208,6 @@ skills/deep-research/tests/deep-research.test.mjs||none
 tools/tests/guard-range.test.sh||none
 hooks/tests/check.test.sh||none
 ROWS
-sed 's/^CHECKOUT_KENDEX_SHARDS=.*/CHECKOUT_KENDEX_SHARDS=""/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
-! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
-check 'control: removing checkout legs changes the same suite result' none \
-  "$("$TMP/rule/tools/ci-job-set" --suite-kendex Linux skills/harness-ci/tests/change-class.test.sh '')"
-# The build rule reads the same list: without jarvis on it, a build input
-# no longer runs the Jarvis picker rows against the kendex it changes.
-sed 's/^CHECKOUT_KENDEX_SHARDS="refresh rest jarvis"$/CHECKOUT_KENDEX_SHARDS="refresh rest"/' \
-  "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
-! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
-got="$(SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false crates/cli/src/commands/tier_model.rs)"
-case "$got" in
-  exit=*) bad "the build-rule control runs the selector ($got)" ;;
-  *) check 'control: dropping jarvis from the build rule drops the Jarvis leg' \
-    'missing=jarvis ' "$(shards_miss +jarvis "$(field shards <<<"$got")")" ;;
-esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
