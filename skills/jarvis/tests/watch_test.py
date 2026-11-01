@@ -209,51 +209,91 @@ class Producer(unittest.TestCase):
         return result.stdout.split("id=", 1)[1].split()[0]
 
     def test_owner_unanswered_reminder(self):
-        owner = self.owner_note("owner asks")
-        self.clock(11 * 60)
-        reminder, failed = "EVENT owner-unanswered id=" + owner + " ", "EVENT owner-unanswered-failed "
+        # A check runs from an owner row's delivery until a check finds it covered.
+        reminder, failed = "EVENT owner-unanswered ", "EVENT owner-unanswered-failed "
+        windows = self.root / "windows"
+        helper = self.scripts / "owner-unanswered"
+        helper.rename(self.scripts / "owner-unanswered-real")
+        helper.write_text('printf "%s\\n" "$*" >> ' + shlex.quote(str(windows)) +
+                          '\nexec "$BASH" "${BASH_SOURCE[0]%/*}/owner-unanswered-real" "$@"\n')
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
                 ThreadPoolExecutor(max_workers=1) as passes:
             # The mail pass never finishes, so a poll runs only the check it schedules.
             pending = Future()
 
-            def poll(watch, now, header):
-                """One _poll at now: whether it submitted a check, and the header lines it added."""
+            def step(watch, now, header, submits, added, waiting):
+                """One _poll at now: whether it checks, the header lines it adds, and the saved waiting ids.
+
+                A check's result is accepted by the poll after the one that submits it.
+                """
                 before = watch.log.read_text().count(header) if watch.log.exists() else 0
                 prior = watch.unanswered_pending
                 watch._poll(passes, pending, now)
                 submitted = watch.unanswered_pending is not None and watch.unanswered_pending is not prior
                 if submitted:
                     watch.unanswered_pending.result(timeout=60)
-                return submitted, (watch.log.read_text().count(header) if watch.log.exists() else 0) - before
+                after = watch.log.read_text().count(header) if watch.log.exists() else 0
+                self.assertEqual((submitted, after - before), (submits, added), now)
+                saved = json.loads(watch.path.read_text()).get("unanswered", {}).get("pending", [])
+                self.assertEqual([row["id"] for row in saved], waiting, now)
 
-            watch = self.watch()
-            watch.next_presence["local"] = 10 ** 9
-            # Each row: now, the header counted, whether the poll submits a check, lines it adds.
-            for now, header, submits, added in ((0, reminder, True, 0), (1, reminder, False, 1),
-                                                (299, reminder, False, 0), (300, "EVENT owner-unanswered ", True, 0),
-                                                (301, "EVENT owner-unanswered ", False, 0)):
-                self.assertEqual(poll(watch, now, header), (submits, added), now)
+            def started():
+                watch = self.watch()
+                watch.next_presence["local"] = 10 ** 9
+                return watch
+
+            watch = started()
+            # Idle: a pass delivers no owner row, so no interval checks.
+            watch.accept(watch.acquire(0))
+            for now in (0, 300, 600):
+                step(watch, now, reminder, False, 0, [])
+            self.assertFalse(windows.exists())
+            first, second = self.owner_note("first ask"), self.owner_note("second ask")
+            at = {row["id"]: row["at"] for row in self.inbox()}
+            both, late = [first, second], "EVENT owner-unanswered id=" + second + " "
+            # Each row: now, the header counted, whether the poll checks, lines it adds, saved waiting ids.
+            # Delivery starts the check at once; young rows stay waiting unreminded.
+            watch.accept(watch.acquire(0))
+            for row in ((601, reminder, True, 0, both), (602, reminder, False, 0, both)):
+                step(watch, *row)
+            # Partial coverage: the covered row leaves, the other keeps the check alive.
+            self.mail(self.home, "notice", "first done", "--to", "owner", "--ref", first)
+            for row in ((901, reminder, True, 0, both), (902, reminder, False, 0, [second])):
+                step(watch, *row)
+            # Each window starts at the oldest waiting row, never a default window.
+            self.assertEqual(re.findall(r"--since (\S+) ", windows.read_text()), [at[first], at[first]])
+            # Ten minutes after delivery the row is reminded once, with its text and home origin.
+            self.clock(11 * 60)
+            for row in ((1201, late, True, 0, [second]), (1202, late, False, 1, [second]),
+                        (1501, reminder, True, 0, [second]), (1502, reminder, False, 0, [second])):
+                step(watch, *row)
+            self.assertEqual(re.findall(r"--since (\S+) ", windows.read_text())[-1], at[second])
             data = watch.log.read_bytes()
-            spans = self.module.decode_log(data, 0)[0]
-            self.assertEqual(data[spans[0][0]:spans[0][1]].decode().split("\n")[1], "owner asks")
-            self.assertIn(["local", str(self.home)], [span[2] for span in spans if len(span) == 3])
+            spans = [span for span in self.module.decode_log(data, 0)[0]
+                     if data[span[0]:span[1]].startswith(b"EVENT owner-unanswered id=")]
+            self.assertEqual([data[span[0]:span[1]].decode().split("\n")[1] for span in spans], ["second ask"])
+            self.assertEqual(spans[0][2], ["local", str(self.home)])
+            # A failed read is reported once and covers nothing.
             self.intercept_mail('[ "$1" != events ] || exit 1')
-            for now, submits, added in ((600, True, 0), (601, False, 1), (900, True, 0), (901, False, 0)):
-                self.assertEqual(poll(watch, now, failed), (submits, added), now)
+            for row in ((1801, failed, True, 0, [second]), (1802, failed, False, 1, [second]),
+                        (2101, failed, True, 0, [second]), (2102, failed, False, 0, [second])):
+                step(watch, *row)
             shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
-            # The batch sent at 300 is this loop's own directive, never an owner message.
+            # Restart with a waiting row checks at once and keeps the reminder deduplicated.
+            watch = started()
+            for row in ((0, reminder, True, 0, [second]), (1, reminder, False, 0, [second])):
+                step(watch, *row)
+            # Full coverage ends the check.
+            self.mail(self.home, "notice", "second done", "--to", "owner", "--ref", second)
+            for row in ((300, reminder, True, 0, [second]), (301, reminder, False, 0, []),
+                        (600, reminder, False, 0, [])):
+                step(watch, *row)
+            # Restart with nothing waiting stays idle. The loop's own batch
+            # directive in the inbox is not an owner delivery.
             self.assertTrue(any(row.get("delivery_id", "").startswith("jarvis-") for row in self.inbox()))
-            for now, submits in ((1200, True), (1201, False)):
-                self.assertEqual(poll(watch, now, "EVENT owner-unanswered"), (submits, 0), now)
-            # batch.json keeps the reported id across a restart.
-            restarted = self.watch()
-            restarted.next_presence["local"] = 10 ** 9
-            for now, submits in ((0, True), (1, False)):
-                self.assertEqual(poll(restarted, now, "EVENT owner-unanswered"), (submits, 0), now)
-            self.intercept_mail('[ "$1" != events ] || exit 1')
-            for now, submits, added in ((300, True, 0), (301, False, 1)):
-                self.assertEqual(poll(restarted, now, failed), (submits, added), now)
+            watch = started()
+            watch.accept(watch.acquire(0))
+            step(watch, 0, reminder, False, 0, [])
 
     def test_owner_unread_is_the_inbox_receipt(self):
         # The page keys on owner-unread; a read row only reminds the session.
@@ -277,7 +317,8 @@ class Producer(unittest.TestCase):
         self.assertNotIn("EVENT owner-unread", again, "second pass")
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.accept_unanswered(*watch.unanswered())
+            watch.accept(watch.acquire(0))
+            watch.accept_unanswered(*watch.unanswered(watch.state["unanswered"]["pending"]))
             log = watch.log.read_text()
         self.assertIn("EVENT owner-unanswered id=" + read + " ", log)
         self.assertIn("EVENT owner-unanswered id=" + unread + " ", log)
@@ -508,7 +549,7 @@ class Producer(unittest.TestCase):
                     changed_detail = dict(result[2], detail="another extraction path")
                     watch.accept_presence(side, [(result[0], "failed", changed_detail)])
                     watch.accept_presence(side, [(result[0], "skipped", None)])
-                    watch.accept([("local", self.module.pass_output("local", {}, []), None)])
+                    watch.accept([("local", self.module.pass_output("local", {}, []), None, [])])
                     self.assertEqual(watch.log.stat().st_size, size)
                     self.assertEqual(watch.state["presence_failures"][side], standing)
                     watch.batch(0)
@@ -947,24 +988,29 @@ class Producer(unittest.TestCase):
             self.assertIn("producer tail before state commit", self.inbox()[-1]["text"])
 
     def test_instrument_control(self):
-        # One planted defect proves this suite goes red: the watch never
-        # pages a report the cursor has not seen.
-        old = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
-        case = Producer(methodName="test_report_deadline_restart_and_receipt")
-        case.setUp()
-        try:
-            path = case.packages / "jarvis/scripts/lib/watch.py"
-            source = path.read_text()
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, "if False and " + old[len("if "):])
-            self.assertNotEqual(source, mutant)
-            path.write_text(mutant)
-            case.module = load(case.scripts / "lib/watch.py")
-            with self.assertRaises(AssertionError):
-                case.test_report_deadline_restart_and_receipt()
-        finally:
-            case.doCleanups()
-
+        # Each planted defect, in a disposable producer copy, turns its row red.
+        gate = "if self.unanswered_pending is None and waiting and now >= self.next_unanswered:"
+        report = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
+        for name, old, new in (
+                # The watch never pages a report the cursor has not seen.
+                ("test_report_deadline_restart_and_receipt", report, "if False and " + report[len("if "):]),
+                # An idle interval with no waiting owner row checks nothing.
+                ("test_owner_unanswered_reminder", gate, gate.replace(" waiting ", " (waiting or True) "))):
+            with self.subTest(row=name):
+                case = Producer(methodName=name)
+                case.setUp()
+                try:
+                    path = case.packages / "jarvis/scripts/lib/watch.py"
+                    source = path.read_text()
+                    self.assertEqual(source.count(old), 1)
+                    mutant = source.replace(old, new)
+                    self.assertNotEqual(source, mutant)
+                    path.write_text(mutant)
+                    case.module = load(case.scripts / "lib/watch.py")
+                    with self.assertRaises(AssertionError):
+                        getattr(case, name)()
+                finally:
+                    case.doCleanups()
 
 if __name__ == "__main__":
     unittest.main()

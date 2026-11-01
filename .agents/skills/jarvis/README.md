@@ -80,7 +80,7 @@ Three scripts in `.agents/skills/jarvis/scripts/` serve the session. Each reads 
 | `progress-log` | Adds one progress record to `state/handoff.md`. The clock supplies its id and time. An id is `P-` and the UTC time as `YYYYMMDDTHHMMSSZ`, with `-2`, `-3` added for later records in the same second. |
 | `owner-note` | Sends a note file as your directive to a repository's agent, on the control host first, then on this machine. The note ends with a request to check its facts and approach. |
 
-The loop adds `EVENT owner-unread` once when a message from you stays unread in the home inbox for 10 minutes. Key a page on that event. Every 5 minutes the loop also adds `EVENT owner-unanswered` once for each message `owner-unanswered` lists after 10 minutes. That event reminds the session; it never means the message is unread.
+The loop adds `EVENT owner-unread` once when a message from you stays unread in the home inbox for 10 minutes. Key a page on that event. When a message from you arrives, the loop checks it every 5 minutes until a reply, closed question or progress record covers it, and adds `EVENT owner-unanswered` once if it is still uncovered after 10 minutes. With no message waiting, it runs no check. That event reminds the session; it never means the message is unread.
 
 Claude Code runs the loop through Monitor and receives a pointer for each batch. Pi uses its installed mailbox wake. Copilot receives mail through its installed hooks; idle delivery depends on its native extension.
 
