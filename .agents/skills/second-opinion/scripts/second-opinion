@@ -299,9 +299,12 @@ Default commands:
           sent the review diff inline. Room check:
           env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick
             --harness pi --model MODEL
-          from the project root: an entry is taken only where the orch skill
-          is installed there and its check admits the account's Copilot
-          seat; the reviewer runs on this machine's login.
+          from the project root this script is installed in: an entry is
+          taken only where the orch skill is installed there and its check
+          admits the account's Copilot seat; the reviewer runs on this
+          machine's login. An install in no repository, such as a global
+          one, has no project root, and the check is unavailable there; it
+          never runs a lanes found under the working directory.
 
 Output clearing and ownership:
   No exit leaves a previous run's output behind. Every mode that writes
@@ -1200,7 +1203,12 @@ target_available() { command_program "$(target_cmd "$1")" "$CWD"; }
 # unset the stock check; a target with none, or with the key set empty, has no
 # check. A check whose program is not installed where it runs is unavailable,
 # not refused, and skips the target before anything runs: a missing optional
-# integration is no reading of the account, and never admits it. Exit 0 is
+# integration is no reading of the account, and never admits it. The stock
+# check names orch by a path relative to the project root this script is
+# installed in, the tree that supplies the script and its settings; an install
+# in no repository, such as a global one, has none, and resolving it from the
+# working directory would run a file of the tree under review, so the stock
+# check is unavailable there. Exit 0 is
 # room, and the stdout lines are the NAME=value env prefix naming the account
 # the command judged, which ROOM_ENV carries to the target command: `lanes pick`
 # prints exactly that, and `lanes pick --json` prints a record, which is
@@ -1215,7 +1223,7 @@ target_available() { command_program "$(target_cmd "$1")" "$CWD"; }
 # under a forced target it is the caller's, where a prompt may still wait.
 ROOM_ENV=""
 target_room() {
-  local t="$1" var from cmd="" model out rc=0 line shown=""
+  local t="$1" var from cmd="" model out rc=0 line shown="" again=""
   ROOM_ENV=""
   var="$(target_var "$t" ROOM_CMD)"
   from="$var"
@@ -1225,6 +1233,12 @@ target_room() {
     # shellcheck disable=SC2059 # the format is the stock template
     printf -v cmd "$DEFAULT_PI_COPILOT_ROOM_CMD" "$model"
     from="the default $var"
+    # No setting holds the stock command, so each skip quotes it.
+    again=": $cmd"
+    if [[ -z "$PROJECT_ROOT" ]]; then
+      skip_target "$t" "room check unavailable — $from runs orch from the project root this install is in, and it is in none: $cmd"
+      return 1
+    fi
   fi
   [[ -n "$cmd" ]] || return 0
   if ! command_program "$cmd" "${PROJECT_ROOT:-.}" >/dev/null; then
@@ -1234,7 +1248,7 @@ target_room() {
   # shellcheck disable=SC2086
   out="$(cd -- "${PROJECT_ROOT:-.}" && $cmd </dev/null)" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    skip_target "$t" "room check refused — $from exited $rc; its own reason is on stderr above, and running $from's command prints it again"
+    skip_target "$t" "room check refused — $from exited $rc; its own reason is on stderr above, and running $from's command prints it again$again"
     return 1
   fi
   while IFS= read -r line; do

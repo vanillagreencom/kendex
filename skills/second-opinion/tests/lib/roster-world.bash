@@ -113,7 +113,7 @@ PROJ=""
 # Word state, reset per row.
 W_PS="" W_PAD="" W_CURRENT="" W_MODELS="" W_COUNT="" W_TARGET="" W_STALE=""
 W_RESP_CLAUDE="" W_RESP_CODEX="" W_RESP_EXTRA="" W_PI="" W_ORCH="" W_PATH=""
-W_ENV=()
+W_GLOBAL="" W_ENV=()
 
 # `_` is a space and TAB a tab inside an identity value: the padded spellings.
 unpad() { local v="${1//_/ }"; printf '%s' "${v//TAB/$'\t'}"; }
@@ -211,6 +211,10 @@ word() {
     # root: orch:<kind> answers as room:<kind> and records its argv, orch:none
     # leaves it uninstalled
     orch:*) W_ORCH="${1#orch:}" ;;
+    # install:global puts the skill in no repository, as a global install
+    # is, and runs it from the project, the tree under review, so the orch
+    # word plants its lanes under the working directory instead
+    install:global) W_GLOBAL=1 ;;
     marker:*) W_ENV+=("${1#marker:}") ;;
     proj:*) project_file "${1#proj:}" ;;
     claude:*) W_RESP_CLAUDE="${1#claude:}" ;;
@@ -397,8 +401,14 @@ build() {
   SO="$PROJ/skills/second-opinion/scripts/second-opinion"
   W_PS=none W_PAD="" W_CURRENT=- W_MODELS=- W_COUNT=- W_TARGET="" W_STALE=""
   W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean W_PI="" W_ORCH="" W_PATH=""
-  W_ENV=()
+  W_GLOBAL="" W_ENV=()
   for w in "$@"; do word "$w"; done
+  if [[ -n "$W_GLOBAL" ]]; then
+    mkdir -p "$ROW/global"
+    second_opinion_install "$SKILL_DIR" "$ROW/global"
+    SO="$ROW/global/second-opinion/scripts/second-opinion"
+    W_ENV+=("GIT_CEILING_DIRECTORIES=$ROW/global")
+  fi
   make_stub claude
   make_stub codex
   make_stub extra
@@ -529,12 +539,22 @@ run() {
     detect) argv=(detect ${argv[@]+"${argv[@]}"}) ;;
     *) echo "UNKNOWN-COMMAND: $verb" >&2; exit 2 ;;
   esac
-  (env -i HOME="$ROW" PATH="$ROW/bin:${W_PATH:-$PATH}" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
+  (if [[ -n "$W_GLOBAL" ]]; then cd -- "$PROJ"; fi
+   env -i HOME="$ROW" PATH="$ROW/bin:${W_PATH:-$PATH}" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=claude:%s,codex:%s,extra:%s art=%s files=%s' "$rc" "$(stdout_text)" \
     "$(selection_log <"$ROW/stderr" | alias_text)" "$(count claude)" "$(count codex)" "$(count extra)" "$(artifact)" "$(files)"
 }
 
 # --- the err specs -------------------------------------------------------------
+# The stock room check of the entry whose settings namespace is NAME.
+stock_pick() {
+  case "$1" in
+    PI_COPILOT) set -- claude-opus-5.5 ;;
+    PI_COPILOT_GPT) set -- gpt-6.1-sol ;;
+    *) echo "UNKNOWN-STOCK-ENTRY: $1" >&2; exit 2 ;;
+  esac
+  printf 'env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/%s' "$1"
+}
 # One word per line the guards emit, held here once; a space composes them.
 same_model() { printf '→ skipping %s: runs the same model as this session (%s) — a second opinion must be cross-model' "$1" "$2"; }
 session_refusal() { printf '→ skipping session: %s' "$1"; }
@@ -570,10 +590,12 @@ err_word() {
     roomsaid:*) printf 'room-check %s: %s' "$a" "$b" ;;
     room:*) printf '→ room: %s has room by SECOND_OPINION_%s_ROOM_CMD%s' "$a" "$b" "$([[ "$c" == - ]] || printf '; runs under SO_TEST_SEAT=%s' "$c")" ;;
     # the stock room check, by the setting it defaults: stockroom:<name>:<NAME>:<seat>,
-    # stockroomrefused:<name>:<NAME>:<exit>, stockroomunavail:<name>:<NAME>:<model>
+    # stockroomrefused:<name>:<NAME>:<exit>, stockroomunavail:<name>:<NAME>,
+    # stockroomnoroot:<name>:<NAME>; each skip quotes the stock command
     stockroom:*) printf '→ room: %s has room by the default SECOND_OPINION_%s_ROOM_CMD; runs under SO_TEST_SEAT=%s' "$a" "$b" "$c" ;;
-    stockroomrefused:*) printf "→ skipping %s: room check refused — the default SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above, and running the default SECOND_OPINION_%s_ROOM_CMD's command prints it again" "$a" "$b" "$c" "$b" ;;
-    stockroomunavail:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs a program not installed here: env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/%s' "$a" "$b" "$c" ;;
+    stockroomrefused:*) printf "→ skipping %s: room check refused — the default SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above, and running the default SECOND_OPINION_%s_ROOM_CMD's command prints it again: %s" "$a" "$b" "$c" "$b" "$(stock_pick "$b")" ;;
+    stockroomunavail:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs a program not installed here: %s' "$a" "$b" "$(stock_pick "$b")" ;;
+    stockroomnoroot:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs orch from the project root this install is in, and it is in none: %s' "$a" "$b" "$(stock_pick "$b")" ;;
     noassign:*) printf '→ skipping %s: room check printed a line that is no NAME=value assignment: {"config_dir":"/seat"} — SECOND_OPINION_%s_ROOM_CMD prints the env prefix of the account it judged and nothing else' "$a" "$b" ;;
     target-undeclared:*) printf '→ skipping %s: model undeclared — %s fronts a selectable model; set SECOND_OPINION_%s_MODEL to the model id it runs' "$a" "$a" "$b" ;;
     roster-empty) printf '→ skipping roster: SECOND_OPINION_MODELS is set but empty — no targets to consider' ;;

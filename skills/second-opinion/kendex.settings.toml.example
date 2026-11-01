@@ -36,7 +36,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reas
 
 # How to add another reviewer: name it in the list above, give it a command,
 # and say which model that command reaches.
-# SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"
+# SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --no-session --no-extensions --model deepseek/deepseek-v4-pro --tools read,grep,find,ls"
 # SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
 
 # A reviewer can be checked for room on the account it spends before it is
@@ -46,8 +46,9 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reas
 # check. pi-copilot and pi-copilot-gpt, Pi on the Copilot pool running Claude
 # Opus and GPT, come with their command, model, room check and inline diff
 # built in (`second-opinion --help` prints them); their check runs lanes pick
-# from this project's .agents/skills/orch, so where orch is not installed
-# there, or the check refuses, the entry is skipped for the next one. Setting
+# from .agents/skills/orch in the project this skill is installed in, so
+# where orch is not installed there, in a global install, which has no
+# project, or where the check refuses, the entry is skipped for the next one. Setting
 # an entry's _CMD replaces all four with that entry's own settings; setting
 # its _ROOM_CMD empty drops the check. Each target remains subject to
 # session-model exclusion.
