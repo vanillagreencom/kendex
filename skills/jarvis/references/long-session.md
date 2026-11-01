@@ -31,7 +31,7 @@ The current handoff defaults to `state/handoff.md` in the [home layout](home-lay
 | State | The session: where it runs, its holds, its wake registrations and report coverage. Read the next report through `jarvis-session report-due`; retain no due row. The user's open questions as ids. Each task and awaited item as a tracker id with one unresolved next action. The checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log. |
 | Sub-agents | Each running lane or attached agent: its identity, task source and result destination. For an attached agent, identify its launch prompt and harness reply by the available agent or message ids. For a lane, record its task file and result file paths. Keep unfinished ids, available output locations and unknown state or locations under the emergency rule above. |
 | Instructions in force | Each temporary instruction from the user, its source and the event that ends it. Link the home of a standing rule. |
-| Progress log | One decision record per action at the time it occurs, under the record contract below. |
+| Progress log | One record at the time of each decision, state change, uncertain send, or user message handled without a reply, under the record contract below. |
 
 - Update session-only state when it changes: an unfinished operation's next step, a running lane's identity or result path, a temporary instruction or its end event, report coverage, or a hold. Change only the affected lines and append the state-change record in the same write. Advance the checkpoint's covered log range with the update.
 - At the scheduled report, refresh changed lines. Commit changed state at each scheduled report unless the user's standing instructions set another commit trigger. Never recompose the whole state for a report.
@@ -47,7 +47,7 @@ The current handoff defaults to `state/handoff.md` in the [home layout](home-lay
 
 ### Progress records
 
-Use named fields for each record. Record values rather than a prose account that the successor must interpret.
+Write a record only for a decision, a state change, a send whose delivery or effect is uncertain, or a user message handled without a reply. An action whose evidence already lives in the tracker or a mailbox gets no record of its own; a record that relies on that evidence cites its tracker or message id rather than copying it. Use named fields for each record. Record values rather than a prose account that the successor must interpret.
 
 | Field | Required content |
 |---|---|
