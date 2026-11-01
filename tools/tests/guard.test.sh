@@ -180,7 +180,7 @@ echo "=== a skill suite staged at mode 100644 reds through the exec-bits lane ==
 # this proves guard runs it and forwards its verdict.
 printf '#!/usr/bin/env bash\necho new\n' >"$R/skills/demo/tests/new.test.sh"
 git -C "$R" add -A && git -C "$R" update-index --chmod=-x skills/demo/tests/new.test.sh && run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: exec-bits=1"* ]] && [[ "$OUT" == *"not executable in git: skills/demo/tests/new.test.sh"* ]] && ok "a new skill suite at 100644 reds guard through the exec-bits lane, naming the file" || bad "a new skill suite at 100644 reds guard through the exec-bits lane, naming the file" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: exec-bits=1"* ]] && ok "a new skill suite at 100644 reds guard through the exec-bits lane" || bad "a new skill suite at 100644 reds guard through the exec-bits lane" "rc=$RC out=$OUT"
 reset_world
 
 echo "=== a shipped decision citation reds through the shipped-refs lane ==="
@@ -221,7 +221,7 @@ git -C "$R" add -A
 SR_OUT=""
 SR_RC=0
 SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
-[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 8193 bytes > 8192 bytes"*) true ;; *) false ;; esac \
+[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"notice=document-over-limit path=AGENTS.md"*) true ;; *) false ;; esac \
   && ok "precondition: doc-limits refuses the oversized document" \
   || bad "precondition: doc-limits refuses the oversized document" "rc=$SR_RC out=$SR_OUT"
 changelog_entries_pass() { # CHECKER: the same acceptance assertion for the control

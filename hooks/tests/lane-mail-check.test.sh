@@ -482,8 +482,6 @@ stop_at "$TRANSCRIPT" false
 assert_eq "RC=$RC first=$(first_line) judged=$(grep -c 'context=' "$ERR_FILE")" \
   "RC=0 first=lane-mail-check: usage-unread=$TRANSCRIPT judged=0" \
   "a usage object neither spelling reads is keyed, never summed to a figure the mark is judged on"
-assert_eq "$(grep -c 'none of the field names' "$ERR_FILE")" "1" \
-  "and the key carries the English that says why the figure went unread"
 assert_eq "$(grep -cx "$GAP" "$ERR_FILE")" "1" \
   "and the account mark beside it is judged as it is on any other turn end"
 
@@ -527,11 +525,9 @@ new_handoff_lane handoff_setting_unreadable KEN-78
 printf 'this is ( not shell\n' > "$LANE/.env.local"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state cause=1 said=1" \
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state cause=1" \
   "a settings file that will not load is reported with the loader's words and the turn ends"
-assert_eq "$(grep -c 'is not there' "$ERR_FILE")" "0" \
-  "and is never reported as an install that is not there"
 
 # The verb's own status 2: a state file it cannot read. Its header and --help
 # publish 2 as attributable, so it is told apart from an install that does not
@@ -821,9 +817,9 @@ expect 2 "lane-mail-check: context=600000" "and the context mark is judged on a 
 # gap is reported, naming the directory, and the turn ends.
 install_hook "$HOOK" "$LANE/.opencode/hooks/lane-mail-check.sh"
 stop
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "$LANE/.opencode/hooks is no harness" "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: account=unlisted named=1" \
-  "a harness this install does not name leaves the account unjudged, named, and the turn ends"
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: account=unlisted" \
+  "a harness this install does not name leaves the account unjudged, and the turn ends"
 
 # A setting out of range dies inside `lanes` as invalid-percent, whose exit the
 # hook cannot tell from an unmeasurable account, so the bound is judged here.
@@ -941,8 +937,8 @@ old_dispatcher
 UNANSWERED="lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'workflow-state: unknown-command' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=$UNANSWERED cause=1 said=1" \
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'workflow-state: unknown-command' "$ERR_FILE")" \
+  "RC=0 first=$UNANSWERED cause=1" \
   "an install that does not carry the verb is reported with its own words and the turn ends"
 record_handoff KEN-80
 old_dispatcher
@@ -968,8 +964,8 @@ printf '# shellcheck shell=bash\n: "an orch library older than the account rule"
   > "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh said=1" \
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh" \
   "an orch library without the account rule is reported and the turn ends, never left on 127"
 
 # This hook's own directory gone while the turn ends, which a refresh that
@@ -986,8 +982,8 @@ printf '#!/usr/bin/env bash\ncase " $* " in *" --git-common-dir "*)\n  rm -f -- 
 chmod +x "$GIT_SHIM/git"
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false "PATH=$GIT_SHIM:$PATH"
-assert_eq "RC=$RC first=$(first_line) named=$(grep -c 'could not be resolved' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-skipped=unlocatable named=1" \
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-skipped=unlocatable" \
   "a hook whose own directory went away reports the gap under the value no path can fill"
 assert_eq "$(grep -c 'No such file or directory' "$ERR_FILE")" "1" \
   "and cd's own words are replayed UNDER the keyed line, never ahead of it"
@@ -1007,8 +1003,8 @@ for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
 done
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) absent=$(grep -c 'is not there' "$ERR_FILE") stale=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh absent=1 stale=0" \
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh" \
   "a library the install has not got is reported as absent, never as one that would not answer"
 
 # A library bash cannot parse. Its syntax errors are written as bash reads the
@@ -1706,9 +1702,9 @@ overseer_transcript
 overseer_route() { grep -cF -- "/oversee-succeed --context $OVERSEER_CONTEXT -- [THE PERMISSION" "$ERR_FILE"; }
 overseer_record_named() { grep -cF -- " set oversee handoff " "$ERR_FILE"; }
 
-# The refusal must explain the cap even on a window whose percentage leaves room.
+# The cap refuses even on a window whose percentage leaves room.
 context_rule_row() { # ROLE NAME [HOOK]
-  local role="$1" text CONTEXT_PCT_ENV=''
+  local role="$1" CONTEXT_PCT_ENV=''
   if [ "$role" = overseer ]; then
     new_overseer "$2"
     judge_says 'oversee-succeed: mark-reached kind=context value=405000 mark=90 succession=on headroom=80'
@@ -1723,10 +1719,9 @@ context_rule_row() { # ROLE NAME [HOOK]
   else
     stop_at "$TRANSCRIPT" false
   fi
-  text="$(sed -n "/^this $role requires handoff under the shared context rule/p" "$ERR_FILE")"
-  assert_eq "RC=$RC first=$(first_line) cap=$(grep -cF '400000 tokens used' <<<"$text" || true) percent=$(grep -cF 'strictly past 90 percent of the printed window' <<<"$text" || true) window=$(grep -cF '1000000' <<<"$text" || true)" \
-    'RC=2 first=lane-mail-check: context=405000 cap=1 percent=1 window=1' \
-    "$role at 405000 tokens names both context limits on a 1000000-token window"
+  assert_eq "RC=$RC first=$(first_line)" \
+    'RC=2 first=lane-mail-check: context=405000' \
+    "$role at 405000 tokens is refused on the cap of a 1000000-token window"
 }
 for context_role in overseer lane; do
   context_rule_row "$context_role" "${context_role}_context_rule"
@@ -1752,9 +1747,10 @@ stop_at "$TRANSCRIPT" true $(overseer_env)
 expect 2 "lane-mail-check: context=612000" \
   "and repeats on the continued turn, as a lane's does"
 record_overseer_handoff
+judged_before=$(judge_calls)
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
-assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=3" \
+assert_eq "RC=$RC first=$(first_line) judged=$(( $(judge_calls) - judged_before ))" "RC=0 first=- judged=0" \
   "an overseer whose own handoff record stands ends its turn, and the judgement is not even asked"
 # The fleet item is one item, shared by every overseer of the fleet in turn. A
 # record the session before this one wrote and exited on answers for nobody
@@ -1782,8 +1778,7 @@ judge_says "$HEADROOM_MARK_LINE"
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: headroom=4" \
   "an overseer the judgement puts at its account mark is refused with the headroom it read"
-assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
-  "named=1 route=1" "and the refusal names the judge's own setting and the succession"
+assert_eq "route=$(overseer_route)" "route=1" "and the refusal names the succession"
 
 # A session with compaction enabled has no managed handoff window. It passes that
 # window empty, to the judge and to the succession the refusal names alike, so

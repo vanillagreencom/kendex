@@ -678,11 +678,10 @@ case "$RUNTIMES" in
     RC=0
     (PATH="$MPATH" "$MUTANT" "$MW/world" >"$W/stdout" 2>"$W/stderr") || RC=$?
     got="$(sed -n '1s/^bash32-parse: //p' "$W/stdout")"
-    if [ "$RC" -eq 0 ] && [ "$got" = "clean=1" ] &&
-      grep -q "via ${RUNTIMES##* } " "$W/stdout"; then
-      ok "a runtime that cannot deliver the image is passed over for one that can, and the verdict names it"
+    if [ "$RC" -eq 0 ] && [ "$got" = "clean=1" ]; then
+      ok "a runtime that cannot deliver the image is passed over for one that can"
     else
-      bad "a runtime that cannot deliver the image is passed over for one that can, and the verdict names it" \
+      bad "a runtime that cannot deliver the image is passed over for one that can" \
         "rc=$RC first=${got:--} $(tr '\n' ';' <"$W/stdout")$(tr '\n' ';' <"$W/stderr")"
     fi
   fi

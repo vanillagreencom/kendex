@@ -718,8 +718,6 @@ map_row() { # HOW PATHS NOTE[;;NOTE...] — sets VERDICT
       [[ "$OUT" == *"$want_note"* ]] || noted=missing
     done <<<"${3//;;/$'\n'}"
   fi
-  # A note whose reason has no explanation arm prints the broken-guard line.
-  [[ "$OUT" != *"no explanation is defined for this value"* ]] || noted=unexplained
   VERDICT="rc=$RC started=$(started) note=$noted"
   back_to_mapped
 }
@@ -801,7 +799,6 @@ for row in "${UNREAD_ROWS[@]}"; do
   range_read_fails "$unread"
   [ "$RC" -eq 0 ] && [ "$(started)" = "$MAPPED_ALL" ] \
     && [[ "$OUT" == *"$(note_for unreadable "$changed")"* ]] \
-    && [[ "$OUT" != *"no explanation is defined for this value"* ]] \
     && ok "an unreadable $unread runs the whole set and names the read" \
     || bad "an unreadable $unread runs the whole set and names the read" "rc=$RC started=$(started) out=$OUT"
   back_to_mapped

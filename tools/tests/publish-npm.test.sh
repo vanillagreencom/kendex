@@ -37,8 +37,8 @@
 #            vdown   exit 1 with a network error for the version
 #   publish  ok or fail
 #
-# The last block cuts each guard out of a copy of the tool, between its
-# `# guard <rule>: begin` and `end` markers, and runs that guard's row
+# The last block cuts the `served` guard out of a copy of the tool, between
+# its `# guard served: begin` and `end` markers, and runs that guard's row
 # again: the row must go red, which is what makes it a row about the guard.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE

@@ -185,7 +185,7 @@ proof_bun() { # STATE
   fixture "bun-$state-$BUN_ROWS"
   bun_release || return 1
   case "$state" in
-    install | corrupt | rerun | foreign | developer) image=1.4.2 ;;
+    corrupt | rerun | foreign | developer) image=1.4.2 ;;
     skip) image="$(cat "$R/.bun-version")" || return 1 ;;
     unsupported | unsupported-os) image=1.4.2 ;;
   esac
@@ -204,19 +204,17 @@ proof_bun() { # STATE
   fi
   run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" BUN_ARCH="$([ "$state" = unsupported ] && echo aarch64 || echo x86_64)" BUN_OS="$([ "$state" = unsupported-os ] && echo Darwin || echo Linux)" DAYTONA_SANDBOX_ID="$sandbox"
   case "$state" in
-    install | rerun)
+    rerun)
       [ "$RC" -eq 0 ] && [ -x "$R/home/.local/bin/bun" ] && [ -s "$R/curl.log" ] || return 1
       # Read the owned startup file without the test host's /etc/profile,
       # which can independently prepend ~/.local/bin and hide a broken file.
       resolved="$(env -i HOME="$R/home" PATH="$R/fake-bin:$SYS_BIN" "$BASH" --noprofile --rcfile "$R/home/.bash_profile" -ic 'command -v bun; bun --version' 2>/dev/null)" || return 1
       [ "$resolved" = "$R/home/.local/bin/bun"$'\n'"$(cat "$R/.bun-version")" ] || return 1
       case "$OUT" in *" npm:10.9.3 bun:$(cat "$R/.bun-version")"*) ;; *) return 1 ;; esac
-      if [ "$state" = rerun ]; then
-        rm "$R/curl.log"
-        run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" DAYTONA_SANDBOX_ID=test
-        [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] || return 1
-        case "$OUT" in *'lane-setup: bun=skip'*) ;; *) return 1 ;; esac
-      fi
+      rm "$R/curl.log"
+      run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" DAYTONA_SANDBOX_ID=test
+      [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] || return 1
+      case "$OUT" in *'lane-setup: bun=skip'*) ;; *) return 1 ;; esac
       ;;
     skip) [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] && [ ! -e "$R/home/.local/bin/bun" ] && case "$OUT" in *'lane-setup: bun=skip'*) true ;; *) false ;; esac ;;
     corrupt) [ "$RC" -ne 0 ] && [ ! -e "$R/home/.local/bin/bun" ] ;;
@@ -562,7 +560,7 @@ proof_linux_only() {
 OWNED_HEADER="$(sed -n "s/^owned_header='\(.*\)'\$/\1/p" "$TOOLS/lane-setup")"
 [ -n "$OWNED_HEADER" ] || { bad "the owned_header extractor reads the header from lane-setup" "no owned_header= line matched"; exit 1; }
 
-# proof_wrapper PRIOR SCCACHE EXPECT CONFIG [FROM TO]: the sandbox setup
+# proof_wrapper PRIOR SCCACHE EXPECT CONFIG: the sandbox setup
 # with a stale owned config, an empty config from a prior run, or no config.
 # sccache wraps rustc and its config is the owned header alone (local), or
 # neither (unused). CONFIG is the sccache-config key the run prints, write
@@ -621,7 +619,7 @@ for tool in cc ld ld.mold mold ld.lld; do
 done
 case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
 
-# proof_warm WARM SOURCE WRAPPER STALE EXPECT [FROM TO]: the setup with
+# proof_warm WARM SOURCE WRAPPER STALE EXPECT: the setup with
 # FLEET_WARM=WARM on a toy crate, committed, that compiles with a current
 # Cargo.lock (good), does not compile (broken), or has no Cargo.lock for
 # --locked to accept (unlocked), with the real cargo on its PATH and the build

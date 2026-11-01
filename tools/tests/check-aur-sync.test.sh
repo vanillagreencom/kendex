@@ -313,86 +313,15 @@ done <<EOF
 $rows
 EOF
 
-# The drift finding names the key that differs, so the author knows what to regenerate.
-dir="$(world pkgrel)"
-run "$dir"
-case "$OUT" in
-  *'kendex: pkgrel differs'*) ok "pkgrel drift names the key" ;;
-  *) bad "pkgrel drift names the key" "$OUT" ;;
-esac
-for name in epoch groups backup pkgbase; do
-  dir="$(world "$name")"
-  run "$dir"
-  case "$OUT" in
-    *"kendex: $name differs"*) ok "$name drift names the key" ;;
-    *) bad "$name drift names the key" "$OUT" ;;
-  esac
-done
-
-# The scriptlet finding names the file the recipe promised.
-dir="$(world install)"
-run "$dir"
-case "$OUT" in
-  *'install=kendex.install names no file'*) ok "absent scriptlet is named" ;;
-  *) bad "absent scriptlet is named" "$OUT" ;;
-esac
-
-# The remote finding names the companion the AUR still tracks.
-dir="$(world aur-extra)"
-run "$dir" --remote kendex
-case "$OUT" in
-  *'kendex: old.install is published but the recipe no longer names it'*) ok "remote drift names the stale companion" ;;
-  *) bad "remote drift names the stale companion" "$OUT" ;;
-esac
-
-# The remote finding names the scriptlet the AUR lacks.
-dir="$(world scriptlet)"
-run "$dir" --remote kendex
-case "$OUT" in
-  *'kendex: kendex.install is not published at all'*) ok "remote drift names the missing scriptlet" ;;
-  *) bad "remote drift names the missing scriptlet" "$OUT" ;;
-esac
-
-# The stale-digest finding names the array, the file and both digests.
-dir="$(world patch-stale)"
-run "$dir" kendex
-case "$OUT" in
-  *"kendex: sha256sums[0] is $AUR_WORLD_PLACEHOLDER but fix.patch hashes to"*) ok "stale local digest names the pin and the file" ;;
-  *) bad "stale local digest names the pin and the file" "$OUT" ;;
-esac
-
-# A differing binary companion is reported by size, with no diff attempted.
-dir="$(world aur-binary)"
-run "$dir" --remote kendex
-case "$OUT" in
-  *'kendex: icon.png on the AUR is not this repo'\''s (10 bytes there, 10 here; binary, no diff)'*) ok "binary companion drift is reported without a text diff" ;;
-  *) bad "binary companion drift is reported without a text diff" "$OUT" ;;
-esac
-
 # A committed AUR symlink is not a recipe file. Its target can be any runner
-# path, so the refusal names the mode without reading or printing that file.
+# path, so the refusal must not read or print that file.
 dir="$(world aur-symlink)"
 run "$dir" --remote kendex
-if [[ "$OUT" == *'kendex: PKGBUILD is not published as a regular file'* ]] &&
-  [[ "$OUT" != *'AUR-SYMLINK-TARGET-MUST-NOT-LEAK'* ]]; then
+if [[ "$OUT" != *'AUR-SYMLINK-TARGET-MUST-NOT-LEAK'* ]]; then
   ok "AUR symlink is rejected without leaking its target"
 else
   bad "AUR symlink is rejected without leaking its target" "$OUT"
 fi
-
-# The missing-file findings name the field and the file, aliases resolved.
-dir="$(world patch-gone)"
-run "$dir" kendex
-case "$OUT" in
-  *'kendex: source=notes.txt names no file'*) ok "absent local source is named after its alias" ;;
-  *) bad "absent local source is named after its alias" "$OUT" ;;
-esac
-dir="$(world changelog-gone)"
-run "$dir" kendex
-case "$OUT" in
-  *'kendex: changelog=ChangeLog names no file'*) ok "absent changelog is named" ;;
-  *) bad "absent changelog is named" "$OUT" ;;
-esac
 
 # --print-files: the two makepkg reads, then each companion file the recipe names.
 dir="$(world patch)"

@@ -28,9 +28,9 @@
 #      or read by the action's own later steps alone, and the classify
 #      step's `env:` block maps each declared input to
 #      exactly one variable, its name upper-cased with `-` as `_`, each one
-#      classify's Environment header lists. Copies carrying a misspelled
-#      `lanes` value and a misspelled
-#      `inputs.lanes-from` are the controls. A workflow reads the action, never the script, and
+#      classify's Environment header lists. A copy carrying a misspelled
+#      `lanes` value is the control. A workflow reads the action, never the
+#      script, and
 #      GitHub reads an undeclared input as empty, so a broken mapping there
 #      publishes an empty `lanes` or `lane_verdicts` with every row above
 #      green.

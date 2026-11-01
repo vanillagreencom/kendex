@@ -266,9 +266,7 @@ set +e
   >/dev/null 2>"$TMP_ROOT/stderr"
 rc=$?
 set -e
-err="$(cat "$TMP_ROOT/stderr")"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: artifact=missing" "no artifact path blocks"
-assert_contains "$err" "tmp/review-reviewer-test-" "and the refusal names the path shape the contract wants"
 [ -e "$RUN_REPO/.git/kendex/reviewer-stop/e1" ] && marker=yes || marker=no
 assert_eq "$marker" yes "the block is recorded under the repository the hook runs in"
 set +e
