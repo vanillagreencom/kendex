@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Inputs: kendex.settings.toml
 # tools/harness-smoke's refusals, which are everything it decides before it
 # installs anything: the arguments it takes, the commands it needs, the
 # repository it places its scratch under, and the kendex build it runs on. The

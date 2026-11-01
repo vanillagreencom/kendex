@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # kendex's committed commands must keep every local fallback on a range.
+# Inputs: kendex.settings.toml
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
