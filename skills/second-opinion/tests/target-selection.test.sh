@@ -9,7 +9,7 @@
 # availability rather than identity when that is its only cause. One table, a
 # row per scenario; the session's identity is declared in every row (the
 # harness-identity suite covers detection). A second table holds the package
-# roster and its stock Copilot entries' defaults.
+# roster and the stock Copilot entries a consumer roster names.
 # shellcheck source=lib/roster-world.bash
 . "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
 
@@ -84,11 +84,12 @@ mixed causes: both skip reasons stand with no availability verdict on top|curren
 
 run_table "target selection" "$DEFAULTS" "$ROWS"
 
-# The package roster with nothing configured but the claude and codex lanes:
-# the stock Copilot entries resolve their command, model, room check and
-# inline diff from the package, pi stubbed, orch's lanes answering room. A
-# Claude session skips both Claude-backed entries and takes GPT on Copilot.
-STOCK_DEFAULTS="ps:none current:claude models:- count:1 cmd:claude=claude cmd:codex=codex pi:stub orch:room"
+# A consumer roster naming both stock Copilot entries, with nothing else
+# configured but the claude and codex lanes: the stock entries resolve their
+# command, model, room check and inline diff from the package, pi stubbed,
+# orch's lanes answering room. A Claude session skips both Claude-backed
+# entries and takes GPT on Copilot. An unset roster names neither entry.
+STOCK_DEFAULTS="ps:none current:claude models:pi-copilot+claude+pi-copilot-gpt+codex count:1 cmd:claude=claude cmd:codex=codex pi:stub orch:room"
 # What the stock commands run: each entry's pi argv and orch room check, and
 # the suffix of a row in which no stock entry ran.
 pi_argv() { printf -- '-p --no-session --no-extensions --model github-copilot/%s --thinking high --tools read,grep,find,ls' "$1"; }
@@ -103,7 +104,8 @@ CODEX_TAKEN="calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out"
 
 # label|world|command|rc|out|err|calls art files pi lanes seat inline
 STOCK_ROWS="
-control: an unset roster takes the package roster, and a Claude session skips both Claude-backed entries to review on GPT on Copilot, read-only, the diff inline, on the seat its room check picked|-|review|0|<out>|$SAME_TWO $GPT_ROOM single:pi-copilot-gpt:review:claude written|$GPT_TAKEN pi=$GPT_PI lanes=$GPT_PICK seat=lanes-seat inline=true
+an unset roster takes the package roster claude codex, so a Claude session reviews on codex and no stock entry runs|models:-|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN $NO_STOCK
+an explicit roster naming the stock entries gets them with no other key: a Claude session skips both Claude-backed entries to review on GPT on Copilot, read-only, the diff inline, on the seat its room check picked|-|review|0|<out>|$SAME_TWO $GPT_ROOM single:pi-copilot-gpt:review:claude written|$GPT_TAKEN pi=$GPT_PI lanes=$GPT_PICK seat=lanes-seat inline=true
 a Codex session takes Claude on Copilot first|current:codex|review|0|<out>|stockroom:pi-copilot:PI_COPILOT:lanes-seat single:pi-copilot:review:codex written|calls=claude:0,codex:0,extra:1 art=external-pi-copilot/$OWN files=out pi=$OPUS_PI lanes=$OPUS_PICK seat=lanes-seat inline=true
 with pi not installed the entry is unavailable before its room check is spent, and codex reviews|pi:missing|review|0|<out>|$SAME_TWO nocli:pi-copilot-gpt:PI_COPILOT_GPT single:codex:review:claude written|$CODEX_TAKEN $NO_STOCK
 with orch not installed the room check is unavailable, never room, and codex reviews|orch:none|review|0|<out>|$SAME_TWO stockroomunavail:pi-copilot-gpt:PI_COPILOT_GPT single:codex:review:claude written|$CODEX_TAKEN $NO_STOCK
@@ -115,16 +117,15 @@ a consumer command replaces the entry's stock model, room check and inline diff 
 two opinions from a session with no model are the two Copilot entries, claude being Claude on Copilot's model again|current:none count:2|review|0|<out>|stockroom:pi-copilot:PI_COPILOT:lanes-seat multi:pi-copilot+pi-copilot-gpt:none selected:claude:claude $GPT_ROOM union:2|calls=claude:0,codex:0,extra:2 art=external-union(pi-copilot+pi-copilot-gpt)/pass/b=-/s=-/cov=full/req=2/sel=2/lanes=pi-copilot:ok,pi-copilot-gpt:ok/dedupe=0/0/0/0/head=head/union=true files=out,out.pi-copilot-gpt,out.pi-copilot pi=$OPUS_PI;$GPT_PI lanes=$OPUS_PICK;$OPUS_PICK;$GPT_PICK;$GPT_PICK seat=lanes-seat inline=true
 "
 
-run_table "stock Copilot defaults" "$STOCK_DEFAULTS" "$STOCK_ROWS" stock_state
+run_table "stock Copilot entries" "$STOCK_DEFAULTS" "$STOCK_ROWS" stock_state
 
-# Must-fail control: the previous package roster, in a disposable copy, turns
-# the unset-roster row red: the Claude session reviews on codex and no stock
-# entry runs.
+# Must-fail control: a Copilot-first package roster, in a disposable copy,
+# turns the unset-roster row red: the Claude session reaches GPT on Copilot.
 # shellcheck disable=SC2086 # STOCK_DEFAULTS is a word list
-build stock-control $STOCK_DEFAULTS
-mutate_script "$SO" 'DEFAULT_MODELS="pi-copilot claude pi-copilot-gpt codex"' 'DEFAULT_MODELS="claude codex"'
-assert_eq "$(run review) $(stock_state)" "rc=0 out=<out> err=$(err_text "same:claude:claude single:codex:review:claude written") $CODEX_TAKEN $NO_STOCK" \
-  'control: under the previous package roster an unset roster never reaches GPT on Copilot'
+build stock-control $STOCK_DEFAULTS models:-
+mutate_script "$SO" 'DEFAULT_MODELS="claude codex"' 'DEFAULT_MODELS="pi-copilot claude pi-copilot-gpt codex"'
+assert_eq "$(run review) $(stock_state)" "rc=0 out=<out> err=$(err_text "$SAME_TWO $GPT_ROOM single:pi-copilot-gpt:review:claude written") $GPT_TAKEN pi=$GPT_PI lanes=$GPT_PICK seat=lanes-seat inline=true" \
+  'control: under a Copilot-first package roster an unset roster reaches GPT on Copilot'
 
 # copilot has no built-in command: a declared copilot target with no
 # SECOND_OPINION_COPILOT_CMD is skipped for its command even where a copilot

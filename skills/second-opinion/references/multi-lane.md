@@ -4,7 +4,7 @@ How `review` collects ordered opinions, merges their findings, places their arti
 
 ## Lane resolution
 
-The roster `SECOND_OPINION_MODELS` (default `pi-copilot claude pi-copilot-gpt codex`, space- or comma-separated) is walked in order and a target is taken when all of these hold:
+The roster `SECOND_OPINION_MODELS` (default `claude codex`, space- or comma-separated; the stock `pi-copilot` and `pi-copilot-gpt` entries run only when it names them) is walked in order and a target is taken when all of these hold:
 
 | Check | Skipped when |
 |---|---|
@@ -15,7 +15,7 @@ The roster `SECOND_OPINION_MODELS` (default `pi-copilot claude pi-copilot-gpt co
 | Available | Its configured command's first word does not resolve |
 | Room | Its room check (`SECOND_OPINION_<NAME>_ROOM_CMD`, or the stock Copilot entries' orch `lanes pick` under the project root the skill is installed in) is unavailable (its program is not installed, or a stock check's install has no project root), refused (a nonzero exit) or printed a line that is no `NAME=value` assignment; an entry with no check passes |
 
-Every skip is one line on stderr naming the target and the cause. Commands run one at a time. Review mode stops after `SECOND_OPINION_COUNT` successful opinions (default 1) or roster exhaustion; every other mode after one opinion or exhaustion. A failed attempt does not reserve its model. On the default roster, two opinions from a session with no model are `pi-copilot` and `pi-copilot-gpt`: `claude` is skipped as `pi-copilot`'s model again, and `codex` is reached only when a Copilot entry is skipped or fails. Coverage follows the `qa_metadata.coverage` definition under [Union merge](#union-merge). A requested count of two or more uses the union collector. No eligible target before execution is a refusal: exit 1, a JSON error listing every candidate, no artifact, no CLI invoked. `--target` and `SECOND_OPINION_TARGET` replace the walk with the one named target, which passes the same checks and never falls through.
+Every skip is one line on stderr naming the target and the cause. Commands run one at a time. Review mode stops after `SECOND_OPINION_COUNT` successful opinions (default 1) or roster exhaustion; every other mode after one opinion or exhaustion. A failed attempt does not reserve its model. On the roster `pi-copilot claude pi-copilot-gpt codex`, two opinions from a session with no model are `pi-copilot` and `pi-copilot-gpt`: `claude` is skipped as `pi-copilot`'s model again, and `codex` is reached only when a Copilot entry is skipped or fails. Coverage follows the `qa_metadata.coverage` definition under [Union merge](#union-merge). A requested count of two or more uses the union collector. No eligible target before execution is a refusal: exit 1, a JSON error listing every candidate, no artifact, no CLI invoked. `--target` and `SECOND_OPINION_TARGET` replace the walk with the one named target, which passes the same checks and never falls through.
 
 Adding a lane is a settings entry, not new code: add its name to `SECOND_OPINION_MODELS`, define `SECOND_OPINION_<NAME>_CMD` (name uppercased, hyphens as underscores), and — when the CLI fronts a model other than its own name, or is named for a harness that fronts a selectable model — `SECOND_OPINION_<NAME>_MODEL`.
 
