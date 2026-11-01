@@ -544,14 +544,13 @@ impl Github {
             json!({"op": "verify-head", "repo": REPO, "base": BASE, "head": head, "required_only": required_only}).to_string(),
         )
         .unwrap();
-        let inherited = std::env::var("PATH").unwrap_or_default();
         support::isolated()
             .args(["--state-dir", &self.dir.path().display().to_string()])
             .arg("op")
             .args(target)
             .arg("--request")
             .arg(&request)
-            .env("PATH", format!("{}:{inherited}", fixtures().display()))
+            .env("PATH", support::tool_path(&[fixtures().as_path()]))
             .env("GH_FAKE_REPLIES", &replies)
             .env("GH_FAKE_LOG", self.dir.path().join("gh.log"))
             .current_dir(self.dir.path())

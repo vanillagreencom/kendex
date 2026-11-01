@@ -391,9 +391,12 @@ pub enum WatchError {
     StopTimeout { pid: u32, start: String },
     /// A live legacy `oversee-watch` holds the claim: its record carries no
     /// start, and it reads no stop request. Nothing is written; the legacy
-    /// watch is stopped through `job-unit.sh stop-job`, its launcher's route.
+    /// watch is stopped by its pid, by the `oversee-watch` entry at a start
+    /// (TERM to the loop's trap, else its process group) or by hand with
+    /// `job-unit.sh kill-group PID '*oversee-watch*'`; no stop reads its
+    /// launcher's `oversee-watch.runner`, which names the newest start.
     #[error(
-        "{path}: a legacy oversee-watch holds the claim (pid {pid}); stop it through job-unit.sh stop-job"
+        "{path}: a legacy oversee-watch holds the claim (pid {pid}); start the watch through oversee-watch, which stops it by its pid, or run job-unit.sh kill-group {pid} '*oversee-watch*'"
     )]
     LegacyLive { path: PathBuf, pid: u32 },
     /// The claim no longer names the running runner: another start wrote

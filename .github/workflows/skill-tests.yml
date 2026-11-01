@@ -491,7 +491,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-watch", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
@@ -758,30 +758,28 @@ jobs:
           done
           bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" || fail=1
           exit "$fail"
-      # ---- shards: orch-terminal, orch-oversee, orch-oversee-watch,
-      # orch-oversee-succeed, orch-dev, orch-state, orch-rest -----------------
+      # ---- shards: orch-terminal, orch-oversee, orch-oversee-succeed,
+      # orch-dev, orch-state, orch-rest ---------------------------------------
       # Source reductions retained all 72 orch-state suites, but run
       # 38164401517 still took 1383s on macOS. run-all.sh owns the family
       # profiles and their complement. Dev/review names enter `orch-dev`,
       # including names that also carry lane or workflow-state, and so does
-      # the oversee launch family; the owed-work family joins it on Linux.
+      # the oversee launch family.
       # On Linux, the account-reader `lanes*` family joins `orch-dev`;
       # `orch-state` keeps the other lane/workflow-state names. `orch-rest`
       # takes the remaining suites after these families. The macOS
-      # profiles spread watch contracts across these same jobs. New suites
-      # join one family by name. orch-shard-partition.test.sh reads the actual
-      # workflow calls and proves complete, unique ownership on both OSes.
+      # profiles spread the hosted open-terminal contracts across these same
+      # jobs. New suites join one family by name. orch-shard-partition.test.sh
+      # reads the actual workflow calls and proves complete, unique ownership
+      # on both OSes.
       #
       # Measured suite by suite, one at a time, on the Linux leg of run
       # 36195213656. A shard's figure is the sum of its suites' seconds, read
       # from the log timestamps; the step time the jobs API reports is within
       # a second of it. orch-terminal 597s over 10 files (open-terminal-lane
       # 229s, open-terminal-record 124s, open-terminal-claude-handoff 90s,
-      # open-terminal-owned-skip 76s), orch-oversee 516s over 13
-      # (oversee_watch_lifecycle 128s, oversee_watch 118s,
-      # oversee_watch_overseer 81s, oversee_watch_lanes 62s),
-      # orch-oversee-succeed 462s over 4 (oversee_succeed 191s,
-      # oversee_watch_mail 163s, oversee_succeed_watch 79s, oversee_report
+      # open-terminal-owned-skip 76s), orch-oversee 516s over 13,
+      # orch-oversee-succeed 462s over 4 (oversee_succeed 191s, oversee_report
       # 29s), orch-state 702s over 42 (dev_validate_run 206s, lanes 189s,
       # lane-host-ssh 50s, lane_close 49s) and orch-rest 221s over 37
       # (approval_wait 51s, round_recover 37s, queue_wait 26s). The macOS
@@ -796,22 +794,16 @@ jobs:
       # 597s on that run, so that is where a name partition stops.
       #
       # `orch-oversee` then ran 14m37s-14m47s on main's own orch pull requests
-      # and was cancelled at 15m16s on PR #2902, inside
-      # oversee_watch_receipts, having spent oversee_succeed 191s,
-      # oversee_watch_mail 165s, oversee_watch_lifecycle 126s, oversee_watch
-      # 112s, oversee_watch_overseer 78s, oversee_succeed_watch 78s,
-      # oversee_watch_lanes 60s and oversee_report 29s. `orch-oversee-succeed`
-      # takes the succession, mailbox and report suites by name
-      # (oversee_succeed, oversee_succeed_watch, oversee_watch_mail,
-      # oversee_report: 463s on that run), and `orch-oversee` keeps every
-      # other oversee suite by rejecting exactly those names, the watch loop,
-      # its lanes, receipts and usage limits. Its rejectors are the other
-      # shard's selectors, so a new oversee suite lands in `orch-oversee` and
-      # never in neither. Run 36195213656, PR #2902's own run with the split
-      # in place, confirms it: both shards finished inside each leg's job
-      # ceiling, by the per-suite paragraph above.
+      # and was cancelled at 15m16s on PR #2902, having spent oversee_succeed
+      # 191s and oversee_report 29s among its suites. `orch-oversee-succeed`
+      # takes the succession and report suites by name (463s on that run),
+      # and `orch-oversee` keeps every other oversee suite, so a new oversee
+      # suite lands in `orch-oversee` and never in neither. Run 36195213656,
+      # PR #2902's own run with the split in place, confirms it: both shards
+      # finished inside each leg's job ceiling, by the per-suite paragraph
+      # above.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-watch' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
+        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -848,15 +840,7 @@ jobs:
         if: matrix.shard == 'orch-oversee'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee
 
-      # Run 37769037887 stopped oversee_watch at the deadline and never
-      # started its lifecycle suite. Its terminal and overseer suites took
-      # 537s and 535s. Linux run 37792683384 also stopped lifecycle at the
-      # deadline. run-all.sh owns both platforms' partition and complement.
-      - name: 'orch suites: the watch, terminal, overseer and lanes'
-        if: matrix.shard == 'orch-oversee-watch'
-        run: bash skills/orch/tests/run-all.sh --shard orch-oversee-watch
-
-      - name: orch suites — the overseer succession, mailbox and report
+      - name: orch suites — the overseer succession and report
         if: matrix.shard == 'orch-oversee-succeed'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee-succeed
 
@@ -1305,7 +1289,7 @@ jobs:
             case "$x" in
               github) set -- --alone bounded-signal.test --alone pr-merge.test --alone pr-view.test --alone native-contracts.test ;;
               change-scope) set -- --alone wiring-errors.test ;;
-              orch) set -- --alone open-terminal-lane --alone oversee_watch_lifecycle ;;
+              orch) set -- --alone open-terminal-lane ;;
               reviewer) set -- --alone mutation-stability.test ;;
               second-opinion)
                 set -- --alone cli-failure-gate.test --alone detached-run.test \
@@ -1554,8 +1538,6 @@ jobs:
             shard: linear-controls-a
           - os: macos-latest
             shard: linear-controls-b
-          - os: macos-latest
-            shard: orch-oversee-watch
           - os: macos-latest
             shard: worktree-restack
           - os: macos-latest

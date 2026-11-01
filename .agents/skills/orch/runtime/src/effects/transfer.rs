@@ -22,8 +22,8 @@ use serde_json::{Value, json};
 
 use super::operation::{
     self, Binding, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
-    ProcessRead, Proof, Published, Recovered, State, Stop, TurnConfirm, WatchHandoverCall,
-    WindowClose, Wire, Word, opening_observation,
+    ProcessRead, Proof, Published, Recovered, State, Stop, TurnConfirm, WindowClose, Wire, Word,
+    opening_observation,
 };
 use super::{
     Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session, idle,
@@ -371,37 +371,6 @@ impl Successor {
             }));
         }
         Ok(operation.appeared_session(self.harness, &self.home, &self.cwd, opened))
-    }
-
-    /// The watch handover this successor's publication runs: the owner's
-    /// words, the fixed session id left out since a watch's later relaunch
-    /// must not reuse it, and the recorded handoff destination.
-    fn handover(
-        &self,
-        settings: &Settings,
-        pane: &Pane,
-        predecessor: &Overseer,
-        handoff: Option<String>,
-    ) -> Result<WatchHandoverCall> {
-        let flags = self.command(settings, None)?;
-        Ok(WatchHandoverCall {
-            predecessor_pane: predecessor
-                .extra
-                .get("pane")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            pane: pane.id.clone(),
-            account_var: self.harness.account_var(self.model.as_deref()),
-            account: self
-                .account
-                .as_ref()
-                .map(|a| a.display().to_string())
-                .unwrap_or_default(),
-            harness: self.harness.name(),
-            flags: flags.args,
-            handoff,
-        })
     }
 }
 
@@ -803,7 +772,6 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // --- Retired. From here a failure is a recoverable stopped transition. ---
     complete_transfer(
         operation,
-        run,
         &successor,
         &pane,
         Some(runner.identity()),
@@ -826,7 +794,6 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
 /// whose handles the publication settles.
 fn complete_transfer(
     mut operation: Operation,
-    run: &Run,
     successor: &Successor,
     pane: &Pane,
     runner: Option<&Identity>,
@@ -849,7 +816,6 @@ fn complete_transfer(
                 // read; a runner held at a dialog is not.
                 return publish(
                     operation,
-                    run,
                     successor,
                     pane,
                     runner,
@@ -1012,7 +978,6 @@ fn complete_transfer(
             return match operation.read_process(&id)? {
                 ProcessRead::Live => publish(
                     operation,
-                    run,
                     successor,
                     pane,
                     Some(&id),
@@ -1050,7 +1015,6 @@ fn complete_transfer(
     match operation.await_delivered_turn(successor.harness, pane, file, turns_before)? {
         TurnConfirm::Recorded => publish(
             operation,
-            run,
             successor,
             pane,
             runner,
@@ -1098,12 +1062,10 @@ fn complete_transfer(
 /// handle of the record the publication moves: a close the host did not
 /// answer for keeps the succession `unconfirmed` at this phase, the
 /// successor live and the brief delivered, and the reconcile closes it again
-/// before it publishes. Once the publication is committed the fleet watch is
-/// handed to the successor's pane.
+/// before it publishes.
 #[allow(clippy::too_many_arguments)]
 fn publish(
     mut operation: Operation,
-    run: &Run,
     successor: &Successor,
     pane: &Pane,
     runner: Option<&Identity>,
@@ -1165,8 +1127,6 @@ fn publish(
         None => operation.close_overseer_window(retired.overseer)?,
     };
     let window_word = window.word();
-    let handover =
-        successor.handover(run.settings, pane, retired.overseer, opened.brief.clone())?;
     let observation = json!({
         "retired": true,
         "retired_by": by,
@@ -1174,16 +1134,14 @@ fn publish(
         "note": "successor-confirmed",
     });
     match operation.publish(Published::Successor, opened, &identity, observation)? {
-        Ok(outcome) => Ok(outcome
-            .with_wire(Wire {
-                launch: Some(runner_wire(opened, Some(identity.identity()))),
-                session_id,
-                server_start: Some(opened.server_start),
-                server_socket: Some(opened.socket.clone()),
-                launch_line: successor.launch_line.clone(),
-                ..Wire::default()
-            })
-            .with_handover(handover)),
+        Ok(outcome) => Ok(outcome.with_wire(Wire {
+            launch: Some(runner_wire(opened, Some(identity.identity()))),
+            session_id,
+            server_start: Some(opened.server_start),
+            server_socket: Some(opened.socket.clone()),
+            launch_line: successor.launch_line.clone(),
+            ..Wire::default()
+        })),
         Err(operation) => Ok(unconfirmed_after_retirement(
             *operation,
             opened,
@@ -1846,7 +1804,6 @@ fn judge_resolved(
     };
     complete_transfer(
         operation,
-        run,
         &successor,
         &pane,
         runner.as_ref(),

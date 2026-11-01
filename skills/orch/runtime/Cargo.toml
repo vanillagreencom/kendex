@@ -90,6 +90,10 @@ path = "../tests/rust/admission.rs"
 name = "watch_report"
 path = "../tests/rust/watch_report.rs"
 
+[[test]]
+name = "watch_cost"
+path = "../tests/rust/watch_cost.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

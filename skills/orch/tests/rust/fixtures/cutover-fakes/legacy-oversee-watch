@@ -1,0 +1,49 @@
+#!/bin/bash
+# The retired repeat loop's claim, traps and pass spawn, as commit 11 ran
+# them (`744fd5727:skills/orch/scripts/oversee-watch`: `watch_claim`
+# `:1097-1115`, the record write and the EXIT, TERM and INT traps;
+# `repeat_stop` `:1062-1070`, the release, TERM to the pass, the wait and
+# exit 143; `repeat_watch` `:1250-1270`, the pass as `"$self" "${args[@]}" &`
+# with `OVERSEE_WATCH_REPEAT_OWNER=$$`, self the script on disk, and a pass
+# status 4 read as exit 0). Here self is the file installed over that path:
+# the thin entry. The log names each step.
+# Usage: legacy-oversee-watch STATE ENTRY LOG, with WATCH_PID_LIB naming
+# lib/watch-pid.sh; installed as .../oversee-watch so its command line names
+# oversee-watch.
+set -u
+STATE_FILE="$1" self="$2" LEGACY_LOG="$3"
+# shellcheck source=/dev/null
+source "$WATCH_PID_LIB"
+watch_pid_write "$STATE_FILE" none hand "$0" || exit 9
+REPEAT_CHILD_PID=""
+repeat_stop() {
+  trap '' TERM INT
+  watch_pid_release "$STATE_FILE"
+  if [[ -n "$REPEAT_CHILD_PID" ]]; then
+    kill -TERM "$REPEAT_CHILD_PID" 2>/dev/null || true
+    wait "$REPEAT_CHILD_PID" 2>/dev/null || true
+  fi
+  printf 'legacy: repeat_stop %s\n' "$1" >> "$LEGACY_LOG"
+  exit "$1"
+}
+trap 'watch_pid_release "$STATE_FILE"' EXIT
+trap 'repeat_stop 143' TERM
+trap 'repeat_stop 130' INT
+printf 'legacy: claimed pid=%s\n' "$$" >> "$LEGACY_LOG"
+while :; do
+  OVERSEE_WATCH_FLEET_STATE_DIR="${STATE_FILE%/*}" OVERSEE_WATCH_REPEAT_OWNER="$$" \
+    "$self" --interval 240 --max-loops 25 --handoff tmp/h.md --state "$STATE_FILE" 2>>"$LEGACY_LOG.pass-err" &
+  REPEAT_CHILD_PID=$!
+  rc=0
+  wait "$REPEAT_CHILD_PID" || rc=$?
+  REPEAT_CHILD_PID=""
+  printf 'legacy: pass rc=%s\n' "$rc" >> "$LEGACY_LOG"
+  if [[ "$rc" -eq 4 ]]; then
+    printf 'legacy: exit 0\n' >> "$LEGACY_LOG"
+    exit 0
+  fi
+  sleep 1 &
+  REPEAT_CHILD_PID=$!
+  wait "$REPEAT_CHILD_PID" || true
+  REPEAT_CHILD_PID=""
+done

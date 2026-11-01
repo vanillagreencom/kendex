@@ -434,53 +434,21 @@ while IFS='|' read -r name profile; do
 done <<< "$family_rows"
 PARTITION_RUNNER_OS=Linux
 
-# A new oversee suite belongs to the complement on both platforms, even when its
-# name extends one of the moved suites. The workflow produces both profiles.
-stub_suite "$SANDBOX/oversee_watch_terminal_future.sh"
+# A new oversee suite belongs to the oversee complement on both platforms.
+stub_suite "$SANDBOX/oversee_future.sh"
 for PARTITION_RUNNER_OS in Linux macOS; do
-for profile in orch-oversee orch-oversee-watch; do
-  kept="$(selected --shard "$profile")"
-  if [[ "$profile" == orch-oversee ]]; then
-    grep -qx oversee_watch_terminal_future <<< "$kept" && ok "new oversee suite enters the $PARTITION_RUNNER_OS complement" || bad "new oversee suite lost from $PARTITION_RUNNER_OS complement"
-    ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "lifecycle leaves the $PARTITION_RUNNER_OS complement" || bad "lifecycle remains in $PARTITION_RUNNER_OS complement"
-  else
-    lifecycle_owner=orch-oversee-watch
-    [[ "$PARTITION_RUNNER_OS" != macOS ]] || lifecycle_owner=orch-rest
-    lifecycle="$(selected --shard "$lifecycle_owner")"
-    grep -qx oversee_watch_lifecycle <<< "$lifecycle" && ok "lifecycle runs in the $PARTITION_RUNNER_OS $lifecycle_owner leg" || bad "lifecycle lost from $PARTITION_RUNNER_OS $lifecycle_owner leg"
-    ! grep -qx oversee_watch_terminal_future <<< "$kept" && ok "$PARTITION_RUNNER_OS watch leg owns only the moved whole names" || bad "$PARTITION_RUNNER_OS watch leg claims a new name extension"
-  fi
+  grep -qx oversee_future <<< "$(selected --shard orch-oversee)" && ok "new oversee suite enters the $PARTITION_RUNNER_OS complement" || bad "new oversee suite lost from $PARTITION_RUNNER_OS complement"
 done
-done
-rm -- "$SANDBOX/oversee_watch_terminal_future.sh"
-# The lifecycle suite must reach the moved leg. Remove its selector from a
-# disposable runner copy while retaining its suite and the rest of the rule.
+rm -- "$SANDBOX/oversee_future.sh"
+PARTITION_RUNNER_OS=Linux
 cp "$SANDBOX/run-all.sh" "$TMP/runner-original"
-sed 's/|oversee_watch_lifecycle|/|/; s/oversee_watch_lifecycle|oversee_watch_overseer_marks/oversee_watch_overseer_marks/' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
-cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "lifecycle control changed no selector"
-for PARTITION_RUNNER_OS in Linux macOS; do
-  lifecycle_owner=orch-oversee-watch
-  [[ "$PARTITION_RUNNER_OS" != macOS ]] || lifecycle_owner=orch-rest
-  kept="$(selected --shard "$lifecycle_owner")"
-  ! grep -qx oversee_watch_lifecycle <<< "$kept" && ok "must-fail: missing lifecycle selector fails its $PARTITION_RUNNER_OS moved-leg contract" || bad "$PARTITION_RUNNER_OS lifecycle omission control retained the suite"
-done
-cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
 
-# The launch and owed-work families left the Linux orch-oversee complement
-# for its run deadline. Each family's suites and a future name of each keep
-# their owner; macOS keeps owed work in its state leg.
+# The launch family left the Linux orch-oversee complement for its run
+# deadline. Its suites and a future name keep their owner on both platforms.
 moved_rows='oversee_launch|orch-dev|orch-dev
-oversee_launch_watch|orch-dev|orch-dev
-oversee_launch_future|orch-dev|orch-dev
-oversee_watch_owed|orch-dev|orch-state
-oversee_watch_owed_bulk|orch-dev|orch-state
-oversee_watch_owed_membership|orch-dev|orch-state
-oversee_watch_owed_release|orch-dev|orch-state
-oversee_watch_owed_shared|orch-dev|orch-state
-oversee_watch_owed_future|orch-dev|orch-state'
-orch_profiles=(orch-terminal orch-oversee orch-oversee-watch orch-oversee-succeed orch-dev orch-state orch-rest)
+oversee_launch_future|orch-dev|orch-dev'
+orch_profiles=(orch-terminal orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest)
 stub_suite "$SANDBOX/oversee_launch_future.sh"
-stub_suite "$SANDBOX/oversee_watch_owed_future.sh"
 moved_owners() { # OS ; `name|shard` for every shard that runs a moved row's suite
   local profile
   for profile in "${orch_profiles[@]}"; do
@@ -494,22 +462,22 @@ for PARTITION_RUNNER_OS in Linux macOS; do
     "$(cut -d'|' -f1,"$column" <<< "$moved_rows" | sort)" "$(moved_owners "$PARTITION_RUNNER_OS")"
 done
 # The moved rows must name the runner's row. Remove it from a disposable
-# copy; the families fall back to the Linux catch-all.
-sed 's/^    oversee_launch\*|oversee_watch_owed\*) OWNING_SHARD=orch-dev ;;$//' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
+# copy; the family falls back to the Linux catch-all.
+sed 's/^    oversee_launch\*) OWNING_SHARD=orch-dev ;;$//' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
 cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "moved-family control changed no selector"
-check "must-fail: without their row the moved families return to Linux orch-oversee" \
+check "must-fail: without its row the moved family returns to Linux orch-oversee" \
   "$(cut -d'|' -f1 <<< "$moved_rows" | sed 's/$/|orch-oversee/' | sort)" "$(moved_owners Linux)"
 cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
-rm -- "$SANDBOX/oversee_launch_future.sh" "$SANDBOX/oversee_watch_owed_future.sh"
+rm -- "$SANDBOX/oversee_launch_future.sh"
 PARTITION_RUNNER_OS=Windows
-for profile in orch-oversee orch-oversee-watch orch-dev orch-state orch-rest; do
+for profile in orch-oversee orch-dev orch-state orch-rest; do
   check "$profile refuses an unsupported platform" "1" "$(status_of --shard "$profile")"
 done
 # GitHub's Windows runner is outside the orch shard's supported platforms.
 # Accept it in a disposable runner to prove that the refusal checks fail.
 sed 's/Linux|macOS)/Linux|macOS|Windows)/' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
 cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "platform control changed no refusal"
-for profile in orch-oversee orch-oversee-watch orch-dev orch-state orch-rest; do
+for profile in orch-oversee orch-dev orch-state orch-rest; do
   check "must-fail: $profile accepts Windows after its platform refusal is removed" \
     "0" "$(status_of --shard "$profile")"
 done
@@ -1713,7 +1681,7 @@ while IFS='|' read -r path linux_owner macos_owner; do
   printf '%s\t%s\n' "$linux_owner" "$path" >> "$TMP/unknown-linux-owners"
   printf '%s\t%s\n' "$macos_owner" "$path" >> "$TMP/unknown-macos-owners"
 done <<'UNKNOWN'
-skills/orch/tests/oversee_watch_overseer_future.sh|orch-oversee-watch|orch-oversee
+skills/orch/tests/oversee_future.sh|orch-oversee|orch-oversee
 skills/worktree/tests/worktree_future_restack.sh|worktree-restack|worktree
 tools/tests/native-future.test.sh|guards-tools|guards-tools
 skills/commit-guards/tests/pre-push-future.test.sh|guards-commit|guards-commit
@@ -1755,18 +1723,6 @@ os_claims "$TMP/unknown-linear.yml" macos-latest 3 > "$TMP/unknown-linear-claims
 check "must-fail: the old linear roster loses its unresolved suite" \
   skills/linear/tests/native-future.test.sh \
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
-
-needle='        if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then OWNING_SHARD=orch-oversee; return; fi ;;'
-NEEDLE="$needle" REPLACEMENT='        if false; then OWNING_SHARD=orch-oversee; return; fi ;;' \
-  awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
-  "$TEST_DIR/run-all.sh" > "$SANDBOX/run-all.sh" || bad "orch retention control changed no runner owner"
-UNION_RUNS="$TMP/unknown-orch-control"
-mkdir -p "$UNION_RUNS"
-os_claims "$WORKFLOW" macos-latest 3 > "$TMP/unknown-orch-claims"
-check "must-fail: the old watch route loses its unresolved suite" \
-  skills/orch/tests/oversee_watch_overseer_future.sh \
-  "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-orch-claims")"
-cp "$TEST_DIR/run-all.sh" "$SANDBOX/run-all.sh"
 
 sed 's/want_shard rest; break;/:; break;/' "$JOB_SET" > "$GITHUB_SELECT/tools/ci-job-set"
 edited "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set" unknown-package-selector

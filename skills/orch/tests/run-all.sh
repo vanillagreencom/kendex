@@ -202,7 +202,6 @@ ORCH_TEST_DIR="$TEST_DIR"
 # word, with the window it holds; run-all-parallel.sh reads this list.
 ALONE=(
   open-terminal-lane      # the lane-tree stub holds the picked account for 2s
-  oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
 )
 
 TEST_DIRS=("$TEST_DIR")
@@ -282,8 +281,6 @@ fi
 SELECT=()
 REJECT=()
 SHARD=""
-# Main run 37769037887 and merge-group run 37792683384 exhausted the macOS
-# and Linux deadlines. These watch suites share a separate leg on both.
 if [ "${1-}" = --shard ]; then
   shard="${2-}"
   [ "$#" -eq 2 ] || { echo "run-all.sh: shard-arguments shard=$shard" >&2; exit 1; }
@@ -292,7 +289,7 @@ if [ "${1-}" = --shard ]; then
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-terminal|orch-oversee|orch-oversee-watch|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; set -- ;;
+    orch-terminal|orch-oversee|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; set -- ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -306,26 +303,24 @@ done
 FILTER="$*"
 
 shard_of() { # BASE
-  # Run 38452700793 exhausted watch's deadline with two overseer suites at
-  # 900s. Spread those contracts across the existing macOS worker pools.
+  # Run 38452700793 exhausted a macOS leg's deadline on a few long contracts.
+  # Spread the hosted open-terminal contracts across the existing macOS
+  # worker pools.
   if [ "${RUNNER_OS:-Linux}" = macOS ]; then
     case "$1" in
-      oversee_watch_overseer_record*|open-terminal-lane-hosted-accounts) OWNING_SHARD=orch-dev; return ;;
-      oversee_watch_lanes|oversee_watch_owed*|oversee_watch_overseer_context|oversee_watch_overseer_gap|open-terminal-lane-hosted-ssh) OWNING_SHARD=orch-state; return ;;
-      oversee_watch_lifecycle|oversee_watch_overseer_marks|oversee_watch_overseer_mail|open-terminal-lane-hosted-cap|open-terminal-lane-hosted-pending) OWNING_SHARD=orch-rest; return ;;
-      oversee_watch_overseer_wall|open-terminal-lane-hosted-pi) OWNING_SHARD=orch-oversee-succeed; return ;;
+      open-terminal-lane-hosted-accounts) OWNING_SHARD=orch-dev; return ;;
+      open-terminal-lane-hosted-ssh) OWNING_SHARD=orch-state; return ;;
+      open-terminal-lane-hosted-cap|open-terminal-lane-hosted-pending) OWNING_SHARD=orch-rest; return ;;
+      open-terminal-lane-hosted-pi) OWNING_SHARD=orch-oversee-succeed; return ;;
       open-terminal-lane-hosted-copilot|open-terminal-lane-hosted-codex) OWNING_SHARD=orch-oversee; return ;;
-      oversee_watch_overseer*)
-        if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then OWNING_SHARD=orch-oversee; return; fi ;;
     esac
   fi
   case "$1" in
     *open-terminal*) OWNING_SHARD=orch-terminal ;;
-    *oversee_succeed*|*oversee_watch_mail*|*oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
-    oversee_watch|oversee_watch_lifecycle|oversee_watch_terminal|oversee_watch_lanes|oversee_watch_overseer*) OWNING_SHARD=orch-oversee-watch ;;
+    *oversee_succeed*|*oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
     # Merge-group run 39048736979 stopped orch-oversee at its Linux deadline
-    # after 831s. These two families held 1111 of its 3195 suite seconds.
-    oversee_launch*|oversee_watch_owed*) OWNING_SHARD=orch-dev ;;
+    # after 831s. The launch family leaves it for the dev pool.
+    oversee_launch*) OWNING_SHARD=orch-dev ;;
     *oversee*) OWNING_SHARD=orch-oversee ;;
     *dev*|*review*) OWNING_SHARD=orch-dev ;;
     # The account-reader family exhausted orch-state in merge-group run
@@ -433,9 +428,6 @@ matches() { # BASE FILTER
   fi
   if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
     case "$1:$2" in
-      oversee_watch_owed_*:=oversee_watch_owed|oversee_watch_mail_*:=oversee_watch_mail) return 0 ;;
-      oversee_watch_overseer_marks:=oversee_watch_overseer|oversee_watch_overseer_record*:=oversee_watch_overseer|oversee_watch_overseer_wall:=oversee_watch_overseer|oversee_watch_overseer_mail:=oversee_watch_overseer) return 0 ;;
-      oversee_watch_overseer_context:=oversee_watch_overseer_rows|oversee_watch_overseer_gap:=oversee_watch_overseer_rows) return 0 ;;
       open-terminal-lane-hosted-*:=open-terminal-lane-hosted) return 0 ;;
     esac
   fi
@@ -708,10 +700,6 @@ while [ "$finished" -lt "$RUN" ]; do
       if [ "$suite_file" = "$ORCH_TEST_DIR/dev_validate_run.sh" ]; then
         suite_args+=(runner)
       fi
-      case "$suite_file" in
-        "$ORCH_TEST_DIR/oversee_watch_owed.sh") suite_args+=(development) ;;
-        "$ORCH_TEST_DIR/oversee_watch_mail.sh") suite_args+=(delivery) ;;
-      esac
       suite_environment "$suite_file" || { status=$?; stop_suites; exit "$status"; }
       PATH="$SUITE_PATH" "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!

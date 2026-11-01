@@ -25,9 +25,13 @@
 //! `ops::wall`; the wall relaunch is the legacy's `open-terminal
 //! --relaunch`, started detached through the one runner after the
 //! account walk's pick, under `ORCH_WALL_RELAUNCH=auto` (decision 121
-//! Q10). A lane `ORCH_WATCH_LANE_AGE_SECS` past its launch is `lane-long`
+//! Q10); a window gone while that relaunch is still opening its
+//! replacement is not `window-gone` (`wall_relaunch_pending`). A lane
+//! `ORCH_WATCH_LANE_AGE_SECS` past its launch is `lane-long`
 //! once per age interval with the counters the legacy read from its
-//! records.
+//! records. A lane told to hand off records `.handoff` in its item's state
+//! and exits (`check_handoff`): the record is read where `workflow-state
+//! handoff-standing` read it and is `handoff` once per record.
 //!
 //! Hosted lanes (`host` other than local, a cloud `kind`) are not observed
 //! here (decision 57); the legacy watch reads them until step 7.
@@ -52,7 +56,7 @@ use serde_json::Value;
 use super::Produced;
 use super::baseline::{Baseline, Change};
 use super::events::Event;
-use super::overseer::Pick;
+use super::overseer::{Pick, RelaunchPending, relaunch_pending};
 use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
@@ -628,6 +632,19 @@ fn clear(kind: &str, lane: &str) -> Change {
     }
 }
 
+/// A partial failure of the pass, said by the runner under its one rule
+/// (decision 156 (1)); the first one stands, the pass goes on.
+fn fail(out: &mut Produced, line: String) {
+    out.failed.get_or_insert(line);
+}
+
+/// The watch's own state directory, beside the legacy claim store
+/// (`PW_STATE_DIR`): where the account wall records and the relaunch
+/// markers live.
+pub fn watch_state_dir(claim_store: &Path) -> &Path {
+    claim_store.parent().unwrap_or(claim_store)
+}
+
 /// The lanes pass: every in-flight local lane read once and judged, the
 /// lines the legacy printed for each kind, the stray sweep and the start
 /// stall, with the rows that keep each line news once.
@@ -659,6 +676,7 @@ pub fn observe(pass: &Pass) -> Produced {
             reading,
         });
     }
+    handoffs(pass, &mut out);
     wall_pauses(&walls, pass, &mut out);
     for lane in &lanes {
         start_stall(lane, pass, &mut out);
@@ -692,7 +710,117 @@ fn wall_pauses(walls: &[WallObservation], pass: &Pass, out: &mut Produced) {
     if let Err(cause) = (pass.wall_pauses)(RecordWallPauses {
         observations: walls.to_vec(),
     }) {
-        out.failed = Some(format!("wall-unrecorded lane=oversee cause={cause}"));
+        fail(out, format!("wall-unrecorded lane=oversee cause={cause}"));
+    }
+}
+
+/// Whether an item's handoff record stands, as `workflow-state
+/// handoff-standing` answered it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandoffReading {
+    /// The record, one JSON line as jq's `tojson` printed it.
+    Stands { record: String },
+    /// No record, or one the relaunched lane stamped `resumed_at` on.
+    None,
+    /// A place that could not be read; never "no handoff".
+    Unreadable { path: PathBuf },
+}
+
+/// One place's answer (`workflow-state`, `handoff_read`): an absent file
+/// is none; a file that cannot be read or parsed is unreadable; `.handoff`
+/// stands where it is an object with no `resumed_at`.
+fn handoff_read(path: &Path) -> HandoffReading {
+    let unreadable = || HandoffReading::Unreadable {
+        path: path.to_path_buf(),
+    };
+    let doc = match item_doc(path) {
+        Reading::Live(doc) => doc,
+        Reading::Gone => return HandoffReading::None,
+        Reading::Unreadable { cause: _ } => return unreadable(),
+    };
+    match doc.get("handoff") {
+        Some(Value::Object(record)) => match record.get("resumed_at") {
+            None | Some(Value::Null) => HandoffReading::Stands {
+                record: Value::Object(record.clone()).to_string(),
+            },
+            Some(
+                Value::Bool(_)
+                | Value::Number(_)
+                | Value::String(_)
+                | Value::Array(_)
+                | Value::Object(_),
+            ) => HandoffReading::None,
+        },
+        None
+        | Some(
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_),
+        ) => HandoffReading::None,
+    }
+}
+
+/// The item's standing handoff over the places the legacy read
+/// (`handoff_places`, with the watch's state directory and the lane's root
+/// as the worktree): the item's file under the fleet's state directory,
+/// then under the root's `tmp`; the first standing record wins, else any
+/// unreadable place, else none.
+pub fn handoff_standing(state_dir: &Path, lane: &Lane) -> HandoffReading {
+    let mut places = vec![state::item_path(state_dir, &lane.item)];
+    if let Some(root) = lane.mail_root.as_deref().filter(|r| !r.is_empty()) {
+        let place = state::item_path(&Path::new(root).join("tmp"), &lane.item);
+        if place != places[0] {
+            places.push(place);
+        }
+    }
+    let mut unread = None;
+    for place in places {
+        match handoff_read(&place) {
+            HandoffReading::Stands { record } => return HandoffReading::Stands { record },
+            HandoffReading::Unreadable { path } => {
+                unread.get_or_insert(path);
+            }
+            HandoffReading::None => {}
+        }
+    }
+    match unread {
+        Some(path) => HandoffReading::Unreadable { path },
+        None => HandoffReading::None,
+    }
+}
+
+/// `check_handoff` (`oversee-watch:2097`): every local lane's record, any
+/// status, read once; a standing record is `handoff` with the record under
+/// it once per record (the row keyed by the record's checksum, so a re-run
+/// between the event and the relaunch says nothing), a record the relaunch
+/// stamped clears the row, and a place that could not be read is the
+/// pass's partial failure with the other lanes' news standing. Rows of
+/// items no record names go.
+fn handoffs(pass: &Pass, out: &mut Produced) {
+    let recorded: BTreeSet<&str> = pass.fleet.lanes.iter().map(|l| l.item.as_str()).collect();
+    for item in pass.baseline.identities("handoff") {
+        if !recorded.contains(item.as_str()) {
+            out.changes.push(clear("handoff", &item));
+        }
+    }
+    for lane in pass.fleet.lanes.iter().filter(|l| is_local(l)) {
+        let item = lane.item.as_str();
+        match handoff_standing(pass.state_dir, lane) {
+            HandoffReading::None => out.changes.push(clear("handoff", item)),
+            HandoffReading::Unreadable { path } => fail(
+                out,
+                format!("handoff-read-failed item={item} path={}", path.display()),
+            ),
+            HandoffReading::Stands { record } => {
+                let key = wall::cksum(record.as_bytes()).to_string();
+                let prior = pass.baseline.get("handoff", item);
+                out.changes.push(set("handoff", item, key.clone()));
+                if prior != Some(key.as_str()) {
+                    out.events.push(Event::Handoff {
+                        item: item.to_owned(),
+                    });
+                    out.events.push(Event::Tail(record));
+                }
+            }
+        }
     }
 }
 
@@ -726,6 +854,23 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
     };
     match &state {
         LaneState::Gone => {
+            // A window gone because the relaunch the route started is
+            // still opening it is not news, and its rows wait for the pass
+            // that judges the gone window (`oversee-watch:4812`); a marker
+            // this pass cannot read is its partial failure, never "not
+            // pending" (decision 156 (1)).
+            let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
+            match relaunch_pending(&marker, pass.settings.prepare, pass.now) {
+                RelaunchPending::Pending => return reading,
+                RelaunchPending::Unreadable { path, cause } => {
+                    fail(
+                        out,
+                        format!("state-read-failed path={} cause={cause}", path.display()),
+                    );
+                    return reading;
+                }
+                RelaunchPending::None => {}
+            }
             out.events.push(Event::WindowGone { lane: lane.clone() });
             for kind in [
                 "lane-asking",
@@ -1093,8 +1238,7 @@ fn route(
         Ok(args) => args,
         Err(cause) => return refused(notes, &format!("context-unavailable cause={cause}")),
     };
-    let marker =
-        wall::relaunch_marker_path(pass.claim_store.parent().unwrap_or(pass.claim_store), lane);
+    let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
     let log = pass
         .state_dir
         .join(format!("wall-relaunch-{}.log", obs.lane.item));

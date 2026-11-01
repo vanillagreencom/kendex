@@ -1,15 +1,8 @@
-# Shared sandbox for the oversee-watch suites: the stub binaries every case
-# drives, the assertion library, and one `run_watch` entry point.
-#
-# oversee-watch reads GitHub (pr-watch, `gh pr list`, the open issues list,
-# the security alert lists), Linear, the tmux panes of the lane windows, and
-# the accounts through `lanes list`. oversee_watch.sh covers GitHub and
-# process-wide failures; oversee_watch_triage.sh covers the tracker;
-# oversee_watch_outside.sh covers outside contributions;
-# oversee_watch_security.sh covers security alerts; the three lane suites
-# cover pane behavior, prompt state, and spent-account banners;
-# oversee_watch_accounts.sh covers account events and the heartbeat roster.
-# They share this sandbox.
+# Shared sandbox of stub binaries (tmux, gh, the tracker, `lanes`), the
+# assertion library and one `run_watch` entry point, built for the retired
+# `oversee-watch` loop's suites and kept for the suites that still drive the
+# stubs: lane-state.sh, lane-state-provider-pane.sh and lane_close.sh. The
+# watch itself is the orch runtime's scheduler, held by its Rust rows.
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub

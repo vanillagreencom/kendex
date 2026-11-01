@@ -851,7 +851,7 @@ fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
     );
 }
 
-/// Decision 135 (5), the legacy's recorded answer on `oversee_watch_owed.sh`'s
+/// Decision 135 (5), the legacy's recorded answer on `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s
 /// shared world (`recorded/owed.lines`: nine lines with their state,
 /// priority and lane). Defect: an item in flight, queued or done read as
 /// owed, a record's fields lost, or the Verifying items dropped from the
@@ -1388,7 +1388,7 @@ fn plant_token(world: &World, token: &str) -> PathBuf {
 }
 
 /// The legacy reducer pass (`lib/pr-watch-pass.sh`, the bytes
-/// `tests/oversee_watch.sh` § 1 pins). Defect: the reducer run without
+/// `744fd5727:skills/orch/tests/oversee_watch.sh` § 1 pins). Defect: the reducer run without
 /// `GH_REPO` or with a flag, a repository's standing attention on the first
 /// pass of a run reported as news (the legacy baselined it with one stderr
 /// note), a new key not reported, a standing key reported again, an error
@@ -1523,7 +1523,7 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
     assert_eq!(baseline, Baseline::default());
 }
 
-/// `pr-watch-pass.sh:195-222`, the bytes `tests/oversee_watch.sh`
+/// `pr-watch-pass.sh:195-222`, the bytes `744fd5727:skills/orch/tests/oversee_watch.sh`
 /// `refresh_merge_replay` pins: a rolling refresh has no item, so its
 /// `refresh-ready` identity is kept by number once the reducer's line
 /// clears, until the pull request merges (one `EVENT merged 1144
@@ -1601,7 +1601,7 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     );
 }
 
-/// `lib/security-alerts.sh`, the bytes `tests/oversee_watch_security.sh`
+/// `lib/security-alerts.sh`, the bytes `744fd5727:skills/orch/tests/oversee_watch_security.sh`
 /// pins (`LINE_DEPENDABOT pr=12`, `LINE_CODE`, `LINE_SECRET`, the repeats,
 /// the unread line). Defect: an alert read without the installation token
 /// or every other read with it, an alert reported once and then forgotten
@@ -1817,7 +1817,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     );
 }
 
-/// `lib/outside-contribution.sh`, the bytes `tests/oversee_watch_outside.sh`
+/// `lib/outside-contribution.sh`, the bytes `744fd5727:skills/orch/tests/oversee_watch_outside.sh`
 /// pins. Defect: a fleet author (a bot, an owner, a member, a collaborator,
 /// a private member whose permission is admin) reported, an outside pull
 /// request or issue reported on every pass, a pushed head not reported
@@ -1950,7 +1950,7 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
 }
 
 /// The budget scan (`oversee-watch:2392-2502`, the bytes
-/// `tests/oversee_watch_main_push.sh` `budget_once` pins: the event and
+/// `744fd5727:skills/orch/tests/oversee_watch_main_push.sh` `budget_once` pins: the event and
 /// the row's raw compact JSON). Defect: a non-producer run (a pull request
 /// event) read for annotations, a producer's warnings reported more than
 /// once, duplicate warnings across jobs repeated, or the row's bytes moved
@@ -2201,7 +2201,7 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
 /// heartbeat raises work whose prerequisite is open. The tracker body reads
 /// the item with its blocker, the verification body judges the slot it
 /// left: the box is `blocked` and names the blocker, with no deadline
-/// event (the legacy's `blocked` row, `oversee_watch_owed.sh:763`, and its
+/// event (the legacy's `blocked` row, `744fd5727:skills/orch/tests/oversee_watch_owed.sh:763`, and its
 /// `blocker_closed` case); once the blocker closes the box is due and the
 /// event fires. The lines and the event are the legacy watch's recorded
 /// bytes on the suite's own world (`tmp/orch-rebuild/U5e3/record-legacy.sh`).
@@ -2296,7 +2296,7 @@ fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_
 
 /// The owner's tracker answers, the description repair and the due tracker
 /// asks (`oversee-watch:2758-2867`; the mail suite's `tracker-*` rows,
-/// `tests/oversee_watch_mail.sh`). Defect: a posted ask's owner comment not
+/// `744fd5727:skills/orch/tests/oversee_watch_mail.sh`). Defect: a posted ask's owner comment not
 /// handed back as its answer under the comment's delivery id, the question
 /// comment or another author's comment handed back, a description that
 /// lost its action line left unrepaired (or repaired every pass), a due

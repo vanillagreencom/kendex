@@ -871,8 +871,7 @@ fn spawn_op(
         .stderr(std::process::Stdio::piped())
         .current_dir(fleet.state_dir());
     if let Some(tools) = tools {
-        let inherited = std::env::var("PATH").unwrap_or_default();
-        command.env("PATH", format!("{}:{inherited}", tools.display()));
+        command.env("PATH", support::tool_path(&[tools]));
     }
     for (name, value) in extra {
         command.env(name, value);

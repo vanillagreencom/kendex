@@ -203,8 +203,10 @@ assert_eq "missing=${MISSING#,}" "missing=" \
   "every verdict the verb publishes is spelled in the help its callers read"
 
 # The callers: each reaches the verb rather than restating its jq filter.
+# The watch's own caller is the runtime's lane observation, held by its
+# Rust rows.
 FILTER='select(type == "object" and .resumed_at == null)'
-for caller in scripts/oversee-watch hooks/lane-mail-check.sh; do
+for caller in hooks/lane-mail-check.sh; do
   path="$TEST_DIR/../../../$caller"
   [[ "$caller" != scripts/* ]] || path="$TEST_DIR/../$caller"
   assert_eq "$(grep -cF -- "$FILTER" "$path" || true)" "0" \

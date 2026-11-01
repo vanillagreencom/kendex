@@ -289,25 +289,15 @@ Automatic close uses the directory containing `[OVERSEE_STATE]`; each lane's own
 
 A lane launch, relaunch, or close while the watch runs needs no watch restart.
 
-Each pass prints every event it found as one block in the shape that `oversee-watch --help` states.
+Each duty appends every event it found to the event log beside the fleet state, `oversee-watch.log`, as `EVENT` lines with their payload lines, in the shapes [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) states.
 
-Handle every line, even when its pass exits nonzero.
+Handle every line.
 
-Fix the cause that stderr names.
+`lane-close` is the only terminal-lane close-out; [lane-reach.md § Lane close](../references/lane-reach.md#lane-close) holds how it ends a lane, what each refusal asks, and each surface's close.
 
-The next pass starts after the `--repeat` delay. `lane-close` is the only terminal-lane close-out; [lane-reach.md § Lane close](../references/lane-reach.md#lane-close) holds how it ends a lane, what each refusal asks, and each surface's close.
+The watch is the orch runtime's standing scheduler: its duties run on their own cadences, the mail turn every `ORCH_WATCH_MAIL_INTERVAL` seconds, the heartbeat every `--max-loops` long passes (`--max-loops × --interval` seconds, 6000 on the defaults) and the rest every `--interval` seconds, until `orch-runtime watch stop --fleet`; it outlives a succession, a death recovery and a wall recovery, so no succession restarts it and the successor follows the same log.
 
-A successful dead-overseer or walled-overseer succession makes the single pass exit 3.
-
-The repeat command converts that status to 0 and stops after the succession helper receives the complete watch command.
-
-The helper starts and confirms the successor's detached watch even after the old claim is removed.
-
-Notice-only recovery, an exhausted retry, and a blocked recovery that no account in the fleet qualifies for also stop the repeat command with status 0, so a manual replacement starts one new watch and owns the overseer mailbox.
-
-Do not restart the old watch after any of those stops.
-
-For any other exit, fix the cause that stderr names and start it again.
+A duty that fails is one `watch-step-failed` line and runs again at its next cadence; only a failure of the runner's own records ends the run, whose cause its stderr names: fix it and start the watch again.
 
 Never hand-roll a monitor.
 
@@ -344,14 +334,14 @@ They never become `owed` development work.
 ```
 
 ```bash
-.agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --harness [HARNESS] --repo [ITEMS_REPO] --repo [OTHER_REPO]... -- [FLAGS]
+.agents/skills/orch/scripts/lib/job-unit.sh launch watch-[STAMP] "[OVERSEE_STATE_DIR]/oversee-watch.runner" -- sh -c 'err=$1; shift; exec "$@" 2>>"$err"' sh "[OVERSEE_STATE_DIR]/oversee-watch.err" .agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --harness [HARNESS] --repo [ITEMS_REPO] --repo [OTHER_REPO]... -- [FLAGS]
 ```
 
-`[HARNESS]` is the harness this overseer runs, `claude`, `codex`, `copilot` or `pi`; `oversee-succeed --help`, `--harness`, states when a pane needs it. A Copilot CLI overseer's account and marks follow [copilot-runtime.md § Overseer succession](../references/copilot-runtime.md#overseer-succession); on a host without `/proc`, register it with `oversee register --account [DIR]` first. `[FLAGS]` are the permission flags this overseer runs under, plus its current model and effort flags. Pass all of them even when `ORCH_OVERSEER_PREFERENCE` is set. The watch records this session. A caller or print entry keeps the flags whole except the question-tool words, which a successor carries exactly when `ORCH_QUESTION_TOOL` is off, its default. A named same-harness entry replaces model and effort but keeps the permission words exact. A named cross-harness entry requires one full-bypass mode with an exact equivalent, and no other permission word, writes the target harness's spelling and carries no other word of the caller's; none crosses to or from `pi`, whose row has no permission word. Under any other permission posture, the walk skips that entry, with `entry-permission-untransferable` on stderr, and goes on to the next one, ending at the caller's own harness. Numeric model selection and eligibility follow [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet. The record binds the launch line to the tmux server, pane and window because a dead pane names neither its model nor its account. Start the watch from the overseer's own pane, with `TMUX_PANE` as that pane's shell sets it, and never unset it: a watch with no pane judges no overseer. A record the start cannot build or write, `overseer-line-missing` or `overseer-unrecorded`, is a notice on stderr and in the fleet log, never a stop: the watch still judges the pane, a wall picks its own account, and a death relaunches from the line the fleet state already holds where its record names this pane by server, server start and pane id, the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand in the same pane may not have been started with, and the start's `held=` field names it; a record naming another pane, or none, reports the death with no successor and names that record. Missing permission flags can stop a caller-entry successor at a prompt. Missing model or effort flags can relaunch it with harness defaults. Where the fleet state's `overseer` record names this pane, it supplies the harness and account of that line ahead of `[HARNESS]`, the pane and the environment, and its model and effort as one pair, only where it names a model ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)); the flags supply the permission words, and the model and effort where the record names no model.
+`[HARNESS]` is the harness this overseer runs, `claude`, `codex`, `copilot` or `pi`; `oversee-succeed --help`, `--harness`, states when a pane needs it. `[FLAGS]` are the permission flags this overseer runs under, plus its current model and effort flags. Pass all of them even when `ORCH_OVERSEER_PREFERENCE` is set: the printed line takes its permission words from these flags, and with none from the line the record already holds, which a `register` record has none of. `--harness`, `--handoff` and `-- [FLAGS]` are this session's own launch line: the entry records it in the fleet state's `overseer` record before the runtime claims, as `oversee-succeed --print-launch-line` prints it, beside the harness, account, model and effort the launcher or `oversee register` (§ 1) wrote there; a death or wall recovery replays that line, and the runtime takes none of the three. A Copilot CLI overseer's account and marks follow [copilot-runtime.md § Overseer succession](../references/copilot-runtime.md#overseer-succession); on a host without `/proc`, register it with `oversee register --account [DIR]` first. Start the watch from the overseer's own pane, with `TMUX_PANE` as that pane's shell sets it: the claim records the pane it serves.
 
-`oversee-watch --help` states each refusal at start. After a self-succession the successor's own start takes over the watch the runtime's succession job restarted from the successor's pane and first prints what it reported, under `watch-replayed`: handle those lines as events.
+`oversee-watch --help` states the entry's refusals and `orch-runtime watch --help` the runtime's: a live claim refuses `watch-running`, and the entry stops a live watch of the retired repeat loop, under a `watch-taken-over` note, before it starts the runtime. After a self-succession the successor starts no watch: the scheduler outlives the controller, and the successor follows the log from the handoff's next line.
 
-**The watch rule.** A turn never ends while the watch is stopped: it alone closes an owner ask at its deadline where its form allows (lane-mail ask help), reported as `owner-ask-closed`. Read `oversee-watch --help` for the mail cadence and delay contract. The long pass, holding pr-watch, the merged check, triage, the outside-contribution and security-alert checks and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
+**The watch rule.** A turn never ends while the watch is stopped: it alone closes an owner ask at its deadline where its form allows (lane-mail ask help), reported as `owner-ask-closed`. Read `orch-runtime watch --help` for the cadences. The long pass, holding pr-watch, the merged check, triage, the outside-contribution and security-alert checks and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
 
 ### Watch delivery
 
@@ -361,7 +351,7 @@ Launch, follow and re-arm the repeat watch as [references/watch-delivery.md](../
 
 Use the pane payload that `oversee-watch` prints as the lane state, and never read the watch log's tail to handle an event: the follow delivers each line once.
 
-Each event carries only the lines its own handling reads, taken from below the lane's last user turn and capped by `ORCH_WATCH_TAIL_LINES`, default 12; which lines each kind carries is `oversee-watch --help` § Events.
+Each event carries only the lines its own handling reads, taken from below the lane's last user turn and capped by `ORCH_WATCH_TAIL_LINES`, default 12; which lines each kind carries is [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
 
 Do not capture the pane again when that payload answers the event.
 
@@ -424,7 +414,7 @@ The fleet is every author GitHub marks type `Bot` or whose `author_association` 
 
 The permission read is there because GitHub computes the association against the reading token: an organization member whose membership is private reads as `CONTRIBUTOR` to the app's token.
 
-A 404 is outside, and any other failed read exits the watch.
+A 404 is outside; any other failed read is the GitHub duty's `watch-step-failed` line, and the pass's other reads stand.
 
 The permission read prints `outside-fleet-by-permission repo= author= permission=` on stderr for each author it admits as fleet.
 
@@ -561,7 +551,7 @@ At an overseer trigger under [oversee-events.md § Judgement rules](../reference
 
    Copy `[TOKENS:WINDOW]` from the turn-end refusal. At an account trigger with no context reading, omit `--context`. `[FLAGS]` carries this session's permission, model and effort flags. A successor using the caller's harness entry keeps that model and effort. A named preference entry uses its own model and effort. Add `--handoff [PATH]` when the fleet brief names a different handoff path. `oversee-succeed --help` owns account selection and launch results.
 
-5. Read the launch result. `transfer-started intent=[ID]` says the runtime's detached job holds the succession; `transfer-refused key=[KEY]` says it was refused and this session keeps running. The job records the publication first, then hands the fleet watch to the successor's pane and records how that went on the intent as an idempotent continuation: `orch-runtime state inspect --fleet` shows the intent's `watch` as `handed-over` or `failed` and its `line` as the handover owner's keyed line. The successor reads its watch log through § 4 and starts no second repeat watch; with no live claim it restarts the watch under [takeover § 2](oversee-takeover.md#watch-reader). Read `watch-restarted` or `watch-restart-failed step=[STEP]` in `oversee-watch.err` beside fleet state when recovery needs inspection.
+5. Read the launch result. `transfer-started intent=[ID]` says the runtime's detached job holds the succession; `transfer-refused key=[KEY]` says it was refused and this session keeps running. The job records the publication; the fleet watch is the standing scheduler and outlives this session, so the successor reads the same log through § 4 from the handoff's next line and starts no second watch; with no live claim it starts one under [takeover § 2](oversee-takeover.md#watch-reader).
 6. Handle a refusal by its fields:
    - `context-below-mark`, or `context-unmeasured reason=window-unnamed`: no trigger is reached. Keep running and try again at a later event.
    - `context-unmeasured reason=context-unread`: at the context mark, run the command the turn-end refusal gives. It carries the missing reading. `headroom=none` or `headroom=unreadable` does not mean room.

@@ -327,9 +327,8 @@ echo "=== 5. a signal that ends the run ends its suites ==="
 # The runner leads its own process group here (set -m), so a group signal
 # never reaches this file; perl sets SIGINT back to its default, as a shell
 # started with it ignored could not trap it. The suite writes its pid and
-# blocks, so only the runner can end it. Its holder uses the shipped
-# oversee_watch_lifecycle stop_bound_case TERM-ignoring loop. TERM goes to the
-# runner alone, the case the group does not cover.
+# blocks, so only the runner can end it. Its holder is a TERM-ignoring loop.
+# TERM goes to the runner alone, the case the group does not cover.
 # SIGNAL|TARGET|EXPECTED RUNNER STATUS
 SIGNAL_ROWS='INT|group|130
 TERM|runner|143

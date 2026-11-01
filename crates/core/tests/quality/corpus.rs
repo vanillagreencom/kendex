@@ -161,7 +161,6 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
         "skills/orch/tests/open-terminal-lane-pick.sh",
         "skills/orch/tests/open-terminal-preference.sh",
         "skills/orch/tests/oversee_succeed.sh",
-        "skills/orch/tests/lib/overseer-watch-case.sh",
     ];
     assert_eq!(found(&result), vec![], "{:#?}", result.findings);
     assert_eq!(result.safety.score, 100);

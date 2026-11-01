@@ -28,7 +28,6 @@ use crate::state::{
 };
 
 use super::super::{overseer_identity, pid_value};
-use super::WatchHandoverCall;
 
 /// A pane by exact id on the server identity that holds it, pid and tmux
 /// start. A lane record the legacy launcher wrote names the server by pid
@@ -1097,8 +1096,7 @@ pub(in crate::effects) struct Wire {
 
 /// An effect's result: the one type `apply_outcome` records. `record` is the
 /// obligation set as the effect left it, written with the outcome;
-/// `handover` is the continuation a confirmed succession runs once the
-/// publication is recorded; `while_owner` is the owner the writes are made
+/// `while_owner` is the owner the writes are made
 /// under, where the writer may have lost the intent to a claimant;
 /// `lane_keys` are the keys a lane intent's terminal carries to the store's
 /// moved-lane judgement (decision 124d (14)).
@@ -1111,7 +1109,6 @@ pub(in crate::effects) struct EffectOutcome {
     pub(super) observation: Value,
     pub(super) wire: Wire,
     pub(super) record: ObligationRecord,
-    pub(super) handover: Option<WatchHandoverCall>,
     pub(super) while_owner: Option<Owner>,
     pub(super) lane_keys: Option<LaneKeys>,
     /// The identities the handle read stale this run, for the stop the same
@@ -1134,7 +1131,6 @@ impl EffectOutcome {
             observation,
             wire: Wire::default(),
             record,
-            handover: None,
             while_owner: None,
             lane_keys: None,
             stale: Vec::new(),
@@ -1265,13 +1261,6 @@ impl EffectOutcome {
     /// same request reruns counts no second time (decision 124e (22)).
     pub(in crate::effects) fn stale_read(&self) -> Vec<Identity> {
         self.stale.clone()
-    }
-
-    pub(in crate::effects) fn with_handover(self, handover: WatchHandoverCall) -> EffectOutcome {
-        EffectOutcome {
-            handover: Some(handover),
-            ..self
-        }
     }
 
     /// Write `value` under `key` on the observation: a caller's note beside
@@ -1913,7 +1902,6 @@ mod tests {
             notice: None,
             phase: None,
             obligations: Some(set.record.clone()),
-            watch: None,
             observation: None,
             reconciled: None,
             observed_status: None,

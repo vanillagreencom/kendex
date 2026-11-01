@@ -2505,9 +2505,10 @@ echo "=== the usage TTL default outlasts the longest watch interval on the host 
 TTL_DEFAULT="$(sed -n 's/^USAGE_TTL="${ORCH_LANES_USAGE_TTL:-\([0-9][0-9]*\)}"$/\1/p' "$LANES")"
 assert_eq "$([[ -n "$TTL_DEFAULT" ]] && echo found || echo none)" "found" \
   "the extractor reads the TTL fallback out of the shipped script"
-WATCH_INTERVAL_DEFAULT="$(sed -n 's/^  INTERVAL=\([0-9][0-9]*\)$/\1/p' "$SCRIPTS_DIR/oversee-watch")"
+# The watch's interval default is the runtime's `watch run --interval`.
+WATCH_INTERVAL_DEFAULT="$(sed -n 's/^ *#\[arg(long, default_value_t = \([0-9][0-9]*\), value_parser = clap::value_parser!(u64).range(1..))\]$/\1/p' "$SCRIPTS_DIR/../runtime/src/main.rs")"
 assert_eq "$([[ "$WATCH_INTERVAL_DEFAULT" =~ ^[0-9]+$ ]] && echo found || echo "none:$WATCH_INTERVAL_DEFAULT")" "found" \
-  "the extractor reads exactly one interval default out of oversee-watch"
+  "the extractor reads exactly one interval default out of the runtime's watch verb"
 assert_eq "$([[ "$TTL_DEFAULT" -gt "$WATCH_INTERVAL_DEFAULT" ]] && echo outlasts || echo "under-interval:$TTL_DEFAULT<=$WATCH_INTERVAL_DEFAULT")" \
   "outlasts" "the default TTL outlasts the default watch interval"
 # The two documents that STATE the default name the setting on one line each,

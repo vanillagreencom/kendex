@@ -403,7 +403,14 @@ impl Operation<'_> {
         self.write()?;
         let job_unit = self.run.settings.job_unit.clone();
         Ok(
-            match host::run("job-unit", &job_unit, "launch", args, JOB_LAUNCH_TIMEOUT) {
+            match host::run_tagged(
+                "job",
+                "job-unit",
+                &job_unit,
+                "launch",
+                args,
+                JOB_LAUNCH_TIMEOUT,
+            ) {
                 Ok(out) if out.status.success() => Asked::Started(host::stdout_text(&out)),
                 Ok(out) => Asked::Refused(host::stderr_text(&out)),
                 Err(e) => Asked::Unrun(e.to_string()),
@@ -679,7 +686,8 @@ fn reply_status(line: &str) -> Option<SidecarRead> {
 /// the manager did not answer or the unit still runs.
 fn unit_end(unit: &str) -> Option<JobEnd> {
     let service = format!("{unit}.service");
-    let out = host::run(
+    let out = host::run_tagged(
+        "job",
         "systemctl",
         Path::new("systemctl"),
         "show",
@@ -860,7 +868,6 @@ fn mark_notice(
             intent_id: intent.id.clone(),
             phase: None,
             obligations: None,
-            watch: None,
             while_owner,
             notice: Some(Notice {
                 key: owed.key.clone(),
@@ -943,7 +950,8 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
         return format!("unsent:notice-write:{e}");
     }
     let file = path.display().to_string();
-    let result = host::run(
+    let result = host::run_tagged(
+        "job",
         "lane-mail",
         &run.settings.lane_mail_cli,
         "notice",

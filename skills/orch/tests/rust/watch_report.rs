@@ -66,7 +66,7 @@ fn lines(path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The Done-when text `oversee_watch_owed.sh`'s `verifying_world` gives
+/// The Done-when text `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s `verifying_world` gives
 /// its two Verifying items.
 const DEADLINE_BOXES: &str = "## Done when\n- [x] branch proof\n- [ ] Post-merge: Read deployed health; Where: live service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z\n- [ ] Post-merge: Read consumer refresh; Where: consumer PR; Why after merge: needs rollout; Deadline: 2026-10-03T00:00:00Z";
 
@@ -250,7 +250,7 @@ fn runner<'a>(world: &World, clock: &'a FakeClock) -> Runner<'a> {
 /// `verifying-deadline` event drifting from the legacy bytes the session
 /// keys on; a standing deadline raised on every pass; a waiting box raised;
 /// a container's outcome box missed or its child box read as open. The
-/// legacy's answers on `oversee_watch_owed.sh`'s own worlds, recorded once
+/// legacy's answers on `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s own worlds, recorded once
 /// (`tmp/orch-rebuild/u5f/recorded/`): the deadline world's four events
 /// and four lines, then nothing on the second pass with the lines held for
 /// the heartbeat; the unfired trigger's four waiting lines and no event;
@@ -675,7 +675,7 @@ fn owed((id, state, priority, lane, host, harness, model, delivery): OwedRow<'_>
 /// roster, the verifying and owed lines with their wall verdicts); the
 /// capacity line missing or naming held items. Under one mail event every
 /// 7 s for 7000 s, with the tracker, GitHub and verification slots holding
-/// `oversee_watch_owed.sh`'s world and the account fixture its roster and
+/// `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s world and the account fixture its roster and
 /// picks: one heartbeat at the first tick at or past 6000 s, its block the
 /// legacy's recorded bytes, then the quota, reducer and capacity lines.
 #[test]
@@ -972,6 +972,526 @@ fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
             "owed unread".to_owned(),
             "open-unblocked count=unread items=-".to_owned(),
         ]
+    );
+}
+
+/// One `lanes list --json` record as `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s
+/// `account` wrote it: `-` for the headroom or the reset is the null an
+/// unmeasured account carries.
+fn account_record(alias: &str, through: &str, reading: &str) -> Value {
+    let words: Vec<&str> = reading.split_whitespace().collect();
+    let [status, verdict, headroom, resets] = words[..] else {
+        panic!("{reading}");
+    };
+    json!({
+        "alias": alias, "harness": "claude", "config_dir": format!("/home/u/.{alias}"),
+        "measured_through": through, "status": status, "verdict": verdict,
+        "headroom_pct": if headroom == "-" { Value::Null } else { json!(headroom.parse::<u64>().unwrap()) },
+        "binding_bucket": if resets == "-" { Value::Null } else { json!("weekly") },
+        "binding_resets_at": if resets == "-" { Value::Null } else { json!(resets) },
+    })
+}
+
+/// The heartbeat body with every slot empty and no open list: the roster
+/// and its account events are what the pass produces.
+fn roster_body(world: &World) -> watch::Body<'static> {
+    heartbeat::body(heartbeat::Context {
+        settings: world.settings.clone(),
+        max_loops: 25,
+        interval: secs(240),
+        since: None,
+        repos: Vec::new(),
+        gh: world.path().join("gh"),
+        shared: Shared::default(),
+        verifying: Lines::default(),
+    })
+}
+
+/// The `account` events of a pass, which stand ahead of its heartbeat line.
+fn account_events(produced: &Produced) -> Vec<String> {
+    let lines = rendered(produced);
+    let heartbeat = lines
+        .iter()
+        .position(|l| l.starts_with("EVENT heartbeat "))
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    let events: Vec<String> = lines
+        .iter()
+        .filter(|l| l.starts_with("EVENT account "))
+        .cloned()
+        .collect();
+    assert_eq!(
+        lines[..heartbeat].to_vec(),
+        events,
+        "the account events stand ahead of the heartbeat line"
+    );
+    events
+}
+
+const CLAUDE_KEY: &str = "claude|local|/home/u/.claude";
+
+/// Decision 176 (1) (b); `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s `renewal`,
+/// `crossing`, `reset`, `dropped`, `reset_unparsed` and `shared_alias`
+/// cases. Defect: an account's change said twice while unchanged (the row
+/// not advanced), or not said again on the next change; the `change=` or
+/// `was=` text drifting from the legacy bytes; a reset time that moved
+/// while still ahead read as a reset, or a passed reset the reading still
+/// names; an account the listing dropped for a pass losing its row, so its
+/// return is judged against nothing; two accounts sharing an alias judged
+/// as one. Each sequence is its passes' listings and the account events
+/// each pass says, at the wall it runs at.
+#[test]
+fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_next() {
+    // `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s BEFORE and AFTER: one hour before and
+    // after the reset sequence's first reset.
+    const BEFORE: u64 = 1_790_247_600;
+    const AFTER: u64 = 1_790_254_800;
+    const ANY: u64 = BEFORE;
+    let claude = |reading: &str| account_record("claude", "local", reading);
+    let eclaude = |reading: &str| account_record("eclaude", "local", reading);
+    let srv = |reading: &str| {
+        let mut record = claude(reading);
+        record["config_dir"] = json!("/srv/u/.claude");
+        record
+    };
+    /// One pass: its wall, the listing it reads, the account events it says.
+    type Pass<'a> = (u64, Vec<Value>, Vec<&'a str>);
+    let sequences: Vec<(&str, Vec<Pass>)> = vec![
+        (
+            "renewal",
+            vec![
+                (
+                    ANY,
+                    vec![
+                        claude("expired unmeasured - -"),
+                        eclaude("ok room 40 2026-10-02T00:00:00Z"),
+                    ],
+                    vec![],
+                ),
+                (
+                    ANY,
+                    vec![
+                        claude("ok room 80 2026-10-01T00:00:00Z"),
+                        eclaude("ok room 40 2026-10-02T00:00:00Z"),
+                    ],
+                    vec![
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=status,headroom was=expired/unmeasured",
+                    ],
+                ),
+                (
+                    ANY,
+                    vec![
+                        claude("ok room 80 2026-10-01T00:00:00Z"),
+                        eclaude("ok room 40 2026-10-02T00:00:00Z"),
+                    ],
+                    vec![],
+                ),
+            ],
+        ),
+        (
+            "crossing",
+            vec![
+                (ANY, vec![claude("ok room 10 2026-10-01T00:00:00Z")], vec![]),
+                (
+                    ANY,
+                    vec![claude("ok walled 3 2026-10-01T00:00:00Z")],
+                    vec![
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=3 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room",
+                    ],
+                ),
+                (
+                    ANY,
+                    vec![claude("ok room 30 2026-10-01T00:00:00Z")],
+                    vec![
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+                    ],
+                ),
+                (ANY, vec![claude("ok room 50 2026-10-01T00:00:00Z")], vec![]),
+            ],
+        ),
+        (
+            "reset",
+            vec![
+                (
+                    BEFORE,
+                    vec![claude("ok walled 2 2026-09-24T12:00:00Z")],
+                    vec![],
+                ),
+                (
+                    BEFORE,
+                    vec![claude("ok walled 2 2026-09-24T12:30:00Z")],
+                    vec![],
+                ),
+                (
+                    AFTER,
+                    vec![claude("ok walled 2 2026-09-24T12:30:00Z")],
+                    vec![],
+                ),
+                (
+                    AFTER,
+                    vec![claude("ok room 20 2026-09-24T12:30:00Z")],
+                    vec![
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-09-24T12:30:00Z change=headroom was=ok/walled",
+                    ],
+                ),
+                (
+                    AFTER,
+                    vec![claude("ok room 20 2026-10-01T12:00:00Z")],
+                    vec![
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/room",
+                    ],
+                ),
+            ],
+        ),
+        (
+            "dropped",
+            vec![
+                (
+                    ANY,
+                    vec![claude("ok walled 2 2026-10-01T00:00:00Z")],
+                    vec![],
+                ),
+                (
+                    ANY,
+                    vec![eclaude("ok room 40 2026-10-02T00:00:00Z")],
+                    vec![],
+                ),
+                (
+                    ANY,
+                    vec![claude("ok room 30 2026-10-01T00:00:00Z")],
+                    vec![
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+                    ],
+                ),
+            ],
+        ),
+        (
+            "reset_unparsed",
+            vec![
+                (ANY, vec![claude("ok walled 2 not-a-time")], vec![]),
+                (
+                    ANY,
+                    vec![claude("ok room 30 2026-10-01T00:00:00Z")],
+                    vec![
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+                    ],
+                ),
+            ],
+        ),
+        (
+            "shared_alias",
+            vec![
+                (
+                    ANY,
+                    vec![
+                        claude("ok room 80 2026-10-01T00:00:00Z"),
+                        srv("ok room 70 2026-10-01T00:00:00Z"),
+                    ],
+                    vec![],
+                ),
+                (
+                    ANY,
+                    vec![
+                        claude("ok room 80 2026-10-01T00:00:00Z"),
+                        srv("ok walled 2 2026-10-01T00:00:00Z"),
+                    ],
+                    vec![
+                        "EVENT account claude config_dir=/srv/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room",
+                    ],
+                ),
+            ],
+        ),
+    ];
+    let world = World::new();
+    let clock = FakeClock::new();
+    for (name, passes) in sequences {
+        let mut body = roster_body(&world);
+        let mut baseline = Baseline::default();
+        for (n, (wall, listing, want)) in passes.into_iter().enumerate() {
+            world.plant("lanes.json", &Value::Array(listing.clone()));
+            let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
+            assert_eq!(produced.failed, None, "{name} pass {}", n + 1);
+            assert_eq!(account_events(&produced), want, "{name} pass {}", n + 1);
+            // The roster under the line is the pass's own reading.
+            let roster: Vec<String> = rendered(&produced)
+                .into_iter()
+                .filter(|l| l.starts_with("account "))
+                .collect();
+            assert_eq!(roster.len(), listing.len(), "{name} pass {}", n + 1);
+        }
+    }
+}
+
+/// Decision 176 (1) (b); `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s `ACCOUNT_SEQUENCES`
+/// table and its four controls. Defect: an unmeasured reading moving the
+/// row (so a provider holding a credential while a lane runs flaps an
+/// event every other pass, the legacy's `flap` control); a measured
+/// change after the gap not said (`measured`); an `expired` or `retired`
+/// reading after a measured one not said, or said only once when it
+/// recurs after a renewal (`expired`, `retired`); an unmeasured first
+/// sighting written as a row. Each row of the table is one pass's
+/// reading, the event tail it says and the `account` row saved under the
+/// legacy's key afterwards, `-` for none.
+#[test]
+fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
+    const SEQUENCES: &[(&str, &str, &str, &str)] = &[
+        (
+            "quiet",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "quiet",
+            "unreachable unmeasured - -",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "quiet",
+            "held unmeasured - -",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "quiet",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "crossing",
+            "ok walled 2 2099-01-01T00:00:00Z",
+            "-",
+            "ok|walled|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "crossing",
+            "unreachable unmeasured - -",
+            "-",
+            "ok|walled|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "crossing",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "change=headroom was=ok/walled",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "expired",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "expired",
+            "unreachable unmeasured - -",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "expired",
+            "expired unmeasured - -",
+            "change=status,headroom was=ok/room",
+            "expired|unmeasured|-|expired",
+        ),
+        (
+            "expired",
+            "held unmeasured - -",
+            "-",
+            "expired|unmeasured|-|expired",
+        ),
+        (
+            "expired",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "change=status,headroom was=expired/unmeasured",
+            "ok|room|2099-01-01T00:00:00Z|expired",
+        ),
+        (
+            "expired",
+            "expired unmeasured - -",
+            "change=status,headroom was=ok/room",
+            "expired|unmeasured|-|expired",
+        ),
+        (
+            "expired",
+            "expired unmeasured - -",
+            "-",
+            "expired|unmeasured|-|expired",
+        ),
+        (
+            "retired",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "retired",
+            "unreachable unmeasured - -",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "retired",
+            "retired unmeasured - -",
+            "change=status,headroom was=ok/room",
+            "retired|unmeasured|-|retired",
+        ),
+        (
+            "retired",
+            "held unmeasured - -",
+            "-",
+            "retired|unmeasured|-|retired",
+        ),
+        (
+            "retired",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "change=status,headroom was=retired/unmeasured",
+            "ok|room|2099-01-01T00:00:00Z|retired",
+        ),
+        (
+            "retired",
+            "retired unmeasured - -",
+            "change=status,headroom was=ok/room",
+            "retired|unmeasured|-|retired",
+        ),
+        (
+            "retired",
+            "retired unmeasured - -",
+            "-",
+            "retired|unmeasured|-|retired",
+        ),
+        ("no_baseline", "unreachable unmeasured - -", "-", "-"),
+        ("no_baseline", "held unmeasured - -", "-", "-"),
+        (
+            "no_baseline",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "-",
+            "ok|room|2099-01-01T00:00:00Z|-",
+        ),
+        (
+            "retired_baseline",
+            "retired unmeasured - -",
+            "-",
+            "retired|unmeasured|-|retired",
+        ),
+        (
+            "retired_baseline",
+            "ok room 80 2099-01-01T00:00:00Z",
+            "change=status,headroom was=retired/unmeasured",
+            "ok|room|2099-01-01T00:00:00Z|retired",
+        ),
+    ];
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    let mut current: Option<(&str, watch::Body<'static>, Baseline)> = None;
+    for &(name, reading, expected, saved) in SEQUENCES {
+        if current.as_ref().is_none_or(|(c, _, _)| *c != name) {
+            current = Some((name, roster_body(&world), Baseline::default()));
+        }
+        let (_, body, baseline) = current.as_mut().unwrap();
+        world.plant(
+            "lanes.json",
+            &json!([account_record("claude", "host", reading)]),
+        );
+        let produced = pass(Duty::Heartbeat, body, baseline, &clock, wall).unwrap();
+        assert_eq!(produced.failed, None, "{name}: {reading}");
+        let events = account_events(&produced);
+        let tail = match events.as_slice() {
+            [] => "-".to_owned(),
+            [one] => one[one.find(" change=").unwrap() + 1..].to_owned(),
+            more => panic!("{name}: {reading}: {more:?}"),
+        };
+        let row = baseline
+            .get("account", "claude|host|/home/u/.claude")
+            .unwrap_or("-");
+        got.push(format!("{name}: {reading}: {tail} row={row}"));
+        want.push(format!("{name}: {reading}: {expected} row={saved}"));
+    }
+    assert_eq!(got, want);
+}
+
+/// Decision 176 (1) (b), decisions 99, 105, 156 (1); `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s
+/// `unread`, `empty_listing` and `missing_status`/`missing_verdict` cases.
+/// Defect: a listing that could not be read, or one the watch cannot
+/// compare (an empty answer at exit 0, a record with no status or
+/// verdict), read as a fleet with no accounts or as no change: the pass
+/// not counted a failure, the roster printed as accounts, the row moved,
+/// so the next readable pass says the change against nothing. Each
+/// unreadable form is a counted failure with `account-roster unread` and
+/// the row as it stood; the readable pass after them says the change
+/// against the reading before them.
+#[test]
+fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let mut body = roster_body(&world);
+    let mut baseline = Baseline::default();
+    let claude = |reading: &str| json!([account_record("claude", "local", reading)]);
+    world.plant("lanes.json", &claude("ok walled 2 2026-10-01T00:00:00Z"));
+    let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
+    assert_eq!(produced.failed, None);
+    assert_eq!(account_events(&produced), Vec::<String>::new());
+    let held = "ok|walled|2026-10-01T00:00:00Z|-";
+    assert_eq!(baseline.get("account", CLAUDE_KEY), Some(held));
+    // Each unreadable form, planted beside the fixture and removed after.
+    let unreadable: Vec<(&str, &str, Value)> = vec![
+        ("refused", "lanes.rc", json!("1\n")),
+        ("empty at exit 0", "lanes.text", json!("")),
+        (
+            "no status",
+            "lanes.json",
+            json!([{"alias": "claude", "harness": "claude", "config_dir": "/home/u/.claude", "measured_through": "local", "verdict": "room", "headroom_pct": 80}]),
+        ),
+        (
+            "no verdict",
+            "lanes.json",
+            json!([{"alias": "claude", "harness": "claude", "config_dir": "/home/u/.claude", "measured_through": "local", "status": "ok", "headroom_pct": 80}]),
+        ),
+    ];
+    for (form, file, content) in unreadable {
+        match &content {
+            Value::String(text) => std::fs::write(world.path().join(file), text).unwrap(),
+            other => world.plant(file, other),
+        }
+        let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
+        assert!(
+            produced
+                .failed
+                .as_deref()
+                .is_some_and(|c| c.starts_with("account-unread path=")),
+            "{form}: {:?}",
+            produced.failed
+        );
+        let lines = rendered(&produced);
+        assert_eq!(account_events(&produced), Vec::<String>::new(), "{form}");
+        assert!(
+            lines.contains(&"account-roster unread".to_owned())
+                && !lines.iter().any(|l| l.starts_with("account ")),
+            "{form}: {lines:?}"
+        );
+        assert_eq!(produced.changes, Vec::new(), "{form}: no row moves");
+        assert_eq!(baseline.get("account", CLAUDE_KEY), Some(held), "{form}");
+        if file != "lanes.json" {
+            std::fs::remove_file(world.path().join(file)).unwrap();
+        }
+    }
+    world.plant("lanes.json", &claude("ok room 30 2026-10-01T00:00:00Z"));
+    let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
+    assert_eq!(produced.failed, None);
+    assert_eq!(
+        account_events(&produced),
+        vec![
+            "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled".to_owned()
+        ],
+        "the change is said against the reading before the unreadable passes"
+    );
+    assert_eq!(
+        baseline.get("account", CLAUDE_KEY),
+        Some("ok|room|2026-10-01T00:00:00Z|-")
     );
 }
 

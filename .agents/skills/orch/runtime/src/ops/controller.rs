@@ -28,7 +28,7 @@ use crate::settings::{Settings, Succession};
 use crate::state::{
     self, Document, EffectOp, Intent, Locking, Notice, OVERSEER_COMPARE_KEYS, ObligationRecord,
     Overseer, Owner, PREDECESSOR_SESSION_KEYS, Pending, Phase, SUCCESSOR_BINDING_KEYS,
-    SUCCESSOR_IDENTITY_KEYS, TransferCause, WatchHandover,
+    SUCCESSOR_IDENTITY_KEYS, TransferCause,
 };
 
 /// The overseer record the requester saw: the legacy succession
@@ -277,10 +277,8 @@ pub struct IntentClaimed {
 }
 
 /// Write an effect's progress into its intent before the wait that follows
-/// (decisions 62, 115 (A)): the phase where one moved, the obligation set as
-/// it stands, and, after a confirmed succession, how the watch handover
-/// went (decision 115 (C)). The phase and the set are written on an open
-/// intent alone; the handover on the closed confirmed intent, once.
+/// (decisions 62, 115 (A)): the phase where one moved and the obligation set
+/// as it stands, each written on an open intent alone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordProgress {
     pub intent_id: String,
@@ -288,8 +286,6 @@ pub struct RecordProgress {
     pub phase: Option<Phase>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<ObligationRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub watch: Option<WatchHandover>,
     /// The owner the launcher-side handle writes under: the write is a no-op
     /// once another owner holds the intent, so a job that claimed between the
     /// launcher's last read and its write keeps its own set (decision 124b);
@@ -636,13 +632,12 @@ pub(super) fn claim_intent(
     Ok(IntentClaimed { intent })
 }
 
-/// Write an effect's progress (decisions 62, 115 (A), 115 (C)). The phase and
-/// the obligation set go onto an open intent, refusing `intent-complete` on
-/// a closed one as a phase write always has; the watch handover goes onto
-/// the closed confirmed succession it continues, once, and the sent mark
-/// onto the notice the outcome's write recorded owed, once: a second write
-/// finds either recorded and changes nothing. A write that leaves the
-/// document as it was is written nowhere (decision 89).
+/// Write an effect's progress (decisions 62, 115 (A)). The phase and the
+/// obligation set go onto an open intent, refusing `intent-complete` on a
+/// closed one as a phase write always has; the sent mark goes onto the
+/// notice the outcome's write recorded owed, once: a second write finds it
+/// recorded and changes nothing. A write that leaves the document as it was
+/// is written nowhere (decision 89).
 pub(super) fn record_progress(
     path: &Path,
     doc: &mut Document,
@@ -669,30 +664,15 @@ pub(super) fn record_progress(
             progress: Progress::Yielded { owner },
         });
     }
-    // A write that carries only a notice mark or the watch handover is a
-    // continuation of the intent's recorded outcome, taken on the closed
-    // intent (decision 124i (36)); the store's content comparison still
-    // holds the mark.
+    // A write that carries only a notice mark is a continuation of the
+    // intent's recorded outcome, taken on the closed intent (decision 124i
+    // (36)); the store's content comparison still holds the mark.
     let continuation = r.phase.is_none() && r.obligations.is_none();
     if !continuation && !intent.open() {
         return Err(Error::IntentComplete {
             id: intent.id.clone(),
             outcome: intent.outcome,
         });
-    }
-    if r.watch.is_some() {
-        match (intent.op, intent.outcome) {
-            (EffectOp::RequestTransfer | EffectOp::StartController, Outcome::Confirmed) => {}
-            (
-                EffectOp::LaunchLane | EffectOp::CloseOwnedResources | EffectOp::StopController,
-                _,
-            )
-            | (_, Outcome::NotStarted | Outcome::Failed | Outcome::Unconfirmed) => {
-                return Err(Error::OutcomeInvalid {
-                    outcome: intent.outcome,
-                });
-            }
-        }
     }
     let before = doc.clone();
     // The notice the outcome's write recorded `owed` is marked with how its
@@ -738,12 +718,6 @@ pub(super) fn record_progress(
         };
         intent.obligations = Some(next.clone());
         state::set(row, "obligations", serde_json::to_value(&next)?);
-    }
-    if let Some(watch) = &r.watch
-        && intent.watch.is_none()
-    {
-        intent.watch = Some(watch.clone());
-        state::set(row, "watch", serde_json::to_value(watch)?);
     }
     if state::same_document(path, doc, &before)? {
         return Ok(ProgressRecorded {
@@ -1608,7 +1582,6 @@ mod tests {
                 intent_id: id.clone(),
                 phase: None,
                 obligations: Some(set),
-                watch: None,
                 while_owner,
                 notice: None,
             }))
@@ -1687,7 +1660,6 @@ mod tests {
             intent_id: id.clone(),
             phase: None,
             obligations: Some(launcher_set),
-            watch: None,
             while_owner: Some(owner()),
             notice: None,
         }));
@@ -1735,7 +1707,6 @@ mod tests {
                     revision,
                     ..Default::default()
                 }),
-                watch: None,
                 while_owner: None,
                 notice: None,
             }))
@@ -1809,7 +1780,6 @@ mod tests {
                 }],
                 ..Default::default()
             }),
-            watch: None,
             while_owner: Some(owner()),
             notice: None,
         }));
@@ -2335,7 +2305,6 @@ mod tests {
                 intent_id: id.to_owned(),
                 phase: None,
                 obligations: None,
-                watch: None,
                 while_owner: None,
                 notice: Some(notice.clone()),
             }))

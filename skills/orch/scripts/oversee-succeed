@@ -15,8 +15,7 @@
 #                   [-- HARNESS_FLAGS...]
 #
 #   `oversee launch --predecessor` replaces a live overseer through the same
-#   walk, flag assembly and launch steps (lib/overseer-launch.sh), and hands
-#   the fleet watch on through the same step 6 (lib/watch-handover.sh), with
+#   walk, flag assembly and launch steps (lib/overseer-launch.sh), with
 #   no mark judged, no caller entry and no flags carried over; this script is the
 #   succession that judges the marks, carries the caller's own flags, and
 #   serves recovery from death, a confirmed wall or a live launch reserve.
@@ -555,12 +554,8 @@ message() { # KEY FIELD=VALUE...
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
     owner-notice-unwritten) text='The succession refusal could not reach the owner channel. The key field names the refusal and the step field names the failed operation. The original refusal and its exit status stand.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
-    watch-handover) text='The fleet watch serving the caller pane is restarted from the successor pane once this window closes, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
-    watch-restarted) text='The fleet watch was stopped and started again from the successor pane, with the successor flags and account, so a successor that dies is reported. Its output stays beside the fleet state for the successor to read.' ;;
-    watch-restart-failed) text='The fleet watch could not be started or restarted from the successor pane. Before the caller closes, this failure refuses the succession. A later helper failure is recorded in the watch error log.' ;;
   esac
-  # One printf, so one write: the restarted watch appends its own keyed lines
-  # to the same oversee-watch.err, and a split write lets them tear this one.
+  # One printf, so one write.
   printf -v fields ' %s' "$@"
   printf 'oversee-succeed: %s%s\n%s\n' "$key" "$fields" "$text"
 }
@@ -655,65 +650,9 @@ source "$SCRIPT_DIR/lib/lane-model.sh"
 # shellcheck source=lib/overseer-launch.sh
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
 PREFERENCE_ACTIVE=false
-# shellcheck source=lib/watch-pid.sh
-source "$SCRIPT_DIR/lib/watch-pid.sh"
-# shellcheck source=lib/job-unit.sh
-source "$SCRIPT_DIR/lib/job-unit.sh"
-# The watch handover and the job launch the helper below restarts the watch
-# through, shared with `oversee launch --predecessor`.
-# shellcheck source=lib/watch-handover.sh
-source "$SCRIPT_DIR/lib/watch-handover.sh"
 # shellcheck source=orch-env
 source "$SCRIPT_DIR/orch-env"
 
-# The internal `--watch-restart STATE CALLER_SESSION PANE LANE_VAR LANE_HOME
-# HARNESS CWD SCRIPT ARGC ARGS... [FLAG...]` run, step 6's helper, which the succession starts before its
-# close through the orch job runner (header step 6). Every
-# line it prints goes to oversee-watch.err, where the handover pointed its
-# stdout and stderr, so the next watch start on the state other than a
-# succession's prints it. Each outcome is one keyed line, and none is a refusal
-# of anything: the succession has already committed.
-watch_restart() { # STATE CALLER_SESSION PANE LANE_VAR LANE_HOME HARNESS CWD SCRIPT ARGC ARGS... [FLAG...]
-  local state="$1" caller="$2" pane="$3" var="$4" home="$5" harness="$6" deadline
-  local cwd="$7" script="$8" argc="$9"
-  local -a argv=()
-  shift 9
-  argv=("${@:1:$argc}")
-  shift "$argc"
-  HANDOFF="${HANDOFF:-tmp/handoffs/OVERSEER-HANDOFF.md}"
-  watch_pid_paths "$state" || { message watch-restart-failed step=state-path "path=$state"; return 0; }
-  deadline=$((SECONDS + WATCH_STOP_SECS))
-  # The caller is closed once the runtime's `inspect` no longer lists it.
-  while [[ -n "$caller" ]]; do
-    if ! ol_session_inspect "$caller"; then
-      message watch-restart-failed step=close "session=$caller"
-      cat -- "$DEP_ERR"
-      return 0
-    fi
-    [[ "$OL_INSPECT_STATE" != gone ]] || break
-    if (( SECONDS >= deadline )); then
-      message watch-restart-failed step=close "session=$caller"
-      return 0
-    fi
-    sleep 0.1
-  done
-  WATCH_CWD="$cwd" WATCH_SCRIPT="$script" WATCH_ARGV=(${argv[@]+"${argv[@]}"})
-  if watch_start replay "$state" "$pane" "$var" "$home" "$harness" "$@"; then
-    message watch-restarted "pid=$WATCH_PID" "pane=$pane" "$JOB_UNIT_LINE"
-  else
-    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
-    cat -- "$DEP_ERR"
-  fi
-}
-if [[ "${1:-}" == --watch-restart ]]; then
-  shift
-  [[ $# -ge 9 ]] || die unknown-option "arg=--watch-restart"
-  watch_restart "$@"
-  # This helper's own job record (lib/watch-handover.sh § watch_job_launch),
-  # which nothing reads once the helper has run.
-  [[ -z "${OVERSEE_WATCH_JOB_RECORD:-}" ]] || rm -f -- "$OVERSEE_WATCH_JOB_RECORD"
-  exit 0
-fi
 
 handoff_record_read() {
   ol_record_read || die handoff-stale "path=$HANDOFF" expected=unknown found=none

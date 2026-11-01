@@ -1,39 +1,35 @@
 #!/usr/bin/env bash
-# The record a repeat-mode `oversee-watch` keeps of itself, beside the fleet
-# state it watches, and the one way to stop it. It is read by
-# `oversee-watch`, which refuses a second watch on one fleet state and takes
-# over the one a succession restarted for its pane, one whose pane is gone, or
-# the one its launcher named for replacement, and by lib/watch-handover.sh,
-# through which `oversee-succeed`, `oversee launch` and `oversee resume` start
-# or restart the running watch from the successor pane, the last naming the
-# watch it replaces.
+# The record a running watch keeps of itself, beside the fleet state it
+# watches, and the one way to stop it, `orch-runtime watch stop --fleet`
+# (../../references/watch-delivery.md): a controller stop (`stop-controller`)
+# leaves the watch running. The runtime (`orch-runtime watch run`, started
+# through the `oversee-watch` entry) writes the record and refuses a second
+# watch on one fleet state; the entry reads it to stop a legacy watch it
+# replaces; the hook reads it to tell a live watch from none.
 #
 # Files, in the directory holding the fleet state:
-#   oversee-watch.pid   `key=value` lines: pid (the repeat loop's own pid,
+#   oversee-watch.pid   `key=value` lines the runtime writes: pid (its own,
 #                       never a launcher's), state (the fleet state path,
 #                       resolved), pane (the $TMUX_PANE the watch serves, or
-#                       none), origin (hand, or succession for a watch
-#                       `oversee-succeed` restarted), script (the watch it
-#                       runs) and cwd (the directory it runs in)
-#   oversee-watch.argv  NUL-separated: watch-command-v1, script, cwd, then
-#                       its arguments up to, never including,
-#                       the `--` that starts the overseer's own flags, which a
-#                       restart replaces with the successor's
-#   oversee-watch.log   stdout of a watch an overseer launcher started, where no
-#   oversee-watch.err   harness is reading it, and stderr beside it, where the
-#                       restart also writes how it went. The next watch start
-#                       on the state other than a succession's prints both
-#                       and removes them; the restarted watch, their writer,
-#                       never does
+#                       none), origin (hand, or succession), script, cwd and
+#                       start (its process start, which binds the claim to
+#                       the pid). A record with no start= line is the retired
+#                       repeat loop's, with its six fields; the entry stops
+#                       that watch before the runtime claims
+#   oversee-watch.argv  the runtime's: NUL-separated, watch-command-v1,
+#                       script, cwd, then its arguments; replaced whole at
+#                       each claim
+#   oversee-watch.log   the runtime's event log, appended after whatever a
+#                       launcher of the retired loop left there; no start
+#                       prints or removes it
+#   oversee-watch.err   the launcher's stderr file for the watch
+#                       (../../workflows/oversee.md § 4), appended on every
+#                       start; no start prints or removes it
 #   oversee-watch.runner
-#                       lib/job-unit.sh's record of how its launcher started
-#                       the watch holding the claim, with the pid line that
-#                       watch added: each job a launcher starts writes a
-#                       record of its own, oversee-watch.runner.XXXXXX, moved
-#                       here only once its watch claims, so a start that never
-#                       claims leaves the live watch's stop route standing
-#                       (lib/watch-handover.sh § watch_job_launch); removed
-#                       with the two above
+#                       lib/job-unit.sh's record of how the launcher started
+#                       the watch, written whole before the start, so it
+#                       names the newest start whether or not that start
+#                       claimed; no stop reads it
 #
 # A record is live only while its pid runs a process whose command line names
 # oversee-watch (watch_pid_runs): a pid read back off disk may by then belong
@@ -124,10 +120,10 @@ watch_pid_release() { # STATE
 }
 
 # The pid line a started watch adds to the record its launcher's job runner
-# wrote for it (lib/watch-handover.sh § watch_job_launch), so the launcher
-# waiting on its claim can tell a start still running from one that exited
-# first. The runner writes the record whole before it starts the job, so the
-# line always lands after it.
+# wrote for it (lib/job-unit.sh), so the launcher waiting on its claim can
+# tell a start still running from one that exited first. The runner writes
+# the record whole before it starts the job, so the line always lands after
+# it.
 watch_job_pid_write() { # RECORD
   printf 'pid=%s\n' "$$" >> "$1"
 }

@@ -1238,7 +1238,7 @@ replay_request() { # CWD
     ORCH_HARNESS_BINARIES="claude=$RUST_FIXTURES/stub-record/claude,codex=$RUST_FIXTURES/stub-record/codex,pi=$RUST_FIXTURES/stub-record/pi" \
     ORCH_LANE_CLOSE_SECS=2 ORCH_STATE_DIR="" ORCH_JOB_UNIT="$SRC_DIR/lib/job-unit.sh" \
     LANE_MAIL_CLI="$RUST_FIXTURES/lane-mail-quiet/lane-mail" DEV_VALIDATE_CLI="$RUST_FIXTURES/dev-validate-quiet/dev-validate-run" \
-    ORCH_WATCH_HANDOVER="$RUST_FIXTURES/watch-handover-quiet/watch-handover.sh" AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-}" \
+    AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-}" \
     "$RUNTIME" --state-dir "$TMP_ROOT/work/tmp" op --fleet --request "$TMP_ROOT/runtime.request" \
     > "$TMP_ROOT/replay.out" 2>"$TMP_ROOT/replay.err") || true
   while (( n < 100 )) && [[ ! -f "$cwd/launch-record.json" ]]; do

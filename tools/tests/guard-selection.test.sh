@@ -478,7 +478,7 @@ done
 direct_launch_selection() { # SELECTED PATHS
   grep -Fxq 'skills/orch/tests/open-terminal-cap.sh' <<<"$1" &&
     grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1" &&
-    ! grep -Fxq 'skills/orch/tests/oversee_watch_lifecycle.sh' <<<"$1"
+    ! grep -Fxq 'skills/orch/tests/oversee_cycle.sh' <<<"$1"
 }
 if mutant_guard '/^  if \[ "\$scoped_only" -eq 1 \] \&\& \[ "\${3:-reader}" != changed \]; then$/,/^  fi$/d'; then
   scoped_selection=""
@@ -517,7 +517,7 @@ if mutant_guard '/^  if \[ "\$scoped_only" -eq 1 \] \&\& \[ "\${3:-reader}" != c
         if direct_launch_selection "$selected"; then
           bad 'control: restoring main propagation rejects the direct-only oracle'
         else
-          grep -Fxq 'skills/orch/tests/oversee_watch_lifecycle.sh' <<<"$selected" \
+          grep -Fxq 'skills/orch/tests/oversee_cycle.sh' <<<"$selected" \
             && ok 'control: restoring main propagation rejects the direct-only oracle' \
             || bad 'control: restoring main propagation rejects the direct-only oracle' "$OUT"
         fi

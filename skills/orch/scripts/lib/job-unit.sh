@@ -5,9 +5,11 @@
 # under a unit the tasks and memory its launching process's own cgroup caps; it
 # sets no CPU limit. It holds the manager probe, the unit name, the
 # systemd-run launch, the setsid fallback, the attached run, the unit stop and
-# the process-group kill for the jobs that use it: dev-validate-run, every job
-# references/waiter-launch.md starts (the repeat watch among them), and
-# oversee-succeed's watch restart.
+# the process-group kill for the jobs that use it: dev-validate-run, the jobs
+# ../../references/waiter-launch.md starts, the fleet watch
+# ../../workflows/oversee.md § 4 starts and the oversee-watch entry's
+# relaunch of itself out of a retired
+# repeat loop's pass.
 # A job is a unit only where the user manager lingers, since one that does
 # not is stopped, with its units,
 # when the user's last login session ends.

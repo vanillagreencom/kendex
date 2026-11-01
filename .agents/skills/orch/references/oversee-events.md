@@ -229,7 +229,7 @@ Report a refusal without blocking lane close.
 
 ## Event kinds
 
-`watch-step-failed step=triage count=N` means the fleet state's `triaged` read failed. The watch prints it on the first failure and every `ORCH_OVERSEER_MARK_REPEAT` failed reads. The count persists in the watch baseline across restarts and resets after a successful read. The pass still exits 2. Read the `triage-state-failed` diagnostic and retained cause on stderr. Correct a malformed record against the [triaged schema](../schemas/workflow-state.md#oversee-state) before retrying. For another read failure, correct the cause stderr names.
+`watch-step-failed step=[DUTY] count=[N]` means the scheduler duty named (`mail`, `native-observation`, `tracker`, `verification`, `report`, `reconcile`, `heartbeat`, `wake`, `github` or `retention`) failed whole or in part on its last run: `N` counts its failures in a row, and the line prints on the first and every `ORCH_OVERSEER_MARK_REPEAT`th after, so a standing failure does not wake this session every pass; the count is the run's, and a restart prints once more. The lines and rows of a run that failed in part stand, the duty runs again at its next cadence, and the other duties go on. Read the cause under the same words in `oversee-watch.err` beside the fleet state: `step=tracker` with `lane-close-failed item=[ITEM] cause=[KEY]` lines under it names each GitHub-tracked lane whose issue read was refused, its close deferred to the next pass; `step=mail` with `item=[TARGET] [CAUSE]` lines names each mailbox the turn could not read, every other box delivered. Correct the cause the line names; a malformed fleet record is corrected against [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state).
 
 `tracker-quota` means this pass could not finish its tracker reads. Keep owner answers unread. An absent owed or Verifying line during this hold is unavailable evidence, not proof that no work remains. Follow the linear skill's quota contract and its `patterns/workflow-actions.md` for held writes. Mail, available GitHub and lane checks, and report-due checks continue. The heartbeat repeats the scheduling receipt while it stands.
 
@@ -1064,3 +1064,19 @@ Judge only issues a fleet lane filed — the candidate set is each lane item's c
 Anything outside the set is left alone.
 
 Record each verdict by writing `{"issue": "[ID]", "verdict": "[kept|canceled]", "reason": "[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool and running `workflow-state append-file oversee triaged tmp/triage-verdict-[ID].json`, in the state `oversee.md` § 3 Lane record creates before the first append; the next pass runs on its own.
+
+### `reconcile-refused intent=[ID] refusal=[KEY]`
+
+the reconcile duty could not complete or mark the open intent named, and `refusal` is the store's or the effect's key. Read the intent with `orch-runtime state inspect --fleet`; correct what the key names, a lane record gone under its close (`lane-missing`) or a replaced obligation set (`set-replaced`), or close the intent by hand per [lane-reach.md](lane-reach.md). The line prints when the refusal is new or its key changed, never on every pass; a deferral to a live owner prints nothing.
+
+### `notice-unmarked intent=[ID] cause=[KEY]`
+
+the owed failure notice of the intent named was sent and the store refused its `sent` mark under `cause`: the owner holds the notice, and the next reconcile sends it again until the mark lands. Read the intent and correct the cause.
+
+### `watch-taken-over pid=[PID] start=[START|none] reason=gone|replace`
+
+this watch took the claim record over from the runner named: `gone` for a record whose process had ended or whose pid another process reused, `replace` for the live runner its start named for replacement and stopped first; `start=none` names a record of the retired repeat loop. Nothing is owed: the line says why the claim moved, so a log that resumes after a gap is read as one watch's.
+
+### `idle-unread [TARGET]`, `wake-delivered [TARGET]`, `wake-limit [TARGET] harness=[H] cause=[C]`
+
+the wake duty found `TARGET`, `overseer` or a lane's item, positively idle with unread mail. `wake-delivered` says the one nudge line was pasted and the session's own file confirmed a new user turn; `wake-limit` names the harness and why no wake was delivered, a Codex lane whose process runs among the causes. On `wake-limit` for a lane, deliver the mail per [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver); for the overseer, this session, run `lane-mail inbox --item overseer`. The nudge repeats only once the target's unread state changes.

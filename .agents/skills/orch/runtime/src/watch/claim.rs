@@ -7,14 +7,21 @@
 //! another start) is taken over, unreadable is refused and never taken.
 //!
 //! One reader answers whether a record names an identity, [`Claim::names`]:
-//! the pid, and the start where the record carries one. A record with no
-//! `start=` is a legacy watch's, and names its pid alone; it reads live only
-//! while that pid runs a process that started before the record was written
-//! (the legacy watch writes its record after it starts), so a pid reused by a
+//! the pid and the start, both. A record with no `start=` is a legacy
+//! watch's and names no runtime identity; it reads live while its pid runs a
+//! process whose command line names `oversee-watch`, the legacy's own test
+//! (`watch_pid_runs`, `lib/watch-pid.sh`), which a wall-clock step cannot
+//! move (decision 156 (3)); a pid running anything else reads live only
+//! while that process started at or before the record was written (the
+//! legacy watch writes its record after it starts), so a pid reused by a
 //! later process reads gone and is taken over. A live legacy watch is never
-//! stopped from here: it reads no stop request, and its stop route is its
-//! launcher's `job-unit.sh stop-job` (decision 94); `stop` and `--replace`
-//! refuse it with `watch-legacy-live` and write nothing.
+//! stopped from here: it reads no stop request; `stop` and `--replace`
+//! refuse it with `watch-legacy-live` and write nothing. Its stop is by its
+//! pid (decision 179): the thin `oversee-watch` entry stops it before it
+//! starts the runtime, TERM to the loop's trap, else its process group
+//! through `lib/job-unit.sh`, and `job-unit.sh kill-group PID
+//! '*oversee-watch*'` is the stop by hand. No stop reads its launcher's
+//! `oversee-watch.runner`, which names the newest start, the entry's own.
 //!
 //! The record is published by linking a whole, synced, pid-named temporary
 //! onto the record's path, which fails where a record already stands, so of
@@ -123,10 +130,10 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// Whether the record names `identity`: its pid, and its start where
-    /// the record carries one. A record with no start names the pid alone.
+    /// Whether the record names `identity`: its pid and its start. A record
+    /// with no start is a legacy watch's and names no runtime identity.
     pub fn names(&self, identity: &Identity) -> bool {
-        self.pid == identity.pid && self.start.as_deref().is_none_or(|s| s == identity.start)
+        self.pid == identity.pid && self.start.as_deref() == Some(identity.start.as_str())
     }
 }
 
@@ -201,11 +208,34 @@ fn start_wall(start: &str) -> std::result::Result<Duration, &'static str> {
     Ok(Duration::from_secs(btime) + Duration::from_millis(ticks * 1000 / USER_HZ))
 }
 
+/// Whether `pid`'s command line names `oversee-watch`, as `watch_pid_runs`
+/// reads it off `ps -o args`: the legacy watch's own liveness test, read
+/// from `/proc`, which no clock step moves. `Gone` where the process ended
+/// between the identity read and this one.
+fn names_oversee_watch(pid: u32) -> Reading<bool> {
+    match std::fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(bytes) => Reading::Live(
+            bytes
+                .split(|b| *b == 0)
+                .any(|word| word.windows(LEGACY_NAME.len()).any(|w| w == LEGACY_NAME)),
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
+        Err(_) => Reading::Unreadable {
+            cause: "cmdline-unreadable",
+        },
+    }
+}
+
+/// The word the legacy watch's command line carries (`watch_pid_runs`).
+const LEGACY_NAME: &[u8] = b"oversee-watch";
+
 /// Whether the claim's process still runs, by its recorded identity. A
-/// record with no start (a legacy watch's) is read by its pid, live only
-/// while that process started at or before the record was written: a pid
-/// reused by a later process reads gone. An unreadable start form, boot
-/// time or record time is unreadable, never gone (decision 99).
+/// record with no start (a legacy watch's) is read by its pid: live while
+/// that process's command line names `oversee-watch` (decision 156 (3)),
+/// else live only while it started at or before the record was written, so
+/// a pid reused by a later process reads gone. An unreadable command line,
+/// start form, boot time or record time is unreadable, never gone (decision
+/// 99).
 #[allow(
     clippy::disallowed_methods,
     reason = "the claim's one identity read: the runner it refuses or takes over by (decision 99), and the record's own modification time a legacy record is read against"
@@ -217,6 +247,12 @@ pub fn read_live(paths: &Paths, claim: &Claim) -> Reading<Identity> {
             Reading::Gone => return Reading::Gone,
             Reading::Unreadable { cause } => return Reading::Unreadable { cause },
         };
+        match names_oversee_watch(claim.pid) {
+            Reading::Live(true) => return Reading::Live(live),
+            Reading::Live(false) => {}
+            Reading::Gone => return Reading::Gone,
+            Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+        }
         let written = std::fs::metadata(&paths.pid)
             .and_then(|m| m.modified())
             .ok()
@@ -501,12 +537,13 @@ mod tests {
         assert_eq!(read(&paths).unwrap(), None, "no pid");
     }
 
-    /// R-U5a F1. Defect: two readers answering "does this record name that
-    /// identity" differently, one by pid alone and one by pid and an equal
-    /// start, under which a stop reads a live legacy claim as released. The
-    /// one reader: the pid, and the start where the record has one.
+    /// R-U5a F1, decision 156 (5). Defect: two readers answering "does this
+    /// record name that identity" differently, one by pid alone and one by
+    /// pid and an equal start, under which a stop reads a live legacy claim
+    /// as released. The one reader: the pid and the start, both; a legacy
+    /// record, which has no start, names no runtime identity.
     #[test]
-    fn a_record_names_an_identity_by_pid_and_an_absent_or_equal_start() {
+    fn a_record_names_an_identity_by_its_pid_and_start() {
         let claim = |pid: u32, start: Option<&str>| Claim {
             pid,
             start: start.map(str::to_owned),
@@ -522,7 +559,11 @@ mod tests {
         };
         let rows = [
             (claim(7, Some("ticks:70")), true, "pid and start equal"),
-            (claim(7, None), true, "a legacy record names the pid alone"),
+            (
+                claim(7, None),
+                false,
+                "a legacy record names no runtime identity",
+            ),
             (claim(7, Some("ticks:71")), false, "another start"),
             (claim(8, None), false, "another pid"),
             (claim(8, Some("ticks:70")), false, "another pid, same start"),

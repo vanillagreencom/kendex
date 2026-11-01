@@ -1,0 +1,24 @@
+#!/bin/bash
+# A `systemctl --user` over the units the systemd-run fake beside it started:
+# `stop -- UNIT.service` sends TERM to the unit's group and waits for its
+# leader, as a unit stop does, whoever calls it (a caller inside the unit is
+# in that group and ends with it); `show -p LoadState` answers loaded or
+# not-found. Every call is appended to systemd.log beside this fake before
+# it acts.
+d="$(cd "$(dirname "$0")" && pwd)"
+printf 'systemctl %s\n' "$*" >> "$d/systemd.log"
+last="${!#}"
+unit="${last%.service}"
+case " $* " in
+  *" stop "*)
+    [[ -f "$d/units/$unit" ]] || { printf 'Unit %s not loaded.\n' "$last" >&2; exit 5; }
+    pid="$(<"$d/units/$unit")"
+    rm -f "$d/units/$unit"
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    for _ in $(seq 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    exit 0 ;;
+  *" show "*)
+    if [[ -f "$d/units/$unit" ]]; then echo loaded; else echo not-found; fi
+    exit 0 ;;
+esac
+exit 0

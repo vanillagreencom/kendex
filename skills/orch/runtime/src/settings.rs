@@ -94,12 +94,6 @@ pub const LANE_MAIL_CLI_KEY: &str = "LANE_MAIL_CLI";
 pub const DEV_VALIDATE_CLI_KEY: &str = "DEV_VALIDATE_CLI";
 /// The mailbox package's program under the project's install.
 pub const LANE_MAIL_CLI_DEFAULT: &str = ".agents/skills/mailbox/scripts/lane-mail";
-/// The fleet watch handover owner a confirmed publication runs (decision
-/// 109 (6)): the orch package's `lib/watch-handover.sh`, sourced and asked
-/// for `watch_handover`; empty finds the installed orch package's own.
-pub const WATCH_HANDOVER_KEY: &str = "ORCH_WATCH_HANDOVER";
-/// The orch package's watch handover library under the project's install.
-pub const WATCH_HANDOVER_DEFAULT: &str = ".agents/skills/orch/scripts/lib/watch-handover.sh";
 /// The orch package's validation runner under the project's install.
 pub const DEV_VALIDATE_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/dev-validate-run";
 /// The program the lane admission reads a diff range's changed paths
@@ -222,7 +216,7 @@ const DEFAULT_LANE_AGE_SECS: u64 = 12600;
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The keys this runtime reads from the private env file.
-const READ_KEYS: [&str; 44] = [
+const READ_KEYS: [&str; 43] = [
     TRACKER_CLI_KEY,
     PR_WATCH_CLI_KEY, // U5e2
     SECURITY_ALERTS_KEY,
@@ -248,7 +242,6 @@ const READ_KEYS: [&str; 44] = [
     LANE_MAIL_CLI_KEY,
     DEV_VALIDATE_CLI_KEY,
     SCOPE_PATHS_CLI_KEY,
-    WATCH_HANDOVER_KEY,
     JOB_CLAIM_SECS_KEY,
     WATCH_MAIL_INTERVAL_KEY,
     OVERSEER_MARK_REPEAT_KEY,
@@ -421,8 +414,6 @@ pub struct Settings {
     /// The program the lane admission reads a range's changed paths
     /// through.
     pub scope_paths_cli: PathBuf,
-    /// The watch handover library a confirmed publication sources.
-    pub watch_handover: PathBuf,
     /// U5d2: the succession's preference entries, which the overseer mark
     /// line's payload names; an empty value reads as the default, as this
     /// reader takes every key.
@@ -497,7 +488,14 @@ pub fn roots(cwd: &Path) -> Result<Roots> {
 fn git_line(cwd: &str, operation: &'static str, args: &[&str]) -> Result<Option<String>> {
     let mut full = vec!["-C", cwd, "rev-parse"];
     full.extend_from_slice(args);
-    let output = host::run("git", Path::new("git"), operation, &full, GIT_TIMEOUT)?;
+    let output = host::run_tagged(
+        "settings",
+        "git",
+        Path::new("git"),
+        operation,
+        &full,
+        GIT_TIMEOUT,
+    )?;
     if output.status.success() {
         return Ok(Some(host::stdout_text(&output)));
     }
@@ -726,7 +724,6 @@ pub fn load(
     let agent_runtime = program(AGENT_RUNTIME_KEY, AGENT_RUNTIME_DEFAULT); // U5g
     let dev_validate_cli = program(DEV_VALIDATE_CLI_KEY, DEV_VALIDATE_CLI_DEFAULT);
     let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
-    let watch_handover = program(WATCH_HANDOVER_KEY, WATCH_HANDOVER_DEFAULT);
     let overseer_preference = get(OVERSEER_PREFERENCE_KEY)
         .unwrap_or(DEFAULT_OVERSEER_PREFERENCE)
         .to_owned(); // U5d2
@@ -791,7 +788,6 @@ pub fn load(
         lane_mail_cli,
         dev_validate_cli,
         scope_paths_cli,
-        watch_handover,
         overseer_preference, // U5d2
         // U5f
         retention_days,
@@ -1245,10 +1241,6 @@ mod tests {
             settings.scope_paths_cli,
             roots.project.join(SCOPE_PATHS_CLI_DEFAULT)
         );
-        assert_eq!(
-            settings.watch_handover,
-            roots.project.join(WATCH_HANDOVER_DEFAULT)
-        );
         let settings = load(
             &roots,
             &env(&[
@@ -1266,7 +1258,6 @@ mod tests {
                 (LANE_MAIL_CLI_KEY, "/opt/lane-mail"),
                 (DEV_VALIDATE_CLI_KEY, "/opt/dev-validate-run"),
                 (SCOPE_PATHS_CLI_KEY, "/opt/harness-only"),
-                (WATCH_HANDOVER_KEY, "/opt/watch-handover.sh"),
                 (JOB_CLAIM_SECS_KEY, "40"),
                 (WATCH_MAIL_INTERVAL_KEY, "5"),
                 (OVERSEER_MARK_REPEAT_KEY, "3"),
@@ -1317,10 +1308,6 @@ mod tests {
             PathBuf::from("/opt/dev-validate-run")
         );
         assert_eq!(settings.scope_paths_cli, PathBuf::from("/opt/harness-only"));
-        assert_eq!(
-            settings.watch_handover,
-            PathBuf::from("/opt/watch-handover.sh")
-        );
         // A relative claim directory is the project's, as the legacy
         // launcher reads it from the checkout it runs in.
         let relative = load(&roots, &env(&[(CLAIM_STATE_DIR_KEY, "tmp/w")]), &FLAGS).unwrap();

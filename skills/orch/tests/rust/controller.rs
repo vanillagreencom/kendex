@@ -151,11 +151,7 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     mkfifo(&fifo);
     let holddir = fixtures().join("tmux-hold");
     let mut words = runner.env_words();
-    words.push(format!(
-        "PATH={}:{}",
-        holddir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    ));
+    words.push(format!("PATH={}", support::tool_path(&[holddir.as_path()])));
     words.push(format!("TMUX_REAL={}", which_tmux()));
     words.push(format!("TMUX_HOLD_FIFO={}", fifo.display()));
     words.push("TMUX_HOLD_VERB=send-keys".to_owned());
@@ -1641,8 +1637,7 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
 /// settles. With the window close refused by the host, the succession stays
 /// `unconfirmed` at `identity-read` with the successor live and the brief
 /// delivered, nothing published; the host answering again, the reconcile
-/// closes the window and publishes, the watch handed over then and not
-/// before.
+/// closes the window and publishes.
 #[test]
 fn a_publication_waits_for_the_predecessors_window_to_read() {
     let dir = tempfile::tempdir().unwrap();
@@ -1663,16 +1658,11 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
     plant(&runner, record.clone());
     let brief = runner.state_dir().join("handoff.md");
     std::fs::write(&brief, "HANDOFF\n").unwrap();
-    let handover_log = runner.state_dir().join("handover.log");
     runner.tools = Some(fixtures().join("tmux-fail"));
     runner.env.push(("TMUX_REAL".to_owned(), which_tmux()));
     runner
         .env
         .push(("TMUX_FAIL_VERB".to_owned(), "kill-window".to_owned()));
-    runner.env.push((
-        "WATCH_HANDOVER_LOG".to_owned(),
-        handover_log.display().to_string(),
-    ));
     let mut request = request_for(&record, runner.state_dir(), "live");
     request["brief_file"] = json!(brief.display().to_string());
     runner.transfer_started(&request);
@@ -1720,10 +1710,6 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
         overseer["pending"]["runner"]["pid"].is_u64(),
         "the runner is kept"
     );
-    assert!(
-        !handover_log.exists(),
-        "no watch handed over before publication"
-    );
     // The host answers again: the reconcile closes the window and publishes.
     runner.tools = None;
     runner.env.retain(|(name, _)| name != "TMUX_FAIL_VERB");
@@ -1738,121 +1724,6 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
     assert_eq!(overseer["generation"], 4);
     let successor = overseer["pane"].as_str().unwrap().to_owned();
     assert_eq!(overseer["harness_pid"], server.pane_pid(&successor));
-    // The watch continuation is recorded on the intent once the publication
-    // is committed (decision 115 (C)).
-    assert_eq!(
-        runner.fleet()["intents"][0]["watch"]["outcome"],
-        "handed-over"
-    );
-    let handed = std::fs::read_to_string(&handover_log).unwrap();
-    assert_eq!(
-        handed.lines().count(),
-        3,
-        "one call: its words, its handoff and the generation it read: {handed}"
-    );
-    assert_eq!(handed.lines().nth(2), Some("generation=4"), "{handed}");
-}
-
-/// Decision 109 (6): a confirmed publication hands the fleet watch to the
-/// successor's pane through the existing owner, with the predecessor's
-/// recorded pane, the successor's account variable and account, its harness
-/// and the flag words its command carries, less the fixed session id. The
-/// outcome carries how it went; a handover the owner refuses leaves the
-/// publication confirmed with `watch: failed`.
-#[test]
-fn a_confirmed_publication_hands_the_watch_to_the_successor_pane() {
-    for fail in [None, Some("helper")] {
-        let dir = tempfile::tempdir().unwrap();
-        let server = Server::start(dir.path(), "fleet");
-        let mut runner = Runner::new(&server, "stub-confirm");
-        runner.init_fleet();
-        let predecessor = Owned::sleep();
-        plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-        let handover_log = runner.state_dir().join("handover.log");
-        runner.env.push((
-            "WATCH_HANDOVER_LOG".to_owned(),
-            handover_log.display().to_string(),
-        ));
-        if let Some(step) = fail {
-            runner
-                .env
-                .push(("WATCH_HANDOVER_FAIL".to_owned(), step.to_owned()));
-        }
-        // A custom handoff destination, as `oversee-succeed --handoff` records
-        // it on the intent (decision 115 (F)).
-        let brief = runner
-            .state_dir()
-            .join("tmp")
-            .join("handoffs")
-            .join("CURRENT.md");
-        std::fs::create_dir_all(brief.parent().unwrap()).unwrap();
-        std::fs::write(&brief, "HANDOFF\n").unwrap();
-        let mut request = transfer_request(&server, runner.state_dir());
-        request["brief_file"] = json!(brief.display().to_string());
-        runner.transfer_started(&request);
-        runner.wait_intent_settled("request-transfer:", SETTLE);
-        // The watch continuation is recorded after the publication commits
-        // (decision 115 (C)), so the job writes it just after the intent
-        // closes: wait for it before reading.
-        wait_until("the watch continuation is recorded", SETTLE, || {
-            !runner.fleet()["intents"][0]["watch"].is_null()
-        });
-        let intent = runner.fleet()["intents"][0].clone();
-        assert_eq!(intent["outcome"], "confirmed", "{fail:?}: {intent}");
-        let overseer = runner.fleet()["overseer"].clone();
-        let successor = overseer["pane"].as_str().unwrap().to_owned();
-        let handed = std::fs::read_to_string(&handover_log).unwrap();
-        let mut lines = handed.lines();
-        let words: Vec<&str> = lines.next().unwrap_or_default().split(' ').collect();
-        // The destination the intent recorded reaches the owner as `HANDOFF`
-        // alone, no `WATCH_HANDOFF_KEEP` letting the running watch's own win
-        // (decision 120, M2), and the owner ran once the publication was
-        // recorded: it read generation 4 (decision 115 (C)).
-        assert_eq!(
-            lines.next(),
-            Some(format!("HANDOFF={}", brief.display()).as_str()),
-            "{fail:?}: {handed}"
-        );
-        assert_eq!(lines.next(), Some("generation=4"), "{fail:?}: {handed}");
-        assert_eq!(
-            &words[..5],
-            &[
-                "%99",
-                successor.as_str(),
-                "CLAUDE_CONFIG_DIR",
-                &runner.state_dir().display().to_string(),
-                "claude",
-            ],
-            "{fail:?}: {handed}"
-        );
-        assert!(
-            words.contains(&"--model") && words.contains(&"opus"),
-            "{fail:?}: the flags carry the model: {handed}"
-        );
-        assert!(
-            !words.contains(&"--session-id"),
-            "{fail:?}: a fixed session id is not a flag the watch keeps: {handed}"
-        );
-        // The watch continuation is recorded on the intent, after the
-        // publication (decision 115 (C)).
-        match fail {
-            None => {
-                assert_eq!(intent["watch"]["outcome"], "handed-over");
-                assert_eq!(
-                    intent["watch"]["line"],
-                    format!("watch-handover pid=0 pane={successor} runner=fixture")
-                );
-            }
-            Some(step) => {
-                assert_eq!(intent["watch"]["outcome"], "failed");
-                assert_eq!(
-                    intent["watch"]["line"],
-                    format!("watch-restart-failed step={step}")
-                );
-                assert_eq!(overseer["generation"], 4, "published all the same");
-            }
-        }
-    }
 }
 
 /// Decision 109 (7): a failure the job records is announced once, to the

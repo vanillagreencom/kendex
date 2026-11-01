@@ -18,22 +18,16 @@ use serde_json::{Value, json};
 use super::obligations::{
     Discharge, KeptReason, PaneEnd, PaneRef, ProcessEnd, Standing, ValidationEnd, WorktreeEnd,
 };
-use super::{Close, Operation, Pane, Server, WatchHandoverCall};
+use super::{Close, Operation, Pane, Server};
 use crate::error::{Error, Result};
 use crate::ops::{self, AdoptController, AdoptionRead, Applied};
 use crate::settings::Settings;
 use crate::state::{
     self, BoundSession, Intent, Lane, Locking, Obligation, OpenedPane, Overseer, Phase, Role,
-    WatchHandover,
 };
 
 /// How long a CLI the close asks is given to answer.
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// How long the watch handover owner is given to answer: it starts the
-/// restart helper through job-unit and returns, or starts a watch and waits
-/// for its claim, each bounded by its own stop seconds.
-const WATCH_HANDOVER_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// How often a poll re-reads a process within its bound.
 const POLL: Duration = Duration::from_millis(200);
@@ -1287,7 +1281,8 @@ impl Operation<'_> {
         if lane.host.is_some() {
             args.push("--host");
         }
-        let output = host::run(
+        let output = host::run_tagged(
+            "close",
             "lane-mail",
             &self.run.settings.lane_mail_cli,
             "pending",
@@ -1925,8 +1920,15 @@ fn git_output(
 ) -> std::result::Result<std::process::Output, String> {
     let mut argv = vec!["-C", path];
     argv.extend_from_slice(args);
-    let output = host::run("git", Path::new("git"), operation, &argv, CLI_TIMEOUT)
-        .map_err(|e| e.to_string())?;
+    let output = host::run_tagged(
+        "worktree",
+        "git",
+        Path::new("git"),
+        operation,
+        &argv,
+        CLI_TIMEOUT,
+    )
+    .map_err(|e| e.to_string())?;
     if !output.status.success() {
         let line = host::stderr_text(&output)
             .lines()
@@ -1979,7 +1981,8 @@ fn git_lines(
 /// The caller gates and signals; this only runs the runner and reads its
 /// answer.
 fn run_validation_stop(settings: &Settings, root: &str) -> std::result::Result<(), String> {
-    let output = host::run(
+    let output = host::run_tagged(
+        "close",
         "dev-validate-run",
         &settings.dev_validate_cli,
         "stop",
@@ -2112,137 +2115,6 @@ fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool 
             .get("server_start")
             .and_then(super::super::pid_value)
             .is_none_or(|recorded| recorded == start)
-}
-
-/// The owner's contract, as `lib/watch-handover.sh` states it: sourced with
-/// `SCRIPT_DIR`, `DEP_ERR` and `HANDOFF` set and its two libs beside it, then
-/// asked `watch_handover PREDECESSOR SUCCESSOR LANE_VAR LANE_HOME HARNESS
-/// FLAG...`; its answer is the key and fields it leaves in its two variables,
-/// printed as one line. The state directory is handed on so the owner's
-/// `workflow-state path oversee` names this fleet's file. The recorded
-/// handoff destination is `HANDOFF` alone (decision 120, M2): the owner's
-/// `WATCH_HANDOFF_KEEP` would let the running watch's own `--handoff` win
-/// over it, so it is never set here.
-const WATCH_HANDOVER_SCRIPT: &str = r#"set -u
-SCRIPT_DIR=$1 DEP_ERR=$2
-export ORCH_STATE_DIR=$3
-handoff=$4
-lib=$5
-shift 5
-if [ -n "$handoff" ]; then HANDOFF="$handoff"; else HANDOFF=${HANDOFF:-tmp/handoffs/OVERSEER-HANDOFF.md}; fi
-export HANDOFF
-unset WATCH_HANDOFF_KEEP
-. "$SCRIPT_DIR/lib/watch-pid.sh" && . "$SCRIPT_DIR/lib/job-unit.sh" && . "$lib" || exit 70
-rc=0
-watch_handover "$@" || rc=$?
-printf '%s' "$WATCH_HANDOVER_KEY"
-for f in ${WATCH_HANDOVER_FIELDS[@]+"${WATCH_HANDOVER_FIELDS[@]}"}; do printf ' %s' "$f"; done
-printf '\n'
-exit "$rc"
-"#;
-
-/// Hand the fleet watch from the predecessor's pane to the successor's
-/// (decision 109 (6)) through the existing owner, orch's
-/// `lib/watch-handover.sh` `watch_handover`, sourced into a shell and asked
-/// with the call's words. Run by the recording boundary once the confirmed
-/// record is committed, and its result recorded on the intent; the
-/// publication stands either way, the successor's own `oversee` start the
-/// fallback.
-pub(super) fn hand_over_watch(settings: &Settings, call: &WatchHandoverCall) -> WatchHandover {
-    let (key, line) = match watch_handover(settings, call) {
-        Ok((key, line)) => (key, line),
-        Err(e) => (
-            "watch-restart-failed".to_owned(),
-            format!(
-                "error={} {}",
-                e.key(),
-                e.to_string().lines().next().unwrap_or_default()
-            ),
-        ),
-    };
-    let full = format!("{key} {line}").trim_end().to_owned();
-    match key.as_str() {
-        "watch-handover" | "watch-started" | "watch-restarted" => {
-            WatchHandover::HandedOver { line: full }
-        }
-        _ => WatchHandover::Failed {
-            cause: key,
-            line: full,
-        },
-    }
-}
-
-fn watch_handover(settings: &Settings, call: &WatchHandoverCall) -> Result<(String, String)> {
-    let lib = &settings.watch_handover;
-    if !lib.is_file() {
-        return Err(super::super::refused(
-            "watch-handover-missing",
-            &[("path", &lib.display().to_string())],
-        ));
-    }
-    // The orch scripts directory the owner's two libs sit under, the one the
-    // job-unit launcher setting names: `<scripts>/lib/job-unit.sh`.
-    let scripts = settings
-        .job_unit
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| {
-            super::super::refused(
-                "job-unit-path",
-                &[("path", &settings.job_unit.display().to_string())],
-            )
-        })?;
-    let bash = std::env::var_os("PATH")
-        .and_then(|path| {
-            std::env::split_paths(&path)
-                .map(|dir| dir.join("bash"))
-                .find(|p| p.is_file())
-        })
-        .ok_or_else(|| super::super::refused("bash-missing", &[]))?;
-    let dep_err = settings
-        .state_dir
-        .join("intents")
-        .join("watch-handover.err")
-        .display()
-        .to_string();
-    let scripts_dir = scripts.display().to_string();
-    let state_dir = settings.state_dir.display().to_string();
-    let lib_path = lib.display().to_string();
-    let handoff = call.handoff.clone().unwrap_or_default();
-    let mut args: Vec<&str> = vec![
-        "-c",
-        WATCH_HANDOVER_SCRIPT,
-        "watch-handover",
-        &scripts_dir,
-        &dep_err,
-        &state_dir,
-        &handoff,
-        &lib_path,
-        &call.predecessor_pane,
-        &call.pane,
-        call.account_var,
-        &call.account,
-        call.harness,
-    ];
-    args.extend(call.flags.iter().map(String::as_str));
-    let out = host::run(
-        "bash",
-        &bash,
-        "watch-handover",
-        &args,
-        WATCH_HANDOVER_TIMEOUT,
-    )?;
-    let line = host::stdout_text(&out);
-    let (key, fields) = line.split_once(' ').unwrap_or((line.as_str(), ""));
-    if key.is_empty() {
-        return Err(agent_runtime::Error::External {
-            program: "bash",
-            operation: "watch-handover",
-            cause: host::stderr_text(&out),
-        }
-        .into());
-    }
-    Ok((key.to_owned(), fields.to_owned()))
 }
 
 /// The state module's receipt path for the operation (decision 96).

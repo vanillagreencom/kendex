@@ -20,6 +20,17 @@
 //! has read nothing, a line the legacy never printed, since its owed read
 //! answered or killed the pass: a standing tracker failure never reads as
 //! nothing owed.
+//!
+//! The roster read also carries the legacy `check_accounts`
+//! (`oversee-watch:5190-5225`, decision 176 (1) (b)): each account's
+//! status, verdict and binding reset compared with the reading the
+//! baseline holds under the legacy's `account` row, an `account` event
+//! ahead of the heartbeat line when one changed, the row advanced after
+//! the line is durable. The legacy compared on every long pass; this body
+//! runs on the heartbeat's cadence, the one duty that reads the roster. A
+//! roster that could not be read is the pass's partial failure (decision
+//! 156 (1)) and moves no row: the next readable pass compares against the
+//! last reading, never against nothing.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -27,6 +38,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use agent_runtime::clock;
 use agent_runtime::host::{self, Place};
 use serde::Deserialize;
 use serde_json::Value;
@@ -35,7 +47,7 @@ use crate::settings::Settings;
 use crate::watch::github::Gh;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
-use crate::watch::{Body, Event, Produced, Runner, Tick};
+use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
 /// The bound on one `lanes` call, the legacy `READ_CEILING`
 /// (`oversee-watch:275`).
@@ -180,6 +192,127 @@ fn text_or_dash(record: &Value, key: &str) -> String {
     }
 }
 
+/// The field text both the roster line and the `account` event print
+/// (`account_roster_read`'s third column, `:5157`).
+fn fields(record: &Value) -> String {
+    format!(
+        "{} config_dir={} harness={} through={} status={} verdict={} headroom_pct={} binding_bucket={} binding_resets_at={}",
+        text(record, "alias"),
+        text(record, "config_dir"),
+        text(record, "harness"),
+        text(record, "measured_through"),
+        text(record, "status"),
+        text(record, "verdict"),
+        text_or_dash(record, "headroom_pct"),
+        text_or_dash(record, "binding_bucket"),
+        text_or_dash(record, "binding_resets_at")
+    )
+}
+
+/// The baseline row kind the legacy kept each account's reading under.
+const ACCOUNT_ROW: &str = "account";
+
+/// The row's identity, the legacy's first column (`:5155`): two accounts
+/// sharing an alias are told apart by `config_dir`.
+fn account_key(record: &Value) -> String {
+    format!(
+        "{}|{}|{}",
+        text(record, "harness"),
+        text(record, "measured_through"),
+        text(record, "config_dir")
+    )
+}
+
+/// `check_accounts` (`oversee-watch:5190-5225`) over one listing: per
+/// record the `status|verdict|resets` reading beside the row's
+/// `status|verdict|resets|unmeasured`, an `account` event where the
+/// status, the verdict or a passed reset changed from the row's, the row
+/// advanced on every reading that differs. The first sighting is the
+/// baseline and says nothing. An `unmeasured` verdict leaves the row on
+/// the reading before it unless its status is `expired` or `retired`,
+/// which need the operator, so each such status after a measured reading
+/// is news. A reset is news once the reset the row holds has passed
+/// (`to_epoch` against the pass's wall, `lanes` writing every reset as one
+/// whole-second UTC stamp, `:5150`) and the reading moved off it; one that
+/// moved while still ahead is a different binding, not a reset; one no
+/// date can read settles no reset and is noted. An account the listing
+/// stops naming keeps its row.
+fn check_accounts(listing: &Listing, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
+    let mut events = Vec::new();
+    let mut changes = Vec::new();
+    for record in &listing.0 {
+        let key = account_key(record);
+        let prior = tick
+            .baseline
+            .get(ACCOUNT_ROW, &key)
+            .map(str::to_owned)
+            .unwrap_or_default();
+        let mut was = prior.splitn(4, '|');
+        let was_status = was.next().unwrap_or_default();
+        let was_verdict = was.next().unwrap_or_default();
+        let was_resets = was.next().unwrap_or_default();
+        let was_unmeasured = was.next().unwrap_or_default();
+        let status = text(record, "status");
+        let verdict = text(record, "verdict");
+        let resets = text_or_dash(record, "binding_resets_at");
+        let mut unmeasured = if was_unmeasured.is_empty() {
+            "-"
+        } else {
+            was_unmeasured
+        };
+        if verdict == "unmeasured" {
+            if status != "expired" && status != "retired" {
+                continue;
+            }
+            unmeasured = status.as_str();
+        }
+        let row = format!("{status}|{verdict}|{resets}|{unmeasured}");
+        if prior == row {
+            continue;
+        }
+        changes.push(Change::Set {
+            kind: ACCOUNT_ROW.to_owned(),
+            identity: key.clone(),
+            value: row,
+        });
+        if prior.is_empty() {
+            continue;
+        }
+        let mut change = Vec::new();
+        if was_status != status {
+            change.push("status");
+        }
+        if was_verdict != verdict {
+            change.push("headroom");
+        }
+        if was_resets != "-" && was_resets != resets {
+            match clock::epoch_secs(was_resets) {
+                Some(reset_epoch) => {
+                    if reset_epoch <= tick.wall {
+                        change.push("reset");
+                    }
+                }
+                None => {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "account-reset-unparsed account={key} binding_resets_at={was_resets}"
+                    );
+                }
+            }
+        }
+        if change.is_empty() {
+            continue;
+        }
+        events.push(Event::Account {
+            fields: fields(record),
+            change: change.join(","),
+            was_status: was_status.to_owned(),
+            was_verdict: was_verdict.to_owned(),
+        });
+    }
+    (events, changes)
+}
+
 impl Listing {
     /// The listing read as one JSON array of records each carrying `status`
     /// and `verdict` (`account_roster_read`'s jq), or none: an answer of
@@ -201,20 +334,7 @@ impl Listing {
     fn lines(&self) -> Vec<String> {
         self.0
             .iter()
-            .map(|r| {
-                format!(
-                    "account {} config_dir={} harness={} through={} status={} verdict={} headroom_pct={} binding_bucket={} binding_resets_at={}",
-                    text(r, "alias"),
-                    text(r, "config_dir"),
-                    text(r, "harness"),
-                    text(r, "measured_through"),
-                    text(r, "status"),
-                    text(r, "verdict"),
-                    text_or_dash(r, "headroom_pct"),
-                    text_or_dash(r, "binding_bucket"),
-                    text_or_dash(r, "binding_resets_at")
-                )
-            })
+            .map(|r| format!("account {}", fields(r)))
             .collect()
     }
 
@@ -260,38 +380,20 @@ fn lanes(
 }
 
 /// `lanes list --json`, for `host` where one is named: the listing, or
-/// none where the call failed or its answer did not read.
-fn listing(settings: &Settings, host: Option<&str>) -> Option<Listing> {
-    let out = match lanes(settings, host, &["list", "--json"]) {
-        Ok(out) => out,
-        Err(cause) => {
-            note(
-                "accounts",
-                &format!("host={} {cause}", host.unwrap_or(LOCAL)),
-            );
-            return None;
-        }
-    };
+/// the cause where the call failed or its answer did not read, for the
+/// caller to say in its place (`account-unread`'s fields, `:5165`).
+fn listing(settings: &Settings, host: Option<&str>) -> std::result::Result<Listing, String> {
+    let host_word = host.unwrap_or(LOCAL);
+    let out = lanes(settings, host, &["list", "--json"])
+        .map_err(|cause| format!("host={host_word} {cause}"))?;
     if !out.status.success() {
-        note(
-            "accounts",
-            &format!(
-                "host={} exit={} {}",
-                host.unwrap_or(LOCAL),
-                out.status.code().unwrap_or(-1),
-                host::stderr_text(&out).trim()
-            ),
-        );
-        return None;
+        return Err(format!(
+            "host={host_word} exit={} {}",
+            out.status.code().unwrap_or(-1),
+            host::stderr_text(&out).trim()
+        ));
     }
-    let parsed = Listing::parse(&host::stdout_text(&out));
-    if parsed.is_none() {
-        note(
-            "accounts",
-            &format!("host={} cause=listing-shape", host.unwrap_or(LOCAL)),
-        );
-    }
-    parsed
+    Listing::parse(&host::stdout_text(&out)).ok_or_else(|| format!("host={host_word} parse=failed"))
 }
 
 // --- the owed verdict ------------------------------------------------------------------------
@@ -336,9 +438,11 @@ fn wall_verdict(
 ) -> String {
     let unjudged = format!("verdict=unjudged harness={}", owed.harness);
     let host = (owed.host != LOCAL).then_some(owed.host.as_str());
-    let listing = listings
-        .entry(owed.host.clone())
-        .or_insert_with(|| listing(settings, host));
+    let listing = listings.entry(owed.host.clone()).or_insert_with(|| {
+        listing(settings, host)
+            .map_err(|cause| note("accounts", &cause))
+            .ok()
+    });
     let Some(listing) = listing else {
         return unjudged;
     };
@@ -418,11 +522,31 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             latest.github.clone(),
         )
     };
-    let mut events = vec![Event::Heartbeat {
+    // The roster, the local host's listing, read once: the account events
+    // ahead of the heartbeat line, as the legacy's pass printed them, then
+    // the roster lines under it; the owed verdicts of local records reuse
+    // it. A roster that could not be read is the pass's partial failure
+    // with the legacy's `account-unread` fields, said by the runner.
+    let roster = listing(&ctx.settings, None);
+    let (mut events, changes, failed) = match &roster {
+        Ok(listing) => {
+            let (events, changes) = check_accounts(listing, tick);
+            (events, changes, None)
+        }
+        Err(cause) => (
+            Vec::new(),
+            Vec::new(),
+            Some(format!(
+                "account-unread path={} {cause}",
+                ctx.settings.lanes_cli.display()
+            )),
+        ),
+    };
+    events.push(Event::Heartbeat {
         loops: ctx.max_loops,
         interval: ctx.interval,
         since: ctx.since.clone(),
-    }];
+    });
     let mut body = |line: String| events.push(Event::Body { line });
     let bot_fix = github
         .as_ref()
@@ -433,20 +557,17 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             body(line);
         }
     }
-    // The roster, the local host's listing, which the owed verdicts of
-    // local records reuse.
-    let mut listings: BTreeMap<String, Option<Listing>> = BTreeMap::new();
-    let roster = listing(&ctx.settings, None);
     match &roster {
-        None => body("account-roster unread".to_owned()),
-        Some(listing) => {
+        Err(_) => body("account-roster unread".to_owned()),
+        Ok(listing) => {
             body(format!("account-roster accounts={}", listing.0.len()));
             for line in listing.lines() {
                 body(line);
             }
         }
     }
-    listings.insert(LOCAL.to_owned(), roster);
+    let mut listings: BTreeMap<String, Option<Listing>> = BTreeMap::new();
+    listings.insert(LOCAL.to_owned(), roster.ok());
     for line in ctx
         .verifying
         .lock()
@@ -495,6 +616,8 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     }
     Produced {
         events,
+        changes,
+        failed,
         ..Produced::default()
     }
 }

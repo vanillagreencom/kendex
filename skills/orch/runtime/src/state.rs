@@ -989,10 +989,6 @@ pub struct Intent {
     /// recorded before the field existed; its next step writes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<ObligationRecord>,
-    /// How the fleet watch was handed to a confirmed successor (decision 115
-    /// (C)): the continuation recorded once, after the publication.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub watch: Option<WatchHandover>,
     /// What the effect last observed of its target: the pane it opened or
     /// found, the process and screen it read, and for a succession whether
     /// the predecessor was retired. A reconciliation re-observes from it.
@@ -1334,15 +1330,6 @@ impl ObligationRecord {
                 | Obligation::JobPgid { .. }
         )
     }
-}
-
-/// How the fleet watch handover after a confirmed succession went (decision
-/// 115 (C)): the handover owner's keyed line, and the cause where it failed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "outcome", rename_all = "kebab-case")]
-pub enum WatchHandover {
-    HandedOver { line: String },
-    Failed { cause: String, line: String },
 }
 
 /// The one failure announcement an intent makes (decision 109 (7)): the

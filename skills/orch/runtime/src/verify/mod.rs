@@ -410,7 +410,7 @@ impl Transport for Gh {
     )]
     fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
         let failed = |detail: String| Cause::ReadFailed { endpoint, detail };
-        let output = host::run("gh", Path::new("gh"), "api", args, GH_TIMEOUT)
+        let output = host::run_tagged("verify", "gh", Path::new("gh"), "api", args, GH_TIMEOUT)
             .map_err(|e| failed(e.to_string()))?;
         if !output.status.success() {
             // gh writes an HTTP error's message to stderr and its body to

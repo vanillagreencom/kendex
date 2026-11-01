@@ -14,6 +14,11 @@
 //! succession; decision 77's terminal proof runs inside that transfer. The
 //! marks and the account walk stay the legacy's, called through the one
 //! runner and counted (decision 75).
+//!
+//! The wall relaunch the lanes pass starts runs detached and lands its
+//! exit status beside its marker; every pass reads each outcome
+//! (`wall_relaunch_outcomes`) independent of the pane observation, since a
+//! completed launch can leave a healthy window with a failed record write.
 
 // Every reading is matched variant by variant (decision 105).
 #![deny(clippy::wildcard_enum_match_arm)]
@@ -33,7 +38,7 @@ use serde_json::Value;
 
 use super::baseline::{Baseline, Change};
 use super::events::{Event, OverseerCase};
-use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload};
+use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, watch_state_dir};
 use super::{Body, Produced, Runner, Tick};
 use crate::ops::{OverseerExpected, RequestTransfer};
 use crate::settings::{Settings, Succession, WatchSettings};
@@ -248,6 +253,12 @@ fn relaunch_record(r: &Relaunch) -> (String, PathBuf) {
     )
 }
 
+/// Where a relaunch's exit status lands: `<marker>.exit`
+/// (`oversee-watch:4747`), the file its wrapper writes last.
+pub fn relaunch_exit_path(marker: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.exit", marker.display()))
+}
+
 /// The shell line the legacy ran the relaunch under (`oversee-watch:4748`):
 /// the launcher in the recovered checkout with the recovered session, its
 /// output appended to the log, its exit status written beside the marker.
@@ -329,7 +340,7 @@ impl Legacy<'static> {
             let (name, record) = relaunch_record(r);
             let record = record.display().to_string();
             let log = r.log.display().to_string();
-            let exit = format!("{}.exit", r.marker.display());
+            let exit = relaunch_exit_path(&r.marker).display().to_string();
             let cwd = r.cwd.display().to_string();
             let mut args = vec![
                 "launch",
@@ -1002,6 +1013,190 @@ fn transfer(
     }
 }
 
+/// One relaunch marker as the lanes pass wrote it (`ops::wall`,
+/// `write_relaunch_marker`).
+#[derive(serde::Deserialize)]
+struct Marker {
+    item: String,
+    since: u64,
+    log: String,
+}
+
+/// The relaunch markers under the watch state directory, each a regular
+/// file `wall-relaunch.<lane>` in name order, as the legacy's glob listed
+/// them; an absent directory holds none.
+fn relaunch_markers(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut markers = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("wall-relaunch.") || name.ends_with(".exit") {
+            continue;
+        }
+        let path = entry.path();
+        if std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+            markers.push(path);
+        }
+    }
+    markers.sort();
+    Ok(markers)
+}
+
+/// Whether a lane's gone window is a relaunch the route started still
+/// opening it (`wall_relaunch_pending`, `oversee-watch:4656`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelaunchPending {
+    /// The marker stands with no status beside it, inside `prepare` of
+    /// its start.
+    Pending,
+    /// No marker, a status beside it, or a start `prepare` or more ago:
+    /// the gone window is left to `window-gone`.
+    None,
+    /// A marker or stamp that could not be read; never "not pending".
+    Unreadable { path: PathBuf, cause: String },
+}
+
+/// `wall_relaunch_pending` (`oversee-watch:4656`): the lane's marker read
+/// once, three-valued (decisions 99, 105): an absent marker, or a status
+/// beside it, is no pending relaunch; a marker or stamp that cannot be
+/// read is unreadable, where the legacy read it as not pending; otherwise
+/// the start inside `prepare` of now is pending (a start ahead of now is
+/// inside it, as the legacy's negative age was).
+pub fn relaunch_pending(marker: &Path, prepare: Duration, now: u64) -> RelaunchPending {
+    let unreadable = |path: &Path, cause: String| RelaunchPending::Unreadable {
+        path: path.to_path_buf(),
+        cause,
+    };
+    let text = match std::fs::read_to_string(marker) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return RelaunchPending::None,
+        Err(e) => return unreadable(marker, e.to_string()),
+    };
+    let exit = relaunch_exit_path(marker);
+    match std::fs::metadata(&exit) {
+        Ok(_) => return RelaunchPending::None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return unreadable(&exit, e.to_string()),
+    }
+    let fields = match serde_json::from_str::<Marker>(&text) {
+        Ok(fields) => fields,
+        Err(e) => return unreadable(marker, e.to_string()),
+    };
+    if fields.since > now || now - fields.since < prepare.as_secs() {
+        RelaunchPending::Pending
+    } else {
+        RelaunchPending::None
+    }
+}
+
+/// `wall_relaunch_outcomes` (`oversee-watch:4667`): every relaunch marker
+/// with an exit status beside it is read once, `lane-prepare-failed ...
+/// reason=relaunch-failed exit= log=` for a non-zero status, and the marker
+/// and its status leave; a marker with no status `prepare` past its start
+/// is `lane-prepare-stuck ... reason=relaunch-pending` once per start (the
+/// `wall-relaunch` row keyed `<since>|stuck`, cleared when the status
+/// lands). A marker, a status or a removal that fails is the pass's
+/// partial failure, the marker kept for the next pass; a status that is no
+/// exit code is such a failure, never a result.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the relaunch marker and its exit status, the watch's own files written for this reader, removed once their outcome is reported (decision 94 (b))"
+)]
+pub fn relaunch_outcomes(
+    watch_state_dir: &Path,
+    prepare: Duration,
+    now: u64,
+    baseline: &Baseline,
+) -> Produced {
+    let mut out = Produced::default();
+    let markers = match relaunch_markers(watch_state_dir) {
+        Ok(markers) => markers,
+        Err(cause) => {
+            out.failed = Some(format!(
+                "state-read-failed path={} cause={cause}",
+                watch_state_dir.display()
+            ));
+            return out;
+        }
+    };
+    fn failed(out: &mut Produced, op: &str, path: &Path, cause: String) {
+        out.failed.get_or_insert(format!(
+            "state-{op}-failed path={} cause={cause}",
+            path.display()
+        ));
+    }
+    for marker in markers {
+        let fields = match std::fs::read_to_string(&marker)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str::<Marker>(&text).map_err(|e| e.to_string()))
+        {
+            Ok(fields) => fields,
+            Err(cause) => {
+                failed(&mut out, "read", &marker, cause);
+                continue;
+            }
+        };
+        let exit = relaunch_exit_path(&marker);
+        let status = match std::fs::read_to_string(&exit) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                failed(&mut out, "read", &exit, e.to_string());
+                continue;
+            }
+        };
+        match status {
+            Some(text) => {
+                let rc = match text.trim_end_matches('\n').parse::<i32>() {
+                    Ok(rc) => rc,
+                    Err(_) => {
+                        failed(&mut out, "read", &exit, format!("no exit status: {text:?}"));
+                        continue;
+                    }
+                };
+                if rc != 0 {
+                    out.events.push(Event::LanePrepareFailed {
+                        item: fields.item.clone(),
+                        reason: "relaunch-failed".to_owned(),
+                        exit: Some(rc),
+                        log: fields.log,
+                    });
+                }
+                for path in [&marker, &exit] {
+                    if let Err(e) = std::fs::remove_file(path) {
+                        failed(&mut out, "write", path, e.to_string());
+                    }
+                }
+                out.changes.push(clear("wall-relaunch", &fields.item));
+            }
+            None => {
+                let age = now.saturating_sub(fields.since);
+                if fields.since > now || age < prepare.as_secs() {
+                    continue;
+                }
+                let key = format!("{}|stuck", fields.since);
+                if baseline.get("wall-relaunch", &fields.item) == Some(key.as_str()) {
+                    continue;
+                }
+                out.events.push(Event::LanePrepareStuck {
+                    item: fields.item.clone(),
+                    age,
+                    log: fields.log,
+                    reason: Some("relaunch-pending".to_owned()),
+                });
+                out.changes.push(set("wall-relaunch", &fields.item, key));
+            }
+        }
+    }
+    out
+}
+
 /// The marks of a working overseer (`overseer_mark_check`): the first
 /// crossing is a line, then one every `mark_repeat` passes while it stands;
 /// a below-mark answer clears the row; an unmeasured or failed judgement
@@ -1179,6 +1374,17 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             },
             &ctx.slot,
         );
+        // Every detached relaunch's outcome, whatever the controller's
+        // verdict (the legacy's `check_prepare` ran before `check_lanes`).
+        absorb(
+            &mut produced,
+            relaunch_outcomes(
+                watch_state_dir(&ctx.settings.claim_store),
+                ctx.settings.watch.prepare,
+                tick.wall,
+                tick.baseline,
+            ),
+        );
         let watched = ctx.slot.read().is_some_and(|j| match j.verdict {
             Verdict::Live | Verdict::Unwatched { .. } | Verdict::Unreadable { .. } => true,
             Verdict::Exited { .. } | Verdict::Walled { .. } | Verdict::Transferring { .. } => false,
@@ -1214,12 +1420,20 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 route: &route,
                 wall_pauses: &wall_pauses,
             });
-            produced.events.extend(lanes.events);
-            produced.changes.extend(lanes.changes);
-            produced.failed = produced.failed.take().or(lanes.failed);
+            absorb(&mut produced, lanes);
         }
         Ok(produced)
     })
+}
+
+/// Fold a later reading's lines, rows and failure into the pass's; the
+/// first failure stands.
+fn absorb(into: &mut Produced, from: Produced) {
+    into.events.extend(from.events);
+    into.changes.extend(from.changes);
+    if let Some(failed) = from.failed {
+        into.failed.get_or_insert(failed);
+    }
 }
 
 #[cfg(test)]

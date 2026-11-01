@@ -2651,32 +2651,8 @@ for row in \
     assert_eq "$(jq -c '.lanes[0].parked | {repo,until_repo,until_pr}' "$STATE")" \
       '{"repo":"owner/repo","until_repo":"other/repo","until_pr":9}' 'a foreign dependency keeps both repositories'
     assert_contains "$(cat "$GH_CALLS")" 'pr view 9 --repo other/repo ' 'park reads the dependency in its repository'
-    FOREIGN_PARK="$(jq -c '.lanes[0]' "$STATE")"
   fi
 done
-# Pass the actual foreign park to the watch. OPEN holds it; MERGED resumes
-# it; CLOSED reports the failed dependency without awarding an item merge.
-FOREIGN_WATCH_RESULT="$(
-  source "$TEST_DIR/lib/oversee-watch-harness.sh"
-  new_case foreign_park
-  printf '' >"$STUB_DIR/windows.txt"
-  jq -n --argjson lane "$FOREIGN_PARK" --arg host "$REPO_ROOT/skills/orch/tests/fixtures/lane-host" \
-    '{lanes:[($lane | .item="issue-2" | .tracker="github" | .host=$host)]}' >"$STUB_DIR/state.json"
-  for dependency_state in OPEN MERGED CLOSED; do
-    jq -nc --arg state "$dependency_state" '{state:$state}' >"$STUB_DIR/dependency-9.json"
-    out="$(run_watch ORCH_CONNECTED_REPOS=other/repo -- --state "$STUB_DIR/state.json" 2>"$STUB_DIR/err")" || { cat "$STUB_DIR/err" >&2; exit 1; }
-    case "$dependency_state" in
-      (OPEN) [[ "$out" != *'EVENT parked-merged '* && "$out" != *'EVENT parked-closed '* ]] || exit 1 ;;
-      (MERGED) grep -xF 'EVENT parked-merged issue-2 pr=9 repo=other/repo' <<<"$out" ;;
-      (CLOSED) grep -xF 'EVENT parked-closed issue-2 pr=9 repo=other/repo' <<<"$out" ;;
-    esac
-    [[ "$out" != *'EVENT merged '* ]] || exit 1
-  done
-  [[ "$(grep -c '^pr view 9 --repo other/repo --json state$' "$STUB_DIR/gh.calls")" -gt 0 ]] || exit 1
-)" && FOREIGN_WATCH_RC=0 || FOREIGN_WATCH_RC=$?
-assert_eq "rc=$FOREIGN_WATCH_RC result=$FOREIGN_WATCH_RESULT" \
-  $'rc=0 result=EVENT parked-merged issue-2 pr=9 repo=other/repo\nEVENT parked-closed issue-2 pr=9 repo=other/repo' \
-  'the watch reads the dependency from a real foreign park and reports its merge and close'
 for row in \
   'ken-1|rc=0 status=parked fallback=1' \
   'other-branch|rc=1 status=running fallback=1'; do

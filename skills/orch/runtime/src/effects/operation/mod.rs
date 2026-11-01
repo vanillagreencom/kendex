@@ -365,7 +365,6 @@ impl<'a> Operation<'a> {
                 intent_id: self.intent_id.clone(),
                 phase: self.phase.clone(),
                 obligations: Some(self.obligations.record().clone()),
-                watch: None,
                 while_owner: self.while_owner.clone(),
                 notice: None,
             })),
@@ -584,18 +583,14 @@ impl<'a> Operation<'a> {
 /// moved announces nothing and the claimant's state is the answer, and a
 /// notice a crash left owed is sent by the next outcome or reconcile; an
 /// intent the outcome closes takes its pane's receipt and its job's files
-/// with it; a confirmed succession's watch handover runs after the
-/// publication is committed and is recorded once on the closed intent
-/// (decision 115 (C)). The outcome's write names the set revision the
+/// with it. The outcome's write names the set revision the
 /// handle read (decision 124l (47)): the set write's own result moves it
 /// forward for the outcome's write, and the store refuses the outcome where
 /// the record's set moved. Every file effect here, the
-/// receipt's and the job files' removal and the handover, runs only where
+/// receipt's and the job files' removal, runs only where
 /// the outcome's write reports the intent still this writer's (decision
 /// 124k (40)); an owner that moved leaves the claimant's files alone.
 pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Applied> {
-    let mut outcome = outcome;
-    let handover = outcome.handover.take();
     let record_after = outcome.record.clone();
     let while_owner = outcome.while_owner.clone();
     let mut outcome = record(outcome);
@@ -612,7 +607,6 @@ pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Re
                 intent_id: outcome.intent_id.clone(),
                 phase: None,
                 obligations: Some(record_after),
-                watch: None,
                 while_owner: while_owner.clone(),
                 notice: None,
             })),
@@ -637,35 +631,16 @@ pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Re
         run.locking,
     )?;
     if let Report::RecordOutcome(r) = &applied.report {
-        // The notice the record owes, the closed intent's files and the
-        // handover are this writer's only while the intent is still its
-        // own: a launcher whose intent a job claimed leaves the claimant's
-        // notices and files to the claimant.
+        // The notice the record owes and the closed intent's files are this
+        // writer's only while the intent is still its own: a launcher whose
+        // intent a job claimed leaves the claimant's notices and files to
+        // the claimant.
         let ours = while_owner.is_none() || r.intent.owner == while_owner;
         if ours {
             job::deliver_owed(run, &r.intent, while_owner.clone())?;
             if !r.intent.open() {
                 receipt::remove(&run.receipt_path(&r.intent.id));
                 job::remove_files(&run.settings.state_dir, &r.intent.id);
-                if let Some(handover) = handover
-                    && r.intent.outcome == Outcome::Confirmed
-                    && r.intent.watch.is_none()
-                {
-                    let watch = host::hand_over_watch(run.settings, &handover);
-                    ops::apply(
-                        run.path,
-                        &Request::RecordProgress(Box::new(RecordProgress {
-                            intent_id: r.intent.id.clone(),
-                            phase: None,
-                            obligations: None,
-                            watch: Some(watch),
-                            while_owner: None,
-                            notice: None,
-                        })),
-                        run.env,
-                        run.locking,
-                    )?;
-                }
             }
         }
     }
@@ -766,20 +741,6 @@ pub(in crate::effects) fn persist_close(
 /// the handle's process reads take.
 pub(in crate::effects) fn predecessor_identity(overseer: &Overseer) -> Option<Identity> {
     overseer_identity(overseer)
-}
-
-/// The handover a confirmed succession runs once its publication is recorded
-/// (decision 115 (C)): the owner's arguments, resolved by the caller from the
-/// successor's typed fields, and the recorded handoff destination (decision
-/// 115 (F)).
-pub(in crate::effects) struct WatchHandoverCall {
-    pub predecessor_pane: String,
-    pub pane: String,
-    pub account_var: &'static str,
-    pub account: String,
-    pub harness: &'static str,
-    pub flags: Vec<String>,
-    pub handoff: Option<String>,
 }
 
 #[cfg(test)]
@@ -1036,7 +997,6 @@ mod tests {
                 intent_id: intent.id.clone(),
                 phase: None,
                 obligations: Some(replaced),
-                watch: None,
                 while_owner: None,
                 notice: None,
             })),
@@ -1120,7 +1080,6 @@ mod tests {
                 intent_id: intent.id.clone(),
                 phase: None,
                 obligations: Some(replacement),
-                watch: None,
                 while_owner: Some(new.clone()),
                 notice: None,
             })),

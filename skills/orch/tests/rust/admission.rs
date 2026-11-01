@@ -121,11 +121,7 @@ impl Fleet {
             .env("GH_FAKE_REPLIES", self.dir.path().join("gh.json"))
             .env(
                 "PATH",
-                format!(
-                    "{}:{}",
-                    fixtures().join(self.gh_fixture).display(),
-                    std::env::var("PATH").unwrap_or_default()
-                ),
+                support::tool_path(&[fixtures().join(self.gh_fixture).as_path()]),
             )
             .env(
                 "LANE_MAIL_CLI",

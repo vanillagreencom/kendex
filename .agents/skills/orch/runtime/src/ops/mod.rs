@@ -208,8 +208,8 @@ pub enum Request {
     ReleaseLane(ReleaseLane),
     RecordOutcome(Box<RecordOutcome>),
     RecordPhase(RecordPhase),
-    /// An effect's phase, obligation set and watch handover, written before
-    /// the wait that follows (decisions 62, 115).
+    /// An effect's phase and obligation set, written before the wait that
+    /// follows (decisions 62, 115).
     RecordProgress(Box<RecordProgress>),
     /// A directive's send receipt onto the lane (decision 31; the mail
     /// duty's).
@@ -807,7 +807,6 @@ fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
         close: None,
         phase: None,
         obligations: None,
-        watch: None,
         observation: None,
         reconciled: None,
         observed_status: None,

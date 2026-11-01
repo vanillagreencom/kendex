@@ -16,8 +16,8 @@
 #   § process ownership
 #                the host process table, zombie states and unreadable processes,
 #                with one must-fail control on lane_owned_processes
-#   § agreement  one screen read by BOTH the watch and the wake. The pane rungs
-#                are shared, so above idle the two answer the same word; the
+#   § agreement  one screen read by the wake, through the shared pane rungs the
+#                runtime's lane observation reads too; the
 #                idle rung falls through to the harness-process read that only
 #                the wake makes, and a box with no /proc parts them there
 #   § verb       `lanes state` as the third caller: the wiring around the judge,
@@ -77,7 +77,7 @@ printf '2' > "$STUB_DIR/probe-fail-5006"
 # Copilot authentication screens are whole captures from a signed-out CLI
 # 1.0.88 in a tmux pane. Composer inputs keep only its frame and footer.
 # The Claude ones are the shapes
-# oversee_watch_lanes.sh already pins, kept whole here so a row's premise is
+# the runtime's watch_observe rows pin, kept whole here so a row's premise is
 # visible beside it.
 screen_for() {
   case "$1" in
@@ -528,9 +528,8 @@ echo "=== lane-state § observe: the pane handed to the judge ==="
 # no match. A stub that merely replays a tab-separated table cannot catch that,
 # so this one renders the format the observer actually sends.
 #
-# In its own directory rather than over the harness's tmux: run_watch below
-# builds its PATH with the harness bin first, so the watch keeps the stub its
-# own suites drive and only the observer and the wake see this one.
+# In its own directory rather than over the harness's tmux, so only the
+# observer and the wake see this one.
 OBS_BIN="$TMP_ROOT/obsbin"; mkdir -p "$OBS_BIN"
 cat > "$OBS_BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
@@ -876,7 +875,7 @@ else
   printf '  skip  process ownership requires procfs\n'
 fi
 
-echo "=== lane-state § agreement: the watch and the wake on one screen ==="
+echo "=== lane-state § agreement: the wake on one screen ==="
 
 # The wake's sandbox. A wake refuses BEFORE it looks for a session, so the whole
 # of it is a worktree whose `path` answers and the harness tmux serving the
@@ -930,36 +929,12 @@ wake_state() {
   esac
 }
 
-# watch_event SCREEN PID CMD [first]: the lane event for this screen.
-# The default waits for debounced events. first reads one watch pass.
-watch_event() {
-  local out loops=2
-  screen_for "$1" > "$STUB_DIR/pane-gh-2.txt"
-  printf '%s\n' "$2" > "$STUB_DIR/panepid-gh-2.txt"
-  printf '%s\n' "$3" > "$STUB_DIR/cmd-gh-2.txt"
-  printf 'gh-2\n' > "$STUB_DIR/windows.txt"
-  [[ "${4:-}" != first ]] || loops=1
-  out="$(run_watch -- --max-loops "$loops" gh-2 2>/dev/null || true)"
-  if [[ "${4:-}" != first ]]; then
-    out+=$'\n'"$(run_watch -- gh-2 2>/dev/null || true)"
-  fi
-  case "$out" in
-    *"EVENT usage-limit gh-2"*) printf 'usage-limit' ;;
-    *"EVENT lane-asking gh-2"*) printf 'lane-asking' ;;
-    *"EVENT lane-exited gh-2"*) printf 'lane-exited' ;;
-    *"EVENT model-capacity gh-2"*) printf 'model-capacity' ;;
-    *"EVENT idle-after-return gh-2"*) printf 'idle-after-return' ;;
-    *) printf 'none' ;;
-  esac
-}
-
-# SCREEN|PANE PID|PANE CMD|THE STATE BOTH MUST READ|THE WATCH'S EVENT FOR IT
+# SCREEN|PANE PID|PANE CMD|THE STATE THE WAKE MUST READ
 #
-# Two assertions per row on one screen: the wake names the state in its own
-# refusal, and the watch emits the event that state produces. A working lane's
-# event is `none`, which is the claim that it took no idle, asking, walled or
-# exited line either.
-while IFS='|' read -r screen pid cmd want event; do
+# One assertion per row on one screen: the wake names the state in its own
+# refusal. The watch's reading of the same screens is the runtime's lane
+# observation, held by its Rust rows.
+while IFS='|' read -r screen pid cmd want; do
   [[ -n "$screen" ]] || continue
   new_case "agree-$screen"
   export STUB_DIR
@@ -973,40 +948,15 @@ while IFS='|' read -r screen pid cmd want event; do
   # every box.
   wake_want="$want"
   proc_table_readable || [[ "$want" != idle ]] || wake_want=unjudged
-  assert_eq "$(watch_event "$screen" "$pid" "$cmd")" "$event" \
-    "the watch reads the $screen screen as $want"
   assert_eq "$(wake_state "$screen" "$pid" "$cmd")" "$wake_want" \
     "the wake reads the same $screen screen as $wake_want"
 done <<'ROWS'
-working|100|claude|working|none
-asking|100|claude|asking|lane-asking
-walled|100|claude|walled|usage-limit
-shell|101|bash|exited|lane-exited
-idle|100|claude|idle|idle-after-return
+working|100|claude|working
+asking|100|claude|asking
+walled|100|claude|walled
+shell|101|bash|exited
+idle|100|claude|idle
 ROWS
-
-# A Copilot lane, whose pane reads node, its npm loader: the watch alone, since
-# the wake does not take the harness and the lane's monitor is its own wake.
-while IFS='|' read -r screen event pass; do
-  [[ -n "$screen" ]] || continue
-  new_case "agree-$screen"
-  export STUB_DIR
-  printf '4242 claude\n' > "$STUB_DIR/kids-100.txt"
-  assert_eq "$(watch_event "$screen" 100 node "$pass")" "$event" \
-    "the watch reads the $screen screen as $event"
-done <<'ROWS'
-copilot_idle|idle-after-return
-copilot_signed_out_idle|usage-limit|first
-copilot_signed_out_draft|usage-limit|first
-copilot_trust|lane-asking
-copilot_working|none
-ROWS
-
-ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/copilot-auth/github"
-new_case agree-copilot-auth-control
-export STUB_DIR
-assert_eq "$(WATCH_BIN="$COPILOT_AUTH_MUTANT/oversee-watch" watch_event copilot_signed_out_idle 100 node first)" none \
-  "control: without auth classification the first-pass usage-limit assertion fails"
 
 # The PRODUCER of `unjudged`, not the word. The two § states rows above hand it
 # to the judge as an argument; nothing there runs `lane_session_state`, which is

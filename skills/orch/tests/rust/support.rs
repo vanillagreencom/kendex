@@ -238,7 +238,7 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
     std::fs::create_dir_all(&home).expect("the scratch home");
     command
         .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("PATH", tool_path(&[]))
         .env(
             "LANG",
             std::env::var_os("LANG").unwrap_or_else(|| "C.UTF-8".into()),
@@ -263,6 +263,54 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
         }
     }
     command
+}
+
+/// The tools directory under the temporary root that every test child sees
+/// on `PATH` after a row's own prefixes: a `gh` that refuses, so a row that
+/// names no `gh` fixture never reaches the operator's real `gh` by omission
+/// (R-U5h: the admission's real `gh` under the scratch home started
+/// `gh send-telemetry` and connected out). Written once per process (the
+/// rows of one test binary start together on a cold temporary root:
+/// R-U5h2 Copilot F1) and published atomically under a temporary name no
+/// other process uses, so two test binaries writing it at once both read
+/// one whole file.
+fn isolated_bin() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join("isolated-bin");
+        let gh = dir.join("gh");
+        if !gh.exists() {
+            std::fs::create_dir_all(&dir).expect("the isolated tools directory");
+            let tmp = dir.join(format!(
+                ".gh.{}.{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            std::fs::write(
+                &tmp,
+                "#!/bin/sh\nprintf 'gh: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
+            )
+            .expect("the gh refusal");
+            std::fs::set_permissions(
+                &tmp,
+                <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+            )
+            .expect("the gh refusal's mode");
+            let _ = std::fs::rename(&tmp, &gh);
+        }
+        dir
+    })
+    .clone()
+}
+
+/// A test child's `PATH`: a row's own `prefixes` first, then the isolated
+/// tools directory, then the path this process inherited. Every row that
+/// sets `PATH` composes it here, so a prefix never drops the refusing `gh`.
+pub fn tool_path(prefixes: &[&Path]) -> String {
+    let mut parts: Vec<String> = prefixes.iter().map(|p| p.display().to_string()).collect();
+    parts.push(isolated_bin().display().to_string());
+    parts.push(std::env::var("PATH").unwrap_or_default());
+    parts.join(":")
 }
 
 pub fn fixtures() -> PathBuf {
@@ -737,19 +785,12 @@ impl Runner {
                 "DEV_VALIDATE_CLI",
                 fixtures().join("dev-validate-quiet/dev-validate-run"),
             )
-            // The watch handover owner a publication runs, as a lib that
-            // starts no watch and records its call in `WATCH_HANDOVER_LOG`.
-            .env(
-                "ORCH_WATCH_HANDOVER",
-                fixtures().join("watch-handover-quiet/watch-handover.sh"),
-            )
             .current_dir(self.state_dir());
         if let Some(verify) = self.verify {
             command.env("ORCH_TMUX_VERIFY_SECS", verify.to_string());
         }
         if let Some(tools) = &self.tools {
-            let inherited = std::env::var("PATH").unwrap_or_default();
-            command.env("PATH", format!("{}:{inherited}", tools.display()));
+            command.env("PATH", tool_path(&[tools.as_path()]));
         }
         for (name, value) in &self.env {
             command.env(name, value);
@@ -772,8 +813,7 @@ impl Runner {
     ) -> Child {
         let path = self.state_dir().join("request.json");
         std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
-        let inherited = std::env::var("PATH").unwrap_or_default();
-        let combined = format!("{}:{inherited}", path_prefix.display());
+        let combined = tool_path(&[path_prefix]);
         let mut command = isolated();
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
@@ -794,10 +834,6 @@ impl Runner {
             .env(
                 "DEV_VALIDATE_CLI",
                 fixtures().join("dev-validate-quiet/dev-validate-run"),
-            )
-            .env(
-                "ORCH_WATCH_HANDOVER",
-                fixtures().join("watch-handover-quiet/watch-handover.sh"),
             )
             .env("PATH", combined)
             .stdout(Stdio::piped())

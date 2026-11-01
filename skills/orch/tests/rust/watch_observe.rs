@@ -21,6 +21,7 @@ mod support;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, Pane, PaneFields};
@@ -667,7 +668,7 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
     );
 }
 
-/// `oversee-watch:4885-4906`; `tests/oversee_watch_usage_limit.sh` § SURFACE 2.
+/// `oversee-watch:4885-4906`; `744fd5727:skills/orch/tests/oversee_watch_usage_limit.sh` § SURFACE 2.
 /// Defect: a wall whose reset has gone by still reported as standing, or
 /// `usage-limit-passed` reported on every pass after it. The reset is pinned
 /// to the first sighting; once the clock passes it the lane is
@@ -741,7 +742,7 @@ fn relaunchable(mut record: Value, cwd: &Path) -> Value {
 }
 
 /// Decision 121 Q10; `oversee-watch:4694` (`wall_route`), the rows
-/// `tests/oversee_watch_wall_relaunch.sh` pins. Defect: the relaunch
+/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` pins. Defect: the relaunch
 /// started on every pass the wall stands, started under `ask`, or started
 /// with no pick. Under `auto` (the default, `oversee-watch:659`) a walled
 /// lane whose record names its model is relaunched once onto the picked
@@ -862,12 +863,12 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     );
 }
 
-/// The item state `tests/oversee_watch_start_stall.sh` plants for its
+/// The item state `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` plants for its
 /// `separate_counts` row.
 const COUNTS_STATE: &str = r#"{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"fix"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"},{"kind":"restack"}],"restack_skips":[{},{}],"restacks":4}"#;
 
 /// `lib/watch-host-kinds.sh:446` (`check_lane_long`), the rows
-/// `tests/oversee_watch_start_stall.sh` pins (`separate_counts`, `parked`,
+/// `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` pins (`separate_counts`, `parked`,
 /// the age intervals). Defect: a long lane reported on every pass, or its
 /// counts read from anywhere but the lane's own records. A running lane
 /// `ORCH_WATCH_LANE_AGE_SECS` past its launch is `lane-long` once per age
@@ -1422,7 +1423,7 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
 }
 
 /// `oversee-watch:4062-4067` (`overseer_mark_check`), the bytes
-/// `tests/oversee_watch_overseer_marks.sh` pins. Defect: the mark line out
+/// `744fd5727:skills/orch/tests/oversee_watch_overseer_marks.sh` pins. Defect: the mark line out
 /// with no handling under it, or a handling naming a preference the walk
 /// does not read. The first crossing of a headroom mark on a live overseer
 /// carries the succession's sentence under the line: the judge's path and
@@ -1497,4 +1498,433 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         ]
     );
     assert!(transfers3.borrow().is_empty());
+}
+
+// U5d3 (decision 176 (1) (a), (c)): the standing handoff and the wall
+// relaunch's outcomes.
+
+/// The handoff record `744fd5727:skills/orch/tests/oversee_watch.sh` § 2b plants
+/// (`handoff_record`), as jq's `tojson` printed it under the event.
+const HANDOFF_RECORD: &str = r##"{"written_at":"2026-09-06T05:00:00Z","merged":["#2210"],"remaining":["merge-pr § 5"],"branch":"ken-1","worktree":"/w","open_pr":2218,"traps":[]}"##;
+
+/// The item's workflow state carrying `record` as its handoff.
+fn handoff_state(record: &str) -> String {
+    format!(r#"{{"cycles":0,"handoff":{record}}}"#)
+}
+
+/// A lane record naming no pane, so the pass judges nothing off a screen.
+fn paneless(mut record: Value) -> Value {
+    record.as_object_mut().unwrap().remove("launch");
+    record
+}
+
+/// `oversee-watch:2097` (`check_handoff`); `744fd5727:skills/orch/tests/oversee_watch.sh` § 2b
+/// (`handoff_once`, `handoff_root_record`, `handoff_resumed`). Defect: a
+/// standing handoff said on every pass, or again on a re-run before the
+/// relaunch stamps the record; a record only in the lane root's own `tmp`
+/// missed; a record the relaunched lane stamped `resumed_at` on still
+/// said. A record with no `resumed_at` is `handoff` once with the record
+/// under it, read under the fleet's state directory and under the lane
+/// root's `tmp`; the same record is quiet after; a resumed one clears the
+/// row; a later record of the same item is news again.
+#[test]
+fn a_standing_handoff_is_said_once_per_record_and_a_resumed_one_clears() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let root = dir.path().join("root-KEN-2");
+    fleet.set_lanes(vec![
+        paneless(lane_record(
+            "KEN-1",
+            "gh-1",
+            "claude",
+            &server,
+            "%999",
+            None,
+            dir.path(),
+        )),
+        paneless(lane_record(
+            "KEN-2", "gh-2", "claude", &server, "%998", None, &root,
+        )),
+    ]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let state_dir = driver.state_dir.clone();
+    let fleet_place = move |item: &str| state_dir.join(format!("workflow-state-{item}.json"));
+    std::fs::write(fleet_place("KEN-1"), handoff_state(HANDOFF_RECORD)).unwrap();
+    // KEN-2's record stands only in its root's tmp, the fleet's place
+    // holding a state with no record.
+    std::fs::write(fleet_place("KEN-2"), "{\"cycles\":0}\n").unwrap();
+    std::fs::write(
+        root.join("tmp/workflow-state-KEN-2.json"),
+        handoff_state(r#"{"written_at":"t"}"#),
+    )
+    .unwrap();
+    let first = driver.pass(&state);
+    assert_eq!(
+        lines(&first),
+        vec![
+            "EVENT handoff KEN-1",
+            HANDOFF_RECORD,
+            "EVENT handoff KEN-2",
+            r#"{"written_at":"t"}"#,
+        ]
+    );
+    let key = driver.baseline.get("handoff", "KEN-1").unwrap().to_owned();
+    let second = driver.pass(&state);
+    assert!(
+        lines(&second).is_empty(),
+        "the same record is reported once: {:?}",
+        lines(&second)
+    );
+    assert_eq!(driver.baseline.get("handoff", "KEN-1"), Some(key.as_str()));
+    // The relaunched lane stamped the record: spent.
+    std::fs::write(
+        fleet_place("KEN-1"),
+        handoff_state(
+            r#"{"written_at":"2026-09-06T05:00:00Z","resumed_at":"2026-09-06T05:10:00Z"}"#,
+        ),
+    )
+    .unwrap();
+    let resumed = driver.pass(&state);
+    assert!(lines(&resumed).is_empty(), "{:?}", lines(&resumed));
+    assert_eq!(
+        driver.baseline.get("handoff", "KEN-1"),
+        None,
+        "a resumed record clears the row"
+    );
+    assert!(driver.baseline.get("handoff", "KEN-2").is_some());
+    std::fs::write(
+        fleet_place("KEN-1"),
+        handoff_state(r#"{"written_at":"2026-09-07T05:00:00Z"}"#),
+    )
+    .unwrap();
+    let again = driver.pass(&state);
+    assert_eq!(
+        lines(&again),
+        vec![
+            "EVENT handoff KEN-1",
+            r#"{"written_at":"2026-09-07T05:00:00Z"}"#
+        ]
+    );
+}
+
+/// `744fd5727:skills/orch/tests/oversee_watch.sh` § 2b (`handoff_root_torn`, `handoff_unread_*`).
+/// Defect: a state this pass could not read passed off as "no handoff",
+/// clearing the row and dropping the event for a lane that has already
+/// handed off and exited, or one lane's refused read silencing the other
+/// lanes' news. A torn file in the lane root's `tmp` is the pass's partial
+/// failure naming the item and that file; the other lane's handoff is out;
+/// the standing row survives, so the next readable pass still owes the
+/// event.
+#[test]
+fn a_refused_handoff_read_is_the_pass_s_failure_and_the_other_lanes_news_stands() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let root = dir.path().join("root-KEN-1");
+    fleet.set_lanes(vec![
+        paneless(lane_record(
+            "KEN-1", "gh-1", "claude", &server, "%999", None, &root,
+        )),
+        paneless(lane_record(
+            "KEN-2",
+            "gh-2",
+            "claude",
+            &server,
+            "%998",
+            None,
+            dir.path(),
+        )),
+    ]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let state_dir = driver.state_dir.clone();
+    let fleet_place = move |item: &str| state_dir.join(format!("workflow-state-{item}.json"));
+    std::fs::write(fleet_place("KEN-1"), "{\"cycles\":0}\n").unwrap();
+    let torn = root.join("tmp/workflow-state-KEN-1.json");
+    std::fs::write(&torn, "{\"handoff\":").unwrap();
+    std::fs::write(fleet_place("KEN-2"), handoff_state(HANDOFF_RECORD)).unwrap();
+    driver.baseline.apply(Change::Set {
+        kind: "handoff".into(),
+        identity: "KEN-1".into(),
+        value: "2455569205".into(),
+    });
+    let produced = driver.pass(&state);
+    assert_eq!(
+        produced.failed.as_deref(),
+        Some(format!("handoff-read-failed item=KEN-1 path={}", torn.display()).as_str())
+    );
+    assert_eq!(
+        lines(&produced),
+        vec!["EVENT handoff KEN-2", HANDOFF_RECORD]
+    );
+    assert_eq!(
+        driver.baseline.get("handoff", "KEN-1"),
+        Some("2455569205"),
+        "the standing row survives, so the next readable pass still owes the event"
+    );
+}
+
+/// One outcomes pass over the markers under `dir`, the changes applied as
+/// the runner commits them; the prepare bound its default, 1800 s.
+fn outcomes(dir: &Path, baseline: &mut Baseline, now: u64) -> Produced {
+    let produced = overseer::relaunch_outcomes(dir, Duration::from_secs(1800), now, baseline);
+    apply(baseline, &produced);
+    produced
+}
+
+/// A relaunch marker as the wall route writes it; the marker and its log.
+fn plant_marker(dir: &Path, lane: &str, item: &str, since: u64) -> (PathBuf, PathBuf) {
+    let marker = wall::relaunch_marker_path(dir, lane);
+    let log = dir.join(format!("wall-relaunch-{item}.log"));
+    wall::write_relaunch_marker(&marker, item, since, &log).unwrap();
+    (marker, log)
+}
+
+/// `oversee-watch:4667` (`wall_relaunch_outcomes`), the bytes
+/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` `failure_passes` pins. Defect: a
+/// relaunch that exited non-zero never said, said on every pass, or judged
+/// off its window instead of its completed status; a status of 0 said as a
+/// failure. The completed status beside the marker is `lane-prepare-failed`
+/// with the exit and the log once; the marker and its status leave with
+/// the row, for a status of 0 as well; the next pass says nothing.
+#[test]
+fn a_failed_relaunch_is_said_once_with_its_exit_and_log_and_its_marker_leaves() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = 1_800_000_000;
+    let (failed, log) = plant_marker(dir.path(), "gh-2", "KEN-2", now - 60);
+    std::fs::write(overseer::relaunch_exit_path(&failed), "1\n").unwrap();
+    let (ok, _) = plant_marker(dir.path(), "gh-3", "KEN-3", now - 60);
+    std::fs::write(overseer::relaunch_exit_path(&ok), "0\n").unwrap();
+    let mut baseline = Baseline::default();
+    baseline.apply(Change::Set {
+        kind: "wall-relaunch".into(),
+        identity: "KEN-2".into(),
+        value: format!("{}|stuck", now - 60),
+    });
+    let first = outcomes(dir.path(), &mut baseline, now);
+    assert_eq!(
+        lines(&first),
+        vec![format!(
+            "EVENT lane-prepare-failed KEN-2 reason=relaunch-failed exit=1 log={}",
+            log.display()
+        )]
+    );
+    assert_eq!(first.failed, None);
+    for marker in [&failed, &ok] {
+        assert!(
+            !marker.exists() && !overseer::relaunch_exit_path(marker).exists(),
+            "the marker ends after its outcome was reported: {}",
+            marker.display()
+        );
+    }
+    assert_eq!(baseline.get("wall-relaunch", "KEN-2"), None);
+    let second = outcomes(dir.path(), &mut baseline, now + 240);
+    assert!(lines(&second).is_empty(), "{:?}", lines(&second));
+}
+
+/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` `stuck_passes`. Defect: an
+/// overdue detached recovery never said while its old window survives,
+/// said on every pass, or a fresh relaunch's wait silenced by an earlier
+/// one's row. A marker with no status `ORCH_WATCH_PREPARE_SECS` past its
+/// start is `lane-prepare-stuck` with its age, log and
+/// `reason=relaunch-pending` once, keyed by that start, the marker kept; a
+/// marker inside the bound is quiet; a relaunch started afresh is said
+/// afresh, at the bound exactly.
+#[test]
+fn a_relaunch_pending_past_the_prepare_bound_is_said_once_per_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = 1_800_000_000;
+    let (pending, log) = plant_marker(dir.path(), "gh-2", "KEN-2", now - 1801);
+    let (young, _) = plant_marker(dir.path(), "gh-4", "KEN-4", now);
+    let mut baseline = Baseline::default();
+    let first = outcomes(dir.path(), &mut baseline, now);
+    assert_eq!(
+        lines(&first),
+        vec![format!(
+            "EVENT lane-prepare-stuck KEN-2 age=1801s log={} reason=relaunch-pending",
+            log.display()
+        )]
+    );
+    assert_eq!(
+        baseline.get("wall-relaunch", "KEN-2"),
+        Some(format!("{}|stuck", now - 1801).as_str())
+    );
+    assert!(pending.exists(), "the marker stands until its status lands");
+    let second = outcomes(dir.path(), &mut baseline, now + 240);
+    assert!(lines(&second).is_empty(), "{:?}", lines(&second));
+    std::fs::remove_file(young).unwrap();
+    let restarted = now + 240;
+    plant_marker(dir.path(), "gh-2", "KEN-2", restarted);
+    let third = outcomes(dir.path(), &mut baseline, restarted + 1800);
+    assert_eq!(
+        lines(&third),
+        vec![format!(
+            "EVENT lane-prepare-stuck KEN-2 age=1800s log={} reason=relaunch-pending",
+            log.display()
+        )]
+    );
+}
+
+/// Decisions 99, 105. Defect: an exit status this reader cannot read taken
+/// as absent, so an ended relaunch is said stuck or its outcome lost. A
+/// status that cannot be read, or one that is no exit code, is the pass's
+/// partial failure naming the file: no line, the marker and the status
+/// kept for the next pass, no row.
+#[test]
+fn an_unreadable_exit_status_is_the_pass_s_failure_not_a_stuck_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = 1_800_000_000;
+    let (marker, _) = plant_marker(dir.path(), "gh-2", "KEN-2", now - 3600);
+    let exit = overseer::relaunch_exit_path(&marker);
+    std::fs::create_dir(&exit).unwrap();
+    let mut baseline = Baseline::default();
+    let produced = outcomes(dir.path(), &mut baseline, now);
+    let expected = format!("state-read-failed path={}", exit.display());
+    assert!(
+        produced
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with(&expected)),
+        "an unreadable status is the pass's failure: {:?}",
+        produced.failed
+    );
+    assert!(lines(&produced).is_empty(), "{:?}", lines(&produced));
+    assert!(
+        marker.exists() && exit.exists(),
+        "nothing leaves on a failed read"
+    );
+    assert!(baseline.rows.is_empty(), "{:?}", baseline.rows);
+    std::fs::remove_dir(&exit).unwrap();
+    std::fs::write(&exit, "boom\n").unwrap();
+    let produced = outcomes(dir.path(), &mut baseline, now);
+    assert!(
+        produced
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with(&expected)),
+        "a status that is no exit code is the same failure: {:?}",
+        produced.failed
+    );
+    assert!(lines(&produced).is_empty(), "{:?}", lines(&produced));
+    assert!(marker.exists() && exit.exists());
+}
+
+/// A lane whose recorded pane the server has not.
+fn gone_lane(server: &Server, item: &str, window: &str, pane: &str, dir: &Path) -> Value {
+    lane_record(item, window, "claude", server, pane, None, dir)
+}
+
+/// The `usage-limit` row the relaunch left (`|lane-relaunched`), the row
+/// a gone window clears, planted to prove whether it moves.
+const RELAUNCHED_ROW: &str = "1800000000|%7|usage-limit|lane-relaunched";
+
+/// `oversee-watch:4656` (`wall_relaunch_pending`) at its one caller
+/// (`:4812`), the row `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` `gone_passes`
+/// pins (`"0 1"`). Defect: the window a relaunch is replacing said gone
+/// while that launch is still opening it, its wall row cleared under the
+/// relaunch so the wall is relaunched again; or the suppression outliving
+/// the launch, so a window gone for good is never said. A gone window
+/// whose relaunch marker stands with no status inside the prepare bound
+/// says nothing and moves no row; once the status lands it is
+/// `window-gone` as any other, its rows cleared; a marker at the bound
+/// suppresses nothing.
+#[test]
+fn a_gone_window_under_a_pending_relaunch_is_said_once_the_launch_ended() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    fleet.set_lanes(vec![
+        gone_lane(&server, "KEN-2", "gh-2", "%999", dir.path()),
+        gone_lane(&server, "KEN-3", "gh-3", "%998", dir.path()),
+    ]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let watch_dir = lanes::watch_state_dir(&driver.settings.claim_store).to_path_buf();
+    std::fs::create_dir_all(&watch_dir).unwrap();
+    let (pending, _) = plant_marker(&watch_dir, "gh-2", "KEN-2", driver.now);
+    plant_marker(&watch_dir, "gh-3", "KEN-3", driver.now - 1800);
+    driver.baseline.apply(Change::Set {
+        kind: "usage-limit".into(),
+        identity: "gh-2".into(),
+        value: RELAUNCHED_ROW.into(),
+    });
+    let first = driver.pass(&state);
+    assert_eq!(
+        event_lines(&first),
+        vec!["EVENT window-gone gh-3"],
+        "no window-gone while the relaunch runs; one for the marker at the bound"
+    );
+    assert_eq!(first.failed, None);
+    assert_eq!(
+        driver.baseline.get("usage-limit", "gh-2"),
+        Some(RELAUNCHED_ROW),
+        "no row moves under the relaunch"
+    );
+    std::fs::write(overseer::relaunch_exit_path(&pending), "0\n").unwrap();
+    let second = driver.pass(&state);
+    assert_eq!(
+        event_lines(&second),
+        vec!["EVENT window-gone gh-2", "EVENT window-gone gh-3"],
+        "window-gone once the launch ended"
+    );
+    assert_eq!(
+        driver.baseline.get("usage-limit", "gh-2"),
+        None,
+        "the ended relaunch's gone window clears its rows"
+    );
+}
+
+/// Decisions 99, 105, 156 (1). Defect: a relaunch marker this reader
+/// cannot read taken as no pending relaunch (the legacy's `jq -er`
+/// failure, `oversee-watch:4660`), so the window the relaunch is replacing
+/// is said gone and its rows cleared under it. A torn marker is the pass's
+/// partial failure naming it: no line, no row moved, and the next pass
+/// asks again.
+#[test]
+fn an_unreadable_relaunch_marker_is_the_pass_s_failure_not_a_gone_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    fleet.set_lanes(vec![gone_lane(
+        &server,
+        "KEN-2",
+        "gh-2",
+        "%999",
+        dir.path(),
+    )]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let watch_dir = lanes::watch_state_dir(&driver.settings.claim_store).to_path_buf();
+    std::fs::create_dir_all(&watch_dir).unwrap();
+    let marker = wall::relaunch_marker_path(&watch_dir, "gh-2");
+    std::fs::write(&marker, r#"{"item":"KEN-2","since":"#).unwrap();
+    driver.baseline.apply(Change::Set {
+        kind: "usage-limit".into(),
+        identity: "gh-2".into(),
+        value: RELAUNCHED_ROW.into(),
+    });
+    let expected = format!("state-read-failed path={}", marker.display());
+    for _ in 0..2 {
+        let produced = driver.pass(&state);
+        assert!(
+            produced
+                .failed
+                .as_deref()
+                .is_some_and(|f| f.starts_with(&expected)),
+            "an unreadable marker is the pass's failure: {:?}",
+            produced.failed
+        );
+        assert!(
+            event_lines(&produced).is_empty(),
+            "{:?}",
+            event_lines(&produced)
+        );
+        assert_eq!(
+            driver.baseline.get("usage-limit", "gh-2"),
+            Some(RELAUNCHED_ROW),
+            "no row moves on a failed read"
+        );
+    }
 }

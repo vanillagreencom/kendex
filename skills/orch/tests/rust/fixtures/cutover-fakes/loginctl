@@ -1,0 +1,4 @@
+#!/bin/bash
+# A `loginctl` reporting that the user manager lingers, so `job-unit.sh
+# launch` keeps its unit.
+echo yes
