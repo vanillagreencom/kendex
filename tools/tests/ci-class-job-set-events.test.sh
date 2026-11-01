@@ -112,9 +112,19 @@ esac
 cat "$GH_WORLD/$file"
 STUB
 chmod +x "$TMP/gh-stub/gh"
+# The recording gives the job shape and the non-shard jobs. The shard legs
+# are one recorded leg cloned per roster shard and runner, so a roster or
+# eligibility change edits no recorded data.
+jq -e --argjson linux "$ROSTER" --argjson macos "$QUEUE_ALL" '
+  ([.jobs[] | select(.name | startswith("Skill suites shard ("))][0] // error("no recorded shard leg")) as $leg
+  | .jobs = [.jobs[] | select(.name | startswith("Skill suites shard (") | not)]
+    + [($linux[] | [., "ubuntu-latest"]), ($macos[] | [., "macos-latest"])
+       | $leg + {name: "Skill suites shard (\(.[0]), \(.[1]))"}]' \
+  "$DATA/main-proof-jobs.json" >"$TMP/push-jobs.json" ||
+  { echo "the recorded jobs gave no shard leg to clone" >&2; exit 1; }
 # One world per GitHub state: runs.json, and jobs-<run>.json per run.
 push_world() { # NAME
-  local dir="$TMP/push/$1" runs="$DATA/main-proof-runs.json" jobs="$DATA/main-proof-jobs.json"
+  local dir="$TMP/push/$1" runs="$DATA/main-proof-runs.json" jobs="$TMP/push-jobs.json"
   local second=$((PUSH_RUN + 1))
   mkdir -p "$dir"
   cp "$runs" "$dir/runs.json"

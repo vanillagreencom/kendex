@@ -526,10 +526,6 @@ check "the shard matrix expands the selected shards" "$ORCH_SHARDS" \
 check "the shard matrix expands ci-job-set's roster, in order, when nothing classified" \
   "$(selection standard false .github/workflows/skill-tests.yml | sed -n 's/.* shards=\([^ ]*\).*/\1/p')" \
   "$(legs "$WORKFLOW" "$ALL_OFF" failure merge_group shard)"
-check "a main push's shard matrix expands the shards its group left unproved" '["node"]' \
-  "$(legs "$WORKFLOW" "$PUSH_LINUX" success push shard)"
-check "a main push's shard matrix expands the whole roster when changes failed" "$ROSTER" \
-  "$(legs "$WORKFLOW" "$ALL_OFF" failure push shard)"
 
 # The document byte ceilings and the work-marker scan run in the job a
 # `render` or `trivial` diff runs, and in no other, so every class that runs

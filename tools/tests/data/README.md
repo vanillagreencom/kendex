@@ -20,4 +20,4 @@ The [CI event selection test](../ci-class-job-set-events.test.sh) serves two rec
 | File | Purpose |
 |---|---|
 | [main-proof-runs.json](main-proof-runs.json) | The merge-group run list for head `43b6b58b`, run 41306604685. |
-| [main-proof-jobs.json](main-proof-jobs.json) | That run's latest jobs, every shard leg among them. |
+| [main-proof-jobs.json](main-proof-jobs.json) | That run's latest jobs. The test keeps the non-shard jobs and clones one recorded shard leg for each shard and runner of the current roster. |

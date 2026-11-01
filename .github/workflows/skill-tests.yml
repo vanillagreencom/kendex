@@ -151,9 +151,10 @@ jobs:
   #
   # The class is read on merge_group alone. A pull request runs no lane, and
   # the nightly run runs its fixed jobs without a class. On a push to main
-  # only the select step runs: tools/ci-job-set reads the same-head merge
-  # group's shard jobs, which `actions: read` admits, and publishes the
-  # shards that group left unproved. The root checkout there is main itself.
+  # only the root checkout and the select step run: tools/ci-job-set reads
+  # the same-head merge group's shard jobs, which `actions: read` admits,
+  # and publishes the shards that group left unproved. The root checkout
+  # there is main itself.
   changes:
     name: Classify the diff
     if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')

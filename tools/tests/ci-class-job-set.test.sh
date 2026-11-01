@@ -121,10 +121,10 @@ mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-[ "$(grep -c '^      printf .%s. "linux=false macos=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
+[ "$(grep -c '^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 awk '
-  /^      printf .%s. "linux=false macos=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$/ {
+  /^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$/ {
     sub(/ cargo_windows_check=false/, "")
   }
   { print }

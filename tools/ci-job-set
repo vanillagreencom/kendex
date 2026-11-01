@@ -188,13 +188,9 @@ fi
 
 TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# A selection is one `name=value` word per lane: the two shell runner bits,
-# LEGS, then one per gated job, JOBS, then `shards=`. The
-# emitted lines are shell_shards and shell_os in place of the legs, then the
-# jobs, the shards and queue_macos_shards.
-LEGS="linux macos"
+# A class selection is one `name=value` word per lane: the macOS shell bit,
+# `macos`, then one per gated job, JOBS, then `shards=`. emit() writes it.
 JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo_windows_check catalog smoke"
-LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
@@ -209,6 +205,12 @@ CHECKOUT_KENDEX_SHARDS="refresh rest jarvis"
 # The ownership proof compares those declarations with actual suite coverage
 # and the workflow matrix. Linux keeps the complete SHARDS roster.
 LINUX_ONLY_SHARDS="$("$TOOLS_DIR/macos-test-contracts" --linux-only-shards)" || exit 2
+# The macOS-capable roster, in roster order: every reader of macOS
+# eligibility reads this list.
+MACOS_SHARDS=""
+for shard in $SHARDS; do
+  case " $LINUX_ONLY_SHARDS " in *" $shard "*) ;; *) MACOS_SHARDS="${MACOS_SHARDS:+$MACOS_SHARDS }$shard" ;; esac
+done
 
 die() { # CAUSE MESSAGE
   printf 'ci-job-set: cause=%s\n' "$1" >&2
@@ -227,12 +229,28 @@ esac
 [ -n "$suite_path" ] || [ -n "${GITHUB_OUTPUT:-}" ] || die missing-output-file \
   "GITHUB_OUTPUT is unset, so no lane could read the selection"
 
-# The push route, as the header states it. Every read that fails leaves
-# `proved` empty, so the rosters it emits are whole.
+# The one writer of a selection. SHARDS and QUEUE are the Linux shard list
+# and the macOS shard list, JSON in roster order; shell_os names each runner
+# whose list is non-empty and shell_shards is true where it names one, so a
+# merge group and a main push read alike. The JOB=VALUE words of a class row
+# follow; the push route selects no job.
+emit() { # SHARDS QUEUE [JOB=VALUE ...]
+  local shards="$1" queue="$2" legs="" shell=false
+  shift 2
+  [ "$shards" = "[]" ] || legs='"ubuntu-latest"'
+  [ "$queue" = "[]" ] || legs="${legs:+$legs,}\"macos-latest\""
+  [ -z "$legs" ] || shell=true
+  set -- "shell_shards=$shell" "shell_os=[$legs]" "$@" "shards=$shards" "queue_macos_shards=$queue"
+  printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
+  printf '%s\n' "$@" >&2
+}
+
+# The push route, as the header states it. A read that fails proves nothing,
+# so the rosters it emits are whole.
 PROOF_WORKFLOW=.github/workflows/skill-tests.yml
 main_proof() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause=""
-  local runs ids="" id page jobs="" proved="" shard linux="" macos="" legs linux_n=0 macos_n=0
+  local runs ids="" id page jobs="" owed linux macos linux_n macos_n
   if ! runs="$(gh api --paginate "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100")"; then
     state=unread cause=runs-read-failed
   elif ! ids="$(jq -rs --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
@@ -254,41 +272,20 @@ main_proof() {
     fi
     jobs="$jobs$page"
   done
-  if [ "$state" = read ]; then
-    # One `<runner> <shard>` line per shard proved on that runner.
-    proved="$(jq -rs --arg roster "$SHARDS" '
-      add as $jobs
-      | ("ubuntu-latest", "macos-latest") as $os
-      | ($roster | split(" "))[] as $shard
-      | [$jobs[] | select(.name == "Skill suites shard (\($shard), \($os))")] as $legs
-      | select(($legs | length) > 0 and all($legs[]; .status == "completed" and .conclusion == "success"))
-      | "\($os) \($shard)"' <<<"$jobs")" || { state=unread cause=jobs-unparseable proved=""; }
-  fi
-  for shard in $SHARDS; do
-    case "
-$proved
-" in
-      *"
-ubuntu-latest $shard
-"*) linux_n=$((linux_n + 1)) ;;
-      *) linux="${linux:+$linux,}\"$shard\"" ;;
-    esac
-    case " $LINUX_ONLY_SHARDS " in *" $shard "*) continue ;; esac
-    case "
-$proved
-" in
-      *"
-macos-latest $shard
-"*) macos_n=$((macos_n + 1)) ;;
-      *) macos="${macos:+$macos,}\"$shard\"" ;;
-    esac
-  done
-  # shell_shards and shell_os mean what they mean on a merge group, so the
-  # Linux job's one condition reads both events alike.
-  legs="${linux:+\"ubuntu-latest\"}"
-  [ -z "$macos" ] || legs="${legs:+$legs,}\"macos-latest\""
-  printf 'shell_shards=%s\nshell_os=[%s]\nshards=[%s]\nqueue_macos_shards=[%s]\n' \
-    "$([ -n "$legs" ] && echo true || echo false)" "$legs" "$linux" "$macos" | tee -a "$GITHUB_OUTPUT" >&2
+  [ "$state" = read ] || jobs=""
+  # Each roster less the shards proved on its runner, with the proved
+  # counts: `<linux> <macos> <linux proved> <macos proved>`.
+  owed="$(jq -rs --arg linux "$SHARDS" --arg macos "$MACOS_SHARDS" '
+    (add // []) as $jobs
+    | def owed($roster; $os):
+        [$roster | split(" ")[] | select(. as $shard
+          | [$jobs[] | select(.name == "Skill suites shard (\($shard), \($os))")]
+          | length == 0 or any(.[]; .status != "completed" or .conclusion != "success"))];
+    owed($linux; "ubuntu-latest") as $l | owed($macos; "macos-latest") as $m
+    | "\($l | tojson) \($m | tojson) \(($linux | split(" ") | length) - ($l | length)) \(($macos | split(" ") | length) - ($m | length))"' <<<"$jobs")" ||
+    die main-proof-unevaluated "jq could not subtract the proved shards from the rosters"
+  read -r linux macos linux_n macos_n <<<"$owed"
+  emit "$linux" "$macos"
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
   printf 'ci-job-set: main-proof=%s runs=%s proved-linux=%d proved-macos=%d%s\n' \
     "$state" "${ids:-none}" "$linux_n" "$macos_n" "${cause:+ cause=$cause}" >&2
@@ -316,20 +313,6 @@ sel_get() { # SELECTION NAME
   esac
   rest="${rest#*" $2="}"
   printf '%s' "${rest%% *}"
-}
-
-# A row names every lane and each shard list or ends the step, before any lane
-# has read a selection with one of them missing from it.
-emit() { # LANE=VALUE ... shards=JSON queue_macos_shards=JSON
-  local lane given=" $* "
-  for lane in $LANES shards queue_macos_shards; do
-    case "$given" in
-      *" $lane="*) ;;
-      *) die "lane-unselected lane=$lane" "the row declares no value for this lane" ;;
-    esac
-  done
-  printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
-  printf '%s\n' "$@" >&2
 }
 
 # `grep -c` exits 1 when nothing matched, which errexit would read as a broken
@@ -658,9 +641,8 @@ $path" ;;
 # Whether one shard of the JSON list SHARDS is one the matrix runs on macOS.
 macos_shard() { # SHARDS
   local shard
-  for shard in $SHARDS; do
-    case "$1" in *"\"$shard\""*) ;; *) continue ;; esac
-    case " $LINUX_ONLY_SHARDS " in *" $shard "*) ;; *) return 0 ;; esac
+  for shard in $MACOS_SHARDS; do
+    case "$1" in *"\"$shard\""*) return 0 ;; esac
   done
   return 1
 }
@@ -670,7 +652,7 @@ macos_shard() { # SHARDS
 # refusals included. Run it in a subshell: the readers above take the paths
 # from `paths`, which it sets, and the shard search starts empty each time.
 select_row() { # CLASS DOCS PATHS EVENT
-  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards shell macos catalog=false known=false each
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards macos catalog=false known=false each
   paths="$3"
   want=" " reached=" " pending=""
   case "$docs" in
@@ -680,7 +662,7 @@ select_row() { # CLASS DOCS PATHS EVENT
   for each in $EVENTS; do
     [ "$each" != "$event" ] || known=true
   done
-  [ "$known" = true ] || die "unsupported-event event=$event" "EVENT is one of: $EVENTS"
+  [ "$known" = true ] || die "unsupported-event event=$event" "EVENT is one of: $EVENTS push"
   row="$class"
   case "$class" in
     render) ;;
@@ -706,7 +688,7 @@ select_row() { # CLASS DOCS PATHS EVENT
   case "$read_lines" in *compiled=1*) catalog=true ;; esac
   case "$row" in
     render | trivial)
-      printf '%s' "linux=false macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[]"
+      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[]"
       ;;
     micro | small | standard | trivial-read)
       platform=false
@@ -722,12 +704,10 @@ select_row() { # CLASS DOCS PATHS EVENT
         uitree=true
         build=true
       fi
-      shell=true
-      [ "$shards" != "[]" ] || shell=false
       macos=$platform
       # The runner arithmetic uses the nightly macOS matrix's exclusions.
       macos_shard "$shards" || macos=false
-      printf '%s' "linux=$shell macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards"
+      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards"
       ;;
   esac
 }
@@ -750,30 +730,19 @@ if [ "$parity" = true ]; then
 fi
 
 now_shards="$(sel_get "$now" shards)"
-legs=""
 jobs=""
-for lane in $LEGS $JOBS; do
+for lane in $JOBS; do
   value="$(sel_get "$now" "$lane")"
-  # The runner bits become shell_os; shell_shards is true only where this
-  # list is non-empty.
-  case "$lane:$value" in
-    linux:true) legs="${legs:+$legs,}\"ubuntu-latest\"" ;;
-    macos:true) legs="${legs:+$legs,}\"macos-latest\"" ;;
-    linux:* | macos:*) ;;
-    *) jobs="$jobs $lane=$value" ;;
-  esac
+  jobs="$jobs $lane=$value"
 done
-shell=false
-[ -z "$legs" ] || shell=true
 
 # The merge group's macOS legs.
 queue=""
 if [ "$(sel_get "$now" macos)" = true ]; then
-  for shard in $SHARDS; do
-    case " $LINUX_ONLY_SHARDS " in *" $shard "*) continue ;; esac
+  for shard in $MACOS_SHARDS; do
     case "$now_shards" in *"\"$shard\""*) queue="${queue:+$queue,}\"$shard\"" ;; esac
   done
 fi
 
 # shellcheck disable=SC2086 # one `lane=value` word per job
-emit "shell_shards=$shell" "shell_os=[$legs]" $jobs "shards=$now_shards" "queue_macos_shards=[$queue]"
+emit "$now_shards" "[$queue]" $jobs
