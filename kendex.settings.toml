@@ -194,9 +194,9 @@ ORCH_LANE_OUTPUT = "quiet"
 # start floor and validates warm; one full run writes about 3.0 GiB.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
-# The roster, pi-copilot claude pi-copilot-gpt codex, and the two Copilot
-# entries' command, model, room check and inline diff are the package
-# defaults (second-opinion --help). The keys below are kendex's differences:
+# Kendex's roster is declared above. The two Copilot entries retain the
+# package command, model, room check and inline diff. The keys below are
+# kendex's differences:
 # the claude and codex entries pin their model and run on a fleet seat with
 # room. The checks assume the orch fleet's accounts, which lanes pick
 # measures; a contributor off the fleet overrides them in .env.local. Each
