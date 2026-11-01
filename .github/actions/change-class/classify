@@ -92,7 +92,8 @@
 # order: true for every lane on the full run; false wherever lanes is false;
 # then true for every lane where the declaration comparison failed;
 # then, on a pull request, false with the cause queue-deferred for a lane
-# the declaration marks `:queue` and one of its own globs reaches, where
+# the declaration marks `:queue` that one of its own globs reaches, or, not
+# marked `:nightly`, that a changed path no base lane claims reaches, where
 # this run's change-class answered queue_only=true and both renders below
 # read the mark; then true
 # for every lane where no changed path was read; then, for a lane marked
@@ -102,8 +103,8 @@
 # matches one of the lane's base globs or the declaration comparison selects
 # that lane, and false everywhere else. A deferred
 # lane runs in the merge group. The deferral needs the queue_only
-# answer as well as the lane's own glob, so no lane is deferred on a pull
-# request change-class reads as free to take the admin merge.
+# answer as well as the path that reached the lane, so no lane is deferred
+# on a pull request change-class reads as free to take the admin merge.
 #
 # That answer is this run's. github.sh pr-merge asks it again at merge time
 # through the harness-ci render beside the github.sh it runs, which is a

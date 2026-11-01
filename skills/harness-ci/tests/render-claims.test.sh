@@ -157,8 +157,8 @@ while IFS='|' read -r case event base_name change expected_lanes expected_cause 
         needle='    --name-only -z --no-renames "$render_base" "$render_head" -- \'
         replacement='    --name-only -z --no-renames --diff-filter=AD "$render_base" "$render_head" -- \' ;;
       render-undeferred)
-        needle='  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then'
-        replacement='  elif [ "$class" != render ] && [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then' ;;
+        needle='  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && { [ -n "$hit" ] || { [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; }; }; then'
+        replacement='  elif [ "$class" != render ] && [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && { [ -n "$hit" ] || { [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; }; }; then' ;;
       similarity-on)
         needle='    --name-only -z --no-renames "$render_base" "$render_head" -- \'
         replacement='    --name-only -z --find-renames "$render_base" "$render_head" -- \' ;;

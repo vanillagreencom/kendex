@@ -415,11 +415,12 @@ fi
 # queue_only=true and both renders read the mark, so pr-merge, asking the
 # same question from either, keeps the pull request off the admin merge, and
 # a render is no exception. Otherwise it runs, its cause naming
-# what was missing. A queue lane only a fallback reached runs here, since no
-# glob of its own put the diff in the queue.
+# what was missing. A non-`:nightly` queue lane the unclaimed-path fallback
+# reaches defers under the same conditions: the merge group runs every lane
+# that fallback reaches. A declaration change alone defers no queue lane.
 # A failed declaration comparison permits no queue deferral, and a diff whose
-# paths could not be read runs every other lane. A `:nightly` lane runs off
-# the full run only on its own glob or a declaration change: the
+# paths could not be read runs every other lane. A `:nightly` lane runs or
+# defers off the full run only on its own glob or a declaration change: the
 # unclaimed-path fallback would run it on most changes, and the full run
 # reaches it every night.
 lane_values=()
@@ -440,7 +441,8 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=false lane_causes[$index]="cause=render-unreached"
   elif [ "$declaration_comparison" = unreadable ]; then
     lane_values[$index]=true lane_causes[$index]="cause=lane-declaration-unreadable path=.github/ci-lanes.conf"
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && { [ -n "$hit" ] || { [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; }; }; then
+    hit="${hit:-path=$unclaimed_path claim=none}"
     [ "$reader_missing" != unread ] || reader_missing="$(render_reader_missing "$queue_reader")"
     if [ -n "$reader_missing" ]; then
       lane_values[$index]=true lane_causes[$index]="cause=queue-reader-absent tree=$reader_missing $hit"

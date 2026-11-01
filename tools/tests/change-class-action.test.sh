@@ -46,7 +46,8 @@
 #      every run starts in a directory holding files the globs would expand
 #      to. One mutant copy per file that holds rules, classify or a
 #      shipped lib it reads, must fail the row its rule decides. Beside them, the queue mark: a lane marked `:queue`
-#      its own glob reaches stands down on a pull request where the
+#      that its own glob or, not marked `:nightly`, a path no lane claims
+#      reaches stands down on a pull request where the
 #      classifier answered queue_only=true and both the lanes-from
 #      checkout and the judged head hold the installed reader of the mark,
 #      runs where any of the three is missing, and stands down on no other
@@ -218,8 +219,15 @@ nightly:event-uniform:queue nightly/*
 '
 declare_lanes queued "$QUEUED"
 declare_lanes queued-no-reader "$QUEUED"
-mkdir -p "$TMP/decl/queued/.agents/skills/harness-ci/scripts/lib"
-cp "$LANES_LIB" "$TMP/decl/queued/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+# `queued-nightly` holds a lane carrying both `:queue` and `:nightly`, with
+# the reader beside it as `queued` has.
+declare_lanes queued-nightly 'check src/*
+slow:queue:nightly slow/*
+'
+for decl in queued queued-nightly; do
+  mkdir -p "$TMP/decl/$decl/.agents/skills/harness-ci/scripts/lib"
+  cp "$LANES_LIB" "$TMP/decl/$decl/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+done
 mkdir -p "$TMP/decl/absent" "$TMP/decl/unreadable/.github/ci-lanes.conf" \
   "$TMP/subject/.github"
 printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
@@ -813,6 +821,7 @@ mixed-delete-claim-first|queue-added|absent|tmux/tmux.conf .github/ci-lanes.conf
 malformed-head|queue-added|bad-name|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 missing-head|queue-added|absent|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 unreadable-head|queue-added|unreadable|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+unreadable-head-unclaimed|queue-added|unreadable|.github/ci-lanes.conf Makefile|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 unreadable-revision|queue-added|invalid|tmux/tmux.conf .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 malformed-base|bad-name|good|.github/ci-lanes.conf|lane_verdicts=
 missing-base|absent|good|.github/ci-lanes.conf|lane_verdicts=
@@ -868,7 +877,7 @@ done <<'ROWS'
         declaration_comparison=unreadable@        declaration_comparison=not-needed@malformed-head
   elif [ "$declaration_comparison" = unreadable ]; then@  elif false; then@missing-head
             lane_count=$((lane_count + 1))@            :@added-lane
- && [ -n "$hit" ]; then@; then@queue-removed
+[ -n "$hit" ] || { [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; }@true@queue-removed
           lane_changed[$index]=true@          lane_hits[$index]="" lane_changed[$index]=true@queue-claim-before-declaration
         [ -n "${lane_hits[$index]}" ] ||@        [ "${lane_changed[$index]}" = true ] ||@queue-claim-after-declaration
           lane_changed[$index]=true@          lane_changed[$index]=false@added-glob
@@ -881,8 +890,9 @@ require_rows "declaration mutant" "$mutants"
 # A lane marked `:queue` that one of its own globs reaches stands down on a
 # pull request alone, and there only where the classifier answered
 # queue_only=true and both the declaration's root and the judged head hold
-# the reader of the mark; every other event runs it as an unmarked lane, and
-# a queue lane only an unclaimed path reached runs on the pull request too.
+# the reader of the mark; every other event runs it as an unmarked lane. A
+# path no lane claims defers every queue lane it turns on alike, which leaves
+# a lane also marked `:nightly` off: that path does not turn it on.
 # ROW|EVENT|DECLARATION|JUDGED HEAD (reader or no-reader)|QUEUE_ONLY|
 # PATHS (each outside the docs set)|EXPECTED: the lane_verdicts value and
 # the lanes the step's `lane:` lines name queue-deferred.
@@ -891,12 +901,13 @@ queue_rows() {
 pr-deferred|pull_request|queued|reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench
 pr-second-line|pull_request|queued|reader|true|Cargo.lock|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=bench
 pr-both-marks|pull_request|queued|reader|true|nightly/run.sh|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=nightly
-pr-unclaimed|pull_request|queued|reader|true|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
-pr-unclaimed-and-claimed|pull_request|queued|reader|true|Makefile benches/b.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=true deferred=bench
+pr-unclaimed|pull_request|queued|reader|true|Makefile|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench nightly
+pr-unclaimed-nightly|pull_request|queued-nightly|reader|false|Makefile|lane_verdicts=lane_check=true,lane_slow=false deferred=
 pr-unconfirmed|pull_request|queued|reader|false|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
 pr-reader-absent|pull_request|queued-no-reader|reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
 pr-judged-reader-absent|pull_request|queued|no-reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
 merge-group|merge_group|queued|reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+merge-group-unclaimed|merge_group|queued|reader|true|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
 push|push|queued|reader|true|benches/b.rs|lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false deferred=
 ROWS
 }
@@ -992,9 +1003,10 @@ while IFS='@' read -r needle replacement row target; do
     *) bad "must-fail: '$needle' planted as '$replacement' gave no verdict on the $row row" ;;
   esac
 done <<'ROWS'
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then@  elif false; then@pr-deferred@classify
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && { [ -n "$hit" ] || { [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; }; }; then@  elif false; then@pr-deferred@classify
 [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}"@true && [ "${lane_queue[$index]}"@merge-group@classify
- && [ -n "$hit" ]; then@; then@pr-unclaimed@classify
+ || { [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; }@@pr-unclaimed@classify
+ && [ "${lane_nightly[$index]}" != true ]@@pr-unclaimed-nightly@classify
   if [ ! -f "$lanes_root/$1" ] ||@  if false ||@pr-reader-absent@classify
   if ! git -C "$REPO" cat-file blob "$HEAD:$1" >"${work:?}/judged-reader" 2>/dev/null ||@  if false ||@pr-judged-reader-absent@classify
     elif [ "$queue_only" != true ]; then@    elif false; then@pr-unconfirmed@classify
