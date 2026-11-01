@@ -9,50 +9,45 @@
 # skills/linear sends the runner a signal, so only a fixture reaches this.
 #
 #   - a TERM to the runner while a suite runs stops that suite: each level
-#     passes it to the one under it
+#     passes it to the one under it, and the timed suite's own handler names
+#     the suite it stops, so the row reads the runner's acknowledgement and
+#     the suite's end rather than when a handler in the suite ran
 #   - a missed stop names the first level whose TERM handler never ran, and
-#     prints the runner's trace, the inner run's log and the marks under it
+#     prints the runner's trace, the inner run's log and the suite's identity
 set -uo pipefail
-
-# REVISIT(KEN-4761): the stop-mark row failed main-push and merge-group runs on
-# Linux and macOS, so it runs only by hand until KEN-4761 corrects or deletes it:
-#   LINEAR_TIMED_TERM=1 bash skills/linear/tests/interrupt.test.sh
-#   LINEAR_TIMED_TERM=1 bash skills/linear/tests/must-fail-controls.sh interrupt
-if [ "${LINEAR_TIMED_TERM:-}" != 1 ]; then
-    printf 'rowless: interrupt timed-term=manual owner=KEN-4761\n'
-    exit 0
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
 source "$SCRIPT_DIR/lib/control-runner.sh"
+# started_at: the runner's own process identity reader, which a zombie and a
+# reused pid both fail.
+source "$SCRIPT_DIR/../../orch/tests/lib/suite-process.sh" || exit 2
 assert_tmpdir TMP
 # The runner's TERM handlers append their entries here; an empty file is a
 # runner that wrote none.
 export CONTROL_TRACE="$TMP/trace"
 : >"$CONTROL_TRACE"
 
-# A suite that says it has started, then runs until a TERM stops it and says
-# so. The runner's cap would stop it too, so the cap sits past the deadline
-# below: a suite stopped within the deadline was stopped by the TERM.
+# A suite that writes its pid once it has started, then runs until a signal
+# ends it. The runner's cap would stop it too, so the cap sits past the
+# deadline below, and the acknowledgement it waits for is the TERM's.
 root="$TMP/skill"
 marks="$TMP/marks"
 mkdir -p "$root/scripts" "$root/tests/controls" "$marks"
 cat >"$root/tests/alpha.test.sh" <<SUITE
 #!/usr/bin/env bash
-trap ': >"$marks/stopped"; exit 143' TERM
-: >"$marks/started"
+printf '%s\\n' "\$\$" >"$marks/started"
 while :; do sleep 0.05; done
 SUITE
 printf '%s\n' 'control_expect "unused"' >"$root/tests/controls/alpha.control.sh"
 control_runner_install "$root"
 
-# wait_for FILE — whether FILE appears within ten seconds.
+# wait_for COMMAND... — whether COMMAND succeeds within ten seconds.
 wait_for() {
     local i
     for ((i = 0; i < 200; i++)); do
-        [ -e "$1" ] && return 0
+        "$@" && return 0
         sleep 0.05
     done
     return 1
@@ -71,10 +66,16 @@ mark_time() { # FILE
 
 CONTROL_TIMEOUT=20 bash "$root/tests/must-fail-controls.sh" >"$TMP/run.log" 2>&1 &
 runner=$!
-if ! wait_for "$marks/started"; then
+if ! wait_for test -s "$marks/started"; then
     kill -TERM "$runner" 2>/dev/null
     wait "$runner"
     assert_stop "the fixture suite starts under the runner" "$(cat "$TMP/run.log")"
+fi
+read -r suite_pid <"$marks/started"
+if ! suite_start="$(started_at "$suite_pid")"; then
+    kill -TERM "$runner" 2>/dev/null
+    wait "$runner"
+    assert_stop "the fixture suite's identity reads before the TERM" "pid=$suite_pid" "$(cat "$TMP/run.log")"
 fi
 kill -TERM "$runner"
 kill_rc=$?
@@ -82,34 +83,35 @@ wait "$runner"
 wait_rc=$?
 waited="$(clock)"
 
+# suite_stopped — the timed suite's handler acknowledged the TERM for this
+# suite, and this suite has ended, by that TERM or by the KILL after its grace.
+suite_stopped() {
+    grep -Fq -- " timed_suite TERM suite=[$suite_pid]" "$CONTROL_TRACE" &&
+        [ "$(started_at "$suite_pid")" != "$suite_start" ]
+}
+
 stopped=no
-wait_for "$marks/stopped" && stopped=yes
+wait_for suite_stopped && stopped=yes
 assert_eq "a TERM to the runner stops the suite it is running" "$stopped" yes
 
 # The stop chain's levels in order, each as the trace line its TERM handler
 # writes on entry. The first one missing is the level the stop never reached.
-# With every handler entered, the stop mark names the rest: absent, the suite
-# never stopped; present, it stopped after the wait ended.
+# With every handler entered, the suite still running is the rest: the tree
+# stop or the identity reader under the timed suite missed it.
 if [ "$stopped" != yes ]; then
     step=trace-unread
-    stop_mark="$(mark_time "$marks/stopped")"
+    now="$(started_at "$suite_pid")" || now=ended
     capture=(
         "test: kill=$kill_rc wait=$wait_rc waited=$waited gave-up=$(clock)"
-        "marks: started=$(mark_time "$marks/started") stopped=$stop_mark"
+        "marks: started=$(mark_time "$marks/started")"
+        "suite: pid=$suite_pid start=$suite_start now=$now"
     )
     if [ -r "$CONTROL_TRACE" ]; then
-        step=""
-        while IFS='|' read -r key pattern; do
-            grep -Eq -- "$pattern" "$CONTROL_TRACE" || { step="$key"; break; }
-        done <<'STEPS'
-runner-term| runner TERM pid=
-job-term| job TERM body=
-timed-suite-term| timed_suite TERM suite=
-STEPS
-        if [ -z "$step" ]; then
-            step=late
-            [ "$stop_mark" != absent ] || step=stop-mark
-        fi
+        step=suite-alive
+        for entry in "runner-term| runner TERM pid=" "job-term| job TERM body=" \
+            "timed-suite-term| timed_suite TERM suite=[$suite_pid]"; do
+            grep -Fq -- "${entry#*|}" "$CONTROL_TRACE" || { step="${entry%%|*}"; break; }
+        done
         while IFS= read -r line; do capture+=("trace: $line"); done <"$CONTROL_TRACE"
     fi
     while IFS= read -r line; do capture+=("run.log: $line"); done <"$TMP/run.log"
