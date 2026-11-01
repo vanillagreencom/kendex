@@ -95,7 +95,9 @@
 # the declaration marks `:queue` that one of its own globs reaches, or, not
 # marked `:nightly`, that a changed path no base lane claims reaches, where
 # this run's change-class answered queue_only=true and both renders below
-# read the mark; then true
+# read the mark, the unclaimed path also needing a queue-only cause pr-merge
+# answers from either render, else true with cause=queue-cause-unproved;
+# then true
 # for every lane where no changed path was read; then, for a lane marked
 # `:nightly`, true only where its own glob or the declaration comparison
 # selects it; then true for every lane where a changed non-declaration path
@@ -114,7 +116,10 @@
 # lane's paths, so a lane is deferred only where both trees carry
 # .agents/skills/harness-ci/scripts/lib/ci-lanes.sh, the render's reader of
 # the mark. Either absent, the lane runs with cause=queue-reader-absent and
-# a `tree=` naming which, and the step raises one warning. A head that
+# a `tree=` naming which, and the step raises one warning. A lane only an
+# unclaimed path reached matches no glob of the mark, so the reader proves
+# nothing there; the library's unclaimed_queue_unproved names the causes
+# both renders answer true. A head that
 # deletes its reader only makes the lane run. A checkout that runs pr-merge
 # behind both trees is outside what CI sees, and wiring.md holds it as an
 # ordering rule. The whole-run stand-down on pull_request and push applies
