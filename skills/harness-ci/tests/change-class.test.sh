@@ -1675,14 +1675,19 @@ commit_paths "$settings_repo" 'settings with no allowlist' seed.txt
 settings_bare="$(git -C "$settings_repo" rev-parse HEAD)"
 
 # One edit is OP~FILE~LINE~TEXT: `swap` replaces the one exact LINE with
-# TEXT, `after` adds TEXT on the line after it, and `link` replaces FILE
-# with a symlink whose target is TEXT. A LINE that does not occur once
-# fails the row.
+# TEXT, `after` adds TEXT on the line after it, `link` replaces FILE
+# with a symlink whose target is TEXT, and `nul` appends a comment line
+# holding a NUL byte, which no environment value can carry. A LINE that
+# does not occur once fails the row.
 settings_edit() { # OP~FILE~LINE~TEXT
   local op file line text
   IFS='~' read -r op file line text <<<"$1"
   if [ "$op" = link ]; then
     rm -- "${settings_repo:?}/$file" && ln -s -- "$text" "$settings_repo/$file"
+    return
+  fi
+  if [ "$op" = nul ]; then
+    printf '# n\000ote\n' >>"$settings_repo/$file"
     return
   fi
   OP="$op" LINE="$line" TEXT="$text" awk '
@@ -1702,8 +1707,9 @@ settings_allow_line='HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* ORCH_SIZE_T
 settings_edit "after~kendex.settings.toml~[env]~$settings_allow_line"
 git -C "$settings_repo" commit -q -am 'the base allowlists settings keys'
 settings_allow="$(git -C "$settings_repo" rev-parse HEAD)"
-# Two more bases on the allowlist: one whose .kendex/settings.toml the
-# reader refuses, and one holding a multiline string outside [env].
+# Three more bases on the allowlist: one whose .kendex/settings.toml the
+# reader refuses, and one each holding a basic and a literal multiline
+# string outside [env], one delimiter apiece so each row holds one.
 settings_edit "after~.kendex/settings.toml~[env]~BROKEN = 'a'b'"
 git -C "$settings_repo" commit -q -am 'the base settings break'
 settings_refused="$(git -C "$settings_repo" rev-parse HEAD)"
@@ -1711,6 +1717,10 @@ git -C "$settings_repo" checkout -q -B settings-case "$settings_allow"
 printf '[tool]\nMESSAGE = """\n# before\n"""\n' >>"$settings_repo/.kendex/settings.toml"
 git -C "$settings_repo" commit -q -am 'the base settings hold a multiline string'
 settings_multiline="$(git -C "$settings_repo" rev-parse HEAD)"
+git -C "$settings_repo" checkout -q -B settings-case "$settings_allow"
+printf "[tool]\nMESSAGE = '''\n# before\n'''\n" >>"$settings_repo/.kendex/settings.toml"
+git -C "$settings_repo" commit -q -am 'the base settings hold a literal multiline string'
+settings_literal="$(git -C "$settings_repo" rev-parse HEAD)"
 
 model_b='swap~kendex.settings.toml~SECOND_OPINION_MODEL = "a"~SECOND_OPINION_MODEL = "b"'
 admitted='class=trivial measured=true cause=allowlisted-settings settings=kendex.settings.toml'
@@ -1738,6 +1748,8 @@ a head the settings reader refuses|allow|pull_request|swap~kendex.settings.toml~
 a base the settings reader refuses|refused|pull_request|$model_b|-|-|dirty|$refused|cause=base-settings-unreadable base=$settings_refused
 a head settings file that is a symlink|allow|pull_request|link~.kendex/settings.toml~~[env]|-|-|dirty|$refused_dot|cause=settings-not-regular path=.kendex/settings.toml side=head
 a comment inside a multiline string outside the env table|multiline|pull_request|swap~.kendex/settings.toml~# before~# after|-|-|dirty|$refused_dot|cause=multiline-string path=.kendex/settings.toml side=base
+a comment inside a literal multiline string outside the env table|literal|pull_request|swap~.kendex/settings.toml~# before~# after|-|-|dirty|$refused_dot|cause=multiline-string path=.kendex/settings.toml side=base
+a NUL byte in a head comment line|allow|pull_request|$model_b;nul~kendex.settings.toml~~|-|-|dirty|$refused|cause=settings-bytes-dropped path=kendex.settings.toml side=head
 an allowlisted name outside the env table|allow|pull_request|swap~kendex.settings.toml~SECOND_OPINION_TOOL = "a"~SECOND_OPINION_TOOL = "b"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 an allowlist only the head adds|bare|pull_request|after~kendex.settings.toml~[env]~$settings_allow_line;$model_b|-|-|dirty|$refused|cause=allowlist-unset
 an allowlist the head widens|allow|pull_request|swap~kendex.settings.toml~$settings_allow_line~HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* OTHER_KEY";swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
@@ -1761,6 +1773,7 @@ settings_rows() { # SCRIPT [LABELS]
       bare) from="$settings_bare" ;;
       refused) from="$settings_refused" ;;
       multiline) from="$settings_multiline" ;;
+      literal) from="$settings_literal" ;;
       *) from="$settings_allow" ;;
     esac
     git -C "$settings_repo" checkout -q -B settings-case "$from" || return
@@ -1821,9 +1834,9 @@ assert_eq "an admitted settings change is trivial and queue-only in its merge gr
 class: $admitted keys=SECOND_OPINION_MODEL lines=2" \
   "$(grep -E '^(queue-only|class): ' <<<"$settings_queue_err")"
 
-# Must-fail controls for the rules whose loss would admit a key that changes
-# CI behaviour, each running the rows it holds against a copy without the
-# rule and naming the rows that turn red.
+# Must-fail controls for the rules whose loss would admit a change that
+# alters CI behaviour or escapes the ceiling, each running the rows it holds
+# against a copy without the rule and naming the rows that turn red.
 settings_reds() { # NAME ROWS LINE REPLACEMENT [LINE REPLACEMENT]...
   local name="$1" only="$2" planted rows
   shift 2
@@ -1842,7 +1855,18 @@ no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) ret
 no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
 no byte comparison|a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
 no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
+no verbatim read|a NUL byte in a head comment line|      1) exit 2 ;;|      1) ;;
 CONTROLS
+# The multiline grep's line holds the table's separator, so its control
+# reads the line and its basic-only copy here.
+{ IFS= read -r multiline_grep; IFS= read -r basic_grep; } <<'LINES'
+    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
+    grep -qE "\"\"\"" -- "$work/settings-$side" || status=$?
+LINES
+settings_controls=$((settings_controls + 1))
+literal_row='a comment inside a literal multiline string outside the env table'
+assert_eq "must-fail: no literal multiline string arm" "$literal_row" \
+  "$(settings_reds "$settings_controls" "$literal_row" "$multiline_grep" "$basic_grep")"
 require_rows change-class-settings-controls "$settings_controls"
 
 # A lane and CI classify one diff alike. CI's classify step may carry

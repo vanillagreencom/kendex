@@ -213,25 +213,29 @@
 # from the base commit alone, admits a changed kendex.settings.toml or
 # .kendex/settings.toml to the trivial set, on --event pull_request or
 # merge_group. Admission needs every changed configuration source to be one
-# of those two files, each a regular file at both endpoints, loaded there by
-# orch's kendex-env.sh, holding no multiline string, and changed only in
-# comment lines, blank lines and [env] assignments of keys a glob names. A
-# key in the settings this script reads from the base, or any HARNESS_CI_*
-# key, never qualifies, whatever the globs say, so a change to the allowlist
-# itself is refused. Unset or blank, no key qualifies. The trivial rule then
+# of those two files, each a regular file at every endpoint that holds it,
+# an endpoint without it read as an empty file, loaded there by orch's
+# kendex-env.sh, holding no byte that reader's line loop drops (a NUL), no
+# multiline string delimiter, and changed only in comment lines, blank
+# lines and [env] assignments of keys a glob names. A key in the settings
+# this script reads from the base, or any HARNESS_CI_* key, never
+# qualifies, whatever the globs say, so a change to the allowlist itself is
+# refused. Unset or blank, no key qualifies. The trivial rule then
 # judges every other changed path and the ceiling as it does for any diff,
 # with no agent instruction file beside it, and answers
 # `cause=allowlisted-settings settings=<file>[,<file>] keys=<key>[,<key>]|-
-# lines=<n>`, keys naming those whose loaded value differs. Every other
-# answer for the change, whatever its class or cause, is the
-# configuration-source refusal, measured, and prints one `settings-admission:
+# lines=<n>`, keys naming those whose loaded value differs. harness-only's
+# refusals, cause=base-inventory-absent and an empty path list answer ahead
+# of the configuration-source rule and print no admission line. Once that rule
+# holds the change, every other answer, whatever its class or cause, is
+# that refusal, measured, and prints one `settings-admission:
 # admitted=false cause=<c> [<field>=<value>]...` line. Its cause is the
 # admission rule that refused: unsupported-event, base-settings-unreadable,
 # allowlist-unset, configuration-file, settings-unreadable,
-# settings-not-regular, multiline-string, settings-unparsed or
-# unadmitted-change. After admission it is class-<class> rule=<cause>, the
-# class and cause a later rule would have answered. The queue-only line is
-# judged as before.
+# settings-not-regular, settings-bytes-dropped, multiline-string,
+# settings-unparsed or unadmitted-change. After admission it is
+# class-<class> rule=<cause>, the class and cause a later rule would have
+# answered. The queue-only line is judged as before.
 # A hand edit counts the same as the engine's: that line decides no render or
 # classifier input. The render path still verifies the head. Product paths
 # use the existing size rules without render verification.
@@ -434,9 +438,6 @@ trap 'rm -rf "$work"' EXIT
 paths_file="$work/paths"
 harness_err="$work/harness-stderr"
 
-# Why a settings change the header's admission names is not trivial.
-settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
-
 # The output FILE is written before stdout, as harness-only writes its own: a
 # verdict printed first would already have been read when the append died.
 #
@@ -456,7 +457,7 @@ settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
 # The configuration-source rule holding an admitted settings change read its
 # paths alone, so every answer for that change but trivial, a later read
 # failure included, is that refusal, measured, with the answer it replaced
-# on the admission line.
+# on the admission line that settings_note, with the admission below, prints.
 answer() { # CLASS FIELDS [measured]
   local queue_line per_push_line rule
   if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
@@ -1001,14 +1002,20 @@ settings_key_admitted() { # KEY
 # FILE without its comment lines, blank lines and admitted [env]
 # assignments, at RESIDUE, and each admitted key it assigns on stdout. The
 # reader validates headers; settings_values runs it on the same bytes.
+# Returns 2 where the lines this loop read are not FILE's bytes: Bash's read
+# drops a NUL, as the reader's own loop does, and git counts a file holding
+# one as binary, so its lines escape the trivial ceiling.
 settings_scan() { # FILE RESIDUE
   (
     exec 3>&1 1>&2
     # shellcheck source=../../orch/scripts/lib/kendex-env.sh
     . "$ORCH_DIR/scripts/lib/kendex-env.sh" || exit 1
-    : >"$2" || exit 1
+    : >"$2" && : >"$2.read" || exit 1
     section=""
-    while IFS= read -r line || [ -n "$line" ]; do
+    while :; do
+      newline=$'\n'
+      IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
+      printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
       kendex_trim trimmed "${line%$'\r'}"
       case "$trimmed" in
         '' | '#'*) continue ;;
@@ -1022,6 +1029,13 @@ settings_scan() { # FILE RESIDUE
       esac
       printf '%s\n' "$line" >>"$2" || exit 1
     done <"$1"
+    status=0
+    cmp -s -- "$1" "$2.read" || status=$?
+    case "$status" in
+      0) ;;
+      1) exit 2 ;;
+      *) exit 1 ;;
+    esac
   )
 }
 
@@ -1079,10 +1093,18 @@ settings_file_admitted() { # PATH
         settings_note "cause=settings-unreadable path=$1 side=$side"
         return 1 ;;
     esac
-    if ! settings_scan "$work/settings-$side" "$work/settings-residue-$side" >>"$work/settings-keys"; then
-      settings_note "cause=settings-unreadable path=$1 side=$side"
-      return 1
-    fi
+    status=0
+    settings_scan "$work/settings-$side" "$work/settings-residue-$side" \
+      >>"$work/settings-keys" || status=$?
+    case "$status" in
+      0) ;;
+      2)
+        settings_note "cause=settings-bytes-dropped path=$1 side=$side"
+        return 1 ;;
+      *)
+        settings_note "cause=settings-unreadable path=$1 side=$side"
+        return 1 ;;
+    esac
   done
   if ! keys="$(LC_ALL=C sort -u "$work/settings-keys")"; then
     settings_note "cause=settings-unreadable path=$1"
