@@ -2,10 +2,10 @@
 // how a stop reaches the child and the processes it started, run against a
 // stand-in `codex` executable with real processes.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { appServerArgs } from "../src/codex-policy.ts";
@@ -75,6 +75,61 @@ test("fixture marker discovery and cleanup keep another world's marker alive", {
 	closed = true;
 	await owned.exited;
 	assert.equal(alive(foreign.child.pid), true);
+});
+
+test("marker assertions reject zombie and foreign-world cleanup regressions", async (t) => {
+	const packageDir = fileURLToPath(new URL("..", import.meta.url));
+	// A sibling tmp of the common checkout keeps the copy outside every worktree.
+	const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd: packageDir, encoding: "utf8", timeout: 5000 }).trim();
+	const controlScratch = resolve(packageDir, commonDir, "..", "..", "tmp");
+	mkdirSync(controlScratch, { recursive: true });
+	const copy = mkdtempSync(join(controlScratch, "codex-marker-control-"));
+	t.after(() => rmSync(copy, { recursive: true, force: true }));
+	for (const path of ["src", "tests", "package.json"]) cpSync(join(packageDir, path), join(copy, path), { recursive: true });
+	symlinkSync(join(packageDir, "node_modules"), join(copy, "node_modules"), "dir");
+	const fixture = join(copy, "tests/lib/codex-fixture.mjs");
+	let source = readFileSync(fixture, "utf8");
+	for (const [before, after] of [
+		['!row[2].startsWith("Z") && ', ""],
+		["return runningMarkers(markers).includes(pid);", 'try { return process.platform === "darwin" ? execFileSync("ps", ["-p", String(pid), "-ww", "-o", "command="], { encoding: "utf8" }).includes(markerScript) : readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(markerScript); } catch { return false; }'],
+	]) {
+		assert.equal(source.split(before).length - 1, 1);
+		const changed = source.replace(before, after);
+		assert.notEqual(changed, source);
+		source = changed;
+	}
+	writeFileSync(fixture, source);
+	// Node otherwise refuses the nested runner inside its current test worker.
+	const { NODE_TEST_CONTEXT: _parentTestContext, ...env } = process.env;
+	const child = spawn(process.execPath, ["--import", "tsx", "--test", "--test-force-exit", "--test-reporter=tap", "--test-name-pattern=^fixture marker ", "tests/unit-process.mjs"], { cwd: copy, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+	const closed = once(child, "close");
+	let output = "";
+	child.stdout.on("data", (chunk) => { output += chunk; });
+	child.stderr.on("data", (chunk) => { output += chunk; });
+	let timedOut = false;
+	const deadline = setTimeout(() => {
+		timedOut = true;
+		process.kill(-child.pid, "SIGKILL");
+	}, 30_000);
+	try {
+		const [code, signal] = await closed;
+		assert.equal(timedOut, false, output);
+		assert.equal(signal, null, output);
+		assert.equal(code, 1, output);
+		for (const name of ["fixture marker ps rows identify only this world's live marker command", "fixture marker discovery and cleanup keep another world's marker alive"]) {
+			const row = output.split("# Subtest: ").find((block) => block.startsWith(`${name}\n`));
+			assert.ok(row, output);
+			assert.match(row, /^.*\nnot ok \d+ - /);
+			assert.match(row, /code: 'ERR_ASSERTION'/);
+		}
+		assert.match(output, /^# fail 2$/m);
+	} finally {
+		clearTimeout(deadline);
+		if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+			process.kill(-child.pid, "SIGKILL");
+			await closed;
+		}
+	}
 });
 
 for (const row of [
