@@ -70,8 +70,9 @@ session_harness_stop() { # DIR
 session_zombie_start() { # DIR
   local dir="$1" tries=0 state=''
   mkdir -p -- "$dir" || return 1
-  # sh starts the child, then becomes a sleep, which never reaps it.
-  sh -c 'sleep 0 & printf "%s\n" "$!" >"$1"; exec sleep 600' _ "$dir/zombie" &
+  # The child exits only once its parent's command reads as sleep: sh reaps
+  # a child that ends before its exec, and the sleep it becomes never reaps.
+  sh -c '(while c=$(ps -o comm= -p "$$"); do case $c in *sleep*) exit 0 ;; esac; done) & printf "%s\n" "$!" >"$1"; exec sleep 600' _ "$dir/zombie" &
   printf '%s\n' "$!" >"$dir/pid"
   : >"$dir/kill"
   SESSION_HARNESS_DIRS="$SESSION_HARNESS_DIRS $dir"
