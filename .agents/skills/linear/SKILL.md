@@ -41,7 +41,7 @@ Every read and write goes to Linear's API as it runs; no tracker data is stored 
 | `attachments` | list (every file an issue references), fetch (download one) |
 | `auth-check` | Report the selected credential, actor, team and `writes_enabled` for writes that need a configured team (`--strict` exits non-zero when no team is configured) |
 | `auth-mint` | Mint application token JSON from the client pair without writing files |
-| `journal` | Start, stop or read a bounded local request-attempt journal; off by default |
+| `journal` | Start, stop or read a bounded local request-attempt journal; off by default ([request journal](references/request-journal.md)) |
 | `session-status` | Aggregated status for the `/start` workflow |
 
 Aliases: `issues relations` → `list-relations`, `projects dependencies` → `list-dependencies`. Singular resource names (`issue`, `project`, …) route to the plural. There is no `view`/`show`: single-issue lookups are `issues get <ID>`; only `issues get <ID>`, without `--with-bundle` and in the default `safe` format, carries `github_sync`, the GitHub issues Linear's GitHub sync links the issue to, each as `owner/repo#N` lowercased. Safe `issues get` and `issues list` rows carry `in_pr_bundle`, true when the description holds `**In-PR bundle**: yes`. Multi-issue lookups are `issues bulk-get <ID1> <ID2> ...`, which is also the post-mutation verification path. Comments for several issues are one `comments bulk-list <ID1> <ID2> ...` call (`--stdin` takes one identifier per line), never a loop or parallel `comments list` readers.
@@ -67,26 +67,6 @@ A list of issues, projects, labels, project labels, teams, users, cycles, docume
 A quota refusal exits nonzero with JSON stderr `code:"RATELIMITED"`. Its `quota` receipt supplies the selected deadline; `requests_reset` keeps the raw request-header time. Same-binding GraphQL calls share a private hold on this host. Receipt fields, storage failures and held writes: [Quota Holds](patterns/workflow-actions.md#quota-holds).
 
 The transport retries a rate refusal, a 5xx query/download or an unanswered query/download at most twice. A known hold can stop a GraphQL retry before HTTP. A 5xx or unanswered mutation is sent once with `linear-http: write=unconfirmed`: read its result before resending. Waits double, or use a longer `Retry-After`. A `Retry-After` over 60 seconds or any other HTTP error fails immediately.
-
-## Request journal
-
-Set `LINEAR_JOURNAL_DIR` to an absolute new directory in every process that participates. The installed interface is:
-
-```bash
-linear.sh journal start --max-bytes BYTES --actor-id UUID
-linear.sh journal stop
-linear.sh journal read
-```
-
-Start accepts a positive byte limit of at most nine digits and a supplied actor UUID. It creates the directory exclusively and binds that identity to the selected credential. It sends no API request and mints no token. Read and stop need no credential lookup. A changed credential leaves actor identity unread. The supplied identity is an operator assertion, not an independent API check. A client pair keeps its binding through token renewal.
-
-The journal is `attempts.jsonl` in that directory. It records completed HTTP attempts for GraphQL, token mint and renewal, attachment downloads and storage PUTs. Each attempt carries the raw HTTP status, safe operation name, attempt within its authorization phase, actor provenance and caller repository/script/item. `LINEAR_JOURNAL_CALLER` supplies a script identifier without arguments. `LINEAR_JOURNAL_ITEM` supplies a carrying issue identifier or `owner/repo#number`. Missing labels stay unread or use the actual Linear command script. No request or response body, variables, authorization, credential value or signed URL is retained.
-
-Collection stops after one hour, before an append would exceed the byte limit, on explicit stop, or on a journal failure. Each new session needs a new directory. The byte limit covers the journal file; small fixed session, stop and writer-lock metadata are additional. A journal failure reports unavailable or incomplete evidence without changing the HTTP result. A lock is never reclaimed by signalling a saved process number.
-
-Read reports the session state, per-caller attempt counts, the top five callers by attempts, separate transport counts and identity/label/complexity coverage. It sums only returned valid `X-Complexity` values. Missing values stay unread. Shared remaining-quota changes are never request costs. A rate-limit refusal does not establish which caller spent the shared quota.
-
-Only participating installed transport processes on this host are covered. The window uses the host clock and records completed attempts. An attempt completed after expiry, or killed before its record, can be absent. A collection stopped before expiry, capped or failed is not a complete hour. Storage attempts need not consume GraphQL quota.
 
 ## Team Target
 

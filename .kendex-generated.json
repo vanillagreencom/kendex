@@ -587,6 +587,7 @@
   ".agents/skills/linear/kendex.settings.toml.example",
   ".agents/skills/linear/patterns/workflow-actions.md",
   ".agents/skills/linear/references/authentication.md",
+  ".agents/skills/linear/references/request-journal.md",
   ".agents/skills/linear/scripts/commands/attachments.sh",
   ".agents/skills/linear/scripts/commands/auth-check.sh",
   ".agents/skills/linear/scripts/commands/auth-mint.sh",
