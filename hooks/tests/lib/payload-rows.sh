@@ -24,8 +24,9 @@
 #            `no-command` a tool_input naming none; `top-level` a bare
 #            `command` beside no tool_input, and `top-level-false` that
 #            field as false; `copilot-object` and `copilot-string` are
-#            Copilot's toolArgs, an object or one JSON-encoded string;
-#            `copilot-text` a toolArgs string that is not JSON
+#            Copilot's toolArgs, an object or one JSON-encoded string,
+#            under the toolName PAYLOAD_COPILOT_TOOL names, bash when
+#            unset; `copilot-text` a toolArgs string that is not JSON
 #   command  what the shape carries: `refusing`, `passing`, `empty`; `-`
 #            where the shape carries none
 #   world    the PATH the hook runs under. `tools` holds every tool a hook
@@ -71,10 +72,10 @@ payload_json() { # shape command dir -> the payload text
     top-level) jq -nc --arg c "$c" '{command:$c}' ;;
     top-level-false) printf '%s' '{"command":false}' ;;
     copilot-object)
-      jq -nc --arg c "$c" --arg d "$d" '{sessionId:"s",timestamp:1,cwd:$d,toolName:"bash",toolArgs:{command:$c}}'
+      jq -nc --arg c "$c" --arg d "$d" --arg t "${PAYLOAD_COPILOT_TOOL:-bash}" '{sessionId:"s",timestamp:1,cwd:$d,toolName:$t,toolArgs:{command:$c}}'
       ;;
     copilot-string)
-      jq -nc --arg c "$c" --arg d "$d" '{sessionId:"s",timestamp:1,cwd:$d,toolName:"bash",toolArgs:({command:$c}|tojson)}'
+      jq -nc --arg c "$c" --arg d "$d" --arg t "${PAYLOAD_COPILOT_TOOL:-bash}" '{sessionId:"s",timestamp:1,cwd:$d,toolName:$t,toolArgs:({command:$c}|tojson)}'
       ;;
     copilot-text) printf '%s' '{"toolName":"bash","toolArgs":"not json"}' ;;
     *)
