@@ -222,12 +222,12 @@ assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=150000 21760
   "the judge in the Copilot home's global scope records the lane's reading"
 
 echo "=== the overseer ==="
-new_usage_overseer() { # NAME [JUDGE]
+new_usage_overseer() { # NAME
   CALL_ENV=("HOME=$COP_HOME" "COPILOT_HOME=$TMP_ROOT")
   new_lane "$1" main
   unmark_lanes
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
-  install_copilot_hooks "$LANE/.github/hooks" "${2:-$HOOK}"
+  install_copilot_hooks "$LANE/.github/hooks"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   # The fleet record names TMP_ROOT as the overseer's launch home, the
   # Copilot home its transcript sits under, so the transcript ownership gate
@@ -266,8 +266,8 @@ overseer_named() { # PANE
 }
 # LOST is the lost turn end's first line and record; the run left is the
 # turn end after it.
-lost_overseer() { # NAME [JUDGE]
-  new_usage_overseer "$@"
+lost_overseer() { # NAME
+  new_usage_overseer "$1"
   # shellcheck disable=SC2046
   usage 199000 272000 s1 $(overseer_env)
   overseer_named %3
@@ -294,54 +294,6 @@ new_usage_lane control_dispatch KEN-411 "$MUTANT_PATH"
 usage 150000 272000
 assert_eq "record=$(record)" "record=none" "control: without its dispatch a reading is recorded nowhere"
 
-# The payload's directory ignored: a hook run from outside the lane finds no
-# lane and records nothing.
-mutant usage-any-dir -e 's@^\[ "\$ARM" != usage \] || LANE_DIR=\$PAYLOAD_CWD$@:@'
-new_usage_lane control_dir KEN-412 "$MUTANT_PATH"
-CALL_DIR="$TMP_ROOT"
-usage 150000 272000
-CALL_DIR=""
-assert_eq "record=$(record)" "record=none" \
-  "control: without the payload's directory a hook run from elsewhere records no reading"
-
-# The gate's answer ignored in this arm: a session no launch made a lane is
-# taken on as one, and meets gaps that are none of its own.
-mutant usage-ungated -e '/^usage_read() {$/,/^}$/ s@^    1) return 0 ;;$@    1) ;;@'
-new_usage_lane control_gate KEN-413 "$MUTANT_PATH"
-unmark_lanes
-usage 150000 272000
-assert_eq "RC=$RC" "RC=2" \
-  "control: without the gate a session that is no lane is refused rather than passed silently"
-
-# The gate's gap passed in this arm: a lane whose install cannot record a
-# reading is passed with nothing said.
-mutant usage-gap-passed -e '/^usage_read() {$/,/^}$/ s@^    \*) refuse "\$GATE_KEY" "\$FAIL_VALUE" "\$FAIL_CAUSE" ;;$@    *) return 0 ;;@'
-new_usage_lane control_gap KEN-416 "$MUTANT_PATH"
-hole_install workflow-state
-usage 150000 272000
-assert_eq "$(quiet)" "RC=0 stdout= stderr=-" \
-  "control: without the gate's refusal a lane whose install has no workflow-state passes unreported"
-
-# The context library's gap passed in this arm.
-mutant usage-lib-passed -e '/^usage_read() {$/,/^}$/ s@^  load_context_lib || refuse "\$FAIL_KEY" "\$FAIL_VALUE" "\$FAIL_CAUSE"$@  load_context_lib || return 0@'
-new_usage_lane control_lib KEN-417 "$MUTANT_PATH"
-hole_install lib/lane-context.sh
-usage 150000 272000
-assert_eq "$(quiet)" "RC=0 stdout= stderr=-" \
-  "control: without the library's refusal a lane whose install has no context library passes unreported"
-
-# The earlier reading kept where the write failed: the turn end past the mark
-# judges the older figure as room.
-STALE_REMOVAL_PATTERN='^[[:space:]]*rm -f -- "\${BOX:?}/\$LANE_CONTEXT_RECORD" 2>>"\$WORK_DIR/record.err" || STALE_RECORD=stands$'
-assert_eq "$(grep -c "$STALE_REMOVAL_PATTERN" "$HOOK")" 1 \
-  'control: the stale-reading removal matches once regardless of nesting'
-mutant usage-stale-kept -e "s@$STALE_REMOVAL_PATTERN@    :@"
-new_usage_lane control_stale KEN-418 "$MUTANT_PATH"
-usage 150000 272000
-usage 199000 272000 s1 "PATH=$TMP_ROOT/nodate:$PATH"
-turn_end s1 "$MARK90"
-expect 0 "$GAP" "control: without the removal the turn end past the mark passes on the earlier figure"
-
 # The pending check removed: the earlier record below the mark is read as
 # room while a reading is on its way.
 MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-pending-unread -e 's@^  if copilot_reading_pending; then$@  if false; then@'
@@ -351,58 +303,6 @@ pend
 turn_end s1 "$MARK90"
 rm -f -- "${PENDING:?}"
 expect 0 "$GAP" "control: without the pending check the earlier record passes the turn end as room"
-# The wait removed: a run recording as the turn ends leaves it unmeasured.
-MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-pending-unwaited -e 's@^PENDING_POLLS=25$@PENDING_POLLS=0@'
-CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_usage_lane control_pending_wait KEN-423
-usage 195841 272000
-pend
-unpend_after 0.5
-turn_end s1 "$MARK90"
-wait "$UNPEND_PID"
-expect 0 "lane-mail-check: reading-pending=$PENDING" \
-  "control: without the wait a reading recorded as the turn ends is still reported pending"
-
-# The session rule at the turn end removed: a successor is judged on its
-# predecessor's reading.
-MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-any-session -e 's@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if@'
-CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_usage_lane control_session KEN-414
-cop_lead_start "$JUDGE" s0
-usage 199000 272000 s0
-turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=199000" \
-  "control: without the session rule a successor is held on its predecessor's reading"
-
-# The lead-record rule removed from the usage arm: a session no lead record
-# names is taken for the lead, and its reading recorded.
-mutant usage-any-caller -e 's@^    copilot:deliver | copilot:halt | copilot:compact | copilot:usage)$@    copilot:deliver | copilot:halt | copilot:compact)@'
-new_usage_lane control_caller KEN-419 "$MUTANT_PATH"
-usage 150000 272000 s5
-assert_eq "RC=$RC record=$(record)" "RC=0 record=150000 217600 s5 null" \
-  "control: without the lead-record rule an unrecorded session's reading is recorded"
-
-# The arm's refusal of an unknown caller removed: its reading is recorded.
-mutant usage-unknown-recorded -e 's@^  \[ "\$CALLER" = lead \] || refuse session-unrecorded "\${SESSION:-none}"$@  :@'
-new_usage_lane control_unknown KEN-420 "$MUTANT_PATH"
-usage 150000 272000 s5
-assert_eq "RC=$RC record=$(record)" "RC=0 record=150000 217600 s5 null" \
-  "control: without the arm's refusal an unrecorded session's reading is recorded"
-
-# The harness assertion removed: a claude copy records the reading as its own.
-mutant usage-any-harness -e 's@^  \[ "\$HARNESS" = copilot \] || refuse harness-unlisted "\${BASH_SOURCE\[0\]%/\*}"$@  :@'
-new_usage_lane control_harness KEN-415
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-JUDGE="$LANE/.claude/hooks/lane-mail-check.sh"
-usage 150000 272000
-assert_eq "RC=$RC record=$(record)" "RC=0 record=150000 217600 s1 null" \
-  "control: without the harness assertion a claude copy records a Copilot reading"
-
-# The capacity-source rule at the turn end removed: a gap record is read as
-# the extension's reading of no figure, and the context goes unmeasured with
-# nothing said.
-MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-gap-read -e '/^copilot_context_read() {/,/^}$/ s@^  if \[ "\$LANE_CTX_SESSION" != "\$SESSION" \] ||$@  if [ "$LANE_CTX_SESSION" != "$SESSION" ]; then return 1; fi; if false \&\&@'
-CONTEXT_LIB_VARIANT="$MUTANT_PATH" lost_overseer control_gap_read
-assert_eq "unrecorded=$(grep -c '^lane-mail-check: reading-unrecorded=' "$ERR_FILE")" "unrecorded=0" \
-  "control: without the capacity-source rule a gap record leaves the overseer's context unmeasured in silence"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -20,10 +20,12 @@ compare_copies() { # ROOT
     [[ $source != "$canonical" ]] || has_canonical=1
   done
   [[ ${#sources[@]} -ge 2 ]] || {
+    echo "vendored-settings-libs: glob=unmatched entries=${#sources[@]}" >&2
     echo "skills/*/scripts/lib/kendex-env.sh matched ${#sources[@]} entry: the glob is broken" >&2
     return 1
   }
   [[ $has_canonical -eq 1 ]] || {
+    echo "vendored-settings-libs: glob=canonical-missed" >&2
     echo "skills/*/scripts/lib/kendex-env.sh missed skills/orch/scripts/lib/kendex-env.sh: the glob is broken" >&2
     return 1
   }
@@ -58,7 +60,7 @@ PASS=$((PASS + 1))
 # guard prints: on these worlds the comparison against a missing canonical
 # would red as well, so the verdict alone would not prove the guard.
 mkdir -p "$SCRATCH/unmatched/skills/none"
-if diag="$(compare_copies "$SCRATCH/unmatched" 2>&1)" || [[ $diag != *"matched 1 entry: the glob is broken"* ]]; then
+if diag="$(compare_copies "$SCRATCH/unmatched" 2>&1)" || [[ ${diag%%$'\n'*} != "vendored-settings-libs: glob=unmatched entries=1" ]]; then
   echo "vendored-settings-libs: an unmatched glob was not named as broken: $diag" >&2
   exit 1
 fi
@@ -66,7 +68,7 @@ PASS=$((PASS + 1))
 mkdir -p "$SCRATCH/no-orch"
 cp -R "$SCRATCH/skills" "$SCRATCH/.agents" "$SCRATCH/no-orch/"
 rm -f "$SCRATCH/no-orch/skills/orch/scripts/lib/kendex-env.sh" "$SCRATCH/no-orch/.agents/skills/orch/scripts/lib/kendex-env.sh"
-if diag="$(compare_copies "$SCRATCH/no-orch" 2>&1)" || [[ $diag != *"missed skills/orch/scripts/lib/kendex-env.sh: the glob is broken"* ]]; then
+if diag="$(compare_copies "$SCRATCH/no-orch" 2>&1)" || [[ ${diag%%$'\n'*} != "vendored-settings-libs: glob=canonical-missed" ]]; then
   echo "vendored-settings-libs: a missing canonical copy was not named as broken: $diag" >&2
   exit 1
 fi

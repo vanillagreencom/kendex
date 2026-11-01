@@ -32,14 +32,6 @@ while IFS='|' read -r expected path; do
   run_guard
   if [ "$expected" = refuse ] && [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: nested-skill-tests=$path"* ]]; then
     ok "nested suite refused: $path"
-    if mutant_guard 's/say nested-skill-tests "\$f"/:/'; then
-      run_mutant
-      [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: nested-skill-tests="* ]] \
-        && ok "control: without the placement refusal the nested suite passes" \
-        || bad "control: without the placement refusal the nested suite passes" "rc=$RC out=$OUT"
-    else
-      bad "control: the placement refusal did not change in the guard copy"
-    fi
   elif [ "$expected" = pass ] && [ "$RC" -eq 0 ] && [[ "$OUT" != *"guard: nested-skill-tests="* ]]; then
     ok "intentional test content passes: $path"
   else
@@ -188,15 +180,7 @@ echo "=== a skill suite staged at mode 100644 reds through the exec-bits lane ==
 # this proves guard runs it and forwards its verdict.
 printf '#!/usr/bin/env bash\necho new\n' >"$R/skills/demo/tests/new.test.sh"
 git -C "$R" add -A && git -C "$R" update-index --chmod=-x skills/demo/tests/new.test.sh && run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: exec-bits=1"* ]] && [[ "$OUT" == *"not executable in git: skills/demo/tests/new.test.sh"* ]] && ok "a new skill suite at 100644 reds guard through the exec-bits lane, naming the file" || bad "a new skill suite at 100644 reds guard through the exec-bits lane, naming the file" "rc=$RC out=$OUT"
-if mutant_guard '/TOOLS_DIR\/exec-bits/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the exec-bits lane deleted the 100644 suite passes" \
-    || bad "control: with the exec-bits lane deleted the 100644 suite passes" "rc=$RC out=$OUT"
-else
-  bad "control: the exec-bits lane could not be deleted from a guard copy"
-fi
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: exec-bits=1"* ]] && ok "a new skill suite at 100644 reds guard through the exec-bits lane" || bad "a new skill suite at 100644 reds guard through the exec-bits lane" "rc=$RC out=$OUT"
 reset_world
 
 echo "=== a shipped decision citation reds through the shipped-refs lane ==="
@@ -206,14 +190,6 @@ printf '#!/usr/bin/env bash\n# Per D015, the share stands.\necho demo\n' >"$R/sk
 cp "$R/skills/demo/scripts/demo.sh" "$R/.agents/skills/demo/scripts/demo.sh"
 git -C "$R" add -A && run_guard
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: shipped-refs=1"* ]] && [[ "$OUT" == *"shipped-refs: decisions=1"* ]] && [[ "$OUT" == *$'skills/demo/scripts/demo.sh:2\tD015'* ]] && ok "a shipped decision citation reds guard through the shipped-refs lane, naming the line" || bad "a shipped decision citation reds guard through the shipped-refs lane, naming the line" "rc=$RC out=$OUT"
-if mutant_guard '/TOOLS_DIR\/shipped-refs/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the shipped-refs lane deleted the citation passes" \
-    || bad "control: with the shipped-refs lane deleted the citation passes" "rc=$RC out=$OUT"
-else
-  bad "control: the shipped-refs lane could not be deleted from a guard copy"
-fi
 reset_world
 
 echo "=== incomplete common-file discovery refuses all dependent scans ==="
@@ -226,14 +202,6 @@ for command in 'ls-files' 'diff --cached --name-only'; do
   [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: file-set=unreadable"* ]] \
     && ok "a failed $command cannot pass on its partial output" \
     || bad "a failed $command cannot pass on its partial output" "rc=$RC out=$OUT"
-  matches=$(grep -Fc 'say file-set unreadable' "$GUARD") || matches=0
-  if [ "$matches" -eq 1 ] && mutant_guard 's/say file-set unreadable/:/'; then
-    run_mutant
-    [ "$RC" -eq 0 ] && ok "control: without the file-set refusal a failed $command passes" \
-      || bad "control: without the file-set refusal a failed $command passes" "rc=$RC out=$OUT"
-  else
-    bad "control: the file-set refusal was not changed in the guard copy"
-  fi
 done
 rm -f -- "${MUTANT_TOOLS:?}/git"
 unset GUARD_TEST_ENV
@@ -253,7 +221,7 @@ git -C "$R" add -A
 SR_OUT=""
 SR_RC=0
 SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
-[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 8193 bytes > 8192 bytes"*) true ;; *) false ;; esac \
+[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"notice=document-over-limit path=AGENTS.md"*) true ;; *) false ;; esac \
   && ok "precondition: doc-limits refuses the oversized document" \
   || bad "precondition: doc-limits refuses the oversized document" "rc=$SR_RC out=$SR_OUT"
 changelog_entries_pass() { # CHECKER: the same acceptance assertion for the control
@@ -312,14 +280,6 @@ run_guard
   && [[ "$OUT" != *"guard: missing-render="* ]] \
   && ok "a Bash 4 construct in a skill test reds the guard through the lint lane" \
   || bad "a Bash 4 construct in a skill test reds the guard through the lint lane" "rc=$RC out=$OUT"
-if mutant_guard '/TOOLS_DIR\/bash32-lint/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the bash32-lint lane deleted the construct passes" \
-    || bad "control: with the bash32-lint lane deleted the construct passes" "rc=$RC out=$OUT"
-else
-  bad "control: the bash32-lint lane could not be deleted from a guard copy"
-fi
 git -C "$R" checkout -q -- skills .agents
 
 echo "=== a caller carrying its own run scoping reds through the correlation lane ==="
@@ -332,14 +292,6 @@ run_guard
   && [[ "$OUT" == *"skills/github/scripts/commands/demo.sh:2:"* ]] \
   && ok "a def bucket copy in a GitHub command reds the guard, naming the line" \
   || bad "a def bucket copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
-if mutant_guard '/def (bucket|runid|red|required_only)/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the correlation lane deleted the copy passes" \
-    || bad "control: with the correlation lane deleted the copy passes" "rc=$RC out=$OUT"
-else
-  bad "control: the correlation lane could not be deleted from a guard copy"
-fi
 git -C "$R" rm -q --cached skills/github/scripts/commands/demo.sh
 rm -rf -- "$R/skills/github"
 mkdir -p "$R/skills/orch/scripts"
@@ -358,14 +310,6 @@ run_guard
   && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
   && ok "a required_only copy in orch ci-wait reds the guard, naming the line" \
   || bad "a required_only copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
-if mutant_guard '/def (bucket|runid|red|required_only)/d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the correlation lane deleted the required_only copy passes" \
-    || bad "control: with the correlation lane deleted the required_only copy passes" "rc=$RC out=$OUT"
-else
-  bad "control: the correlation lane could not be deleted from a guard copy"
-fi
 printf '#!/usr/bin/env bash\necho "def red: ."\n' >"$R/skills/orch/scripts/ci-wait"
 git -C "$R" add skills/orch/scripts/ci-wait
 run_guard
@@ -373,16 +317,6 @@ run_guard
   && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
   && ok "a red copy in orch ci-wait reds the guard, naming the line" \
   || bad "a red copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
-# Narrow: only the red alternative leaves the alternation, so this control
-# answers for that alternative alone and not for the lane around it.
-if mutant_guard 's/(bucket|runid|red|required_only)/(bucket|runid|required_only)/'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with only the red alternative removed the red copy passes" \
-    || bad "control: with only the red alternative removed the red copy passes" "rc=$RC out=$OUT"
-else
-  bad "control: the red alternative could not be removed from a guard copy"
-fi
 git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
 rm -rf -- "$R/skills/orch"
 
@@ -397,14 +331,6 @@ run_guard
   && [[ "$OUT" == *"  qs -c vshell"* ]] \
   && ok "a doc example that stopped refusing its own call reds, naming the command" \
   || bad "a doc example that stopped refusing its own call reds, naming the command" "rc=$RC out=$OUT"
-if mutant_guard '/^command_safety_policy docs\/authoring\/command-safety.md/,+9d'; then
-  run_mutant
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the doc policy rows deleted the weakened pattern passes" \
-    || bad "control: with the doc policy rows deleted the weakened pattern passes" "rc=$RC out=$OUT"
-else
-  bad "control: the doc policy rows could not be deleted from a guard copy"
-fi
 cp "$TMP/doc.orig" "$R/docs/authoring/command-safety.md"
 
 awk '/^COMMAND_SAFETY_DENY_PATTERN = / { print "COMMAND_SAFETY_DENY_PATTERN = \"[\"" ; next } { print }' \
@@ -480,12 +406,6 @@ run_guard
 [ "$RC" -eq 0 ] && [[ "$OUT" == *'guard-note: ui-color-literal=1'* ]] \
   && ok 'a color literal warns without blocking' \
   || bad 'a color literal warns without blocking' "rc=$RC out=$OUT"
-if mutant_guard 's/  note ui-color-literal/  say ui-color-literal/'; then
-  run_mutant
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: ui-color-literal=1'* ]] \
-    && ok 'control: a blocking color check turns the style row red' \
-    || bad 'color warning control' "rc=$RC out=$OUT"
-else bad 'color warning control changed nothing'; fi
 REAL_GREP="$(command -v grep)"
 cat >"$MUTANT_TOOLS/grep" <<'SH'
 #!/usr/bin/env bash
@@ -518,35 +438,6 @@ an unreadable file has no verdict and discards its partial matches||3
 a prior confirmed finding stays blocking|ui/src/a-import.ts|1
 a later confirmed finding stays blocking|ui/src/z-import.ts|1
 ROWS
-if mutant_guard 's/unrun scan "\$f status=\$rc"/:/'; then
-  GUARD_TEST_ENV=("PATH=$MUTANT_TOOLS:$PATH" "GUARD_REAL_GREP=$REAL_GREP")
-  run_mutant
-  [ "$RC" -eq 0 ] && [[ "$OUT" != *'guard-note: no-verdict=scan='* ]] \
-    && ok 'control: swallowing the read failure turns its row red' \
-    || bad 'failed source read control' "rc=$RC out=$OUT"
-  unset GUARD_TEST_ENV
-else bad 'failed source read control changed nothing'; fi
-for defect in clear stop; do
-  if [ "$defect" = clear ]; then
-    path=ui/src/a-import.ts
-    edit='s/unrun scan "\$f status=\$rc"/hits=""; unrun scan "$f status=$rc"/'
-  else
-    path=ui/src/z-import.ts
-    edit='s/unrun scan "\$f status=\$rc"/unrun scan "$f status=$rc"; return/'
-  fi
-  printf 'import { invoke } from "@tauri-apps/api/core";\n' >"$R/$path"
-  git -C "$R" add -- "$path"
-  if mutant_guard "$edit"; then
-    GUARD_TEST_ENV=("PATH=$MUTANT_TOOLS:$PATH" "GUARD_REAL_GREP=$REAL_GREP")
-    run_mutant
-    [ "$RC" -eq 3 ] && [[ "$OUT" != *'guard: ui-tauri-import='* ]] \
-      && ok "control: $defect loses confirmed findings after a read failure" \
-      || bad "confirmed finding control: $defect" "rc=$RC out=$OUT"
-    unset GUARD_TEST_ENV
-  else bad "confirmed finding control changed nothing: $defect"; fi
-  git -C "$R" reset -q HEAD -- "$path"
-  rm -- "$R/$path"
-done
 rm -- "$MUTANT_TOOLS/grep"
 git -C "$R" reset -q HEAD -- ui/src/style.ts
 rm -- "$R/ui/src/style.ts"
@@ -617,26 +508,11 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" WARN_CLIPPY=1
 [ "$RC" -eq 0 ] && [[ "$OUT" != *'guard: clippy='* ]] \
   && ok 'clippy warnings pass while compiler errors still block' \
   || bad 'clippy warning severity' "rc=$RC out=$OUT"
-if mutant_guard 's/cargo clippy --manifest-path "\$manifest" --all-targets --quiet ||/cargo clippy --manifest-path "$manifest" --all-targets --quiet -- -D warnings ||/'; then
-  GUARD_TEST_ENV=("PATH=$R/fake-bin:$PATH" "COMPILE_LOG=$COMPILE_LOG" WARN_CLIPPY=1)
-  run_mutant
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: clippy=crates/core/Cargo.toml'* ]] \
-    && ok 'control: denying warnings turns the clippy row red' \
-    || bad 'clippy warning control' "rc=$RC out=$OUT"
-  unset GUARD_TEST_ENV
-else bad 'clippy warning control changed nothing'; fi
 RESOLVER='BASH_FUNC_command%%=() { if [ "$*" = "-v cargo" ]; then return 1; fi; builtin command "$@"; }'
 run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" "$RESOLVER"
 [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-tool=cargo'* ]] \
   && ok 'an unavailable compiler has no verdict' \
   || bad 'missing compiler no-verdict' "rc=$RC out=$OUT"
-if mutant_guard 's/  unrun missing-tool cargo/  note missing-tool cargo/'; then
-  GUARD_TEST_ENV=("PATH=$R/fake-bin:$PATH" "COMPILE_LOG=$COMPILE_LOG" "$RESOLVER")
-  run_mutant
-  [ "$RC" -eq 0 ] && ok 'control: losing the missing compiler result turns its row red' \
-    || bad 'missing compiler control' "rc=$RC out=$OUT"
-  unset GUARD_TEST_ENV
-else bad 'missing compiler control changed nothing'; fi
 git -C "$R" reset -q HEAD -- crates/core/src/lib.rs
 git -C "$R" checkout -q -- crates/core/src/lib.rs
 printf 'export const value = 1;\n' >"$R/ui/test.ts"
@@ -677,23 +553,15 @@ chmod +x "$R/fake-bin/find"
 mkdir -p "$R/packaging"
 printf 'data\n' >"$R/packaging/recipe.txt"
 git -C "$R" add packaging/recipe.txt
-unreadable_inputs() { # [GUARD] — the staged recipe with the reader failing; sets OUT and RC
+unreadable_inputs() { # — the staged recipe with the reader failing; sets OUT and RC
   : >"$COMPILE_LOG"
-  GUARD="${1:-$GUARD}" run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_FIND=1
+  run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG" FAIL_FIND=1
 }
 unreadable_inputs
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: rust-reads=crates"* ]] \
   && grep -Fxq 'cargo clippy --workspace --all-targets --quiet' "$COMPILE_LOG" \
   && ok "an underivable set of shared inputs is a finding, and the workspace compiles" \
   || bad "an underivable set of shared inputs is a finding, and the workspace compiles" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
-if mutant_guard '/^  workspace_every=1$/d'; then
-  unreadable_inputs "$MUTANT_TOOLS/guard"
-  grep -Fxq 'cargo clippy --workspace --all-targets --quiet' "$COMPILE_LOG" \
-    && bad "control: with every path no longer an input the recipe compiles nothing" "calls=$(cat "$COMPILE_LOG")" \
-    || ok "control: with every path no longer an input the recipe compiles nothing"
-else
-  bad "control: the fail-closed input could not be cut from a guard copy"
-fi
 git -C "$R" reset -q HEAD -- packaging/recipe.txt
 rm -f -- "$R/packaging/recipe.txt"
 

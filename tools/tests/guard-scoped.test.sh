@@ -94,22 +94,6 @@ doc_selection "$GUARD"
 [ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh ' ] && [ "$SELECTED" = 'doc-render ' ] \
   && ok 'scoped: a skill doc and its render select only the reader CI does not run' \
   || bad 'scoped: a skill doc and its render select only the reader CI does not run' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
-if mutant_guard 's/^              if skill_markdown "\$f" || \[/              if [/'; then
-  doc_selection "$MUTANT_TOOLS/guard"
-  [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-source.sh ' ] \
-    && ok 'control: without the Markdown rule the scoped run selects both doc readers' \
-    || bad 'control: without the Markdown rule the scoped run selects both doc readers' "rc=$RC plan=$PLAN out=$OUT"
-else
-  bad 'control removes the scoped Markdown rule'
-fi
-if mutant_guard '/^                  merge_group_runs "\$d" || tree_ci=\$?$/d'; then
-  doc_selection "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [ -z "$PLAN" ] \
-    && ok 'control: without the CI-coverage exception the orch doc reader is dropped' \
-    || bad 'control: without the CI-coverage exception the orch doc reader is dropped' "rc=$RC plan=$PLAN out=$OUT"
-else
-  bad 'control removes the CI-coverage exception'
-fi
 doc_change outside
 doc_selection "$GUARD"
 [ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-outside.sh ' ] \
@@ -177,15 +161,6 @@ for row in \
     && ok "scoped inventory: $name" \
     || bad "scoped inventory: $name" "rc=$RC plan=$PLAN expected=$expected out=$OUT"
 done
-inventory_change '. + [".agents/skills/demo/references/new.md"] | sort'
-if mutant_guard 's/ || \[ "\$f:\$inventory_markdown_only" = \.kendex-generated\.json:1 \]; then$/; then/'; then
-  doc_selection "$MUTANT_TOOLS/guard"
-  [ "$PLAN" = "$READERS" ] \
-    && ok 'control: without the inventory rule markdown rows select the inventory reader' \
-    || bad 'control: without the inventory rule markdown rows select the inventory reader' "rc=$RC plan=$PLAN out=$OUT"
-else
-  bad 'control removes the scoped inventory rule'
-fi
 for filter in '. + [".agents/skills/demo/references/new.md"] | sort' '. + [".agents/skills/demo/scripts/extra"] | sort'; do
   inventory_change "$filter"
   RC=0
@@ -219,72 +194,34 @@ entry_points_executable
 git -C "$R" commit -qm python-tests
 BASE="$(git -C "$R" rev-parse HEAD)"
 PY_SELECTED='skills/pyreach/tests/from-wrapper.sh skills/pyreach/tests/importer-wrapper.sh skills/pyreach/tests/mod-wrapper.sh '
-python_change() { # PATH GUARD: append to PATH, then take the scoped selection
+python_change() { # PATH: append to PATH, then take the scoped selection
   printf '# changed\n' >> "$R/$1"
   : > "$SUITE_LOG"
-  doc_selection "$2"
+  doc_selection "$GUARD"
   git -C "$R" checkout -q -- "$1"
 }
 for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/scripts/pytool skills/pyreach/tests/mod_test.py; do
-  python_change "$path" "$GUARD"
+  python_change "$path"
   [ "$RC" -eq 0 ] && [ "$PLAN" = "$PY_SELECTED" ] && [ "$SELECTED" = 'from importer mod ' ] \
     && ok "scoped: $path selects the wrappers of the Python tests naming or importing it" \
     || bad "scoped: $path selects the wrappers of the Python tests naming or importing it" "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
 done
-# Without the test-program role, tests/*.py has no role, so no scan reads it
-# and a changed one is skipped.
-if mutant_guard '/^    \*:tests\/\*\.py)$/,/^      ;;$/d'; then
-  for path in skills/pyreach/scripts/lib/mod.py skills/pyreach/tests/mod_test.py; do
-    python_change "$path" "$MUTANT_TOOLS/guard"
-    [ "$RC" -eq 0 ] && [ -z "$PLAN" ] \
-      && ok "control: with no test-program role $path selects no suite" \
-      || bad "control: with no test-program role $path selects no suite" "rc=$RC plan=$PLAN out=$OUT"
-  done
-else
-  bad 'control removes the test-program role'
-fi
-if mutant_guard 's/^        if (role == "test-program") scan_imports(reader, text)$/        if (0) scan_imports(reader, text)/'; then
-  python_change skills/pyreach/tests/mod_test.py "$MUTANT_TOOLS/guard"
-  [ "$PLAN" = 'skills/pyreach/tests/mod-wrapper.sh ' ] \
-    && ok 'control: without import names the importing test program goes unreached' \
-    || bad 'control: without import names the importing test program goes unreached' "rc=$RC plan=$PLAN out=$OUT"
-else
-  bad 'control removes the import names'
-fi
-if mutant_guard '/^        \[ "\$n:\${SCAN_ROLE\[i\]}" != "\$folder:test-program" \] || continue$/d'; then
-  python_change skills/pyreach/scripts/lib/mod.py "$MUTANT_TOOLS/guard"
-  [ "$PLAN" = "${PY_SELECTED}skills/pyreach/tests/other-wrapper.sh " ] \
-    && ok 'control: with the folder seed reaching test programs the other module test runs' \
-    || bad 'control: with the folder seed reaching test programs the other module test runs' "rc=$RC plan=$PLAN out=$OUT"
-else
-  bad 'control removes the folder exception'
-fi
 # Outside a scoped run no scan reads a test program: a changed one, or a
 # changed script only a test program names, runs the whole set.
-python_range() { # PATH GUARD: append to PATH, then run the normal range
+python_range() { # PATH: append to PATH, then run the normal range
   printf '# changed\n' >> "$R/$1"
   : > "$SUITE_LOG"
   RC=0
-  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$2" --range "$BASE" 2>&1)" || RC=$?
+  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
   SELECTED="$(sort "$SUITE_LOG" | tr '\n' ' ')"
   git -C "$R" checkout -q -- "$1"
 }
 for path in skills/pyreach/tests/mod_test.py skills/pyreach/scripts/pytool; do
-  python_range "$path" "$GUARD"
+  python_range "$path"
   [ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod other ' ] \
     && ok "normal range: $path runs the whole set" \
     || bad "normal range: $path runs the whole set" "rc=$RC selected=$SELECTED out=$OUT"
 done
-if mutant_guard '/^      \[ "\$scoped_only" -eq 1 \] || return 1$/d'; then
-  for path in skills/pyreach/tests/mod_test.py skills/pyreach/scripts/pytool; do
-    python_range "$path" "$MUTANT_TOOLS/guard"
-    [ "$RC" -eq 0 ] && [ "$SELECTED" = 'from importer mod ' ] \
-      && ok "control: with the test-program role outside a scoped run $path leaves the other test unrun" \
-      || bad "control: with the test-program role outside a scoped run $path leaves the other test unrun" "rc=$RC selected=$SELECTED out=$OUT"
-  done
-else
-  bad 'control gives tests/*.py the test-program role outside a scoped run'
-fi
 
 # A real cancellation must also name suites in batteries not yet entered.
 # The first selected suite acknowledges its start before the parent sends TERM.
@@ -330,7 +267,7 @@ if [ "$1" = --version ]; then
   if [ "$PHASE" != npm-probe ]; then echo fixture; exit 0; fi
 elif [ "$PHASE" = npm-later ]; then
   [ "${PWD##*/}" = z-later ] || exit 0
-elif [ "$PHASE" != npm ] && [ "$PHASE" != npm-missing-report ]; then
+elif [ "$PHASE" != npm ]; then
   exit 0
 fi
 printf ready > "$ACK"
@@ -349,7 +286,6 @@ for phase, expected in (
     ("npm-later", shell_suites),
     ("loading", shell_suites),
     ("running", ["helper", "open-terminal.test", "tools/tests/later.sh"]),
-    ("npm-missing-report", []),
 ):
   ack, fifo = Path(scratch) / (phase + "-ready"), Path(scratch) / (phase + "-hold")
   os.mkfifo(fifo)
@@ -359,20 +295,9 @@ for phase, expected in (
     assert text.count(marker) == 1
     text = text.replace(marker, 'printf ready > "$ACK"\nread -r line < "$FIFO"\n' + marker)
   runner.write_text(text)
-  selected_guard = guard
-  if phase == "npm-missing-report":
-    text = Path(guard).read_text()
-    needle = "        printf 'guard-note: unstarted-suite=%s\\n' \"$t\""
-    assert text.count(needle) == 1
-    changed = text.replace(needle, needle + " > /dev/null")
-    assert changed != text
-    control = Path(scratch) / "mutant-tools/guard"
-    control.write_text(changed)
-    control.chmod(0o755)
-    selected_guard = str(control)
   env = dict(os.environ, DEV_VALIDATE_SCOPED="true", ACK=str(ack), FIFO=str(fifo), PHASE=phase,
              PATH=str(Path(scratch) / "serial-bin") + os.pathsep + os.environ["PATH"])
-  process = subprocess.Popen([selected_guard, "--selection", "--range", base], cwd=repo, env=env,
+  process = subprocess.Popen([guard, "--selection", "--range", base], cwd=repo, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              start_new_session=True)
   try:

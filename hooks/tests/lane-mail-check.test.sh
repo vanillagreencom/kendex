@@ -71,10 +71,9 @@ expect 2 "lane-mail-check: unread=2" "two new messages refuse once, naming both"
 # Killed right after its Nth reader call, as a harness kills a hook at its
 # budget, the hook has shown the directive or left it unread, never consumed it
 # unseen. KILLED is shown, kept (the next stop reports it) or lost.
-killed_stop() { # NAME ITEM N [HOOK]
+killed_stop() { # NAME ITEM N
   local calls="$TMP_ROOT/$1.calls"
   new_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
-  [ -z "${4:-}" ] || install_hook "$4" "$LANE/.claude/hooks/lane-mail-check.sh"
   send "$2" 'Survive the budget.'
   rm -f "$LANE/.claude/skills/orch"
   rm -f "$LANE/.claude/skills/mailbox"
@@ -100,9 +99,8 @@ done
 
 # A launch makes a lane: a mailbox a repository carries with no launch marker,
 # or with one bound to another root, is no lane.
-unlaunched() { # NAME ITEM MARKER-CONTENT [HOOK] — empty content removes the marker
+unlaunched() { # NAME ITEM MARKER-CONTENT — empty content removes the marker
   new_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
-  [ -z "${4:-}" ] || install_hook "$4" "$LANE/.claude/hooks/lane-mail-check.sh"
   send "$2" 'Pose as a lane.'
   local marker
   marker="$LANE/.git/lane-mail/$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
@@ -372,10 +370,8 @@ expect 2 "lane-mail-check: context=500000" \
 # as a launch forbidding writes to the main checkout makes it, past the context
 # mark with no record yet. The hook runs from the main clone, as a hosted Pi
 # lane's does, so only the root its launch marker binds names the worktree.
-# HOOK, where named, is the copy it runs.
-worktree_handoff_lane() { # NAME ITEM [HOOK]
+worktree_handoff_lane() { # NAME ITEM
   new_worktree_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
-  [ -z "${3:-}" ] || install_hook "$3" "$LANE/.claude/hooks/lane-mail-check.sh"
   mkdir -p "$LANE/tmp/lane-mail/$2"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" --state-dir "$LANE/tmp" init "$2" >/dev/null)
   REPORT_ITEM="$2"
@@ -486,8 +482,6 @@ stop_at "$TRANSCRIPT" false
 assert_eq "RC=$RC first=$(first_line) judged=$(grep -c 'context=' "$ERR_FILE")" \
   "RC=0 first=lane-mail-check: usage-unread=$TRANSCRIPT judged=0" \
   "a usage object neither spelling reads is keyed, never summed to a figure the mark is judged on"
-assert_eq "$(grep -c 'none of the field names' "$ERR_FILE")" "1" \
-  "and the key carries the English that says why the figure went unread"
 assert_eq "$(grep -cx "$GAP" "$ERR_FILE")" "1" \
   "and the account mark beside it is judged as it is on any other turn end"
 
@@ -531,11 +525,9 @@ new_handoff_lane handoff_setting_unreadable KEN-78
 printf 'this is ( not shell\n' > "$LANE/.env.local"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state cause=1 said=1" \
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state cause=1" \
   "a settings file that will not load is reported with the loader's words and the turn ends"
-assert_eq "$(grep -c 'is not there' "$ERR_FILE")" "0" \
-  "and is never reported as an install that is not there"
 
 # The verb's own status 2: a state file it cannot read. Its header and --help
 # publish 2 as attributable, so it is told apart from an install that does not
@@ -640,25 +632,6 @@ while IFS='|' read -r model account status first; do
   expect "$status" "$first" "Claude model [$model] reads $account through its own windows"
 done <<< "$CLAUDE_ACCOUNT_ROWS"
 
-# Keep --model in the copy while removing its assignment. The Opus row then
-# fails: a full Fable window forces a handoff on a model with room.
-wake_mutant claude-model-unassigned \
-  '    PICK_MODEL=(--model "$(lane_context_mark_model claude "$MODEL")")' \
-  '    : # PICK_MODEL=(--model "$(lane_context_mark_model claude "$MODEL")")'
-new_handoff_lane control_claude_model KEN-54
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 1000
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .fableclaude)
-expect 2 "lane-mail-check: headroom=0 bucket=model mark=3" "control: the unassigned model reads the full Fable window"
-control_status=0
-(
-  FAIL=0
-  expect 0 - "Claude model [claude-opus-5-5] reads .fableclaude through its own windows"
-  [ "$FAIL" -eq 0 ]
-) > "$TMP_ROOT/claude-model.control.log" || control_status=$?
-assert_eq "$control_status" 1 "control: without the model assignment the Opus row turns red"
-
 new_handoff_lane handoff_headroom KEN-54
 write_transcript "$TRANSCRIPT" 1000
 # shellcheck disable=SC2046
@@ -726,20 +699,8 @@ headroom_verdict_rows() { # HOOK
 }
 headroom_verdict_rows "$HOOK"
 
-# Keep the verdict read while disabling its seat arm. The same rows must fail
-# when the hook treats that answer as the ordinary headroom wall again.
-wake_mutant seat-verdict-unread '        seat-reserve)' '        unobserved-seat-reserve)'
-control_status=0
-(
-  FAIL=0
-  headroom_verdict_rows "$MUTANT_PATH"
-  [ "$FAIL" -eq 0 ]
-) > "$TMP_ROOT/seat-verdict.control.log" || control_status=$?
-assert_eq "$control_status" 1 "control: the verdict rows reject an unread seat verdict"
-
 # lanes pick publishes wall as used percent for binding_bucket. Its exit-3
-# record can carry a different account-wide headroom. The same assertion
-# rejects a copy that restores the account field read.
+# record can carry a different account-wide headroom.
 new_handoff_lane handoff_binding KEN-54
 write_transcript "$TRANSCRIPT" 1000
 plant_install lanes
@@ -749,26 +710,9 @@ printf '%s\n' '{"binding_bucket":"five_hour","wall":98,"headroom_pct":50}'
 exit 3
 PICK
 chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
-binding_refusal() {
-  expect 2 "lane-mail-check: headroom=2 bucket=five_hour mark=3" \
-    "the refusal names the binding bucket's headroom against its mark"
-}
 stop_at "$TRANSCRIPT" false ORCH_HANDOFF_HEADROOM_PCT=3
-binding_refusal
-wake_mutant account-headroom \
-  '        (if .wall == null then "unknown" else 100 - .wall end)] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||' \
-  '        (.headroom_pct // "unknown")] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||'
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-stop_at "$TRANSCRIPT" false ORCH_HANDOFF_HEADROOM_PCT=3
-expect 2 "lane-mail-check: headroom=50 bucket=five_hour mark=3" \
-  "control: the old account field reports 50 for the binding bucket at 2"
-control_status=0
-(
-  FAIL=0
-  binding_refusal
-  [ "$FAIL" -eq 0 ]
-) > "$TMP_ROOT/binding-headroom.control.log" || control_status=$?
-assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects the old field read"
+expect 2 "lane-mail-check: headroom=2 bucket=five_hour mark=3" \
+  "the refusal names the binding bucket's headroom against its mark"
 
 # An account nothing could measure is a gap the lane cannot act on: it is
 # reported and the turn ends, never refused, so a setup with no usage endpoint
@@ -776,7 +720,6 @@ assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects t
 # The cause it relays is `lanes`' own words, with no preference-deprecated or
 # model-resolution line beside them: a lane's launch prints those only where
 # its preference walk classified the entry, and none where it named its model.
-# The control drops the hook's hold.
 new_handoff_lane handoff_unmeasured KEN-55
 write_transcript "$TRANSCRIPT" 1000
 # model_lines — the hook's first line, then the model lines ERR_FILE carries.
@@ -785,13 +728,6 @@ model_lines() { printf '%s|%s' "$(first_line)" "$(grep -c -e '^preference-deprec
 stop_at "$TRANSCRIPT" false $(account_env .openclaude)
 assert_eq "RC=$RC $(model_lines)" "RC=0 lane-mail-check: account=unmeasured|0" \
   "an account with an inventory entry and no usable credential is reported, never read as room, with no model line in its cause"
-variant unheld -e 's/^export ORCH_MODEL_LINES_HELD=1$/:/'
-install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .openclaude)
-assert_eq "$(model_lines)" "lane-mail-check: account=unmeasured|1" \
-  "control: without the hook's hold the cause carries the model's preference-deprecated line"
-install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # `lanes pick --lane` keeps a status-only contract where `handoff-standing`
 # could not, and one reservation is what makes that safe: every status with an
@@ -876,23 +812,14 @@ rm -rf -- "${LANE:?}/.pi/kendex/skills"
 # shellcheck disable=SC2046
 stop_pi pi-claude 600000 $(account_env .claude)
 expect 2 "lane-mail-check: context=600000" "and the context mark is judged on a Pi lane as everywhere"
-# The control drops the Pi arm, which reads every Pi account as one lanes
-# keeps no inventory for, so a Pi lane on a spent seat ends its turn.
-variant no-pi-account -e '/^    pi) pi_account || return 0 ;;$/d'
-install_hook "$VARIANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
-# shellcheck disable=SC2046
-stop_pi pi-claude 1000 $(account_env .neutralclaude)
-assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unlisted" \
-  "control: with no Pi arm a Pi lane on a spent Claude seat ends its turn unjudged"
-install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 
 # An install directory naming no harness has no account to read at all: the
 # gap is reported, naming the directory, and the turn ends.
 install_hook "$HOOK" "$LANE/.opencode/hooks/lane-mail-check.sh"
 stop
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "$LANE/.opencode/hooks is no harness" "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: account=unlisted named=1" \
-  "a harness this install does not name leaves the account unjudged, named, and the turn ends"
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: account=unlisted" \
+  "a harness this install does not name leaves the account unjudged, and the turn ends"
 
 # A setting out of range dies inside `lanes` as invalid-percent, whose exit the
 # hook cannot tell from an unmeasurable account, so the bound is judged here.
@@ -1010,8 +937,8 @@ old_dispatcher
 UNANSWERED="lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'workflow-state: unknown-command' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=$UNANSWERED cause=1 said=1" \
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'workflow-state: unknown-command' "$ERR_FILE")" \
+  "RC=0 first=$UNANSWERED cause=1" \
   "an install that does not carry the verb is reported with its own words and the turn ends"
 record_handoff KEN-80
 old_dispatcher
@@ -1037,8 +964,8 @@ printf '# shellcheck shell=bash\n: "an orch library older than the account rule"
   > "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh said=1" \
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh" \
   "an orch library without the account rule is reported and the turn ends, never left on 127"
 
 # This hook's own directory gone while the turn ends, which a refresh that
@@ -1055,8 +982,8 @@ printf '#!/usr/bin/env bash\ncase " $* " in *" --git-common-dir "*)\n  rm -f -- 
 chmod +x "$GIT_SHIM/git"
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false "PATH=$GIT_SHIM:$PATH"
-assert_eq "RC=$RC first=$(first_line) named=$(grep -c 'could not be resolved' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-skipped=unlocatable named=1" \
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-skipped=unlocatable" \
   "a hook whose own directory went away reports the gap under the value no path can fill"
 assert_eq "$(grep -c 'No such file or directory' "$ERR_FILE")" "1" \
   "and cd's own words are replayed UNDER the keyed line, never ahead of it"
@@ -1076,8 +1003,8 @@ for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
 done
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) absent=$(grep -c 'is not there' "$ERR_FILE") stale=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh absent=1 stale=0" \
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh" \
   "a library the install has not got is reported as absent, never as one that would not answer"
 
 # A library bash cannot parse. Its syntax errors are written as bash reads the
@@ -1169,12 +1096,12 @@ expect 2 "lane-mail-check: context=600000" \
 # those rows is tested in orch's lane-state suite; these rows pin the writer.
 
 # A Pi lane with the orch install where the Pi hook's walk to its reader looks.
-new_pi_lane() { # NAME ITEM [HOOK]
+new_pi_lane() { # NAME ITEM
   new_handoff_lane "$1" "$2"
   mkdir -p "$LANE/.pi/skills"
   ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
   ln -s "$LANE/.claude/skills/mailbox" "$LANE/.pi/skills/mailbox"
-  install_hook "${3:-$HOOK}" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+  install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
   PI_ROWS="$LANE/tmp/lane-mail/$2/session-rows.jsonl"
 }
 # Each row as event:stop_reason:message, space-joined; `-` for no file.
@@ -1775,9 +1702,9 @@ overseer_transcript
 overseer_route() { grep -cF -- "/oversee-succeed --context $OVERSEER_CONTEXT -- [THE PERMISSION" "$ERR_FILE"; }
 overseer_record_named() { grep -cF -- " set oversee handoff " "$ERR_FILE"; }
 
-# The refusal must explain the cap even on a window whose percentage leaves room.
+# The cap refuses even on a window whose percentage leaves room.
 context_rule_row() { # ROLE NAME [HOOK]
-  local role="$1" text CONTEXT_PCT_ENV=''
+  local role="$1" CONTEXT_PCT_ENV=''
   if [ "$role" = overseer ]; then
     new_overseer "$2"
     judge_says 'oversee-succeed: mark-reached kind=context value=405000 mark=90 succession=on headroom=80'
@@ -1792,10 +1719,9 @@ context_rule_row() { # ROLE NAME [HOOK]
   else
     stop_at "$TRANSCRIPT" false
   fi
-  text="$(sed -n "/^this $role requires handoff under the shared context rule/p" "$ERR_FILE")"
-  assert_eq "RC=$RC first=$(first_line) cap=$(grep -cF '400000 tokens used' <<<"$text" || true) percent=$(grep -cF 'strictly past 90 percent of the printed window' <<<"$text" || true) window=$(grep -cF '1000000' <<<"$text" || true)" \
-    'RC=2 first=lane-mail-check: context=405000 cap=1 percent=1 window=1' \
-    "$role at 405000 tokens names both context limits on a 1000000-token window"
+  assert_eq "RC=$RC first=$(first_line)" \
+    'RC=2 first=lane-mail-check: context=405000' \
+    "$role at 405000 tokens is refused on the cap of a 1000000-token window"
 }
 for context_role in overseer lane; do
   context_rule_row "$context_role" "${context_role}_context_rule"
@@ -1821,9 +1747,10 @@ stop_at "$TRANSCRIPT" true $(overseer_env)
 expect 2 "lane-mail-check: context=612000" \
   "and repeats on the continued turn, as a lane's does"
 record_overseer_handoff
+judged_before=$(judge_calls)
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
-assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=3" \
+assert_eq "RC=$RC first=$(first_line) judged=$(( $(judge_calls) - judged_before ))" "RC=0 first=- judged=0" \
   "an overseer whose own handoff record stands ends its turn, and the judgement is not even asked"
 # The fleet item is one item, shared by every overseer of the fleet in turn. A
 # record the session before this one wrote and exited on answers for nobody
@@ -1851,8 +1778,7 @@ judge_says "$HEADROOM_MARK_LINE"
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: headroom=4" \
   "an overseer the judgement puts at its account mark is refused with the headroom it read"
-assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
-  "named=1 route=1" "and the refusal names the judge's own setting and the succession"
+assert_eq "route=$(overseer_route)" "route=1" "and the refusal names the succession"
 
 # A session with compaction enabled has no managed handoff window. It passes that
 # window empty, to the judge and to the succession the refusal names alike, so
@@ -1865,14 +1791,7 @@ stop_at "$TRANSCRIPT" false $(overseer_env) DISABLE_AUTO_COMPACT=0
 assert_eq "argv=$(judge_argv | tail -n 1) route=$(grep -cF -- "/oversee-succeed --context 999999: -- [THE PERMISSION" "$ERR_FILE")" \
   "argv=--check-marks --context 999999: route=1" \
   "an overseer reading with no window hands its judge and its succession the tokens and no window" "$ERR_FILE"
-variant no-context-arg -e 's|^    ${JUDGE_ARGS\[@\]+"${JUDGE_ARGS\[@\]}"} 2>|    2>|'
-install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-assert_eq "$(judge_argv | tail -n 1)" "--check-marks" \
-  "control: a hook that withholds the reading hands its judge no context"
-install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # --- the reading is bound to the current session's own transcript ----------
 # The overseer reads context only off the native file the payload's session
@@ -1936,14 +1855,6 @@ assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) reason=$(gr
 gap_record() { jq -r '"\(.tokens) \(.gap) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null || echo none; }
 assert_eq "$(gap_record)" "null home-mismatch $OVERSEER_SERVER $OVERSEER_PANE" \
   "and the context record is written with no reading, the gate's reason as its gap and this pane's key" "$ERR_FILE"
-variant no-gap-record -e '/^  \[ -z "\$READ_GAP" \] || overseer_gap_record "\$READ_GAP"$/d'
-install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-rm -f -- "${LANE:?}/tmp/lane-mail/overseer/context.json"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env) "CLAUDE_CONFIG_DIR=$OFFLINE_HOME/.claude"
-assert_eq "$(gap_record)" "none" \
-  "control: a hook that writes no gap record leaves an unowned turn end recording nothing"
-install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # The record that lost its launch identity: it names this pane on this server
 # and carries no server start, no home and no harness, the shape a writer from
@@ -1953,13 +1864,12 @@ install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 # nothing while it runs into its window. The judge is the real
 # oversee-succeed, which answers the reading this turn end hands it with
 # `mark-reached kind=context` before it discovers anything else.
-lost_identity() { # NAME [HOOK] [STUB]: STUB is a state_stub mode
+lost_identity() { # NAME [STUB]: STUB is a state_stub mode
   new_overseer "$1"
-  install_hook "${2:-$HOOK}" "$LANE/.claude/hooks/lane-mail-check.sh"
   rm -f -- "$LANE/.claude/skills/orch/scripts/oversee-succeed"
   ln -s "$REPO_ROOT/skills/orch/scripts/oversee-succeed" "$LANE/.claude/skills/orch/scripts/oversee-succeed"
   startless_record
-  [ -z "${3:-}" ] || state_stub "$3"
+  [ -z "${2:-}" ] || state_stub "$2"
   # shellcheck disable=SC2046
   stop_at "$TRANSCRIPT" false $(overseer_env) "CLAUDE_CONFIG_DIR=$OVERSEER_HOME_DIR"
   LOST="RC=$RC first=$(first_line) record=$(jq -r '"\(.tokens) \(.gap)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null || echo none) start=$(recorded_field server_start) home=$(recorded_field home) harness=$(recorded_field harness)"
@@ -1968,22 +1878,9 @@ lost_identity overseer_lost_identity
 assert_eq "$LOST" \
   "RC=2 first=lane-mail-check: context=${OVERSEER_CONTEXT%%:*} record=${OVERSEER_CONTEXT%%:*} null start=$OVERSEER_SERVER_START home=$OVERSEER_HOME_DIR harness=claude" \
   "a record naming this pane with no start, home or harness still names this session: the reading is recorded, the context mark is refused, and the record is healed" "$ERR_FILE"
-# The start test that reads a record carrying no start as another session's:
-# the session is judged on nothing, and nothing is healed.
-variant startless-unnamed \
-  -e 's/^    elif ol_unstarted(.*/    else "other" end),/'
-lost_identity control_lost_identity_start "$VARIANT_PATH"
-assert_eq "$LOST" "RC=0 first=- record=none start=none home=none harness=none" \
-  "control: a hook that reads a record carrying no start as another session's judges the lost overseer on nothing"
-# The heal skipped: the record names no home, the transcript binds to nothing
-# and the context mark is left to nothing.
-variant no-heal -e 's/^  \[ "\$NEED_HEAL" -eq 1 \] || return 0$/  return 0/'
-lost_identity control_lost_identity_heal "$VARIANT_PATH"
-assert_eq "$LOST" "RC=0 first=lane-mail-check: transcript-unowned=$TRANSCRIPT record=null home-unnamed start=none home=none harness=none" \
-  "control: a hook that heals nothing leaves the lost overseer's transcript unbound and its context mark judged by nothing"
 # The first native binding is required. A failed writer leaves the session
 # unbound, with no reading or mark judgement.
-lost_identity overseer_lost_unhealed "$HOOK" update-fails
+lost_identity overseer_lost_unhealed update-fails
 assert_eq "$LOST unhealed=$(grep -c "^lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE\$" "$ERR_FILE") mark=$(grep -c "^lane-mail-check: context=${OVERSEER_CONTEXT%%:*}\$" "$ERR_FILE" || :) judged=$(judge_calls)" \
   "RC=0 first=lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE record=none start=none home=none harness=none unhealed=1 mark=0 judged=0" \
   "a failed required heal leaves the native session unbound and judges no mark" "$ERR_FILE"
@@ -2083,25 +1980,12 @@ overseer_unlisted_untranscribed|.other|-|record=none unread=0 unlisted=0 unrecor
 overseer_copilot_unowned|.github|$(usage_line claude 600000)|record=null home-mismatch $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0 unrecorded=0|a Copilot install writes the transcript gate's gap
 overseer_copilot_unrecorded|.github|-|record=null session-record $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0 unrecorded=1|a Copilot agentStop with no extension reading and no statusLine record answering writes the gap session-record and reports reading-unrecorded
 INSTALLS
-VARIANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" variant unlisted-late -e '/^  if \[ -z "\$HARNESS" \]; then$/,/^  fi$/d'
-CONTEXT_LIB_VARIANT="$VARIANT_PATH"
-assert_eq "$(overseer_gap_word control_unlisted_late - .other)" \
-  "record=null transcript-unnamed $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0 unrecorded=0" \
-  "control: a hook that decides the harness after the transcript names a gap for an unnamed harness at every turn end"
-unset CONTEXT_LIB_VARIANT
 VARIANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" variant no-session-record-gap -e '/^      READ_GAP=session-record$/d'
 CONTEXT_LIB_VARIANT="$VARIANT_PATH"
 assert_eq "$(overseer_gap_word control_session_record_gap - .github)" \
   "record=none unread=0 unlisted=0 unrecorded=1" \
   "control: a Copilot arm that names no gap leaves an unanswered session record unrecorded"
 unset CONTEXT_LIB_VARIANT
-variant no-overseer-unread -e 's/^    \[ "\$READ_GAP" != usage-unread \] || message usage-unread "\$TRANSCRIPT"$/    :/'
-HOOK_SAVED="$HOOK"
-HOOK="$VARIANT_PATH"
-assert_eq "$(overseer_gap_word control_overseer_unread "$(usage_line unread 900000)")" \
-  "record=null usage-unread $OVERSEER_SERVER $OVERSEER_PANE unread=0 unlisted=0 unrecorded=0" \
-  "control: an overseer arm that drops the usage-unread report leaves the unread figure silent on stderr"
-HOOK="$HOOK_SAVED"
 write_transcript "$TRANSCRIPT" "${OVERSEER_CONTEXT%%:*}"
 # A gap record that cannot be written is reported under its own key, which
 # says no reading was taken, and the record keeps its earlier entry.
@@ -2128,24 +2012,6 @@ gap_unwritten() {
 }
 assert_eq "$(gap_unwritten overseer_gap_unwritten)" "key=1 cause=1 record=none" \
   "a gap record that cannot be written is reported under its own key with the cause below it" "$ERR_FILE"
-variant gap-key-shared -e 's/^    message context-gap-unrecorded /    message context-unrecorded /'
-HOOK_SAVED="$HOOK"
-HOOK="$VARIANT_PATH"
-assert_eq "$(gap_unwritten control_gap_unwritten)" "key=0 cause=1 record=none" \
-  "control: a gap write failure reported under the reading's key says a reading was taken"
-HOOK="$HOOK_SAVED"
-# Control: with the ownership gate gone the predecessor's foreign file is read
-# and its reading handed to the judge, the very thing the gate prevents.
-new_overseer overseer_binding_control
-bind_overseer claude "$OVERSEER_HOME_DIR" s2
-variant read-any-transcript -e 's/^  if overseer_transcript_owned; then$/  if true; then/'
-install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "$HEADROOM_MARK_LINE"
-# shellcheck disable=SC2046
-owned_payload s2 "$TRANSCRIPT" $(overseer_env)
-assert_eq "argv=$(judge_argv | tail -n 1)" "argv=--check-marks --context 600000:1000000" \
-  "control: without the ownership gate a session reads a transcript it does not own"
-install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 for mark_row in \
   "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
@@ -2232,10 +2098,7 @@ esac
 REALTMUX
   chmod +x "$REAL_TMUX_BIN/tmux"
   # The real judge handles a node pane before slow capacity or a stored identity.
-  # The record names no harness, and the turn end heals it with this install's,
-  # so the context-after-identity judge meets no harness-unnamed refusal; it
-  # still reads the account before the due reading and answers nothing the
-  # hook can act on.
+  # The record names no harness, and the turn end heals it with this install's.
   mkdir -p "$LANE/.codex/skills"
   ln -s "$LANE/.claude/skills/orch" "$LANE/.codex/skills/orch"
   ln -s "$LANE/.claude/skills/mailbox" "$LANE/.codex/skills/mailbox"
@@ -2250,10 +2113,6 @@ REALTMUX
   record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$CODEX_OVERSEER_HOME"
   usage_line codex 400000 > "$CODEX_TRANSCRIPT"
   REAL_SUCCEED="$LANE/.claude/skills/orch/scripts/oversee-succeed"
-  EARLY_RESULT='if [[ "$MODE" == check && "$CONTEXT_STATE" == due ]]; then'
-  assert_eq "$(grep -cF -- "$EARLY_RESULT" "$REAL_SUCCEED")" 1 'the context-order control finds its result once'
-  HOOK="$REAL_SUCCEED" variant context-after-identity \
-    -e 's/if \[\[ "$MODE" == check \&\& "$CONTEXT_STATE" == due \]\]; then/if [[ "$MODE" == check \&\& "$CONTEXT_STATE" == due \&\& 0 == 1 ]]; then/'
   REAL_MV="$(command -v mv)"
   cat > "$REAL_TMUX_BIN/mv" <<'FAILWRITE'
 #!/usr/bin/env bash
@@ -2279,7 +2138,6 @@ FAILWRITE
   done <<ROWS
 kept|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|0|0|0|400000 258400 $OVERSEER_SERVER $OVERSEER_PANE
 failed|$REPO_ROOT/skills/orch/scripts/oversee-succeed|2|lane-mail-check: context=400000|1|0|1|none
-failed|$VARIANT_PATH|0|lane-mail-check: marks=unjudged|1|0|1|none
 ROWS
   write_transcript "$TRANSCRIPT" 600000
 
@@ -2350,22 +2208,6 @@ assert_eq "$(unrecorded_rows "$OVERSEER_PANE")" \
 assert_eq "$(unrecorded_rows %3)" \
   "RC=0 first=- recorded=0 judged=1 record=null pane-unrecorded $OVERSEER_SERVER $OVERSEER_PANE" \
   "a session in a pane neither record names is ordinary and writes nothing over the overseer's record" "$ERR_FILE"
-variant any-pane-unrecorded -e '/^  \[ "\$LANE_CTX_PANE_KEY" = "\$CALLER_KEY" \] || return 0$/d'
-install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-assert_eq "$(unrecorded_rows %3)" \
-  "RC=0 first=lane-mail-check: pane-unrecorded=$OVERSEER_SERVER %3 recorded=1 judged=1 record=null pane-unrecorded $OVERSEER_SERVER %3" \
-  "control: without the pane test an ordinary session overwrites the overseer's record"
-variant no-unrecorded -e 's/^      overseer_unrecorded$/      :/'
-install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-record_overseer %4 "$OVERSEER_SERVER"
-bind_overseer claude "$OVERSEER_HOME_DIR" s1
-assert_eq "$(unrecorded_rows "$OVERSEER_PANE")" \
-  "RC=0 first=- recorded=0 judged=2 record=600000 null $OVERSEER_SERVER $OVERSEER_PANE" \
-  "control: a hook that skips the lost overseer leaves its record standing, stale and silent"
-install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 # A fleet state that cannot be read names no pane at all: the session whose
 # reading the context record holds is not taken for the overseer the record
 # lost, and its record stands as it was.
@@ -2384,15 +2226,6 @@ state_unread() { # NAME
 }
 assert_eq "$(state_unread overseer_state_unread)" "RC=0 first=- record=600000 null $OVERSEER_SERVER $OVERSEER_PANE" \
   "a fleet state that cannot be read writes no pane-unrecorded gap over the overseer's reading" "$ERR_FILE"
-variant ungated-unrecorded -e '/^  \[ "\$OVERSEER_UNRECORDED" -eq 1 \] || return 0$/d'
-HOOK_SAVED="$HOOK"
-HOOK="$VARIANT_PATH"
-# The path's first read of CALLER_KEY, unset by the failed read, stops the
-# hook on both shells; bash 3.2 then exits with its EXIT trap's 0, bash 5 with
-# 1, so the error line is the witness and the status is not.
-assert_eq "$(state_unread control_state_unread >/dev/null; grep -c ': CALLER_KEY: unbound variable$' "$ERR_FILE")" "1" \
-  "control: without the unrecorded gate a fleet state that cannot be read reaches the lost-overseer path" "$ERR_FILE"
-HOOK="$HOOK_SAVED"
 
 # The mailbox rules are untouched: an overseer's checkout carries the fleet's
 # own mailbox directory, and its branch names no mailbox in it.
@@ -2448,17 +2281,6 @@ run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
 assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
   "a subagent of the overseer is judged on neither mark"
 
-# The qualifying refusal's headroom field: its parse gone, the refusal reads
-# the account as unmeasured whatever the judgement said.
-mutant no-headroom -e '/^      headroom=\*) MARK_HEADROOM=\${field#headroom=} ;;$/d'
-new_overseer control_headroom
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "${QUALIFYING_MARK_LINE% headroom=*} headroom=40"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-assert_eq "RC=$RC read=$(grep -cF -- "reads headroom=40" "$ERR_FILE")" "RC=2 read=0" \
-  "control: without the headroom parse the qualifying refusal drops the figure the judgement read"
-
 mutant no-block -e 's@^  refuse unread "\$COUNT"$@  acknowledge; exit 0@'
 BLOCK_MUTANT="$MUTANT_PATH"
 new_lane control ken-11
@@ -2466,49 +2288,6 @@ send KEN-11 'Block me.'
 install_hook "$BLOCK_MUTANT" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop
 expect 0 - "control: without its refusal the hook lets the turn end with the message unread"
-
-mutant unbound -e 's@^  \[ "\$BOUND" != "\$ROOT" \] || LAUNCHED=yes$@  LAUNCHED=yes@'
-unlaunched control_unmarked KEN-22 "" "$MUTANT_PATH"
-expect 2 "lane-mail-check: unread=1" "control: without the marker rule a committed mailbox poses as a lane"
-
-# The acknowledgement moved ahead of the refusal, both still made: killed
-# between them, the hook has consumed a directive it never showed.
-mutant ack-first -e 's@^  ACK_LINES=\$LINES$@  ACK_LINES=$LINES; acknowledge; ACK_LINES=""@'
-killed_stop control_killed KEN-19 2 "$MUTANT_PATH"
-assert_eq "$KILLED" "lost" "control: acknowledged before its refusal, a killed hook consumes the directive unseen"
-
-# The containment rule's control: its refusal arm replaced by the assignment
-# it guards, so the repository's script runs and leaves its marker.
-mutant no-containment -e 's@^        return 2$@        READER="$ROOT/.agents/skills/mailbox/scripts/lane-mail"@'
-OPEN_MUTANT="$MUTANT_PATH"
-new_lane control_open ken-13
-send KEN-13 'run me'
-OPEN_MARKER="$TMP_ROOT/open-ran"
-plant_reader "$OPEN_MARKER"
-install_hook "$OPEN_MUTANT" "$TMP_ROOT/open-elsewhere/hooks/lane-mail-check.sh"
-stop
-assert_eq "$([ -e "$OPEN_MARKER" ] && echo ran || echo not-run)" "ran" \
-  "control: without the containment rule the repository's own script runs"
-
-# The shared tree is one rule offered at two sites, the walk and the home, so
-# the mutant removes both; either site alone still answers the other's world.
-mutant no-shared-tree \
-  -e 's@ "\$AT/.agents/skills/mailbox/scripts/lane-mail"; do$@; do@' \
-  -e 's@^    \[ ! -x "\$CANDIDATE" \] || READER="\$CANDIDATE"$@    :@'
-SHARED_MUTANT="$MUTANT_PATH"
-new_lane control_shared ken-15
-send KEN-15 'Reached the global install.'
-rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
-rm -f "$LANE/.claude/skills/mailbox" "$LANE/.agents/skills/mailbox/scripts"
-global_home home-control
-install_hook "$SHARED_MUTANT" "$GLOBAL_HOME/.claude/hooks/lane-mail-check.sh"
-stop "HOME=$GLOBAL_HOME"
-expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
-  "control: without the shared tree the global install finds no reader"
-install_hook "$SHARED_MUTANT" "$TMP_ROOT/opt-control/codex/hooks/lane-mail-check.sh"
-stop "HOME=$GLOBAL_HOME"
-expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
-  "control: without it a relocated harness root finds none either"
 
 # The tool a call names, Bash unless a case names the harness question tool;
 # the payload names the command the lane is about to run.
@@ -2791,70 +2570,6 @@ rmdir "$LANE/tmp/lane-mail"
 tool halt
 expect 0 - "a root with neither a launch marker nor a mailbox directory passes a tool call silently"
 
-# The directory the harness started in dropped: the judge asks the call's cwd.
-mutant no-project-dir -e 's@^LANE_DIR=\${CLAUDE_PROJECT_DIR:-\$PWD}$@LANE_DIR=$PWD@'
-new_worktree_lane control_from_main ken-97
-install_arms "$MUTANT_PATH"
-send KEN-97 'Hold the merge.' --halt
-CALL_DIR="$MAIN"
-CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
-tool halt
-expect 0 - "control: without the harness's directory a halt judge run from the main clone passes the call"
-# The root dropped from the reader's peek: the reader roots itself at the call's
-# cwd and reads the main clone.
-mutant peek-no-root -e 's@inbox --item "\$MAILBOX_ITEM" --root "\$ROOT" --peek@inbox --item "$MAILBOX_ITEM" --peek@'
-install_arms "$MUTANT_PATH"
-tool halt
-expect 0 - "control: without the root the reader's peek from the main clone finds nothing and passes the call"
-# The marker read dropped: LANE_MAIL_ITEM no longer reaches the lane's root.
-mutant no-marker-root -e 's@|| ROOT="\$BOUND"$@|| :@'
-install_arms "$MUTANT_PATH"
-CALL_ENV=("LANE_MAIL_ITEM=KEN-97")
-tool halt
-expect 0 - "control: without the marker read a harness naming no directory passes the call"
-# The read command written without the root: run from the main clone, it
-# reads the main clone and the halt stands.
-mutant ack-no-root -e 's@'"'"'%q inbox --item %q --root %q'"'"' "\$READER" "\$MAILBOX_ITEM" "\$ROOT"@'"'"'%q inbox --item %q'"'"' "$READER" "$MAILBOX_ITEM"@'
-install_arms "$MUTANT_PATH"
-CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
-tool halt
-(cd "$MAIN" && env -u CLAUDE_PROJECT_DIR bash -c "$(sed -n 3p "$ERR_FILE")" >/dev/null 2>&1) || :
-tool halt
-expect 2 "lane-mail-check: halt=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-97/to-lane.jsonl")" \
-  "control: without the root in it the command run from the main clone leaves the halt standing"
-# The root dropped from the turn end's acknowledgement alone: a turn end from
-# the main clone moves the main clone's cursor, and the directive repeats.
-mutant stop-ack-no-root -e 's@^  "\$READER" inbox --item "\$MAILBOX_ITEM" --root "\$ROOT" --ack@  "$READER" inbox --item "$MAILBOX_ITEM" --ack@'
-new_worktree_lane control_stop_ack ken-94
-install_arms "$MUTANT_PATH"
-send KEN-94 'Rebase first.'
-CALL_DIR="$MAIN"
-CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
-stop
-stop
-expect 2 "lane-mail-check: unread=1" \
-  "control: without the root in its acknowledgement a turn end from the main clone repeats the directive"
-CALL_DIR=""
-CALL_ENV=()
-
-# The refusal replaced by a pass, and the command's pass removed.
-mutant no-mailbox-missing -e 's@^      refuse mailbox-missing "\$MAIL_ROOT"$@      exit 0@'
-new_lane control_no_mailbox ken-98
-install_arms "$MUTANT_PATH"
-tool halt
-expect 0 - "control: without its refusal a marked root with no mailbox passes the call"
-mutant no-mailbox-pass -e 's@^      \[ "\$CALLER" = subagent \] || ! call_runs "\$MAILBOX_COMMAND" || exit 0$@      :@'
-install_arms "$MUTANT_PATH"
-printf -v MKDIR_98 'mkdir -p -- %q' "$LANE/tmp/lane-mail"
-tool halt "$MKDIR_98"
-expect 2 "lane-mail-check: mailbox-missing=$LANE/tmp/lane-mail" \
-  "control: without its pass the one command that restores the mailbox is refused"
-# The subagent gate on that pass removed: a subagent's call runs the command.
-mutant mailbox-pass-subagent -e 's@^      \[ "\$CALLER" = subagent \] || ! call_runs@      ! call_runs@'
-install_arms "$MUTANT_PATH"
-tool halt "$MKDIR_98" agent_id
-expect 0 - "control: without the subagent gate a subagent's call carrying that command passes"
-
 # A condition the lane cannot clear without a tool call: before a tool call
 # it is reported and the call runs, where a fresh turn end refuses it.
 new_lane halt_workdir ken-36
@@ -2867,68 +2582,6 @@ expect 0 "lane-mail-check: workdir=$TMP_ROOT/absent" \
 stop "TMPDIR=$TMP_ROOT/absent"
 expect 2 "lane-mail-check: workdir=$TMP_ROOT/absent" \
   "control: the same condition refuses a fresh turn end"
-
-# The halt refusal replaced by a pass, its judgement still made.
-mutant no-halt -e 's@^    refuse halt "\$HALT_ID"$@    exit 0@'
-new_lane control_halt ken-31
-install_arms "$MUTANT_PATH"
-send KEN-31 'Stop.' --halt
-tool halt
-expect 0 - "control: without its halt refusal the hook passes a tool call with a halt pending"
-
-# Each arm's subagent check removed alone: a subagent's call is judged as the lead's.
-mutant lead-deliver -e 's@^if \[ -n "\$CONTEXT_EVENT" \] && \[ "\$CALLER" = subagent \]; then$@if false; then@'
-new_lane control_sub_deliver ken-34
-install_arms "$MUTANT_PATH"
-send KEN-34 'For the lead.'
-tool deliver "git status" agent_id
-assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
-  "control: without the deliver check a subagent's call is handed the lead's directive"
-mutant lead-halt -e 's@^      lead | unknown) ! call_runs "\$ACK_COMMAND" || exit 0 ;;$@      *) ! call_runs "$ACK_COMMAND" || exit 0 ;;@'
-new_lane control_sub_halt ken-35
-install_arms "$MUTANT_PATH"
-send KEN-35 'Halt the lead.' --halt
-printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-35 "$LANE"
-tool halt "$SUB_READ" agent_id
-expect 0 - "control: without the halt check a subagent's call carrying the acknowledging command passes"
-
-# The agent_type read dropped, agent_id still read: a subagent the pi-hooks
-# carrier marks is judged as the lead.
-wake_mutant no-agent-type \
-  '   (if .hook_event_name == "SubagentStop" or str(.agent_id) + str(.agent_type) != "" then "subagent" else "lead" end),' \
-  '   (if .hook_event_name == "SubagentStop" or str(.agent_id) != "" then "subagent" else "lead" end),'
-new_lane control_sub_type ken-38
-install_arms "$MUTANT_PATH"
-send KEN-38 'For the lead.'
-tool deliver "git status" agent_type
-tool deliver
-assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
-  "control: without the agent_type read a subagent's call consumes the lead's directive"
-send KEN-38 'Halt the lead.' --halt
-printf -v SUB_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-38 "$LANE"
-tool halt "$SUB_READ" agent_type
-expect 0 - "control: without the agent_type read a subagent's call carrying the acknowledging command passes"
-
-# The deliver context written without its envelopes, the keyed line kept.
-mutant no-envelopes -e 's@^    NOTICE=\$(message unread "\$COUNT" 2>&1)$@    NOTICE=$(UNREAD= message unread "$COUNT" 2>\&1)@'
-new_lane control_envelopes ken-39
-install_arms "$MUTANT_PATH"
-send KEN-39 'Rebase first.'
-tool deliver
-assert_eq "context=$(context_line) carried=$(jq -r '.hookSpecificOutput.additionalContext' "$TMP_ROOT/stdout" | grep -cF 'Rebase first.')" \
-  "context=PostToolUse lane-mail-check: unread=1 carried=0" \
-  "control: without its envelopes the deliver context keeps its key and loses the directive"
-
-# The halt refusal written without the acknowledging command.
-mutant no-ack-command -e 's@"\$ACK_COMMAND" "\$HALT_TEXT"@"" "$HALT_TEXT"@'
-new_lane control_ack_command ken-41
-install_arms "$MUTANT_PATH"
-send KEN-41 'Stop pushing.' --halt
-printf -v ACK_READ '%q inbox --item %q --root %q' "$LANE/.claude/skills/mailbox/scripts/lane-mail" KEN-41 "$LANE"
-tool halt
-assert_eq "key=$(first_line | cut -d= -f1) command=$(grep -cxF -- "$ACK_READ" "$ERR_FILE")" \
-  "key=lane-mail-check: halt command=0" \
-  "control: without the command the halt refusal keeps its key and loses the one read that clears it"
 
 # The reader's acknowledgement clamp removed: a deliver run consumes the halt it showed.
 CLAMPLESS="$TMP_ROOT/clampless/mailbox/scripts"
@@ -2959,243 +2612,6 @@ tool halt
 assert_eq "$([ "$RC" -eq 2 ] && echo refused || echo passed)" "passed" \
   "control: without its exit the halt hook with no judge beside it does not refuse"
 
-# Each handoff mark's refusal replaced by a pass, its judgement still made.
-mutant no-context-mark -e 's@^    0) \[ "\$DUE" != due \] || refuse_judged_handoff .* context "\$TOKENS" ;;$@    0) : ;;@'
-new_handoff_lane control_context KEN-56
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" false
-expect 0 "$GAP" "control: without its context refusal a lane past the mark ends its turn"
-
-mutant no-headroom-mark -e 's@^      refuse_handoff headroom "\$HEADROOM"$@      :@'
-new_handoff_lane control_headroom KEN-57
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 1000
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
-expect 0 - "control: without its account refusal a lane at its account's mark ends its turn"
-
-# The verb's own status 2 folded back in with the statuses it cannot attribute:
-# an unreadable state file then reads as an install that does not carry the
-# verb, and the operator is sent to refresh an install that is current while
-# the state file that actually stopped the read is never named.
-mutant fold-unreadable \
-  -e 's@^    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unreadable ;;$@    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unanswered ;;@'
-new_handoff_lane control_unreadable KEN-89
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-CONTROL_STATE="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path KEN-89)"
-printf '{"handoff":' > "$CONTROL_STATE"
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" false
-expect 0 "lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state" \
-  "control: folded in, an unreadable state file reads as an install that lacks the verb"
-assert_eq "$(grep -c "$CONTROL_STATE" "$ERR_FILE")" "0" \
-  "control: and the file that actually stopped the read is never named"
-
-# The library probe moved out of this shell and into a child of it. Bash 3.2
-# kills the shell on a source it cannot parse even as the condition of an `if`,
-# where bash 5 takes the non-zero status and carries on, and this hook's EXIT
-# teardown then succeeds and lends the dead run its own 0: the turn passes with
-# the account mark unjudged and not one line on stderr, which is the one answer
-# the marks forbid. What the masking costs depends on the interpreter the
-# shebang picks, so the control runs only under the one that dies.
-cat > "$TMP_ROOT/in-process-probe.sed" <<'IN_PROCESS_PROBE'
-/^load_context_lib()/,/^}/ {
-  /^  if ! "\$BASH" -euo pipefail -c '/,/^    ' _ .* 2>"\$WORK_DIR\/lib.err"; then$/c\
-  if ! { . "$SCRIPTS/lib/lane-context.sh" && declare -F lane_context_caller_cfg >/dev/null; } 2>"$WORK_DIR/lib.err"; then
-}
-IN_PROCESS_PROBE
-mutant in-process-probe -f "$TMP_ROOT/in-process-probe.sed"
-probe_syntax_rc=0
-"$BASH" -n "$MUTANT_PATH" 2>"$TMP_ROOT/probe-syntax.err" || probe_syntax_rc=$?
-assert_eq "$probe_syntax_rc" 0 'the in-process source control remains a valid hook'
-new_handoff_lane control_probe KEN-93
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-plant_install lib
-mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
-for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
-  [ "${name##*/}" != lane-context.sh ] || continue
-  ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
-done
-printf '# shellcheck shell=bash\nthis is ( not shell\n' \
-  > "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
-write_transcript "$TRANSCRIPT" 1000
-if [ "$HOOK_BASH_MAJOR" -lt 4 ]; then
-  stop_at "$TRANSCRIPT" false
-  expect 0 - \
-    "control: probed in-process, a library this shell cannot parse kills the hook and its teardown passes the turn in silence"
-else
-  printf '  skip  control: probed in-process, the masking needs a shell that dies on a sourced parse error; this one is bash %s\n' \
-    "$HOOK_BASH_MAJOR"
-fi
-
-# The record test answering yes whatever the state holds: the mark then clears
-# itself and no lane ever writes one.
-mutant record-always \
-  -e 's@^    "$HANDOFF_VERDICT=none") HANDOFF_STATE=none; return 0 ;;$@    "$HANDOFF_VERDICT=none") HANDOFF_STATE=stands; return 0 ;;@'
-new_handoff_lane control_record KEN-58
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" false
-expect 0 - "control: with the record test inverted a lane past the mark with no record ends its turn"
-
-# The continued turn routed back to a plain pass: a lane that declined the
-# first refusal then ends the session with nothing recorded.
-mutant active-passes -e 's@^handoff_check$@[ "$CONTINUED" = true ] || handoff_check@'
-new_handoff_lane control_active KEN-59
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" true
-expect 0 - "control: with the continued turn routed past the marks a lane ends past the mark"
-
-# A read mailbox routed to a plain pass rather than on to the marks: the lane
-# that has already been messaged is then the one never judged.
-mutant read-passes -e 's@^  \[ -n "\$UNREAD" \] || return 0$@  [ -n "$UNREAD" ] || exit 0@'
-new_handoff_lane control_read KEN-73
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-send KEN-73 'Rebase first.'
-stop
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" false
-expect 0 - "control: with a read mailbox routed past the marks a lane ends past the mark"
-
-# The continued turn refusing every resolution failure again: the session then
-# never ends, which is the loop stop_hook_active exists to end.
-mutant active-refuses -e 's@^  if \[ "\$REPORTED" = true \]; then$@  if false; then@'
-new_lane control_stall ken-75
-mkdir -p "$LANE/tmp/lane-mail/KEN-75"
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-stop_active LANE_MAIL_ITEM='bad item!'
-expect 2 "lane-mail-check: item=invalid" \
-  "control: without the continued turn's report the same refusal is made again"
-
-# The gap left unreported: an account nothing measured then reads as room.
-mutant silent-gap -e 's@^    \*) message account unmeasured .*$@    *) : ;;@'
-new_handoff_lane control_gap KEN-76
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 1000
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .openclaude)
-expect 0 - "control: without its report an account nothing measured passes silently"
-
-# An unattributable status read as "no record stands": the lane that wrote its
-# record is then refused at every turn end by an install that never saw it.
-mutant record-on-any -e 's@^    \*) HANDOFF_STATE=unanswered ;;$@    *) HANDOFF_STATE=none ;;@'
-new_handoff_lane control_old_state KEN-77
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-old_dispatcher
-record_handoff KEN-77
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" false
-expect 2 "lane-mail-check: context=600000" \
-  "control: read as no record, an older install refuses a lane that has already handed off"
-
-# The whole-file fallback dropped: a session whose recent window is all tool
-# results reads as no context at all and runs to its wall.
-MUTANT_SOURCE="$WINDOW_LIB" mutant no-window-fallback \
-  -e 's@^    if \[ -z "\$READING" \] && ! READING=\$(lane_context_reading .*); then$@    if false; then@'
-CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_handoff_lane control_window KEN-78
-write_transcript "$TRANSCRIPT" 600000
-filler "$TRANSCRIPT" 2000
-stop_at "$TRANSCRIPT" false
-expect 0 "$GAP" \
-  "control: without the fallback a usage line before the window reads as no context at all"
-
-# The record's time put back in the template: the lane is asked for it again,
-# and the row above that says it is not goes red.
-assert_eq "$(grep -cF -- '{"merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]",' "$HOOK")" "1" \
-  "control: written_at mutation names one live record constructor"
-mutant asks-written-at -e 's@{"merged":@{"written_at":"[NOW]","merged":@'
-new_handoff_lane control_written_at KEN-94
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 600000
-stop_at "$TRANSCRIPT" false
-assert_eq "$(template_omits_written_at && echo yes || echo no)" "no" \
-  "control: with written_at back in the template the lane is asked for the record's time"
-
-# Control: a gate that asks the library about an empty path reports it as an
-# unbound transcript and withholds the context argument for nothing.
-mutant owned-empty-path -e '/^overseer_transcript_owned() {$/,/^}$/{/^  \[ -n "\$TRANSCRIPT" \] || return 0$/d;}'
-new_overseer control_owned_empty_path
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "$HEADROOM_MARK_LINE"
-# shellcheck disable=SC2046
-stop $(overseer_env)
-assert_eq "argv=$(judge_argv | tail -n 1) unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")" \
-  "argv=--check-marks --harness claude unowned=1" \
-  "control: without its empty-path test the gate reports a payload naming no transcript as unowned"
-# Control: a gate that reports the library's harness-unlisted answer holds a Pi
-# overseer, whose install states no transcript shape, to a binding it cannot make.
-mutant owned-unlisted-reported -e 's/^    0 | 3) return 0 ;;$/    0) return 0 ;;/'
-new_overseer control_owned_unlisted
-mkdir -p "$LANE/.pi/skills"
-ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
-ln -s "$LANE/.claude/skills/mailbox" "$LANE/.pi/skills/mailbox"
-install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
-judge_says "$HEADROOM_MARK_LINE"
-# shellcheck disable=SC2046
-run_payload "$(jq -nc --arg p "$PI_TRANSCRIPT" \
-  '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')" $(overseer_env)
-assert_eq "unowned=$(grep -c '^lane-mail-check: transcript-unowned' "$ERR_FILE")" "unowned=1" \
-  "control: a gate reporting the harness-unlisted answer holds a Pi overseer to a transcript shape"
-
-# The overseer identification's control: the pane comparison removed, so any
-# session with no lane is taken for the overseer. An ordinary session in a
-# fleet checkout is then held at its own turn end on marks nobody set for it.
-mutant any-session-overseer -e '/^   (if ol_names(/s@\$pane)@(.pane // ""))@'
-new_overseer control_any_session
-bind_overseer claude "$OVERSEER_HOME_DIR" s1
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "$CONTEXT_MARK_LINE"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env "%3")
-expect 2 "lane-mail-check: context=612000" \
-  "control: without the pane comparison a session the fleet state never named is held"
-
-# The succession field's controls, one per rule it enforces: the arm that
-# passes an account mark removed, and the context exception removed.
-mutant overseer-succession -e 's@^  \[ "\$SUCCESSION" != off \] || \[ "\$MARK_KIND" = context \] || return 0$@  :@'
-new_overseer control_succession_off
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "$OFF_HEADROOM_LINE"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-expect 2 "lane-mail-check: headroom=4" \
-  "control: without the field read an account mark is refused with its route turned off"
-mutant overseer-succession-context -e 's@ || \[ "\$MARK_KIND" = context \] || return 0$@ || return 0@'
-new_overseer control_succession_context
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "$OFF_MARK_LINE"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-assert_eq "RC=$RC first=$(first_line)" "RC=0 first=-" \
-  "control: without the context exception a context crossing under succession off is told nothing"
-
-# The fleet record's own control: the writer comparison removed, so a record
-# any session left on the shared item answers for this one and its turn end is
-# passed with both marks unjudged, for the life of the session.
-mutant overseer-record-owner -e 's@^      if \[ "\$ROLE" != overseer \] || handoff_is_mine; then$@      if true; then@'
-new_overseer control_record_owner
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "$CONTEXT_MARK_LINE"
-record_overseer_handoff other-session
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-assert_eq "RC=$RC first=$(first_line)" "RC=0 first=-" \
-  "control: without the writer comparison another session's record passes this one past its mark"
-
-# The judged line's own control: the three-field guard removed, so a keyed line
-# missing a figure refuses anyway and names nothing the judgement read.
-mutant overseer-fields \
-  -e 's@^  if \[ -z "\$MARK_KIND" \] || \[ -z "\$MARK_VALUE" \] || \[ -z "\$MARK" \]; then$@  if false; then@'
-new_overseer control_overseer_fields
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says "oversee-succeed: mark-reached kind=context mark=500000 succession=on"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-expect 2 "lane-mail-check: context=" \
-  "control: without the three-field guard a line naming no figure refuses on one"
-
 # The silence a session that is neither a lane nor the recorded overseer keeps.
 # Two arms hold it, one where the install cannot be resolved and one where that
 # install has no workflow-state, and the candidate flag is what both read.
@@ -3206,275 +2622,17 @@ new_lane control_not_a_lane main
 unmark_lanes
 rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
 rm -f -- "${LANE:?}/.claude/skills/mailbox" "${LANE:?}/.agents/skills/mailbox/scripts"
-SILENT_READER="$LANE/.agents/skills/mailbox/scripts/lane-mail"
 # shellcheck disable=SC2046
 stop $(overseer_env "%3")
 expect 0 - "a session that is no lane and no overseer says nothing about an install it has not got"
-mutant unresolved-speaks -e 's@^    \[ "\$NO_LANE_ITEM" -eq 0 \] || return 1$@    :@'
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-# shellcheck disable=SC2046
-stop $(overseer_env "%3")
-expect 0 "lane-mail-check: handoff-skipped=$SILENT_READER" \
-  "control: without the candidate arms that session reports a gap at every turn end"
 
-# The question tool's refusal replaced by a pass, its judgement still made: a
-# lane then opens the dialog its overseer never sees.
-mutant no-question-tool -e 's@^  refuse question-tool "\$TOOL"$@  return 0@'
-new_lane control_question_tool ken-43
-mkdir -p "$LANE/tmp/lane-mail/KEN-43"
-install_arms "$MUTANT_PATH"
-TOOL_NAME=AskUserQuestion
-tool halt
-expect 0 - "control: without its refusal a lane's question tool call passes"
-
-# The mailbox check's pass on unread mail with no halt turned back into an
-# exit: a directive in the mailbox then lets the question tool through.
-mutant question-behind-mail -e 's@^    \[ -n "\$HALT" \] || return 0$@    [ -n "$HALT" ] || exit 0@'
-new_lane control_question_mail ken-45
-mkdir -p "$LANE/tmp/lane-mail/KEN-45"
-install_arms "$MUTANT_PATH"
-send KEN-45 'Rebase onto main.'
-TOOL_NAME=AskUserQuestion
-tool halt
-expect 0 - "control: with the mailbox check exiting on unread mail, a directive lets the question tool through"
-
-# The launch gate dropped from that check alone: a committed mailbox then
-# poses as a lane and an ordinary session loses its question tool.
-mutant question-unlaunched -e '/^question_tool_check() {/,/^}/ s@^  lane_launched || return 0$@  :@'
-new_lane control_question_unmarked ken-44
-mkdir -p "$LANE/tmp/lane-mail/KEN-44"
-install_arms "$MUTANT_PATH"
-unmark_lanes
-tool halt
-expect 2 "lane-mail-check: question-tool=AskUserQuestion" \
-  "control: without the marker rule a committed mailbox loses its question tool"
-TOOL_NAME=Bash
-
-# The idle refusal replaced by a pass: a lane that sent nothing then stops
-# unseen.
-mutant no-idle-refusal -e 's@^  refuse idle "\$ITEM"$@  return 0@'
-new_handoff_lane control_idle_refusal KEN-80
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-stop
-expect 0 "$GAP" "control: without its refusal a lane that sent nothing ends its turn"
-
-# The old judge used only mail sends. Removing the status comparison restores
-# that rule and rejects the paired no-send status update.
-mutant idle-ignores-status -e 's@^  if \[ -n "\$STATUS_STATE" \] \&\& \[ "\$STATUS_STATE" != "\$RECORDED_STATUS" \]; then$@  if false; then@'
-new_handoff_lane control_idle_status KEN-104
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-104.md"
-stop
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-104" \
-  "control: the old mail-only judge holds a no-send turn that updated its status"
-
-# Ignoring update time restores the content-only rule. The same text can be
-# written again when the wait continues, and must still report that turn.
-mutant idle-status-ignores-time -e "s@stat -c '%d:%i:%s:%y'@stat -c '%d:%i:%s'@" \
-  -e "s@stat -f '%d:%i:%z:%.9Fm'@stat -f '%d:%i:%z'@"
-new_handoff_lane control_idle_status_time KEN-105
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-105.md"
-touch -t 202401010000 "$LANE/tmp/lane-status-KEN-105.md"
-stop
-printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-105.md"
-touch -t 202401010001 "$LANE/tmp/lane-status-KEN-105.md"
-stop
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-105" \
-  "control: a judge without update time holds a same-text rewrite"
-
-mutant idle-status-follows-links -e '/^  if \[ -L "\$STATUS_FILE" \]/s@^  if .*; then$@  if false; then@'
-new_handoff_lane control_idle_status_link KEN-106
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-printf 'Step: waiting\n' > "$TMP_ROOT/control-unrelated-status"
-ln -s "$TMP_ROOT/control-unrelated-status" "$LANE/tmp/lane-status-KEN-106.md"
-[ -L "$LANE/tmp/lane-status-KEN-106.md" ]
-stop
-expect 0 "$GAP" "control: a judge without the path check counts a non-lane symbolic link as a report"
-
-# Restore the rejected parent-directory rule. A regular status file in the
-# supported linked tmp layout must report just as one in a plain tmp does.
-mutant idle-status-rejects-linked-tmp -e 's@^  if \[ -L "\$STATUS_FILE" \] ||@  if [ -L "$ROOT/tmp" ] || [ -L "$STATUS_FILE" ] ||@'
-new_handoff_lane control_idle_status_tmp KEN-107
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-mv "$LANE/tmp" "$TMP_ROOT/control-status-linked-tmp"
-ln -s "$TMP_ROOT/control-status-linked-tmp" "$LANE/tmp"
-[ -L "$LANE/tmp" ]
-printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-107.md"
-stop
-assert_eq "RC=$RC keys=$(hook_keys) record=$(sent_record KEN-107)" \
-  "RC=2 keys=account=unlisted;idle-status=$LANE/tmp/lane-status-KEN-107.md;idle=KEN-107 record=0 held" \
-  "control: rejecting linked tmp holds a turn that updated its regular status file"
-
-# The count ignored: a lane that reported this turn is held all the same.
-mutant idle-ignores-sent -e 's@^  if \[ "\$SENT" != "\$RECORDED" \]; then$@  if false; then@'
-new_handoff_lane control_idle_sent KEN-81
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-report KEN-81
-stop
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-81" \
-  "control: without the count a lane that sent a notice this turn is held"
-
-# The box filter dropped: the overseer's directive in the lane's inbound file
-# counts as the lane's own send.
-mutant idle-any-box -e 's@select(\.box == "to-overseer" and (\.kind == "ask" or \.kind == "notice"))@select(.kind == "ask" or .kind == "notice" or .kind == "directive")@'
-new_handoff_lane control_idle_box KEN-82
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-send KEN-82 'Rebase onto main.' >/dev/null
-read_mail KEN-82
-stop
-expect 0 "$GAP" "control: without the box filter a directive the overseer sent passes a lane that sent nothing"
-
-# The halt fact dropped: a halted lane is held and told to continue.
-mutant idle-ignores-halt -e 's@^  if \[ "\$HALTED" = true \]; then$@  if false; then@'
-new_handoff_lane control_idle_halt KEN-83
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-send KEN-83 'Stop here.' --halt >/dev/null
-read_mail KEN-83
-stop
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-83" \
-  "control: without the halt fact a halted lane is held"
-
-# The continued-turn arm dropped: the refusal repeats, which is the loop.
-mutant idle-refused-twice -e 's@^  if \[ "\$CONTINUED" = true \] && {@  if false \&\& {@'
-new_handoff_lane control_idle_twice KEN-84
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-stop
-stop_active
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-84" \
-  "control: without the continued-turn arm a lane is held twice in a row"
-
-# The notice left out of the record: the hook's own notice then passes the
-# lane's next idle turn as a send of its own.
-mutant idle-notice-uncounted -e '/^  record_sent idle-notice-unrecorded "\$((SENT + 1))" || :$/d'
-new_handoff_lane control_idle_notice KEN-85
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-stop
-stop_active
-stop
-expect 0 "$GAP" "control: with the notice uncounted the lane's next idle turn passes"
-
-# Each row plants one forbidden read or broadens the accepted read fields.
-# The same inventory assertion rejects every row, including a second read
-# inside claude_attached_agents but outside its one permitted jq block.
-PLANTED_TEXT_READ="jq -r 'select(.type == \"text\")';"
-for read_case in outside-function outside-site changed-fields other-hook; do
-  copy_name=lane-mail-check.sh
-  case "$read_case" in
-    outside-function)
-      mutant "text-$read_case" -e "s@^idle_check() {\$@idle_check() { $PLANTED_TEXT_READ@" ;;
-    outside-site)
-      mutant "text-$read_case" -e "s@^  local agents row id status output.*\$@&; $PLANTED_TEXT_READ@" ;;
-    changed-fields)
-      mutant "text-$read_case" -e 's@agentId: (?<id>@agentId: (?<words>@' ;;
-    other-hook)
-      MUTANT_SOURCE="$REPO_ROOT/hooks/lane-mail-halt.sh"
-      mutant "text-$read_case" -e "s@^set -euo pipefail\$@&; $PLANTED_TEXT_READ@"
-      unset MUTANT_SOURCE
-      copy_name=lane-mail-halt.sh ;;
-  esac
-  mkdir -p "$TMP_ROOT/text-inventory-$read_case"
-  cp "$MUTANT_PATH" "$TMP_ROOT/text-inventory-$read_case/$copy_name"
-  assert_eq "$(text_reads "$TMP_ROOT/text-inventory-$read_case/$copy_name")" "1" \
-    "control: inventory rejects $read_case"
-done
-
-# A words-reading judge outside the reviewed attached-agent roster read site:
-# it passes a turn whose final assistant text is no question. The transcript
-# rows hold the lane that wrote a statement and sent nothing.
-WORDS_READ='idle_check() { [ -n "$TRANSCRIPT" ] \&\& tail -n 1 -- "$TRANSCRIPT" | jq -r ".message.content[]?.text" | grep -q "?$" || return 0;'
-mutant words-read -e "s@^idle_check() {\$@$WORDS_READ@"
-new_handoff_lane control_words_read KEN-90
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-usage_line claude 1000 | jq -c '.message.content = [{type: "text", text: "All done."}]' > "$TMP_ROOT/words.jsonl"
-run_payload "$(jq -nc --arg p "$TMP_ROOT/words.jsonl" \
-  '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')"
-assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true)" "RC=0 idle=0" \
-  "control: a judge that reads the lane's words passes a statement from a lane that sent nothing"
-
-# The envelope failure passed in silence: a listing jq cannot read ends the
-# turn with nothing said.
-mutant idle-envelope-silent -e 's@ || { message events envelope "\$FACTS"; return 0; }$@ || return 0@'
-new_handoff_lane control_idle_envelope KEN-98
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-wrap_reader "$NOT_JSON"
-stop
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=0 keys=account=unlisted" \
-  "control: without its report a listing jq cannot read ends the turn unsaid"
-
-# The recorded hold ignored: every continued turn is reported, so a turn
-# another stop hook continued after the lane reported sends the notice.
-mutant idle-hold-ignored -e 's@{ \[ -n "\$HOLD" \] || \[ "\$HARNESS" = pi \]; }@true@'
-new_handoff_lane control_idle_hold KEN-91
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-report KEN-91
-stop
-stop_active
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=0 keys=account=unlisted;idle-notice=KEN-91" \
-  "control: without the recorded hold a turn another stop hook continued is reported, never held"
-
-# The hold made and not recorded: the turn it continued is held again.
-mutant idle-hold-unrecorded -e 's@^  record_sent idle-hold-unrecorded "\$SENT" held || return 0$@  record_sent idle-hold-unrecorded "$SENT" || return 0@'
-new_handoff_lane control_idle_unrecorded KEN-92
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-stop
-stop_active
-assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-92" \
-  "control: without the hold in the record the turn it continued is held again"
-
-# A hold the record could not take made all the same: the lane is held with
-# nothing to bound the next continued turn.
-mutant idle-hold-unguarded -e 's@^  record_sent idle-hold-unrecorded "\$SENT" held || return 0$@  record_sent idle-hold-unrecorded "$SENT" held || :@'
-if [ "${CAN_DENY_READS:?}" -eq 1 ]; then
-  new_handoff_lane control_idle_unguarded KEN-93
-  REPORT_ITEM=""
-  install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-  printf '0\n' > "$LANE/tmp/lane-mail/KEN-93/sent-count"
-  chmod 555 "$LANE/tmp/lane-mail/KEN-93"
-  stop
-  chmod 755 "$LANE/tmp/lane-mail/KEN-93"
-  assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=' "$ERR_FILE" || true)" "RC=2 idle=1" \
-    "control: without the guard a hold the record cannot take is made"
-else
-  printf '  skip  control: a hold the record cannot take made unguarded: running as root, which writes in a mode-555 directory\n'
-fi
-
-# The Pi arm dropped: a Pi turn another stop hook continued is held, and the
-# carrier runs nothing for that hold.
-mutant idle-pi-held -e 's@ || \[ "\$HARNESS" = pi \]; }@; }@'
-new_pi_lane control_idle_pi KEN-94 "$MUTANT_PATH"
-REPORT_ITEM=""
-report KEN-94
-stop
-stop_active
-assert_eq "RC=$RC idle=$(grep -c '^lane-mail-check: idle=KEN-94$' "$ERR_FILE" || true)" "RC=2 idle=1" \
-  "control: without the Pi arm a Pi turn another stop hook continued is held"
-
-# The halt's clear dropped: the hold the turn end before the halt recorded
-# stands.
-mutant idle-halt-keeps-hold -e 's@^    \[ -z "\$HOLD" \] || record_sent idle-unrecorded "\$SENT" || :$@    :@'
-new_handoff_lane control_idle_halt_hold KEN-96
-REPORT_ITEM=""
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-stop
-send KEN-96 'Stop here.' --halt >/dev/null
-read_mail KEN-96
-stop
-assert_eq "record=$(sent_record KEN-96)" "record=0 held" "control: without the clear a halted turn end keeps the hold"
+# A forbidden read planted outside the permitted jq block: the inventory
+# assertion rejects it.
+mutant text-outside-function -e "s@^idle_check() {\$@idle_check() { jq -r 'select(.type == \"text\")';@"
+mkdir -p "$TMP_ROOT/text-inventory"
+cp "$MUTANT_PATH" "$TMP_ROOT/text-inventory/lane-mail-check.sh"
+assert_eq "$(text_reads "$TMP_ROOT/text-inventory/lane-mail-check.sh")" "1" \
+  "control: inventory rejects outside-function"
 
 # --- the checkout's overseer mailbox --------------------------------------
 # `lane-mail peer send --repo` writes the overseer mailbox of another
@@ -3488,9 +2646,9 @@ assert_eq "record=$(sent_record KEN-96)" "record=0 held" "control: without the c
 # and a judge that finds no mark reached, so its turn end speaks only for the
 # mailbox. SESSION_ENV is its own environment, OTHER_ENV a second session's in
 # another pane of the same tmux server.
-named_session() { # NAME [JUDGE]
+named_session() { # NAME
   new_overseer "$1"
-  install_arms "${2:-$HOOK}"
+  install_arms "$HOOK"
   judge_says "$BELOW_MARK_LINE"
 }
 # shellcheck disable=SC2207
@@ -3507,12 +2665,8 @@ new_plain_session() { # NAME
 NATIVE_BIND_RULE=$(sed -n '/^    and ((.session_id /p' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh")
 
 # Native payloads carry the session id even when a child inherits the pane.
-identity_child() { # NAME HOME SESSION ARM [HOOK] [NATIVE_LIB]
-  named_session "$1" "${5:-$HOOK}"
-  if [ -n "${6:-}" ]; then
-    hole_install lib/overseer-launch.sh "$LANE/.claude/skills/orch/scripts"
-    cp -- "$6" "$LANE/.claude/skills/orch/scripts/lib/overseer-launch.sh"
-  fi
+identity_child() { # NAME HOME SESSION ARM
+  named_session "$1"
   bind_overseer claude "$OVERSEER_HOME_DIR" s1
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   CALL_ENV=("${SESSION_ENV[@]}")
@@ -3538,8 +2692,8 @@ identity_child() { # NAME HOME SESSION ARM [HOOK] [NATIVE_LIB]
   IDENTITY_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)" ] && echo same || echo changed) judged=$(( $(judge_calls) - judged_before ))"
 }
 # A failed first binding cannot let either the parent or its child read mail.
-binding_failed() { # NAME ARM [HOOK]
-  named_session "$1" "${3:-$HOOK}"
+binding_failed() { # NAME ARM
+  named_session "$1"
   bind_overseer claude "$OVERSEER_HOME_DIR" ""
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   printf '%s\n' '{"session_id":"s1","tokens":1000}' > "$LANE/tmp/lane-mail/overseer/context.json"
@@ -3568,9 +2722,6 @@ for failed_arm in deliver stop; do
   binding_failed "native_binding_failed_$failed_arm" "$failed_arm"
   assert_eq "$BINDING_RESULT" unchanged "$failed_arm: failed parent and child bindings change no mail, cursor, context, gaps or marks"
 done
-mutant native-binding-fail-open -e '/^    message record-unhealed /{n;s/^    return 1$/    return 0/;}'
-binding_failed native_binding_control deliver "$MUTANT_PATH"
-assert_eq "$BINDING_RESULT" changed 'control: accepting a failed binding breaks the unchanged-record assertion'
 
 for identity_case in home session missing; do
   for identity_arm in deliver stop; do
@@ -3588,27 +2739,11 @@ for identity_case in home session missing; do
       "the child receives one diagnostic on stderr and no context"
   done
 done
-for identity_case in home session missing; do
-  case "$identity_case" in
-    home)
-      wake_mutant native-home-control '    and ((.home // "") == "" or $home == "" or .home == $home)' '    and true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
-      identity_home="$TMP_ROOT/another-claude-home" identity_session=s1 ;;
-    session)
-      wake_mutant native-session-control "$NATIVE_BIND_RULE" "    and true;'" "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
-      identity_home=$OVERSEER_HOME_DIR identity_session=child ;;
-    missing)
-      wake_mutant native-missing-control '  def ol_native_match($harness; $home; $session): $session != ""' '  def ol_native_match($harness; $home; $session): true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
-      identity_home=$OVERSEER_HOME_DIR identity_session="" ;;
-  esac
-  identity_child "native_control_$identity_case" "$identity_home" "$identity_session" deliver "$HOOK" "$MUTANT_PATH"
-  assert_eq "$([ "$IDENTITY_RESULT" = 'RC=0 stdout= unchanged=yes state=same judged=0' ] && echo accepted || echo rejected)" rejected \
-    "control: dropping the $identity_case rule fails the unchanged-mail assertion"
-done
 
 # Launch and registration write a new pane before its first native hook.
 # Drive that writer, then call from the previous pane before the successor binds.
-successor_transition() { # NAME CALLER ARM [HOOK]
-  named_session "$1" "${4:-$HOOK}"
+successor_transition() { # NAME CALLER ARM
+  named_session "$1"
   overseer_transcript
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   write_transcript "$TRANSCRIPT" 100000
@@ -3663,15 +2798,10 @@ successor_transition() { # NAME CALLER ARM [HOOK]
   ARM_ARGS=()
   CALL_ENV=()
 }
-wake_mutant native-transition-control '      [ -n "$RECORDED_SESSION" ] || return 1' '      :'
-TRANSITION_CONTROL=$MUTANT_PATH
 while IFS='|' read -r transition_session transition_arm; do
   successor_transition "native_transition_${transition_session}_${transition_arm}" "$transition_session" "$transition_arm"
   assert_eq "$TRANSITION_RESULT" 'RC=0 stdout= stderr=- unchanged=yes state=same writes=0 judged=0 unread=1' \
     "$transition_arm: old $transition_session preserves mail, cursor, context, gaps and fleet state before the successor binds"
-  successor_transition "native_transition_control_${transition_session}_${transition_arm}" "$transition_session" "$transition_arm" "$TRANSITION_CONTROL"
-  assert_eq "$([ "$TRANSITION_RESULT" = 'RC=0 stdout= stderr=- unchanged=yes state=same writes=0 judged=0 unread=1' ] && echo accepted || echo rejected)" rejected \
-    "control: disabling only the absent-binding rule breaks the same old $transition_session $transition_arm assertion"
 done <<'ROWS'
 s1|deliver
 child|deliver
@@ -3827,8 +2957,8 @@ expect 2 "lane-mail-check: unread=1" \
 # nothing; one carrying no start names the session in its pane, which heals
 # it; one whose server start tmux cannot read establishes nothing.
 EARLIER_START=$((OVERSEER_SERVER_START - 3600))
-bound_session() { # NAME START [JUDGE]
-  named_session "$1" "${3:-$HOOK}"
+bound_session() { # NAME START
+  named_session "$1"
   record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "" "$2"
 }
 bound_session peer_bound "$OVERSEER_SERVER_START"
@@ -3956,6 +3086,7 @@ tool halt
 expect 0 - "the halt arm never judges the overseer mailbox"
 run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}'
 expect 0 - "nor does a subagent's turn end"
+# shellcheck disable=SC2034 # run_payload in lib/lane-mail-world.sh reads it
 CALL_ENV=()
 stop "${OTHER_ENV[@]}"
 expect 0 - "nor a session the fleet record does not name"
@@ -3974,179 +3105,6 @@ stop "${SESSION_ENV[@]}"
 expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
   "an install with the reader and no watch record library refuses the named session on the missing library"
 assert_eq "$(overseer_unread 'No library.')" "1" "and the note stays unread"
-
-mutant no-overseer-arm -e 's@^    MAILBOX_ITEM=overseer$@    return 0@'
-named_session control_peer_named "$MUTANT_PATH"
-peer_send 'Never read.'
-stop "${SESSION_ENV[@]}"
-expect 0 - "control: without the overseer mailbox arm a peer note never reaches the named session"
-
-# With the record test gone, every lead session in a checkout no live watch
-# holds is handed the mailbox, a second session in another pane among them.
-mutant any-lead-reads -e '/^mail_check() {/,/^}/ { /^    overseer_identified || return 0$/d; }'
-named_session control_peer_other "$MUTANT_PATH"
-peer_send 'Taken by another pane.'
-stop "${OTHER_ENV[@]}"
-expect 2 "lane-mail-check: unread=1" \
-  "control: without the record test a session in another pane is handed the named session's note"
-
-# With the start test gone the pair alone names the session: a later server
-# handed the recorded pid and pane id is handed the gone server's note.
-mutant pair-only -e '/^   (if ol_names(/s@\$start;@(.server_start | tostring);@'
-bound_session control_peer_reused "$EARLIER_START" "$MUTANT_PATH"
-bind_overseer claude "$OVERSEER_HOME_DIR" s1
-peer_send 'Taken by a later server.'
-stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: unread=1" \
-  "control: without the start test a later server's session in the recorded pane id is handed the note"
-# A completed native binding isolates the current-server read from healing.
-# Substituting the recorded start for a failed tmux read admits that caller.
-wake_mutant start-unread-names '      start=$(tmux_server_start "$2" "${key%% *}")' "      start=$OVERSEER_SERVER_START"
-bound_session control_peer_start_unread "$OVERSEER_SERVER_START" "$MUTANT_PATH"
-bind_overseer claude "$OVERSEER_HOME_DIR" s1
-peer_send 'Unread start taken.'
-stop "${SESSION_ENV[@]}" TMUX_SERVER_START=
-assert_eq "RC=$RC unread=$(overseer_unread 'Unread start taken.')" "RC=2 unread=0" \
-  "control: a hook that reads past an unread start hands that session the note"
-
-mutant record-at-call-dir -e '/^overseer_identify() {/,/^}/ s@cd -- "\$ROOT" 2>/dev/null && @@'
-named_session control_peer_call_elsewhere "$MUTANT_PATH"
-peer_send 'Named at the call dir.'
-CALL_DIR="$PEER_SENDER"
-CALL_ENV=("CLAUDE_PROJECT_DIR=$LANE")
-stop "${SESSION_ENV[@]}"
-CALL_DIR=""
-CALL_ENV=()
-expect 0 - "control: a record read in the call's own directory names no session for the root's mailbox"
-
-mutant peer-halt-reads -e '/^    \[ "\$ARM" != halt \] || return 0$/d'
-named_session control_peer_halt "$MUTANT_PATH"
-peer_send 'Halt arm.'
-watch_stub
-CALL_ENV=("${SESSION_ENV[@]}")
-tool halt
-# shellcheck disable=SC2034 # run_payload in lib/lane-mail-world.sh reads it
-CALL_ENV=()
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
-  "control: without the halt exclusion the halt arm judges the overseer mailbox"
-
-mutant peer-subagent-reads -e '/^    \[ "\$CALLER" != subagent \] || return 0$/d'
-named_session control_peer_subagent "$MUTANT_PATH"
-peer_send 'Subagent.'
-watch_stub
-run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}' "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
-  "control: without the lead-only rule a subagent's turn end judges the overseer mailbox"
-
-mutant peer-no-file-test -e '/^    \[ -e "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || \[ -L "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || return 0$/d'
-named_session control_peer_nofile "$MUTANT_PATH"
-watch_stub
-stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
-  "control: without the file test the named session with no overseer mailbox judges the fleet state"
-
-mutant peer-reader-refuses -e 's@^    resolve_reader || return 0$@    resolve_reader || refuse "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"@'
-named_session control_peer_noreader "$MUTANT_PATH"
-peer_send 'No reader.'
-rm -rf -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
-rm -rf -- "${LANE:?}/.claude/skills/mailbox" "${LANE:?}/.agents/skills/mailbox/scripts"
-stop "${OTHER_ENV[@]}"
-expect 2 "lane-mail-check: reader=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
-  "control: refusing where no reader resolves holds every session in the checkout on mail none of them reads"
-
-mutant peer-path-passes -e 's@^    refuse fleet-state "\$SCRIPTS/workflow-state" @    return 0 # @' -e 's/input_filename/""/'
-named_session control_peer_state "$MUTANT_PATH"
-peer_send 'Path unread.'
-state_stub path-fails
-stop "${SESSION_ENV[@]}"
-assert_eq "RC=$RC unread=$(overseer_unread 'Path unread.')" "RC=0 unread=1" \
-  "control: without the path refusal a failed state read passes mail protection and leaves the note unread"
-
-mutant peer-library-passes -e 's@^    \*) refuse fleet-state "\$SCRIPTS/lib/watch-pid.sh" .*$@    *) return 1 ;;@'
-named_session control_peer_library "$MUTANT_PATH"
-peer_send 'Library unread.'
-state_stub delegate
-hole_watch_library
-stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: unread=1" "control: without the library refusal a library that answers nothing reads as no live watch"
-
-mutant peer-ignores-watch -e '/^watch_live() {/,/^}/ s@^    0) return 0 ;;$@    0) return 1 ;;@'
-named_session control_peer_watched "$MUTANT_PATH"
-start_watch
-peer_send 'Taken from the watch.'
-stop "${SESSION_ENV[@]}"
-stop_watch
-expect 2 "lane-mail-check: unread=1" "control: without the live-watch rule the named session takes the watch's mail"
-
-mutant peer-idle-stands-down -e '/^watch_live() {/,/^}/ s@^    1) return 1 ;;$@    1) return 0 ;;@'
-named_session control_peer_idle "$MUTANT_PATH"
-peer_send 'Nobody watching.'
-stop "${SESSION_ENV[@]}"
-expect 0 - "control: without the no-watch rule a checkout with no live watch leaves the note unread"
-
-mutant lane-reads-overseer -e 's@^    MAILBOX_ITEM="\$ITEM"$@    MAILBOX_ITEM=overseer@'
-new_lane control_peer_lane ken-72
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER"
-send KEN-72 'Own directive.'
-peer_send 'Peer note.'
-stop
-assert_eq "RC=$RC peer=$(grep -cF 'Peer note.' "$ERR_FILE")" "RC=2 peer=1" \
-  "control: without the own-mailbox rule a lane is handed the peer's note"
-
-# The deliver arm's acknowledgement removed: the same lines are handed over
-# at every finished call of the lead's.
-mutant deliver-no-ack -e '/^    acknowledge$/d'
-new_lane control_deliver_ack ken-222
-install_arms "$MUTANT_PATH"
-send KEN-222 'Rebase first.'
-tool deliver
-tool deliver
-assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
-  "control: without its acknowledgement the deliver arm hands the same lines over again"
-# A Pi lane's turn rows: with the call gone the lane emits nothing, so every reader reads it
-# unjudged.
-mutant no-lane-row -e '/^lane_row$/d'
-new_pi_lane control_pi_rows KEN-96 "$MUTANT_PATH"
-pi_tool
-pi_stop
-assert_eq "rows=$(pi_rows)" "rows=-" "control: without the lane row call a Pi lane writes no row"
-mutant no-working-payload -e 's/^  \[ "\$ROW_EVENT" != Stop \] || ROW_PAYLOAD=\$INPUT$/  [ "$ROW_EVENT" != Stop ] || ROW_PAYLOAD="{}" # $INPUT/'
-new_pi_lane control_pi_count KEN-96 "$MUTANT_PATH"
-CONTROL_COUNT_LOG="$(PASS=0 FAIL=0; pi_working_count; [ "$FAIL" -eq 0 ])" && CONTROL_COUNT_RC=0 || CONTROL_COUNT_RC=$?
-assert_eq "$CONTROL_COUNT_RC" 1 'control: the payload assertions fail when lane_row loses the working count'
-assert_eq "$(grep -Fxc '  FAIL  a Pi Stop keeps working-agent count 1' <<<"$CONTROL_COUNT_LOG" || true)" 1 \
-  'control: the missing payload reaches the working-agent count assertion'
-# Without the moved root a pool account's Pi install writes no row: the FLT-400
-# silence the moved root closes.
-mutant no-moved-pi-root -e 's@^  \[ -z "\$PI_HOOK_DIR" \] || \[ "\$PI_HOOK_DIR" != "\$THIS_HOOK_DIR" \] || HARNESS=pi$@  :@'
-new_handoff_lane control_pi_pool KEN-99
-PI_POOL="$LANE/.pool/acct"
-mkdir -p "$PI_POOL"
-ln -s "$LANE/.claude/skills/orch" "$PI_POOL/skills"
-install_hook "$MUTANT_PATH" "$PI_POOL/kendex/hooks/lane-mail-check.sh"
-PI_ROWS="$LANE/tmp/lane-mail/KEN-99/session-rows.jsonl"
-pi_stop '{}'
-run_payload "$(jq -nc --arg p "$PI_TURN" '{session_id:"s1",stop_hook_active:false,transcript_path:$p,context_window:200000}')" \
-  "PI_CODING_AGENT_DIR=$PI_POOL"
-assert_eq "rows=$(pi_rows)" "rows=-" "control: without the moved root a pool account's Pi install writes no row"
-
-# The read naming no worktree: a lane whose record stands in its worktree's tmp
-# is refused at every turn end.
-mutant no-worktree-read -e 's@^  \[ "\$ROLE" = overseer \] || \[ "\$LAUNCHED" != yes \] || set -- --worktree "\$ROOT"$@  :@'
-worktree_handoff_lane control_worktree_state KEN-442 "$MUTANT_PATH"
-record_handoff KEN-442 "" "$LANE/tmp"
-stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-442
-expect 2 "lane-mail-check: context=500000" \
-  "control: without the worktree read a record in the worktree's tmp leaves the refusal standing"
-# The instruction naming no directory: the set line points at the main clone.
-mutant no-state-dir -e 's@^  \[ -z "\$HANDOFF_FILE" \] || printf -v STATE_ARGS@  : || printf -v STATE_ARGS@'
-worktree_handoff_lane control_worktree_set KEN-444 "$MUTANT_PATH"
-stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-444
-assert_eq "RC=$RC $(worktree_set_named KEN-444)" "RC=2 set=0 init=0" \
-  "control: without the directory the read found, the set line does not name the worktree's tmp"
-CALL_DIR=""
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

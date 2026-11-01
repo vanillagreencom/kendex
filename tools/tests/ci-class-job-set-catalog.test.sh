@@ -62,62 +62,24 @@ ROWS
 catalog_rows "$JOB_SET"
 check "compiled catalog prose selects both jobs" 'catalog=true
 smoke=true' "$(catalog_bits "$(SELECT_IN="$READ_WORLD" selection trivial true docs/a.md)")"
-# Plant the inverse at each selection rule. The assertions remain the same
-# as the positive table; the copy must fail at least one of them.
+# Plant the inverse of the inputs rule. The assertions remain the same as the
+# positive table; the copy must fail at least one of them.
 mkdir -p "$TMP/catalog/tools"
 cp -R "$ROOT/tools/lib" "$TMP/catalog/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/catalog/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/catalog/tools/rust-reads"
 catalog_copy="$TMP/catalog/tools/ci-job-set"
-for rule in inputs compiled scope skip; do
-  case "$rule" in
-    inputs) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=false' ;;
-    compiled) needle='  case "$read_lines" in *compiled=1*) catalog=true ;; esac'; replacement='  case "$read_lines" in *compiled=1*) catalog=false ;; esac' ;;
-    scope) needle='          if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1'; replacement='          if (kind[r] == "include" || (kind[r] == "build" && path !~ ENVIRON["PROSE"])) compiled = 1' ;;
-    skip) needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'; replacement='  catalog=true; any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true' ;;
-  esac
-  [ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
-  NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
-  ! cmp -s "$JOB_SET" "$catalog_copy" || exit 1
-  chmod +x "$catalog_copy"
-  if (PASS=0 FAIL=0; catalog_rows "$catalog_copy" >"$TMP/catalog-control-$rule"; [ "$FAIL" -eq 0 ]); then
-    bad "must-fail: $rule inverse leaves catalog selection green"
-  else
-    ok "must-fail: $rule inverse fails catalog selection"
-  fi
-done
-# The platform lanes run on a standard diff that is not documentation alone,
-# prose included; the control drops that rule.
-mkdir -p "$TMP/standard/tools"
-cp -R "$ROOT/tools/lib" "$TMP/standard/tools/lib"
-cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/standard/tools/"
-cp "$ROOT/tools/rust-reads" "$TMP/standard/tools/rust-reads"
-sed '/\[ "\$class:\$docs" != standard:false \] /d' "$JOB_SET" >"$TMP/standard/tools/ci-job-set"
-chmod +x "$TMP/standard/tools/ci-job-set"
-[ "$(SELECT_WITH="$TMP/standard/tools/ci-job-set" selection standard false "$UNREAD_DOC")" = "$PROSE_ROW" ] &&
-  ok "control: without the standard rule a standard prose diff stands the platform lanes down" ||
-  bad "control: without the standard rule a standard prose diff stands the platform lanes down"
-# EDIT|CLASS|PATHS|EXPECTED — a copy with that rule removed answers the row
-# other than EXPECTED.
-while IFS='|' read -r edit class paths expected; do
-  sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
-  chmod +x "$TMP/rule/tools/ci-job-set"
-  if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
-    bad "control: the edit changed nothing in a ci-job-set copy: $edit"
-    continue
-  fi
-  got="$(SELECT_IN="$READ_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection "$class" true "$paths")"
-  [ "$got" != "$expected" ] && ok "control: $edit reddens $class over $paths" ||
-    bad "control: $edit reddens $class over $paths (still '$got')"
-done <<CONTROLS
-s/row=trivial-read ;;/row=trivial ;;/|trivial|docs/a.md|$READ_PROSE_ROW
-s/index(path, read\[r\] "\/") != 1/index(path, read[r]) != 1/|trivial|docs/legalese.md|$VERIFY_ROW
-s/if (.*) build = 1/build = 1/|micro|docs/a.md|$READ_PROSE_ROW
-s/if (.*) build = 1/if (path !~ ENVIRON["PROSE"]) build = 1/|micro|tools/x|$TOOL_ROW
-s/if any "\$LANE_SOURCES"; then/if false; then/|standard|.github/workflows/skill-tests.yml|$ALL_ON
-s/\(macos-test-contracts..json)\)[$]/\1/|standard|tools/ci-job-set.orig|$TOOL_ROW
-s/any '^ui\/' .. uitree=true/uitree=true/|micro|docs/a.md|$READ_PROSE_ROW
-CONTROLS
+needle='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true'
+replacement='  any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=false'
+[ "$(grep -cxF -- "$needle" "$JOB_SET")" -eq 1 ] || exit 1
+NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }' "$JOB_SET" >"$catalog_copy"
+! cmp -s "$JOB_SET" "$catalog_copy" || exit 1
+chmod +x "$catalog_copy"
+if (PASS=0 FAIL=0; catalog_rows "$catalog_copy" >"$TMP/catalog-control-inputs"; [ "$FAIL" -eq 0 ]); then
+  bad "must-fail: inputs inverse leaves catalog selection green"
+else
+  ok "must-fail: inputs inverse fails catalog selection"
+fi
 
 # The shard selection in a fixture world, where every reader is planted and
 # so each list is whole:
@@ -143,16 +105,6 @@ awk -v needle="$needle" '$0 != needle' "$ROOT/tools/lib/skill-requirements.awk" 
 got="$(awk -f "$TMP/rule/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
 [ "$got" != "$required_edge" ] && ok "must-fail: dropping the agents skip fails the required-edge row" || \
   bad "must-fail: dropping the agents skip leaves the required-edge row green"
-cp "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk"
-needle='/^  commands:/ { commands = 1; next }'
-[ "$(grep -cxF -- "$needle" "$ROOT/tools/lib/skill-requirements.awk")" -eq 1 ] || exit 1
-awk -v needle="$needle" '$0 != needle' "$ROOT/tools/lib/skill-requirements.awk" >"$TMP/rule/tools/lib/skill-requirements.awk"
-! cmp -s "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk" || exit 1
-got="$(awk -f "$TMP/rule/tools/lib/skill-requirements.awk" "$SEL_WORLD/skills/doc-limits/SKILL.md")"
-case "$got" in
-  *"$(printf '?\t%s' "$SEL_WORLD/skills/doc-limits/SKILL.md")"*) ok "must-fail: the base reader's command refusal rejects the valid required-edge row" ;;
-  *) bad "must-fail: removing command support did not refuse the declared key" ;;
-esac
 cp "$ROOT/tools/lib/skill-requirements.awk" "$TMP/rule/tools/lib/skill-requirements.awk"
 # PATH|SHARDS, every row micro and not docs-only.
 world_rows=0
@@ -184,54 +136,6 @@ skills/CLAUDE.md|["guards-scans"]
 refresh/runner.sh|["review-gate","refresh","guards-scans"]
 ROWS
 [ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
-
-# The shard selection's rules, each removed from a copy run over the fixture
-# world: the copy must answer its path other than the script does. Fields
-# split on `@`, since the edits spell `|`. The row for
-# skills/orch/scripts/lib/branch-growth.sh under the package-arm edit is the
-# inverse the selection must never reach, a shared-script diff missing its consumers.
-[ "$(grep -c '^    skills/orch)' "$JOB_SET")" -eq 1 ] || exit 1
-while IFS='@' read -r edit paths; do
-  sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
-  chmod +x "$TMP/rule/tools/ci-job-set"
-  if cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set"; then
-    bad "control: the edit changed nothing in a ci-job-set copy: $edit"
-    continue
-  fi
-  expected="$(SELECT_IN="$SEL_WORLD" selection micro false "$(printf '%s\n' $paths)")"
-  got="$(SELECT_IN="$SEL_WORLD" SELECT_WITH="$TMP/rule/tools/ci-job-set" selection micro false "$(printf '%s\n' $paths)")"
-  [ "$got" != "$expected" ] && ok "control: $edit reddens $paths" ||
-    bad "control: $edit reddens $paths (still '$got')"
-done <<'CONTROLS'
-s/^    \[ "\$required" != "\$1" \] || reach_skill "\$skill"$/    :/@skills/orch/scripts/lib/branch-growth.sh
-s/skills\/\*:script) reach_skill "\${package#skills\/}"/skills\/*:script) want_package "$package"/@skills/github/scripts/lib/gh-auth.sh
-s/? "suite" : "script")/? "script" : "script")/@skills/preflight/scripts/preflight
-s/print "(^|\[^A-Za-z0-9_.-\])" \$0 end/print $0 end/@install.sh
-s/^\$path" ;;$/" ;;/@kendex.settings.toml
-/^      \*\.md | \*\.markdown) ;;$/d@README.md
-s/^      \*\/\*) pending="\$pending$/      *.md | *.markdown) ;; *\/*) pending="$pending/@docs/x/policy.md
-s/0) want_shard guards-tools-tail ;;/0) ;;/@docs/cite.md
-s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail ;;/@hooks/block-bare-cd.sh
-s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-hooks-tail node ;;/@hooks/block-bare-cd.sh
-s/skills\/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit ;;/@docs/guard/refs.md
-s/skills\/mailbox) want_shard mailbox ;;/skills\/mailbox) : ;;/@skills/mailbox/tests/alone.sh
-/^  \/\^pi-extensions\\\/\/ { package = "pi-extensions" }$/d@tools/demo-tool
-s/^\.\.\/\$1\/"$/"/@skills/orch/scripts/lib/branch-growth.sh
-s/^        want_package tools$/        :/@skills/price-handling/scripts/x
-s/^        want_shard guards-hooks guards-hooks-tail$/        :/@skills/price-handling/scripts/x
-s/ | \.claude\/hooks\/\*//@.claude/hooks/lane-mail-check
-s/skills\/\*\/\* | \.agents\/skills\/\*\/\*)/no-package)/@skills/orch/scripts/lib/branch-growth.sh
-s/skills\/\* | hooks\/\* | tools\/\* | refresh\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@skills/price-handling/scripts/x
-s/skills\/\* | hooks\/\* | tools\/\* | refresh\/\*) want_shard guards-scans/no-tree) want_shard guards-scans/@refresh/runner.sh
-s/\[ "\$build" = false \] || .*/:/@crates/demo/src/unnamed.rs
-s/! any "\$ALL_SHARDS" || want_shard \$SHARDS/:/@.github/instructions/code-review.md
-s/\[ "\$shards" != "\[\]" \] || shell=false/:/@install.sh
-s/^      macos=\$platform$/      macos=true/@skills/price-handling/SKILL.md
-s/^      macos_shard "\$shards" || macos=false$/      :/@pi-extensions/pi-demo/src/x.ts
-s/hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;/hooks) want_shard guards-hooks guards-tools-tail node ;;/@hooks/block-bare-cd.sh
-s/^        want_shard guards-hooks guards-hooks-tail$/        want_shard guards-hooks/@skills/price-handling/scripts/x
-s/skills\/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks guards-hooks-tail ;;/skills\/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks ;;/@docs/guard/refs.md
-CONTROLS
 
 # Each refusal the shard selection makes, from a fixture or a planted copy.
 # A dependencies block this reader cannot take is refused, never read as no

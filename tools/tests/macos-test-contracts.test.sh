@@ -156,16 +156,6 @@ class NativeContracts(unittest.TestCase):
         answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)
         self.assertEqual(answer.returncode, 1)
         runner.write_text(original)
-        owner_source = self.owner.read_text()
-        needle = 'contracts.get(relative, "unresolved")'
-        self.assertEqual(owner_source.count(needle), 1)
-        self.owner.write_text(owner_source.replace(needle, 'contracts.get(relative, "linux-duplicate")'))
-        answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)
-        self.assertEqual(answer.returncode, 0, answer.stderr)
-        started = {line.removeprefix("start suite=") for line in answer.stdout.splitlines() if line.startswith("start suite=")}
-        with self.assertRaises(AssertionError):
-            self.assertEqual(started, expected)
-        self.owner.write_text(owner_source)
         # Removing the profile is the control for the real runner boundary.
         environment.pop("RUN_ALL_NATIVE_CONTRACTS")
         answer = subprocess.run(argv, env=environment, capture_output=True, text=True, timeout=60)

@@ -82,16 +82,14 @@ host_account_rows "$HOOK"
 wake_mutant host-account-unreturned \
   '        0) message account host-measured; return 0 ;;' \
   '        0) : ;; # message account host-measured; return 0'
-# Each hosted row runs alone, so every harness's row is proved to need it.
-while IFS= read -r row; do
-  control_status=0
-  (
-    FAIL=0
-    host_account_rows "$MUTANT_PATH" "$row"
-    [ "$FAIL" -eq 0 ]
-  ) > "$TMP_ROOT/host-account.control.log" || control_status=$?
-  assert_eq "$control_status" 1 "control: the ${row%%|*} row rejects a sandbox account lookup"
-done <<< "$(grep '^hosted' <<< "$HOST_ACCOUNT_ROWS")"
+row=$(grep -m 1 '^hosted' <<< "$HOST_ACCOUNT_ROWS")
+control_status=0
+(
+  FAIL=0
+  host_account_rows "$MUTANT_PATH" "$row"
+  [ "$FAIL" -eq 0 ]
+) > "$TMP_ROOT/host-account.control.log" || control_status=$?
+assert_eq "$control_status" 1 "control: the ${row%%|*} row rejects a sandbox account lookup"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

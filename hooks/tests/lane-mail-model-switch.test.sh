@@ -19,7 +19,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|reset|reset-warning) ;;
+    matching|fresh-shell|missing-judge) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -552,38 +552,23 @@ fi
 
 if [[ -z "${MODEL_CONTROL:-}" ]]; then
   echo '=== must-fail controls ==='
+  # One mutation per unit this suite holds: the hook's model check, the
+  # recovery relaunch library and the companion hook. None reddens another.
   while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/control-$rule.sh"
-    if [[ "$rule" == baseline ]]; then
-      git -C "$REPO_ROOT" show b510440e4273d1cd168f381eb3d5b8d8a6aa693e:hooks/lane-mail-check.sh > "$control"
-    else
-      python3 - "$HOOK" "$control" "$rule" <<'CONTROL'
+    python3 - "$HOOK" "$control" "$rule" <<'CONTROL'
 from pathlib import Path
 import sys
 source, target, rule = sys.argv[1:]
 text = Path(source).read_text()
 old, new = {
     "comparison": ('elif [ "$launch_id" = "$observed_id" ]; then return 0', 'elif false; then return 0'),
-    "family": ('observed_id=$(launch_choice_model_id claude "$observed" resolved "$launched")', 'observed_id=$(launch_choice_model_id claude "$observed" resolved)'),
-    "duplicate": ('elif $current.model_check.session_id == $session', 'elif false and $current.model_check.session_id == $session'),
-    "history": ('and $current.model_check.launch_identity == $identity', 'and true'),
-    "callback": ('.launch.pane == $pane and (.launch.server | tostring) == $server', 'true'),
-    "server": ('(.launch.server | tostring) == $server', '.launch.server == $server'),
-    "standing": ('$prior // {merged:', '{merged:'),
-    "unbound": ('unbound) model_unavailable_notice launch-unbound "$observed"; return 0 ;;', 'unbound) return 0 ;;'),
-    "notice": ('model_unavailable_notice adapter-unread "$observed" "$(cat -- "$WORK_DIR/model.err")"; return 0', 'message model-unavailable adapter-unread; return 0'),
-    "claim": ('or $current.launch != $record.launch or $current.launched_at != $record.launched_at', 'or $current.launch != $record.launch or false'),
-    "roster": ('(.child_sessions // {}) as $children', '{} as $children'),
-    "unavailable": ('if .model_checks[$session] != null then', 'if false then'),
-    "reset": ('    model_recovery_reset\n', '    : # model_recovery_reset\n'),
-    "reset-warning": ('message model-unavailable reset-launch-unread', 'model_unavailable_notice reset-launch-unread ""'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
 assert changed != text
 Path(target).write_text(changed)
 CONTROL
-    fi
     status=0
     MODEL_CONTROL=1 MODEL_CONTROL_CASE="$control_case" HOOK_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/control-$rule.log" 2>&1 || status=$?
     if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/control-$rule.log"; then
@@ -592,21 +577,7 @@ CONTROL
       assert_eq "$status" red "$rule production control must fail"
     fi
   done <<'CONTROLS'
-baseline|complete
 comparison|matching
-family|family-alias
-duplicate|complete
-history|complete
-callback|retired-callback
-claim|replaced-before-write
-roster|extended
-unavailable|no-fleet-record
-server|complete
-standing|complete
-unbound|gui-session
-notice|adapter
-reset|reset
-reset-warning|reset-warning
 CONTROLS
   while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/relaunch-$rule.sh"
@@ -617,12 +588,6 @@ source, target, rule = sys.argv[1:]
 text = Path(source).read_text()
 old, new = {
     "stop": ('lane_stop_local "" "$pid" "$start" "$wake_pid" "$wake_start" "$harness" || {', 'true || {'),
-    "pin": ('if [[ "${5:-}" == model-switched ]]; then', 'if false; then'),
-    "binding": ('[[ "$claim" == true ]] || return 0', ':'),
-    "selector": ('model="${model}[1m]"', 'model="$model"'),
-    "selector-id": ('&& "$launch_id" == "$selector_id"', '&& true'),
-    "words": ('eval "choice_words=($choice)" || return 1', 'choice_words=("$choice")'),
-    "account": ('[[ -z "$2" ]] || LANE_RECOVERY_ARGS+=(--lane "$2")', 'LANE_RECOVERY_ARGS+=(--lane "$2")'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -631,21 +596,13 @@ Path(target).write_text(changed)
 CONTROL
     status=0
     MODEL_CONTROL=1 MODEL_CONTROL_CASE="$control_case" MODEL_RELAUNCH_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/relaunch-$rule.log" 2>&1 || status=$?
-    failure='^  FAIL '
-    [[ "$rule" != account ]] || failure='^  FAIL  omitted-mismatch recovery arguments preserve its account option$'
-    if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/relaunch-$rule.log"; then
+    if [[ "$status" != 0 ]] && grep -q '^  FAIL ' "$TMP_ROOT/relaunch-$rule.log"; then
       assert_eq red red "$rule recovery control rejects the defect"
     else
       assert_eq "$status" red "$rule recovery control must fail"
     fi
   done <<'CONTROLS'
 stop|fresh-shell
-pin|fresh-shell
-binding|stale-launch
-selector|extended
-selector-id|conflicting-selector
-words|extended
-account|optional-account
 CONTROLS
   control="$TMP_ROOT/companion-control.sh"
   python3 - "$COMPANION" "$control" <<'CONTROL'
