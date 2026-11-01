@@ -18,7 +18,7 @@ Judge `.agents/skills/code-quality/SKILL.md` § Tests and `.agents/skills/code-q
 
 ## Discipline
 
-The highest-value question is not "is there a test?" but "**can this test still fail?**" Hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted.
+The highest-value question is not "is there a test?" but "**can this test still fail?**" Hunt for tests that stay green when the behavior they guard is weakened, inverted, or deleted. The next question is what each run of the test costs: a real-clock wait or a real device effect its claim does not need is cost a cheaper form removes.
 
 A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 
@@ -36,7 +36,7 @@ A finding in a class `.agents/skills/reviewer/references/finding-disposition.md`
 
 ## Output
 
-Missing or weak needed protection, or an unwired suite that supplies it → `blockers[]`. A missing must-fail control blocks only a new or changed instrument. A test with no protection, including a vacuous or redundant case, → `suggestions[]` with category `fix` to remove it. Accept a justified omission.
+Missing or weak needed protection, or an unwired suite that supplies it → `blockers[]`. A missing must-fail control blocks only a new or changed instrument. A test with no protection, including a vacuous or redundant case, or one whose protection a cheaper form keeps → `suggestions[]` with category `fix`. The test rows of the `.agents/skills/reviewer/references/finding-disposition.md` decision table give each one's remedy and say which omission to accept.
 
 ## Required Skills
 
