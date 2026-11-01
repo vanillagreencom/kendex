@@ -3,6 +3,7 @@
 // stand-in `codex` executable with real processes.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,7 @@ import { CodexBridge } from "../src/bridge.ts";
 import { CodexProtocolClient } from "../src/json-rpc.ts";
 import { descendantsOf, parseProcStat, parsePsRows } from "../src/process-tree.ts";
 import { finish, model, system, user } from "./lib/fake-client.mjs";
+import { ARG_SENTINEL, fixtureWorld, markerPidsFromPs } from "./lib/codex-fixture.mjs";
 import { alive, goneWithin, recordedPids, writeStubCodex } from "./lib/stub-codex.mjs";
 
 const scratch = join(fileURLToPath(new URL("..", import.meta.url)), "tmp");
@@ -28,6 +30,52 @@ function scratchDir(t, name) {
 function launch(executable, home) {
 	return { executable, codexHome: home, cwd: home, env: { PATH: process.env.PATH }, configOverrides: [], handshakeTimeoutMs: 5000 };
 }
+
+test("fixture marker ps rows identify only this world's live marker command", () => {
+	const markerScript = fileURLToPath(new URL("./fixtures/marker-mcp.mjs", import.meta.url));
+	const markers = { user: "/fixture world/STARTED-user" };
+	const command = `${process.execPath} ${markerScript} ${markers.user} --token ${ARG_SENTINEL}`;
+	for (const row of [
+		{ name: "running", line: ` 101 S+ ${command}`, expected: [101] },
+		{ name: "zombie", line: ` 101 Z+ ${command}`, expected: [] },
+		{ name: "another world", line: ` 102 S ${command.replace(markers.user, "/another world/STARTED-user")}`, expected: [] },
+		{ name: "another script", line: ` 103 S ${command.replace(markerScript, `${markerScript}.other`)}`, expected: [] },
+		{ name: "another executable", line: ` 104 S ${command.replace(process.execPath, "/another/node")}`, expected: [] },
+		{ name: "arguments that only mention the marker", line: ` 105 S ${process.execPath} -e ${command}`, expected: [] },
+		{ name: "empty", line: "", expected: [] },
+	]) {
+		assert.deepEqual(markerPidsFromPs(row.line, markers), row.expected, row.name);
+	}
+});
+
+test("fixture marker discovery and cleanup keep another world's marker alive", { timeout: 10_000 }, async (t) => {
+	const world = await fixtureWorld("marker-identity");
+	const foreignRoot = mkdtempSync(join(scratch, "foreign-marker-"));
+	const markerScript = fileURLToPath(new URL("./fixtures/marker-mcp.mjs", import.meta.url));
+	const children = [];
+	let closed = false;
+	t.after(async () => {
+		for (const { child, exited } of children) {
+			child.kill("SIGKILL");
+			await exited;
+		}
+		if (!closed) await world.close();
+		rmSync(foreignRoot, { recursive: true, force: true });
+	});
+	for (const marker of [world.markers.user, join(foreignRoot, "STARTED")]) {
+		const child = spawn(process.execPath, [markerScript, marker, "--token", ARG_SENTINEL], { stdio: ["pipe", "ignore", "inherit"] });
+		children.push({ child, exited: once(child, "exit") });
+		await recordedPids(marker === world.markers.user ? world.root : foreignRoot, marker === world.markers.user ? "STARTED-user" : "STARTED");
+	}
+	const [owned, foreign] = children;
+	assert.deepEqual(world.runningMarkers(), [owned.child.pid]);
+	// A pid record alone must not let this world's cleanup kill another marker.
+	writeFileSync(world.markers.late, `${foreign.child.pid}\n`);
+	await world.close();
+	closed = true;
+	await owned.exited;
+	assert.equal(alive(foreign.child.pid), true);
+});
 
 for (const row of [
 	{ name: "another release", write: (dir) => writeStubCodex(dir, { version: "0.164.0" }), error: "codex-version-unsupported found=0.164.0 expected=0.163.0" },

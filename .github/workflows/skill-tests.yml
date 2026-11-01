@@ -1412,7 +1412,7 @@ jobs:
       # lockfile pins through a mock model provider on 127.0.0.1.
       # `npm ci` keeps the bundle check below tied to the lockfile.
       - name: pi-codex-bridge suite
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-bridge
         run: |
           npm ci --no-audit --no-fund
@@ -1421,7 +1421,7 @@ jobs:
       # bundle/index.js is the artifact Pi loads and npm publishes. A clean
       # lockfile build must reproduce the committed bytes exactly.
       - name: pi-codex-bridge bundle matches a clean lockfile build
-        if: matrix.shard == 'node'
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-bridge
         run: git diff --exit-code -- bundle/
 

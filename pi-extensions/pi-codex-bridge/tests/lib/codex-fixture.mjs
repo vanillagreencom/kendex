@@ -2,7 +2,7 @@
 // CODEX_HOME whose user config declares one marker MCP server and trusts a
 // scratch project that declares another, a mock model provider on 127.0.0.1,
 // and a spawn seam that records every child the bridge starts.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -133,14 +133,7 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 		startedMarkers: () => Object.entries(markers).filter(([, path]) => existsSync(path)).map(([key]) => key),
 		/** The pids of this world's marker servers that run now, read from the
 		 * process table, so a server that has not yet recorded itself counts. */
-		runningMarkers: () => readdirSync("/proc").filter((name) => /^\d+$/.test(name)).filter((pid) => {
-			try {
-				const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-				return cmdline.includes(markerScript) && cmdline.includes(root) && !readFileSync(`/proc/${pid}/stat`, "utf8").includes(") Z ");
-			} catch {
-				return false;
-			}
-		}).map(Number),
+		runningMarkers: () => runningMarkers(markers),
 		/** Every pid a marker server recorded. */
 		markerPids: () => Object.values(markers).flatMap((path) => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map(Number) : []),
 		/** Stop the mock, every Codex child's process group and every marker
@@ -161,7 +154,7 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 				if (!existsSync(path)) continue;
 				for (const pid of readFileSync(path, "utf8").trim().split("\n").map(Number)) {
 					// Only while the pid still names the marker this world started.
-					if (!isMarker(pid)) continue;
+					if (!isMarker(pid, markers)) continue;
 					try {
 						process.kill(pid, "SIGKILL");
 					} catch {
@@ -174,12 +167,36 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 	};
 }
 
-function isMarker(pid) {
-	try {
-		return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(markerScript);
-	} catch {
-		return false;
+function markerCommands(markers, separator) {
+	return Object.values(markers).map((marker) => [process.execPath, markerScript, marker, "--token", ARG_SENTINEL].join(separator));
+}
+
+/** Darwin ps(1) documents headerless fields, unlimited -ww command width,
+ * and Z as the first state character: apple-oss-distributions/adv_cmds/ps/ps.1. */
+export function markerPidsFromPs(output, markers) {
+	const commands = markerCommands(markers, " ");
+	return output.split("\n").flatMap((line) => {
+		const row = /^\s*(\d+)\s+(\S+)\s+(.+)$/.exec(line);
+		return row && !row[2].startsWith("Z") && commands.includes(row[3]) ? [Number(row[1])] : [];
+	});
+}
+
+function runningMarkers(markers) {
+	if (process.platform === "darwin") {
+		return markerPidsFromPs(execFileSync("ps", ["-A", "-ww", "-o", "pid=,state=,command="], { encoding: "utf8" }), markers);
 	}
+	const commands = markerCommands(markers, "\0").map((command) => `${command}\0`);
+	return readdirSync("/proc").filter((name) => /^\d+$/.test(name)).filter((pid) => {
+		try {
+			return commands.includes(readFileSync(`/proc/${pid}/cmdline`, "utf8")) && !readFileSync(`/proc/${pid}/stat`, "utf8").includes(") Z ");
+		} catch {
+			return false;
+		}
+	}).map(Number);
+}
+
+function isMarker(pid, markers) {
+	return runningMarkers(markers).includes(pid);
 }
 
 /** Every file under `dir` whose bytes hold `needle`, `skip` excepted. */
