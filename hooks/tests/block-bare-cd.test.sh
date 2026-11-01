@@ -3,7 +3,8 @@
 #
 # The hook refuses a line that is only a `cd`, the move that re-roots every
 # later tool call where the shell persists (Claude Code) and changes nothing
-# where each command runs fresh (Codex, the Pi carrier), and passes anything
+# where each command runs fresh (Codex, the Pi carrier, Copilot's bash tool),
+# so it passes a bare cd on Copilot's bash tool, and passes anything
 # that scopes the move — a subshell, an &&-chain doing the real work — or that
 # only mentions cd. The argument is optional on both sides of the check: a
 # bare `cd` goes to $HOME, which is the same move as `cd /tmp`.
@@ -105,7 +106,17 @@ run_hook 'cdr --version';     assert_eq "$rc" 0 'a command whose name merely sta
 run_hook 'ls -la';            assert_eq "$rc" 0 'an unrelated command passes'
 run_hook 'git checkout main'; assert_eq "$rc" 0 'a command with no cd at all passes'
 
+# Copilot's bash tool passes every bare cd, so the shared Copilot rows read
+# the payload under its powershell tool, which the Bash matcher also reaches.
+PAYLOAD_COPILOT_TOOL=powershell
 payload_table "$HOOK" 'cd /tmp' '(cd /tmp && ls)'
+
+# A persistent shell's bare cd is refused by the first-line table above.
+echo "=== block-bare-cd: Copilot's shell tools ==="
+first_table "\
+a bare cd on Copilot's fresh bash tool passes|payload|0|-|{\"toolName\":\"bash\",\"toolArgs\":{\"command\":\"cd /tmp\"}}
+a bare cd on Copilot's powershell tool is refused|payload|2|block-bare-cd: refused=bare-cd|{\"toolName\":\"powershell\",\"toolArgs\":{\"command\":\"cd /tmp\"}}
+"
 
 # Python launcher writers and cat file writers send these bodies as command
 # input. A missing terminator grants no exemption to later command lines.
