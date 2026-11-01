@@ -34,7 +34,11 @@ name: Skill Tests
 # A PUSH TO MAIN carries the tree its merge group proved, so its cargo lanes
 # run only the compile steps, which save the compile cache under the merged
 # lockfile for each platform, and the catalog and smoke checks run as on
-# every main run. THE NIGHTLY RUN, the daily schedule on main, also runs the
+# every main run. Its Linux and macOS shell shards run only where the
+# same-head merge group did not prove them: the `changes` job reads that
+# group's shard jobs through `tools/ci-job-set`, whose push route states the
+# proof, and an unread, failed, pending or absent proof runs the shard. The
+# temporary main-only suites run on every push. THE NIGHTLY RUN, the daily schedule on main, also runs the
 # full macOS shell roster, the macOS cargo tests and the Windows tests; a
 # manual dispatch runs the same jobs on demand. A macOS or Windows failure
 # that independently passing changes cause only in combination, or that no
@@ -146,11 +150,17 @@ jobs:
   # check nothing will report.
   #
   # The class is read on merge_group alone. A pull request runs no lane, and
-  # the main and nightly runs run their fixed jobs without a class.
+  # the nightly run runs its fixed jobs without a class. On a push to main
+  # only the select step runs: tools/ci-job-set reads the same-head merge
+  # group's shard jobs, which `actions: read` admits, and publishes the
+  # shards that group left unproved. The root checkout there is main itself.
   changes:
     name: Classify the diff
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     # The render proof re-renders every installed item, so its cost grows with
     # this repository's catalog rather than with the diff. This ceiling sits
     # ahead of every lane below and is the whole budget a `render` merge
@@ -198,12 +208,14 @@ jobs:
         with:
           persist-credentials: false
       - name: the classifier, from the default branch
+        if: github.event_name == 'merge_group'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: classifier
           persist-credentials: false
       - name: the tree under judgement
+        if: github.event_name == 'merge_group'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -215,6 +227,7 @@ jobs:
       # verdict the install and the refresh below would buy nothing. Read with
       # the default branch's copy, as the class is.
       - id: render-reach
+        if: github.event_name == 'merge_group'
         # The source repository's harness inventory is available on the default
         # branch. A failed inventory read must fail classification and run lanes.
         run: >-
@@ -264,6 +277,7 @@ jobs:
         run: >-
           echo "::warning title=render proof may be unavailable::kendex install $KENDEX_OUTCOME, source refresh $MIRROR_OUTCOME; the render proof may be unavailable, and the class the classify step prints is the answer"
       - id: classify
+        if: github.event_name == 'merge_group'
         uses: ./.github/actions/change-class
         with:
           classifier: classifier
@@ -277,7 +291,8 @@ jobs:
       # class runs and one place to change it. It runs in the workspace root,
       # the group's tree, whose crates/ tools/rust-reads reads.
       # --event-parity refuses a selection that differs by event, once per
-      # run here rather than on every call the suites make.
+      # run here rather than on every call the suites make. On a push the
+      # class inputs are empty and the token reads the merge group's jobs.
       - id: select
         env:
           RUSTUP_TOOLCHAIN: stable
@@ -285,6 +300,7 @@ jobs:
           DOCS_ONLY: ${{ steps.classify.outputs.docs_only }}
           CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
           EVENT: ${{ env.EVENT }}
+          GH_TOKEN: ${{ github.token }}
         run: tools/ci-job-set --event-parity
 
   # This repository is the package's source, so the candidate's own checker
@@ -473,10 +489,13 @@ jobs:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
     # Merge groups run Linux shards when classification is missing or
-    # selects shell work with a remaining Linux runner. Main pushes run the
-    # full fallback roster. The status function also permits skipped main
-    # classification and lifts implicit success after a classifier failure.
-    if: ${{ !cancelled() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'merge_group' && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')))) }}
+    # selects shell work with a remaining Linux runner; main pushes run the
+    # Linux shards their same-head merge group left unproved, read from the
+    # same lines. Where the changes job did not succeed the full fallback
+    # roster runs; an empty list stands the job down, since an empty matrix
+    # fails the run. The status function lifts implicit success after a
+    # changes failure.
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.result != 'success' || (needs.changes.outputs.shell_shards == 'true' && needs.changes.outputs.shell_os != '["macos-latest"]')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1417,14 +1436,15 @@ jobs:
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
 
-  # Full main and nightly macOS rosters. Main shell execution is additional
-  # work versus the pre-KEN-4718 cargo-only main route; its cost is unmeasured.
-  # changes is skipped there, so the shared matrix expression uses its
-  # full-roster fallback. The suite steps and budgets have one owner.
+  # The full nightly macOS roster. changes is skipped there, so the shared
+  # matrix expression uses its full-roster fallback. The suite steps and
+  # budgets have one owner. A main push runs its macOS legs in the queue job
+  # below, because changes runs there and the shared alias would read its
+  # Linux list.
   skill-suites-macos:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1457,14 +1477,15 @@ jobs:
 
   # THE PATCH'S macOS LEGS: merge groups run the shards the changes job's
   # `queue_macos_shards` list names; tools/ci-job-set's header states when
-  # it is empty. Where the classifier published nothing the nightly roster
-  # less its Linux-only shards runs. CI holds this job to the same list, so
-  # a failed or cancelled leg ejects the entry and an unselected one does
-  # not.
+  # it is empty. A main push runs the macOS shards its same-head merge group
+  # left unproved, through the same list. Where the changes job published
+  # nothing the nightly roster less its Linux-only shards runs. CI holds
+  # this job to the same list on a merge group, so a failed or cancelled leg
+  # ejects the entry and an unselected one does not.
   skill-suites-macos-queue:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
     strategy:
       fail-fast: false
       matrix:

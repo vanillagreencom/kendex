@@ -1318,7 +1318,11 @@ dedicated_claims() { # WORKFLOW OS MAJOR CONTEXT
 event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claims
   local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards shard row_ctx temporary filters excluded
   [[ "$event" != merge_group ]] || { result=failure; ref=refs/heads/gh-readonly-queue/main/fixture; }
-  # A failed classifier exercises the workflow's full required fallback.
+  # A failed changes job exercises the workflow's full fallback: the
+  # required roster on a merge group, and on a main push the roster a
+  # failed same-head proof read runs. tools/tests/ci-class-job-set-events
+  # holds the proved complement.
+  [[ "$event" != push ]] || result=failure
   published_map "$wf" > "$TMP/event-map" || return
   ctx="$(context_json "$event" "$result" '' "$TMP/event-map" "$ref")" || return
   job_ifs "$wf" > "$TMP/event-job-ifs" || return

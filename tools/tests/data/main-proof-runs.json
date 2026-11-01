@@ -1,0 +1,3 @@
+{"total_count":1,"workflow_runs":[
+{"id":41306604685,"event":"merge_group","head_sha":"43b6b58bdf548f17c53d239506b8aa44abf1bda1","path":".github/workflows/skill-tests.yml","run_attempt":1,"status":"completed","conclusion":"success","head_branch":"gh-readonly-queue/main/pr-5834-b6fb3e692a55dc9632cd2e20a2bc7a8c6fb1b575"}
+]}
