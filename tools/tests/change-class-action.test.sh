@@ -46,7 +46,8 @@
 #      every run starts in a directory holding files the globs would expand
 #      to. One mutant copy per file that holds rules, classify or a
 #      shipped lib it reads, must fail the row its rule decides. Beside them, the queue mark: a lane marked `:queue`
-#      its own glob reaches stands down on a pull request where the
+#      that its own glob or, not marked `:nightly`, a path no lane claims
+#      reaches stands down on a pull request where the
 #      classifier answered queue_only=true and both the lanes-from
 #      checkout and the judged head hold the installed reader of the mark,
 #      runs where any of the three is missing, and stands down on no other
@@ -118,7 +119,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -z "$output" ] || printf 'change_class=%s\n' "$STUB_CLASS" >>"$output"
 if [ "${STUB_QUEUE_ABSENT:-false}" != true ]; then
-  printf 'queue-only: queue_only=%s cause=%s\n' "${STUB_QUEUE:-false}" "${STUB_QUEUE_CAUSE:-stub}" >&2
+  printf 'queue-only: queue_only=%s %s\n' "${STUB_QUEUE:-false}" "${STUB_QUEUE_FIELDS:-cause=stub}" >&2
   [ -z "${STUB_PER_PUSH:-}" ] || printf 'per-push: state=%s\n' "$STUB_PER_PUSH" >&2
   [ -z "$output" ] || printf 'queue_only=%s\n' "${STUB_QUEUE:-false}" >>"$output"
 fi
@@ -218,8 +219,15 @@ nightly:event-uniform:queue nightly/*
 '
 declare_lanes queued "$QUEUED"
 declare_lanes queued-no-reader "$QUEUED"
-mkdir -p "$TMP/decl/queued/.agents/skills/harness-ci/scripts/lib"
-cp "$LANES_LIB" "$TMP/decl/queued/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+# `queued-nightly` holds a lane carrying both `:queue` and `:nightly`, with
+# the reader beside it as `queued` has.
+declare_lanes queued-nightly 'check src/*
+slow:queue:nightly slow/*
+'
+for decl in queued queued-nightly; do
+  mkdir -p "$TMP/decl/$decl/.agents/skills/harness-ci/scripts/lib"
+  cp "$LANES_LIB" "$TMP/decl/$decl/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+done
 mkdir -p "$TMP/decl/absent" "$TMP/decl/unreadable/.github/ci-lanes.conf" \
   "$TMP/subject/.github"
 printf 'evil *\n' >"$TMP/subject/.github/ci-lanes.conf"
@@ -261,6 +269,22 @@ mac:nightly macos/*
 done
 cp "$TMP/subject/$STANDDOWN_READER" "$TMP/decl/standdown/$STANDDOWN_READER"
 printf '#!/usr/bin/env bash\n# an older render\n' >"$TMP/decl/standdown-old/$STANDDOWN_READER"
+# A lane only an unclaimed path reaches defers on the per-push mode's answer
+# only where both trees also read the opt-back. JUDGED_BOTH carries both
+# readers; the `queued` root holds both, and `queued-old` the mark's reader
+# beside the change-class from before the opt-back.
+mkdir -p "$TMP/subject/.agents/skills/harness-ci/scripts/lib"
+cp "$LANES_LIB" "$TMP/subject/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+subject_git add .agents
+subject_git commit -qm both-readers
+JUDGED_BOTH="$(subject_git rev-parse HEAD)"
+declare_lanes queued-old "$QUEUED"
+for decl in queued queued-old; do
+  mkdir -p "$TMP/decl/$decl/$(dirname "$STANDDOWN_READER")" "$TMP/decl/$decl/.agents/skills/harness-ci/scripts/lib"
+  cp "$LANES_LIB" "$TMP/decl/$decl/.agents/skills/harness-ci/scripts/lib/ci-lanes.sh"
+done
+cp "$TMP/subject/$STANDDOWN_READER" "$TMP/decl/queued/$STANDDOWN_READER"
+cp "$TMP/decl/standdown-old/$STANDDOWN_READER" "$TMP/decl/queued-old/$STANDDOWN_READER"
 
 # Run a classify script with an explicit environment: the defaults below,
 # then each NAME=VALUE argument, the later of two settings winning. The
@@ -813,6 +837,7 @@ mixed-delete-claim-first|queue-added|absent|tmux/tmux.conf .github/ci-lanes.conf
 malformed-head|queue-added|bad-name|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 missing-head|queue-added|absent|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 unreadable-head|queue-added|unreadable|.github/ci-lanes.conf tmux/tmux.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
+unreadable-head-unclaimed|queue-added|unreadable|.github/ci-lanes.conf Makefile|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 unreadable-revision|queue-added|invalid|tmux/tmux.conf .github/ci-lanes.conf|lane_verdicts=lane_check=true,lane_tmux=true,lane_docs-build=true
 malformed-base|bad-name|good|.github/ci-lanes.conf|lane_verdicts=
 missing-base|absent|good|.github/ci-lanes.conf|lane_verdicts=
@@ -863,12 +888,12 @@ done <<'ROWS'
 [ "${claims[$other]}" != "$claim" ]@[ "${claims[$other]}" = "$claim" ]@added-glob
 [ "${queues[$other]}" != "${lane_queue[$index]}" ]@false@queue-added
  || [ "${nightlies[$other]}" != "${lane_nightly[$index]}" ]; then@; then@nightly-added
-    elif [ "${lane_changed[$index]}" = true ]; then@    elif false; then@nightly-glob-changed
+  elif [ "${lane_changed[$index]}" = true ]; then@  elif false; then@nightly-glob-changed
 [ "$found" = true ] || printf@[ "$found" = false ] || printf@removed-lane
         declaration_comparison=unreadable@        declaration_comparison=not-needed@malformed-head
   elif [ "$declaration_comparison" = unreadable ]; then@  elif false; then@missing-head
             lane_count=$((lane_count + 1))@            :@added-lane
- && [ -n "$hit" ]; then@; then@queue-removed
+[ "${lane_queue[$index]}" = true ] && [ -n "$reach" ]@[ "${lane_queue[$index]}" = true ]@queue-removed
           lane_changed[$index]=true@          lane_hits[$index]="" lane_changed[$index]=true@queue-claim-before-declaration
         [ -n "${lane_hits[$index]}" ] ||@        [ "${lane_changed[$index]}" = true ] ||@queue-claim-after-declaration
           lane_changed[$index]=true@          lane_changed[$index]=false@added-glob
@@ -881,40 +906,53 @@ require_rows "declaration mutant" "$mutants"
 # A lane marked `:queue` that one of its own globs reaches stands down on a
 # pull request alone, and there only where the classifier answered
 # queue_only=true and both the declaration's root and the judged head hold
-# the reader of the mark; every other event runs it as an unmarked lane, and
-# a queue lane only an unclaimed path reached runs on the pull request too.
-# ROW|EVENT|DECLARATION|JUDGED HEAD (reader or no-reader)|QUEUE_ONLY|
-# PATHS (each outside the docs set)|EXPECTED: the lane_verdicts value and
-# the lanes the step's `lane:` lines name queue-deferred.
+# the reader of the mark, whatever cause it named; every other event runs it
+# as an unmarked lane. A path no lane claims defers every queue lane it turns
+# on alike, which leaves a lane also marked `:nightly` off: that path does
+# not turn it on. That deferral also needs an answer pr-merge reproduces: the
+# queue-only line's inputs=declared, or the per-push mode where both trees
+# read the opt-back.
+# ROW|EVENT|DECLARATION|JUDGED HEAD (reader, no-reader or both)|QUEUE_ONLY|
+# QUEUE FIELDS (the queue-only line after queue_only=)|PER PUSH (empty: no
+# per-push line)|PATHS (each outside the docs set)|EXPECTED: the
+# lane_verdicts value and the lanes the step's `lane:` lines name
+# queue-deferred.
 queue_rows() {
   cat <<'ROWS'
-pr-deferred|pull_request|queued|reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench
-pr-second-line|pull_request|queued|reader|true|Cargo.lock|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=bench
-pr-both-marks|pull_request|queued|reader|true|nightly/run.sh|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=nightly
-pr-unclaimed|pull_request|queued|reader|true|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
-pr-unclaimed-and-claimed|pull_request|queued|reader|true|Makefile benches/b.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=true deferred=bench
-pr-unconfirmed|pull_request|queued|reader|false|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
-pr-reader-absent|pull_request|queued-no-reader|reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
-pr-judged-reader-absent|pull_request|queued|no-reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
-merge-group|merge_group|queued|reader|true|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
-push|push|queued|reader|true|benches/b.rs|lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false deferred=
+pr-deferred|pull_request|queued|reader|true|inputs=run cause=queue-list-unreadable|set|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench
+pr-second-line|pull_request|queued|reader|true|inputs=declared cause=queue-lane|set|Cargo.lock|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=bench
+pr-both-marks|pull_request|queued|reader|true|inputs=declared cause=queue-lane|set|nightly/run.sh|lane_verdicts=lane_check=false,lane_bench=false,lane_nightly=false deferred=nightly
+pr-unclaimed|pull_request|queued|both|true|inputs=declared cause=per-push-unset|unset|Makefile|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench nightly
+pr-unclaimed-settings|pull_request|queued|reader|true|inputs=declared cause=repository-queue-path|set|Makefile|lane_verdicts=lane_check=true,lane_bench=false,lane_nightly=false deferred=bench nightly
+pr-unclaimed-selector-failed|pull_request|queued|both|true|inputs=run cause=queue-selector-failed|set|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
+pr-unclaimed-settings-unread|pull_request|queued|both|true|inputs=run cause=queue-settings-unreadable|unread|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
+pr-unclaimed-unmarked|pull_request|queued|both|true|cause=repository-queue-path|set|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
+pr-unclaimed-old-render|pull_request|queued-old|both|true|inputs=declared cause=per-push-unset|unset|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
+pr-unclaimed-nightly|pull_request|queued-nightly|reader|false|inputs=declared cause=no-queue-path|set|Makefile|lane_verdicts=lane_check=true,lane_slow=false deferred=
+pr-unconfirmed|pull_request|queued|reader|false|inputs=declared cause=no-queue-path|set|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+pr-reader-absent|pull_request|queued-no-reader|reader|true|inputs=declared cause=queue-lane|set|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+pr-judged-reader-absent|pull_request|queued|no-reader|true|inputs=declared cause=queue-lane|set|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+merge-group|merge_group|queued|reader|true|inputs=declared cause=queue-lane|set|benches/b.rs src/main.rs|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=false deferred=
+merge-group-unclaimed|merge_group|queued|reader|true|inputs=declared cause=per-push-unset|unset|Makefile|lane_verdicts=lane_check=true,lane_bench=true,lane_nightly=true deferred=
+push|push|queued|reader|true|inputs=declared cause=queue-lane|set|benches/b.rs|lane_verdicts=lane_check=false,lane_bench=true,lane_nightly=false deferred=
 ROWS
 }
 # The one read of a queue row's columns, into the Q_* globals.
 queue_row() { # ROW
   local line
   line="$(queue_rows | grep -m1 "^$1|")" || { echo "no queue row named $1" >&2; exit 1; }
-  IFS='|' read -r _ Q_EVENT Q_DECL Q_JUDGED Q_QUEUE Q_PATHS Q_EXPECTED <<<"$line"
+  IFS='|' read -r _ Q_EVENT Q_DECL Q_JUDGED Q_QUEUE Q_FIELDS Q_PER_PUSH Q_PATHS Q_EXPECTED <<<"$line"
   case "$Q_JUDGED" in
     reader) Q_HEAD="$JUDGED_READER" ;;
     no-reader) Q_HEAD="$JUDGED_NO_READER" ;;
+    both) Q_HEAD="$JUDGED_BOTH" ;;
     *) echo "queue row $1 names no judged head: $Q_JUDGED" >&2; exit 1 ;;
   esac
 }
 queue_answer() { # SCRIPT ROW — the row's answer, or `crashed`
   queue_row "$2"
   if [ "$(run "$1" EVENT="$Q_EVENT" HEAD="$Q_HEAD" LANES_FROM="$TMP/decl/$Q_DECL" STUB_QUEUE="$Q_QUEUE" \
-    STUB_PATHS="$Q_PATHS" STUB_OUTSIDE="$Q_PATHS")" != 0 ]; then
+    STUB_QUEUE_FIELDS="$Q_FIELDS" STUB_PER_PUSH="$Q_PER_PUSH" STUB_PATHS="$Q_PATHS" STUB_OUTSIDE="$Q_PATHS")" != 0 ]; then
     echo crashed
     return 0
   fi
@@ -930,9 +968,12 @@ done < <(queue_rows | cut -d'|' -f1)
 require_rows queue "$rows"
 # The lane: line's cause, per row that reaches each branch of the deferral,
 # and the one annotation a missing reader raises on the step's stdout.
-for row in pr-deferred pr-unconfirmed pr-reader-absent pr-judged-reader-absent; do
+for row in pr-deferred pr-unconfirmed pr-reader-absent pr-judged-reader-absent pr-unclaimed pr-unclaimed-selector-failed pr-unclaimed-old-render; do
   case "$row" in
     pr-deferred) want="lane: name=bench verdict=false cause=queue-deferred path=benches/b.rs glob=benches/*" ;;
+    pr-unclaimed) want="lane: name=bench verdict=false cause=queue-deferred path=Makefile claim=none" ;;
+    pr-unclaimed-selector-failed) want="lane: name=bench verdict=true cause=queue-cause-unproved inputs=run path=Makefile claim=none" ;;
+    pr-unclaimed-old-render) want="lane: name=bench verdict=true cause=queue-cause-unproved per_push=unset tree=lanes-from path=Makefile claim=none" ;;
     pr-unconfirmed) want="lane: name=bench verdict=true cause=queue-unconfirmed queue_only=false path=benches/b.rs glob=benches/*" ;;
     pr-reader-absent) want="lane: name=bench verdict=true cause=queue-reader-absent tree=lanes-from path=benches/b.rs glob=benches/*" ;;
     pr-judged-reader-absent) want="lane: name=bench verdict=true cause=queue-reader-absent tree=judged path=benches/b.rs glob=benches/*" ;;
@@ -992,9 +1033,17 @@ while IFS='@' read -r needle replacement row target; do
     *) bad "must-fail: '$needle' planted as '$replacement' gave no verdict on the $row row" ;;
   esac
 done <<'ROWS'
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then@  elif false; then@pr-deferred@classify
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$reach" ]; then@  elif false; then@pr-deferred@classify
 [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}"@true && [ "${lane_queue[$index]}"@merge-group@classify
- && [ -n "$hit" ]; then@; then@pr-unclaimed@classify
+  if [ -z "$hit" ] && [ -n "$unclaimed_path" ]@  if false@pr-unclaimed@classify
+ && [ "${lane_nightly[$index]}" != true ]@@pr-unclaimed-nightly@classify
+      if [ "$reach_kind" = unclaimed-path ] && [ -n "$unclaimed_unproved" ]; then@      if [ -n "$unclaimed_unproved" ]; then@pr-deferred@classify
+      if [ "$reach_kind" = unclaimed-path ] && [ -n "$unclaimed_unproved" ]; then@      if false; then@pr-unclaimed-selector-failed@classify
+  [ "$queue_inputs" = declared ] || printf@  false || printf@pr-unclaimed-settings@classify
+  [ "$queue_inputs" = declared ] || printf@  [ -n "$queue_inputs" ] || printf@pr-unclaimed-selector-failed@classify
+  if [ "$per_push" = unset ]; then@  if false; then@pr-unclaimed-old-render@classify
+  if [ "$per_push" = unset ]; then@  if [ "$per_push" != set ]; then@pr-unclaimed-settings-unread@classify
+    missing="$(render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)"@    missing="$(render_reader_missing "$per_push_reader")"@pr-unclaimed-old-render@classify
   if [ ! -f "$lanes_root/$1" ] ||@  if false ||@pr-reader-absent@classify
   if ! git -C "$REPO" cat-file blob "$HEAD:$1" >"${work:?}/judged-reader" 2>/dev/null ||@  if false ||@pr-judged-reader-absent@classify
     elif [ "$queue_only" != true ]; then@    elif false; then@pr-unconfirmed@classify
@@ -1107,11 +1156,11 @@ done <<'ROWS'
   '' | false) queue_default=false ;;@  '' | false) queue_default=true ;;@pr-copied-template@classify
 per_push="$(sed -n 's/^per-push: state=//p'@per_push="$(sed -n 's/^per-push: state=x//p'@pr-stood-down@classify
     pull_request | push)@    pull_request | push | merge_group)@merge-group@classify
-render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)@render_reader_missing "$per_push_reader")@judged-old-render@classify
+standdown_missing="$(render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)@standdown_missing="$(render_reader_missing "$per_push_reader")@judged-old-render@classify
 if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then@if [ "$EVENT" = schedule ]; then@dispatch@classify
   if [ "$lanes_cause" = full-run ]; then@  if false; then@schedule@classify
-  elif [ "${lane_nightly[$index]}" = true ]; then@  elif false; then@nightly-unclaimed@classify
-      lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"@      lane_values[$index]=true lane_causes[$index]="cause=nightly-unreached"@nightly-unclaimed@classify
+ && [ "${lane_nightly[$index]}" != true ]@@nightly-unclaimed@classify
+    lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"@    lane_values[$index]=true lane_causes[$index]="cause=nightly-unreached"@nightly-unclaimed@classify
   elif [ "$no_changed_paths" = true ]; then@  elif [ "$no_changed_paths" = true ] && [ "${lane_nightly[$index]}" != true ]; then@nightly-no-paths@classify
 *:nightly) nightly=true name=@*:nightly) nightly=false name=@nightly-unclaimed@lib
 ROWS

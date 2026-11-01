@@ -149,18 +149,21 @@ opencode.jsonc'
 # A schedule or workflow_dispatch run is the nightly full run: lanes=true
 # and every declared lane true, cause=full-run, whatever the class.
 # QUEUE_DEFAULT is true where the workflow asked for the queue-only default;
-# the stand-down below states what it does. Positions 1 to 8 keep the
-# meaning an older caller gives them, since the merge-group run pairs this
-# tree's action with the default branch's library; a new argument is only
-# ever appended.
-change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT
+# the stand-down below states what it does. QUEUE_INPUTS is the `inputs=`
+# field of change-class's queue-only line, which unclaimed_queue_unproved
+# reads. Positions 1 to 8 keep the meaning an older caller gives them, since
+# the merge-group run pairs this tree's action with the default branch's
+# library; a new argument is only ever appended.
+change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT QUEUE_INPUTS
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
   local queue_only="$6" work="$7" lanes_from="$8" queue_default="${9:-false}"
+  local queue_inputs="${10:-}"
   local declaration="" lanes_root="" judged_root="" per_push
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
   local render_base render_head path index delta name claimed
   local lane_hits=() lane_changed=() render_hits=()
   local reader_missing queue_reader per_push_reader standdown_missing hit
+  local reach reach_kind unclaimed_unproved
 # Every class but `standard` is reached only after the classifier read a
 # changed path, so an empty list under one of them is a state neither script
 # can produce. Publishing the families empty there would select the lanes a
@@ -377,6 +380,23 @@ render_reader_missing() { # PATH [MARKER]
   printf '%s' "$missing"
 }
 
+# Whether pr-merge, run from either tree, also answers queue_only=true where
+# only a path no lane claims reached a queue lane: no `:queue` glob produced
+# this run's answer, so ci-lanes.sh in both trees proves nothing about it.
+# Prints nothing where it would, else what is missing. A base on the default
+# mode answers true from any render reading HARNESS_CI_PER_PUSH_REASON,
+# whatever the cause. Otherwise change-class's `inputs=declared` says a
+# later run on the same change and base reads the same answer.
+unclaimed_queue_unproved() {
+  local missing
+  if [ "$per_push" = unset ]; then
+    missing="$(render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)"
+    [ -z "$missing" ] || printf 'per_push=unset tree=%s' "$missing"
+    return 0
+  fi
+  [ "$queue_inputs" = declared ] || printf 'inputs=%s' "${queue_inputs:-absent}"
+}
+
 # The whole-run stand-down, on pull_request and push: the merge group proves
 # the head. It applies only where the workflow asked for the default, which
 # the harness-ci template alone does, so a ci.yml copied before the default
@@ -410,27 +430,33 @@ fi
 
 # Each lane's classified verdict and cause, at its index. A lane's hit is the
 # path one of its own globs reached: the render claim on a render, the
-# ordinary claim otherwise. On a pull request a lane marked `:queue` with a
-# hit stands down only where this run's change-class answered
-# queue_only=true and both renders read the mark, so pr-merge, asking the
-# same question from either, keeps the pull request off the admin merge, and
-# a render is no exception. Otherwise it runs, its cause naming
-# what was missing. A queue lane only a fallback reached runs here, since no
-# glob of its own put the diff in the queue.
-# A failed declaration comparison permits no queue deferral, and a diff whose
-# paths could not be read runs every other lane. A `:nightly` lane runs off
-# the full run only on its own glob or a declaration change: the
-# unclaimed-path fallback would run it on most changes, and the full run
-# reaches it every night.
+# ordinary claim otherwise. Its reach is that hit, else, for a lane not
+# marked `:nightly`, the changed path outside the docs set no base lane
+# claims: the unclaimed-path fallback would run a `:nightly` lane on most
+# changes, and the full run reaches it every night. On a pull request a lane
+# marked `:queue` with a reach stands down only where this run's
+# change-class answered queue_only=true and both renders read the mark, so
+# pr-merge, asking the same question from either, keeps the pull request off
+# the admin merge, and a render is no exception; an unclaimed reach also
+# needs a queue-only cause pr-merge reproduces, above. Otherwise it runs, its
+# cause naming what was missing. The merge group runs every lane a reach
+# turns on. A declaration change alone defers no queue lane. A failed
+# declaration comparison permits no queue deferral, and a diff whose paths
+# could not be read runs every other lane.
 lane_values=()
 lane_causes=()
 reader_missing=unread
+unclaimed_unproved=unread
 index=0
 while [ "$index" -lt "$lane_count" ]; do
   if [ "$class" = render ]; then
     hit="${render_hits[$index]:-}"
   else
     hit="${lane_hits[$index]:-}"
+  fi
+  reach="$hit" reach_kind=claimed
+  if [ -z "$hit" ] && [ -n "$unclaimed_path" ] && [ "${lane_nightly[$index]}" != true ]; then
+    reach="path=$unclaimed_path claim=none" reach_kind=unclaimed-path
   fi
   if [ "$lanes_cause" = full-run ]; then
     lane_values[$index]=true lane_causes[$index]="cause=full-run event=$EVENT"
@@ -440,33 +466,32 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=false lane_causes[$index]="cause=render-unreached"
   elif [ "$declaration_comparison" = unreadable ]; then
     lane_values[$index]=true lane_causes[$index]="cause=lane-declaration-unreadable path=.github/ci-lanes.conf"
-  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$hit" ]; then
+  elif [ "$EVENT" = pull_request ] && [ "${lane_queue[$index]}" = true ] && [ -n "$reach" ]; then
     [ "$reader_missing" != unread ] || reader_missing="$(render_reader_missing "$queue_reader")"
     if [ -n "$reader_missing" ]; then
-      lane_values[$index]=true lane_causes[$index]="cause=queue-reader-absent tree=$reader_missing $hit"
+      lane_values[$index]=true lane_causes[$index]="cause=queue-reader-absent tree=$reader_missing $reach"
     elif [ "$queue_only" != true ]; then
-      lane_values[$index]=true lane_causes[$index]="cause=queue-unconfirmed queue_only=${queue_only:-absent} $hit"
+      lane_values[$index]=true lane_causes[$index]="cause=queue-unconfirmed queue_only=${queue_only:-absent} $reach"
     else
-      lane_values[$index]=false lane_causes[$index]="cause=queue-deferred $hit"
+      if [ "$reach_kind" = unclaimed-path ] && [ "$unclaimed_unproved" = unread ]; then
+        unclaimed_unproved="$(unclaimed_queue_unproved)"
+      fi
+      if [ "$reach_kind" = unclaimed-path ] && [ -n "$unclaimed_unproved" ]; then
+        lane_values[$index]=true lane_causes[$index]="cause=queue-cause-unproved $unclaimed_unproved $reach"
+      else
+        lane_values[$index]=false lane_causes[$index]="cause=queue-deferred $reach"
+      fi
     fi
   elif [ "$class" = render ]; then
     lane_values[$index]=true lane_causes[$index]="cause=render-claim $hit"
   elif [ "$no_changed_paths" = true ]; then
     lane_values[$index]=true lane_causes[$index]="cause=no-changed-paths"
-  elif [ "${lane_nightly[$index]}" = true ]; then
-    if [ -n "${lane_hits[$index]}" ]; then
-      lane_values[$index]=true lane_causes[$index]="cause=claimed ${lane_hits[$index]}"
-    elif [ "${lane_changed[$index]}" = true ]; then
-      lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
-    else
-      lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"
-    fi
-  elif [ -n "$unclaimed_path" ]; then
-    lane_values[$index]=true lane_causes[$index]="cause=unclaimed-path path=$unclaimed_path"
-  elif [ -n "${lane_hits[$index]}" ]; then
-    lane_values[$index]=true lane_causes[$index]="cause=claimed ${lane_hits[$index]}"
+  elif [ -n "$reach" ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=$reach_kind $reach"
   elif [ "${lane_changed[$index]}" = true ]; then
     lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
+  elif [ "${lane_nightly[$index]}" = true ]; then
+    lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"
   else
     lane_values[$index]=false lane_causes[$index]="cause=unreached"
   fi

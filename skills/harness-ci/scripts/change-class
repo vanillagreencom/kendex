@@ -31,9 +31,9 @@
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
 # marker rather than a list of causes of its own. Every verdict also prints
-# one `queue-only: queue_only=true|false cause=<name> [<field>=<value>]...`
-# line on stderr, ahead of the `class:` line, each cause's fields as the
-# table below names them. It reads false only
+# one `queue-only: queue_only=true|false inputs=declared|run cause=<name>
+# [<field>=<value>]...` line on stderr, ahead of the `class:` line, each
+# cause's fields as the table below names them. It reads false only
 # with cause=no-queue-path. The causes are read in this order, first match
 # winning, and every one but no-queue-path reads true:
 #
@@ -108,6 +108,17 @@
 # --output FILE carries the same value as `queue_only=true|false` beside
 # `change_class=`. This paragraph is the one statement of when the line reads
 # true; other docs point here.
+# On a queue_only=true answer, the line's `inputs=` marks whether a later run
+# on the same change and base reads the same answer, as `measured=` marks a
+# fallback: declared where the cause was read off the changed paths, the
+# base's lane declaration and its settings alone (no-changed-paths,
+# path-quoted, per-push-unset, queue-lane, queue-list-undeclared and
+# repository-queue-path); run where it rests on a read that can fail, the
+# shipped queue list or the selector's run. The change-class action defers a lane on a declared
+# answer from any render carrying lib/ci-lanes.sh, and per-push-unset only
+# beside a render reading HARNESS_CI_PER_PUSH_REASON, so a declared cause a
+# render with lib/ci-lanes.sh would not reach needs that action's reader
+# check of its own.
 # Every verdict also prints one `per-push: state=unset|set|unread` line
 # after the queue-only line: the repository's mode, whichever cause that
 # line names. unset is the default, the base's HARNESS_CI_PER_PUSH_REASON
@@ -380,7 +391,7 @@ changed=""
 # The queue-only class. Until the changed paths are read, the diff is
 # unreadable, and an unreadable diff reads queue-only.
 QUEUE_ONLY=true
-QUEUE_CAUSE="cause=paths-unread"
+QUEUE_CAUSE="cause=paths-unread" QUEUE_INPUTS=run
 # A settings change HARNESS_CI_TRIVIAL_SETTINGS admitted: its class-line
 # fields, its files, the refusal it keeps, and the keys one file changed.
 SETTINGS_ADMITTED=""
@@ -470,7 +481,7 @@ answer() { # CLASS FIELDS [measured]
   [ "${3:-}" != measured ] || measured=true
   [ "$QUEUE_ONLY" = true ] || queue_selection "$1"
   per_push_mode
-  queue_line="queue-only: queue_only=$QUEUE_ONLY $QUEUE_CAUSE"
+  queue_line="queue-only: queue_only=$QUEUE_ONLY inputs=$QUEUE_INPUTS $QUEUE_CAUSE"
   per_push_line="per-push: state=$PER_PUSH"
   if [ -n "$output" ] && [ "$output" != /dev/null ]; then
     local lane_docs
@@ -481,7 +492,7 @@ answer() { # CLASS FIELDS [measured]
     # The two records below are the ones the action's log carries.
     { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"; } >"$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
-      "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" >&2
+      "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" "$QUEUE_INPUTS" >&2
   fi
   if [ -n "$output" ]; then
     if ! { printf 'change_class=%s\nqueue_only=%s\n' "$1" "$QUEUE_ONLY"
@@ -748,20 +759,20 @@ queue_only_of_paths() {
   local globs path
   while IFS= read -r path; do
     case "$path" in
-      \"*) QUEUE_CAUSE="cause=path-quoted path=$path"; return ;;
+      \"*) QUEUE_CAUSE="cause=path-quoted path=$path" QUEUE_INPUTS=declared; return ;;
     esac
   done <<<"$changed"
   if [ ! -r "$NARROW_CONF" ] || ! globs="$(change_class_list_globs "$NARROW_CONF" queue)"; then
-    QUEUE_CAUSE="cause=queue-list-unreadable"
+    QUEUE_CAUSE="cause=queue-list-unreadable" QUEUE_INPUTS=run
     return
   fi
   if [ -z "$globs" ]; then
-    QUEUE_CAUSE="cause=queue-list-missing"
+    QUEUE_CAUSE="cause=queue-list-missing" QUEUE_INPUTS=run
     return
   fi
   set_globs "$globs"
   if path_matches any; then
-    QUEUE_CAUSE="cause=queue-path $PATH_MATCH_HIT"
+    QUEUE_CAUSE="cause=queue-path $PATH_MATCH_HIT" QUEUE_INPUTS=run
     return
   fi
   # The shipped list names this catalog's own CI inputs. A repository's own,
@@ -771,30 +782,30 @@ queue_only_of_paths() {
   # queue-only. Set, even empty, the declaration is the rest of the list.
   per_push_mode
   case "$PER_PUSH" in
-    unread) QUEUE_CAUSE="cause=queue-settings-unreadable"; return ;;
-    unset) QUEUE_CAUSE="cause=per-push-unset"; return ;;
+    unread) QUEUE_CAUSE="cause=queue-settings-unreadable" QUEUE_INPUTS=run; return ;;
+    unset) QUEUE_CAUSE="cause=per-push-unset" QUEUE_INPUTS=declared; return ;;
   esac
   if ! queue_lane_of_paths; then
-    QUEUE_CAUSE="cause=lane-declaration-unreadable"
+    QUEUE_CAUSE="cause=lane-declaration-unreadable" QUEUE_INPUTS=run
     return
   fi
   if [ -n "$QUEUE_LANE_HIT" ]; then
-    QUEUE_CAUSE="cause=queue-lane $QUEUE_LANE_HIT"
+    QUEUE_CAUSE="cause=queue-lane $QUEUE_LANE_HIT" QUEUE_INPUTS=declared
     return
   fi
   if [ -z "${HARNESS_CI_QUEUE_PATHS+x}" ]; then
     printf 'setting-unset: setting=HARNESS_CI_QUEUE_PATHS\n' >&2
     echo "change-class: HARNESS_CI_QUEUE_PATHS is unset in the base commit's settings, so every change reads queue-only and never takes the admin merge; set it in the [env] table of kendex.settings.toml to the repository's own CI inputs, or empty for none" >&2
-    QUEUE_CAUSE="cause=queue-list-undeclared"
+    QUEUE_CAUSE="cause=queue-list-undeclared" QUEUE_INPUTS=declared
     return
   fi
   set_globs "$HARNESS_CI_QUEUE_PATHS"
   if ! path_matches any; then
     QUEUE_ONLY=false
-    QUEUE_CAUSE="cause=no-queue-path"
+    QUEUE_CAUSE="cause=no-queue-path" QUEUE_INPUTS=declared
     return
   fi
-  QUEUE_CAUSE="cause=repository-queue-path $PATH_MATCH_HIT"
+  QUEUE_CAUSE="cause=repository-queue-path $PATH_MATCH_HIT" QUEUE_INPUTS=declared
 }
 
 # A checkout of REV at DIR, errors to ERR. It has a git directory of its own,
@@ -860,7 +871,7 @@ queue_selection() { # CLASS
     pull_request | merge_group) ;;
     *) return 0 ;;
   esac
-  QUEUE_ONLY=true
+  QUEUE_ONLY=true QUEUE_INPUTS=run
   read -r command name rest <<<"$HARNESS_CI_QUEUE_SELECTOR"
   case "$command" in
     '' | /* | .. | ../* | */.. | */../*) name="" ;;
@@ -928,7 +939,7 @@ if [ -s "$paths_file" ]; then
   queue_only_of_paths
 else
   case "$harness_note" in
-    '' | cause=empty-diff | cause=empty-diff\ *) QUEUE_CAUSE="cause=no-changed-paths" ;;
+    '' | cause=empty-diff | cause=empty-diff\ *) QUEUE_CAUSE="cause=no-changed-paths" QUEUE_INPUTS=declared ;;
   esac
 fi
 

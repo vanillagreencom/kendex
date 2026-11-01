@@ -1001,7 +1001,7 @@ merge_route() { # PR TOKEN HEAD QUEUE ACCEPTED...
 
 # The merge-route class of one pull request at HEAD, the head the merge is
 # pinned to, from harness-ci's change-class beside this scripts tree, else
-# change-class on PATH: asked about the pull request's own range, it prints `queue-only: queue_only=true|false cause=...`
+# change-class on PATH: asked about the pull request's own range, it prints `queue-only: queue_only=true|false ...`
 # on stderr. This command asks; it never matches a path itself. Sets
 # QUEUE_ONLY to true or false, QUEUE_ONLY_DETAIL to the classifier's line or
 # the reason it was not read, and QUEUE_ONLY_NOTES to the diagnostics of a
