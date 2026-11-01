@@ -125,7 +125,7 @@ SH
 done <<<"$CLAUDE_ROWS"
 
 # The stock Copilot entries' default room check with the real chooser, from a
-# Claude session on the package roster: the pool ORCH_LANE_COPILOT_POOL states
+# Claude session on a consumer roster naming them: the pool ORCH_LANE_COPILOT_POOL states
 # for a Pi root is what pick judges, and the root it picks is the Pi
 # configuration the stock pi command runs on. Only pi is a fixture.
 # label|pool used/granted|reviewer|Pi root the reviewer ran on
@@ -137,7 +137,7 @@ pi_row=0
 while IFS='|' read -r label pool reviewer root; do
   [[ -n "$label" ]] || continue
   pi_row=$((pi_row + 1))
-  build "pi-pool-$pi_row" ps:none current:claude models:- count:1 cmd:claude=claude cmd:codex=codex pi:stub
+  build "pi-pool-$pi_row" ps:none current:claude models:claude+pi-copilot-gpt+codex count:1 cmd:claude=claude cmd:codex=codex pi:stub
   H="$ROW/home"
   mkdir -p "$H/.pi-copilot" "$PROJ/.agents/skills"
   ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"

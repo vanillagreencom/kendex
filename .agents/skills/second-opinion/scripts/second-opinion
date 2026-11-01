@@ -10,7 +10,7 @@
 #
 # Environment:
 #   SECOND_OPINION_MODELS        Priority-ordered target roster
-#                                (default: "pi-copilot claude pi-copilot-gpt codex")
+#                                (default: "claude codex")
 #   SECOND_OPINION_COUNT         Opinions to collect in review mode (default: 1)
 #   SECOND_OPINION_CURRENT_MODEL Declared model identity of THIS session (overrides detection)
 #   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>, or
@@ -121,9 +121,10 @@ Environment. Every key below belongs in kendex.settings.toml [env] (or
 .env.local) except SECOND_OPINION_CURRENT_MODEL and
 SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
   SECOND_OPINION_MODELS      Priority-ordered target roster, space/comma
-                             separated (default: "pi-copilot claude
-                             pi-copilot-gpt codex"); set empty and the run
-                             refuses rather than using the default
+                             separated (default: "claude codex"; name
+                             pi-copilot or pi-copilot-gpt here to use those
+                             stock entries); set empty and the run refuses
+                             rather than using the default
   SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
   SECOND_OPINION_CURRENT_MODEL
                              Model identity of THIS session. A positively
@@ -295,8 +296,10 @@ Default commands:
             --tools read,grep,find,ls
           MODEL is github-copilot/claude-opus-5.5 for pi-copilot (identity
           claude) and github-copilot/gpt-6.1-sol for pi-copilot-gpt
-          (identity codex). Read-only file tools and no shell, so each is
-          sent the review diff inline. Room check:
+          (identity codex). Neither is in the default roster: a consumer
+          names it in SECOND_OPINION_MODELS, which needs no other key.
+          Read-only file tools and no shell, so each is sent the review
+          diff inline. Room check:
           env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick
             --harness pi --model MODEL
           from the project root this script is installed in: an entry is
@@ -606,7 +609,7 @@ done
 # the argument loop leaves a previous run's artifact behind. `detect` is the one
 # deliberate exclusion: it writes nothing and takes no --output.
 
-DEFAULT_MODELS="pi-copilot claude pi-copilot-gpt codex"
+DEFAULT_MODELS="claude codex"
 FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
 
 # The roster, one entry per line, split with globbing off: an entry is a name,
