@@ -64,24 +64,60 @@ PATH="$NOFLOCK" "$WS" --state-dir "$SD" set KEN-LOCK phase reviewing >/dev/null 
 [[ "$rc" -eq 0 ]] && pass "a second write is not blocked by the first one's mutex" \
   || fail "a second write is not blocked by the first one's mutex" "rc=$rc $(cat "$TMP_ROOT/set2.err")"
 
-# Serialization is the point of the lock, so it is measured: two appends racing
-# on one file must both survive. Without one the loser's element is lost to the
-# winner's read-modify-write.
-RACE_SD="$TMP_ROOT/race"
-PATH="$NOFLOCK" "$WS" --state-dir "$RACE_SD" init KEN-RACE --worktree "$REPO_ROOT" --branch ken-race >/dev/null
-GO="$TMP_ROOT/go"
-for racer in 1 2; do
-  (
-    until [[ -e "$GO" ]]; do :; done
-    PATH="$NOFLOCK" "$WS" --state-dir "$RACE_SD" append KEN-RACE fixed_items "item-$racer" >/dev/null 2>&1
-  ) &
-done
-sleep 0.4
-: >"$GO"
-wait
-count="$(PATH="$NOFLOCK" "$WS" --state-dir "$RACE_SD" get KEN-RACE '.fixed_items | length')"
-[[ "$count" == "2" ]] && pass "two racing appends both survive under the mkdir mutex" \
-  || fail "two racing appends both survive under the mkdir mutex" "count=$count"
+# A final member count cannot tell a failed child from a lost successful write.
+# Retain each actual result before judging the shared state.
+racing_appends() { # WRITER NAME
+  local writer="$1" race_sd="$TMP_ROOT/$2" go="$TMP_ROOT/$2.go"
+  local racer rc members read_rc=0 evidence_rc=0 pids=() statuses=()
+  PATH="$NOFLOCK" "$writer" --state-dir "$race_sd" init KEN-RACE --worktree "$REPO_ROOT" --branch ken-race >/dev/null || return 1
+  for racer in 1 2; do
+    (
+      until [[ -e "$go" ]]; do :; done
+      PATH="$NOFLOCK" "$writer" --state-dir "$race_sd" append KEN-RACE fixed_items "item-$racer" \
+        >"$race_sd/racer-$racer.out" 2>"$race_sd/racer-$racer.err"
+    ) &
+    pids+=("$!")
+  done
+  sleep 0.4
+  : >"$go"
+  for racer in 1 2; do
+    rc=0
+    wait "${pids[racer-1]}" || rc=$?
+    statuses+=("$rc")
+    printf '%s\n' "$rc" >"$race_sd/racer-$racer.rc" || evidence_rc=1
+    printf 'racer=%s pid=%s status=%s\n' "$racer" "${pids[racer-1]}" "$rc"
+  done
+  members="$(PATH="$NOFLOCK" "$writer" --state-dir "$race_sd" get KEN-RACE '.fixed_items | sort | @json' \
+    2>"$race_sd/read.err")" || read_rc=$?
+  printf '%s\n' "$members" >"$race_sd/members" || evidence_rc=1
+  printf 'members=%s read-status=%s\n' "$members" "$read_rc"
+  if [[ "${statuses[0]}" == 0 && "${statuses[1]}" == 0 && "$read_rc" == 0 && "$evidence_rc" == 0 && "$members" == '["item-1","item-2"]' ]]; then
+    return 0
+  fi
+  for racer in 1 2; do
+    printf 'racer=%s stdout:\n' "$racer"
+    cat "$race_sd/racer-$racer.out"
+    dump_stderr "$race_sd/racer-$racer.err"
+  done
+  dump_stderr "$race_sd/read.err"
+  return 1
+}
+
+racing_appends "$WS" race && pass "two successful racing appends both survive under the mkdir mutex" \
+  || fail "two successful racing appends both survive under the mkdir mutex"
+
+# Both real writes land, then one child fails: checking only the final members
+# would credit success to this failed operation.
+LATE_FAILURE="$(mutant_scripts late-failure workflow-state)" || exit 1
+mutate_file "$LATE_FAILURE/workflow-state" 'append)    shift; cmd_append "$@" ;;' \
+  'append)    shift; cmd_append "$@"; if [[ "$3" == item-1 ]]; then exit 73; fi ;;'
+rc=0
+racing_appends "$LATE_FAILURE/workflow-state" late-failure-state || rc=$?
+assert_eq "$(cat "$TMP_ROOT/late-failure-state/racer-1.rc") $(cat "$TMP_ROOT/late-failure-state/racer-2.rc")" \
+  "73 0" "control: one real append fails after writing while its peer succeeds"
+assert_eq "$(cat "$TMP_ROOT/late-failure-state/members")" '["item-1","item-2"]' \
+  "control: both real updates survive despite the failed child"
+assert_eq "$rc" 1 "control: a failed child is rejected even when both updates survive"
 
 # The control: a copy whose lock helper only ever calls flock must refuse every
 # write on this PATH, so the assertions above are about the mutex arm and not
