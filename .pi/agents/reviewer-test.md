@@ -31,12 +31,12 @@ A finding in a class `.agents/skills/reviewer/references/finding-disposition.md`
 - **Subset case**: a new case whose assertions are a subset of an existing case on the same function. A new input does not rescue it: the existing case takes that input as one more row or gains the assertion, and the new case is deleted. The finding names the existing case. Authoring copy: `.agents/skills/dev/SKILL.md` § Engineering Rules.
 - **Wiring**: a new test file is only real if a runner invokes it. Verify CI/run-all wiring for every added suite.
 - **Environment**: assumptions that break under root, another locale, or elevated parallelism.
-- **Clock and progress**: apply `.agents/skills/code-quality/SKILL.md` § Tests to clock-dependent and concurrent logic, and to a test's own real-clock waits and real device effects.
+- **Clock and progress**: apply `.agents/skills/code-quality/SKILL.md` § Tests to clock-dependent and concurrent logic.
 - Use the reviewer skill's § Mutation-Stability Pairing when its evidence conditions apply.
 
 ## Output
 
-Missing or weak needed protection, or an unwired suite that supplies it → `blockers[]`. A missing must-fail control blocks only a new or changed instrument. A test with no protection, including a vacuous or redundant case, → `suggestions[]` with category `fix` to remove it. A test whose protection a cheaper form keeps → `suggestions[]` with category `fix` naming that form. Accept a justified omission.
+Missing or weak needed protection, or an unwired suite that supplies it → `blockers[]`. A missing must-fail control blocks only a new or changed instrument. A test with no protection, including a vacuous or redundant case, or one whose protection a cheaper form keeps → `suggestions[]` with category `fix`. The test rows of the `.agents/skills/reviewer/references/finding-disposition.md` decision table give each one's remedy and say which omission to accept.
 
 ## Required Skills
 
