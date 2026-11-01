@@ -2,7 +2,7 @@
 
 Audit tracked issues and projects, apply mechanical corrections, and authorize creations and cancellations through § 6.
 
-**Primary-session wrapper: never delegate this workflow itself.** § 6 authorizes § 7 mutations. Delegate TPM analysis in § 2.1 / § 4.1 (`tpm-audit.md`); fleet ownership follows [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination).
+**Primary-session wrapper: never delegate this workflow itself.** § 6 authorizes § 7 mutations. Delegate TPM analysis in § 2.1 / § 4.1 (`tpm-audit.md`), except an authorized single filing, which § 4.1 judges in this session; fleet ownership follows [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination).
 
 Overseer heartbeat audits use [Heartbeat audit](../../orch/references/heartbeat-audit.md) for the shared § 4.1 TPM delegation, Triage eligibility and § 6 authorization instead of blanket auto approval or interactive-only asks.
 
@@ -153,6 +153,8 @@ With `TARGET` set, use it. Otherwise take the first `session-status.projects` en
 
 ### 4.1 Delegate
 
+**Authorized single filing.** A `single` item the owner or their delegate asked for, with its outcome, Done-when and `Reached by:` written and one landing ([SKILL.md § Disposition](../SKILL.md#disposition), **One landing per subsystem**), is judged in this session. Run [tpm-audit § 14](tpm-audit.md#14-single-item-mode) here, with no subagent, and carry its one row to § 5; § 4.2 does not apply. Every later section still holds it: the creation bar and the title duplicate check in § 14, § 7.0's label preflight, the tracker's label, project and team refusals at create, and § 7.5's read-back. § 7 publishes no audit JSON for it. Every other `single` item, and every other mode, delegates as below.
+
 Spawn a one-shot `[TPM]` sub-agent (not a teammate).
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the input file's `worktree` when the invocation supplied one, the current repo root otherwise.
@@ -251,7 +253,7 @@ Everything in the § 5 corrections block — priorities, labels, relations, hier
 
 **Hard precondition: § 6 authorization obtained in the primary session.** Creations and cancellations execute only against its resolved `auto` policy or its `ask` approvals, including a validated carried approval (`approved_at_plan_gate`). If § 6 did not run, § 7 MUST NOT execute: stop and return to the primary session.
 
-Apply [publish-artifacts.md](publish-artifacts.md) to each issue this section creates or updates. The artifact set is the audit JSON plus any supplied plan markdown, plan JSON, and cited research inputs. Resolve missing inputs before mutation. Carry this set through both tracker routes; § 7.5 verifies it with the other writes. Skip this rule when the input's `source` is `roadmap-create`: that wrapper's § 5 publishes the plan set once, after every issue exists, and the audit JSON, a mechanical conversion of the plan JSON, is not published.
+Apply [publish-artifacts.md](publish-artifacts.md) to each issue this section creates or updates. The artifact set is the audit JSON plus any supplied plan markdown, plan JSON, and cited research inputs. Resolve missing inputs before mutation. Carry this set through both tracker routes; § 7.5 verifies it with the other writes. Skip this rule when the input's `source` is `roadmap-create`: that wrapper's § 5 publishes the plan set once, after every issue exists, and the audit JSON, a mechanical conversion of the plan JSON, is not published. An authorized single filing (§ 4.1) writes no audit JSON, so its set holds only the inputs supplied with it.
 
 ### 7.0 Label Preflight
 

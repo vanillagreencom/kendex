@@ -141,9 +141,8 @@ Create Options:
                         kendex.settings.toml [env], create refuses without an
                         agent:* label from that set: an unlabeled issue is
                         invisible to agent routing. Route normal issue
-                        creation through the TPM pipeline (project-management
-                        skill), which owns labels, project, priority, and
-                        relations — do not create tracked issues directly.
+                        creation as linear SKILL.md § Issue Creation Routing
+                        sets out.
 
   --review-born         This create came from a review finding, which is what
                         subjects it to the `Symptom:` half of the bar below.
@@ -153,16 +152,18 @@ Create Options:
   `--review-born --priority 2` one with no `Symptom:`; a placeholder or null
   token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
   Under the same key, create, update --description/--description-file,
-  and bulk-update --description require nonempty quoted blocks starting with
-  `> **Story:**` then `> **Why this matters:**`, after any optional owner action
-  line (`**Name, what you do:** ...`). Keep each block's text quoted, with an
-  unquoted blank line between the blocks and before the first heading, if any.
-  Unfilled placeholders count as empty. Authors and reviewers judge the prose;
-  the guard checks structure. It also refuses a header line over 500
-  characters; each refusal names the line number and its length. Update judges
-  the body after it reads the issue: a body equal to the stored one apart from
-  a leading owner action line, which it places, replaces or removes, is judged
-  on that line's length alone, so an owner ask writes over a body filed header-first.
+  and bulk-update --description refuse a Post-merge Done-when box whose
+  release trigger names no repository or whose Deadline is invalid. They
+  advise, without refusing, when the body does not open with nonempty quoted
+  blocks starting with `> **Story:**` then `> **Why this matters:**`, after
+  any optional owner action line (`**Name, what you do:** ...`), with an
+  unquoted blank line between the blocks and before the first heading, if
+  any, or when a header line is over 500 characters: one
+  `linear: advisory=RULE line=N length=N` line on stderr per miss, and the
+  write proceeds. Unfilled placeholders count as empty. Authors and reviewers
+  judge the prose. Update judges the body after it reads the issue: a body
+  equal to the stored one apart from a leading owner action line, which it
+  places, replaces or removes, is judged on that line's length alone.
 
   Label taxonomy: where the repository declares one (project-management
   references/labels.md, plus LINEAR_AGENT_LABELS), create, update --labels,
@@ -790,7 +791,15 @@ bulk_update_issues() {
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
     fi
-    [[ "$description_set" != "true" ]] || require_issue_header_shape "$description" || return 1
+    # Each issue's update repeats this check against its stored body and prints
+    # its own advisories; this pass keeps only a refusal, before any write.
+    if [[ "$description_set" == "true" ]]; then
+        local shape_refusal
+        shape_refusal=$(require_issue_header_shape "$description" 2>&1 >/dev/null) || {
+            printf '%s\n' "$shape_refusal" >&2
+            return 1
+        }
+    fi
     local project_map=""
     if [ -n "$project" ]; then
         project_map=$(linear_project_map) || return 1

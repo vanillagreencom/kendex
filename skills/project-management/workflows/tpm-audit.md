@@ -446,4 +446,4 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
 
 5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "make_child", "parent": null}` when the input's `parent_issue` names a rework parent, else `{"action": "none", "parent": null}`.
 
-Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row.
+Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row. For an authorized single filing, [audit-issues § 4.1](audit-issues.md#41-delegate) runs this section in the filing session: the row goes straight to its § 5, and no file is written.
