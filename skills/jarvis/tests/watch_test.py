@@ -685,8 +685,11 @@ class Producer(unittest.TestCase):
         private.unlink()
         shared.unlink()
         example = (REPO / "skills/jarvis/kendex.settings.toml.example").read_text()
-        consumed = set(re.findall(r'["\'](JARVIS_[A-Z_]+)["\']', (SCRIPTS / "lib/watch.py").read_text()))
         declared = set(re.findall(r'^(JARVIS_[A-Z_]+)\s*=', example, re.M))
+        # The watch reads its settings by quoted key; session-backend.sh reads
+        # JARVIS_UNATTENDED_HARNESSES by expansion after jarvis_load.
+        consumed = set(re.findall(r'["\'](JARVIS_[A-Z_]+)["\']', (SCRIPTS / "lib/watch.py").read_text()))
+        consumed |= set(re.findall(r'\$\{(JARVIS_[A-Z_]+)', (SCRIPTS / "lib/session-backend.sh").read_text()))
         self.assertEqual(declared, consumed)
         with patch.dict(os.environ, self.env, clear=True):
             defaults = self.module.config(BASH, self.home)
