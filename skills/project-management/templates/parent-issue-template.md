@@ -7,9 +7,9 @@ Work that ships in one PR is a leaf work item with an internal checklist, never 
 ## Template
 
 ```markdown
-[SUMMARY: one or two plain sentences on the subject the children share and its impact]
+> **Story:** [Who this is about.] [What happens today.] [What happens after the change, and its consequence.]
 
-Done when every child is Done or cancelled.
+> **Why this matters:** [The harm or cost today, and what the change buys.]
 
 ## Done when
 
@@ -22,10 +22,13 @@ Done when every child is Done or cancelled.
 
 ## Filing record
 
-**Research**: [RESEARCH_REF]
-**Decision [DXXX]**: [DECISION_PATH]
 **Source**: [ORIGIN_CONTEXT]
+
 **Reached by**: [REACH]
+
+**Research**: [RESEARCH_REF]
+
+**Decision [DXXX]**: [DECISION_PATH]
 
 ## Context
 
@@ -43,5 +46,5 @@ The one Done-when box is the parent's whole checklist. When the last child is Do
 5. A coordination-only parent carries no estimate. Clear it with `issues update [ISSUE_ID] --clear-estimate`; Linear stores "no estimate" and formatters render it as `0`.
 6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping).
 7. A coordination parent has no defect of its own, so its `[REACH]` is the run that produced it — the roadmap layer, the audit, or the merge-pr rebundle that detached its children — named as that run, not as a defect. Such a parent is structural and never `--review-born`.
-8. After any hierarchy change, regenerate Summary and Sub-Issues from the current children.
-9. Filing headers follow [issue-description-template.md](issue-description-template.md) § Rules. Keep them under Filing record. Synthesize the opening from all children.
+8. After any hierarchy change, regenerate Story, Why this matters and Sub-Issues from the current children. Link each child identifier.
+9. The opening and filing headers follow [issue-description-template.md](issue-description-template.md) § Field Mapping and § Rules. Keep filing headers under Filing record, in the same order, with a blank line between each field and around every section heading. Synthesize the opening from all children. Add Evidence after Context only when it holds source facts.

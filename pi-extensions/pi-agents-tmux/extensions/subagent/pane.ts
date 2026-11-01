@@ -76,6 +76,8 @@ export interface ExecCaptureOptions { cwd?: string; timeoutMs?: number; signal?:
 type ExecCaptureResult = { code: number; stdout: string; stderr: string; error?: unknown; interruption?: "timeout" | "aborted" };
 type ExecCaptureFn = (command: string, args: string[], options?: ExecCaptureOptions) => Promise<ExecCaptureResult>;
 let resolvedPiBridgeCommand: string | undefined;
+let latestPiBridgeLookup = 0;
+let latestSettledPiBridgeLookup = 0;
 
 async function defaultExecCapture(command: string, args: string[], options: ExecCaptureOptions = {}, spawner: typeof spawn = spawn): Promise<ExecCaptureResult> {
 	const signal = options.signal ?? childSignal();
@@ -488,6 +490,18 @@ function resolveSessionBridgeExtension(cwd?: string): string | undefined {
 }
 
 async function resolvePiBridgeBin(): Promise<string | undefined> {
+	// Overlapping lookups settle out of order: the extension's startup lookup can
+	// still be waiting on a login shell when a later call resolves. A lookup sets
+	// the bridge execCapture admits unless a later-started one already settled,
+	// so its caller can run what it returned and a stale result changes nothing.
+	const lookup = ++latestPiBridgeLookup;
+	const admit = (bin: string | undefined) => {
+		if (lookup > latestSettledPiBridgeLookup) {
+			latestSettledPiBridgeLookup = lookup;
+			resolvedPiBridgeCommand = bin;
+		}
+		return bin;
+	};
 	const projectBinDir = path.join(path.dirname(projectSettingsPath(process.cwd())), "bin");
 	const projectPackagesDir = path.join(path.dirname(projectSettingsPath(process.cwd())), "packages");
 	const candidates = [
@@ -498,12 +512,12 @@ async function resolvePiBridgeBin(): Promise<string | undefined> {
 		path.join(projectPackagesDir, SESSION_BRIDGE_PACKAGE_ID, "bin", "pi-bridge.js"),
 	].filter((candidate): candidate is string => Boolean(candidate));
 	for (const candidate of candidates) {
-		if (fs.existsSync(candidate)) return resolvedPiBridgeCommand = candidate;
+		if (fs.existsSync(candidate)) return admit(candidate);
 	}
 	const result = await execCapture("bash", ["-lc", "command -v pi-bridge || true"]);
 	if (result.error) throw result.error;
 	const found = result.stdout.trim().split(/\r?\n/)[0];
-	return resolvedPiBridgeCommand = found || undefined;
+	return admit(found || undefined);
 }
 
 type DiagnosticLogger = (message: string) => void;

@@ -3,7 +3,8 @@
 #
 # The hook refuses a line that is only a `cd`, the move that re-roots every
 # later tool call where the shell persists (Claude Code) and changes nothing
-# where each command runs fresh (Codex, the Pi carrier), and passes anything
+# where each command runs fresh (Codex, the Pi carrier, Copilot's bash tool),
+# so it passes a bare cd on Copilot's bash tool, and passes anything
 # that scopes the move — a subshell, an &&-chain doing the real work — or that
 # only mentions cd. The argument is optional on both sides of the check: a
 # bare `cd` goes to $HOME, which is the same move as `cd /tmp`.
@@ -105,7 +106,17 @@ run_hook 'cdr --version';     assert_eq "$rc" 0 'a command whose name merely sta
 run_hook 'ls -la';            assert_eq "$rc" 0 'an unrelated command passes'
 run_hook 'git checkout main'; assert_eq "$rc" 0 'a command with no cd at all passes'
 
+# Copilot's bash tool passes every bare cd, so the shared Copilot rows read
+# the payload under its powershell tool, which the Bash matcher also reaches.
+PAYLOAD_COPILOT_TOOL=powershell
 payload_table "$HOOK" 'cd /tmp' '(cd /tmp && ls)'
+
+# A persistent shell's bare cd is refused by the first-line table above.
+echo "=== block-bare-cd: Copilot's shell tools ==="
+first_table "\
+a bare cd on Copilot's fresh bash tool passes|payload|0|-|{\"toolName\":\"bash\",\"toolArgs\":{\"command\":\"cd /tmp\"}}
+a bare cd on Copilot's powershell tool is refused|payload|2|block-bare-cd: refused=bare-cd|{\"toolName\":\"powershell\",\"toolArgs\":{\"command\":\"cd /tmp\"}}
+"
 
 # Python launcher writers and cat file writers send these bodies as command
 # input. A missing terminator grants no exemption to later command lines.
@@ -126,19 +137,14 @@ an ordinary delimiter needs an exact terminator|command|2|block-bare-cd: refused
 a second body on one opening line keeps its judgement|command|2|block-bare-cd: refused=bare-cd|cat <<FIRST <<SECOND\ntext\nFIRST\ncd /tmp\nSECOND
 "
 
-# Each disposable hook runs this same suite. The legacy copy restores the
-# original whole-command judgement; the other copy skips every later line.
+# The disposable hook runs this same suite: the legacy copy restores the
+# original whole-command judgement.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  mkdir "$TMP_ROOT/legacy" "$TMP_ROOT/skip"
+  mkdir "$TMP_ROOT/legacy"
   marker_count=$(grep -cF 'STRIPPED=$(echo "$JUDGED"' "$HOOK")
   assert_eq "$marker_count" 1 'the legacy mutation has one target'
   sed 's/echo "\$JUDGED"/echo "$COMMAND"/' "$HOOK" >"$TMP_ROOT/legacy/block-bare-cd.sh"
-  marker_count=$(grep -cF 'if [[ ${LINES[$i]} =~ $HEREDOC_RE ]]; then' "$HOOK")
-  assert_eq "$marker_count" 1 'the skip mutation has one target'
-  sed '/if \[\[ ${LINES\[\$i\]} =~ \$HEREDOC_RE \]\]; then/i\
-  if [[ ${LINES[$i]} == *"<<"* ]]; then break; fi
-' "$HOOK" >"$TMP_ROOT/skip/block-bare-cd.sh"
-  for mutant in legacy skip; do
+  for mutant in legacy; do
     if cmp -s "$HOOK" "$TMP_ROOT/$mutant/block-bare-cd.sh"; then
       assert_eq unchanged changed "$mutant changes its disposable hook"
       continue

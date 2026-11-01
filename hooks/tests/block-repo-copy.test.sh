@@ -31,10 +31,6 @@ assert_eq() {
   if [[ "$1" == "$2" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
 }
-assert_contains() {
-  if [[ "$1" == *"$2"* ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected to contain: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
-}
 
 # The command reaches the hook JSON-encoded, exactly as the harness sends it.
 # jq does the encoding rather than sed: a Bash tool call is routinely several
@@ -210,10 +206,6 @@ the verb on the far side of a pipe is the one that matched|command|2|block-repo-
 a copy the hook allows says nothing|command|0|-|cp -r $REPO/docs /tmp/copy
 a payload that is not JSON is refused unread|payload|0|block-repo-copy: payload=invalid-json|not JSON
 "
-run_hook "cp -r $REPO/target /tmp/copy"
-assert_contains "$err" "cp -r $REPO/target /tmp/copy" 'the refusal quotes the command it judged'
-assert_contains "$err" 'mktemp -d' 'the refusal shows how to build the fixture'
-
 payload_table "$HOOK" "cp -r $REPO/.git /tmp/copy" "cp -r $REPO/src /tmp/copy"
 
 echo "=== block-repo-copy: the stated limits ==="

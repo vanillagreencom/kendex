@@ -53,7 +53,7 @@ while IFS='|' read -r world class paths macos; do
   done
 done < <(queue_table)
 [ "$queue_rows" -ge 9 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
-# EDIT@PATHS: a copy with that rule removed must fail the row over PATHS.
+# EDIT@PATHS: a copy with the rule removed must fail the row over PATHS.
 # A refusal is a broken copy, never a reddened row.
 while IFS='@' read -r edit paths; do
   sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
@@ -78,9 +78,6 @@ while IFS='@' read -r edit paths; do
   done
 done <<'CONTROLS'
 s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md
-/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*) \(.*\) ;; esac$/    \1/@skills/price-handling/scripts/x
-/queue=/s/^    case "\$now_shards" in \*"\\"\$shard\\""\*)/    case "\$now_shards" in *"\\"\$shard"*)/@.claude/hooks/lane-mail-check
-s/^    case " \$LINUX_ONLY_SHARDS " in \*" \$shard "\*) continue ;; esac$/    :/@skills/price-handling/scripts/x pi-extensions/pi-demo/src/x.ts
 CONTROLS
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

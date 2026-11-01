@@ -351,6 +351,23 @@ run_rows \
   "a deletion of a named path is a change to it and runs the entry|fx_scope_deleted|$SCOPE_ENV|$BARE||rc=2 $BATCH_OK;$LOCAL_DIED" \
   "an absolute glob is a config error naming the setting, as every path setting's is|fx_scope_malformed|$LOCAL_ENV,COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS=/abs/*.py|$BARE||rc=2 $BATCH_OK;pre-commit: path-absolute=COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS:/abs/*.py"
 
+# A full or failing scratch filesystem: git writes the commit's raw list, and
+# the chain's path list beside it cannot be written. The git on PATH puts a
+# directory where that list goes, in the chain's own scratch only, once the
+# shell has opened the raw list for it. Unread admission evidence blocks: no
+# skip line, no entry run and no verdict follow the batch, only the shell's
+# own diagnostic, which starts at the scratch root.
+fx_scope_unwritable() {
+  repo scope-unwritable
+  local_entry '#!/bin/sh\necho "fixture=local-error"\nexit 2\n'
+  mkdir -p "$TMP/scope-unwritable-bin" "$TMP/scope-unwritable-tmp"
+  printf '#!/bin/sh\ncase " $* " in\n  *" --raw "*)\n    for d in "$TMPDIR"/gg-pre-commit.*; do\n      [ -f "$d/raw.z" ] && [ ! -e "$d/staged.z" ] && mkdir "$d/staged.z"\n    done ;;\nesac\nexec "%s" "$@"\n' "$(command -v git)" >"$TMP/scope-unwritable-bin/git"
+  chmod +x "$TMP/scope-unwritable-bin/git"
+}
+fx_scope_unwritable
+unwritable="$(run "$SCOPE_ENV,PATH=$TMP/scope-unwritable-bin:$PATH,TMPDIR=$TMP/scope-unwritable-tmp" "$BARE" "")"
+assert_eq "a path list the chain cannot write blocks the commit rather than skipping the entry" "rc=1 $BATCH_OK" "${unwritable%%;<root>/*}"
+
 echo "=== the batch runs at commit scope: a marker the commit does not add belongs to CI ==="
 # The fixture proves its marker landed in HEAD: a row over a repository
 # without one passes for the wrong reason.

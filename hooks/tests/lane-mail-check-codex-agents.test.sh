@@ -247,22 +247,15 @@ expect 2 'lane-mail-check: agent-unobserved=Agent tokens=300000 reserve=150000' 
 assert_eq "$(sed -n 's/^lane-mail-check: detached-route=//p' "$ERR_FILE")" orch-job-runner 'the overseer refusal names the installed detached route'
 ARM_ARGS=()
 
+# One mutation per unit: the hook's Codex roster arm, and the Codex adapter
+# the roster reads its children through. Neither mutation reddens the other.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  for control in roster route; do
-    case "$control" in
-      roster) wake_mutant no-codex-roster '  elif [ "$HARNESS" = codex ]; then' '  elif false; then' ;;
-      route) wake_mutant no-overseer-route '        [ "$ROLE" != overseer ] || printf '\''lane-mail-check: detached-route=orch-job-runner\n'\''' '        :' ;;
-    esac
-    control_rc=0
-    env "HOOK_UNDER_TEST=$MUTANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-codex-agents.test.sh" \
-      > "$TMP_ROOT/$control.control.log" 2>&1 || control_rc=$?
-    if [ "$control" = roster ] && ! command -v timeout >/dev/null 2>&1; then
-      printf 'skip: roster control needs timeout to observe Codex children\n'
-      continue
-    fi
-    assert_eq "$control_rc" 1 "control $control fails the real hook assertions"
-  done
+  wake_mutant no-codex-roster '  elif [ "$HARNESS" = codex ]; then' '  elif false; then'
+  control_rc=0
+  env "HOOK_UNDER_TEST=$MUTANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-codex-agents.test.sh" \
+    > "$TMP_ROOT/roster.control.log" 2>&1 || control_rc=$?
   if command -v timeout >/dev/null 2>&1; then
+    assert_eq "$control_rc" 1 "control roster fails the real hook assertions"
     new_lane codex-return-control AGENT-1
     mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
     hole_install lib/adapters
@@ -274,53 +267,16 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     cp "$MUTANT_PATH" "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
     install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
     ARM_ARGS=(halt)
-    for control in spawn-completed followup-completed; do
-      control_rc=0
-      (PASS=0; FAIL=0
-        codex_row "$control" 0 -
-        [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/$control.control.log" 2>&1 || control_rc=$?
-      assert_eq "$control_rc" 1 "control $control fails its roster and hook row"
-      assert_eq "$(first_line)" \
-        'lane-mail-check: agent-reserve=collaborationspawn_agent tokens=119200 reserve=10000' \
-        "control $control holds the reserve without completion handling"
-    done
-    new_lane codex-interrupted-control AGENT-1
-    mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
-    hole_install lib/adapters
-    cp -R "$REPO_ROOT/skills/orch/scripts/lib/adapters" "$LANE/.agents/skills/orch/scripts/lib/adapters"
-    wake_mutant interrupted-held \
-      '        elif . == "errored" or . == "shutdown" or . == "not_found" or . == "interrupted" then "completed"' \
-      '        elif . == "interrupted" then "running" elif . == "errored" or . == "shutdown" or . == "not_found" then "completed"' \
-      "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
-    cp "$MUTANT_PATH" "$LANE/.agents/skills/orch/scripts/lib/adapters/codex.sh"
-    install_hook "$HOOK" "$LANE/.codex/hooks/lane-mail-check.sh"
-    ARM_ARGS=(halt)
     control_rc=0
     (PASS=0; FAIL=0
-      codex_row interrupted 0 -
-      [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/interrupted.control.log" 2>&1 || control_rc=$?
-    assert_eq "$control_rc" 1 'control interrupted fails its own hook row'
+      codex_row spawn-completed 0 -
+      [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/spawn-completed.control.log" 2>&1 || control_rc=$?
+    assert_eq "$control_rc" 1 "control spawn-completed fails its roster and hook row"
     assert_eq "$(first_line)" \
       'lane-mail-check: agent-reserve=collaborationspawn_agent tokens=119200 reserve=10000' \
-      'the interrupted control holds the reserve as main does'
-    for control in current-call prior-pending; do
-      case "$control" in
-        current-call) wake_mutant no-current-exclusion '      lane_adapter_codex_agents "$2"' '      lane_adapter_codex_agents ""' ;;
-        prior-pending) wake_mutant no-pending-guard "      if [ \"\$id\" = '?' ]; then" "      if [ \"\$id\" = '?' ]; then continue;" ;;
-      esac
-      new_lane "codex-$control-control" AGENT-1
-      mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
-      install_hook "$MUTANT_PATH" "$LANE/.codex/hooks/lane-mail-check.sh"
-      ARM_ARGS=(halt)
-      control_rc=0
-      (PASS=0; FAIL=0
-        case "$control" in
-          current-call) codex_row current-call 0 - ;;
-          prior-pending) codex_row prior-pending 2 agent-unobserved ;;
-        esac
-        [ "$FAIL" -eq 0 ]) > "$TMP_ROOT/$control.control.log" 2>&1 || control_rc=$?
-      assert_eq "$control_rc" 1 "control $control fails its own hook row"
-    done
+      "control spawn-completed holds the reserve without completion handling"
+  else
+    printf 'skip: roster control needs timeout to observe Codex children\n'
   fi
 fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

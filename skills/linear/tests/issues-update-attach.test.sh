@@ -113,6 +113,7 @@ run_linear() {
   OUT="$(cd "$PROJECT" && env -u LINEAR_TEAM -u LINEAR_AGENT_LABELS \
     PATH="$PROJECT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
+    LINEAR_REQUIRE_REACH= \
     PUT_HTTP="${PUT_HTTP:-200}" PUT_EXIT="${PUT_EXIT:-0}" \
     CURL_LOG="$CURL_LOG" \
     bash "$LINEAR" "$@" </dev/null 2>"$ERR_FILE")" || RC=$?

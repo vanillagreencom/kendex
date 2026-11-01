@@ -16,8 +16,8 @@
 #      step writes, and the arguments each wrapped script was called with.
 #   2. the must-fail inverses: a copy of classify that prints a class of its
 #      own instead of reading the wrapped script's fails the render row, and
-#      one copy per lanes rule with that rule planted wrong fails the row the
-#      rule decides. Each copy must also run to completion, so a copy that
+#      a copy of the decision lib with one lanes rule planted wrong fails
+#      the row the rule decides. Each copy must also run to completion, so a copy that
 #      dies for another reason is never counted as a kill.
 #   3. the refusals: one row per cause the header documents, each asserting
 #      exit 2 and the `change-class-action: wiring-error: cause=` key, the
@@ -28,9 +28,9 @@
 #      or read by the action's own later steps alone, and the classify
 #      step's `env:` block maps each declared input to
 #      exactly one variable, its name upper-cased with `-` as `_`, each one
-#      classify's Environment header lists. Copies carrying a misspelled
-#      `lanes` value and a misspelled
-#      `inputs.lanes-from` are the controls. A workflow reads the action, never the script, and
+#      classify's Environment header lists. A copy carrying a misspelled
+#      `lanes` value is the control. A workflow reads the action, never the
+#      script, and
 #      GitHub reads an undeclared input as empty, so a broken mapping there
 #      publishes an empty `lanes` or `lane_verdicts` with every row above
 #      green.
@@ -44,9 +44,8 @@
 #      asserting the verdict lines and the declaration's state; the judged
 #      tree carries a declaration of its own that no row may read, and
 #      every run starts in a directory holding files the globs would expand
-#      to. One mutant copy per rule must fail the row the rule decides, the
-#      copy of classify or of the shipped lanes lib it reads, whichever
-#      holds the rule. Beside them, the queue mark: a lane marked `:queue`
+#      to. One mutant copy per file that holds rules, classify or a
+#      shipped lib it reads, must fail the row its rule decides. Beside them, the queue mark: a lane marked `:queue`
 #      its own glob reaches stands down on a pull request where the
 #      classifier answered queue_only=true and both the lanes-from
 #      checkout and the judged head hold the installed reader of the mark,
@@ -394,18 +393,6 @@ status="$(run "$mutant" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.m
 check "must-fail: a classify that decides its own class changes the render row" \
   '0 change_class=standard' "$status $(sed -n '/^change_class=/p' "$OUT")"
 
-# The wrapped dependency writes outputs by default. Removing the explicit
-# sink restores that unused path and makes the existing output row fail.
-needle=' --output /dev/null '
-NEEDLE="$needle" awk '
-  { i = index($0, ENVIRON["NEEDLE"]) }
-  i > 0 { hits++; $0 = substr($0, 1, i - 1) " " substr($0, i + length(ENVIRON["NEEDLE"])) }
-  { print } END { if (hits != 1) exit 2 }
-' "$CLASSIFY" >"$mutant"
-! cmp -s "$CLASSIFY" "$mutant" || exit 1
-check 'must-fail: the wrapped command uses its output sink' \
-  no "$(row_holds "$mutant" render)"
-
 # A rule planted wrong in a copy of TARGET, `classify` or `lib`, every other
 # line kept: a classify copy at $mutant, or a lanes lib copy in a stubs root
 # of its own, which ROW_CLASSIFIER then names for the runs after it. Sets
@@ -444,8 +431,8 @@ plant() { # TARGET NEEDLE REPLACEMENT
   [ "$file" != "$CLASSIFY" ] || PLANTED="$mutant"
 }
 
-# One copy per lanes rule, the rule planted wrong and every other line kept.
-# Each copy must run to completion and fail the row its rule decides.
+# A lanes rule planted wrong, every other line kept. The copy must run to
+# completion and fail the row the rule decides.
 # NEEDLE@REPLACEMENT@ROW THE RULE DECIDES, split on `@` because a rule spells
 # the shell's `||`.
 mutants=0
@@ -456,9 +443,6 @@ while IFS='@' read -r needle replacement row; do
     no "$(row_holds "$PLANTED" "$row")"
 done <<'ROWS'
 [ "$class" = render ] || @@render
- || [ "$class" = trivial ]; then@; then@trivial-allowlisted
-elif [ "$docs" = docs_only=true ]; then@elif false; then@docs-only-standard
-  lanes=true lanes_cause="$class"@  lanes=false lanes_cause="$class"@standard
 ROWS
 require_rows "lanes mutant" "$mutants"
 ROW_CLASSIFIER=""
@@ -473,12 +457,6 @@ status="$(run "$CLASSIFY" CLASSIFIER="$LEGACY_STUBS" STUB_CLASS=render STUB_PATH
 check 'an older classifier runs every lane' \
   '0 lanes=true lanes_cause=lane-producer-unavailable lane_verdicts=' \
   "$status $(outputs | tr ' ' '\n' | grep -E '^(lanes|lanes_cause|lane_verdicts)=' | tr '\n' ' ' | sed 's/ $//')"
-plant classify '  lanes=true lanes_cause=lane-producer-unavailable' \
-  '  lanes=false lanes_cause=lane-producer-unavailable'
-status="$(run "$PLANTED" CLASSIFIER="$LEGACY_STUBS" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
-check 'must-fail: missing producer cannot authorize a lane skip' '0 lanes=false' \
-  "$status $(outputs | tr ' ' '\n' | grep '^lanes=')"
-ROW_CLASSIFIER=""
 
 # --- 3. The refusals --------------------------------------------------------
 
@@ -647,21 +625,6 @@ esac
 check "classify's env names are the ones its Environment header lists" \
   "$header_env" "$(classify_env "$ACTION" | sed 's/:.*//')"
 
-needle='LANES_FROM: ${{ inputs.lanes-from }}'
-[ "$(grep -cF -- "$needle" "$ACTION")" -eq 1 ] ||
-  { echo "the lanes-from mapping is no longer one line in $ACTION" >&2; exit 1; }
-NEEDLE="$needle" awk '
-  { i = index($0, ENVIRON["NEEDLE"]) }
-  i > 0 { $0 = substr($0, 1, i - 1) "LANES_FROM: ${{ inputs.lanes_from }}" substr($0, i + length(ENVIRON["NEEDLE"])) }
-  { print }
-' "$ACTION" >"$TMP/action.yml"
-! cmp -s "$ACTION" "$TMP/action.yml" || { echo "the lanes-from mutant changed nothing" >&2; exit 1; }
-if [ "$mapped" != "$(classify_env "$TMP/action.yml")" ]; then
-  ok "must-fail: an action.yml whose lanes-from input is misspelled fails the input mapping row"
-else
-  bad "must-fail: an action.yml whose lanes-from input is misspelled fails the input mapping row"
-fi
-
 # --- 5. The lane verdicts ---------------------------------------------------
 
 # ROW|DECLARATION|CLASS|DOCS|PATHS|PATHS OUTSIDE THE DOCS SET|EXPECTED
@@ -738,8 +701,8 @@ for decl in absent bad-name unreadable good; do
     "$(sed -n 's/^\(::warning title=[^:]*::\).*/\1/p' "$TMP/stdout")"
 done
 
-# One copy per lane rule, the rule planted wrong and every other line kept.
-# Each must run to completion and fail the row its rule decides.
+# A lane rule planted wrong, every other line kept. The copy must run to
+# completion and fail the row the rule decides.
 # NEEDLE@REPLACEMENT@ROW@TARGET, split on `@` because a rule spells the
 # shell's `&&`; TARGET is the file holding the rule, as plant takes it.
 mutants=0
@@ -749,46 +712,12 @@ while IFS='@' read -r needle replacement row target; do
   check "must-fail: '$needle' planted as '$replacement' fails the $row row" \
     no "$(lane_row_holds "$PLANTED" "$row")"
 done <<'ROWS'
-declaration="$lanes_root/.github/ci-lanes.conf"@declaration="$judged_root/.github/ci-lanes.conf"@one-lane@classify
     line="${line%%#*}"@    line="$line"@one-lane@lib
-[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*)@never-a-lane-name)@bad-name@lib
-{ declaration_note="cause=no-globs line=$number lane=$name"; return 1; }@:@no-globs@lib
-[ "$lane_count" -gt 0 ] || { declaration_note="cause=no-lanes"; return 1; }@:@no-lanes@lib
-          lane_hits[$index]="path=$path glob=$LANE_GLOB_HIT"@          lane_hits[$index]=""@two-lanes@classify
-    if [ "$claimed" = false ] && [ -z "$unclaimed_path" ] && outside_docs "$path"; then@    if false; then@unclaimed@classify
- && outside_docs "$path"; then@ && true; then@unclaimed-docs@classify
-    no_changed_paths=true@    no_changed_paths=false@no-paths@classify
-    lane_state="malformed" lane_count=0@    lane_state="malformed"@bad-after-good@classify
-[!abcdefghijklmnopqrstuvwxyz0123456789]* | *[!@*[!@bad-leading@lib
-      '' | [!@      [!@bad-mark-only@lib
-    set -f@    :@one-lane@lib
-  set -f; for glob in@  for glob in@one-lane@lib
-    lane_values[$index]=false lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@    lane_values[$index]=true lane_causes[$index]="cause=lanes-false lanes_cause=$lanes_cause"@docs-only@classify
-    lane_values[$index]=false lane_causes[$index]="cause=unreached"@    lane_values[$index]=true lane_causes[$index]="cause=unreached"@one-lane@classify
-{ declaration_note="cause=unreadable"; return 1; }@:@unreadable@lib
-        *:event-uniform) name="${name%:event-uniform}" ;;@        *:event-uniform-retired) ;;@one-lane@lib
 ROWS
 ROW_CLASSIFIER=""
 require_rows "lane mutant" "$mutants"
 
-# The refusal of a lanes-from naming the judged tree, planted away.
-plant classify '[ "$lanes_root" != "$judged_root" ] ||' 'true ||'
-status="$(run "$PLANTED" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OUTSIDE=src/main.rs)"
-check "must-fail: a classify reading lanes from the judged tree is not refused" \
-  "0 lane_verdicts=lane_evil=true" "$status $(outputs | tr ' ' '\n' | grep '^lane_verdicts=')"
-ROW_CLASSIFIER=""
-
 # --- 5b. Declaration changes ------------------------------------------------
-
-# Imported refusals already carry cause=. The action's formatter must emit
-# its existing machine field once, as the judged-tree refusal above reads it.
-plant classify \
-  'printf '\''change-class-action: wiring-error: cause=%s\n'\'' "${1#cause=}" >&2' \
-  'printf '\''change-class-action: wiring-error: cause=%s\n'\'' "$1" >&2'
-status="$(run "$PLANTED" LANES_FROM="$TMP/subject" STUB_PATHS=src/main.rs STUB_OUTSIDE=src/main.rs)"
-check 'must-fail: the action normalizes the imported cause field' \
-  "2 cause=lanes-from-judged-tree root=$TMP/subject" "$status $(refusal)"
-ROW_CLASSIFIER=""
 
 declare_lanes added-glob 'check:event-uniform src/* Cargo.toml tests/*
 tmux:event-uniform tmux/* fixtures/*

@@ -94,7 +94,7 @@ Position within the backlog is not set here; `audit-issues project-order` owns p
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Load the project taxonomy and validate every issue's `labels[]` per [labels.md](../references/labels.md) § Validation before writing the audit file. Complete a set from the taxonomy when only `agent`/`agent_label` is present. Any failure there halts before mutation.
+Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). When only `agent`/`agent_label` is present, complete the set per [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set). Validate every issue's `labels[]` per [labels.md § Validation](../references/labels.md#validation) before writing the audit file. Any failure there halts before mutation.
 
 ### 4.2 Convert to Audit Input
 
@@ -151,7 +151,7 @@ Use `blocked_by` for a real dependency and `related` for an informational link. 
 
 Confirm every issue landed in the project, the parent/child structure matches the plan, dependencies are set, and project relations exist. Report discrepancies; do not auto-fix them.
 
-This section is the run's one publisher under [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts); audit-issues § 7 skips publication for a `roadmap-create` input. The plan's source issue is the one [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) selects; an invocation `--source-issue` already holds the plan markdown and its JSON from roadmap-plan § 6, and any other source issue receives both now. A research/spec input whose `context.research_source_issue` is set already sits on that issue and is uploaded nowhere; its link takes the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on `[RESEARCH_SOURCE_ISSUE]`. An input with a null `context.research_source_issue`, an inline or local-only file, is uploaded to the plan's source issue with the plan. Every issue this workflow created or updated, § 2 actions included, carries an `**Artifacts**` link to each of these files. Verify the attachments on each source issue and the links on every other issue.
+This section is the run's one publisher under [publish-artifacts.md](publish-artifacts.md); audit-issues § 7 skips publication for a `roadmap-create` input. The plan's source issue is the one [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) selects; an invocation `--source-issue` already holds the plan markdown and its JSON from roadmap-plan § 6, and any other source issue receives both now. A research/spec input whose `context.research_source_issue` is set already sits on that issue and is uploaded nowhere; its link takes the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on `[RESEARCH_SOURCE_ISSUE]`. An input with a null `context.research_source_issue`, an inline or local-only file, is uploaded to the plan's source issue with the plan. Every issue this workflow created or updated, § 2 actions included, carries an `**Artifacts**` link to each of these files. Verify the attachments on each source issue and the links on every other issue.
 
 <output_format>
 

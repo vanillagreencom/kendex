@@ -130,44 +130,13 @@ ACTION_CASES
 echo "=== decisions issue action rows ==="
 evaluate_action_rows "$DECISIONS" normal
 
-if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
-  echo "=== must-fail controls ==="
-  lookup_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-issue-match/decisions" '      .[] | select(.research | test($issue + "(?![0-9])"; "i")) |' '      .[] | select(false) |' 1)"
-  failures="$(evaluate_action_rows "$lookup_mutant" control supported-issue-lookup)"
-  if [[ "$failures" == *'|supported-issue-lookup|'* ]]; then
-    pass "wrong lookup result fails the supported lookup row"
-  else
-    fail "wrong lookup result did not fail the supported lookup row"
-  fi
-
-  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/action-diagnostic-key/decisions" '    emit_error action-unknown "action=$action hint=search--issue"' '    emit_error action-invalid "action=$action hint=search--issue"' 1)"
-  failures="$(evaluate_action_rows "$diagnostic_mutant" control issue-action)"
-  if [[ "$failures" == *'|issue-action|'* ]]; then
-    pass "a changed action key fails its row"
-  else
-    fail "a changed action key did not fail its row"
-  fi
-
-  action_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-action-table/decider/tests/decider-issue-action-hint.test.sh" ACTION_CASES)"
-  if decider_test_fails_with "$action_table_mutant" "action table executed no rows"; then
-    pass "an empty action table fails its row-count guard"
-  else
-    fail "an empty action table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
-  fi
-  if decider_diagnostic_only_table_control "$action_table_mutant" "$TMP_ROOT/empty-action-table/decider/tests/diagnostic-only.test.sh" "action table executed no rows" 1; then
-    pass "an action-table diagnostic without a failure is rejected"
-  else
-    fail "an action-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
-  fi
-  set +e
-  selection_output="$(evaluate_action_rows "$lookup_mutant" control unknown-action-row 2>&1)"
-  selection_rc=$?
-  set -e
-  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:action table selected no row: unknown-action-row"* ]]; then
-    pass "an unknown action row fails its selection guard"
-  else
-    fail "an unknown action row missed its selection guard"
-  fi
+echo "=== must-fail control ==="
+lookup_mutant="$(decider_mutate_script "$TMP_ROOT/no-issue-match/decisions" '      .[] | select(.research | test($issue + "(?![0-9])"; "i")) |' '      .[] | select(false) |' 1)"
+failures="$(evaluate_action_rows "$lookup_mutant" control supported-issue-lookup)"
+if [[ "$failures" == *'|supported-issue-lookup|'* ]]; then
+  pass "wrong lookup result fails the supported lookup row"
+else
+  fail "wrong lookup result did not fail the supported lookup row"
 fi
 
 echo

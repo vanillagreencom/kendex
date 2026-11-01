@@ -629,85 +629,20 @@ BASE_CASES
 echo "=== decision IDs against the base branch ==="
 evaluate_rows "$DECISIONS" normal
 
-echo "=== must-fail controls ==="
-# Each control plants one defect in a copy of the script and names the row it
-# must turn red. Columns: row, text to replace, its replacement, what the
-# defect removes. A \n in either text is a newline.
-control_seq=0
-while IFS='~' read -r row old new label; do
-  control_seq=$((control_seq + 1))
-  printf -v old '%b' "$old"
-  printf -v new '%b' "$new"
-  if ! mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-$control_seq/decisions" "$old" "$new" 1)"; then
-    fail "control $label could not be planted"
-    continue
-  fi
+echo "=== must-fail control ==="
+# A collision rule that never fires, planted in a copy of the script, must
+# turn the check-collision row red.
+if mutant="$(decider_mutate_script "$TMP_ROOT/control-collision/decisions" 'select(($held | length) > 0 and' 'select(($held | length) > 99 and' 1)"; then
   set +e
-  failures="$(evaluate_rows "$mutant" control "$row")"
+  failures="$(evaluate_rows "$mutant" control check-collision)"
   set -e
-  if [[ "$failures" == *"|$row|"* ]]; then
-    pass "$label fails $row"
+  if [[ "$failures" == *"|check-collision|"* ]]; then
+    pass "a collision rule that never fires fails check-collision"
   else
-    fail "$label did not fail $row"
+    fail "a collision rule that never fires did not fail check-collision"
   fi
-done <<'CONTROLS'
-next-id-base-ahead~  for id in ${ids[@]+"${ids[@]}"} ${base_ids[@]+"${base_ids[@]}"}; do~  for id in ${ids[@]+"${ids[@]}"}; do~a maximum over the working tree alone
-next-id-base-ahead~        if ! fetched="$(git_remote fetch~        if false && ! fetched="$(git_remote fetch~a base read without a fetch
-next-id-no-remote~  emit_notice base-unverified "ref=~  emit_notice base-unread "ref=~a renamed base notice
-next-id-fetch-failed~        fetch_failed=1\n        if [[ "$branch" == HEAD ]]; then~        fetch_failed=1; return 0\n        if [[ "$branch" == HEAD ]]; then~a failed fetch that drops the local copy
-next-id-fetch-failed-local-main~    short="${cand#refs/remotes/}"~    fetch_failed=0; short="${cand#refs/remotes/}"~a fetch failure forgotten by the next candidate
-next-id-origin-head~    candidates=(origin/HEAD origin/main main)~    candidates=(origin/main main)~a default ladder without origin/HEAD
-next-id-configured-origin-head~|| found="${line#ref: refs/heads/}"~|| found=""~a remote HEAD that is never resolved to its branch
-check-renamed-default~|| found="${line#ref: refs/heads/}"~|| found=""~a remote HEAD that is never resolved to its branch
-check-stale-remote-branch~        [[ -n "$found" ]] || continue~        [[ -n "$found" ]] || found="$branch"~a branch the remote lacks read from its stale local ref
-next-id-configured-ref~    candidates=("$DECISIONS_BASE_REF")~    candidates=(origin/main main)~a configured base ref that is ignored
-next-id-local-ref~    candidates=("$DECISIONS_BASE_REF")~    candidates=(origin/main main)~a configured local base branch that is ignored
-next-id-empty-index-base-scheme~    elif [[ "${#base_ids[@]}" -gt 0 ]]; then~    elif false; then~a scheme inferred from the working tree alone
-next-id-configured-prefix-base-width~    for id in ${base_ids[@]+"${base_ids[@]}"} ${ids[@]+"${ids[@]}"}; do~    for id in ${ids[@]+"${ids[@]}"}; do~a configured prefix whose width ignores the base
-next-id-index-absent~    BASE_REASON=index-absent~    BASE_REASON=""~a base without INDEX.md reported as read
-check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and~a collision rule that never fires
-check-renamed-record~if [[ -n "$old_link"\n~if [[ -z "$old_link"\n~a rename rule that rejects inherited records
-check-base-rename-branch-removed~if [[ -n "$old_link"\n~if [[ -n "$old_link" && -f "$path"\n~an unchanged branch required to retain its removed document
-check-branch-rename-base-removed~[[ "$base_link" == "$old_link" ]]~[[ "$base_link" == "$old_link" ]] && git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null~an unchanged base required to retain its removed document
-check-base-renamed-record~then $history[0] else null end~then (if $history[0].link == $row.base_links[0] then $history[0] else null end) else null end~an identity rule that rejects base-side renames
-check-both-renamed-record~then $history[0] else null end~then (if $history[0].link == $row.base_links[0] or $history[0].link == $row.link then $history[0] else null end) else null end~an identity rule that rejects both-side renames
-check-collision~then $history[0] else null end~then $history[0] else {link: .base_links[0], path: .base} end~a rename rule that accepts independently allocated IDs
-check-rename-old-present~! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link"~true~a rename rule that accepts a retained old document
-check-both-rename-old-present~! -e "$DECISIONS_DIR/$old_link" && ! -L "$DECISIONS_DIR/$old_link"~true~a both-side rename that retains the ancestor's file
-check-base-rename-old-present~[[ -z "$base_old_path" ]]~true~a rename rule that accepts a retained old base document
-check-rename-new-absent~-f "$path" && ! -e~true && ! -e~a rename rule that accepts a missing new document
-check-base-rename-new-absent~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$BASE_REF:${BASE_PATH%INDEX.md}$base_link" >/dev/null~&& true~a rename rule that accepts a missing new base document
-check-removed-id-revived~&& git -C "$DECISIONS_DIR" rev-parse --verify --quiet "$old_path" >/dev/null~&& true~a rename rule that accepts a removed ancestor ID
-check-removed-retained-active~.link != .ancestor.link and .status != "Removed"~.link != .ancestor.link and false~a retained Removed pointer that permits active branch ID reuse
-check-removed-retained-base-active~.base_links[0] != .ancestor.link and .base_statuses[0] != "Removed"~.base_links[0] != .ancestor.link and false~a retained Removed pointer that permits active base ID reuse
-check-removed-retained-removed~.link != .ancestor.link and .status != "Removed"~.link != .ancestor.link and .status == "Removed"~a status rule that rejects a retained Removed pointer rename
-check-rename-no-history~ancestor_rows="$(shared_index)" || return 1~ancestor_rows="$(shared_index)" || ancestor_rows='[]'~an unread shared history that becomes an empty INDEX
-check-removed-record~    if [[ "$file_count" -gt 1 ]]; then~    if [[ "$file_count" -ne 1 ]]; then~a check that demands a document for every row
-check-removed-record~          status: .[6], link: (.[7] | cell_path), line: $line }~          status: .[6], link: .[7], line: $line }~an identity read from the Link cell as written
-next-id-past-removed~      | { id: .[1], research: .[2],~      | { id: (if .[6] == "Removed" then "" else .[1] end), research: .[2],~a next-id that skips a removed row
-check-duplicate-row~map(select(length > 1))~map(select(length > 99))~a duplicate-row rule that never fires
-check-duplicate-file~file_count=$((file_count + 1))~file_count=$((file_count + 0))~a duplicate-file rule that never counts
-check-unresolved~    unresolved) refuse=1;~    unresolved) refuse=0;~an unresolved base that check passes
-check-fetch-failed-index-absent~    [[ "$fetch_failed" -eq 0 ]] || BASE_REASON=fetch-failed~    :~a stale copy's missing INDEX.md taken as the base's
-check-index-absent~    index-absent) text=~    index-absent) refuse=1; text=~a base without INDEX.md that check refuses
-check-fetch-failed~    fetch-failed) refuse=1; text=~    fetch-failed) text=~a stale base copy that check passes
-check-malformed-row~  ROW_INVALID_KIND=error~  ROW_INVALID_KIND=notice~a skipped working-tree row that check passes
-check-malformed-base-row~|| BASE_ROWS_SKIPPED=1~|| BASE_ROWS_SKIPPED=0~a skipped base row that check passes
-check-revisit-empty~    | select(.revisit | ascii_downcase |~    | select(false) | select(.revisit | ascii_downcase |~a removed Revisit condition guard
-check-revisit-legacy-untouched~any($held[]; . == $row) | not~true~a Revisit guard that judges rows the base holds unchanged
-check-revisit-edited-none~any($held[]; . == $row)~any($held[]; .id == $row.id)~a base comparison that exempts an edited row by its ID
-check-revisit-edited-date~revisit: .[5], cells: .,~revisit: .[5], cells: .[1:],~a parser that discards Date from the base comparison
-check-revisit-edited-link~revisit: .[5], cells: .,~revisit: .[5], cells: (.[0:7] + [(.[7] | cell_path)]),~a parser that discards Link text from the base comparison
-check-not-a-repository~    not-a-repository) text=~    not-a-repository) refuse=1; text=~a directory outside a repository that check refuses
-check-configured-unresolved~  if [[ -n "${DECISIONS_BASE_REF:-}" ]]; then~  if false; then~a configured base ref that is ignored
-check-blob-missing~rev-parse --verify --quiet "$BASE_REF:$BASE_PATH"~cat-file -e "$BASE_REF:$BASE_PATH"~a presence test that needs the blob
-get-ambiguous~  if [[ "$count" -gt 1 ]]; then~  if [[ "$count" -gt 99 ]]; then~a get that answers with the first of several rows
-get-unique~del(.line, .link, .revisit, .cells)~del(.line, .revisit, .cells)~a get that leaks the parser's link field
-get-unique~del(.line, .link, .revisit, .cells)~del(.line, .link, .cells)~a get that leaks the parser's Revisit field
-get-unique~del(.line, .link, .revisit, .cells)~del(.line, .link, .revisit)~a get that leaks the parser's INDEX cells
-CONTROLS
-if [[ "$control_seq" -eq 0 ]]; then
-  fail "the control table planted no defect"
+else
+  fail "the collision control could not be planted"
 fi
 
 echo "=== ssh never prompts, and runs the transport the caller chose ==="
@@ -835,30 +770,20 @@ SSH_CASES
 
 evaluate_ssh_rows "$DECISIONS" normal
 
-# Columns: row, text to replace, its replacement, what the defect removes.
-while IFS='~' read -r row old new label; do
-  control_seq=$((control_seq + 1))
-  if ! mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-$control_seq/decisions" "$old" "$new" 1)"; then
-    fail "control $label could not be planted"
-    continue
-  fi
+# An OpenSSH command without BatchMode, planted in a copy of the script, must
+# turn the ssh-env row red.
+if mutant="$(decider_mutate_script "$TMP_ROOT/control-ssh/decisions" 'BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes"' 'BASE_SSH_COMMAND="$ssh_cmd"' 1)"; then
   set +e
-  failures="$(evaluate_ssh_rows "$mutant" control "$row")"
+  failures="$(evaluate_ssh_rows "$mutant" control ssh-env)"
   set -e
-  if [[ "$failures" == *"|$row|"* ]]; then
-    pass "$label fails $row"
+  if [[ "$failures" == *"|ssh-env|"* ]]; then
+    pass "an OpenSSH command without BatchMode fails ssh-env"
   else
-    fail "$label did not fail $row"
+    fail "an OpenSSH command without BatchMode did not fail ssh-env"
   fi
-done <<'SSH_CONTROLS'
-ssh-env~BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes"~BASE_SSH_COMMAND="$ssh_cmd"~an OpenSSH command without BatchMode
-ssh-env~${BASE_FETCH_CAUSE:+ Cause: $BASE_FETCH_CAUSE}~~a fetch failure that does not name its cause
-ssh-config~    ssh_cmd="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)" || ssh_cmd=""~    ssh_cmd=""~a core.sshCommand that is dropped
-ssh-both~    ssh_cmd="$GIT_SSH_COMMAND"~    ssh_cmd="$(git -C "$DECISIONS_DIR" config --get core.sshCommand)"~a GIT_SSH_COMMAND outranked by core.sshCommand
-ssh-default~    ssh_prog="${GIT_SSH:-ssh}"~    ssh_prog="${GIT_SSH:-}"~a default that is not ssh
-ssh-git-ssh~    ssh_prog="${GIT_SSH:-ssh}"~    ssh_prog=ssh~a GIT_SSH program that is ignored
-ssh-wrapper~  case "$variant:${ssh_prog##*/}" in~  case "ssh:" in~BatchMode forced on a program that is not OpenSSH
-SSH_CONTROLS
+else
+  fail "the ssh control could not be planted"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

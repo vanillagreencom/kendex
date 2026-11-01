@@ -6,6 +6,8 @@ How a review finding is dispositioned: applied in this PR, filed as a tracked is
 
 **Verification prerequisite.** Before classifying anything as noise, stale, or not actionable, read the files it references. A comment is stale only when the code proves it so. No file read, no dismissal.
 
+**Class before instance.** A finding is classified by its class first: the rule the code broke. An instance of a class an earlier finding in the same change named joins that finding: one finding reports the class, lists every site, and takes the higher tier of its instances. A fix round that fixes an instance and leaves the class is a blocker.
+
 ## Decision flow
 
 One pass, in order; the first verdict stands. Step 0 runs ahead of Step 1, so a finding it excludes never reaches the introduced-or-armed branch.

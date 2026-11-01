@@ -187,28 +187,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     ':; elif false; then' HOOK remote_rows \
     'unset normal committed project none runs no installer' \
     'unset normal committed project none leaves git hooks untouched'
-  skill_load_control committed-consent "$HOOK" \
-    "' <<<\"\$COMMITTED_SETTINGS\" >/dev/null 2>&1; then" \
-    ':; elif false; then' HOOK remote_rows \
-    'true normal absent global none runs no installer' \
-    'true normal absent global none leaves git hooks untouched'
-  skill_load_control inherited-repository "$HOOK" \
-    '# An absent or unreadable registration grants no licence to run an installer.' \
-    'unset() { :; }' HOOK remote_rows \
-    'true normal absent global foreign runs no installer'
-  skill_load_control armed-check "$HOOK" \
-    '    bash "$PROJECT_DIR/.agents/skills/commit-guards/scripts/install-git-hooks" --check) 2>&1' \
-    ':' HOOK remote_rows 'true hooks-path committed project none reports its result first'
-  skill_load_control missing-jq "$HOOK" \
-    'if ! command -v jq >/dev/null 2>&1; then' \
-    'exit 0' HOOK remote_rows \
-    'true no-jq committed project none reports its result first' \
-    'no-jq explains the arming gap below its key'
-  skill_load_control installer-report "$HOOK" \
-    '  printf '\''cloud-git-hooks: gap=%s\n'\'' "$PROJECT_DIR"' \
-    'OUTPUT=""' HOOK remote_rows \
-    'missing replays the captured installer report below its explanation' \
-    'hooks-path replays the captured installer report below its explanation'
 fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

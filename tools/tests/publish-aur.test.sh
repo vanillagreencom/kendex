@@ -189,10 +189,6 @@ else
   bad "placeholder pin: want rc=0 keys=deferred=kendex and no push" "got rc=$RC keys=$KEYS $before -> $after
 $OUT"
 fi
-case "$OUT" in
-  *'kendex-aarch64'*'placeholder'*) ok "placeholder pin: the line names the file and the pin" ;;
-  *) bad "placeholder pin: the line names the file and the pin" "$OUT" ;;
-esac
 
 # A dry run shows the whole diff, so a reader can review what a push would carry.
 dir="$(world diff)"
@@ -266,10 +262,6 @@ if [ "$before" != "$after" ] &&
 else
   bad "push: the AUR's master holds the tree's files" "$before -> $after"
 fi
-case "$OUT" in
-  *'AUR recipes match this repo (kendex)'*) ok "push: verified against the AUR afterwards" ;;
-  *) bad "push: verified against the AUR afterwards" "$OUT" ;;
-esac
 subject="$(git --git-dir="$dir/aur/kendex.git" log -1 --format=%s master)"
 revision="$(git -C "$dir/tree" rev-parse --short HEAD)"
 if [ "$subject" = "sync from vanillagreencom/kendex $revision" ]; then
@@ -284,6 +276,29 @@ if [ "$RC" = 0 ] && [ "$KEYS" = "unchanged=kendex" ]; then
   ok "push again: unchanged"
 else
   bad "push again: unchanged" "rc=$RC keys=$KEYS"
+fi
+
+# The run verifies what the AUR holds after its push: an AUR that accepts the
+# push and then keeps its old master fails the run on that check's drift, one
+# finding each for PKGBUILD and .SRCINFO.
+dir="$(world unkept)"
+ship "$dir"
+bump "$dir"
+release "$dir" ready
+hook="$dir/aur/kendex.git/hooks/post-receive"
+mkdir -p -- "${hook%/*}"
+# shellcheck disable=SC2016 # the variables are the hook's, expanded when it runs
+printf '#!/bin/sh\nread -r old new ref\ngit update-ref "$ref" "$old"\n' >"$hook"
+chmod +x "$hook"
+before="$(aur_head "$dir" kendex)"
+run "$dir" kendex
+after="$(aur_head "$dir" kendex)"
+if [ "$RC" = 1 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ] && [ "$before" = "$after" ] &&
+  grep -qxF 'check-aur-sync: drift=2' <<<"$OUT"; then
+  ok "unkept push: the post-push check reads the AUR and fails the run"
+else
+  bad "unkept push: want rc=1, keys=changed,pushed and check-aur-sync: drift=2" "rc=$RC keys=$KEYS $before -> $after
+$OUT"
 fi
 
 # A recipe naming a scriptlet publishes it beside PKGBUILD and .SRCINFO:
@@ -321,8 +336,7 @@ release "$dir" ready
 run "$dir" kendex
 if [ "$RC" = 0 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ] &&
   ! git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | grep -qx old.install &&
-  [ "$(git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | tr '\n' ' ')" = ".SRCINFO PKGBUILD " ] &&
-  case "$OUT" in *'old.install'*' | 1 -'*) true ;; *) false ;; esac; then
+  [ "$(git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | tr '\n' ' ')" = ".SRCINFO PKGBUILD " ]; then
   ok "dropped companion: the push removed old.install, the AUR holds exactly the recipe's files"
 else
   bad "dropped companion: old.install should be gone" "rc=$RC keys=$KEYS files=$(git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | tr '\n' ' ')

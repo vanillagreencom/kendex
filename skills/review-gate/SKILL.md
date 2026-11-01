@@ -25,7 +25,7 @@ Run `scripts/validate-standard.sh` for a read-only report. The organization's ow
 
 ## Consumer refresh
 
-An existing consumer first follows [references/adoption.md § Trusted removal for an existing consumer](references/adoption.md#trusted-removal-for-an-existing-consumer). Automatic refresh runs only after that normally reviewed removal merges. Fresh installs run `refresh/adopt-refresh.sh` from a kendex checkout at a release tag. Each consumer calls the shared workflow, which runs its scripts from that release checkout. Environment and token requirements: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
+An existing consumer first runs [workflows/retire-consumer-writer.md](workflows/retire-consumer-writer.md). Automatic refresh runs only after that normally reviewed removal merges. Fresh installs run `refresh/adopt-refresh.sh` from a kendex checkout at a release tag. Each consumer calls the shared workflow, which runs its scripts from that release checkout. Environment and token requirements: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
 
 Consumers refresh on a schedule or a manual run. An organization managed by fleet uses `fleet repos kendex-refresh` for immediate refresh dispatch. Dispatch requirements: [references/adoption.md § Immediate refresh](references/adoption.md#immediate-refresh).
 

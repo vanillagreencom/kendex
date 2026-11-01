@@ -81,7 +81,7 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 | `found_by` | Yes | Agent that identified it |
 | `origin` | Yes | `suggestion`, `escalated` (items no dev round resolved: blockers dev could not fix, plus items outstanding at the review cycle cap), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |
 | `blocks_items` / `blocked_by_items` | No | Indexes of other items in this batch |
-| `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs |
+| `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs. Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode |
 | `supersedes` | No | Structured form of the filer's `Supersedes:` line: entries carry `identifier`, `reason`, and `when` (`now`, `partial`, or `at-completion`). `now` cancels after creation; `partial` re-scopes the named item to its remainder; `at-completion` records the strict description block below for the completion close and an ordinary related link for readers. Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode. `Related:` prose acts on nothing |
 
 ### Completion block

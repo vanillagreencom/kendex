@@ -7,7 +7,7 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 - The repository mailbox is the one route to another repository's agent, with a fleet or without one. A repository is reachable when the [mailbox](../../mailbox/SKILL.md) package is installed there; [SKILL.md § Reachable repositories](../SKILL.md#reachable-repositories) judges which are.
 - `[LANE_MAIL]` below is the repository's own `.agents/skills/mailbox/scripts/lane-mail`, run with the repository's main checkout as the working directory. Do not use the Jarvis home's `lane-mail` or its `peer send`: a peer send reaches the agent as another repository's note, not as the user's.
 - Take repositories only from `kendex project list`. Each line is a folder, then optional notes in parentheses: `(folder not found)`, `(not a folder)`, `(folder could not be read)` or `(worktree of [MAIN])`. A worktree line stands for `[MAIN]`, where its mailbox sits.
-- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one. The one exception is a directive to a repository on the control host through `.agents/skills/jarvis/scripts/owner-note REPO FILE`, which makes the send below on that host; `owner-note --help` lists its refusal keys.
+- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one. The one exception is a directive to a repository on the control host through `.agents/skills/jarvis/scripts/owner-note REPO FILE`, which makes the send below on that host; `owner-note --help` lists its refusal keys. The host reaches that repository only after [Control host setup](#control-host-setup).
 - `lane-mail --help` defines every verb, envelope, receipt and refusal key used here.
 
 ## Read
@@ -40,7 +40,7 @@ Report each refusal in plain words. Do not retry it or work around it.
 
 | Key | Meaning | Next step |
 |---|---|---|
-| `overseer-absent`, `no-overseer` | No session is registered to read that repository's mail; nothing was sent. `owner-note` refuses `no-overseer` when no machine it tried lists that repository with one. A second line saying orch is not installed means the repository has mailbox alone. | Without orch, offer the [directive install](#install). With orch, say that the agent's session must run orch's `oversee register` in its own tmux pane. |
+| `overseer-absent`, `no-overseer` | No session is registered to read that repository's mail; nothing was sent. `owner-note` refuses `no-overseer` when no machine it tried lists that repository with one. A second line saying orch is not installed means the repository has mailbox alone. | Without orch, offer the [directive install](#install). With orch, say that the agent's session must run orch's `oversee register` in its own tmux pane. When that session runs on the control host, offer [Control host setup](#control-host-setup) first. |
 | `overseer-unreadable` | The repository's fleet record could not be read; nothing was sent. | Report the cause `lane-mail` printed. |
 | `command-missing`, `file-unreadable` | A command `lane-mail` needs is absent, or the message file is unreadable. | Name the command or file. |
 
@@ -57,6 +57,16 @@ Offer one of these commands, run with the repository's main checkout as the work
 - Before the user's yes, say what it installs, that it writes files into that repository's working tree and commits nothing, and, for the directive install, that the agent's running session may need a restart before the hooks reach it.
 - On a yes, run the command, then judge the folder again by [§ Reachable repositories](../SKILL.md#reachable-repositories).
 - After the directive install, the agent's session still runs orch's `oversee register` before mail reaches it. Say so. Call the repository instructable only after a directive send prints its receipt.
+
+## Control host setup
+
+- `owner-note` finds a repository on the control host only in `ssh [HOST] kendex project list`, `[HOST]` being `JARVIS_CONTROL_HOST`. That list belongs to the user `ssh [HOST]` logs in as.
+- The host reaches `REPO` only when that list prints the repository's main checkout as a row with no note, and the row's last path segment is `REPO`. A worktree row carries a note and does not count. Starting or registering an overseer on the host adds no row.
+- Without that row, `owner-note` tries this machine, and a local checkout with a stale overseer record takes the note. The receipt then reads `sent side=local`. If `REPO`'s overseer runs on the host, tell the user the note reached this machine instead, and offer the row.
+- To add the row, show the user the command and the repository, and run it only after the user agrees: `ssh [HOST] kendex project add [MAIN_CHECKOUT]`, once per hosted repository. It writes nothing into the checkout. It refuses a path the list already holds.
+- Do not run `kendex project discover --register` over a parent folder. It adds every project it finds, and two rows whose last segment is `REPO` make `owner-note` refuse `repo-ambiguous`. With the user's yes, remove the extra row with `kendex project remove [PATH]` on that side.
+- Check the result: `ssh [HOST] kendex project list` prints the row, and the next `owner-note` receipt reads `sent side=host`.
+- Record the host and the repositories it lists in the consumer's own repository or tracker. This package names neither.
 
 ## Transcript fallback
 

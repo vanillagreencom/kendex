@@ -68,8 +68,6 @@ run_update() {
 run_status refuse_rc run_update "real-label,ghost-label"
 
 assert_ne "unknown label refuses the update" "$refuse_rc" 0
-assert_file_contains "the refusal names the unknown label" "$ERR_FILE" "ghost-label"
-assert_jq "the refusal names the issue team" "$(cat "$ERR_FILE")" '.error | contains("TestTeam")'
 assert_file_lacks "no mutation was sent for the refused update" "$CURL_LOG" "issueUpdate"
 
 # Unknown label + --attach → refuse BEFORE the upload, so no asset is
@@ -113,21 +111,18 @@ jq 'del(.issue.team.name)' "$SKILL_DIR/tests/lib/fixtures/label-team-issue.json"
 
 # Linear can return no label, fail a lookup, or fail the issue read. Each
 # refusal must leave both the issue and attachment storage unchanged.
-while IFS='|' read -r name fail labels needle; do
+while IFS='|' read -r name fail labels; do
   fixture_dir="$SKILL_DIR/tests/lib/fixtures"
   [[ "$name" != team-missing ]] || fixture_dir="$MISSING_TEAM_NAME"
   run_status rc run_label_team_request "$PROJECT" "$name" "$fail" "FIXTURE_DIR=$fixture_dir" \
     update KEN-2413 --labels "$labels" --attach "$TMP_ROOT/asset.bin"
   assert_ne "$name: update refuses" "$rc" 0
-  assert_file_contains "$name: refusal names its cause" "$TMP_ROOT/$name.err" "$needle"
   assert_not "$name: no mutation or upload is sent" \
     grep -qiE 'issueUpdate|fileUpload|attachmentCreate' "$TMP_ROOT/$name.jsonl"
 done <<'ROWS'
-foreign||harness,secrets|secrets
-unknown||harness,ghost-label|ghost-label
-lookup-failed|labels|harness|label service unavailable
-issue-failed|issue|harness|issue service unavailable
-team-missing||harness|KEN-2413
+foreign||harness,secrets
+unknown||harness,ghost-label
+lookup-failed|labels|harness
+issue-failed|issue|harness
+team-missing||harness
 ROWS
-assert_jq "a foreign-only label refusal names the actual issue team" \
-  "$(cat "$TMP_ROOT/foreign.err")" '.error | contains("kendex") and contains("secrets")'

@@ -3,7 +3,9 @@
 #
 # 1. BLANKET suppressions fail flat (no baseline): the file- or module-wide
 #    pragmas that turn a linter off wholesale. A PER-LINE suppression that
-#    names its lint and states its reason stays legal.
+#    names its lint and states its reason stays legal; in Rust that form is
+#    legal as an inner attribute too, since its reach is the module's either
+#    way, and only a group, a list of lints or a reasonless one fails.
 # 2. BARE ALLOW RATCHET (rust): reasonless dead_code/unused allow attributes
 #    are counted per file against a tighten-only baseline TSV
 #    (path<TAB>count). Rows only go down or away; --update lowers and removes
@@ -32,9 +34,11 @@ usage() {
   cat <<'EOF'
 usage: suppression-ban [--update] [--baseline FILE] [--excludes FILE]
 
-Blanket lint suppressions (module-wide rust allow, file-level noqa, bare
-eslint-disable, bare/`all` nolint, biome-ignore-all, unscoped
-biome-ignore-start, and rule-less `biome-ignore lint` forms) fail flat. Bare rust allow(dead_code)/
+Blanket lint suppressions (a module-wide rust allow naming a lint group,
+several lints or no reason, file-level noqa, bare eslint-disable, bare/`all`
+nolint, biome-ignore-all, unscoped biome-ignore-start, and rule-less
+`biome-ignore lint` forms) fail flat. A rust `#![allow(lint, reason = "..")]`
+naming one lint is legal at any level. Bare rust allow(dead_code)/
 allow(unused*) attributes are counted per file against a tighten-only
 baseline; --update lowers/removes rows to current reality (never adds,
 never raises) and then re-checks.
@@ -90,10 +94,87 @@ gg_load_render_inventory
 gg_tmpdir
 
 # --- gate 1: blanket suppressions, flat fail ---------------------------------
-gg_grep_lane "module-wide rust allow" \
-  '^[[:space:]]*#!\[allow\(' \
-  "delete the module-wide attribute and fix the findings, or annotate the surviving sites per line with a stated reason; vendored trees belong in $EXCLUDES_FILE with a reason" \
-  '*.rs'
+# The Rust lane judges each inner attribute whole: `#![allow(` at line start
+# through its `)]`, which rustfmt may spread over several lines. One lint path
+# (`ident` or `tool::ident`) with a non-empty `reason = "..."` is legal at any
+# level: the per-item `#[allow(lint, reason = "..")] mod m;` the lane admits
+# has the same reach, so at a crate root, where no outer position exists, the
+# inner form is the honest one. A lint group, two or more lints, no reason or
+# an attribute never closed fails.
+#
+# The groups name no lint, so an allow on one states no finding. rustc's are
+# the table at https://doc.rust-lang.org/rustc/lints/groups.html; clippy's
+# are the lint list's groups at https://doc.rust-lang.org/clippy/ plus `all`.
+RUST_LINT_GROUPS=(
+  warnings unused nonstandard_style future_incompatible let_underscore
+  keyword_idents refining_impl_trait deprecated_safe rust_2018_compatibility
+  rust_2018_idioms rust_2021_compatibility rust_2024_compatibility
+  unknown_or_malformed_diagnostic_attributes
+  clippy::all clippy::cargo clippy::complexity clippy::correctness
+  clippy::nursery clippy::pedantic clippy::perf clippy::restriction
+  clippy::style clippy::suspicious
+)
+RUST_ALLOW_LABEL="module-wide rust allow"
+RUST_ALLOW_REMEDY="name one lint and its reason (#![allow(lint, reason = \"why\")]), or annotate the sites per item; vendored trees belong in $EXCLUDES_FILE with a reason"
+# The unit separator between the cause and the `line:content` record: the
+# content keeps every tab git grep -n would have printed.
+US=$'\037'
+
+gg_content_carriers "$GG_TMP/rust.z" "$RUST_ALLOW_LABEL" '^[[:space:]]*#!\[allow\(' '*.rs'
+while IFS= read -r -d '' f; do
+  gg_read_blob ":0:$f" "$f" "$RUST_ALLOW_LABEL"
+  judge_status=0
+  LC_ALL=C awk -v groups="${RUST_LINT_GROUPS[*]}" '
+    BEGIN {
+      n = split(groups, g, " ")
+      for (i = 1; i <= n; i++) group[g[i]] = 1
+      lint = "[a-z_][a-z0-9_]*(::[a-z_][a-z0-9_]*)?"
+      reason = "reason ?= ?\"([^\"\\\\]|\\\\.)+\""
+      open = 0
+    }
+    # The index of the `)` closing the attribute outside any string, or 0.
+    function closer(s,    i, n, c, instr) {
+      instr = 0; n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (instr) { if (c == "\\") i++; else if (c == "\"") instr = 0 }
+        else if (c == "\"") instr = 1
+        else if (c == ")" && substr(s, i + 1, 1) == "]") return i
+      }
+      return 0
+    }
+    function report(cause) { printf "%s\037%d:%s\n", cause, start, first }
+    function judge(inner,    s, head, lints, reasoned) {
+      s = inner
+      gsub(/[ \t\r\n]+/, " ", s); sub(/^ /, "", s); sub(/ ?,? ?$/, "", s)
+      if (s !~ ("^" lint "( ?, ?" lint ")*( ?, ?" reason ")?$")) { report("is not one lint with a reason"); return }
+      head = s; sub(/ ?,.*$/, "", head)
+      lints = s; reasoned = sub(" ?, ?" reason "$", "", lints)
+      if (head in group) report("names the lint group " head)
+      else if (!reasoned) report("names no reason")
+      else if (lints ~ /,/) report("lists several lints")
+    }
+    open == 0 && /^[ \t\f\v\r]*#!\[allow\(/ {
+      start = NR; first = $0; buf = $0
+      sub(/^[ \t\f\v\r]*#!\[allow\(/, "", buf)
+      open = 1
+    }
+    open == 1 {
+      if (NR != start) buf = buf "\n" $0
+      at = closer(buf)
+      if (at == 0) next
+      judge(substr(buf, 1, at - 1))
+      open = 0
+    }
+    END { if (open) report("is never closed") }
+  ' "$GG_TMP/blob" >"$GG_TMP/rust.hits" || judge_status=$?
+  [ "$judge_status" -eq 0 ] || gg_fail allow-judge "$f:$judge_status" "awk could not judge the inner allow attributes in $(gg_shown "$f") (exit $judge_status)"
+  while IFS="$US" read -r cause hit; do
+    gg_message match "$RUST_ALLOW_LABEL:$f:$hit" "$RUST_ALLOW_LABEL in $(gg_shown "$f"): the attribute $cause"
+    echo "  remedies: $RUST_ALLOW_REMEDY"
+    GG_VIOLATIONS=$((GG_VIOLATIONS + 1))
+  done <"$GG_TMP/rust.hits"
+done <"$GG_TMP/rust.z"
 
 gg_grep_lane "file-level noqa" \
   '^[[:space:]]*#[[:space:]]*(ruff|flake8):[[:space:]]*noqa' \

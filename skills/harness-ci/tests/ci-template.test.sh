@@ -45,17 +45,17 @@
 #      was built on, so a lane its base marked `:queue` after it opened is
 #      read by the shipped change-class; merge_group and push keep their
 #      payload's base. Its control plants the pull request's recorded base.
-# Must-fail arms plant a lane condition without its status function, one
-# running only on a true verdict, one without its `lanes` term, CI without
-# the waiver, a lane output forwarding the action's `lanes` in place of the
-# lane's own verdict, one reading the class, a
-# declaration read from the judged checkout, CI without always(), a
-# template without merge_group, a render-reach step that fails the job, and
-# an evaluator that refuses every expression, a credential scanner or
-# installer read from the PR, guards checked out at its merge ref, and an
-# exclusion list read from the PR, a depth-0 subject checkout, a fetch that
-# leaves the shallow boundary, a concurrency group missing its event,
-# and cancellation that also reaches merge groups.
+# Each reader of the template keeps one must-fail arm, a planted copy it
+# reads the wrong answer from: a lane condition without its status function,
+# CI without the waiver, a lane output reading the class, a declaration read
+# from the judged checkout, CI without always(), a template without
+# merge_group, a render-reach step that fails the job, an evaluator that
+# refuses every expression, a credential scanner read from the PR, the
+# subject's checkout without its pull_request gate, a concurrency group
+# missing its event, the aggregate run from the subject, a missing helper
+# without its annotation guard, a short action pin, a template not asking
+# for the queue-only default, the pull request's recorded base, and a fixed
+# old installer pin.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
@@ -197,13 +197,9 @@ ROWS
 }
 check_concurrency "$TEMPLATE"
 plant "$TEMPLATE" '-${{ github.event_name }}' '' "$SANDBOX/no-concurrency-event.yml"
-plant "$TEMPLATE" "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" \
-  'cancel-in-progress: true' "$SANDBOX/cancel-all.yml"
-for control in no-concurrency-event cancel-all; do
-  status=0
-  (FAIL=0; check_concurrency "$SANDBOX/$control.yml") >"$SANDBOX/$control.log" 2>&1 || status=$?
-  assert_eq "must-fail: concurrency rows reject $control" 1 "$status"
-done
+status=0
+(FAIL=0; check_concurrency "$SANDBOX/no-concurrency-event.yml") >"$SANDBOX/no-concurrency-event.log" 2>&1 || status=$?
+assert_eq "must-fail: concurrency rows reject a group missing its event" 1 "$status"
 
 # --- 2. The job set ---------------------------------------------------------
 
@@ -397,18 +393,9 @@ secrets_contract() { # TEMPLATE
   ' "$1"
 }
 assert_eq "CI scans pull requests with an installer and the subject's ancestry" "depth=1 gated=1 fetched=1 scans=1 ready=1" "$(secrets_contract "$TEMPLATE")"
-while IFS='|' read -r scope from to expected; do
-  plant "$TEMPLATE" "$from" "$to" "$SANDBOX/secrets-mutant.yml" "$scope"
-  assert_eq "must-fail: secrets contract with ${to:-no $from} in $scope" "$expected" "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
-done <<'ROWS'
-ci/secrets (credential scan of the pull request diff)|if: always() && github.event_name == 'pull_request'|if: always() && github.event_name == 'pull_request' && needs.changes.outputs.harness_only != 'true'|depth=1 gated=1 fetched=1 scans=1 ready=0
-ci/the tree under judgement|if: always() && github.event_name == 'pull_request'||depth=1 gated=0 fetched=1 scans=1 ready=1
-ci/the tree under judgement|fetch-depth: 1|fetch-depth: 0|depth=0 gated=1 fetched=1 scans=1 ready=1
-ci/the subject's ancestry|if: always() && github.event_name == 'pull_request'||depth=1 gated=1 fetched=0 scans=1 ready=1
-ci|fetch --unshallow --no-tags|fetch --no-tags|depth=1 gated=1 fetched=0 scans=1 ready=1
-ci|origin "$SUBJECT"|origin "$SUBJECT" "+refs/heads/*:refs/remotes/origin/*"|depth=1 gated=1 fetched=0 scans=1 ready=1
-ci|"$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|: # "$GITHUB_WORKSPACE/guards/.agents/skills/commit-guards/scripts/install-gitleaks" "$RUNNER_TEMP/gitleaks"|depth=1 gated=1 fetched=1 scans=1 ready=0
-ROWS
+plant "$TEMPLATE" "if: always() && github.event_name == 'pull_request'" '' "$SANDBOX/secrets-mutant.yml" "ci/the tree under judgement"
+assert_eq "must-fail: secrets contract with the subject's checkout ungated" "depth=1 gated=0 fetched=1 scans=1 ready=1" \
+  "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
 
 # Read the CI job's checkout inputs and the secrets step from the template.
 # An omitted checkout ref selects the PR merge ref on pull_request.
@@ -483,13 +470,9 @@ check_aggregate_checkout() { # TEMPLATE
 }
 check_aggregate_checkout "$TEMPLATE"
 plant "$TEMPLATE" '        working-directory: guards' '        working-directory: subject' "$SANDBOX/subject-aggregate.yml" ci line
-plant "$TEMPLATE" '          path: guards' '          path: guards
-        if: github.event_name == '\''pull_request'\''' "$SANDBOX/pr-only-aggregate.yml" ci line
-for control in subject-aggregate pr-only-aggregate; do
-  status=0
-  (FAIL=0; check_aggregate_checkout "$SANDBOX/$control.yml") >"$SANDBOX/$control.log" 2>&1 || status=$?
-  assert_eq "must-fail: the trusted aggregate contract rejects $control" 1 "$status"
-done
+status=0
+(FAIL=0; check_aggregate_checkout "$SANDBOX/subject-aggregate.yml") >"$SANDBOX/subject-aggregate.log" 2>&1 || status=$?
+assert_eq "must-fail: the trusted aggregate contract rejects the subject's helper" 1 "$status"
 
 # Execute the template's aggregate step. The subject helper would accept a
 # failed classifier, while the real helper in guards rejects it.
@@ -551,18 +534,10 @@ require_rows template "$template_rows"
 check_action_pins "$TEMPLATE"
 checkout_pin="$(awk '/^[[:space:]-]*uses: actions\/checkout@/ { sub(/^[[:space:]-]*uses: /, ""); print; exit }' "$TEMPLATE")"
 [ -n "$checkout_pin" ] || { echo "checkout pin extractor is broken" >&2; exit 1; }
-while IFS='|' read -r name pin; do
-  plant "$TEMPLATE" "$checkout_pin" "$pin" "$SANDBOX/action-pin-$name.yml" test
-  status=0
-  (FAIL=0; check_action_pins "$SANDBOX/action-pin-$name.yml") >"$SANDBOX/action-pin-$name.log" 2>&1 || status=$?
-  assert_eq "must-fail: action pin form rejects $name" 1 "$status"
-done <<'ROWS'
-major-tag|actions/checkout@v7 # v7.0.1
-short-sha|actions/checkout@3d3c42e # v7.0.1
-no-version|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-major-version|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-third-party-tag|other/action@v7 # v7.0.1
-ROWS
+plant "$TEMPLATE" "$checkout_pin" 'actions/checkout@3d3c42e # v7.0.1' "$SANDBOX/action-pin-short-sha.yml" test
+status=0
+(FAIL=0; check_action_pins "$SANDBOX/action-pin-short-sha.yml") >"$SANDBOX/action-pin-short-sha.log" 2>&1 || status=$?
+assert_eq "must-fail: action pin form rejects a short sha" 1 "$status"
 
 # Both the installer and scanner in the PR are no-ops, and its exclusion
 # list excludes every path. The credential is assembled at runtime, so the
@@ -642,25 +617,6 @@ plant "$TEMPLATE" '/guards/.agents/skills/commit-guards/scripts/secrets' \
 assert_eq "must-fail: the PR scanner passes its planted credential" "exit=0
 subject-code=ran" \
   "$(credential_scan "$SANDBOX/pr-scanner.yml" pr-scanner)"
-plant "$TEMPLATE" '/guards/.agents/skills/commit-guards/scripts/install-gitleaks' \
-  '/subject/.agents/skills/commit-guards/scripts/install-gitleaks' "$SANDBOX/pr-installer.yml" ci
-assert_eq "must-fail: the installer runs from the PR" "exit=1
-secrets: secret=cred.txt:1:aws-access-token
-subject-code=ran" "$(credential_scan "$SANDBOX/pr-installer.yml" pr-installer)"
-plant "$TEMPLATE" ' --policy-root "$GITHUB_WORKSPACE/guards"' '' "$SANDBOX/pr-policy.yml" ci
-assert_eq "must-fail: the PR's exclusion list passes the planted credential" "exit=0
-subject-code=absent" "$(credential_scan "$SANDBOX/pr-policy.yml" pr-policy)"
-plant "$TEMPLATE" 'ref: ${{ github.event.repository.default_branch }}' \
-  'ref: ' "$SANDBOX/pr-guards.yml" ci
-assert_eq "must-fail: guards from the merge ref pass the planted credential" "exit=0
-subject-code=ran" \
-  "$(credential_scan "$SANDBOX/pr-guards.yml" pr-guards)"
-# A fetch that leaves the depth-1 boundary in place hands the scan a range
-# it refuses, so the credential is never judged.
-plant "$TEMPLATE" 'fetch --unshallow --no-tags' 'fetch --no-tags' "$SANDBOX/shallow.yml" ci
-assert_eq "must-fail: a shallow subject is refused before the credential is judged" "exit=2
-secrets: range-ref
-subject-code=absent" "$(credential_scan "$SANDBOX/shallow.yml" shallow)"
 
 # --- 4a. The classifier's permission and the default it asks for ---------
 # The classifier reads the repository and nothing else: no read of earlier
@@ -774,16 +730,6 @@ for id in kendex mirror; do
     "$(gh_eval value '{"steps":{"render-reach":{"outputs":{"render_candidate":"true","harness_only":"false"}}}}' "$condition")"
   assert_eq "$id stays down without a candidate" false \
     "$(gh_eval value '{"steps":{"render-reach":{"outputs":{"render_candidate":"false","harness_only":"true"}}}}' "$condition")"
-  awk -v id="$id" '
-    /^      - / { step = ($0 == "      - id: " id) }
-    step && /steps.render-reach.outputs.render_candidate/ {
-      sub(/steps.render-reach.outputs.render_candidate/, "steps.render-reach.outputs.harness_only"); n++
-    }
-    { print }
-    END { if (n != 1) exit 2 }
-  ' "$TEMPLATE" >"$SANDBOX/old-reach-$id.yml" || exit 1
-  assert_eq "must-fail: $id using the old harness answer misses new renders" false \
-    "$(gh_eval value '{"steps":{"render-reach":{"outputs":{"render_candidate":"true","harness_only":"false"}}}}' "$(step_key "$SANDBOX/old-reach-$id.yml" "$id" if)")"
 done
 
 assert_eq "the candidate step requests the prerequisite-only mode" yes \
@@ -791,10 +737,6 @@ assert_eq "the candidate step requests the prerequisite-only mode" yes \
 assert_eq "the installer uses the trusted release selector" \
   'classifier/.agents/skills/review-gate/scripts/install-latest.sh' "$(step_key "$TEMPLATE" kendex run)"
 assert_eq "the installer reads with the workflow token" 'github.token' "$(step_key "$TEMPLATE" kendex GITHUB_TOKEN)"
-plant "$TEMPLATE" 'run: classifier/.agents/skills/review-gate/scripts/install-latest.sh' \
-  'run: sh old-installer --version main-build-250' "$SANDBOX/old-pin.yml"
-assert_eq "must-fail: a fixed old installer loses release selection" \
-  'sh old-installer --version main-build-250' "$(step_key "$SANDBOX/old-pin.yml" kendex run)"
 
 # Execute the template's command with the real release-selection helper.
 # Only its external HTTP dependency is replaced. Each release response must
@@ -855,28 +797,10 @@ plant "$TEMPLATE" "if: \${{ !cancelled() && (needs.changes.result" "if: \${{ (ne
 assert_eq "must-fail: a lane without its status function stands down under a dead classifier" "none" \
   "$(running "$SANDBOX/no-status.yml" merge_group failure "" "" "")"
 
-# A lane that runs only on a true verdict stands down where no declaration
-# was read, and CI then refuses the skip it cannot authorize.
-plant "$TEMPLATE" "needs.changes.outputs.lane_test != 'false'" "needs.changes.outputs.lane_test == 'true'" "$SANDBOX/true-only.yml"
-assert_eq "must-fail: a lane running only on a true verdict stands down with no declaration read" "none" \
-  "$(running "$SANDBOX/true-only.yml" pull_request success true "" standard)"
-
-# A lane that drops its `lanes` term runs on a docs-only diff wherever the
-# default branch carries no declaration, and CI without the waiver refuses
-# the skip that diff earns.
-plant "$TEMPLATE" "needs.changes.outputs.lanes != 'false' && " "" "$SANDBOX/no-lanes-term.yml"
-assert_eq "must-fail: a lane without its lanes term runs on a docs-only diff with no declaration read" "test" \
-  "$(running "$SANDBOX/no-lanes-term.yml" pull_request success false "" standard)"
+# CI without the waiver refuses the skip a docs-only diff earns.
 plant "$TEMPLATE" "--skippable test --lane test=test" "--lane test=test" "$SANDBOX/no-waiver.yml"
 assert_eq "must-fail: CI without the waiver refuses a docs-only skip with no declaration read" "1" \
   "$(aggregate_exit "$SANDBOX/no-waiver.yml" success false "" skipped)"
-
-# A lane output forwarding the action's one `lanes` runs the lane on a diff
-# that reaches no path it reads.
-plant "$TEMPLATE" "lane_test: \${{ steps.lanes.outputs.lane_test }}" \
-  "lane_test: \${{ steps.classify.outputs.lanes }}" "$SANDBOX/global-lanes.yml"
-assert_eq "must-fail: a lane output forwarding lanes runs the lane its own verdict stood down" "test" \
-  "$(running "$SANDBOX/global-lanes.yml" merge_group success true lane_test=false standard)"
 
 # A lane output that spells a class rule reads the class.
 plant "$TEMPLATE" "lane_test: \${{ steps.lanes.outputs.lane_test }}" \

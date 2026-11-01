@@ -12,9 +12,17 @@ Apply the [visible comparison](questions.md#today-and-after). Keep technical det
 
 A report names the author's own misses since the previous report. Give each miss its cause and the fix, or the reason no fix is needed.
 
+## Work-item descriptions and comments
+
+Descriptions explain the person's problem and why the work matters. Follow the owning package's description template for its quoted Story and Why this matters opening and body sections.
+
+A comment records one change, reading or decision. Start with its result for the person, with the earlier and current behavior in plain words where that comparison applies. Do not repeat the issue's Story or Why this matters. A question starts with the decision needed. A machine-read marker that must be first, such as `Proposal:`, stays first; the plain explanation follows it. The tracker's author and date are sufficient unless a reading needs its own observation date or delegated authority.
+
+Use `##` for body sections and `###` for subsections in descriptions and ordinary comments. Use `**Label**: value` for record fields at line start. Put blank lines between paragraphs, between every filing-record field, before and after every section heading, and around lists. Quote source words under Evidence. Reserve other blockquotes for the description's opening blocks and the report's overview paragraphs. Omit empty sections and optional fields; keep every required value and the owning writer's markers, evidence bindings and authority records.
+
 ## Reports
 
-Say the outcome for the person or fleet. A project name or item title does not replace its effect. Link each work item to its owning tracker issue: the Linear issue for a Linear item or the GitHub issue for an `issue-N` item. Do not use its pull request or commit as the work-item link. The tracker issue links to its pull request.
+Say the outcome for the person or fleet. A project name or item title does not replace its effect. A report does not retell each item's Story. Link each work item to its owning tracker issue: the Linear issue for a Linear item or the GitHub issue for an `issue-N` item. Do not use its pull request or commit as the work-item link. The tracker issue links to its pull request.
 
 Put detail in the report file. Send one post per report, not a thread of fragments. Give each blocked item its cause and next action.
 

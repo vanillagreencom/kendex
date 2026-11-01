@@ -34,7 +34,7 @@ env = os.environ.copy()
 for key in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
     env.pop(key, None)
 env["GIT_TERMINAL_PROMPT"] = "0"
-exclude = re.compile(rb"(^|/)(plans|research|node_modules|fixtures)/|^changelog\.d/|^CHANGELOG\.md$")
+exclude = re.compile(rb"(^|/)(plans|research|node_modules|fixtures)/|^(changelog\.d|state)/|^CHANGELOG\.md$")
 quote = json.dumps
 
 

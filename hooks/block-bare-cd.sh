@@ -3,7 +3,7 @@
 # name: block-bare-cd
 # event: PreToolUse
 # matcher: Bash
-# description: Not run on codex: each shell call starts a fresh process. Not run on pi: each shell call starts a fresh process. Not run on antigravity: its toolCall.args payload is not read. Refuse a command with a line that is only a `cd`. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
+# description: Not run on codex: each shell call starts a fresh process. Not run on pi: each shell call starts a fresh process. Not run on antigravity: its toolCall.args payload is not read. Refuse a command with a line that is only a `cd`. Copilot's bash tool runs every call in a fresh process, so a bare cd passes there; its powershell tool keeps the check. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell persists across tool calls (Claude Code) a bare cd re-roots every later command and every hook that judges the working directory, while instruction files and hook paths stay with the launch directory; a cd into a worktree inside the repository, Claude Code's default `.claude/worktrees/<name>/`, also loads that tree's instruction files a second time as files there are read. Names the scoped form, `(cd /path && command)`, and, where the harness has one (Claude Code's EnterWorktree), its worktree tool for a move.
 # summary: Stops a command whose whole line is a `cd`. A here-document body is not judged because it is input to a command, not a line the shell runs. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
 # safety: Reads command text using its local here-document check. Missing tools or unreadable payload produce one keyed warning and allow the call. A matching bare-cd line still refuses. Every refusal opens with `block-bare-cd: <key>=<value>`; captured command output follows that line.
 # harnesses: [claude, copilot, gemini, cursor, opencode]
@@ -63,14 +63,18 @@ INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # bare `command`, or Copilot's `toolArgs.command`, whose `toolArgs` arrives as
 # an object or as one JSON-encoded string. The null tests are spelled out
 # because jq's `//` reads `false` as absent, and `false` is not a command
-# either.
+# either. Copilot's `toolName` bash runs each call in a fresh process
+# (Copilot CLI 1.0.105's tool instructions: a cd does not persist between
+# calls), so its command is read and then judged as empty; the Bash matcher
+# also reaches `toolName` powershell, which keeps the check.
 COMMAND=$(printf '%s' "$INPUT" \
   | jq -er 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
-           if .tool_input.command != null then .tool_input.command
+           (.toolName == "bash") as $fresh
+           | if .tool_input.command != null then .tool_input.command
            elif .command != null then .command
-           elif copilot != null then copilot
+           elif copilot != null then copilot | if $fresh and type == "string" then "" else . end
            else "" end
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json

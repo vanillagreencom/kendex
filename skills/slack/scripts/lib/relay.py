@@ -99,9 +99,9 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
-from api import RETRIES, Slack
+from api import RETRIES, Slack, markdown_checked
 from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail
-from markup import Verbatim, outbound, plain
+from markup import Verbatim, continuations, outbound, plain
 from refusals import LockRefusal, Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
@@ -967,27 +967,45 @@ class RootRelay:
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
         the text as its comment, or the text posted as standard Markdown.
-        Slack's refusal goes to `post_refused`. A
-        text past the `markdown_text` cap goes as `text`, Slack's mrkdwn,
-        its Markdown marks shown literally: an ask or an answer the owner
-        never sees would stand at its deadline unread. A `Verbatim` block
-        mrkdwn cannot show as typed is refused like a secret. Returns the
+        Slack's refusal goes to `post_refused`. Questions must fit one
+        message. Long reports continue in order under the original root,
+        with acknowledged progress synced after each part. An ambiguous
+        write never retries. Returns the
         message ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
         try:
             text, body_arg = outbound(self.path, text, file_comment=bool(attach))
             secret_check(text.encode(), f"id={env_id}")
+            if kind in ("ask", "overdue"):
+                markdown_checked(text, f"id={env_id} kind={kind} fix=shorten-question-or-link-detail-in-file-issue-or-report")
             data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
+            parts = [text] if attach else continuations(text)
+            digest = hashlib.sha256(json.dumps([thread_ts, parts], ensure_ascii=False).encode()).hexdigest()
+            progress = self.state.progress.get(env_id)
         except Refusal as err:
             self._out(envelope, kind, "refused", reason=err.key)
             print_refusal(err)
             return None
-        self._out(envelope, kind, "inflight")
+        if progress is not None and progress["hash"] != digest:
+            self._out(envelope, kind, "refused", reason="continuation-changed")
+            notice("continuation-changed", f"id={env_id} reason=hash-mismatch")
+            return None
+        if env_id in self.state.unknown:
+            return None
         try:
             if data is not None:
+                self._out(envelope, kind, "inflight")
                 return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
-            return str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts,
-                                     **{body_arg: text})["ts"])
+            root = progress["thread"] if progress else thread_ts
+            start = progress["next"] if progress else 0
+            for index in range(start, len(parts)):
+                self._out(envelope, kind, "inflight")
+                ts = str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=root,
+                                       **{body_arg: parts[index]})["ts"])
+                root = root or ts
+                if len(parts) > 1:
+                    self._out(envelope, kind, "progress", thread=root, next=index + 1, hash=digest)
+            return root
         except Refusal as err:
             self.post_refused(err, envelope, kind)
             return None

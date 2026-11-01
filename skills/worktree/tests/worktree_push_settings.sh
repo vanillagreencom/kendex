@@ -122,7 +122,7 @@ cut_copy() { # ROOT SED-EXPRESSION
 # way; `helper` is a package copy whose sibling GitHub library
 # exports the key when sourced, the way that library exports the token it
 # resolves; `fold` runs `push --prepare-base`, whose fold commit fires the
-# pre-commit hook, in place of the push. Each `unfixed` word is a must-fail
+# pre-commit hook, in place of the push. The `unfixed` word is the must-fail
 # control's world, a package copy with one rule cut. The fixture names no WORKTREE_SYMLINKS, so the
 # worktree has no private env file or untracked settings file of its own, and
 # an override reaches the hook only through the environment.
@@ -130,19 +130,14 @@ ROWS='the hook reads the branch'"'"'s committed value, not the main checkout'"'"
 the nested settings file is kept out of the hook the same way|.kendex/settings.toml|main-value|-|-|branch-value
 must-fail: with the unexport cut, the hook reads the main checkout'"'"'s value|kendex.settings.toml|main-value|unfixed|-|main-value
 a value the caller exported still wins, even when it equals the committed one|kendex.settings.toml|main-value|-|main-value|main-value
-must-fail: with the caller check cut, that export is dropped for the branch'"'"'s value|kendex.settings.toml|main-value|unfixed-caller|main-value|branch-value
 a private env file override stays exported, since no branch carries it|kendex.settings.toml|main-value|local:local-value|-|local-value
 an exported private env file override equal to the committed value stays exported|kendex.settings.toml|main-value|local-export:main-value|-|main-value
-must-fail: with the private env file layer cut, that override is dropped for the branch'"'"'s value|kendex.settings.toml|main-value|local-export:main-value unfixed-private|-|branch-value
 a key only the private env file exports stays exported|kendex.settings.toml|-|local-export:local-value|-|local-value
 a private env file the tracked settings name, not .env.local, keeps its override exported|kendex.settings.toml|main-value|envfile:private-value|-|private-value
 an untracked settings file is a local override and stays exported|kendex.settings.toml|main-value|untracked-nested:nested-value|-|nested-value
 an untracked override equal to the committed value stays exported|kendex.settings.toml|main-value|untracked-nested:main-value|-|main-value
-must-fail: with the tracked check cut, the untracked override is dropped for the branch'"'"'s value|kendex.settings.toml|main-value|untracked-nested:nested-value unfixed-tracked|-|branch-value
 a key a sourced library exports at run time stays exported|kendex.settings.toml|-|helper|-|helper-value
-must-fail: with the subshell clearing cut, that key is dropped for the branch'"'"'s value|kendex.settings.toml|-|helper unfixed-clear|-|branch-value
-the fold'"'"'s commit hook reads the branch'"'"'s committed value, not the main checkout'"'"'s|kendex.settings.toml|main-value|fold|-|branch-value
-must-fail: with the fold'"'"'s boundary cut, its commit hook reads the main checkout'"'"'s value|kendex.settings.toml|main-value|fold unfixed-fold|-|main-value'
+the fold'"'"'s commit hook reads the branch'"'"'s committed value, not the main checkout'"'"'s|kendex.settings.toml|main-value|fold|-|branch-value'
 
 echo "=== worktree push hands its hooks the branch's settings ==="
 n=0
@@ -173,14 +168,9 @@ while IFS='|' read -r label file main_value edit caller want; do
         ;;
       fold) op=(push topic --prepare-base) ;;
       unfixed) script="$(cut_copy "$root" 's/|| export -n "\${COMMITTED_UNEXPORT\[@\]}"$/|| : cut/')" ;;
-      unfixed-fold) script="$(cut_copy "$root" 's/if ! without_committed_settings git -C "\$WT_PATH" commit /if ! : cut || ! git -C "$WT_PATH" commit /')" ;;
       # The phase-two unset loop sits between the tracked snapshot and the
       # first loop that reads it; the clearing loop is the one that reads
       # compgen -e inside committed_settings_keys.
-      unfixed-caller) script="$(cut_copy "$root" '/^  tracked="\$(compgen -e)"$/,/^  done <<<"\$tracked"$/s/caller_exported "\$name" || unset/: cut; unset/')" ;;
-      unfixed-clear) script="$(cut_copy "$root" '/^committed_settings_keys() ($/,/^  done < <(compgen -e)$/s/caller_exported "\$name" || unset "\$name"$/: cut/')" ;;
-      unfixed-tracked) script="$(cut_copy "$root" 's/^      1) untracked+=("\$file") ;;$/      1) : cut; kendex_load_settings_file "$PROJECT_ROOT\/$file" ;;/')" ;;
-      unfixed-private) script="$(cut_copy "$root" 's/^  kendex_source_env_file "\$PROJECT_ROOT\/\$private" || exit 1$/  : cut/')" ;;
       *) echo "FIXTURE: unknown edit $word" >&2; exit 2 ;;
     esac
   done

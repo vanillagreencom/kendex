@@ -289,7 +289,7 @@ assert_jq "a semicolon in Why preserves the legacy form" "$parsed" '(.errors | l
 # command refuses each rule before any write. Columns: name | trigger |
 # deadline | the completion rule, or valid.
 while IFS='|' read -r name trigger deadline rule; do
-  printf '%s\n' '## Done when' '- [x] branch proof' '  Evidence: branch source read' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
+  printf '%s\n' '> **Story:** The owner checks a released change. The branch proof is complete. After release, live health decides acceptance.' '' '> **Why this matters:** Live readings keep incomplete acceptance visible.' '' '## Done when' '- [x] branch proof' '  Evidence: branch source read' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
   filed=0
   require_issue_header_shape "$(cat "$TMP_ROOT/trigger.md")" 2>"$TMP_ROOT/filing.err" || filed=$?
   if [[ "$rule" == valid ]]; then

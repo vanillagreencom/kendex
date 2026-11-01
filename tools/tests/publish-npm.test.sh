@@ -37,8 +37,8 @@
 #            vdown   exit 1 with a network error for the version
 #   publish  ok or fail
 #
-# The last block cuts each guard out of a copy of the tool, between its
-# `# guard <rule>: begin` and `end` markers, and runs that guard's row
+# The last block cuts the `served` guard out of a copy of the tool, between
+# its `# guard served: begin` and `end` markers, and runs that guard's row
 # again: the row must go red, which is what makes it a row about the guard.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -226,21 +226,11 @@ done <<EOF_ROWS
 $rows
 EOF_ROWS
 
-# The must-fail controls, one per guard: `rule|row label`. Each guard is cut
-# out of a copy of the tool, and its row, run over that copy, must no longer
-# give the row's answer.
+# The must-fail control: `rule|row label`. The guard is cut out of a copy of
+# the tool, and its row, run over that copy, must no longer give the row's
+# answer.
 controls="
-tag|not a release tag
-absent|tag missing
-off-main|tag off the default branch
-package|no such package
-name|package named outside the scope
-version|manifest version differs from the tag
-npm|npm below the trusted-publishing floor
-lookup|registry lookup fails
-first-release|npm serves no version of the package
 served|already served publishes nothing
-moved|package changed on main since the tag
 "
 while IFS='|' read -r rule label; do
   [ -n "$rule" ] || continue

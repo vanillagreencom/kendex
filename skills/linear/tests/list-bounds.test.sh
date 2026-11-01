@@ -40,7 +40,9 @@ STUB
 chmod +x "$TMP_ROOT/bin/curl"
 
 # The rows, the requests sent, the largest page asked for and whether the
-# notice printed, as one line.
+# notice printed, as one line. A want of `requests=-` leaves the count
+# unasserted: how many requests a read spends is no result, while none before
+# a refusal is.
 list_summary() { # TOTAL ARGS...
     local total="$1" rc=0 out rows requests first notice
     shift
@@ -59,25 +61,27 @@ list_summary() { # TOTAL ARGS...
 while IFS='|' read -r label total args want; do
     [[ -n "$label" ]] || continue
     read -r -a argv <<<"$args"
-    assert_eq "$label" "$(list_summary "$total" "${argv[@]}")" "$want"
+    got=$(list_summary "$total" "${argv[@]}")
+    [[ "$want" != *' requests=- '* ]] || got=$(sed 's/ requests=[0-9]* / requests=- /' <<<"$got")
+    assert_eq "$label" "$got" "$want"
 done <<'ROWS'
-issues list: 75 rows by default in one request, and the notice|100|issues list|rc=0 rows=75 requests=1 first=75 notice=yes
-issues list --limit 300: pages of 75|400|issues list --limit 300|rc=0 rows=300 requests=4 first=75 notice=yes
+issues list: 75 rows by default, and the notice|100|issues list|rc=0 rows=75 requests=- first=75 notice=yes
+issues list --limit 300: pages of 75|400|issues list --limit 300|rc=0 rows=300 requests=- first=75 notice=yes
 issues list --limit 0: refused before any request|100|issues list --limit 0|rc=1 rows=0 requests=0 first=null notice=no
-issues list --max: every row in pages of 75, no notice|160|issues list --max|rc=0 rows=160 requests=3 first=75 notice=no
-issues list --limit 10 over 10 rows: no notice|10|issues list --limit 10|rc=0 rows=10 requests=1 first=10 notice=no
-labels list --limit 300: a trimmed last page still notices|400|labels list --limit 300|rc=0 rows=300 requests=2 first=250 notice=yes
-projects list: 75 rows by default in pages of 50|100|projects list|rc=0 rows=75 requests=2 first=50 notice=yes
+issues list --max: every row in pages of 75, no notice|160|issues list --max|rc=0 rows=160 requests=- first=75 notice=no
+issues list --limit 10 over 10 rows: no notice|10|issues list --limit 10|rc=0 rows=10 requests=- first=10 notice=no
+labels list --limit 300: a trimmed last page still notices|400|labels list --limit 300|rc=0 rows=300 requests=- first=250 notice=yes
+projects list: 75 rows by default in pages of 50|100|projects list|rc=0 rows=75 requests=- first=50 notice=yes
 projects list --limit 0: refused before any request|100|projects list --limit 0|rc=1 rows=0 requests=0 first=null notice=no
-projects list --first: one row, no notice|100|projects list --first|rc=0 rows=unparsed requests=1 first=1 notice=no
+projects list --first: one row, no notice|100|projects list --first|rc=0 rows=unparsed requests=- first=1 notice=no
 users list --limit soon: refused before any request|100|users list --limit soon|rc=1 rows=0 requests=0 first=null notice=no
 cycles list --type past: refused before any request|10|cycles list --type past|rc=1 rows=0 requests=0 first=null notice=no
-teams list --max: rows with a connection, pages of 50|300|teams list --max|rc=0 rows=300 requests=6 first=50 notice=no
-initiatives list --max: rows with a connection, pages of 50|300|initiatives list --max|rc=0 rows=300 requests=6 first=50 notice=no
-projects list --max: rows with a connection, pages of 50|300|projects list --max|rc=0 rows=300 requests=6 first=50 notice=no
-labels list --max: flat rows, pages of 250|300|labels list --max|rc=0 rows=300 requests=2 first=250 notice=no
-project-labels list --max: flat rows, pages of 250|300|project-labels list --max|rc=0 rows=300 requests=2 first=250 notice=no
-users list --max: flat rows, pages of 250|300|users list --max|rc=0 rows=300 requests=2 first=250 notice=no
-cycles list --max: flat rows, pages of 250|300|cycles list --max|rc=0 rows=300 requests=2 first=250 notice=no
-documents list --max: flat rows, pages of 250|300|documents list --max|rc=0 rows=300 requests=2 first=250 notice=no
+teams list --max: rows with a connection, pages of 50|300|teams list --max|rc=0 rows=300 requests=- first=50 notice=no
+initiatives list --max: rows with a connection, pages of 50|300|initiatives list --max|rc=0 rows=300 requests=- first=50 notice=no
+projects list --max: rows with a connection, pages of 50|300|projects list --max|rc=0 rows=300 requests=- first=50 notice=no
+labels list --max: flat rows, pages of 250|300|labels list --max|rc=0 rows=300 requests=- first=250 notice=no
+project-labels list --max: flat rows, pages of 250|300|project-labels list --max|rc=0 rows=300 requests=- first=250 notice=no
+users list --max: flat rows, pages of 250|300|users list --max|rc=0 rows=300 requests=- first=250 notice=no
+cycles list --max: flat rows, pages of 250|300|cycles list --max|rc=0 rows=300 requests=- first=250 notice=no
+documents list --max: flat rows, pages of 250|300|documents list --max|rc=0 rows=300 requests=- first=250 notice=no
 ROWS

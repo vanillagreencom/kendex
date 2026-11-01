@@ -48,8 +48,8 @@
 # rejector. Two runs whose arguments are
 # a set and that set negated therefore partition the battery: every suite
 # runs in exactly one of them, and a suite added later lands in the negated
-# run rather than in neither. --shard uses shard_of instead of name filters.
-# Its macOS table spreads suites across the existing CI worker pools.
+# run rather than in neither. --shard intersects shard_of membership with
+# these filters. Its macOS table spreads suites across the existing CI pools.
 #
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
@@ -282,13 +282,13 @@ SHARD=""
 # and Linux deadlines. These watch suites share a separate leg on both.
 if [ "${1-}" = --shard ]; then
   shard="${2-}"
-  [ "$#" -eq 2 ] || { echo "run-all.sh: shard-arguments shard=$shard" >&2; exit 1; }
+  [ "$#" -ge 2 ] || { echo "run-all.sh: shard-arguments shard=$shard" >&2; exit 1; }
   case "${RUNNER_OS:-Linux}" in
     Linux|macOS) ;;
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-terminal|orch-oversee|orch-oversee-watch|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; set -- ;;
+    orch-terminal|orch-oversee|orch-oversee-watch|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; shift 2 ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -447,8 +447,7 @@ wanted() { # BASE
   local keep=1 pat
   if [ -n "$SHARD" ]; then
     shard_of "$1"
-    [ "$OWNING_SHARD" = "$SHARD" ]
-    return
+    [ "$OWNING_SHARD" = "$SHARD" ] || return 1
   fi
   if [ "${#SELECT[@]}" -gt 0 ]; then
     keep=0

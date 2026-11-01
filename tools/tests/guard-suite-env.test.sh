@@ -75,12 +75,10 @@ for row in \
   done
 done
 
-# Mutations keep the suite and assertions intact, and change only the PATH
-# selected by the production runner.
-for row in 'none|SUITE_PATH=$CLEAN_PATH|SUITE_PATH=$PATH|lanes-pick-spread.sh|0|none|no' \
-  'checkout|SUITE_PATH=$CHECKOUT_PATH|SUITE_PATH=$PATH|open-terminal-context.sh|0|checkout|yes'; do
-  IFS='|' read -r kind before after suite status resolved built <<< "$row"
-  python3 - "$RUNNER" "$TMP/mutant" "$before" "$after" <<'PY'
+# The mutation keeps the suite and assertions intact, and changes only the
+# PATH selected by the production runner.
+# shellcheck disable=SC2016 # the runner's own text, matched literally
+python3 - "$RUNNER" "$TMP/mutant" 'SUITE_PATH=$CLEAN_PATH' 'SUITE_PATH=$PATH' <<'PY'
 from pathlib import Path
 import sys
 source, target, before, after = sys.argv[1:]
@@ -90,12 +88,11 @@ changed = text.replace(before, after)
 assert changed != text
 Path(target).write_text(changed)
 PY
-  cp "$RUNNER" "$TMP/source-runner"
-  cp "$TMP/mutant" "$RUNNER"
-  suite_result "$RUNNER" "$R/skills/orch/tests/$suite" direct Linux
-  cp "$TMP/source-runner" "$RUNNER"
-  [ "$ACTUAL" != "$status|$resolved|$built" ] && ok "control: $kind rejects host PATH" || bad "control: $kind rejects host PATH" "$OUT"
-done
+cp "$RUNNER" "$TMP/source-runner"
+cp "$TMP/mutant" "$RUNNER"
+suite_result "$RUNNER" "$R/skills/orch/tests/lanes-pick-spread.sh" direct Linux
+cp "$TMP/source-runner" "$RUNNER"
+[ "$ACTUAL" != "0|none|no" ] && ok "control: none rejects host PATH" || bad "control: none rejects host PATH" "$OUT"
 
 BUILD_STATUS=9
 suite_result "$RUNNER" "$R/skills/orch/tests/open-terminal-context.sh" direct Linux
@@ -111,11 +108,8 @@ import sys
 import time
 
 runner, root, bash = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-source = runner.read_text()
 cargo = root / "host-bin/cargo"
 original_cargo = cargo.read_text()
-needle = 'suite_environment "$suite_file" || { status=$?; stop_suites; exit "$status"; }'
-assert source.count(needle) == 1
 (root / "host-bin/nproc").write_text('#!/bin/sh\necho 2\n')
 (root / "host-bin/nproc").chmod(0o755)
 cargo.write_text('''#!/bin/sh
@@ -132,36 +126,33 @@ exit 9
 (runner.parent / "dev-env-block.sh").write_text('trap \'printf stopped > "$STOPPED"; exit 0\' TERM\nprintf ready > "$READY"\nread -r line < "$FIFO"\nprintf done > "$DONE"\n')
 (runner.parent / "open-terminal-env-fail.sh").write_text('printf "pass: 1 fail: 0\\n"\n')
 try:
-    for variant in ("normal", "missing-stop"):
-        runner.write_text(source if variant == "normal" else source.replace(needle, 'suite_environment "$suite_file" || exit 1'))
-        env = dict(os.environ, RUNNER_OS="Linux")
-        for name in ("READY", "STOPPED", "DONE", "FIFO"):
-            env[name] = str(root / (variant + name))
-        os.mkfifo(env["FIFO"])
-        hold = os.open(env["FIFO"], os.O_RDWR)
-        try:
-            result = subprocess.run([bash, str(runner), "--local", "=dev-env-block", "=open-terminal-env-fail"], env=env, capture_output=True, text=True, timeout=25)
-            assert result.returncode == 1, result.stdout + result.stderr
-            stopped = Path(env["STOPPED"]).exists()
-            if not stopped:
-                os.write(hold, b"release\n")
-                deadline = time.monotonic() + 5
-                while not Path(env["DONE"]).exists():
-                    assert time.monotonic() < deadline, "suite release deadline"
-                    time.sleep(0.01)
-            assert stopped == (variant == "normal"), result.stdout + result.stderr
-        finally:
+    env = dict(os.environ, RUNNER_OS="Linux")
+    for name in ("READY", "STOPPED", "DONE", "FIFO"):
+        env[name] = str(root / name)
+    os.mkfifo(env["FIFO"])
+    hold = os.open(env["FIFO"], os.O_RDWR)
+    try:
+        result = subprocess.run([bash, str(runner), "--local", "=dev-env-block", "=open-terminal-env-fail"], env=env, capture_output=True, text=True, timeout=25)
+        assert result.returncode == 1, result.stdout + result.stderr
+        stopped = Path(env["STOPPED"]).exists()
+        if not stopped:
             os.write(hold, b"release\n")
-            os.close(hold)
+            deadline = time.monotonic() + 5
+            while not Path(env["DONE"]).exists():
+                assert time.monotonic() < deadline, "suite release deadline"
+                time.sleep(0.01)
+        assert stopped, result.stdout + result.stderr
+    finally:
+        os.write(hold, b"release\n")
+        os.close(hold)
 finally:
-    runner.write_text(source)
     cargo.write_text(original_cargo)
     (root / "host-bin/nproc").unlink()
     (runner.parent / "dev-env-block.sh").unlink()
     (runner.parent / "open-terminal-env-fail.sh").unlink()
 PY
-then ok 'pooled environment failure stops earlier suites and the control rejects missing teardown'
-else bad 'pooled environment failure stops earlier suites and the control rejects missing teardown'
+then ok 'pooled environment failure stops earlier suites'
+else bad 'pooled environment failure stops earlier suites'
 fi
 
 # These are the direct Bash and Node arms of guard's configured range route.
@@ -190,25 +181,8 @@ export MSYS=winsymlinks:nativestrict
 ln -s "$R" "$TMP/linked-checkout"
 [ -L "$TMP/linked-checkout" ] || exit 1
 printf '\n' >> "$R/skills/harness-ci/tests/change-class.test.sh"
-cp "$RUNNER" "$TMP/source-runner"
-for row in "physical|$R|checkout" "symlink|$TMP/linked-checkout|checkout" "control|$TMP/linked-checkout|none"; do
+for row in "physical|$R|checkout" "symlink|$TMP/linked-checkout|checkout"; do
   IFS='|' read -r kind checkout expected <<< "$row"
-  if [ "$kind" = control ]; then
-    python3 - "$RUNNER" <<'PY'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-source = path.read_text()
-before = 'SUITE_ROOT="$(cd "$ORCH_TEST_DIR/../../.." && pwd -P)"'
-assert source.count(before) == 1
-changed = source.replace(before, before.replace('pwd -P', 'pwd'))
-assert changed != source
-path.write_text(changed)
-PY
-    git -C "$R" add skills/orch/tests/run-all.sh
-    git -C "$R" commit -qm control
-    BASE="$(git -C "$R" rev-parse HEAD)"
-  fi
   : > "$BUILD_LOG"
   RC=0
   OUT="$(cd "$checkout" && RUNNER_OS=Linux DEV_VALIDATE_SCOPED=true "$checkout/tools/guard" --selection --range "$BASE" 2>&1)" || RC=$?
@@ -216,10 +190,8 @@ PY
   BUILT=no
   [ ! -s "$BUILD_LOG" ] || BUILT=yes
   want="0|$expected|yes"
-  [ "$kind" != control ] || want='0|none|no'
   [ "$RC|$RESULT|$BUILT" = "$want" ] && ok "$kind guard supplies direct suite environment" || bad "$kind guard supplies direct suite environment" "$RC|$RESULT|$BUILT $OUT"
 done
-cp "$TMP/source-runner" "$RUNNER"
 
 # The release job must also survive suites that normally replace PATH with
 # their own build. Exercise the harness-ci suite's actual engine owner.

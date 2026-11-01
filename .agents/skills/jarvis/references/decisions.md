@@ -24,6 +24,7 @@ A grant covers only the action it names. Spending money, an external commitment 
 - Find the cause and correct it where it starts. Check every affected path.
 - Extend the existing owner of a concern. Add an owner only when none exists.
 - Add a mechanism only for a present requirement. Identify the person or system that needs it.
+- When judging an existing rule, step, mechanism or check, ask what it provides and for whom. Remove what protects nothing real or is over-engineered, after reading what uses or relies on it.
 - Follow the user's current project conventions and compatibility policy.
 - Keep user-specific facts and settings in the user's own instructions or private records.
 - Check the destination before sharing account or record information. Exclude private details from public outputs.

@@ -33,7 +33,7 @@ Every read and write goes to Linear's API as it runs; no tracker data is stored 
 | `attachments` | list (every file an issue references), fetch (download one) |
 | `auth-check` | Report the selected credential, actor, team and `writes_enabled` for writes that need a configured team (`--strict` exits non-zero when no team is configured) |
 | `auth-mint` | Mint application token JSON from the client pair without writing files |
-| `journal` | Start, stop or read a bounded local request-attempt journal; off by default |
+| `journal` | Start, stop or read a bounded local request-attempt journal; off by default ([request journal](references/request-journal.md)) |
 | `session-status` | Aggregated status for the `/start` workflow |
 
 Aliases: `issues relations` → `list-relations`, `projects dependencies` → `list-dependencies`. Singular resource names (`issue`, `project`, …) route to the plural. There is no `view`/`show`: single-issue lookups are `issues get <ID>`; only `issues get <ID>`, without `--with-bundle` and in the default `safe` format, carries `github_sync`, the GitHub issues Linear's GitHub sync links the issue to, each as `owner/repo#N` lowercased. Safe `issues get` and `issues list` rows carry `in_pr_bundle`, true when the description holds `**In-PR bundle**: yes`. Multi-issue lookups are `issues bulk-get <ID1> <ID2> ...`, which is also the post-mutation verification path. Comments for several issues are one `comments bulk-list <ID1> <ID2> ...` call (`--stdin` takes one identifier per line), never a loop or parallel `comments list` readers.
@@ -60,33 +60,13 @@ A quota refusal exits nonzero with JSON stderr `code:"RATELIMITED"`. Its `quota`
 
 The transport retries a rate refusal, a 5xx query/download or an unanswered query/download at most twice. A known hold can stop a GraphQL retry before HTTP. A 5xx or unanswered mutation is sent once with `linear-http: write=unconfirmed`: read its result before resending. Waits double, or use a longer `Retry-After`. A `Retry-After` over 60 seconds or any other HTTP error fails immediately.
 
-## Request journal
-
-Set `LINEAR_JOURNAL_DIR` to an absolute new directory in every process that participates. The installed interface is:
-
-```bash
-linear.sh journal start --max-bytes BYTES --actor-id UUID
-linear.sh journal stop
-linear.sh journal read
-```
-
-Start accepts a positive byte limit of at most nine digits and a supplied actor UUID. It creates the directory exclusively and binds that identity to the selected credential. It sends no API request and mints no token. Read and stop need no credential lookup. A changed credential leaves actor identity unread. The supplied identity is an operator assertion, not an independent API check. A client pair keeps its binding through token renewal.
-
-The journal is `attempts.jsonl` in that directory. It records completed HTTP attempts for GraphQL, token mint and renewal, attachment downloads and storage PUTs. Each attempt carries the raw HTTP status, safe operation name, attempt within its authorization phase, actor provenance and caller repository/script/item. `LINEAR_JOURNAL_CALLER` supplies a script identifier without arguments. `LINEAR_JOURNAL_ITEM` supplies a carrying issue identifier or `owner/repo#number`. Missing labels stay unread or use the actual Linear command script. No request or response body, variables, authorization, credential value or signed URL is retained.
-
-Collection stops after one hour, before an append would exceed the byte limit, on explicit stop, or on a journal failure. Each new session needs a new directory. The byte limit covers the journal file; small fixed session, stop and writer-lock metadata are additional. A journal failure reports unavailable or incomplete evidence without changing the HTTP result. A lock is never reclaimed by signalling a saved process number.
-
-Read reports the session state, per-caller attempt counts, the top five callers by attempts, separate transport counts and identity/label/complexity coverage. It sums only returned valid `X-Complexity` values. Missing values stay unread. Shared remaining-quota changes are never request costs. A rate-limit refusal does not establish which caller spent the shared quota.
-
-Only participating installed transport processes on this host are covered. The window uses the host clock and records completed attempts. An attempt completed after expiry, or killed before its record, can be absent. A collection stopped before expiry, capped or failed is not a complete hour. Storage attempts need not consume GraphQL quota.
-
 ## Team Target
 
 `LINEAR_TEAM` has no default. Existing-issue writes, including `comments create`, route by the issue identifier and need no configured team. Other writes refuse when it is unset; reads drop the team filter. `--team <key-or-name>` overrides `LINEAR_TEAM` per call only on `issues create`, `projects create`, `cycles create`, `labels create`, `labels audit`, `projects audit`, `cycles list`, `statuses list` and `statuses get`; the `--team` filter of `issues list`, `projects list` and `labels list` takes a key or name too. On these reads and `statuses list|get`, an empty or dash-led `--team` value refuses before any request rather than reading every team. Run `auth-check --strict` before the first mutation that needs a configured team in a project.
 
 Every lane writes with one app token, and Linear lets that token write in every team, so `linear.sh` keeps writes in `LINEAR_TEAM` itself. Before any write it refuses `issues create` whose `--team` is another team, and `issues update`, `bulk-update`, `activate`, `block`, `unblock`, `complete`, `archive` and `trash` (or its alias `delete`) on an issue outside `LINEAR_TEAM`, judged by reading the issue's current team for each identifier or UUID, once per distinct reference per invocation. A failed team read refuses as `refused=cross-team-unread` before any write. Reads, `comments create`, `add-relation` and `remove-relation` run in any team. The refusal line is `linear: refused=cross-team action=<verb> issue=<ID> team=<KEY> own-team=<KEY> route=peer-mail`: give cross-team work to the overseer of that team's repository with `lane-mail peer send --repo [REPO]`. No setting turns the guard off. With no `LINEAR_TEAM`, an existing-issue write runs unchecked and prints `linear: cross-team-guard=inactive`.
 
-Set `LINEAR_APP_TOKEN` or the client pair in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another); `op://` references are supported. Use `auth-mint` on the host with the real pair to publish a token to the fleet. Credential precedence, expiry, caching and attribution: [README.md § Setup](README.md#setup).
+Set `LINEAR_APP_TOKEN` or the client pair in the project's private env file (`.env.local` unless `KENDEX_ENV_FILE` names another); `op://` references are supported. Use `auth-mint` on the host with the real pair to publish a token to the fleet. Credential precedence, expiry, caching and attribution: [authentication](references/authentication.md).
 
 `LINEAR_API_KEY` and `KENDEX_USER_EMAIL`, the operator's email, also belong in the private env file. Non-secret defaults belong in committed `kendex.settings.toml` `[env]`. The kendex app's Customize tab writes the key, team and email. A `LINEAR_API_KEY` from project files beats an inherited key. When the personal key is selected, `auth-check` warns with fingerprints if it shadows a different inherited key. Every other key uses process environment precedence over the private env file.
 
@@ -102,9 +82,9 @@ Prepare dependent repository corrections before the label change. After an autho
 
 ## Issue Creation Routing
 
-Never create a tracked issue directly from an orchestration or review session. Route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
+Orchestration and review sessions file through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations. An owner-authorized, well-specified single filing is judged in the filing session, with no analysis agent or audit JSON: project-management workflows/audit-issues.md § 4.1.
 
-Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses before any API call one with no agent label from that set (`--no-agent-label` permits a deliberate bare create). Unless `LINEAR_REQUIRE_REACH` is set empty, it refuses a description with no `Reached by:` line and, with `--review-born` and `--priority 2`, one with no `Symptom:` line; a placeholder or null token counts as no line. Under that setting, `issues create`, `update` and `bulk-update` refuse a description opening with a `**Key**:` or `Reached by:` header past any owner action line, or with a header over 500 characters, naming the line and length; an update only moving that action line on the stored body checks only its length. Each other guard is its own setting. What the lines say is the author's to judge; the rule is the project-management skill's SKILL.md § Disposition, **Name what reaches it**, which is also where a create decides whether it is review-born.
+`issues create` needs a `LINEAR_AGENT_LABELS` label before API calls when set; `--no-agent-label` allows bare creates. Unless `LINEAR_REQUIRE_REACH` is set empty, create needs `Reached by:` and, with `--review-born --priority 2`, `Symptom:`; placeholders and null tokens are absent. Under that key, authored create/update/bulk-update bodies refuse an invalid `Post-merge:` trigger or Deadline; a missing quoted `> **Story:**` and `> **Why this matters:**` opening or a header over 500 characters prints a `linear: advisory=` line and writes (`issues --help`). Filing-line and review-born rules: project-management SKILL.md § Disposition, **Name what reaches it**.
 
 Under a declared label taxonomy (project-management references/labels.md § Project Taxonomy Contract), `issues create`, `issues update --labels`, `issues bulk-update --labels`, `issues activate` and `issues block` refuse before any write a label it does not declare, naming the label and the taxonomy file. The taxonomy check does not refuse an undeclared label the issue already carries. `issues create` refuses declared labels absent from Linear. `labels create` and `labels update --name` refuse an undeclared name, and a name a workspace label already uses (on create, only a `--team` label). `labels audit` lists the undeclared labels on the team's open issues and the same-name team/workspace pairs. With no taxonomy declared, none of this applies.
 
@@ -131,7 +111,7 @@ No match leaves the calling workflow's missing-file behavior unchanged. Multiple
 
 ## Blocked Label vs Issue Relations
 
-For a cross-team relation, select a minted app token through `LINEAR_APP_TOKEN`. Confirm `credential: "app-token"` with `auth-check` and check that the actor can access both teams. Credential selection follows [README.md § Setup](README.md#setup).
+For a cross-team relation, select a minted app token through `LINEAR_APP_TOKEN` ([credential selection](references/authentication.md)). Confirm `credential: "app-token"` with `auth-check` and check that the actor can access both teams.
 
 A blocker that is itself a Linear issue is a relation (`--blocked-by`); an external one (vendor, license) is the `blocked` label plus a comment.
 

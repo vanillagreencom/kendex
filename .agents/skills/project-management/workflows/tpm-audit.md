@@ -58,7 +58,7 @@ gh label list --repo [REPOSITORY] --limit 200 --json name,description     # TRAC
 
 `--limit 200` is a stated cap, not a page: a repository reaching it is analyzed against a truncated inventory, which the analysis notes in `analysis[]` and scopes itself to.
 
-Load the project taxonomy alongside it. A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
+Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every `agent_mismatch`, `label_cooccurrence`, `recommended_issue.labels[]`, and `create_fields.labels[]` recommendation must be expressible against this live inventory. Issue labels only.
 
 ### 1.3 Fetch Projects
 
@@ -197,7 +197,7 @@ Iterate every `blocks`/`blocked_by` on the input issues and their children. A re
 
 ### 5.1 Dependencies
 
-Merge three sources: creates-consumes analysis (does B consume what A creates?), caller hints in `blocks_items`/`blocked_by_items`/`blocks_issues`/`blocked_by_issues` (validate against the contracts — carry valid hints, drop contradictions), and cross-domain sequencing between siblings with different agent domains (a relation only when data flow is confirmed).
+Merge four sources: creates-consumes analysis (does B consume what A creates?), caller hints in `blocks_items`/`blocked_by_items`/`blocks_issues`/`blocked_by_issues`, text-named prerequisites (each issue a proposed item's text names as work it builds on or waits for, a `blocked_by` hint), and cross-domain sequencing between siblings with different agent domains (a relation only when data flow is confirmed). Validate both kinds of hint against the contracts: carry valid hints, drop contradictions.
 
 Default to `blocks` when a dependency exists; use `related` only for a genuinely informational link. Record `Pair | Current | Should be | Reason`.
 
@@ -374,7 +374,7 @@ Otherwise, first match wins: creation bar failed → `skip` for a proposed item,
 
 **Completed-issue guard**: `combine`, `expand`, and `update` never target a Done or Canceled issue; new scope goes in a new issue with a `related` relation to the completed one.
 
-For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` from the input item or completed from § 1.2 taxonomy — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. `reach` is the producer the input item's `impact` names — the same line the filing bar reads, never re-derived from the finding. `review_born` is true when `SOURCE` is `review`, `pr-comments`, or `local-review`, false otherwise; a `review_born` create at priority 2 also carries `symptom` from the input item, and is left blocked with a `reason` when the item states none. `regressed_by` is the input item's, copied as written and omitted when the item has none. Preserve confirmed input `supersedes[]` entries and their `when`, subject to § 7.0's contract-parent scope transfer; verify entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
+For every `create`: populate `create_fields` per [audit-output.md](../schemas/audit-output.md) with the full `labels[]` [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set) selects from § 1.2 — an action that can only supply `agent`/`agent_label` is left blocked with a clear `reason`. Its `add_relations` carries every relation § 5.1 keeps for the item; in single mode, which skips § 5, it carries the ones § 14 step 4 confirms. audit-issues § 7.2 persists them with the create. `reach` is the producer the input item's `impact` names — the same line the filing bar reads, never re-derived from the finding. `review_born` is true when `SOURCE` is `review`, `pr-comments`, or `local-review`, false otherwise; a `review_born` create at priority 2 also carries `symptom` from the input item, and is left blocked with a `reason` when the item states none. `regressed_by` is the input item's, copied as written and omitted when the item has none. Preserve confirmed input `supersedes[]` entries and their `when`, subject to § 7.0's contract-parent scope transfer; verify entries carry `identifier`, `title`, and `reason`, and set `summary.superseded` to the total. When `SOURCE == "research-complete"` and `RESEARCH_ISSUE` is set, add it to `add_relations.related[]` on every `create`.
 
 ---
 
@@ -406,7 +406,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] No completed-blocker relation appears in `remove_relations[]` outside a § 4.2 `Violation:` entry, or under any stale-metadata framing (§ 4.1)
 - [ ] The § 6 cancellation sweep ran against the § 1.5 active set; closed rows took no disposition, and each input item's closed-row findings report and respect any search truncation
 - [ ] TRACKER=linear: when the § 1.4.1 set is non-empty, one comments read covered the input set, candidate duplicate/relation/supersession rows, and every active cancellation candidate; an empty set made no read
-- [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix
+- [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix, except an `add_relations.related` entry, which the linear skill's Blocked Label vs Issue Relations section lets name an issue in another team
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
 - [ ] More than one create follows § 7.1's rework-parent rule: its placement, its children and its two exceptions; no create is a `make_child` under the input's `parent_issue` outside § 7.1's cases; no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)
@@ -430,20 +430,20 @@ File: tmp/audit-[MODE]-YYYYMMDD-HHMMSS.json
 
 ## 14. Single-Item Mode
 
-One filing: the creation bar, a title-level duplicate check, explicit supersession confirmation, the label set and the placement, then § 12 and § 13. No other section runs: no contracts, no inferred relation or hierarchy analysis, no comparison-set bodies, and no § 6 cancellation sweep.
+One filing: the creation bar, a title-level duplicate check, explicit supersession and relation confirmation, the label set and the placement, then § 12 and § 13. No other section runs: no contracts, no inferred relation or hierarchy analysis, no comparison-set bodies, and no § 6 cancellation sweep.
 
 1. **Input.** Read the file as § 1.1 reads `issues` mode. It holds exactly one `items[]` entry and no `hierarchy_contract`; any other shape halts naming the item count, and the caller runs `--issues`.
 2. **Scope and labels.** § 1.1.1, then § 1.2.
 3. **Placement.** Linear: the § 1.3 command, then the project whose name and description fit the item's `location`; in a map repository, the § 1.6 map read and [project-map.md § Routing](../references/project-map.md#routing), with `project_needed` when it routes to none. GitHub: § 1.3's degradation.
-4. **Duplicates by title and explicit supersession.** One read of the open titles; keep only rows § 1.1.1 scopes in:
+4. **Duplicates by title, explicit supersession and relation confirmation.** One read of the open titles; keep only rows § 1.1.1 scopes in:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review" --max --format=compact   # TRACKER=linear
-   gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title                                                                # TRACKER=github
+   .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Backlog,Todo,In Progress,In Review,Verifying" --max --format=compact   # TRACKER=linear
+   gh issue list --repo [REPOSITORY] --state open --limit 200 --json number,title                                                                                     # TRACKER=github
    ```
 
-   Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). Check every input `supersedes[].identifier` against this same read, with no second tracker list. Echo each confirmed identifier, its title, reason and `when` into the create row's `supersedes[]`. Report each absent identifier in the row's `reason` as not touched and omit it from `supersedes[]`. A confirmed explicit supersession is disposed by its `when`, not treated as a duplicate title. Another title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
+   Read `id` and `title` from each row, `number` and `title` on GitHub; neither read takes a pipe, under orch's one-simple-command rule ([orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell)). Check every input `supersedes[].identifier`, every `blocks_issues` and `blocked_by_issues` identifier, and every issue the item's text names as work it builds on or waits for against this same read, with no second tracker list. A Verifying row confirms a relation, never a supersession. Echo each confirmed `supersedes[]` identifier, its title, reason and `when` into the create row's `supersedes[]`. Echo each confirmed `blocks_issues` identifier into its `add_relations.blocks`, and each confirmed `blocked_by_issues` identifier or text-named prerequisite into `add_relations.blocked_by`. Report each absent identifier in the row's `reason` as not touched and omit it from `supersedes[]` and `add_relations`. A confirmed explicit supersession is disposed by its `when`, not treated as a duplicate title. Another title naming the item's problem makes the item `skip` with that issue as `target` and reason `covered by [ISSUE_ID]`. Read a matched issue's body (`issues get [ISSUE_ID]`, or `gh issue view [N] --repo [REPOSITORY] --json body`) only when its title alone leaves the match open; read no other body.
 
 5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "make_child", "parent": null}` when the input's `parent_issue` names a rework parent, else `{"action": "none", "parent": null}`.
 
-Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row.
+Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row. For an authorized single filing, [audit-issues § 4.1](audit-issues.md#41-delegate) runs this section in the filing session: the row goes straight to its § 5, and no file is written.

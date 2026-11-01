@@ -8,7 +8,9 @@
 # the markdown agents load, md-format and md-refs hold that markdown to one
 # paragraph per line with live references, and the opt-in comments lane
 # judges source comments. What is here is what none of them ships.
-# Repository scans read the working tree. Bot instructions use the index at
+# Repository scans read the working tree. COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS
+# in kendex.settings.toml names the paths this default mode reads; a rule over
+# a new path adds it there. Bot instructions use the index at
 # commit time so their configuration, doctrine and outputs agree.
 # Every finding opens with `guard: <key>=<value>` and explains itself below
 # that line; say() and finding_text() hold the shape and the text. A notice,
@@ -161,6 +163,10 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "free space on the cargo target volume could not be read at $2 after the cargo block, so the exhaustion check did not run." ;;
     touched-set)
       echo "the touched-file set for the suite lane could not be read at that step." ;;
+    inventory-rows)
+      echo "a side of the .kendex-generated.json change could not be read as a list of paths, so the scoped run maps that file as any changed file; the read's own error is above." ;;
+    merge-group-shards)
+      printf 'tools/ci-job-set could not say which shards run the suites of %s, so the scoped run maps its skill Markdown as any changed file; its own error is above.\n' "${2#*tree=}" ;;
     missing-tool)
       printf 'the required command %s is unavailable.\n' "$2" ;;
     missing-peers)
@@ -363,7 +369,10 @@ case "${1:-}" in
       '        runs every shell suite of the package.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
       '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
-      '        the same suite mapper, leaving the full record to merge-group CI.'
+      '        the same suite mapper, leaving the full record to merge-group CI;' \
+      '        a skill package'"'"'s Markdown, source or render, selects no suite there,' \
+      '        nor does a .kendex-generated.json change only to their rows, save' \
+      '        in a tree whose suites tools/ci-job-set runs in no shard.'
     exit 0
     ;;
 esac
@@ -555,9 +564,7 @@ done <<<"$files"
 # decision records, where of the other packages only those it requires are
 # sure to be installed. The rule and what it judges are tools/shipped-refs';
 # it is handed the skill entries no render carries. Exit 1 is a citation or
-# link, exit 2 a scan that could not run, and neither is a pass. One line on
-# purpose: the must-fail control in tools/tests/guard.test.sh removes this
-# lane by deleting it.
+# link, exit 2 a scan that could not run, and neither is a pass.
 # shellcheck disable=SC2086 # not_rendered is a word list
 "$TOOLS_DIR/shipped-refs" $not_rendered || say shipped-refs "$?"
 
@@ -919,15 +926,12 @@ fi
 
 # Bash 3.2 portability over the skill tree. The roster and the pattern set
 # are the lint's own; exit 1 is a construct, exit 2 a scan that could not
-# run, and neither is a pass. One line on purpose: the must-fail control in
-# tools/tests/guard.test.sh removes this lane by deleting it.
+# run, and neither is a pass.
 "$TOOLS_DIR/bash32-lint" || say bash32-lint "$?"
 
 # Skill and hook-test entry points carry the executable bit in the index,
 # which is what the commit records. The rule is tools/exec-bits'; exit 1 is a
 # file at 100644, exit 2 a scan that could not run, and neither is a pass.
-# One line on purpose: the must-fail control in tools/tests/guard.test.sh
-# removes this lane by deleting it.
 "$TOOLS_DIR/exec-bits" || say exec-bits "$?"
 
 # What the scan above reads as text, this one parses with the shell that has
@@ -935,8 +939,6 @@ fi
 # 3.2 — macOS's own /bin/bash, or the bash:3.2 image under a container
 # runtime — and refuses when it can reach neither, so in the chain a machine
 # without either could not commit at all.
-# One line on purpose, like the lane above it: the must-fail control in
-# tools/tests/guard-full.test.sh removes this lane by deleting it.
 if [ "$MODE" = full ] && lane_on shell_shards; then
   parse_status=0
   "$TOOLS_DIR/bash32-parse" || parse_status=$?
@@ -1458,16 +1460,22 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #   helper       a shell file under tests/lib/, which suites source
 #   module       any other file below scripts/<dir>/
 #   test-module  any other file under tests/lib/
+#   test-program in a DEV_VALIDATE_SCOPED=true run only, a Python file
+#                directly under tests/, which a suite wrapper runs by
+#                path or a sibling imports; in any other run it is a
+#                path of no role
 #   suite        a member of the tree's whole set: tests/*.sh but
 #                run-all.sh, and tests/*.test.mjs where no run-all.sh runs
 #                the set
 #   doc          a file under references/ and any other .md file: a
 #                skill's SKILL.md, README.md, workflows/ and schemas/
-# A module is scanned as a lib is, and a test module as a helper is, but a
-# changed module seeds its enclosing folder and file name. A changed test
-# module maps to no suite: an import can spell no path. Status 1 is a path of no role:
-# run-all.sh, any other file under tests/<dir>/, a file of hooks/ that is no
-# hook, and anything else.
+# A module is scanned as a lib is, and a test module or test program as a
+# helper is, but a changed module seeds its enclosing folder and file name.
+# A changed test module maps to no suite: an import can spell no path. A
+# changed test program seeds its file name.
+# Status 1 is a path of no role:
+# run-all.sh, any other file under tests/<dir>/, tests/*.py outside a scoped
+# run, a file of hooks/ that is no hook, and anything else.
 path_role() { # DIR REL
   case "$1:$2" in
     *:tests/run-all.sh) return 1 ;;
@@ -1476,6 +1484,10 @@ path_role() { # DIR REL
     *:scripts/*/*) echo module ;;
     *:tests/lib/*) echo test-module ;;
     *:tests/*/*) return 1 ;;
+    *:tests/*.py)
+      [ "$scoped_only" -eq 1 ] || return 1
+      echo test-program
+      ;;
     *:tests/*.sh) echo suite ;;
     *:tests/*.test.mjs)
       if [ -f "$1/tests/run-all.sh" ]; then return 1; fi
@@ -1509,11 +1521,11 @@ skill_suites() { # DIR [shell]
 # file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
-  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
+  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py; do
     [ -f "$f" ] || continue
     role=$(path_role "$1" "${f#"$1"/}") || continue
     case "$role" in
-      script | lib | helper | module | test-module | suite) printf '%s %s\n' "$role" "$f" ;;
+      script | lib | helper | module | test-module | test-program | suite) printf '%s %s\n' "$role" "$f" ;;
     esac
   done
 }
@@ -1590,7 +1602,7 @@ PY
 # What the scan holds of each file skill_files lists for the tree SCAN_DIR,
 # loaded once for all of the tree's changed paths, one index per file:
 # SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
-# spells, and SCAN_SOURCED, each
+# spells and each `/<module>.py` a test program imports, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines,
 # and SCAN_INPUTS, the repository path patterns in its input notes.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
@@ -1644,6 +1656,27 @@ scan_load() { # DIR
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
+    # A test program imports a sibling by module name, which spells no path:
+    # `import a, b` reads /a.py and /b.py, and `from a.c import x` reads /a.py.
+    function scan_imports(reader, text, rest, count, modules, j, name) {
+      rest = text
+      if (sub(/^[[:space:]]*from[[:space:]]+/, "", rest)) {
+        count = 1
+        modules[1] = rest
+      } else if (sub(/^[[:space:]]*import[[:space:]]+/, "", rest)) {
+        count = split(rest, modules, /,/)
+      } else {
+        return
+      }
+      for (j = 1; j <= count; j++) {
+        name = modules[j]
+        sub(/^[[:space:]]+/, "", name)
+        if (!match(name, /^[[:alpha:]_][[:alnum:]_]*/)) continue
+        name = "/" substr(name, 1, RLENGTH) ".py"
+        if (!name_seen["N", reader, name]++)
+          print "N\t" reader "\t" name
+      }
+    }
     function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, j, notes, note_count) {
       path = scan_paths[reader]; role = scan_roles[reader]
       while ((status = (getline text < path)) > 0) {
@@ -1655,6 +1688,7 @@ scan_load() { # DIR
         if (text ~ /^[[:space:]]*#/) continue
         code[++count] = text
         scan_names(reader, text, "N")
+        if (role == "test-program") scan_imports(reader, text)
         if (text ~ /(^|[;&|({[:space:]])(source|\.)[[:space:]]/)
           scan_names(reader, text, "S")
         if (role != "script" && role != "lib") {
@@ -1811,7 +1845,7 @@ reach_join() { # ROLE PATH [changed]
     case "$1" in script | lib | module) return 0 ;; esac
   fi
   case "$1" in
-    lib | helper | module | test-module) next_any+=("${2##*/}") ;;
+    lib | helper | module | test-module | test-program) next_any+=("${2##*/}") ;;
     script)
       next_script+=("${2##*/}")
       reach_scripts+=("$2")
@@ -1824,15 +1858,18 @@ reach_join() { # ROLE PATH [changed]
 # or tools/: REL is inside the tree, or ../ followed by a repository input.
 # This comment, with path_role's table and
 # doc_readers' for a doc, is the one statement of the rule.
-#   - A changed or deleted script, lib or helper starts a scan over
-#     skill_files with its name as the first needle. A file joins the reach
-#     when its code, comment lines dropped, names a needle as `/<name>`, the
-#     whole name. A lib, helper, module or test module that joins adds a
-#     needle any file may name. A script, the changed one or one that joins,
-#     adds a needle a suite, helper or test module may name anywhere and any
-#     other file only on a line that sources it (`source` or `.`): the reach follows what sources a file, never a
-#     script that only runs another. A changed suite seeds no needle and runs
-#     alone, and a suite that joins adds none.
+#   - A changed or deleted script, lib, helper or test program starts a
+#     scan over skill_files with its name as the first needle. A file
+#     joins the reach when its code, comment lines dropped, names a needle
+#     as `/<name>`, the whole name; a test program also
+#     names `/<module>.py` for each module an `import` or `from` line of it
+#     imports. A lib, helper, module, test module or test program that
+#     joins adds a needle any file may name. A script, the changed one or
+#     one that joins, adds a needle a suite, helper, test module or test
+#     program may name anywhere and any other file only on a line that
+#     sources it (`source` or `.`): the reach follows what sources a file,
+#     never a script that only runs another. A changed suite seeds no
+#     needle and runs alone, and a suite that joins adds none.
 #   - Each suite in the reach runs, and so does each suite named for a
 #     script in the reach: the suite's name, `_` read as `-` and `.test`
 #     dropped, is the script's name without extension or starts with it and
@@ -1840,8 +1877,11 @@ reach_join() { # ROLE PATH [changed]
 #   - A changed or deleted doc starts the same scan from the files
 #     doc_readers names, each adding its needle by its role. A doc no file
 #     reads runs nothing.
-#   - A deleted suite whose reach holds no suite runs nothing.
+#   - A deleted suite whose reach holds no suite runs nothing, and so does
+#     a deleted test program.
 #   - A changed module seeds its scripts/<dir> folder and its file name.
+#     The folder needle reaches no test program: the folder a test program
+#     spells is part of a module path it names, which the file name reaches.
 #     A module no suite names runs nothing.
 #   - A path of no role, a changed test module, and a path whose
 #     reach holds no suite map to no suite.
@@ -1852,16 +1892,36 @@ reach_join() { # ROLE PATH [changed]
 # production needles. Readers under tests/ still extend the reach, so a
 # suite can cover the file through its test helpers. Other production
 # readers add no needles or named suites. Merge-group CI keeps the full reach.
+# Only a scoped run gives tests/*.py the test-program role (path_role): a
+# control can run a test program through a bare quoted file name or a sibling
+# suite, which no needle follows. In any other run no scan reads a test
+# program, and a changed one is a path of no role.
+# Scoped too, a changed .md file of a skill package, a source under
+# skills/<name>/ or its render under .agents/skills/<name>/, seeds no suite,
+# neither in its own tree nor as a ../ repository input of tools/ or a
+# consumer tree: the merge group first runs the suites that read it (D027).
+# That holds only in a tree whose suites the merge group runs, which
+# tools/ci-job-set --suite-shards answers; in a tree it runs in no shard, or
+# where it cannot answer, such a path seeds that tree's suites as on main.
+# REVISIT(D026): until KEN-4733 that tree is skills/orch.
+# A changed .kendex-generated.json is read as the rows it lists: where the
+# rows other than skill Markdown are the same list on both sides, the
+# change only adds, removes or reorders skill Markdown rows and seeds no
+# suite; any other changed row, or an unreadable side, seeds its suites as
+# any changed file does. Every other file a suite reads as data, a fixture,
+# a script or a JSON file, still seeds its suites, and so does a .md file
+# outside a skill package.
 # The reach is what the scan can see, not every caller: a script run through
 # a variable path is missed, and so is a suite that runs a changed script
 # only through another script that runs it. CI's full run owns completeness.
 # The suites land in MAPPED, one per line, rather than on stdout, so the
 # scan stays loaded for the tree's next path. None with status 0 is a
-# deleted suite, a module no suite names or a doc no file reads; status 1 is a path mapped to no
+# deleted suite or test program, a module no suite names or a doc no file
+# reads; status 1 is a path mapped to no
 # suite, status 2 evidence the scan could not read or compare, and status 3 a role
 # reach_join does not know, a broken guard.
 mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" role="" i n hit names readers f t name base input input_path noted="" out="" nl=$'\n'
+  local dir="$1" rel="$2" role="" i n hit names readers f t name base input input_path noted="" out="" folder="" nl=$'\n'
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
   case "$rel" in
@@ -1903,6 +1963,7 @@ mapped_suites() { # DIR REL
     reach_join "$role" "$dir/$rel" changed || return 3
     if [ "$role" = module ]; then
       name=${rel#scripts/}
+      folder=${name%%/*}
       next_any+=("${name%%/*}")
     fi
   fi
@@ -1918,16 +1979,15 @@ mapped_suites() { # DIR REL
       names=${SCAN_NAMES[i]}
       hit=0
       for n in ${any[@]+"${any[@]}"}; do
+        [ "$n:${SCAN_ROLE[i]}" != "$folder:test-program" ] || continue
         if [[ $names == *"$nl/$n$nl"* ]]; then
           hit=1
           break
         fi
       done
-      # A script's needle: in a suite or helper anywhere, elsewhere only
-      # where a line sources it.
       if [ "$hit" -eq 0 ]; then
         case "${SCAN_ROLE[i]}" in
-          suite | helper | test-module) ;;
+          suite | helper | test-module | test-program) ;;
           *) names=${SCAN_SOURCED[i]} ;;
         esac
         for n in ${scripts[@]+"${scripts[@]}"}; do
@@ -1975,6 +2035,41 @@ mapped_suites() { # DIR REL
   fi
   MAPPED=$out
 }
+skill_markdown() { # PATH: a .md file of a skill package, source or render
+  case "$1" in skills/*/*.md | .agents/skills/*/*.md) return 0 ;; esac
+  return 1
+}
+# Whether the merge group runs tree DIR's suites: status 0 where
+# tools/ci-job-set names a shard for them, 1 where it names none, 2 where it
+# could not answer. It selects per package, so one suite answers for the tree.
+merge_group_runs() { # DIR
+  local suite shards
+  suite=$(skill_suites "$1") || return 2
+  suite=${suite%%$'\n'*}
+  [ -n "$suite" ] || return 1
+  shards=$("$TOOLS_DIR/ci-job-set" --suite-shards "$suite") || return 2
+  [ -n "$shards" ]
+}
+# The rows of .kendex-generated.json at REV, or in the working tree for an
+# empty REV, that are not skill Markdown, one per line in file order. An
+# absent file lists no rows. Status 1: the side could not be read or is not
+# a list of paths.
+inventory_rest() { # REV
+  local listed text row
+  if [ -n "$1" ]; then
+    listed=$(git ls-tree --name-only "$1" -- .kendex-generated.json) || return 1
+    [ -n "$listed" ] || return 0
+    text=$(git show "$1:.kendex-generated.json") || return 1
+  else
+    [ -e .kendex-generated.json ] || return 0
+    text=$(cat .kendex-generated.json) || return 1
+  fi
+  text=$(jq -r 'if type == "array" and all(.[]; type == "string" and (contains("\n") | not))
+    then .[] else error("not a list of paths") end' <<<"$text") || return 1
+  while IFS= read -r row; do
+    skill_markdown "$row" || printf '%s\n' "$row"
+  done <<<"$text"
+}
 # The final report uses the runner's subset vocabulary only for a smaller
 # mapped set. Empty means no tree was selected; any whole set makes it all.
 suite_selection=""
@@ -1994,6 +2089,14 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     [ -n "$consumer_suites" ] || continue
     consumer_trees+=("$consumer")
   done
+  inventory_markdown_only=0
+  if [ "$scoped_only" -eq 1 ] && grep -Fxq .kendex-generated.json <<<"$touched"; then
+    if base_rest=$(inventory_rest "$suites_base") && head_rest=$(inventory_rest ""); then
+      [ "$base_rest" != "$head_rest" ] || inventory_markdown_only=1
+    else
+      note inventory-rows unread
+    fi
+  fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
@@ -2046,6 +2149,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     suite_script=""
     if [ -n "$release_version" ]; then
       case "$d" in pi-extensions/*) continue ;; esac
+      # REVISIT(D026): CI excludes the orch corpus until KEN-4733 restores it.
+      [ "$d:${CI:-false}" != skills/orch:true ] || continue
       release_suites=$(skill_suites "$d" shell) || { say scan "$d/tests"; continue; }
       [ -n "$release_suites" ] || continue
       release_inputs=$(skill_files "$d") || { say scan "$d"; continue; }
@@ -2108,15 +2213,25 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ -z "$release_version" ] || run=all
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
+          tree_ci=""
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
             if [ "$scoped_only" -eq 1 ]; then
+              # mapped_suites' header states this set and why.
+              if skill_markdown "$f" || [ "$f:$inventory_markdown_only" = .kendex-generated.json:1 ]; then
+                if [ -z "$tree_ci" ]; then
+                  tree_ci=0
+                  merge_group_runs "$d" || tree_ci=$?
+                  [ "$tree_ci" -ne 2 ] || note merge-group-shards "unread tree=$d"
+                fi
+                [ "$tree_ci" -ne 0 ] || continue
+              fi
               if [[ $rel == ../* ]]; then
                 role=script
               else
                 role=$(path_role "$d" "$rel") || continue
               fi
-              case "$role" in script | lib | helper | module | suite | test-module) ;; *) continue ;; esac
+              case "$role" in script | lib | helper | module | suite | test-module | test-program) ;; *) continue ;; esac
             fi
             map_status=0
             mapped_suites "$d" "$rel" || map_status=$?

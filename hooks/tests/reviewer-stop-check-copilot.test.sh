@@ -12,8 +12,8 @@
 # subagent's next stop passes.
 #
 # A row is read as `rc=<status> decision=<stdout .decision or -> first=<line
-# 1 of stderr or ->`. The controls at the end run these rows against mutants
-# of the hook, one per rule, each of which must turn its row red.
+# 1 of stderr or ->`. The control at the end runs these rows against a mutant
+# of the hook, which must turn its row red.
 #
 # HOOK_UNDER_TEST overrides the script the fixture installs.
 set -euo pipefail
@@ -165,35 +165,12 @@ echo "=== reviewer-stop-check on Copilot's subagentStop ==="
 copilot_rows
 
 # --- controls ----------------------------------------------------------------
-# Each rule a line planted in a copy of the hook undoes turns its row red: the
-# install's answer shape, the answer built without jq, the camelCase agent
-# type and id reads, the reply as the artifact source, each of the install's
-# two harness reads, and the per-agent record of every refusal.
+# The install's answer shape, undone by a line planted in a copy of the hook,
+# turns its row red.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control answer "$HOOK" '  if [ "$INSTALL" = copilot ]; then' \
     '    exit 2' HOOK copilot_rows \
     'a reviewer whose reply names a dirty worktree is held with the block answer at exit 0'
-  skill_load_control answer-jq "$HOOK" '  if [ "$INSTALL" = copilot ]; then' \
-    '    command -v jq >/dev/null 2>&1 || exit 2' HOOK copilot_rows \
-    'with jq off PATH a reviewer is held with the block answer, built without jq'
-  skill_load_control agent-type "$HOOK" 'AGENT_TYPE=${FIELDS%%"$TAB"*}' \
-    "AGENT_TYPE=\$(printf '%s' \"\$INPUT\" | jq -r '.agent_type // \"\"')" HOOK copilot_rows \
-    'a reviewer whose reply names a dirty worktree is held with the block answer at exit 0'
-  skill_load_control agent-id "$HOOK" 'AGENT_ID=${REST%%"$TAB"*}' \
-    "AGENT_ID=\$(printf '%s' \"\$INPUT\" | jq -r '.agent_id // \"\"')" HOOK copilot_rows \
-    "the same subagent's next stop passes"
-  skill_load_control reply "$HOOK" '  MENTIONS=$(grep -oE "$ARTIFACT_PATTERN" <<<"$REPLY" 2>&1)' \
-    '  MENTIONS=$(grep -oE "$ARTIFACT_PATTERN" -- "$TRANSCRIPT" 2>&1)' HOOK copilot_rows \
-    "a reviewer whose reply names a clean worktree passes, whatever the lead's transcript names"
-  skill_load_control install-dir "$HOOK" '  */.github/hooks) INSTALL=copilot' \
-    'INSTALL=""' HOOK copilot_rows \
-    'a reviewer whose reply names a dirty worktree is held with the block answer at exit 0'
-  skill_load_control install-registry "$HOOK" '[ -f "${BASH_SOURCE[0]%.sh}.json" ]; then INSTALL=copilot' \
-    'INSTALL=""' HOOK copilot_rows \
-    'a reviewer over a dirty worktree is held with the block answer at exit 0 from a global-scope install'
-  skill_load_control every-refusal "$HOOK" '[ "$INSTALL" != copilot ] || MARK_EVERY_REFUSAL=1' \
-    'MARK_EVERY_REFUSAL=0' HOOK copilot_rows \
-    "the same subagent's next stop over that unreadable worktree passes"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

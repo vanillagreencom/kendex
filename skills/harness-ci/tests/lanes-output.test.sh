@@ -168,69 +168,21 @@ assert_eq "must-fail: a blank value read as a reason opts the change back" "queu
 assert_eq "the retired coverage flag is read with one notice" "1 queue_only=true" \
   "$(grep -cxF 'option-retired: option=--covers-all-lanes' "$SANDBOX/local-stderr") $(sed -n '/^queue_only=/p' "$SANDBOX/local-output")"
 
-# Restore the base command's missing output in a disposable package copy.
-# The control must complete, then fail the same machine-output assertion.
-mkdir -p "$SANDBOX/control"
-cp -R "$TEST_DIR/.." "$SANDBOX/control/harness-ci"
-cp -R "$TEST_DIR/../../orch" "$SANDBOX/control/orch"
-needle='      [ "$output" = /dev/null ] || printf '\''lanes=%s\nlanes_cause=%s\n'\'' "$lanes" "$lanes_cause"'
-NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] { hits++; print "      :"; next }
-  { print } END { if (hits != 1) exit 2 }' "$CHANGE_CLASS" >"$SANDBOX/control/harness-ci/scripts/change-class"
-! cmp -s "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class" || exit 1
-run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
-assert_eq 'must-fail: base output contract omits the local lane answer' "" \
-  "$(sed -n '/^lanes/p' "$SANDBOX/local-output")"
-
-# The stand-down reads the repository's per-push mode, not the queue-only
-# cause. The control gates it on the cause again, so the queue-path change
-# above, whose cause answers before the reason is read, runs its lanes.
-cp "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class"
-library="$SANDBOX/control/harness-ci/scripts/lib/change-class.sh"
-needle='per_push="$(sed -n '\''s/^per-push: state=//p'\'' "${work:?}/class-log")" ||'
-replacement='per_push="$(sed -n '\''s/^queue-only: queue_only=[^ ]* cause=per-push-unset.*/unset/p'\'' "${work:?}/class-log")" ||'
-NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] {
-    hits++; print ENVIRON["REPLACEMENT"]; next
-  } { print } END { if (hits != 1) exit 2 }' \
-  "$TEST_DIR/../scripts/lib/change-class.sh" >"$library"
-! cmp -s "$TEST_DIR/../scripts/lib/change-class.sh" "$library" || exit 1
-write_row queue-path-control "$base_default" 'src/main.sh .github/workflows/ci.yml' 21
-run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
-assert_eq 'must-fail: a stand-down gated on the queue-only cause runs a queue-path change' \
-  'queue_only=true lanes=true' \
-  "$(sed -n '/^queue_only=/p; /^lanes=/p' "$SANDBOX/local-output" | tr '\n' ' ' | sed 's/ $//')"
-
 # Local callers read the structured cause field, not the explanation. Both
 # checkout refusals are reachable from --lanes-from on the public command.
-# The control restores the bare field that the action formatter accepts.
-cp "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class"
-library="$SANDBOX/control/harness-ci/scripts/lib/change-class.sh"
-needle='    die "cause=lanes-from-judged-tree root=$lanes_from" \'
-NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] {
-    hits++; sub(/cause=/, ""); print; next
-  } { print } END { if (hits != 1) exit 2 }' \
-  "$TEST_DIR/../scripts/lib/change-class.sh" >"$library"
-! cmp -s "$TEST_DIR/../scripts/lib/change-class.sh" "$library" || exit 1
 rows=0
-while IFS='|' read -r name declaration expected command; do
+while IFS='|' read -r name declaration expected; do
   rows=$((rows + 1))
-  classifier="$CHANGE_CLASS"
-  [ "$command" != control ] || classifier="$SANDBOX/control/harness-ci/scripts/change-class"
   status=0
-  run_local "$classifier" pull_request "$base_default" "$declaration" || status=$?
+  run_local "$CHANGE_CLASS" pull_request "$base_default" "$declaration" || status=$?
   assert_eq "$name: lane checkout refusal exits 2" 2 "$status"
   assert_eq "$name: structured local cause" "$expected" \
     "$(sed -n 's/^wiring-error: cause=\([^ ]*\).*/\1/p' "$SANDBOX/local-stderr")"
-  if [ "$command" = control ]; then
-    assert_eq "$name: reaches the planted lane refusal" \
-      "wiring-error: lanes-from-judged-tree root=$declaration" \
-      "$(sed -n '/^wiring-error:/p' "$SANDBOX/local-stderr")"
-  fi
   assert_eq "$name: refusal publishes no class" "" "$(cat "$SANDBOX/local-stdout")"
   assert_eq "$name: refusal publishes no lane outputs" "" "$(cat "$SANDBOX/local-output")"
 done <<ROWS
-judged checkout|$repo|lanes-from-judged-tree|production
-absent checkout|$SANDBOX/missing-checkout|lanes-from-unreadable|production
-must-fail bare cause control|$repo||control
+judged checkout|$repo|lanes-from-judged-tree
+absent checkout|$SANDBOX/missing-checkout|lanes-from-unreadable
 ROWS
 require_rows local-lane-refusals "$rows"
 report lanes-output

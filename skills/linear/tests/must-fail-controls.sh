@@ -22,14 +22,11 @@
 #
 # What it does not refuse is a mutation whose failures happen to sit inside
 # another's under an assertion nobody else claims. Refusing that would take
-# legitimate evidence with it: in controls/mutation-isolation.control.sh
-# mutation 5's failures sit wholly inside mutation 8's, and mutation 5 is the
-# only thing that reddens the TIMEOUT case.
+# legitimate evidence with it: the inner mutation can be the only one that
+# reddens the case it claims.
 #
 #   skills/linear/tests/must-fail-controls.sh                     # all
 #   skills/linear/tests/must-fail-controls.sh estimate-clear      # one, by stem
-#   skills/linear/tests/must-fail-controls.sh --shard 0           # checksum even
-#   skills/linear/tests/must-fail-controls.sh --shard 1           # checksum odd
 
 set -uo pipefail
 
@@ -50,6 +47,15 @@ CONTROL_JOBS="${CONTROL_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf -- "${WORK:?}"' EXIT
+# With CONTROL_TRACE naming a file, each level's TERM handler below appends a
+# line on entry, so a stop that never reached a suite names the level it
+# missed; tests/interrupt.test.sh reads it. Bash 3.2 has no EPOCHREALTIME, so
+# there the time is `-` and the file's order alone orders the entries.
+trace_term() { # EVENT
+	[[ -n ${CONTROL_TRACE:-} ]] || return 0
+	printf '%s %s\n' "${EPOCHREALTIME:--}" "$1" >>"$CONTROL_TRACE" || true
+}
+
 # An interrupted run signals the control jobs it launched, and only the pids
 # it recorded when it launched them: every lane on this machine runs these
 # same suites out of its own worktree, so an argv match would reach theirs
@@ -62,7 +68,7 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # One trap each, so the code a wrapper reads says which signal arrived: an
 # interrupt and a kill are the same cleanup but not the same event.
 trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 130' INT
-trap 'kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 143' TERM
+trap 'trace_term "runner TERM pid=$$ jobs=[${PIDS[*]-}]"; kill -TERM ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; exit 143' TERM
 
 # --- control vocabulary -----------------------------------------------------
 # A control script runs with CONTROL_ROOT pointing at its own copy of the
@@ -214,7 +220,7 @@ launch() {
 run_job() {
 	local n="$1" body="" rc
 	shift
-	trap '[[ -z $body ]] || kill -TERM "$body" 2>/dev/null' TERM
+	trap 'trace_term "job TERM body=[$body]"; [[ -z $body ]] || kill -TERM "$body" 2>/dev/null' TERM
 	("$@") >"$WORK/${JOBS[n]}.log" 2>&1 3>&- &
 	body=$!
 	wait "$body"
@@ -260,6 +266,9 @@ flush() {
 				[[ -f "$WORK/$stem/mutation$k.rc" ]] || return 0
 			done
 			sed -n '/^BASELINE /p' "$WORK/$stem.log"
+			for ((k = 1; k <= n; k++)); do
+				sed -n '/^MUTATION /p' "$WORK/$stem/mutation$k.log"
+			done
 			log=""
 			for ((k = n; k >= 1; k--)); do
 				[[ "$(cat "$WORK/$stem/mutation$k.rc")" -eq 0 ]] ||
@@ -267,7 +276,7 @@ flush() {
 			done
 		fi
 		if [[ -n "$log" ]]; then
-			cat "$log"
+			sed '/^MUTATION /d' "$log"
 			FAILURES=$((FAILURES + 1))
 		else
 			printf 'ok       %s.test.sh\n' "$stem"
@@ -286,7 +295,7 @@ timed_suite() {
 	local pid="" rc line i remaining=0 stopped=0 capped=0 started=$SECONDS tree fragment="" consumed
 	local STOP_GRACE=$SUITE_KILL_GRACE
 	local -a wanted=()
-	trap 'if [[ -n $pid ]]; then tree="$(tree_of "$pid")"; stop_tree "$tree"; fi; exit 143' TERM
+	trap 'trace_term "timed_suite TERM suite=[$pid]"; if [[ -n $pid ]]; then tree="$(tree_of "$pid")"; stop_tree "$tree"; fi; exit 143' TERM
 	if [[ "$#" -eq 4 ]]; then
 		while IFS= read -r line; do
 			wanted+=("$line")
@@ -504,7 +513,7 @@ prepare_one() {
 
 # mutate_one SUITE STEM K... — each mutation K of a control prepare_one passed.
 mutate_one() {
-	local suite="$1" stem="$2" root out rc k want
+	local suite="$1" stem="$2" root out rc k want started
 	shift 2
 	CONTROL_NAME="$stem"
 	CONTROL_PATH="$CONTROLS_DIR/$stem.control.sh"
@@ -531,8 +540,13 @@ mutate_one() {
 
 		grep "^$k	" "$CONTROL_EXPECT_FILE" | cut -f2- >"$root.wanted" ||
 			die "cannot read wanted assertions for $suite mutation $k"
+		started=$SECONDS
 		timed_suite "$root" "$suite" "$root.out" "$root.wanted"
 		rc=$?
+		# CI triage reads this beside BASELINE to hold every suite run
+		# under the cap.
+		printf 'MUTATION %-52s mutation=%d elapsed=%ss exit=%s cap=%ss\n' \
+			"$suite" "$k" "$((SECONDS - started))" "$rc" "$SUITE_TIMEOUT"
 		out="$(<"$root.out")" || die "cannot read the output of $suite"
 		if [[ "$rc" -eq 0 ]]; then
 			printf 'GREEN    %-52s suite passed with mutation %d, its only break\n' \
@@ -563,12 +577,6 @@ mutate_one() {
 }
 
 main() {
-	local shard="" checksum
-	if [[ "${1-}" == --shard ]]; then
-		[[ "$#" -ge 2 && "$2" =~ ^[01]$ ]] || die "--shard requires 0 or 1"
-		shard="$2"
-		shift 2
-	fi
 	local -a wanted=("$@") stems=()
 	timeout --version || die "cannot read the timeout implementation"
 	local suite_path control_path suite stem want k total=0 orphans=0
@@ -602,12 +610,6 @@ main() {
 		suite="$stem.test.sh"
 		if [[ ${#wanted[@]} -gt 0 ]] && [[ " ${wanted[*]} " != *" $stem "* ]]; then
 			continue
-		fi
-		# CI runs both checksum parities. New stems join one half without
-		# moving existing controls, and explicit stem runs keep their selection.
-		if [[ -n "$shard" ]]; then
-			checksum="$(printf '%s' "$stem" | cksum)" || die "cannot partition control: $stem"
-			[[ "$(( ${checksum%% *} % 2 ))" -eq "$shard" ]] || continue
 		fi
 		total=$((total + 1))
 		SELECTED+=("$stem")

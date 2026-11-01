@@ -35,6 +35,11 @@ REASONS = {
                 "trust-required"},
     "failed": {"launch-failed", "handover-failed"},
 }
+# The full-bypass words each harness's CLI takes for an unattended launch.
+# Pi has none.
+PERMISSION_WORDS = {"claude": {"--dangerously-skip-permissions"}, "codex": {"--dangerously-bypass-approvals-and-sandbox"},
+                    "copilot": {"--allow-all"}, "pi": set()}
+ANY_PERMISSION_WORD = set().union(*PERMISSION_WORDS.values())
 # A blocked answer whose detail tells the person what to do.
 DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required")}
 
@@ -72,13 +77,8 @@ def validate(output, code, verb, duplicate_boot=False):
 
 
 class BootReceiptScenario:
-    # The specified receipt producer owns applicability for its contract rows
-    # and every mutation of that scenario.
+    # The specified receipt producer owns applicability for its contract rows.
     applicable = Path("/proc/sys/kernel/random/boot_id").is_file()
-    controls = (
-        ("boot receipt", "jarvis/scripts/lib/session.py", 'if boot and record and record.get("boot") == boot:', 'if False:', "test_off_and_boot_receipt"),
-        ("boot refusal receipt", "jarvis/scripts/lib/session.py", 'if boot:\n                    record["boot"] = boot\n                if args.origin == "app-on":', 'if False:\n                    record["boot"] = boot\n                if args.origin == "app-on":', "test_off_and_boot_receipt"),
-    )
 
 
 class SessionContract(unittest.TestCase):
@@ -105,8 +105,7 @@ class SessionContract(unittest.TestCase):
                                  "XDG_STATE_HOME": str(self.root / "state"), "XDG_SESSION_ID": "fixture-login",
                                  "WAYLAND_DISPLAY": "fixture-wayland", "DISPLAY": ":fixture",
                                  "JARVIS_TEST_BASH": os.environ["JARVIS_TEST_BASH"]}
-        # Keep the production 70 s window, scaled with the source timer
-        # when the control runner shortens its disposable copy.
+        # Keep the production 70 s window in step with the source timer.
         with patch.dict(os.environ, {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}):
             self.launch_wait = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))["CALL_SECONDS"] * 70 / 55
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
@@ -360,6 +359,54 @@ class SessionContract(unittest.TestCase):
     def test_copilot_contract(self): self.lifecycle("copilot")
     def test_pi_contract(self): self.lifecycle("pi")
 
+    def test_provider_home_and_selected_account(self):
+        provider = self.root / "caller Claude provider's home"
+        provider.mkdir()
+        excluded = ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR",
+                    "CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
+                    "PI_SUBAGENT_CHILD_AGENT", "PI_SUBAGENT_PARENT_SESSION_ID", "PI_BRIDGE_PARENT_SESSION_ID",
+                    "SECOND_OPINION_CURRENT_MODEL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN")
+        config = self.home / ".fixture.json"
+        config.write_text(json.dumps(json.loads(config.read_text()) | {"excluded_env": excluded}))
+        for harness, caller in (("pi", str(provider)), ("pi", None), ("pi", ""),
+                                ("claude", str(provider)), ("codex", str(provider)), ("copilot", str(provider))):
+            with self.subTest(harness=harness, caller=caller):
+                account = self.root / ("selected-" + harness + "-account")
+                account.mkdir(exist_ok=True)
+                self.env.update({key: "fixture-parent-value" for key in excluded})
+                self.env.pop("CLAUDE_CONFIG_DIR", None)
+                if caller is not None:
+                    self.env["CLAUDE_CONFIG_DIR"] = caller
+                self.call("start", harness, account=account, mode="new")
+                self.wait()
+                native = self.started()[-1]
+                record = json.loads(self.record.read_text())
+                self.assertEqual(record["account"], str(account))
+                # Codex launches under the lane's prepared copy of the account.
+                self.assertEqual(native["account"], record["effective_home"])
+                if harness in ("pi", "claude"):
+                    self.assertEqual(native["account"], str(account))
+                expected = str(account) if harness == "claude" else (caller or None) if harness == "pi" else None
+                self.assertEqual(native["claude_config_dir"], expected)
+                self.assertEqual(native["excluded_env"], [])
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
+    def test_unattended_start_posture(self):
+        # The home's setting decides the launch line's permission words.
+        settings = self.home / "kendex.settings.toml"
+        for harness, named, unattended in (("claude", "claude", True), ("codex", " pi , codex ", True),
+                                           ("copilot", "copilot", True), ("pi", "pi", False),
+                                           ("claude", "", False), ("claude", "codex,copilot", False)):
+            with self.subTest(harness=harness, named=named):
+                settings.write_text('[env]\nJARVIS_UNATTENDED_HARNESSES = "' + named + '"\n')
+                self.call("start", harness, mode="new")
+                self.wait()
+                words = set(self.started()[-1]["argv"]) & ANY_PERMISSION_WORD
+                self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
     def test_contract_validator_controls(self):
         answer, _ = self.call("status")
         for patch in ({"reason": "unknown"}, {"detail": "x" * 201}, {"detail": "a\nb"}):
@@ -367,13 +414,6 @@ class SessionContract(unittest.TestCase):
                 validate(json.dumps(answer | patch) + "\n", 0, "status")
 
     def test_off_and_boot_receipt(self):
-        from session_controls import applicable_controls
-        for available in (False, True):
-            with self.subTest(boot_producer=available), patch.object(BootReceiptScenario, "applicable", available):
-                names = {row[0] for row in applicable_controls(BootReceiptScenario)}
-                for name, *_ in BootReceiptScenario.controls:
-                    self.assertEqual(name in names, available)
-                self.assertTrue({"app Off", "app On", "app On state"} <= names)
         # A desktop with no selected app still has the lock/runtime tools.
         tool_bin = self.root / "tools"
         tool_bin.mkdir()

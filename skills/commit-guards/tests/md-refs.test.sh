@@ -688,11 +688,11 @@ for row in \
 done
 
 echo "=== the skill's own shipped markdown resolves ==="
-fx_shipped() { # the four shipped documents beside what they cite: consumer files by directory, and the one script a `::` citation reads for its phrase
+fx_shipped() { # the five shipped documents beside what they cite: consumer files by directory, and the one script a `::` citation reads for its phrase
   local doc
   repo "$1"
-  mkdir -p "$R/skills/commit-guards/scripts/lib"
-  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md; do
+  mkdir -p "$R/skills/commit-guards/scripts/lib" "$R/skills/commit-guards/references"
+  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md references/hooks-and-settings.md; do
     cp "$SKILL_DIR/$doc" "$R/skills/commit-guards/$doc"
   done
   # A content citation is answered by the file's bytes, so this is the real
@@ -702,11 +702,11 @@ fx_shipped() { # the four shipped documents beside what they cite: consumer file
   put .claude/CLAUDE.md '@AGENTS.md\n'
 }
 # The shipped documents' own reference count is theirs to change: the pin is
-# the verdict over the two, then the four, files read, with N for that count.
+# the verdict over the two, then the five, files read, with N for that count.
 counted() { LC_ALL=C sed 's/references=[0-9][0-9]*/references=N/'; }
 fx_shipped shipped
 assert_eq "the shipped SKILL.md's references resolve (beside the fixture's CLAUDE.md shim)" "rc=0 $(clean N 2 1)" "$(run '' --all | counted)"
-assert_eq "and so do README.md, CHECKS.md and DEVELOPMENT.md when named, the content citation among them" "rc=0 $(clean N 4 1)" "$(run 'COMMIT_GUARDS_MD_REFS_PATHS=*/commit-guards/*.md' --all | counted)"
+assert_eq "and so do README.md, CHECKS.md, DEVELOPMENT.md and references/hooks-and-settings.md when named, the content citation among them" "rc=0 $(clean N 5 1)" "$(run 'COMMIT_GUARDS_MD_REFS_PATHS=*/commit-guards/*.md' --all | counted)"
 fx_shipped shipped-planted
 put skills/commit-guards/SKILL.md "$(cat "$SKILL_DIR/SKILL.md")"'\n\nSee [gone](nowhere.md).\n'
 assert_eq "control: a planted dead link in the shipped SKILL.md fails, at the line it was planted on" \

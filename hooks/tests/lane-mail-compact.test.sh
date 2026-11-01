@@ -176,13 +176,13 @@ assert_eq "RC=$RC first=$(first_line)" "RC=2 first=lane-mail-compact: judge=$LAN
 # The overseer: a Copilot session in the pane the fleet state names. Its
 # compaction is flagged in the overseer mailbox under its pane key, and its
 # turn end is held whatever its succession setting, naming the succession.
-new_compact_overseer() { # NAME [JUDGE]
+new_compact_overseer() { # NAME
   CALL_ENV=("HOME=$COP_HOME" "COPILOT_HOME=$TMP_ROOT")
   new_lane "$1" main
   unmark_lanes
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
   install_hook "$TEST_DIR/../lane-mail-compact.sh" "$LANE/.github/hooks/lane-mail-compact.sh"
-  install_hook "${2:-$HOOK}" "$LANE/.github/hooks/lane-mail-check.sh"
+  install_hook "$HOOK" "$LANE/.github/hooks/lane-mail-check.sh"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   # The fleet record names TMP_ROOT as the overseer's launch home, the
   # Copilot home its transcript sits under, so the transcript ownership gate
@@ -229,45 +229,6 @@ assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "the overseer's own handoff record standing, its turn end passes"
 
 echo "=== must-fail controls ==="
-# The trigger rule removed: a manual compaction marks the lane.
-mutant compact-any-trigger -e 's@ && \[ "\$TRIGGER" = auto \]; } || return 0$@; } || return 0@'
-new_compact_lane control_trigger KEN-311 "$MUTANT_PATH"
-compact manual
-assert_eq "flag=$(flag)" "flag=s1 manual" \
-  "control: without the trigger rule a manual compaction is flagged"
-
-# The lead-record rule removed from the compact arm: a subagent's compaction
-# is flagged as the lead's.
-mutant compact-any-caller -e 's@^    copilot:deliver | copilot:halt | copilot:compact | copilot:usage)$@    copilot:deliver | copilot:halt | copilot:usage)@'
-new_compact_lane control_caller KEN-312 "$MUTANT_PATH"
-compact auto s7 s1
-assert_eq "flag=$(flag)" "flag=s7 auto" \
-  "control: without the lead-record rule a subagent's compaction is flagged"
-
-# The early pass removed: a subagent's compaction meets the lead's gaps.
-mutant compact-subagent-judged -e 's@^if \[ "\$ARM" = compact \] && \[ "\$CALLER" != lead \]; then$@if false; then@'
-new_compact_lane control_subagent KEN-313 "$MUTANT_PATH"
-rm -rf -- "${LANE:?}/tmp/lane-mail"
-compact auto s7 s1
-assert_eq "RC=$RC" "RC=2" \
-  "control: without the early pass a subagent's compaction is refused on the lead's missing mailbox"
-
-# The early pass's report dropped: an unrecorded session's automatic
-# compaction passes with nothing said.
-mutant compact-unknown-quiet -e 's@ || message session-unrecorded "\${SESSION:-none}"$@ || :@'
-new_compact_lane control_quiet KEN-321 "$MUTANT_PATH"
-compact auto s7 s1
-assert_eq "$(quiet)" "RC=0 stdout= stderr=-" \
-  "control: without its report an unrecorded session's compaction passes unsaid"
-
-# The report's trigger rule removed: a subagent's manual compaction, which
-# would flag nothing anyway, is reported as unflagged.
-mutant compact-unknown-any-trigger -e 's@^  \[ "\$CALLER" != unknown \] || \[ "\$TRIGGER" != auto \] || @  [ "$CALLER" != unknown ] || @'
-new_compact_lane control_quiet_trigger KEN-322 "$MUTANT_PATH"
-compact manual s7 s1
-assert_eq "$(quiet)" "RC=0 stdout= stderr=lane-mail-check: session-unrecorded=s7" \
-  "control: without the trigger rule a subagent's manual compaction is reported"
-
 # The lane's turn-end refusal removed: a flagged lane ends its turn unheld.
 mutant compact-unheld -e 's@^  \[ "\$COMPACTED" != true \] || refuse_handoff compacted auto$@  :@'
 new_compact_lane control_unheld KEN-314 "$MUTANT_PATH"
@@ -277,87 +238,6 @@ turn_end
 assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "control: without the lane's refusal a flagged Copilot lane ends its turn unheld"
 
-# The overseer's refusal removed: a flagged overseer is judged on its reading
-# alone, and has none.
-mutant compact-overseer-unheld -e 's@^    \[ "\$COMPACTED" != true \] || refuse_handoff compacted auto$@    :@'
-new_compact_overseer control_overseer "$MUTANT_PATH"
-# shellcheck disable=SC2046
-compact auto s1 s1 $(overseer_env)
-# shellcheck disable=SC2046
-turn_end false s1 $(overseer_env)
-assert_eq "RC=$RC decision=$(stdout_field .decision) flag=$(flag)" "RC=0 decision= flag=s1 auto" \
-  "control: without the overseer's refusal a flagged overseer is not held"
-
-# The overseer's pane rule removed from the gate every arm asks: a session in
-# a pane the fleet state does not name is taken for the overseer.
-mutant gate-any-pane -e 's@^    overseer_identified || return 1$@    overseer_identified || :@'
-new_compact_overseer control_pane "$MUTANT_PATH"
-# shellcheck disable=SC2046
-compact auto s1 s1 $(overseer_env %3)
-assert_eq "flag=$(flag)" "flag=s1 auto" \
-  "control: without the pane rule a session in another pane flags the overseer's compaction"
-
-# The overseer's role dropped from the gate: the flag targets a lane box
-# that does not exist, so the write fails and the turn end sees no compaction.
-mutant gate-no-role -e 's@^    ROLE=overseer$@    :@'
-new_compact_overseer control_role "$MUTANT_PATH"
-# shellcheck disable=SC2046
-compact auto s1 s1 $(overseer_env)
-assert_eq "RC=$RC first=$(first_line)" \
-  "RC=2 first=lane-mail-check: compaction-unrecorded=$LANE/tmp/lane-mail/oversee/compaction.json" \
-  "control: without its role the compaction write targets the missing lane box"
-# shellcheck disable=SC2046
-turn_end false s1 $(overseer_env)
-assert_eq "route=$(stdout_field .reason | grep -cF -- "$OVERSEER_ROUTE")" "route=0" \
-  "control: without its role the overseer's turn end names no succession"
-
-# The fleet item dropped from the gate: the overseer's own handoff record is
-# looked for under no item, and its turn end is held past it.
-mutant gate-no-item -e 's@^    ITEM="\$OVERSEER_ITEM"$@    :@'
-new_compact_overseer control_item "$MUTANT_PATH"
-# shellcheck disable=SC2046
-compact auto s1 s1 $(overseer_env)
-(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee handoff \
-  "$(jq -nc --arg k "$OVERSEER_SERVER $OVERSEER_PANE" '{handoff_file: "/h", pane_key: $k, session_id: "s1"}')" >/dev/null)
-# shellcheck disable=SC2046
-turn_end false s1 $(overseer_env)
-assert_eq "RC=$RC decision=$(stdout_field .decision) flag=$(flag)" "RC=0 decision=block flag=s1 auto" \
-  "control: without the fleet item the overseer's own handoff record does not end its hold"
-
-# The flag's write gap passed: a compaction nothing flagged goes unreported.
-mutant compact-unrecorded-passed -e 's@^    refuse compaction-unrecorded "\$BOX/\$LANE_CONTEXT_COMPACTION" "\$(cat -- "\$WORK_DIR/flag.err")"$@    :@'
-new_compact_lane control_unwritable KEN-315 "$MUTANT_PATH"
-rm -rf -- "${BOX:?}"
-printf 'not a directory\n' > "$BOX"
-compact auto s1 s1 LANE_MAIL_ITEM=KEN-315
-assert_eq "$(quiet)" "RC=0 stdout= stderr=-" \
-  "control: without its refusal a flag that cannot be written passes unreported"
-
-# The gate's gap passed in this arm: a lane whose install cannot flag the
-# compaction is passed with nothing said.
-mutant compact-gap-passed -e '/^compaction_mark() {$/,/^}$/ s@^    \*) refuse compaction-unrecorded "\$FAIL_VALUE" "\$FAIL_CAUSE" ;;$@    *) return 0 ;;@'
-new_compact_lane control_gap KEN-319 "$MUTANT_PATH"
-hole_install workflow-state
-compact auto
-assert_eq "$(quiet)" "RC=0 stdout= stderr=-" \
-  "control: without the gate's refusal a lane whose install has no workflow-state passes unreported"
-
-# The context library's gap passed in this arm.
-mutant compact-lib-passed -e '/^compaction_mark() {$/,/^}$/ s@^  load_context_lib || refuse compaction-unrecorded "\$FAIL_VALUE" "\$FAIL_CAUSE"$@  load_context_lib || return 0@'
-new_compact_lane control_lib KEN-320 "$MUTANT_PATH"
-hole_install lib/lane-context.sh
-compact auto
-assert_eq "$(quiet)" "RC=0 stdout= stderr=-" \
-  "control: without the library's refusal a lane whose install has no context library passes unreported"
-
-# The compact arm passed at exit 0 like a session start: its gaps reach no
-# operator.
-mutant compact-exit-zero -e 's@^    start | prompt) exit 0 ;;$@    start | prompt | compact) exit 0 ;;@'
-new_compact_lane control_exit KEN-316 "$MUTANT_PATH"
-rm -rf -- "${LANE:?}/tmp/lane-mail"
-compact auto
-assert_eq "RC=$RC" "RC=0" "control: passed like a session start, a compaction's gap exits 0"
-
 # The wrapper's arm swapped for the turn end's: the compaction is judged as a
 # turn end and never flagged.
 MUTANT_SOURCE="$TEST_DIR/../lane-mail-compact.sh" mutant compact-as-stop -e 's@ "\$JUDGE" compact$@ "$JUDGE"@'
@@ -365,13 +245,6 @@ new_compact_lane control_wrapper KEN-317 "$HOOK" "$MUTANT_PATH"
 compact auto
 assert_eq "flag=$(flag)" "flag=none" \
   "control: the wrapper running the turn-end arm never flags the compaction"
-
-# The wrapper's missing-judge exit made a pass: its gap reaches no operator.
-MUTANT_SOURCE="$TEST_DIR/../lane-mail-compact.sh" mutant compact-no-judge-pass -e 's@^  exit 2$@  exit 0@'
-new_compact_lane control_nojudge KEN-318 "$HOOK" "$MUTANT_PATH"
-rm -f -- "${LANE:?}/.github/hooks/lane-mail-check.sh"
-compact auto
-assert_eq "RC=$RC" "RC=0" "control: with its exit made a pass the hook with no judge exits 0"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

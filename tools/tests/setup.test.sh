@@ -93,7 +93,7 @@ printf 'fn main() {}\n' >"$R/crates/a.rs"
 git -C "$R" add -A
 RC=0
 OUT="$(git -C "$R" commit -m "feat: a crate change" 2>&1)" || RC=$?
-[ "$RC" -ne 0 ] && case "$OUT" in *"without a changelog entry"*) true ;; *) false ;; esac \
+[ "$RC" -ne 0 ] && case "$OUT" in *"commit-msg: changelog-missing=crates/a.rs:"*) true ;; *) false ;; esac \
   && ok "a crates/ change with no changelog entry is refused by the installed hook" \
   || bad "a crates/ change with no changelog entry is refused by the installed hook" "rc=$RC out=$OUT"
 

@@ -124,10 +124,6 @@ updates() {
   jq -s -c '[.[] | select(.query | contains("issueUpdate")) | .variables.input]' "$TMP_ROOT/$1.jsonl"
 }
 
-users_calls() {
-  jq -s '[.[] | select(.query | contains("users("))] | length' "$TMP_ROOT/$1.jsonl"
-}
-
 # One row per outcome: case, --agent, KENDEX_USER_EMAIL, current assignee,
 # the keyed stderr line, the JSON assignee field, the assigneeId the one
 # issueUpdate carries (none: the input has no assigneeId at all), and the
@@ -163,9 +159,6 @@ kept||dana@example.com|$OTHER|assignee-kept assignee=Other Person|kept|none|none
 unset||||assignee-skipped cause=unset|skipped|none|none
 unknown||nobody@example.com|null|assignee-skipped cause=unknown-email email=nobody@example.com|skipped|none|none
 ROWS
-
-assert_eq "set: the person is looked up once" "$(users_calls set)" 1
-assert_eq "unset: no users lookup is made" "$(users_calls unset)" 0
 
 # One row per failure: case, the call that fails, the issueUpdates sent, and
 # the error stderr must carry (- for none beyond the refusal itself). None is

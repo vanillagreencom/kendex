@@ -71,9 +71,9 @@
 #   argv   check | auto | immediate | with:<flag+flag> (the flags alone,
 #          `+` a space, no --keep-branch) | mutant:<name>:<flag+flag> (the
 #          same, run from the mutant_copy named <name>) |
-#          expected:<sha> (--auto with --expected-head) | router:<flags> |
-#          auto-mutant:<name> (--auto, run from the copy pr-merge.test.sh
-#          builds under that name with one line of pr-merge.sh replaced) |
+#          check-mutant:<name> (--check, run from the mutant_copy named
+#          <name>) | expected:<sha> (--auto with --expected-head) |
+#          router:<flags> | router-in:<dir> |
 #          force | admin | admin-credential (the retired flags) |
 #          auto-classified | immediate-classified |
 #          classified-with:<flag+flag> (the immediate merge with those flags,
@@ -82,20 +82,15 @@
 #          pr-merge.test.sh builds as $MIRROR) | immediate-classless (the
 #          immediate merge from that suite's mirror with no harness-ci
 #          sibling, $CLASSLESS_PR_MERGE, on $CLASSLESS_PATH, which holds no
-#          change-class) | route-mutant:<name> | auto-route-mutant:<name> (the
-#          immediate merge, or the arm at creation, from the copy mutant_copy
-#          built as <name>, with the classifier stub beside it)
+#          change-class)
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
 #          at=<mergedAt|-> runs=<ids|-> issues=[a;b] warnings=[c]
 #          keys=[<the JSON's keys>]`; otherwise stdout, `-` when empty
-#   err    stderr's lines joined by `;`, leading spaces dropped, blank lines
-#          dropped, `{word}` macros expanded (see err_macro)
-#          protocol:<lines> compares merge outcomes, issue categories and
-#          causes, and volatile-note presence without explanatory prose
+#   err    the stderr lines a program reads, joined by `;` (see err_lines);
+#          explanatory prose is dropped
 #   calls  `calls=<each gh call by kind, in order> auth=<the GH_TOKEN each
 #          call saw, distinct values in order>`
-#   control optional mutant argv: the same row assertion must reject it;
-#           same:<argv> keeps behavior and must pass after the fixture reset
+#   control optional mutant argv: the same row assertion must reject it
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -438,9 +433,6 @@ argv_for() {
     force) printf '%s\n' "$PR_MERGE" 123 --force --keep-branch ;;
     admin) printf '%s\n' "$PR_MERGE" 123 --admin --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
-    auto-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --keep-branch ;;
-    route-mutant:*) printf '%s\n' "$TMPDIR/${1#route-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --keep-branch ;;
-    auto-route-mutant:*) printf '%s\n' "$TMPDIR/${1#auto-route-mutant:}/skills/github/scripts/commands/pr-merge.sh" 123 --auto --keep-branch ;;
     admin-credential) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
     router-in:*) printf '%s\n' "$GITHUB" -C "$TMPDIR/settings-${1#router-in:}" pr-merge 123 --auto --keep-branch ;;
     router:*) printf '%s\n' "$GITHUB" -C "$REPO" pr-merge 123 "${1#router:}" --keep-branch ;;
@@ -505,24 +497,22 @@ stdout_text() {
   sed 's/;/\\;/g' "$TMPDIR/stdout" | paste -s -d ';' -
 }
 err_lines() {
-  # The sandbox's own path is per-run, so a row that pins a child's diagnostic
-  # pins <tmp> rather than a directory no second run produces. An empty
-  # stderr is `-`, as stdout's is.
+  # orch reads the outcome headline, the merge-route: line and the arm:
+  # refusal; ci-classify-refusal reads issue categories and causes; the queue
+  # contract requires the volatile note. Each kept line is a headline, an
+  # issue or warning category, or a line led by a lowercase key. The
+  # sandbox's own path is per-run, so it reads <tmp>. An empty answer is `-`.
   local text
-  if [[ "${1:-full}" == protocol ]]; then
-    # orch reads the merge outcome; ci-classify-refusal reads issue categories
-    # and causes. The queue contract also requires the volatile warning.
-    text="$(awk '
-      { sub(/^[[:space:]]*/, "") }
-      /^BLOCKED PR #[0-9]+/ { print $1 " " $2 " " $3; next }
-      /^QUEUED IN MERGE QUEUE PR #[0-9]+/ { print; next }
-      /^NOTE: queue\/auto-merge state is VOLATILE/ { print "volatile-note"; next }
-      /^✗ / { print $2 ($3 ~ /^cause=/ ? " " $3 : "") }
-    ' "$TMPDIR/stderr" | paste -s -d ';' -)" || return 1
-    printf '%s' "${text:--}"
-    return
-  fi
-  text="$(sed -e 's/^[[:space:]]*//' -e '/^$/d' -e 's/;/\\;/g' -e "s|$TMPDIR_PHYSICAL|<tmp>|g" -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | paste -s -d ';' -)" || return 1
+  text="$(sed -e "s|$TMPDIR_PHYSICAL|<tmp>|g" -e "s|$TMPDIR|<tmp>|g" "$TMPDIR/stderr" | awk '
+    { sub(/^[[:space:]]*/, "") }
+    /^BLOCKED PR #[0-9]+/ { print $1 " " $2 " " $3; next }
+    /^AUTO-MERGE ENABLED PR #[0-9]+/ { print $1 " " $2 " " $3 " " $4; next }
+    /^(MERGED|ALREADY MERGED|QUEUED IN MERGE QUEUE|CLOSED \(not merged\)) PR #[0-9]+/ { print; next }
+    /^NOTE: queue\/auto-merge state is VOLATILE/ { print "volatile-note"; next }
+    /^✗ / { print $2 ($3 ~ /^cause=/ ? " " $3 : ""); next }
+    /^⚠ / { print "warning " $2; next }
+    /^[a-z][a-z0-9_-]*(: |:$|=|$)/ { print }
+  ' | paste -s -d ';' -)" || return 1
   printf '%s' "${text:--}"
 }
 
@@ -536,7 +526,7 @@ run() {
     -u GH_CONFIG_DIR \
     STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" STUB_MERGE_REFUSED="$MERGE_REFUSED" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
-  printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines "${2:-full}")" "$(calls)" "$(auth)"
+  printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
 }
 
 # A must-fail control's subject: lib/mutant-copy.sh's copy under
@@ -548,56 +538,6 @@ mutant_copy() { # NAME FROM TO [FILE]
   printf '%s\n' "$TMPDIR/$1/skills/github/scripts/commands/pr-merge.sh"
 }
 
-# --- the err macros ---------------------------------------------------------------
-# The long fixed texts; a `{name}` in a row's err field expands to one.
-err_macro() {
-  case "$1" in
-    blocked) printf 'BLOCKED PR #123 — no merge attempted, none queued' ;;
-    permanent) printf '(permanent — needs fix or review action)' ;;
-    transient) printf '(transient: GitHub read unavailable, mergeability computing or CI pending)' ;;
-    # git's own words for a fetch in a repository with no origin, replayed
-    # under this command's fixed line. Pinned here, in one place, because the
-    # point of the row is that git's account survives rather than being
-    # flattened into one sentence; a git that rewords this moves this macro.
-    fetch-no-origin) printf "pr-merge: the pull request's range is not in this checkout and the fetch of its two commits from origin failed:;fatal: 'origin' does not appear to be a git repository;fatal: Could not read from remote repository.;Please make sure you have the correct access rights;and the repository exists." ;;
-    hint-auto) printf 'Use --auto to queue for auto-merge.' ;;
-    volatile) printf 'NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently\\; follow orch merge-pr.md § 5 for PR #123;Block on .agents/skills/orch/scripts/queue-wait 123 --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does\\; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is .agents/skills/github/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)\\; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, which picks the direct attempt or an explicit queue arm after readiness and approval checks' ;;
-    merge-failed) printf 'BLOCKED PR #123 — gh pr merge failed' ;;
-    no-token) printf 'Warning: GH_BOT_TOKEN not configured, using current user' ;;
-    closed) printf 'CLOSED (not merged) PR #123;No merge attempted, none queued. Reopen the PR or supersede it.' ;;
-    # route-queue:<why> the second line of a queue route; route-why:<name>
-    # names the why.
-    route-queue:*) printf '%s The merge call passes --auto and no --admin.' "$(err_macro "route-why:${1#route-queue:}")" ;;
-    route-why:ruleset) printf 'The ruleset could not be read, so no bypass is proven.' ;;
-    route-why:no-bypass) printf 'This token may not bypass the merge-queue ruleset.' ;;
-    route-why:mixed) printf 'The merge-queue ruleset holds another rule, which --admin would skip too.' ;;
-    route-why:other-bypass) printf 'This token may bypass another ruleset on the base, which --admin would skip too.' ;;
-    route-why:classic) printf 'The base branch has classic branch protection, which --admin would skip too.' ;;
-    route-why:protection) printf "The base branch's classic protection could not be read, so no bypass is proven." ;;
-    route-why:explicit) printf 'The caller explicitly requested the queue for a PR eligible for a direct merge.' ;;
-    arm-admin) printf 'Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first.' ;;
-    route-why:direct-method) printf "A merge past the queue takes the repository's methods and the base's pull_request rules, which allow none of the accepted methods." ;;
-    route-why:direct-unread) printf 'The methods a merge past the queue may take could not be read.' ;;
-    route-why:queue-only) printf 'A queue-only change runs in a merge group before it lands.' ;;
-    route-why:occupied) printf 'The base queue holds entries, so a direct merge would repeat their CI.' ;;
-    route-why:queue-unreadable) printf "The base queue's entry count could not be read as a whole number." ;;
-    auto-remedy) printf 'Nothing mutated. Enable auto-merge on the repository.' ;;
-    approval-remedy) printf "Nothing mutated. No ruleset on the base branch requires an approval, so GitHub would merge the armed PR before review\\; require at least 1 approval, thread resolution and stale-approval dismissal in its pull_request rule." ;;
-    thread-remedy) printf "Nothing mutated. No ruleset on the base branch requires thread resolution, so GitHub would merge the armed PR on its first approval past open review threads\\; require review threads resolved in its pull_request rule." ;;
-    stale-remedy) printf "Nothing mutated. No ruleset on the base branch dismisses stale approvals on push, so GitHub would merge the armed PR on an approval of an earlier head, with no review of the pushed one\\; dismiss stale approvals on push in its pull_request rule." ;;
-    unverified-remedy) printf "Nothing mutated. The base branch's rules could not be read, so no merge gate is proven\\; retry once they read." ;;
-    *) printf 'UNKNOWN-MACRO:%s' "$1" ;;
-  esac
-}
-err_text() {
-  local text="$1" name
-  while [[ "$text" =~ \{([A-Za-z0-9:_+-]+)\} ]]; do
-    name="${BASH_REMATCH[1]}"
-    text="${text//\{$name\}/$(err_macro "$name")}"
-  done
-  printf '%s' "$text"
-}
-
 # Apply the unchanged assertion to a disposable mutant. Its red output is
 # part of the suite log, which is the control receipt.
 assert_mutant_fails() { # GOT WANT NAME
@@ -607,7 +547,7 @@ assert_mutant_fails() { # GOT WANT NAME
 }
 
 run_table() {
-  local title="$1" rows="$2" n=0 label world argv rc out err want got row field control expected err_mode
+  local title="$1" rows="$2" n=0 label world argv rc out err want got row field control expected
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
@@ -616,29 +556,22 @@ run_table() {
       [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
     done
     n=$((n + 1))
-    err_mode=full
-    case "$err" in
-      protocol:*) err_mode=protocol; err="${err#protocol:}" ;;
-    esac
     # shellcheck disable=SC2086
     build $world
-    got="$(run "$argv" "$err_mode")"
+    got="$(run "$argv")"
     # A rendering aid for writing rows; the run is refused after the loop.
     if [[ "${GITHUB_TABLE_PROBE:-}" == 1 ]]; then
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    expected="rc=$rc out=$out err=$(err_text "$err") $want"
+    expected="rc=$rc out=$out err=$err $want"
     assert_eq "$got" "$expected" "$label"
     if [[ -n "$control" ]]; then
       # Rebuild each evaluation so the control cannot inherit API call logs
       # or mutation state from the normal row.
       # shellcheck disable=SC2086
       build $world
-      case "$control" in
-        same:*) assert_eq "$(run "${control#same:}" "$err_mode")" "$expected" "clean fixture: $label" ;;
-        *) assert_mutant_fails "$(run "$control" "$err_mode")" "$expected" "$label" ;;
-      esac
+      assert_mutant_fails "$(run "$control")" "$expected" "$label"
     fi
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
@@ -646,8 +579,8 @@ run_table() {
 
 # The calls a --check makes on an open PR, and a merge's calls before the
 # mutation. Each also makes the reply check's viewer and review-thread
-# reads, which calls() filters out of the pin: the review_replies rows and
-# the no-replies mutant prove those reads.
+# reads, which calls() filters out of the pin: the review_replies rows prove
+# those reads.
 CHECK="view:state,view:mergeable,checks,view:reviews"
 PRE="view:state,view:mergeable,checks,view:reviews,view:head"
 OPEN="state=OPEN mergeable=MERGEABLE at=-"
