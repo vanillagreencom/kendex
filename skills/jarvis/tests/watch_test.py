@@ -303,6 +303,15 @@ class Producer(unittest.TestCase):
             watch = started()
             watch.accept(watch.acquire(0))
             step(watch, 0, reminder, False, 0, [])
+            # A home the project list omits still waits on its owner rows; its
+            # to-overseer mail stays out of the pass.
+            self.registry.write_text(str(self.peer) + "\n")
+            fourth = self.owner_note("fourth ask")
+            self.mail(self.home, "notice", "home mail while unlisted", "--to", "owner")
+            before = watch.log.read_text()
+            watch.accept(watch.acquire(0))
+            self.assertNotIn("EVENT mail ", watch.log.read_text()[len(before):])
+            step(watch, 1, reminder, True, 0, [fourth])
 
     def test_owner_unread_is_the_inbox_receipt(self):
         # The page keys on owner-unread; a read row only reminds the session.
@@ -1002,6 +1011,7 @@ class Producer(unittest.TestCase):
         report = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
         keep = 'if row["id"] not in checked_ids or row["id"] in listed]'
         window = '"--since", min(row["at"] for row in waiting)'
+        unlisted = 'alone = side == "local" and home not in roots'
         for name, old, new in (
                 # The watch never pages a report the cursor has not seen.
                 ("test_report_deadline_restart_and_receipt", report, "if False and " + report[len("if "):]),
@@ -1010,7 +1020,11 @@ class Producer(unittest.TestCase):
                 # A row delivered during a check waits for the next one.
                 ("test_owner_unanswered_reminder", keep, 'if row["id"] in listed]'),
                 # The window starts at the oldest waiting row.
-                ("test_owner_unanswered_reminder", window, window.replace("min(", "max("))):
+                ("test_owner_unanswered_reminder", window, window.replace("min(", "max(")),
+                # A home the project list omits still delivers owner rows.
+                ("test_owner_unanswered_reminder", unlisted, "alone = False"),
+                # That home's read takes its to-lane alone.
+                ("test_owner_unanswered_reminder", 'boxes = ("to-lane",) if', 'boxes = ("to-lane", "to-overseer") if')):
             with self.subTest(row=name, planted=new):
                 case = Producer(methodName=name)
                 case.setUp()

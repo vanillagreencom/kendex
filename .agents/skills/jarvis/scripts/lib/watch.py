@@ -267,7 +267,13 @@ def mail_pass(bash, home, side, cursor, delivered=None):
     state = json.loads(json.dumps(cursor))
     events = []
     now = epoch()
-    for root in project_roots():
+    roots = project_roots()
+    # A home the project list omits (unregistered, removed, or a noted
+    # worktree row) still receives owner mail. Its to-lane alone is read for
+    # those rows: no mail event, no to-overseer mark-read, no receipts.
+    alone = side == "local" and home not in roots
+    for root in (roots + [home]) if alone else roots:
+        boxes = ("to-lane",) if alone and root == home else ("to-lane", "to-overseer")
         key = str(root)
         prior = state.get(key, {})
         next_root = json.loads(json.dumps(prior))
@@ -279,7 +285,7 @@ def mail_pass(bash, home, side, cursor, delivered=None):
             if not lane_mail().is_file():
                 raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
             common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
-            for box in ("to-lane", "to-overseer"):
+            for box in boxes:
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
                 size_read = run(["wc", "-c", str(filename)])
@@ -307,34 +313,35 @@ def mail_pass(bash, home, side, cursor, delivered=None):
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
                     text = line_value(envelope.get("text", ""), limit=4000)
                     root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
-            receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
-            index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
-            if index is None:
-                raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
-            receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
-            if not receipt:
-                raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
-            unread = []
-            for row in receipts[index + 1:]:
-                parts = row.split()
-                if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
-                    unread.append(parts)
-            if side == "local" and root == home:
-                # Only the home inbox's receipts say whether owner mail was read.
-                owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
-                                     prior.get("owner_unread", []), root_events)
-                if owned:
-                    next_root["owner_unread"] = owned
+            if len(boxes) > 1:
+                receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
+                index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
+                if index is None:
+                    raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
+                receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
+                if not receipt:
+                    raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
+                unread = []
+                for row in receipts[index + 1:]:
+                    parts = row.split()
+                    if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
+                        unread.append(parts)
+                if side == "local" and root == home:
+                    # Only the home inbox's receipts say whether owner mail was read.
+                    owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
+                                         prior.get("owner_unread", []), root_events)
+                    if owned:
+                        next_root["owner_unread"] = owned
+                    else:
+                        next_root.pop("owner_unread", None)
+                if unread and now - int(unread[0][2]) >= 900:
+                    oldest = unread[0][1]
+                    if prior.get("unread") != oldest:
+                        root_events.append(event("overseer-unread", repo=root.name, unread=len(unread),
+                                                 oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min"))
+                    next_root["unread"] = oldest
                 else:
-                    next_root.pop("owner_unread", None)
-            if unread and now - int(unread[0][2]) >= 900:
-                oldest = unread[0][1]
-                if prior.get("unread") != oldest:
-                    root_events.append(event("overseer-unread", repo=root.name, unread=len(unread),
-                                             oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min"))
-                next_root["unread"] = oldest
-            else:
-                next_root.pop("unread", None)
+                    next_root.pop("unread", None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             cause = failure("root-read", error).record
         if cause:
