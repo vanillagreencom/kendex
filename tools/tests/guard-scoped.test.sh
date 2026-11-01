@@ -224,8 +224,9 @@ for path in skills/pyreach/tests/mod_test.py skills/pyreach/scripts/pytool; do
 done
 
 # A real cancellation must also name suites in batteries not yet entered.
-# The first selected suite acknowledges its start before the parent sends TERM.
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
+# Each phase holds on its FIFO; the parent sends TERM only once its
+# non-blocking writer open proves a holder is there, then releases the hold.
+printf 'source "$PWD/skills/orch/scripts/open-terminal"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
 printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
 mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/github/scripts/lib" "$TMP/serial-bin"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
@@ -233,7 +234,7 @@ cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/lane-state.sh"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
-printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then printf ready > "$ACK"; read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
+printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
 printf '#!/bin/sh\necho 1\n' > "$TMP/serial-bin/nproc"
 chmod +x "$TMP/serial-bin/nproc"
 git -C "$R" add -A
@@ -242,6 +243,7 @@ git -C "$R" commit -qm cancellation
 BASE="$(git -C "$R" rev-parse HEAD)"
 printf '# changed\n' >> "$R/skills/orch/scripts/open-terminal"
 if python3 - "$R" "$GUARD" "$BASE" "$TMP" <<'PY'
+import errno
 import os
 from pathlib import Path
 import signal
@@ -270,7 +272,6 @@ elif [ "$PHASE" = npm-later ]; then
 elif [ "$PHASE" != npm ]; then
   exit 0
 fi
-printf ready > "$ACK"
 read -r line < "$FIFO"
 ''')
 npm.chmod(0o755)
@@ -287,27 +288,38 @@ for phase, expected in (
     ("loading", shell_suites),
     ("running", ["helper", "open-terminal.test", "tools/tests/later.sh"]),
 ):
-  ack, fifo = Path(scratch) / (phase + "-ready"), Path(scratch) / (phase + "-hold")
+  fifo = Path(scratch) / (phase + "-hold")
   os.mkfifo(fifo)
   text = runner_text
   if phase == "loading":
+    # The runner owns the TERM trap this row reads, so its hold ignores TERM:
+    # the signal stays pending in the runner until the parent releases the
+    # hold, the worst order a hold entered around the signal can take.
     marker = 'source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
     assert text.count(marker) == 1
-    text = text.replace(marker, 'printf ready > "$ACK"\nread -r line < "$FIFO"\n' + marker)
+    text = text.replace(marker, 'sh -c \'trap "" TERM; read -r line < "$FIFO"\'\n' + marker)
   runner.write_text(text)
-  env = dict(os.environ, DEV_VALIDATE_SCOPED="true", ACK=str(ack), FIFO=str(fifo), PHASE=phase,
+  env = dict(os.environ, DEV_VALIDATE_SCOPED="true", FIFO=str(fifo), PHASE=phase,
              PATH=str(Path(scratch) / "serial-bin") + os.pathsep + os.environ["PATH"])
   process = subprocess.Popen([guard, "--selection", "--range", base], cwd=repo, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              start_new_session=True)
+  writer = None
   try:
     deadline = time.monotonic() + 20
-    while not ack.exists():
-        if process.poll() is not None:
-            raise AssertionError("guard ended before the suite acknowledgement: " + process.communicate()[0])
-        assert time.monotonic() < deadline, "suite acknowledgement deadline"
-        time.sleep(0.01)
+    while writer is None:
+        try:
+            writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as error:
+            if error.errno != errno.ENXIO:
+                raise
+            if process.poll() is not None:
+                raise AssertionError("guard ended before the phase held its FIFO: " + process.communicate()[0])
+            assert time.monotonic() < deadline, "phase hold deadline"
+            time.sleep(0.01)
     os.killpg(process.pid, signal.SIGTERM)
+    os.close(writer)
+    writer = None
     output, _ = process.communicate(timeout=grace)
     assert process.returncode == 143, output
     selected = [line.removeprefix("guard-note: selected-suite=") for line in output.splitlines()
@@ -325,6 +337,8 @@ for phase, expected in (
         assert not any(line.startswith("guard-note: unstarted-suite=") for line in output.splitlines()), output
     print("pass: guard cancellation " + phase)
   finally:
+    if writer is not None:
+        os.close(writer)
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
