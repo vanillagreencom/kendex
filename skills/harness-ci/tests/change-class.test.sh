@@ -576,11 +576,10 @@ a retirement ahead of a registry edit whose rest moved|.codex/agents/rust.md|-|.
 a retirement ahead of a deletion still named in the head inventory|.agents/skills/orch/app.ts|.codex/agents/rust.md|-|clean|standard|true|render-path-unowned path=.codex/agents/rust.md
 REMOVALS
 
-# Every removal row run against SCRIPT, one `LABEL<TAB>WANT<TAB>GOT` line
-# each.
+# Every removal row, one `LABEL<TAB>WANT<TAB>GOT` line each.
 # errexit does not reach a function run inside a substitution, so each step
 # checks its own status.
-removal_rows() { # SCRIPT
+removal_rows() {
   local label retired kept edited verifier class measured cause path out status line want
   while IFS='|' read -r label retired kept edited verifier class measured cause; do
     git -C "$removed_repo" checkout -q -B removal "$removed_base" || return
@@ -599,7 +598,7 @@ removal_rows() { # SCRIPT
     git -C "$removed_repo" add -A || return
     git -C "$removed_repo" commit -q -m "$label" || return
     set_verifier "$verifier"
-    if out=$(PATH="$stub_bin:$PATH" "$1" --repo "$removed_repo" --event pull_request \
+    if out=$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$removed_repo" --event pull_request \
       --base "$removed_base" --head HEAD 2>"$SANDBOX/removal-err"); then
       status=0
     else
@@ -614,14 +613,13 @@ removal_rows() { # SCRIPT
     printf '%s\t%s\t%s\n' "$label" "$want" "$out exit $status $line"
   done <"$SANDBOX/removals"
 }
-removals_out=$(removal_rows "$CHANGE_CLASS")
+removals_out=$(removal_rows)
 removed_rows=0
 while IFS=$'\t' read -r label want got; do
   removed_rows=$((removed_rows + 1))
   assert_eq "$label" "$want" "$got"
 done <<<"$removals_out"
 require_rows change-class-removals "$removed_rows"
-
 
 # `standard` is two answers in one word, and `measured=` is the only thing
 # that separates them. Both shapes, from the same fixtures the table above
@@ -1431,14 +1429,12 @@ assert_eq "a head that cannot be checked out is refused, naming it" \
 assert_eq "and the verifier was not run" "0" \
   "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
 
-# An installed package layout: harness-ci's scripts, and orch beside them
-# where the case wants one, so a classifier standing there resolves the same
-# siblings the shipped one does. A case that needs a mutant writes its own
-# body over the path this prints.
-plant_package() { # ROOT link|none -> prints the planted change-class path
+# An installed package layout with harness-ci's scripts and no orch beside
+# them, so a classifier standing there resolves the same harness-ci siblings
+# the shipped one does. A case that wants an orch writes its own.
+plant_package() { # ROOT -> prints the planted change-class path
   mkdir -p "$1/harness-ci/scripts"
   ln -s "$(dirname "$CHANGE_CLASS")/harness-only" "$1/harness-ci/scripts/harness-only"
-  [ "$2" != link ] || ln -s "$ORCH_PACKAGE" "$1/orch"
   cp "$CHANGE_CLASS" "$1/harness-ci/scripts/change-class"
   cp -R "$(dirname "$CHANGE_CLASS")/lib" "$1/harness-ci/scripts/"
   chmod +x "$1/harness-ci/scripts/change-class"
@@ -1449,7 +1445,7 @@ plant_package() { # ROOT link|none -> prints the planted change-class path
 # beside it still answers `render` on a diff the proof covers; only the
 # measured classes need the sibling.
 orchless_root="$SANDBOX/orchless"
-orchless_class="$(plant_package "$orchless_root" none)"
+orchless_class="$(plant_package "$orchless_root")"
 assert_eq "the orchless copy really has no orch sibling" "absent" \
   "$([ -e "$orchless_root/orch" ] && echo present || echo absent)"
 reset_case
@@ -1514,7 +1510,7 @@ skewed_rows=0
 while IFS='|' read -r contract_line reported; do
   skewed_rows=$((skewed_rows + 1))
   skewed_root="$SANDBOX/skewed-orch-$skewed_rows"
-  skewed_class="$(plant_package "$skewed_root" none)"
+  skewed_class="$(plant_package "$skewed_root")"
   mkdir -p "$skewed_root/orch/references"
   cp "$ORCH_PACKAGE/references/narrow-change.conf" "$skewed_root/orch/references/"
   cp -R "$ORCH_PACKAGE/scripts" "$skewed_root/orch/"
@@ -1654,7 +1650,6 @@ refused_err="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
 assert_eq "a base settings file the reader refuses answers standard, unmeasured" \
   "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
-
 
 # A lane and CI classify one diff alike. CI's classify step may carry
 # ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
@@ -2202,7 +2197,6 @@ MANIFEST_EDIT
   assert_eq "a hand edit to a de-listed path measures as product code after a refused de-listing" \
     "class: class=small measured=true cause=instruction-file path=.claude/skills/second/SKILL.md glob=*/SKILL.md measured-class=micro" \
     "$(printf '%s\n' "$de_listed_edit_err" | grep '^class: ')"
-
 
   # A refresh can replace only a stale bot output while the installed package
   # and its record stay current. The old summary produces the base's stale

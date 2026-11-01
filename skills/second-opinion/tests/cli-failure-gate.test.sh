@@ -19,19 +19,15 @@
 . "$(dirname "${BASH_SOURCE[0]}")/lib/install.bash"
 
 # The suite's must-fail control: a hermetic copy of the script,
-# scripts/second-opinion-<name>, that keeps one line's text and disarms it;
-# every row its label pattern selects turns red. A \n in a line is a line
-# break.
-# name|the line|its disarmed form|label pattern
-CONTROLS='is-error|"$failed" == true ]]; then|"$failed" == never ]]; then|an is_error envelope whose result is API*'
+# scripts/second-opinion-is-error, that keeps the is_error test's text and
+# disarms it; the row of an is_error envelope with API error text turns red.
 PROJ="$TMP_ROOT/proj"
 mkdir -p "$PROJ/skills"
 git init -q "$PROJ"
 second_opinion_install "$SKILL_DIR" "$PROJ/skills"
 SCRIPTS="$PROJ/skills/second-opinion/scripts"
-while IFS='|' read -r name old new _; do
-  cp -- "$SCRIPTS/second-opinion" "$SCRIPTS/second-opinion-$name"
-  python3 - "$SCRIPTS/second-opinion-$name" "${old//\\n/$'\n'}" "${new//\\n/$'\n'}" <<'PY'
+cp -- "$SCRIPTS/second-opinion" "$SCRIPTS/second-opinion-is-error"
+python3 - "$SCRIPTS/second-opinion-is-error" '"$failed" == true ]]; then' '"$failed" == never ]]; then' <<'PY'
 import pathlib, sys
 path, old, new = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 assert not path.is_symlink()
@@ -41,7 +37,6 @@ changed = text.replace(old, new)
 assert changed != text
 path.write_text(changed)
 PY
-done <<<"$CONTROLS"
 suite_word() {
   case "$1" in
     script:*) W_SCRIPT="$SCRIPTS/second-opinion-${1#script:}" ;;
@@ -96,24 +91,17 @@ a record path that refuses the write names the cause and the loss, and keeps the
 
 run_table "the CLI-failure gate" "$DEFAULTS" "$ROWS"
 
-# Under the control, every row its label pattern selects no longer matches
-# its expected record or report. The rows reuse the table's row
-# directories, so the table's are removed first.
-while IFS='|' read -r name _ _ pattern; do
-  selected=0
-  while IFS= read -r row; do
-    # shellcheck disable=SC2053 # the pattern is a glob
-    [[ -n "$row" && "${row%%|*}" == $pattern ]] || continue
-    selected=$((selected + 1))
-    control_rc=0
-    (
-      chmod -R u+rwX "${TMP_ROOT:?}"/row-* && rm -rf -- "${TMP_ROOT:?}"/row-* || exit 3
-      PASS=0 FAIL=0
-      run_table "control $name: ${row%%|*}" "$DEFAULTS script:$name" "$row"
-      [[ "$FAIL" -eq 0 ]]
-    ) >"$TMP_ROOT/control.log" 2>&1 || control_rc=$?
-    assert_eq "$control_rc" 1 "control $name turns red: ${row%%|*}"
-  done <<<"$ROWS"
-  assert_eq "$((selected > 0))" 1 "control $name selects a row"
-done <<<"$CONTROLS"
+# Under the control, the is_error row no longer matches its expected record
+# or report. It reuses the table's row directories, so the table's are
+# removed first.
+CONTROL_ROW="$(grep -F 'an is_error envelope whose result is API error text' <<<"$ROWS")"
+assert_eq "$(grep -c . <<<"$CONTROL_ROW")" 1 "control is-error selects one row"
+control_rc=0
+(
+  chmod -R u+rwX "${TMP_ROOT:?}"/row-* && rm -rf -- "${TMP_ROOT:?}"/row-* || exit 3
+  PASS=0 FAIL=0
+  run_table "control is-error: ${CONTROL_ROW%%|*}" "$DEFAULTS script:is-error" "$CONTROL_ROW"
+  [[ "$FAIL" -eq 0 ]]
+) >"$TMP_ROOT/control.log" 2>&1 || control_rc=$?
+assert_eq "$control_rc" 1 "control is-error turns red: ${CONTROL_ROW%%|*}"
 finish

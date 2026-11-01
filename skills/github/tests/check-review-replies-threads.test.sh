@@ -28,9 +28,10 @@
 # without the colon, so a rule that read only the punctuated form would pass
 # every one of them.
 #
-# The must-fail probe is at the bottom: the count fires on a content-free
-# decline first, then the same jq with the rule removed lets it through, so
-# the catch belongs to the rule and not to the fixture.
+# The must-fail probe is the "must-fail probe: the rule, reverted" section:
+# the count fires on a content-free decline first, then the same jq with the
+# rule removed lets it through, so the catch belongs to the rule and not to
+# the fixture.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECKER="$SCRIPT_DIR/../scripts/commands/check-review-replies.sh"
@@ -61,31 +62,24 @@ page_with() { # page_with PROGRAM THREAD_JSON… -> "truncated untracked unreaso
 }
 page() { page_with "$prog" "$1"; }
 
-# A probe plants a mutant by rewriting the program's text, and "the text
+# A probe plants a mutant by substituting text in the program, and "the text
 # changed" is a contract that a WRONG change satisfies: an anchor that has
-# drifted can delete the pass a probe claims to move, and every assertion
-# under it then runs against a program nobody described. The probe therefore
-# declares the SHAPE its mutation should have and this checks it: a move
-# preserves the line count, a substitution changes lines without changing the
-# count, a deletion removes exactly as many lines as it names.
+# drifted can rewrite more than the line the probe names, and every assertion
+# under it then runs against a program nobody described. So the substitution
+# must change the program and keep its line count.
 #
 # Prints nothing on success. On failure it reds and the caller skips its
 # assertions, because assertions under an unplanted mutant are not evidence.
-planted() { # planted LABEL SHAPE VARIANT   SHAPE: move | sub | del:N
-  local label="$1" shape="$2" variant="$3" want lines
+planted() { # planted LABEL VARIANT
+  local label="$1" variant="$2" lines
   if [ "$variant" = "$prog" ]; then
     bad "probe planted nothing — $label" "the anchor matched no line"
     return 1
   fi
   lines=$(( $(wc -l <<<"$prog") - $(wc -l <<<"$variant") ))
-  case "$shape" in
-    move|sub) want=0 ;;
-    del:*)    want="${shape#del:}" ;;
-    *)        bad "probe declared no shape — $label" "$shape"; return 1 ;;
-  esac
-  if [ "$lines" != "$want" ]; then
+  if [ "$lines" != 0 ]; then
     bad "probe planted the wrong shape — $label" \
-        "declared $shape, but the program lost $lines line(s)"
+        "a substitution, but the program lost $lines line(s)"
     return 1
   fi
   return 0
@@ -276,7 +270,7 @@ echo "--- must-fail probe: the rule, reverted ---"
 # the real reason must stay uncounted: a probe where both fixtures moved would
 # prove the fixtures, not the rule.
 REVERTED="$(sed 's/^    | gsub("\^ +| +\$"; "");$/    | gsub("^ +| +$"; "") | "x";/' <<<"$prog")"
-if ! planted "the rule, reverted" sub "$REVERTED"; then :
+if ! planted "the rule, reverted" "$REVERTED"; then :
 else
   rprog="$REVERTED"
   rpage() { page_with "$rprog" "$1"; }

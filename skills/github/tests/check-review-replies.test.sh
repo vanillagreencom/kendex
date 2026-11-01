@@ -432,7 +432,7 @@ assert_eq "$(grep '^suppressed-findings: ignored-author ' "$TMP_ROOT/stderr" | p
 # other than a lone marker on the first non-blank line, but the last.
 SUPP_HEXPATH="${HEAD:0:8}.ts:1"
 # Each body answers both entries once it binds, so a rule binding a marker
-# on any line passes all three; the must-fail controls below run that rule.
+# on any line would pass all three.
 MARKER_BELOW="Thanks for the review.\nDispositions at $H7:\n**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400"
 MARKER_FENCED="The answers below take this shape:\n\`\`\`\nDispositions at $H7:\n\`\`\`\n**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400"
 MARKER_TWO_HEADS="Dispositions at $H7:\n**$SUPP_FIRST** - $SUPP_REASON\n\nDispositions at $O7:\n**$SUPP_SECOND** - Tracked: KEN-1400"

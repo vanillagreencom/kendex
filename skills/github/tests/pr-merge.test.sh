@@ -232,8 +232,8 @@ unreadable required run evidence refuses the exact-head merge with green jobs|he
 # GitHub's approval cannot read what a review reply says, so the readiness
 # check runs check-review-replies live.
 run_table "the merge path" "\
-a failed check without --auto is blocked with the auto hint|checks:failed|immediate|1|-|BLOCKED PR #123;ci_failed:|calls=$CHECK auth=<unset>
-a native-approved PR with a bad disposition is not merged, and no auto hint is given|checks:ci-required replies:unreasoned post:MERGED merge-commit:merged-oid|immediate|1|-|BLOCKED PR #123;review_replies:|calls=$CHECK auth=<unset>
+a failed check without --auto is blocked|checks:failed|immediate|1|-|BLOCKED PR #123;ci_failed:|calls=$CHECK auth=<unset>
+a native-approved PR with a bad disposition is not merged|checks:ci-required replies:unreasoned post:MERGED merge-commit:merged-oid|immediate|1|-|BLOCKED PR #123;review_replies:|calls=$CHECK auth=<unset>
 a red optional check does not stop the merge, and is named on the way|checks:optional-red required:Lint post:MERGED merge-commit:merged-oid|immediate|0|-|warning ci_optional_failed:;MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 the router promotes the bot token for the mutation and the snapshot|checks:ci-required require-token post:MERGED merge-commit:merged-oid env:GH_BOT_TOKEN=ghp_test_token|router:--squash|0|-|MERGED PR #123|calls=user,$PRE,user,merge:squash,graphql:queue auth=ghp_test_token
 a prepared head that drifted fails before arming|checks:ci-required head:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|expected:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|1|-|BLOCKED PR #123|calls=$PRE auth=<unset>
@@ -243,12 +243,12 @@ the refusal is the first stderr line, ahead of the checks' warnings|checks:none 
 a base branch with slashes is URL-encoded in the gate reads and arms|checks:ci-required post-auto base:release/foo/bar|auto|75|-|AUTO-MERGE ENABLED PR #123;volatile-note|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 classic auto-merge is success-pending, exit 75, volatile|checks:ci-required post-auto|auto|75|-|AUTO-MERGE ENABLED PR #123;volatile-note|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 an immediate merge whose snapshot is MERGED exits 0|checks:ci-required post:MERGED merge-commit:merged-oid|auto|0|-|MERGED PR #123|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
-OPEN, unqueued and unarmed after a zero exit is blocked, naming the absent proof|checks:ci-required|auto|1|-|BLOCKED PR #123|calls=$PRE,merge:squash:auto,graphql:queue,graphql:queue,graphql:queue auth=<unset>
+OPEN, unqueued and unarmed after a zero exit is blocked|checks:ci-required|auto|1|-|BLOCKED PR #123|calls=$PRE,merge:squash:auto,graphql:queue,graphql:queue,graphql:queue auth=<unset>
 a snapshot on a newer head fails closed|checks:ci-required head:guarded-head post-head:newer-unreviewed-head post-queue|auto|1|-|BLOCKED PR #123|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 a merge whose both post-merge reads fail is blocked, never a success|checks:ci-required merge-commit:merged-oid graphql:fail post-view-fail|immediate|1|-|BLOCKED PR #123|calls=$PRE,merge:squash,graphql:queue,view:post,graphql:queue,view:post,graphql:queue,view:post auth=<unset>
 the REST fallback keeps classic auto-merge when the queue query fails|checks:ci-required graphql:fail post-auto|auto|75|-|AUTO-MERGE ENABLED PR #123;volatile-note|calls=$PRE,merge:squash:auto,graphql:queue,view:post auth=<unset>
 a second --auto on a queued PR: gh's already-queued failure, the snapshot's entry wins|checks:ci-required head:already-queued-head merge-fail:already-queued post-queue|auto|75|-|QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
-a genuine merge failure with no proof stays blocked with gh's output|checks:ci-required merge-fail:policy|auto|1|-|BLOCKED PR #123|calls=$PRE,merge:squash:auto,graphql:queue,graphql:queue,graphql:queue auth=<unset>
+a genuine merge failure with no proof stays blocked|checks:ci-required merge-fail:policy|auto|1|-|BLOCKED PR #123|calls=$PRE,merge:squash:auto,graphql:queue,graphql:queue,graphql:queue auth=<unset>
 a failed CLI is still a success when the exact-head snapshot is MERGED|checks:ci-required merge-fail:transport post:MERGED merge-commit:merged-oid|immediate|0|-|MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 "
 
@@ -299,7 +299,7 @@ a state resolved only on the retry still short-circuits --auto, the lookup retri
 a closed PR found on the retry keeps its line|state:CLOSED state-err:once|auto|1|-|CLOSED (not merged) PR #123|calls=view:state,view:state auth=<unset>
 the immediate mode on a retry-resolved state|state:MERGED merged-at state-err:once|immediate|0|-|ALREADY MERGED PR #123 2026-08-15T09:41:12Z|calls=view:state,view:state auth=<unset>
 an open PR still merges, its state read once|checks:ci-required post:MERGED merge-commit:merged-oid|immediate|0|-|MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
-a token whose user lookup fails any other way is named unverified, and the merge still runs|checks:ci-required post:MERGED merge-commit:merged-oid env:GH_TOKEN=ghp_REVOKED|immediate|0|-|MERGED PR #123|calls=$PRE,user,merge:squash,graphql:queue auth=ghp_REVOKED
+a token whose user lookup fails any other way still merges, under that token|checks:ci-required post:MERGED merge-commit:merged-oid env:GH_TOKEN=ghp_REVOKED|immediate|0|-|MERGED PR #123|calls=$PRE,user,merge:squash,graphql:queue auth=ghp_REVOKED
 "
 
 # On a base whose rules hold no merge_queue rule, the default world, no route
@@ -309,10 +309,10 @@ a token whose user lookup fails any other way is named unverified, and the merge
 run_table "the merge queue and the retired settings" "\
 on a queue base --auto enrolls the PR and passes no --admin|checks:ci-required post-queue|auto|75|-|QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>
 a partial post-merge answer is no outcome: the pr-view fallback decides|checks:ci-required post-graphql:partial post-auto|auto|75|-|AUTO-MERGE ENABLED PR #123;volatile-note|calls=$PRE,merge:squash:auto,graphql:queue,view:post auth=<unset>
-the admin-credential verb is gone: an unknown option, refused before any call|-|admin-credential|1|-|-|calls=- auth=-
-the admin request is gone: an unknown option, refused before any call|-|admin|1|-|-|calls=- auth=-
+the admin-credential verb is gone: refused before any call|-|admin-credential|1|-|-|calls=- auth=-
+the admin request is gone: refused before any call|-|admin|1|-|-|calls=- auth=-
 the router passes --admin to the same refusal|-|router:--admin|1|-|-|calls=- auth=-
-the force override is gone: an unknown option, refused before any call|-|force|1|-|-|calls=- auth=-
+the force override is gone: refused before any call|-|force|1|-|-|calls=- auth=-
 the router passes --force to the same refusal|-|router:--force|1|-|-|calls=- auth=-
 a set ORCH_MERGE_BYPASS no longer refuses: the immediate merge runs|checks:ci-required post:MERGED merge-commit:merged-oid env:ORCH_MERGE_BYPASS=fast-path|immediate|0|-|MERGED PR #123|calls=$PRE,merge:squash,graphql:queue auth=<unset>
 a set ORCH_ADMIN_MERGE_GH_CONFIG_DIR no longer refuses --check|checks:ci-required env:ORCH_ADMIN_MERGE_GH_CONFIG_DIR=/home/dev/.config/gh-admin|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[] $KEYS|mergeable;head-run: none|calls=$CHECK auth=<unset>
@@ -411,7 +411,7 @@ a PR whose base marked a lane it changes and dropped the mark since it opened ta
 a PR whose recorded base is still the unmarked tip admin-merges, the shipped classifier reading that tip|checks:ci-required queue-rule:always mark-unmoved post:MERGED merge-commit:merged-oid|immediate|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265 bypass=always;queue_only=false cause=no-queue-path;MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
 a classifier that prints no queue-only line reads queue-only, its stderr replayed|checks:ci-required queue-rule:always route:- post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;cause=classifier-unreadable;class: class=standard measured=true cause=stub;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
 a classifier that fails reads queue-only|checks:ci-required queue-rule:always route:fail post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;cause=classifier-exit-1;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
-an unreadable pull request range reads queue-only, gh's words replayed|checks:ci-required queue-rule:always route:range-fail post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;cause=range-unreadable;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
+an unreadable pull request range reads queue-only|checks:ci-required queue-rule:always route:range-fail post-queue|immediate-classified|75|-|merge-route: queue cause=queue-only;cause=range-unreadable;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note|calls=$ROUTE_PRE,merge:squash:auto,graphql:queue auth=<unset>
 no classifier beside the scripts tree or on PATH reads queue-only|checks:ci-required queue-rule:always post-queue|immediate-classless|75|-|merge-route: queue cause=queue-only;cause=classifier-absent;QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;volatile-note|calls=$PRE,graphql:entries,merge:squash:auto,graphql:queue auth=<unset>
 two merge-queue rulesets the token may bypass admin-merge, both named|checks:ci-required queue-two:always,pull_requests_only route:false post:MERGED merge-commit:merged-oid|immediate-classified|0|-|merge-route: admin cause=queue-bypass-safe ruleset=20569265,20569266 bypass=always,pull_requests_only;$QUEUE_FALSE;MERGED PR #123|calls=$ROUTE_PRE,merge:squash:admin,graphql:queue auth=<unset>
 a second merge-queue ruleset the token may not bypass takes the queue, naming it|checks:ci-required queue-two:always,never route:false post-queue|immediate-classified|75|-|merge-route: queue cause=no-bypass ruleset=20569266 bypass=never;$QUEUED|calls=$PRE,merge:squash:auto,graphql:queue auth=<unset>

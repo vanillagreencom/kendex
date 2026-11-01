@@ -135,17 +135,6 @@ err_text() {
   local text
   text="$(head -n 1 "$TMP_ROOT/stderr")"
   [[ "$text" != "" ]] || { printf -- '-'; return; }
-  # jq's parser wording and the program line number are its internals, not a
-  # contract, and the suite runs on whatever jq the ubuntu and macos runner
-  # images ship. A compile error reduces to the part every build states: it is
-  # a syntax error, and `==` is what it choked on. A build that words even that
-  # differently prints its raw line here and fails loudly.
-  case "$text" in
-    "jq: error: syntax error"*"unexpected =="*)
-      printf 'jq-syntax-error-at-=='
-      return
-      ;;
-  esac
   printf '%s' "$text"
 }
 
@@ -251,13 +240,11 @@ DISMISS_REFUSED="{\"success\":false,\"dismissed\":[],\"failed\":[{\"review_id\":
 THREAD_CALLS="auth,graphql"
 DISMISS_CALLS="repo,auth,api:repos/owner/repo/pulls/23/reviews,api:repos/owner/repo/pulls/23/reviews/555/dismissals,api:repos/owner/repo/pulls/23/reviews/556/dismissals"
 
-# The partial-batch rows' expectations, named because the drop_status_read
+# The resolve-two-partial row's expectation, named because the drop_status_read
 # control below has to fail against the very string its row asserts. A control
-# carrying its own copy would, once a row changed, compare against a spelling no
-# row asserts, and would then be satisfied by any output at all.
+# carrying its own copy would, once the row changed, compare against a spelling
+# no row asserts, and would then be satisfied by any output at all.
 PARTIAL_RESOLVE="1|$RESOLVED_PARTIAL|-|$THREAD_CALLS"
-PARTIAL_UNRESOLVE="1|$UNRESOLVED_PARTIAL|-|$THREAD_CALLS"
-PARTIAL_DISMISS="1|$DISMISS_REFUSED|-|$DISMISS_CALLS"
 
 run_table "the summary renders, and the exit status reports the mutations" "\
 resolve-thread with two ids names both as resolved|resolve-two|$ID_A $ID_B|0|$RESOLVED_TWO|-|$THREAD_CALLS
@@ -265,8 +252,8 @@ resolve-thread with one id keeps the single-thread answer|resolve-one|$ID_A|0|$R
 unresolve-thread with two ids names both as unresolved|unresolve-two|$ID_A $ID_B|0|$UNRESOLVED_TWO|-|$THREAD_CALLS
 dismiss-review names both dismissals|dismiss-two|23 --bot|0|$DISMISSED_TWO|-|$DISMISS_CALLS
 one thread left unresolved is named under failed and exits 1|resolve-two-partial|$ID_A $ID_B|$PARTIAL_RESOLVE
-one thread left resolved is named under failed and exits 1|unresolve-two-partial|$ID_A $ID_B|$PARTIAL_UNRESOLVE
-a refused dismissal is named under failed and exits 1|dismiss-two-refused|23 --bot|$PARTIAL_DISMISS
+one thread left resolved is named under failed and exits 1|unresolve-two-partial|$ID_A $ID_B|1|$UNRESOLVED_PARTIAL|-|$THREAD_CALLS
+a refused dismissal is named under failed and exits 1|dismiss-two-refused|23 --bot|1|$DISMISS_REFUSED|-|$DISMISS_CALLS
 "
 
 MUTANT_DIR="$TMP_ROOT/mutant"
@@ -366,10 +353,6 @@ drop_status_read() {
   mutate "$1" '[ "$(jq -r '"'"'.success'"'"' <<<"$summary")" = "true" ] || exit 1' ':'
 }
 
-stage_mutants() {
-  cp "$COMMANDS/resolve-thread.sh" "$MUTANT_DIR/commands/"
-}
-
 # The comparison each summary filter parenthesizes, as shipped. The thread
 # commands share a form; dismiss-review counts refused entries instead.
 LIVE_THREAD='(($failed | length) == 0)'
@@ -395,7 +378,7 @@ echo "=== must-fail control: the exit status stops reading the summary ==="
 # that expectation to fail, which is the kill; the mutation it leaves behind is
 # the same summary under exit 0, so the tail it pins is its forward tail with
 # the status replaced.
-stage_mutants
+cp "$COMMANDS/resolve-thread.sh" "$MUTANT_DIR/commands/"
 drop_status_read "$MUTANT_DIR/commands/resolve-thread.sh"
 COMMAND_DIR="$MUTANT_DIR/commands"
 

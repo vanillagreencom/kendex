@@ -237,8 +237,6 @@ for identity in branch author type; do
     "wrong refresh $identity keeps ordinary stale attention|--awaiting-after 60|$REFRESH_ENV;STUB_OPEN_PRS=[$(jq -c --arg at "$OLD" '.created_at=$at' <<<"$other")];STUB_HEAD_DATE=$OLD|rc=1 kinds=awaiting-stale"
 done
 
-
-
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

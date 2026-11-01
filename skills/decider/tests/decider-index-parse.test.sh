@@ -81,13 +81,10 @@ record_row() {
 }
 
 evaluate_link_rows() {
-  local script="$1" mode="$2" only_row="${3:-}" name kind argument expected actual guard
+  local script="$1" mode="$2" name kind argument expected actual
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name kind argument expected; do
-    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
-      continue
-    fi
     executed_rows=$((executed_rows + 1))
     run_decisions "$script" "$REPO" "$REPO/docs/decisions" "${kind%%-*}" "$argument"
     case "$kind" in
@@ -126,15 +123,8 @@ empty-cell-path~get-empty-path~D004~<empty>
 empty-cell-date~get-date~D004~unknown
 LINK_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
-    guard="link table executed no rows"
-    [[ -n "$only_row" ]] && guard="link table selected no row: $only_row"
-    if [[ "$mode" == normal ]]; then
-      fail "$guard"
-      return 1
-    else
-      printf 'TABLE_GUARD:%s' "$guard"
-      return 1
-    fi
+    fail "link table executed no rows"
+    return 1
   fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"
@@ -142,14 +132,11 @@ LINK_CASES
 }
 
 evaluate_diagnostic_rows() {
-  local script="$1" mode="$2" only_row="${3:-}" name fixture projection expected actual first second third guard first_line
+  local script="$1" mode="$2" name fixture projection expected actual first_line
   local bad_index="$BAD_REPO/docs/decisions/INDEX.md"
   local executed_rows=0
   table_failures=""
   while IFS='~' read -r name fixture projection expected; do
-    if [[ -n "$only_row" && "$name" != "$only_row" ]]; then
-      continue
-    fi
     executed_rows=$((executed_rows + 1))
     if [[ "$fixture" == malformed ]]; then
       run_decisions "$script" "$BAD_REPO" "$BAD_REPO/docs/decisions" list
@@ -182,15 +169,8 @@ malformed-row-diagnostic~malformed~malformed-warning~0~notice=index-row-invalid 
 healthy-index-diagnostic~healthy~empty-stderr~0~<empty>
 DIAGNOSTIC_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
-    guard="diagnostic table executed no rows"
-    [[ -n "$only_row" ]] && guard="diagnostic table selected no row: $only_row"
-    if [[ "$mode" == normal ]]; then
-      fail "$guard"
-      return 1
-    else
-      printf 'TABLE_GUARD:%s' "$guard"
-      return 1
-    fi
+    fail "diagnostic table executed no rows"
+    return 1
   fi
   if [[ "$mode" == control ]]; then
     printf '%s' "$table_failures"

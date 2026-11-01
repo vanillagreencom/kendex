@@ -365,6 +365,7 @@ assert_table_executed "process cleanup" "$process_rows"
 #
 # The failing-child row shows the pin is not green because the transcript is
 # discarded.
+#
 # The two lines the script itself owes this run: SETTLE=0 is how the tables
 # above tell it their stub builds share no cache, and it says so once.
 QUIET_TRANSCRIPT='notice=settle-disabled value=0|copies are not mtime-separated; verdicts assume BUILD shares no cache|'
@@ -584,9 +585,6 @@ try:
     poll.register(pidfd, select.POLLIN)
     stopped = bool(poll.poll(0))
     notice = "notice=workspace-process-ended pid=" + str(child) + "\n" in output
-    def assert_child_stopped():
-        assert stopped, output
-
     if private:
         root = Path(os.environ["TMPDIR"])
         workspaces = list(root.glob("mutation-stability.*"))
@@ -594,9 +592,7 @@ try:
         assert not stopped, output
         expected_exit = 1 if mode == "private-fail" else 0
         notice = "notice=workspace-process-unreadable pid=" + str(child)
-        def assert_measured_exit():
-            assert runner.returncode == expected_exit, output
-        assert_measured_exit()
+        assert runner.returncode == expected_exit, output
         assert "mutation: killed " + ("0" if mode == "private-fail" else "1") + "/1; stability: 1/1" in output, output
         assert output.splitlines().count(notice) == (0 if mode == "other-user" else 1), output
         assert bool(workspaces) == (mode != "other-user"), output
@@ -606,7 +602,7 @@ try:
         assert Path(cwd).is_dir(), "failed cleanup deleted an occupied workspace"
         assert "error=cleanup-incomplete path=" in output, output
     else:
-        assert_child_stopped()
+        assert stopped, output
         _, status = os.waitpid(child, 0)
         expected_signal = signal.SIGKILL if mode == "kill" else signal.SIGTERM
         assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == expected_signal, status
@@ -710,8 +706,8 @@ chmod +x "$SLOW_GIT_BIN/git" "$SLOW_GIT_BIN/tar"
 
 # The script's TERM handler exits 143, after the copy in flight ends, and that
 # exit runs the cleanup trap.
-observe_stop() { # observe_stop SIGNAL
-  stop_tmp="$TMP/stop-$1"
+observe_stop() {
+  stop_tmp="$TMP/stop-term"
   mkdir -p "$stop_tmp"
   rm -f "$STOP_MARKER" "$COPY_DONE"
   PATH="$SLOW_GIT_BIN:$PATH" TMPDIR="$stop_tmp" "$MS" --worktree "$REPO" --sha "$SHA_BASE" \
@@ -724,12 +720,12 @@ observe_stop() { # observe_stop SIGNAL
   done
   copying=no
   [ ! -e "$STOP_MARKER" ] || copying=yes
-  kill -s "$1" "$stop_pid" 2>/dev/null || :
+  kill -s TERM "$stop_pid" 2>/dev/null || :
   rc=0
   out=""
   { wait "$stop_pid"; } 2>/dev/null || rc=$?
-  # A killed run leaves the archive and tar writing its copy; count once tar
-  # has acknowledged its exit.
+  # Count once tar has acknowledged its exit, so a copy still being written
+  # is not missed.
   attempts=0
   while [ ! -e "$COPY_DONE" ] && [ "$attempts" -lt 200 ]; do
     sleep 0.05
@@ -741,16 +737,9 @@ observe_stop() { # observe_stop SIGNAL
   actual="rc=$rc;copying=$copying;settled=$settled;left=$left"
 }
 
-echo "=== stop signal table ==="
-stop_rows=0
-while IFS=$'\t' read -r name signal expected; do
-  observe_stop "$signal"
-  assert_row "stop signal" "$name" "$actual" "$expected"
-  stop_rows=$((stop_rows + 1))
-done <<'ROWS'
-SIGTERM mid-copy removes the workspace	TERM	rc=143;copying=yes;settled=yes;left=0
-ROWS
-assert_table_executed "stop signal" "$stop_rows"
+echo "=== stop signal ==="
+observe_stop
+assert_row "stop signal" "SIGTERM mid-copy removes the workspace" "$actual" "rc=143;copying=yes;settled=yes;left=0"
 
 unset MUTATION_STABILITY_SETTLE
 export CACHE="$TMP/build-cache"

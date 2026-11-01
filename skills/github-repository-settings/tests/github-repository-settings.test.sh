@@ -368,26 +368,23 @@ completed += 1
 print("pass: linked installation")
 
 # One control proves the contracts go red: a preview that writes.
-for name, contract, path, old, new in (
-    ("preview-write", preview, "bot-instructions/scripts/lib/writer.py",
-     '    if dry_run:\n        return True', '    if False:\n        return True'),
-):
-    root = fixture(f"control-{name}")
-    target = root / "catalog" / path
-    assert not target.is_symlink()
-    text = target.read_text()
-    assert text.count(old) == 1, (name, old)
-    changed = text.replace(old, new)
-    assert changed != text
-    # Git Bash must reach the mutant, not fail on rewritten CRLF script lines.
-    target.write_text(changed, newline="")
-    try:
-        contract(root)
-    except AssertionError:
-        completed += 1
-        print(f"control rejected: {name}")
-    else:
-        raise AssertionError(f"control survived: {name}")
+old, new = '    if dry_run:\n        return True', '    if False:\n        return True'
+root = fixture("control-preview-write")
+target = root / "catalog" / "bot-instructions/scripts/lib/writer.py"
+assert not target.is_symlink()
+text = target.read_text()
+assert text.count(old) == 1, old
+changed = text.replace(old, new)
+assert changed != text
+# Git Bash must reach the mutant, not fail on rewritten CRLF script lines.
+target.write_text(changed, newline="")
+try:
+    preview(root)
+except AssertionError:
+    completed += 1
+    print("control rejected: preview-write")
+else:
+    raise AssertionError("control survived: preview-write")
 
 # skills/orch/tests/run-all.sh reads this numeric suite summary.
 print(f"{completed} passed, 0 failed")

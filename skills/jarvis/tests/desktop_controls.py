@@ -21,17 +21,14 @@ class Controls(unittest.TestCase):
             ("required-agent-browser", "SKILL.md", '- command: agent-browser', '- command: missing-fixture-replacement', "command_declarations_test.py", "Declaration.test_missing_agent_browser"),
         ]
         baseline_env = dict(os.environ, JARVIS_TOOL_SCRIPTS=str(PACKAGE / "scripts"), JARVIS_TOOL_SKILL=str(PACKAGE / "SKILL.md"))
-        skipped = {}
         for rule, relative, before, after, suite, case in rows:
             if rule == "required-agent-browser" and kendex_path() is None and not os.environ.get("HARNESS_CI_REQUIRE_KENDEX"):
                 print("control=" + rule + " unavailable dependency=kendex", flush=True)
                 continue
-            if (suite, case) not in skipped:
-                clean = run_case(PACKAGE / "tests" / suite, case, baseline_env)
-                self.assertEqual(clean.returncode, 0, clean.stderr)
-                # unittest's documented summary for one case its platform marker skipped.
-                skipped[suite, case] = re.search(rb"^OK \(skipped=1\)$", clean.stderr, re.MULTILINE) is not None
-            if skipped[suite, case]:
+            clean = run_case(PACKAGE / "tests" / suite, case, baseline_env)
+            self.assertEqual(clean.returncode, 0, clean.stderr)
+            # unittest's documented summary for one case its platform marker skipped.
+            if re.search(rb"^OK \(skipped=1\)$", clean.stderr, re.MULTILINE):
                 print("control=" + rule + " unavailable platform=" + sys.platform, flush=True)
                 continue
             with self.subTest(rule=rule), tempfile.TemporaryDirectory(prefix="jarvis-control-") as scratch:

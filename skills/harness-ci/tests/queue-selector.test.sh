@@ -120,21 +120,13 @@ ROW_ENV=""
 ROW_EVENT=pull_request
 require_rows queue-selector "$rows"
 
-# The suite's must-fail control: a planted copy without one rule answers the
-# row it holds otherwise.
-control() { # ROW_LABEL EXPECTED NAME LINE REPLACEMENT [LINE REPLACEMENT]...
-  local label="$1" expected="$2" name="$3" planted edits row_base
-  shift 2
-  planted="$(mutant "$@")"
-  IFS='|' read -r _ edits row_base ROW_ENV ROW_EVENT <<<"$(row_of "$label")"
-  ROW_EVENT="${ROW_EVENT:-pull_request}"
-  # shellcheck disable=SC2086
-  assert_eq "control $name for: $label" "$expected" "$(run_row "$planted" "${!row_base}" $edits)"
-  ROW_ENV=""
-  ROW_EVENT=pull_request
-}
-control "a path the selector names is queue-only" \
-  "queue_only=false cause=no-queue-path" \
-  no-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' -
+# The suite's must-fail control: a planted copy that never calls the selector
+# answers the row it holds otherwise.
+planted="$(mutant no-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' -)"
+IFS='|' read -r _ edits row_base ROW_ENV ROW_EVENT <<<"$(row_of "a path the selector names is queue-only")"
+ROW_EVENT="${ROW_EVENT:-pull_request}"
+# shellcheck disable=SC2086
+assert_eq "control no-call for: a path the selector names is queue-only" "queue_only=false cause=no-queue-path" \
+  "$(run_row "$planted" "${!row_base}" $edits)"
 
 report queue-selector

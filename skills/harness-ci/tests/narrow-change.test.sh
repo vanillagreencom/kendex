@@ -149,31 +149,22 @@ names_err="$(run_row "$CHANGE_CLASS" hash-changed)"
 assert_eq "a hash change prints no names-only line" "" \
   "$(grep '^inventory-change: ' <<<"$names_err" || true)"
 
-# The suite's must-fail control: the planted copy drops one rule, and the row
-# it reaches answers the class the rule was refusing.
-control() { # LABEL EXPECTED EDIT NAME SCRIPT LINE REPLACEMENT...
-  local label="$1" expected="$2" edit="$3" planted
-  shift 3
-  if ! planted="$(mutant "$@")"; then
-    assert_eq "$label: the control is an edit" edited "not edited"
-    return
-  fi
-  assert_eq "$label" "$expected" "$(verdict_of "$(run_row "$planted" "$edit")")"
-}
-
-MICRO="class=micro measured=true cause=production-within-micro"
-
-# Removing a validation gate's exclusion lets its small edit measure as micro.
+# The suite's must-fail control: a planted copy reading a list without the
+# validation gate's exclusion lets that gate's small edit measure as micro.
 awk '
   $0 == "path *skills/orch/scripts/dev-validate-run" { hits++; next }
   { print }
   END { exit hits == 1 ? 0 : 3 }
 ' "$ORCH_PACKAGE/references/narrow-change.conf" >"$SANDBOX/validation-gate.conf"
-control "a list without the validation runner measures its edit as micro" "$MICRO" \
-  skills/orch/scripts/dev-validate-run=2 validation-gate change-class \
+if planted="$(mutant validation-gate change-class \
   'NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"' \
-  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\""
-
+  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\"")"; then
+  assert_eq "a list without the validation runner measures its edit as micro" \
+    "class=micro measured=true cause=production-within-micro" \
+    "$(verdict_of "$(run_row "$planted" skills/orch/scripts/dev-validate-run=2)")"
+else
+  assert_eq "the validation-gate control is an edit" edited "not edited"
+fi
 
 # A list from before the floor carries no `instruction` line; the classifier
 # refuses it rather than reading AGENTS.md with no floor.
@@ -513,6 +504,5 @@ cp -R "$(dirname "$CHANGE_CLASS")/lib" "$listless/harness-ci/scripts/"
 assert_eq "an orch with no list reads queue-only" \
   "queue_only=true cause=queue-list-unreadable" \
   "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
-
 
 report narrow-change

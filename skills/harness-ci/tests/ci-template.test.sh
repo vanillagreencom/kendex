@@ -393,12 +393,9 @@ secrets_contract() { # TEMPLATE
   ' "$1"
 }
 assert_eq "CI scans pull requests with an installer and the subject's ancestry" "depth=1 gated=1 fetched=1 scans=1 ready=1" "$(secrets_contract "$TEMPLATE")"
-while IFS='|' read -r scope from to expected; do
-  plant "$TEMPLATE" "$from" "$to" "$SANDBOX/secrets-mutant.yml" "$scope"
-  assert_eq "must-fail: secrets contract with ${to:-no $from} in $scope" "$expected" "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
-done <<'ROWS'
-ci/the tree under judgement|if: always() && github.event_name == 'pull_request'||depth=1 gated=0 fetched=1 scans=1 ready=1
-ROWS
+plant "$TEMPLATE" "if: always() && github.event_name == 'pull_request'" '' "$SANDBOX/secrets-mutant.yml" "ci/the tree under judgement"
+assert_eq "must-fail: secrets contract with the subject's checkout ungated" "depth=1 gated=0 fetched=1 scans=1 ready=1" \
+  "$(secrets_contract "$SANDBOX/secrets-mutant.yml")"
 
 # Read the CI job's checkout inputs and the secrets step from the template.
 # An omitted checkout ref selects the PR merge ref on pull_request.
@@ -537,14 +534,10 @@ require_rows template "$template_rows"
 check_action_pins "$TEMPLATE"
 checkout_pin="$(awk '/^[[:space:]-]*uses: actions\/checkout@/ { sub(/^[[:space:]-]*uses: /, ""); print; exit }' "$TEMPLATE")"
 [ -n "$checkout_pin" ] || { echo "checkout pin extractor is broken" >&2; exit 1; }
-while IFS='|' read -r name pin; do
-  plant "$TEMPLATE" "$checkout_pin" "$pin" "$SANDBOX/action-pin-$name.yml" test
-  status=0
-  (FAIL=0; check_action_pins "$SANDBOX/action-pin-$name.yml") >"$SANDBOX/action-pin-$name.log" 2>&1 || status=$?
-  assert_eq "must-fail: action pin form rejects $name" 1 "$status"
-done <<'ROWS'
-short-sha|actions/checkout@3d3c42e # v7.0.1
-ROWS
+plant "$TEMPLATE" "$checkout_pin" 'actions/checkout@3d3c42e # v7.0.1' "$SANDBOX/action-pin-short-sha.yml" test
+status=0
+(FAIL=0; check_action_pins "$SANDBOX/action-pin-short-sha.yml") >"$SANDBOX/action-pin-short-sha.log" 2>&1 || status=$?
+assert_eq "must-fail: action pin form rejects a short sha" 1 "$status"
 
 # Both the installer and scanner in the PR are no-ops, and its exclusion
 # list excludes every path. The credential is assembled at runtime, so the

@@ -630,31 +630,19 @@ echo "=== decision IDs against the base branch ==="
 evaluate_rows "$DECISIONS" normal
 
 echo "=== must-fail control ==="
-# Each table runner keeps one control: it plants one defect in a copy of the
-# script and names the row it must turn red. Columns: row, text to replace,
-# its replacement, what the defect removes. A \n in either text is a newline.
-control_seq=0
-while IFS='~' read -r row old new label; do
-  control_seq=$((control_seq + 1))
-  printf -v old '%b' "$old"
-  printf -v new '%b' "$new"
-  if ! mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-$control_seq/decisions" "$old" "$new" 1)"; then
-    fail "control $label could not be planted"
-    continue
-  fi
+# A collision rule that never fires, planted in a copy of the script, must
+# turn the check-collision row red.
+if mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-collision/decisions" 'select(($held | length) > 0 and' 'select(($held | length) > 99 and' 1)"; then
   set +e
-  failures="$(evaluate_rows "$mutant" control "$row")"
+  failures="$(evaluate_rows "$mutant" control check-collision)"
   set -e
-  if [[ "$failures" == *"|$row|"* ]]; then
-    pass "$label fails $row"
+  if [[ "$failures" == *"|check-collision|"* ]]; then
+    pass "a collision rule that never fires fails check-collision"
   else
-    fail "$label did not fail $row"
+    fail "a collision rule that never fires did not fail check-collision"
   fi
-done <<'CONTROLS'
-check-collision~select(($held | length) > 0 and~select(($held | length) > 99 and~a collision rule that never fires
-CONTROLS
-if [[ "$control_seq" -eq 0 ]]; then
-  fail "the control table planted no defect"
+else
+  fail "the collision control could not be planted"
 fi
 
 echo "=== ssh never prompts, and runs the transport the caller chose ==="
@@ -782,24 +770,20 @@ SSH_CASES
 
 evaluate_ssh_rows "$DECISIONS" normal
 
-# Columns: row, text to replace, its replacement, what the defect removes.
-while IFS='~' read -r row old new label; do
-  control_seq=$((control_seq + 1))
-  if ! mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-$control_seq/decisions" "$old" "$new" 1)"; then
-    fail "control $label could not be planted"
-    continue
-  fi
+# An OpenSSH command without BatchMode, planted in a copy of the script, must
+# turn the ssh-env row red.
+if mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-ssh/decisions" 'BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes"' 'BASE_SSH_COMMAND="$ssh_cmd"' 1)"; then
   set +e
-  failures="$(evaluate_ssh_rows "$mutant" control "$row")"
+  failures="$(evaluate_ssh_rows "$mutant" control ssh-env)"
   set -e
-  if [[ "$failures" == *"|$row|"* ]]; then
-    pass "$label fails $row"
+  if [[ "$failures" == *"|ssh-env|"* ]]; then
+    pass "an OpenSSH command without BatchMode fails ssh-env"
   else
-    fail "$label did not fail $row"
+    fail "an OpenSSH command without BatchMode did not fail ssh-env"
   fi
-done <<'SSH_CONTROLS'
-ssh-env~BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes"~BASE_SSH_COMMAND="$ssh_cmd"~an OpenSSH command without BatchMode
-SSH_CONTROLS
+else
+  fail "the ssh control could not be planted"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
