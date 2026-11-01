@@ -174,7 +174,9 @@
 #            the change is within HARNESS_CI_TRIVIAL_MAX_LINES (default 20).
 #            Where HARNESS_CI_TRIVIAL_PATHS names the repository's own
 #            allowlist as blank-separated globs, it replaces that set, within
-#            the same ceiling.
+#            the same ceiling. A changed kendex.settings.toml or
+#            .kendex/settings.toml joins the set where the base commit's
+#            HARNESS_CI_TRIVIAL_SETTINGS admits it, below.
 #   micro    production additions within the micro ceiling.
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
@@ -207,6 +209,33 @@
 # A changed kendex configuration file refuses every narrow class, not only
 # render: those files decide what is rendered and what each judgement below
 # reads. harness-only removes a byte-exact top-level kendex.toml schema step first.
+# HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of [env] key names read
+# from the base commit alone, admits a changed kendex.settings.toml or
+# .kendex/settings.toml to the trivial set, on --event pull_request or
+# merge_group. Admission needs every changed configuration source to be one
+# of those two files, each a regular file at every endpoint that holds it,
+# an endpoint without it read as an empty file, loaded there by orch's
+# kendex-env.sh, holding no byte that reader's line loop drops (a NUL), no
+# multiline string delimiter, and changed only in comment lines, blank
+# lines and [env] assignments of keys a glob names. A key in the settings
+# this script reads from the base, or any HARNESS_CI_* key, never
+# qualifies, whatever the globs say, so a change to the allowlist itself is
+# refused. Unset or blank, no key qualifies. The trivial rule then
+# judges every other changed path and the ceiling as it does for any diff,
+# with no agent instruction file beside it, and answers
+# `cause=allowlisted-settings settings=<file>[,<file>] keys=<key>[,<key>]|-
+# lines=<n>`, keys naming those whose loaded value differs. harness-only's
+# refusals, cause=base-inventory-absent and an empty path list answer ahead
+# of the configuration-source rule and print no admission line. Once that rule
+# holds the change, every other answer, whatever its class or cause, is
+# that refusal, measured, and prints one `settings-admission:
+# admitted=false cause=<c> [<field>=<value>]...` line. Its cause is the
+# admission rule that refused: unsupported-event, base-settings-unreadable,
+# allowlist-unset, configuration-file, settings-unreadable,
+# settings-not-regular, settings-bytes-dropped, multiline-string,
+# settings-unparsed or unadmitted-change. After admission it is
+# class-<class> rule=<cause>, the class and cause a later rule would have
+# answered. The queue-only line is judged as before.
 # A hand edit counts the same as the engine's: that line decides no render or
 # classifier input. The render path still verifies the head. Product paths
 # use the existing size rules without render verification.
@@ -228,8 +257,8 @@
 # diff being judged writes all of them, so trusting one fails open on exactly
 # the diffs that most want to pass. For the same reason the judged tree's own
 # configuration decides nothing here, and no script out of that tree is run.
-# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS and both HARNESS_CI_TRIVIAL_*
-# settings come from this process's environment, else from the [env] tables of
+# ORCH_SIZE_RENDER_ROOTS, ORCH_SIZE_TEST_PATHS, HARNESS_CI_TRIVIAL_MAX_LINES
+# and HARNESS_CI_TRIVIAL_PATHS come from this process's environment, else from the [env] tables of
 # kendex.settings.toml and .kendex/settings.toml, the second winning, as the
 # base endpoint's commit holds them. HARNESS_CI_STANDARD_PATHS (additional
 # exclusions before render and size classes, blank-separated, unset or empty adds none),
@@ -237,7 +266,8 @@
 # own queue globs, blank-separated, set empty where the shipped list is the
 # whole list), HARNESS_CI_QUEUE_SELECTOR (unset, no selector runs) and
 # HARNESS_CI_PER_PUSH_REASON (the reason the repository runs its lanes on
-# each pull-request push; unset, every change is queue-only) come from those
+# each pull-request push; unset, every change is queue-only) and
+# HARNESS_CI_TRIVIAL_SETTINGS come from those
 # tables alone, never from the environment. The private env file
 # is never read.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
@@ -351,6 +381,12 @@ changed=""
 # unreadable, and an unreadable diff reads queue-only.
 QUEUE_ONLY=true
 QUEUE_CAUSE="cause=paths-unread"
+# A settings change HARNESS_CI_TRIVIAL_SETTINGS admitted: its class-line
+# fields, its files, the refusal it keeps, and the keys one file changed.
+SETTINGS_ADMITTED=""
+SETTINGS_FILES=""
+SETTINGS_REFUSAL=""
+SETTINGS_FILE_KEYS=""
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -417,8 +453,18 @@ harness_err="$work/harness-stderr"
 # that measured one says so. An `answer standard` added later is refused until
 # its author decides otherwise, which is the way round that cannot hand a
 # waiver to a diff nothing read. stdout is unchanged: one `change_class=` line.
+#
+# The configuration-source rule holding an admitted settings change read its
+# paths alone, so every answer for that change but trivial, a later read
+# failure included, is that refusal, measured, with the answer it replaced
+# on the admission line that settings_note, with the admission below, prints.
 answer() { # CLASS FIELDS [measured]
-  local queue_line per_push_line
+  local queue_line per_push_line rule
+  if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
+    rule="${2%% *}"
+    settings_note "cause=class-$1 rule=${rule#cause=}"
+    set -- standard "$SETTINGS_REFUSAL" measured
+  fi
   measured=true
   [ "$1" != standard ] || measured=false
   [ "${3:-}" != measured ] || measured=true
@@ -506,7 +552,7 @@ set_globs() { # GLOBS
 
 # One matcher and one glob grammar for the allowlist and the refusal lists.
 PATH_MATCH_HIT=""
-path_matches() { # MODE(every|any) — against GLOB_LIST
+path_matches() { # MODE(every|any) [PATHS] — against GLOB_LIST, PATHS default the changed paths
   local path hit globs
   PATH_MATCH_HIT=""
   globs=""
@@ -522,7 +568,7 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
     else
       [ "$hit" = true ] || return 1
     fi
-  done <<<"$changed"
+  done <<<"${2-$changed}"
   [ "$1" = every ]
 }
 
@@ -543,8 +589,8 @@ path_class_matches() { # PHASE CLASS
 # [env] tables of the settings files the base endpoint's commit holds, never
 # from the judged tree: a branch cannot choose the ceilings or the roots its
 # own size is scored against, nor the paths that keep it in the queue, and a
-# settings file the branch changes answers standard as a configuration source
-# and is queue-only. That commit is the one --base names, the pull request's base end
+# settings file the branch changes answers standard as a configuration source,
+# save the admission below, and is queue-only. That commit is the one --base names, the pull request's base end
 # ../references/wiring.md § The endpoint expressions names or a merge
 # group's base, never the merge base, which the author picks by
 # choosing where to fork. The tables are parsed by orch's kendex-env.sh, the
@@ -552,33 +598,46 @@ path_class_matches() { # PHASE CLASS
 # so .kendex/settings.toml outranks kendex.settings.toml; nothing is sourced,
 # so the private env file its KENDEX_ENV_FILE names never reaches this script.
 # A key this process's environment carries keeps that value, as it does on the
-# ladder, save the standard paths, queue list, selector and per-push reason: a caller's environment is its own
+# ladder, save the standard paths, queue list, selector, per-push reason and
+# settings allowlist: a caller's environment is its own
 # checkout's settings, which github.sh's router exports from the working
 # tree, so these are dropped from it and the base's alone decide. The load runs in a
 # subshell and hands back these keys alone.
 unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'
+unset HARNESS_CI_TRIVIAL_SETTINGS
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_TRIVIAL_SETTINGS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
-# The bytes of PATH as the commit --base names holds it, written to OUT:
-# status 0, 2 where that commit holds no PATH, and 1 where the commit or the
-# file could not be read. BASE_REV is that commit, resolved once.
-BASE_REV=""
-base_file() { # PATH OUT
+# The bytes of PATH as commit REV holds it, written to OUT: status 0, 2 where
+# that commit holds no PATH, 3 where it holds PATH as anything but a regular
+# file, and 1 where the commit or the file could not be read. A symlink is a
+# blob of its target's name, which no reader of a checkout sees: it follows
+# the link.
+rev_file() { # REV PATH OUT
   local listed kind blob
-  if [ -z "$BASE_REV" ]; then
-    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
-      BASE_REV=""
-    [ -n "$BASE_REV" ] || return 1
-  fi
-  listed="$(git -C "$repo" ls-tree "$BASE_REV" -- "$1" 2>/dev/null)" || return 1
+  listed="$(git -C "$repo" ls-tree "$1" -- "$2" 2>/dev/null)" || return 1
   [ -n "$listed" ] || return 2
+  case "${listed%% *}" in
+    100644 | 100755) ;;
+    *) return 3 ;;
+  esac
   kind="${listed#* }"
   kind="${kind%% *}"
   blob="${listed%%"$TAB"*}"
   blob="${blob##* }"
   [ "$kind" = blob ] || return 1
-  git -C "$repo" cat-file blob "$blob" >"$2" 2>/dev/null
+  git -C "$repo" cat-file blob "$blob" >"$3" 2>/dev/null || return 1
+}
+
+# rev_file at the commit --base names. BASE_REV is that commit, resolved once.
+BASE_REV=""
+base_file() { # PATH OUT
+  if [ -z "$BASE_REV" ]; then
+    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
+      BASE_REV=""
+    [ -n "$BASE_REV" ] || return 1
+  fi
+  rev_file "$BASE_REV" "$1" "$2"
 }
 
 base_settings() {
@@ -911,8 +970,222 @@ if [ ! -s "$paths_file" ] && [ "$harness_verdict" != harness_only=true ]; then
   answer standard "${harness_note:-cause=no-changed-paths}"
 fi
 
-! path_class_matches before-render standard ||
-  answer standard "cause=$CHANGE_CLASS_PATH_CAUSE" measured
+# The settings admission the header states. A key no CI job reads decides no
+# render or classifier input, the reason a configuration source is refused.
+# A table other than [env] counts as a change: the reader ignores it and
+# other tools may read it. The ceiling is read at the trivial rule below,
+# and answer() turns any other class an admitted change reaches into the
+# refusal.
+settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
+
+# The keys a merge-group run reads from the base never qualify, the
+# allowlist itself included: their breakage stops the queue that would merge
+# the repair.
+settings_key_admitted() { # KEY
+  local glob
+  case "$1" in
+    '' | [0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*) return 1 ;;
+    HARNESS_CI_*) return 1 ;;
+  esac
+  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac
+  set -f
+  for glob in $HARNESS_CI_TRIVIAL_SETTINGS; do
+    # shellcheck disable=SC2254
+    case "$1" in
+      $glob) set +f; return 0 ;;
+    esac
+  done
+  set +f
+  return 1
+}
+
+# FILE without its comment lines, blank lines and admitted [env]
+# assignments, at RESIDUE, and each admitted key it assigns on stdout. The
+# reader validates headers; settings_values runs it on the same bytes.
+# Returns 2 where the lines this loop read are not FILE's bytes: Bash's read
+# drops a NUL, as the reader's own loop does, and git counts a file holding
+# one as binary, so its lines escape the trivial ceiling.
+settings_scan() { # FILE RESIDUE
+  (
+    exec 3>&1 1>&2
+    # shellcheck source=../../orch/scripts/lib/kendex-env.sh
+    . "$ORCH_DIR/scripts/lib/kendex-env.sh" || exit 1
+    : >"$2" && : >"$2.read" || exit 1
+    section=""
+    while :; do
+      newline=$'\n'
+      IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
+      printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
+      kendex_trim trimmed "${line%$'\r'}"
+      case "$trimmed" in
+        '' | '#'*) continue ;;
+        '['*) section="${trimmed#\[}" section="${section%\]}" ;;
+        *=*)
+          kendex_trim key "${trimmed%%=*}"
+          if [ "$section" = env ] && settings_key_admitted "$key"; then
+            printf '%s\n' "$key" >&3
+            continue
+          fi ;;
+      esac
+      printf '%s\n' "$line" >>"$2" || exit 1
+    done <"$1"
+    status=0
+    cmp -s -- "$1" "$2.read" || status=$?
+    case "$status" in
+      0) ;;
+      1) exit 2 ;;
+      *) exit 1 ;;
+    esac
+  )
+}
+
+# KEY=value for each KEY the reader loads from FILE. Returns 1 where it
+# refuses FILE. The keys arrive as arguments, which no loaded key can
+# overwrite.
+settings_values() { # FILE KEY...
+  (
+    exec 3>&1 1>&2
+    # shellcheck source=../../orch/scripts/lib/kendex-env.sh
+    . "$ORCH_DIR/scripts/lib/kendex-env.sh" || exit 1
+    for key in "${@:2}"; do unset "$key" || exit 1; done
+    kendex_load_settings_file "$1" || exit 1
+    for key in "${@:2}"; do
+      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
+    done
+  )
+}
+
+# The keys whose value differs between the range's endpoints of PATH, as
+# SETTINGS_FILE_KEYS. Returns 1, with the admission line, where admission
+# refuses the file. The line scan cannot tell a comment from a line inside a
+# multiline string, so a multiline string delimiter at either endpoint
+# refuses the file.
+settings_file_admitted() { # PATH
+  local side rev status keys base_values head_values key line base_value head_value
+  if ! : >"$work/settings-keys"; then
+    settings_note "cause=settings-unreadable path=$1"
+    return 1
+  fi
+  for side in base head; do
+    rev="$base_rev"
+    [ "$side" = base ] || rev="$head_rev"
+    status=0
+    rev_file "$rev" "$1" "$work/settings-$side" || status=$?
+    case "$status" in
+      0) ;;
+      2) : >"$work/settings-$side" || status=1 ;;
+      3)
+        settings_note "cause=settings-not-regular path=$1 side=$side"
+        return 1 ;;
+    esac
+    [ "$status" = 0 ] || [ "$status" = 2 ] || {
+      settings_note "cause=settings-unreadable path=$1 side=$side rev=${rev:-unresolved}"
+      return 1
+    }
+    status=0
+    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
+    case "$status" in
+      0)
+        settings_note "cause=multiline-string path=$1 side=$side"
+        return 1 ;;
+      1) ;;
+      *)
+        settings_note "cause=settings-unreadable path=$1 side=$side"
+        return 1 ;;
+    esac
+    status=0
+    settings_scan "$work/settings-$side" "$work/settings-residue-$side" \
+      >>"$work/settings-keys" || status=$?
+    case "$status" in
+      0) ;;
+      2)
+        settings_note "cause=settings-bytes-dropped path=$1 side=$side"
+        return 1 ;;
+      *)
+        settings_note "cause=settings-unreadable path=$1 side=$side"
+        return 1 ;;
+    esac
+  done
+  if ! keys="$(LC_ALL=C sort -u "$work/settings-keys")"; then
+    settings_note "cause=settings-unreadable path=$1"
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  if ! base_values="$(settings_values "$work/settings-base" $keys)"; then
+    settings_note "cause=settings-unparsed path=$1 side=base"
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then
+    settings_note "cause=settings-unparsed path=$1 side=head"
+    return 1
+  fi
+  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then
+    settings_note "cause=unadmitted-change path=$1"
+    return 1
+  fi
+  SETTINGS_FILE_KEYS=""
+  for key in $keys; do
+    base_value="" head_value=""
+    while IFS= read -r line; do
+      case "$line" in "$key="*) base_value="=${line#*=}" ;; esac
+    done <<<"$base_values"
+    while IFS= read -r line; do
+      case "$line" in "$key="*) head_value="=${line#*=}" ;; esac
+    done <<<"$head_values"
+    [ "$base_value" = "$head_value" ] || SETTINGS_FILE_KEYS="$SETTINGS_FILE_KEYS,$key"
+  done
+}
+
+# SETTINGS_FILES, the admitted files one per line in byte order, and
+# SETTINGS_ADMITTED, their class-line fields. Returns 1, with the admission
+# line, where admission refuses the change. Another event defines no range
+# the size rules read, and a base whose settings cannot be read holds no
+# allowlist.
+settings_admission() {
+  local path files="" file key keys=""
+  case "$event" in
+    pull_request | merge_group) ;;
+    *)
+      settings_note "cause=unsupported-event event=$event"
+      return 1 ;;
+  esac
+  base_settings || {
+    settings_note "$MEASURE_CAUSE"
+    return 1
+  }
+  case "${HARNESS_CI_TRIVIAL_SETTINGS:-}" in
+    *[![:space:]]*) ;;
+    *) settings_note "cause=allowlist-unset"; return 1 ;;
+  esac
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    change_class_path "$path" before-render
+    [ "$CHANGE_CLASS_PATH" = standard ] || continue
+    case " $BASE_SETTINGS_FILES " in
+      *" $path "*) files="$files$path"$'\n' ;;
+      *) settings_note "cause=configuration-file path=$path"; return 1 ;;
+    esac
+  done <<<"$changed"
+  if ! files="$(printf '%s' "$files" | LC_ALL=C sort -u)"; then
+    settings_note "cause=settings-unreadable"
+    return 1
+  fi
+  while IFS= read -r file; do
+    settings_file_admitted "$file" || return 1
+    for key in ${SETTINGS_FILE_KEYS//,/ }; do
+      case ",$keys," in *",$key,"*) ;; *) keys="$keys,$key" ;; esac
+    done
+  done <<<"$files"
+  keys="${keys#,}"
+  SETTINGS_FILES="$files"
+  SETTINGS_ADMITTED="settings=${files//$'\n'/,} keys=${keys:--}"
+}
+
+if path_class_matches before-render standard; then
+  SETTINGS_REFUSAL="cause=$CHANGE_CLASS_PATH_CAUSE"
+  settings_admission || answer standard "$SETTINGS_REFUSAL" measured
+fi
 
 # Repository exclusions add to the shared list and precede every render and
 # size class. The base alone declares them so the change cannot select its
@@ -1360,19 +1633,40 @@ case "$trivial_max" in
     die "cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES" \
       "HARNESS_CI_TRIVIAL_MAX_LINES must be a whole number" ;;
 esac
+# An admitted settings file is a member of the trivial set, and the rule
+# below judges every other changed path. In the docs set, harness-only lists
+# each admitted file outside it, which also shows its list was read.
+trivial_paths="$changed"
+docs_trivial=false
+[ "$docs_verdict" != "docs_only=true" ] || docs_trivial=true
+settings_cause=""
+if [ -n "$SETTINGS_ADMITTED" ]; then
+  trivial_paths=""
+  while IFS= read -r path; do
+    case $'\n'"$SETTINGS_FILES"$'\n' in
+      *$'\n'"$path"$'\n'*) ;;
+      *) trivial_paths="$trivial_paths$path"$'\n' ;;
+    esac
+  done <<<"$changed"
+  if [ "$docs_verdict" = docs_only=false ] &&
+    outside="$(LC_ALL=C sort -u -- "$docs_outside")" && [ "$outside" = "$SETTINGS_FILES" ]; then
+    docs_trivial=true
+  fi
+  settings_cause="cause=allowlisted-settings $SETTINGS_ADMITTED"
+fi
 # The ceiling bounds what a trivial diff can change unreviewed, and a
 # documentation path can still be one the product reads — compiled into a
 # binary, shipped as a template.
 if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
   if [ "$total" -le "$trivial_max" ]; then
     set_globs "$HARNESS_CI_TRIVIAL_PATHS"
-    path_matches every &&
-      answer_narrow trivial "cause=allowlisted-paths lines=$total"
+    path_matches every "$trivial_paths" &&
+      answer_narrow trivial "${settings_cause:-cause=allowlisted-paths} lines=$total"
   fi
 else
   # The shipped allowlist is that mode's own path set, read from its verdict.
-  if [ "$docs_verdict" = "docs_only=true" ] && [ "$total" -le "$trivial_max" ]; then
-    answer_narrow trivial "cause=documentation-paths lines=$total"
+  if [ "$docs_trivial" = true ] && [ "$total" -le "$trivial_max" ]; then
+    answer_narrow trivial "${settings_cause:-cause=documentation-paths} lines=$total"
   fi
 fi
 
