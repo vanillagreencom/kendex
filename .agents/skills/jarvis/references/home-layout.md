@@ -23,6 +23,10 @@ Read when setting up an assistant home, choosing a home path or starting a conti
 
 A home whose `JARVIS_UNATTENDED_HARNESSES` names `copilot` skips this step: Copilot then launches with `--allow-all`, which also trusts the folder without the dialog. Otherwise, before the first Jarvis Start with Copilot CLI, open this home in native Copilot with the selected account. Approve its folder-trust request once. Jarvis does not approve native security requests. Without this setup, Start ends the native session and reports Blocked with reason `trust-required`, naming the dialog's question in its detail.
 
+## Claude Code bypass consent
+
+A home whose `JARVIS_UNATTENDED_HARNESSES` names `claude` launches Claude Code with `--dangerously-skip-permissions`. Claude Code asks once per account to accept Bypass Permissions mode, and Jarvis does not approve native security requests. Before the first Jarvis Start with Claude Code, launch the selected account once natively with `--dangerously-skip-permissions` and accept. Without this setup, Start waits at that dialog until its launch bound ends and reports Failed with reason `launch-failed`.
+
 ## Session record
 
 The [session command](../workflows/session.md#session-command) keeps one tmux controller per canonical home. Its record stays across logins and restarts. Each home uses a separate tmux socket. Status names that socket and the owned session, window and pane.
