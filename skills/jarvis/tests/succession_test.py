@@ -34,6 +34,10 @@ row = json.loads(config.read_text())
 with Path(row["calls"]).open("a") as stream:
     stream.write(json.dumps(args) + "\\n")
 harness = args[args.index("--harness") + 1]
+# A failing dependency answers every walk pick with an error exit.
+if row["harness"] == "fail" and "--lane" not in args:
+    print("lanes: usage fetch failed", file=sys.stderr)
+    sys.exit(2)
 floor = float(args[args.index("--min-headroom-pct") + 1])
 if row.get("shared") and "--for-overseer" not in args:
     floor = max(floor, 50)
@@ -119,7 +123,9 @@ print(json.dumps({"config_dir": row["account"]}))
         # account comes last: kept as it is when it has room, and otherwise
         # replaced by another account of its harness, or none, which refuses
         # before the predecessor ends. target is the one harness with an
-        # account the walk can pick; none names no such harness. A Copilot
+        # account the walk can pick; none names no such harness, and fail a
+        # walk whose every reading fails, which refuses even an account with
+        # room since the walk stops at its first entry unjudged. A Copilot
         # account whose owner turned extensions off stays untouched when it is
         # kept, since its session already runs there. The recorded account has
         # room above the trigger, 5%, and below the work-item reserve, 50%,
@@ -131,7 +137,7 @@ print(json.dumps({"config_dir": row["account"]}))
                 ("low", "claude", 4, "codex", "claude"), ("walled", "claude", 0, "copilot", "copilot"),
                 ("room-first-entry", "codex", 20, "claude", ""), ("room-no-entry", "claude", 20, "none", ""),
                 ("room-no-entry", "copilot", 20, "none", ""), ("walled-no-entry", "claude", 0, "none", ""),
-                ("app-missing", "claude", 0, "codex", "")):
+                ("pick-fails", "claude", 20, "fail", ""), ("app-missing", "claude", 0, "codex", "")):
             with self.subTest(state=state, start=start, target=target):
                 self.call("start", harness=start, mode="new")
                 previous = self.wait()
@@ -178,17 +184,23 @@ print(json.dumps({"config_dir": row["account"]}))
                 settings = self.account / "settings.json"
                 if start == "copilot":
                     settings.write_text('{"enabledFeatureFlags":{"EXTENSIONS":false}}\n')
-                if kept and refused:
+                failed = target == "fail"
+                if kept and refused or failed:
                     saved = self.record.read_bytes()
                     answer, code = self.call("succeed")
                     self.assertEqual((answer["state"], code), ("failed", 1))
                     self.assertEqual(self.record.read_bytes(), saved)
                     self.assertEqual(self.call("status")[0]["terminal"], previous["terminal"])
                     self.assertEqual(len(self.started()), native_count)
-                    # The caller entry's own pick leaves the spent account out.
                     queries = [json.loads(line) for line in calls.read_text().splitlines()]
-                    self.assertEqual([query[query.index("--harness") + 1] for query in queries[1:]], order + [start])
-                    self.assertEqual(queries[-1][queries[-1].index("--exclude-lane") + 1], str(self.account))
+                    walked = [query[query.index("--harness") + 1] for query in queries[1:]]
+                    if failed:
+                        # The first failed reading stops the walk.
+                        self.assertEqual(walked, order[:1])
+                    else:
+                        # The caller entry's own pick leaves the spent account out.
+                        self.assertEqual(walked, order + [start])
+                        self.assertEqual(queries[-1][queries[-1].index("--exclude-lane") + 1], str(self.account))
                     self.call("stop")
                     self.wait("stopped", persisted_stop=True)
                     (self.home / ".lane-fixture.json").unlink()
