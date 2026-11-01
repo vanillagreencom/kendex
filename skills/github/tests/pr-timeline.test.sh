@@ -700,20 +700,17 @@ assert_eq "$(run . --bogus) $(cat "$TMP_ROOT/stderr")" 'rc=1 {"error":"Unknown o
 echo "=== control ==="
 # One planted defect proves the suite goes red. It runs from a private copy
 # of pr-timeline.sh beside a link to the shipped lib, so the source tree is
-# never written; mutate writes that copy with ANCHOR, found once in the
-# source, replaced by R.
+# never written; that copy has the job page size, found once in the source,
+# raised to 100.
 mkdir -p "$TMP_ROOT/scripts/commands"
 ln -s "$REPO_ROOT/skills/github/scripts/lib" "$TMP_ROOT/scripts/lib"
 BIN="$TMP_ROOT/scripts/commands/pr-timeline.sh"
-mutate() { # ANCHOR REPLACEMENT
-  assert_eq "$(grep -Fc -- "$1" "$PR_TIMELINE")" "1" "the control finds its one site"
-  A="$1" R="$2" \
-    awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
-    "$PR_TIMELINE" > "$BIN"
-  assert_eq "$(grep -Fc -- "$1" "$BIN")" "0" "the control applied its mutation"
-}
-
-mutate '/jobs?per_page=30' '/jobs?per_page=100'
+JOB_PAGE='/jobs?per_page=30'
+assert_eq "$(grep -Fc -- "$JOB_PAGE" "$PR_TIMELINE")" "1" "the control finds its one site"
+A="$JOB_PAGE" R='/jobs?per_page=100' \
+  awk '{ i = index($0, ENVIRON["A"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["R"] substr($0, i + length(ENVIRON["A"])); print }' \
+  "$PR_TIMELINE" > "$BIN"
+assert_eq "$(grep -Fc -- "$JOB_PAGE" "$BIN")" "0" "the control applied its mutation"
 if (FAIL=0; large_attempt; [[ "$FAIL" -eq 0 ]]) > "$TMP_ROOT/jobs-control.out"; then
   assert_eq 'accepted' 'refused' 'control: the large job page must fail the merged rerun case'
 else

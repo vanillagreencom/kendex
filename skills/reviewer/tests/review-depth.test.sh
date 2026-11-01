@@ -66,21 +66,18 @@ assert_eq "$(cat "$DEPTH_FIXTURE_ARGS")" "$expected_args" 'the real reader forwa
 # class. The micro/small row is a micro escape on Copilot no-files, whose small
 # run measures the same micro diff. floor_line says whether stderr carries the
 # floor's key line, which it does only when the floor changed the depth.
-floor_table() {
-  local command="$1" class measured floor depth expected_status floor_line status output before
-  before="$FAIL"
-  while read -r class measured floor depth expected_status floor_line; do
-    status=0
-    output="$(DEPTH_FIXTURE_CLASS="$class" DEPTH_FIXTURE_MEASURED="$measured" \
-      "$command" --base base-ref --floor "$floor" 2>"$TMP_ROOT/stderr")" || status=$?
-    assert_eq "$status" "$expected_status" "$class/floor=$floor status" "$TMP_ROOT/stderr"
-    if [ "$expected_status" = 0 ]; then
-      assert_eq "$output" "change_class=$class review_depth=$depth native_approval=unchanged" "$class/floor=$floor depth"
-    else
-      assert_eq "$output" '' "$class/floor=$floor publishes no depth"
-    fi
-    assert_eq "$(grep -c '^review-depth: floor=' "$TMP_ROOT/stderr" || :)" "$floor_line" "$class/floor=$floor floor line"
-  done <<'ROWS'
+while read -r class measured floor depth expected_status floor_line; do
+  status=0
+  output="$(DEPTH_FIXTURE_CLASS="$class" DEPTH_FIXTURE_MEASURED="$measured" \
+    "$DEPTH" --base base-ref --floor "$floor" 2>"$TMP_ROOT/stderr")" || status=$?
+  assert_eq "$status" "$expected_status" "$class/floor=$floor status" "$TMP_ROOT/stderr"
+  if [ "$expected_status" = 0 ]; then
+    assert_eq "$output" "change_class=$class review_depth=$depth native_approval=unchanged" "$class/floor=$floor depth"
+  else
+    assert_eq "$output" '' "$class/floor=$floor publishes no depth"
+  fi
+  assert_eq "$(grep -c '^review-depth: floor=' "$TMP_ROOT/stderr" || :)" "$floor_line" "$class/floor=$floor floor line"
+done <<'ROWS'
 micro true small bot 0 1
 standard true small full 0 0
 small true micro bot 0 0
@@ -88,9 +85,6 @@ trivial true micro none 0 0
 standard false small absent 3 0
 micro true trivial absent 2 0
 ROWS
-  [ "$FAIL" -eq "$before" ]
-}
-floor_table "$DEPTH" || :
 
 while read -r name marker classifier_exit expected_cause; do
   [ "$marker" != absent ] || marker=''
@@ -120,10 +114,10 @@ for option in --class --event; do
   assert_eq "$output" '' "$option publishes no depth"
 done
 
-# The control changes one real depth decision in a disposable source copy.
-mutant() { # NAME OLD NEW
-  cp "$DEPTH" "$INSTALL/reviewer/scripts/$1"
-  python3 - "$INSTALL/reviewer/scripts/$1" "$2" "$3" <<'PY'
+# The control changes one real depth decision in a disposable source copy:
+# the small class reviewed at full depth instead of bot.
+cp "$DEPTH" "$INSTALL/reviewer/scripts/small-full"
+python3 - "$INSTALL/reviewer/scripts/small-full" 'small) DEPTH=bot ;;' 'small) DEPTH=full ;;' <<'PY'
 from pathlib import Path
 import sys
 p, old, new = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
@@ -134,8 +128,6 @@ after = before.replace(old, new)
 assert after != before
 p.write_text(after)
 PY
-}
-mutant small-full 'small) DEPTH=bot ;;' 'small) DEPTH=full ;;'
 status=0
 (depth_table "$INSTALL/reviewer/scripts/small-full") >"$TMP_ROOT/control.log" 2>&1 || status=$?
 assert_eq "$status" 1 'must-fail control rejects the changed small depth'

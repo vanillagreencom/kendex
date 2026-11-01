@@ -131,7 +131,7 @@ echo "=== decisions issue action rows ==="
 evaluate_action_rows "$DECISIONS" normal
 
 echo "=== must-fail control ==="
-lookup_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-issue-match/decisions" '      .[] | select(.research | test($issue + "(?![0-9])"; "i")) |' '      .[] | select(false) |' 1)"
+lookup_mutant="$(decider_mutate_script "$TMP_ROOT/no-issue-match/decisions" '      .[] | select(.research | test($issue + "(?![0-9])"; "i")) |' '      .[] | select(false) |' 1)"
 failures="$(evaluate_action_rows "$lookup_mutant" control supported-issue-lookup)"
 if [[ "$failures" == *'|supported-issue-lookup|'* ]]; then
   pass "wrong lookup result fails the supported lookup row"

@@ -168,8 +168,8 @@ run() {
 }
 
 # want_of TAIL — the output a command must print, from TAIL, a row's
-# `rc|out|err|calls` expectation. The forward table and every must-fail control
-# below read their expectation through here, so a control can never compare
+# `rc|out|err|calls` expectation. The forward table and the must-fail control
+# below read their expectation through here, so the control can never compare
 # against a spelling no forward row asserts.
 want_of() {
   local rc out err calls field
@@ -203,25 +203,6 @@ run_table() {
     assert_eq "$got" "$want" "$label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
-}
-
-# assert_killed GOT FORWARD MUTANT LABEL — the mutated command's output is not
-# what the forward row requires, and is what this mutation produces.
-#
-# The first half is the kill: the very comparison that passes against the
-# shipped command fails against the mutant, so the forward row is established as
-# the thing that catches the defect rather than merely described. The second
-# half pins what the mutation changed, so a mutant broken some other way is not
-# counted as the kill.
-assert_killed() {
-  local got="$1" forward="$2" mutant="$3" label="$4"
-  if [[ "$got" == "$forward" ]]; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        the forward row still passes against the mutant: %s\n' \
-      "$label" "$got"
-    return
-  fi
-  assert_eq "$got" "$mutant" "$label"
 }
 
 RESOLVED_TWO="{\"success\":true,\"resolved\":[\"$ID_A\",\"$ID_B\"],\"failed\":[]}"
@@ -280,8 +261,11 @@ replace_first() {
   return 1
 }
 
-# mutate FILE OLD NEW — write FILE with its one literal OLD replaced by NEW,
-# then establish that the edit is in the file that will run.
+# drop_status_read — write the mutant resolve-thread.sh with its one literal
+# OLD, the line that reads the summary's `success` into the exit status,
+# replaced by NEW, a colon: the summary is still rendered and printed, but its
+# `success` no longer reaches the exit status. Then establish that the edit is
+# in the file that will run.
 #
 # A mutation that quietly does not land turns a must-fail control into a row
 # that passes on the unmutated script. So the substitution uses no tool whose
@@ -295,14 +279,16 @@ replace_first() {
 #   - Only grep, head, tail, cmp, cp, chmod and printf run here, each with POSIX
 #     options that BSD and GNU spell the same. The substitution itself is
 #     replace_first, which is Bash and nothing else.
-#   - The mutated bytes are copied onto FILE and the execute bit set again,
-#     rather than moved over it, which drops the mode.
+#   - The mutated bytes are copied onto the mutant and the execute bit set
+#     again, rather than moved over it, which drops the mode.
 #
 # The proof that the edit landed is `cmp`: the mutated bytes differ from the
-# staged bytes, and FILE no longer carries OLD. Counting NEW would establish
-# nothing on its own: drop_status_read's NEW is a colon.
-mutate() {
-  local file="$1" old="$2" new="$3" hit count lineno line mutated
+# staged bytes, and the mutant no longer carries OLD. Counting NEW would
+# establish nothing on its own: NEW is a colon.
+drop_status_read() {
+  local file="$MUTANT_DIR/commands/resolve-thread.sh" new=':' hit count lineno line mutated
+  local old='[ "$(jq -r '"'"'.success'"'"' <<<"$summary")" = "true" ] || exit 1'
+  cp "$COMMANDS/resolve-thread.sh" "$file"
   hit="$(grep -F -n -- "$old" "$file" || true)"
   count="$(printf '%s' "$hit" | grep -c . || true)"
   [[ "$count" == "1" ]] || {
@@ -347,12 +333,6 @@ mutate() {
   }
 }
 
-# drop_status_read FILE — the summary is still rendered and printed, but its
-# `success` no longer reaches the exit status.
-drop_status_read() {
-  mutate "$1" '[ "$(jq -r '"'"'.success'"'"' <<<"$summary")" = "true" ] || exit 1' ':'
-}
-
 # The comparison each summary filter parenthesizes, as shipped. The thread
 # commands share a form; dismiss-review counts refused entries instead.
 LIVE_THREAD='(($failed | length) == 0)'
@@ -375,17 +355,24 @@ assert_eq "$(live_count "$COMMANDS/dismiss-review.sh" "$LIVE_DISMISS")" 1 \
 
 echo "=== must-fail control: the exit status stops reading the summary ==="
 # The mutant runs against the expectation its forward row asserts and requires
-# that expectation to fail, which is the kill; the mutation it leaves behind is
-# the same summary under exit 0, so the tail it pins is its forward tail with
-# the status replaced.
-cp "$COMMANDS/resolve-thread.sh" "$MUTANT_DIR/commands/"
-drop_status_read "$MUTANT_DIR/commands/resolve-thread.sh"
+# that expectation to fail, which is the kill: the forward row is then the
+# thing that catches the defect rather than merely described. The mutation it
+# leaves behind is the same summary under exit 0, so the tail it pins is its
+# forward tail with the status replaced, and a mutant broken some other way is
+# not counted as the kill.
+drop_status_read
 COMMAND_DIR="$MUTANT_DIR/commands"
 
 build resolve-two-partial
-assert_killed "$(run "$ID_A $ID_B")" \
-  "$(want_of "$PARTIAL_RESOLVE")" "$(want_of "0|${PARTIAL_RESOLVE#*|}")" \
-  "must-fail control: an unresolved thread reads as a success"
+KILLED="$(run "$ID_A $ID_B")"
+if [[ "$KILLED" == "$(want_of "$PARTIAL_RESOLVE")" ]]; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        the forward row still passes against the mutant: %s\n' \
+    "must-fail control: an unresolved thread reads as a success" "$KILLED"
+else
+  assert_eq "$KILLED" "$(want_of "0|${PARTIAL_RESOLVE#*|}")" \
+    "must-fail control: an unresolved thread reads as a success"
+fi
 COMMAND_DIR="$COMMANDS"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

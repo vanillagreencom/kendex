@@ -261,32 +261,24 @@ run_table "a 404 at the issue endpoint and another failure at the review one" "\
 the review endpoint's own error is reported, and the issue endpoint's 404 is carried beside it^2633519824 Fixed^1^-^error detail=issues=$STDERR_404 pulls=$BROKEN_422^repo,api:$ISSUE_PATH,api:$PULLS_PATH
 "
 
-# mutate LABEL FROM TO — a copy of edit-comment.sh beside a copy of the lib,
-# with every FROM replaced by TO. The replacement's occurrence count is
+echo "=== must-fail control: the predicate never fires ==="
+# A copy of edit-comment.sh beside a copy of the lib, with every predicate
+# call replaced by `false`, which leaves the pulls call and the keyed refusal
+# in the file and unreachable: the pre-fix behaviour, where the issue
+# endpoint's 404 is the final answer. The replacement's occurrence count is
 # asserted in both directions, so a call site that moved leaves the control
 # refusing rather than silently testing an unmutated file.
 MUTANT_DIR="$TMP_ROOT/mutant"
 PREDICATE='gh_error_is_not_found "$result"'
-mutate() {
-  local label="$1" from="$2" to="$3" dir
-  dir="$MUTANT_DIR/$label"
-  rm -rf "$dir"
-  mkdir -p "$dir/commands"
-  cp -R "$REPO_ROOT/skills/github/scripts/lib" "$dir/lib"
-  cp "$EDIT_COMMENT" "$dir/commands/edit-comment.sh"
-  assert_eq "$(grep -Fc -- "$from" "$dir/commands/edit-comment.sh")" "2" \
-    "control $label finds both live predicate call sites"
-  sed -i.bak "s|$from|$to|g" "$dir/commands/edit-comment.sh"
-  assert_eq "$(grep -Fc -- "$from" "$dir/commands/edit-comment.sh")" "0" \
-    "control $label applied the mutation"
-  SUBJECT="$dir/commands/edit-comment.sh"
-}
-
-echo "=== must-fail control: the predicate never fires ==="
-# `false` where the predicate stood leaves the pulls call and the keyed
-# refusal in the file and unreachable, which is the pre-fix behaviour: the
-# issue endpoint's 404 is the final answer.
-mutate never "$PREDICATE" 'false'
+mkdir -p "$MUTANT_DIR/commands"
+cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
+cp "$EDIT_COMMENT" "$MUTANT_DIR/commands/edit-comment.sh"
+assert_eq "$(grep -Fc -- "$PREDICATE" "$MUTANT_DIR/commands/edit-comment.sh")" "2" \
+  "control never finds both live predicate call sites"
+sed -i.bak "s|$PREDICATE|false|g" "$MUTANT_DIR/commands/edit-comment.sh"
+assert_eq "$(grep -Fc -- "$PREDICATE" "$MUTANT_DIR/commands/edit-comment.sh")" "0" \
+  "control never applied the mutation"
+SUBJECT="$MUTANT_DIR/commands/edit-comment.sh"
 SCENARIO="review-comment"
 build
 GOT="$(run '2633519824 Fixed')"
@@ -321,18 +313,10 @@ assert_eq "$(pattern_census "$SCRIPTS")" \
   "the 404 pattern is written once in the lib and once in label-add's wider permission question"
 
 # The census's must-fail control copies the scripts, plants one further
-# spelling of the pattern, and asserts the census counts it.
-plant() { # LABEL FILE -> the tree's path
-  local label="$1" target="$2" dir
-  dir="$TMP_ROOT/census/$label"
-  rm -rf -- "${dir:?}"
-  mkdir -p "$TMP_ROOT/census"
-  cp -R "$SCRIPTS" "$dir"
-  printf '%s\n' "    grep -Eq 'HTTP 404|$NEEDLE' <<<\"\$out\" && :" >>"$dir/$target"
-  printf '%s' "$dir"
-}
-
-CENSUS_TREE="$(plant readopted commands/label-add.sh)"
+# spelling of the pattern in label-add, and asserts the census counts it.
+CENSUS_TREE="$TMP_ROOT/census"
+cp -R "$SCRIPTS" "$CENSUS_TREE"
+printf '%s\n' "    grep -Eq 'HTTP 404|$NEEDLE' <<<\"\$out\" && :" >>"$CENSUS_TREE/commands/label-add.sh"
 assert_eq "$(pattern_census "$CENSUS_TREE")" \
   "commands/label-add.sh=2 lib/github-api.sh=1" \
   "must-fail control: the inline spelling back in label-add is counted, not absorbed by its file name"

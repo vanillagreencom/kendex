@@ -100,14 +100,6 @@ a path the repository list names answers before the selector runs|queue_only=tru
 a push runs no selector|queue_only=false cause=no-queue-path|slow/run.sh=2|declared_base||push'
 
 # The row of TABLE whose label is LABEL, as `expected|edits|base|env|event`.
-row_of() { # LABEL
-  local label expected edits row_base env row_event
-  while IFS='|' read -r label expected edits row_base env row_event; do
-    [ "$label" != "$1" ] || { printf '%s|%s|%s|%s|%s\n' "$expected" "$edits" "$row_base" "$env" "$row_event"; return 0; }
-  done <<<"$TABLE"
-  echo "FAIL: no row labelled '$1'" >&2
-  exit 1
-}
 
 rows=0
 while IFS='|' read -r label expected edits row_base ROW_ENV ROW_EVENT; do
@@ -123,10 +115,16 @@ require_rows queue-selector "$rows"
 # The suite's must-fail control: a planted copy that never calls the selector
 # answers the row it holds otherwise.
 planted="$(mutant no-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' -)"
-IFS='|' read -r _ edits row_base ROW_ENV ROW_EVENT <<<"$(row_of "a path the selector names is queue-only")"
+control_label="a path the selector names is queue-only"
+control_row=""
+while IFS='|' read -r label expected edits row_base env row_event; do
+  [ "$label" != "$control_label" ] || control_row="$edits|$row_base|$env|$row_event"
+done <<<"$TABLE"
+[ -n "$control_row" ] || { echo "FAIL: no row labelled '$control_label'" >&2; exit 1; }
+IFS='|' read -r edits row_base ROW_ENV ROW_EVENT <<<"$control_row"
 ROW_EVENT="${ROW_EVENT:-pull_request}"
 # shellcheck disable=SC2086
-assert_eq "control no-call for: a path the selector names is queue-only" "queue_only=false cause=no-queue-path" \
+assert_eq "control no-call for: $control_label" "queue_only=false cause=no-queue-path" \
   "$(run_row "$planted" "${!row_base}" $edits)"
 
 report queue-selector

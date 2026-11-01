@@ -99,7 +99,7 @@ git -C "$TMP_ROOT/proj" init -q
 second_opinion_install "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills"
 SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 RUNTIME="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion-runtime"
-# The control's mutant is written at the runtime's OWN DEPTH inside the fixture
+# Every mutant below is written at the runtime's OWN DEPTH inside the fixture
 # install, not into $TMP_ROOT: the runtime resolves the group-leader prefix
 # relative to its own directory, and a copy parked elsewhere refuses at startup
 # with group-leader-missing instead of running the case.
@@ -340,7 +340,7 @@ echo "=== the runtime says nothing of its own while a CLI runs ==="
 # fork and the exec, so no shell has anything to report. Repeated because the
 # defect was a race.
 #
-# One CLI serves this pair and the fork-window pair below: it records the two
+# One CLI serves this case and the fork-window cases below: it records the two
 # numbers that say whether the child took a group of its own, then holds for
 # CLI_HOLD seconds so a survivor is still there to be found.
 cat > "$TMP_ROOT/bin/recording-codex" <<'SH'
@@ -352,19 +352,19 @@ sleep "$CLI_HOLD"
 printf 'quiet answer\n'
 SH
 chmod +x "$TMP_ROOT/bin/recording-codex"
-quiet_group_run() { # RUNTIME LABEL -> what the runtime wrote for itself, empty when clean
-  local runtime="$1" label="$2" rc=0 _
+quiet_group_run() { # -> what the runtime wrote for itself, empty when clean
+  local label=quiet rc=0 _
   for _ in $(seq 1 25); do
     : > "$TMP_ROOT/$label.pid"; : > "$TMP_ROOT/$label.pgid"
     rc=0
     CLI_PID_FILE="$TMP_ROOT/$label.pid" CLI_PGID_FILE="$TMP_ROOT/$label.pgid" CLI_HOLD=0 \
-      "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" recording-codex < /dev/null \
+      "$RUNTIME" group-run "$TMP_ROOT/$label.cli-stderr" recording-codex < /dev/null \
       > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" || rc=$?
     [[ $rc -eq 0 ]] || { printf 'group-run exited %s\n' "$rc"; return 0; }
     [[ ! -s "$TMP_ROOT/$label.stderr" ]] || { cat "$TMP_ROOT/$label.stderr"; return 0; }
   done
 }
-quiet_noise="$(quiet_group_run "$RUNTIME" quiet)"
+quiet_noise="$(quiet_group_run)"
 [[ -z "$quiet_noise" ]] \
   || fail "the runtime wrote to its own stderr while a silent CLI ran: $quiet_noise"
 ok "25 group-run passes leave the runtime's own stderr empty"
@@ -392,12 +392,12 @@ exec "$SLOW_PERL_REAL" "$@"
 SH
 chmod +x "$TMP_ROOT/slowbin/perl"
 WIDENED_WINDOW=(SLOW_PERL_REAL="$SLOW_PERL_REAL" SLOW_PERL_DELAY=1 PATH="$TMP_ROOT/slowbin:$PATH")
-cancel_in_window() { # RUNTIME LABEL -> the surviving CLI's pid, empty when none
-  local runtime="$1" label="$2" job rc=0
+cancel_in_window() { # -> the surviving CLI's pid, empty when none
+  local label=window job rc=0
   : > "$TMP_ROOT/$label.pid"; : > "$TMP_ROOT/$label.pgid"
   env "${WIDENED_WINDOW[@]}" CLI_HOLD=120 \
     CLI_PID_FILE="$TMP_ROOT/$label.pid" CLI_PGID_FILE="$TMP_ROOT/$label.pgid" \
-    "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" recording-codex < /dev/null \
+    "$RUNTIME" group-run "$TMP_ROOT/$label.cli-stderr" recording-codex < /dev/null \
     > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" &
   job=$!
   # Well inside the slow perl's delay, and after the pid is recorded: the stop
@@ -415,11 +415,11 @@ cancel_in_window() { # RUNTIME LABEL -> the surviving CLI's pid, empty when none
 # substitution puts both in a subshell: the registration is lost when it exits
 # and the refusal ends only that subshell. What the rows below match on is
 # unchanged either way.
-launch_then_wait() { # RUNTIME LABEL -> what the wait command it printed reported
-  local label="$2" pid w cli_pid cli_pgid
+launch_then_wait() { # -> what the wait command it printed reported
+  local label=publish pid w cli_pid cli_pgid
   mkdir "$TMP_ROOT/$label-rt"
   env "${WIDENED_WINDOW[@]}" CLI_HOLD=30 CLI_PID_FILE="$TMP_ROOT/$label.pid" \
-    CLI_PGID_FILE="$TMP_ROOT/$label.pgid" "$1" launch "$TMP_ROOT/bin/recording-codex" \
+    CLI_PGID_FILE="$TMP_ROOT/$label.pgid" "$RUNTIME" launch "$TMP_ROOT/bin/recording-codex" \
     "$TMP_ROOT/$label-answer" "$TMP_ROOT/$label-rt" 60 false 5 quick q \
     > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr"
   w="$(sed -n 's/^wait: //p' "$TMP_ROOT/$label.stdout")"
@@ -464,7 +464,7 @@ launch_then_wait() { # RUNTIME LABEL -> what the wait command it printed reporte
 if [[ -z "$SLOW_PERL_REAL" ]]; then
   printf 'SKIP: the fork-window cases need the perl the runtime itself uses\n'
 else
-  window_survivor="$(cancel_in_window "$RUNTIME" window)"
+  window_survivor="$(cancel_in_window)"
   [[ -z "$window_survivor" ]] \
     || { STRAYS+=("$window_survivor"); fail "a cancel in the fork window left the CLI $window_survivor running"; }
   ok "a cancel inside the fork window leaves no CLI behind"
@@ -473,7 +473,7 @@ else
   # The wait command launch prints probes `-$pid`, so a worker published before
   # it has grouped reads there as one that is gone: exit 1, relaunch, and a
   # second CLI run while the first goes on unsupervised.
-  launch_then_wait "$RUNTIME" publish > "$TMP_ROOT/publish.reported"
+  launch_then_wait > "$TMP_ROOT/publish.reported"
   case "$(cat < "$TMP_ROOT/publish.reported")" in
     *"is gone and published no status"*) fail "launch published a worker its own wait read as gone" ;;
   esac
@@ -496,11 +496,11 @@ while :; do sleep 0.05; done
 SH
 chmod +x "$TMP_ROOT/bin/signal-codex"
 
-assert_cli_signal() { # RUNTIME SIGNAL LABEL
-  local runtime="$1" signal="$2" label="$3" runner cli
+assert_cli_signal() { # SIGNAL
+  local signal="$1" label="cli-$1" runner cli
   : > "$TMP_ROOT/$label.observed" || fail "$label: cannot create signal record"
   CLI_READY_FILE="$TMP_ROOT/$label.ready" CLI_SIGNAL_FILE="$TMP_ROOT/$label.observed" \
-    "$runtime" group-run "$TMP_ROOT/$label.clierr" "$TMP_ROOT/bin/signal-codex" \
+    "$RUNTIME" group-run "$TMP_ROOT/$label.clierr" "$TMP_ROOT/bin/signal-codex" \
     </dev/null > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" &
   runner=$!
   STRAYS+=("$runner")
@@ -512,15 +512,12 @@ assert_cli_signal() { # RUNTIME SIGNAL LABEL
     kill -TERM "$cli" 2>/dev/null || true
   fi
   wait "$runner" || fail "$label: the signal CLI or its cleanup failed"
-  if grep -Fxq -- "$signal" "$TMP_ROOT/$label.observed"; then
-    ok "the launched CLI observes $signal"
-  else
-    printf 'signal-not-observed: signal=%s\n' "$signal" >&2
-    return 1
-  fi
+  grep -Fxq -- "$signal" "$TMP_ROOT/$label.observed" \
+    || fail "$label: the launched CLI did not observe $signal"
+  ok "the launched CLI observes $signal"
 }
 for signal in INT QUIT; do
-  assert_cli_signal "$RUNTIME" "$signal" "cli-$signal"
+  assert_cli_signal "$signal"
 done
 
 echo "=== a signal to second-opinion still reaches the CLI ==="
@@ -698,12 +695,12 @@ assert_contains "$TMP_ROOT/cleanup-fail.stderr" \
   || fail "cleanup failure deleted the runtime state needed to retry"
 ok "cleanup failure preserves the runtime directory"
 
-run_launch_cleanup_failure() { # RUNTIME LABEL [CLI]
-  local runtime="$1" label="$2" cli="${3:-treeish-codex}" root rc=0
+run_launch_cleanup_failure() { # LABEL [CLI]
+  local label="$1" cli="${2:-treeish-codex}" root rc=0
   root="$TMP_ROOT/$label"
   mkdir "$root-runtime"
   : > "$root-runtime/pid"
-  RUNTIME_PATH="$runtime" SECOND_OPINION_PATH="$SECOND_OPINION" CASE_ROOT="$TMP_ROOT" \
+  RUNTIME_PATH="$RUNTIME" SECOND_OPINION_PATH="$SECOND_OPINION" CASE_ROOT="$TMP_ROOT" \
     CASE_LABEL="$label" STOP_CAPTURE="$root.stop-pid" \
     SECOND_OPINION_LAUNCH_MODEL=claude SECOND_OPINION_CODEX_CMD="$cli" \
     CLI_READY_FILE="$root.ready" CLI_KID_FILE="$root.kid" bash -c '
@@ -772,7 +769,7 @@ cleanup_captured_launch() { # LABEL
     || fail "$label: the CLI group $cli_group survived KILL"
 }
 
-rc="$(run_launch_cleanup_failure "$RUNTIME" launch-cleanup)"
+rc="$(run_launch_cleanup_failure launch-cleanup)"
 assert_rc "$rc" 1 "a publication failure with failed cleanup exits nonzero"
 assert_contains "$TMP_ROOT/launch-cleanup.stderr" \
   "injected-launch-cleanup-refusal: group=$(cat < "$TMP_ROOT/launch-cleanup.stop-pid")" \
@@ -802,7 +799,7 @@ echo "=== control: a captured launch's teardown leaves nothing writing under the
 # predicate for this survivor; `-A` is there because a dotfile entry left behind
 # also keeps `rm -rf` from removing the root.
 laggard_entries() { ls -A "$TMP_ROOT" | grep '^laggard[.-]'; }
-rc="$(run_launch_cleanup_failure "$RUNTIME" laggard laggard-codex)"
+rc="$(run_launch_cleanup_failure laggard laggard-codex)"
 assert_rc "$rc" 1 "the laggard CLI's launch reports its cleanup failure"
 cleanup_captured_launch laggard
 laggard_settled="$(laggard_entries)"

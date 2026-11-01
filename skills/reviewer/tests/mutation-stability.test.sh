@@ -370,12 +370,10 @@ assert_table_executed "process cleanup" "$process_rows"
 # above tell it their stub builds share no cache, and it says so once.
 QUIET_TRANSCRIPT='notice=settle-disabled value=0|copies are not mtime-separated; verdicts assume BUILD shares no cache|'
 
-transcript_of() { # SCRIPT ARGS... — the script's own stderr, stdout discarded
-  script="$1"
-  shift
+transcript_of() { # ARGS... — the script's own stderr, stdout discarded
   ms_rc=0
   ms_err=""
-  ms_err=$("$script" --worktree "$REPO" --sha "$SHA_BASE" "$@" 2>&1 >/dev/null) || ms_rc=$?
+  ms_err=$("$MS" --worktree "$REPO" --sha "$SHA_BASE" "$@" 2>&1 >/dev/null) || ms_rc=$?
   ms_transcript=$(printf '%s\n' "$ms_err" | tr '\n' '|')
 }
 
@@ -384,11 +382,11 @@ transcript_rows=0
 while IFS=$'\t' read -r name kind expected; do
   case "$kind" in
     quiet)
-      transcript_of "$MS" --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2
+      transcript_of --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2
       actual="rc=$ms_rc;transcript=$ms_transcript"
       ;;
     loud)
-      transcript_of "$MS" --test 'printf "boom\n" >&2; exit 1' --build 'true' --mutate 'true' --stability 1
+      transcript_of --test 'printf "boom\n" >&2; exit 1' --build 'true' --mutate 'true' --stability 1
       if [ "$ms_transcript" = "$QUIET_TRANSCRIPT" ]; then matches=yes; else matches=no; fi
       actual="rc=$ms_rc;matches-quiet-pin=$matches"
       ;;
@@ -403,23 +401,6 @@ a clean run writes only its own keyed notice	quiet	rc=0;transcript=$QUIET_TRANSC
 a failing child still reddens that pin	loud	rc=2;matches-quiet-pin=no
 ROWS
 assert_table_executed "runner transcript" "$transcript_rows"
-
-# plant_variant NAME FROM TO — a copy of the script with the one line FROM
-# replaced by TO, beside its own group-leader lib; prints the copy's path.
-plant_variant() {
-  variant_tree="$TMP/variant-$1"
-  mkdir -p "$variant_tree/reviewer/scripts" "$variant_tree/github/scripts/lib"
-  cp "$SCRIPT_DIR/../../github/scripts/lib/group-leader.sh" "$variant_tree/github/scripts/lib/group-leader.sh"
-  variant="$variant_tree/reviewer/scripts/mutation-stability"
-  awk -v from="$2" -v to="$3" '$0 == from { print to; next } { print }' "$MS" > "$variant"
-  chmod +x "$variant"
-  planted=$(grep -cxF -- "$3" "$variant") || planted=0
-  if [ "$planted" != 1 ] || cmp -s "$MS" "$variant" || ! bash -n "$variant"; then
-    fail "$1 control" "planted $planted lines, wanted exactly 1 in valid shell"
-  else
-    pass "$1 control plants exactly one line"
-  fi
-}
 
 # The suite command takes longer than the repeat start budget. Its clean-copy
 # failure is seeded only in the clean copy, after the control and kill.
@@ -437,8 +418,22 @@ slow stable suite|no|0|stability: 2/2 at 2 threads
 slow seeded failure|yes|1|stability: 1/2 at 2 threads
 ROWS
 
-plant_variant ignored-platform-failure '  platform=$(uname -s) || refuse cleanup-unavailable path "$ROOT" "platform probe failed; workspace kept"' '  platform=$(uname -s) || platform=unknown'
-MS_PLATFORM_UNCHECKED="$variant"
+# The control's copy of the script, beside its own group-leader lib, with the
+# platform probe's refusal replaced by a fallback.
+variant_tree="$TMP/variant-ignored-platform-failure"
+mkdir -p "$variant_tree/reviewer/scripts" "$variant_tree/github/scripts/lib"
+cp "$SCRIPT_DIR/../../github/scripts/lib/group-leader.sh" "$variant_tree/github/scripts/lib/group-leader.sh"
+MS_PLATFORM_UNCHECKED="$variant_tree/reviewer/scripts/mutation-stability"
+platform_unchecked='  platform=$(uname -s) || platform=unknown'
+awk -v from='  platform=$(uname -s) || refuse cleanup-unavailable path "$ROOT" "platform probe failed; workspace kept"' \
+  -v to="$platform_unchecked" '$0 == from { print to; next } { print }' "$MS" > "$MS_PLATFORM_UNCHECKED"
+chmod +x "$MS_PLATFORM_UNCHECKED"
+planted=$(grep -cxF -- "$platform_unchecked" "$MS_PLATFORM_UNCHECKED") || planted=0
+if [ "$planted" != 1 ] || cmp -s "$MS" "$MS_PLATFORM_UNCHECKED" || ! bash -n "$MS_PLATFORM_UNCHECKED"; then
+  fail "ignored-platform-failure control" "planted $planted lines, wanted exactly 1 in valid shell"
+else
+  pass "ignored-platform-failure control plants exactly one line"
+fi
 PLATFORM_BIN="$TMP/platform-probe"
 mkdir -p "$PLATFORM_BIN"
 cat > "$PLATFORM_BIN/uname" <<'CASE'

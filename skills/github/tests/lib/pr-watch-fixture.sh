@@ -308,19 +308,19 @@ observe() {
   printf '%s' "${got# }"
 }
 
-# mutant_watch LABEL SED-EXPR ANCHOR [FILE] — a copy with one planted
+# mutant_watch LABEL SED-EXPR ANCHOR — a copy of pr-watch.sh with one planted
 # defect, which the rows after it run against until WATCH_BIN="$LIVE_WATCH".
 # The anchor must stand once in the live script and be gone from the copy, so
 # a substitution that matched nothing never passes for a control.
 mutant_watch() {
-  local dir="$TMP_ROOT/mutants/$1" file="${4:-pr-watch.sh}"
+  local dir="$TMP_ROOT/mutants/$1"
   mkdir -p "$dir/lib"
   cp "$TMP_ROOT/scripts/pr-watch.sh" "$dir/"
   cp "$TMP_ROOT/scripts/lib/"* "$dir/lib/"
   chmod +x "$dir/pr-watch.sh"
-  assert_eq "$(grep -Fc -- "$3" "$dir/$file")" "1" "mutant $1: its anchor stands once in the live script"
-  sed -i.bak "$2" "$dir/$file"
-  assert_eq "$(grep -Fc -- "$3" "$dir/$file")" "0" "mutant $1: the anchor is gone from the copy"
+  assert_eq "$(grep -Fc -- "$3" "$dir/pr-watch.sh")" "1" "mutant $1: its anchor stands once in the live script"
+  sed -i.bak "$2" "$dir/pr-watch.sh"
+  assert_eq "$(grep -Fc -- "$3" "$dir/pr-watch.sh")" "0" "mutant $1: the anchor is gone from the copy"
   WATCH_BIN="$dir/pr-watch.sh"
 }
 

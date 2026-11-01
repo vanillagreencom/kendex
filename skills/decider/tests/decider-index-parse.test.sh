@@ -193,11 +193,11 @@ echo "=== decisions malformed and healthy INDEX rows ==="
 evaluate_diagnostic_rows "$DECISIONS" normal
 
 echo "=== must-fail controls, one per table ==="
-fallback_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-fallback/decisions" '+ [ $cell | scan' '+ [ empty | scan' 2)"
+fallback_mutant="$(decider_mutate_script "$TMP_ROOT/no-fallback/decisions" '+ [ $cell | scan' '+ [ empty | scan' 2)"
 failures="$(evaluate_link_rows "$fallback_mutant" control)"
 expect_control_failure "$failures" backtick-body "backtick fallback loss fails its row"
 
-warning_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-warning/decisions" '| select((.value | cells | length) < 8)' '| select(false)' 1)"
+warning_mutant="$(decider_mutate_script "$TMP_ROOT/no-warning/decisions" '| select((.value | cells | length) < 8)' '| select(false)' 1)"
 failures="$(evaluate_diagnostic_rows "$warning_mutant" control)"
 expect_control_failure "$failures" malformed-row-diagnostic "warning suppression fails the diagnostic row"
 

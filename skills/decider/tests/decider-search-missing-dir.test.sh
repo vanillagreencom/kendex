@@ -224,7 +224,7 @@ new_branch='  if [[ "$DECISIONS_DIR_ABSENT" -eq 1 ]]; then'
 new_branch+=$'\n    note_missing_decisions_dir\n'
 new_branch+="    echo '[]'"
 new_branch+=$'\n    return 1\n  fi\n\n  local all'
-status_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/absent-search-fails/decisions" "$old_branch" "$new_branch" 1)"
+status_mutant="$(decider_mutate_script "$TMP_ROOT/absent-search-fails/decisions" "$old_branch" "$new_branch" 1)"
 failures="$(evaluate_directory_rows "$status_mutant" control configured-absent-issue)"
 if [[ "$failures" == *'|configured-absent-issue|'* ]]; then
   pass "absent issue-search failure fails its row"

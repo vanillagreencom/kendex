@@ -94,7 +94,7 @@ run_table "the CLI-failure gate" "$DEFAULTS" "$ROWS"
 # Under the control, the is_error row no longer matches its expected record
 # or report. It reuses the table's row directories, so the table's are
 # removed first.
-CONTROL_ROW="$(grep -F 'an is_error envelope whose result is API error text' <<<"$ROWS")"
+CONTROL_ROW="$(grep -F 'an is_error envelope whose result is API error text' <<<"$ROWS" || :)"
 assert_eq "$(grep -c . <<<"$CONTROL_ROW")" 1 "control is-error selects one row"
 control_rc=0
 (

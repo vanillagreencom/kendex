@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 
+# decider_mutate_script DESTINATION OLD NEW COUNT — a copy of $DECISIONS, the
+# script each sourcing suite tests, with its COUNT occurrences of OLD replaced
+# by NEW; prints the copy's path.
 decider_mutate_script() {
-  local source="$1" destination="$2" old="$3" new="$4" expected_count="$5"
+  local source="$DECISIONS" destination="$1" old="$2" new="$3" expected_count="$4"
   local content="" rest="" prefix="" mutated="" count=0 destination_dir source_dir
 
   if [[ -L "$source" ]]; then

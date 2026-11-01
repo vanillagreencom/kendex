@@ -332,24 +332,24 @@ require_rows queue-only "$queue_rows"
 # off the base alone: a process environment that names another list, as a
 # caller's own checkout exports it, changes nothing. Each base is a commit of
 # the fixture repository, and the diff edits the same script.
-settings_queue() { # CLASSIFIER BASE [NAME=VALUE] -> the queue-only line
-  git -C "$repo" checkout -q -B settings-case "$2"
+settings_queue() { # BASE [NAME=VALUE] -> the queue-only line
+  git -C "$repo" checkout -q -B settings-case "$1"
   write_lines scripts/ci/run.sh 2
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "settings row"
-  queue_of "$(env ${3:+"$3"} "$1" --repo "$repo" --event pull_request --base "$2" --head HEAD 2>&1 >/dev/null)" || true
+  queue_of "$(env ${2:+"$2"} "$CHANGE_CLASS" --repo "$repo" --event pull_request --base "$1" --head HEAD 2>&1 >/dev/null)" || true
 }
 declared_base="$(settings_base "$(printf '[env]\n%s\nHARNESS_CI_QUEUE_PATHS = "scripts/ci/*"' "$REASON")")"
 rejected_base="$(settings_base $'[env]\nHARNESS_CI_QUEUE_PATHS = ""\nHARNESS_CI_QUEUE_PATHS = ""')"
 assert_eq "the base commit's settings declare the repository's list" \
   "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
-  "$(settings_queue "$CHANGE_CLASS" "$declared_base")"
+  "$(settings_queue "$declared_base")"
 assert_eq "the base's list decides where the process environment names another" \
   "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
-  "$(settings_queue "$CHANGE_CLASS" "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
+  "$(settings_queue "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
 assert_eq "a base whose settings the loader rejects reads queue-only" \
   "queue_only=true cause=queue-settings-unreadable" \
-  "$(settings_queue "$CHANGE_CLASS" "$rejected_base")"
+  "$(settings_queue "$rejected_base")"
 
 # The undeclared list's one warning, counted by its key line: once where the
 # key is unset, and never where the base declares a list, empty or naming
@@ -424,13 +424,11 @@ require_rows queue-lane "$lane_rows"
 # A queue lane answers ahead of the undeclared list: its cause stands and
 # the list's warning is not printed.
 queued_unset_base="$(lanes_base 'bench:queue benches/*' unset)"
-queue_and_warnings() { # STDERR
-  printf '%s warnings=%s\n' "$(queue_of "$1")" "$(unset_warnings_of "$1")"
-}
 ROW_BASE="$queued_unset_base"
+queued_unset_err="$(run_row "$CHANGE_CLASS" benches/b.rs=2)" || :
 assert_eq "a queue lane answers before the undeclared list warns" \
   "queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/* warnings=0" \
-  "$(queue_and_warnings "$(run_row "$CHANGE_CLASS" benches/b.rs=2)")"
+  "$(queue_of "$queued_unset_err") warnings=$(unset_warnings_of "$queued_unset_err")"
 ROW_BASE=""
 
 # Every `queue` entry of the shipped list has a row above, read off the list

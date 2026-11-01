@@ -201,7 +201,7 @@ echo "=== decisions next-id scheme rows ==="
 evaluate_next_id_rows "$DECISIONS" normal
 
 echo "=== must-fail control ==="
-arithmetic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/wrong-next-id/decisions" '$((max_num + 1))' '$((max_num + 2))' 1)"
+arithmetic_mutant="$(decider_mutate_script "$TMP_ROOT/wrong-next-id/decisions" '$((max_num + 1))' '$((max_num + 2))' 1)"
 failures="$(evaluate_next_id_rows "$arithmetic_mutant" control inferred-adr)"
 if [[ "$failures" == *'|inferred-adr|'* ]]; then
   pass "wrong next ID fails the inferred scheme row"

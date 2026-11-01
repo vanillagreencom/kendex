@@ -119,7 +119,7 @@ echo "=== decisions body-search rows ==="
 evaluate_search_rows "$DECISIONS" normal
 
 echo "=== must-fail control ==="
-ordering_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-score-sort/decisions" '] | sort_by(-.score) | .[:$limit]' '] | .[:$limit]' 1)"
+ordering_mutant="$(decider_mutate_script "$TMP_ROOT/no-score-sort/decisions" '] | sort_by(-.score) | .[:$limit]' '] | .[:$limit]' 1)"
 failures="$(evaluate_search_rows "$ordering_mutant" control summary-body-score)"
 if [[ "$failures" == *'|summary-body-score|'* ]]; then
   pass "missing score sort fails the ranking row"

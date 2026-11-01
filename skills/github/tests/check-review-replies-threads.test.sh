@@ -62,28 +62,6 @@ page_with() { # page_with PROGRAM THREAD_JSON… -> "truncated untracked unreaso
 }
 page() { page_with "$prog" "$1"; }
 
-# A probe plants a mutant by substituting text in the program, and "the text
-# changed" is a contract that a WRONG change satisfies: an anchor that has
-# drifted can rewrite more than the line the probe names, and every assertion
-# under it then runs against a program nobody described. So the substitution
-# must change the program and keep its line count.
-#
-# Prints nothing on success. On failure it reds and the caller skips its
-# assertions, because assertions under an unplanted mutant are not evidence.
-planted() { # planted LABEL VARIANT
-  local label="$1" variant="$2" lines
-  if [ "$variant" = "$prog" ]; then
-    bad "probe planted nothing — $label" "the anchor matched no line"
-    return 1
-  fi
-  lines=$(( $(wc -l <<<"$prog") - $(wc -l <<<"$variant") ))
-  if [ "$lines" != 0 ]; then
-    bad "probe planted the wrong shape — $label" \
-        "a substitution, but the program lost $lines line(s)"
-    return 1
-  fi
-  return 0
-}
 # A thread node as the reader returns it, oldest comment first, the first
 # being the finding the thread opens. TRUNCATED says GitHub holds one comment
 # more than the read returned. thread() puts the replies under a review bot's
@@ -145,8 +123,9 @@ page_of() { page "$(thread "$(human "$1")")"; }
 # One `# --- heading ---` section of a corpus file, replies only. The ordering
 # check below needs a NAMED subset of the corpus and must not restate it as
 # literals: a fixture written twice is a fixture that drifts in one place.
-section() { # section HEADING FILE
-  awk -v h="$1" 'index($0, h) { f = 1; next } /^# --- / { f = 0 } f && $0 !~ /^#/ && NF' "$2"
+section() { # section HEADING
+  awk -v h="$1" 'index($0, h) { f = 1; next } /^# --- / { f = 0 } f && $0 !~ /^#/ && NF' \
+    "$CORPUS/declines-unreasoned.txt"
 }
 
 # A reply is caught when EITHER thread rule counts it. Read both, because the
@@ -269,8 +248,21 @@ echo "--- must-fail probe: the rule, reverted ---"
 # the rule switched off. The content-free decline must stop being counted and
 # the real reason must stay uncounted: a probe where both fixtures moved would
 # prove the fixtures, not the rule.
+#
+# The probe plants its mutant by substituting text in the program, and "the
+# text changed" is a contract that a WRONG change satisfies: an anchor that has
+# drifted can rewrite more than the line the probe names, and every assertion
+# under it then runs against a program nobody described. So the substitution
+# must change the program and keep its line count, and where it does not the
+# probe reds and skips its assertions, because assertions under an unplanted
+# mutant are not evidence.
 REVERTED="$(sed 's/^    | gsub("\^ +| +\$"; "");$/    | gsub("^ +| +$"; "") | "x";/' <<<"$prog")"
-if ! planted "the rule, reverted" "$REVERTED"; then :
+reverted_lost=$(( $(wc -l <<<"$prog") - $(wc -l <<<"$REVERTED") ))
+if [ "$REVERTED" = "$prog" ]; then
+  bad "probe planted nothing — the rule, reverted" "the anchor matched no line"
+elif [ "$reverted_lost" != 0 ]; then
+  bad "probe planted the wrong shape — the rule, reverted" \
+      "a substitution, but the program lost $reverted_lost line(s)"
 else
   rprog="$REVERTED"
   rpage() { page_with "$rprog" "$1"; }
@@ -351,7 +343,7 @@ else
     while IFS= read -r line; do
       flat="$flat
 $(flatten "$line")"
-    done < <(section "$heading" "$CORPUS/declines-unreasoned.txt")
+    done < <(section "$heading")
     while IFS= read -r entry; do
       case "$entry" in *' '*) ;; *) continue ;; esac
       w="$(words_of "$entry")"

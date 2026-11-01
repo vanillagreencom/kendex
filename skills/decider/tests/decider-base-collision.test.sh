@@ -632,7 +632,7 @@ evaluate_rows "$DECISIONS" normal
 echo "=== must-fail control ==="
 # A collision rule that never fires, planted in a copy of the script, must
 # turn the check-collision row red.
-if mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-collision/decisions" 'select(($held | length) > 0 and' 'select(($held | length) > 99 and' 1)"; then
+if mutant="$(decider_mutate_script "$TMP_ROOT/control-collision/decisions" 'select(($held | length) > 0 and' 'select(($held | length) > 99 and' 1)"; then
   set +e
   failures="$(evaluate_rows "$mutant" control check-collision)"
   set -e
@@ -772,7 +772,7 @@ evaluate_ssh_rows "$DECISIONS" normal
 
 # An OpenSSH command without BatchMode, planted in a copy of the script, must
 # turn the ssh-env row red.
-if mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/control-ssh/decisions" 'BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes"' 'BASE_SSH_COMMAND="$ssh_cmd"' 1)"; then
+if mutant="$(decider_mutate_script "$TMP_ROOT/control-ssh/decisions" 'BASE_SSH_COMMAND="$ssh_cmd -oBatchMode=yes"' 'BASE_SSH_COMMAND="$ssh_cmd"' 1)"; then
   set +e
   failures="$(evaluate_ssh_rows "$mutant" control ssh-env)"
   set -e
