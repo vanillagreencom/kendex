@@ -83,21 +83,21 @@ run_row() { # CLASSIFIER BASE EDITS...
 }
 
 # label | expected queue-only line | edits | base | environment | event
-TABLE='a path the selector names is queue-only|queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]|slow/run.sh=2|declared_base|
-a path the selector names no job for answers as without a selector|queue_only=false cause=no-queue-path|runtime/product.ts=2|declared_base|
-a repository that declares no selector answers as before|queue_only=false cause=no-queue-path|slow/run.sh=2|plain_base|
-the selector is asked about a trivial class and its docs verdict|queue_only=true cause=queue-selection selector=ci/select output=jobs value=["trivial:true:pull_request:base:docs/slow.md"]|docs/slow.md=2|declared_base|
-the selector is asked about a class refused before the docs verdict|queue_only=true cause=queue-selection selector=ci/select output=jobs value=["standard:false:pull_request:base:slow/run.sh"]|hooks/guard.sh=2 slow/run.sh=2|declared_base|
-the base commit'"'"'s selector judges where the branch changes it|queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]|ci/select=2 tree-marker=2 slow/run.sh=2|declared_base|
-the selector runs without the caller'"'"'s environment|queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]|slow/run.sh=2|declared_base|LEAKED=1
-a selector named in the process environment alone never runs|queue_only=false cause=no-queue-path|slow/run.sh=2|plain_base|HARNESS_CI_QUEUE_SELECTOR=ci/select jobs
-a failing selector is queue-only|queue_only=true cause=queue-selector-failed selector=ci/select detail=exit-3|fail/x=2|declared_base|
-a selector output that is no list is queue-only|queue_only=true cause=queue-selector-failed selector=ci/select detail=output-unreadable|garbled/x=2|declared_base|
-a selector the base does not hold is queue-only|queue_only=true cause=queue-selector-failed selector=ci/missing detail=command-absent|runtime/product.ts=2|absent_base|
-a selector setting naming no output is queue-only|queue_only=true cause=queue-selector-failed detail=setting-malformed|runtime/product.ts=2|bare_base|
-a selector outside the repository is queue-only|queue_only=true cause=queue-selector-failed detail=setting-malformed|runtime/product.ts=2|climbing_base|
-a path the repository list names answers before the selector runs|queue_only=true cause=repository-queue-path path=infra/deploy.sh glob=infra/*|infra/deploy.sh=2|listed_base|
-a push runs no selector|queue_only=false cause=no-queue-path|slow/run.sh=2|declared_base||push'
+TABLE='a path the selector names is queue-only|queue_only=true inputs=run cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]|slow/run.sh=2|declared_base|
+a path the selector names no job for is not queue-only, on the selector run|queue_only=false inputs=run cause=no-queue-path|runtime/product.ts=2|declared_base|
+a repository that declares no selector answers as before|queue_only=false inputs=declared cause=no-queue-path|slow/run.sh=2|plain_base|
+the selector is asked about a trivial class and its docs verdict|queue_only=true inputs=run cause=queue-selection selector=ci/select output=jobs value=["trivial:true:pull_request:base:docs/slow.md"]|docs/slow.md=2|declared_base|
+the selector is asked about a class refused before the docs verdict|queue_only=true inputs=run cause=queue-selection selector=ci/select output=jobs value=["standard:false:pull_request:base:slow/run.sh"]|hooks/guard.sh=2 slow/run.sh=2|declared_base|
+the base commit'"'"'s selector judges where the branch changes it|queue_only=true inputs=run cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]|ci/select=2 tree-marker=2 slow/run.sh=2|declared_base|
+the selector runs without the caller'"'"'s environment|queue_only=true inputs=run cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]|slow/run.sh=2|declared_base|LEAKED=1
+a selector named in the process environment alone never runs|queue_only=false inputs=declared cause=no-queue-path|slow/run.sh=2|plain_base|HARNESS_CI_QUEUE_SELECTOR=ci/select jobs
+a failing selector is queue-only|queue_only=true inputs=run cause=queue-selector-failed selector=ci/select detail=exit-3|fail/x=2|declared_base|
+a selector output that is no list is queue-only|queue_only=true inputs=run cause=queue-selector-failed selector=ci/select detail=output-unreadable|garbled/x=2|declared_base|
+a selector the base does not hold is queue-only|queue_only=true inputs=run cause=queue-selector-failed selector=ci/missing detail=command-absent|runtime/product.ts=2|absent_base|
+a selector setting naming no output is queue-only|queue_only=true inputs=run cause=queue-selector-failed detail=setting-malformed|runtime/product.ts=2|bare_base|
+a selector outside the repository is queue-only|queue_only=true inputs=run cause=queue-selector-failed detail=setting-malformed|runtime/product.ts=2|climbing_base|
+a path the repository list names answers before the selector runs|queue_only=true inputs=declared cause=repository-queue-path path=infra/deploy.sh glob=infra/*|infra/deploy.sh=2|listed_base|
+a push runs no selector|queue_only=false inputs=declared cause=no-queue-path|slow/run.sh=2|declared_base||push'
 
 # The row of TABLE whose label is LABEL, as `expected|edits|base|env|event`.
 
@@ -124,7 +124,7 @@ done <<<"$TABLE"
 IFS='|' read -r edits row_base ROW_ENV ROW_EVENT <<<"$control_row"
 ROW_EVENT="${ROW_EVENT:-pull_request}"
 # shellcheck disable=SC2086
-assert_eq "control no-call for: $control_label" "queue_only=false cause=no-queue-path" \
+assert_eq "control no-call for: $control_label" "queue_only=false inputs=declared cause=no-queue-path" \
   "$(run_row "$planted" "${!row_base}" $edits)"
 
 report queue-selector

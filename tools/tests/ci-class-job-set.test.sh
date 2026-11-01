@@ -109,7 +109,7 @@ while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(sel
 # a merge group: harness-ci's change-class answers it queue-only, off the
 # `queue` group of orch's narrow-change.conf.
 while IFS= read -r p; do
-  check "lane source $p is queue-only" "queue_only=true cause=queue-path path=$p" \
+  check "lane source $p is queue-only" "queue_only=true inputs=run cause=queue-path path=$p" \
     "$(queue_only_of "$p" | sed 's/ glob=.*//')"
 done <<<"$sources"
 

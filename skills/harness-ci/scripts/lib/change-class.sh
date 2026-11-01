@@ -149,13 +149,16 @@ opencode.jsonc'
 # A schedule or workflow_dispatch run is the nightly full run: lanes=true
 # and every declared lane true, cause=full-run, whatever the class.
 # QUEUE_DEFAULT is true where the workflow asked for the queue-only default;
-# the stand-down below states what it does. Positions 1 to 8 keep the
+# the stand-down below states what it does. QUEUE_INPUTS is the `inputs=`
+# field of change-class's queue-only line; an older caller passes none,
+# which defers no lane only an unclaimed path reached. Positions 1 to 8 keep the
 # meaning an older caller gives them, since the merge-group run pairs this
 # tree's action with the default branch's library; a new argument is only
 # ever appended.
-change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT
+change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM QUEUE_DEFAULT QUEUE_INPUTS
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
   local queue_only="$6" work="$7" lanes_from="$8" queue_default="${9:-false}"
+  local queue_inputs="${10:-}"
   local declaration="" lanes_root="" judged_root="" per_push
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
   local render_base render_head path index delta name claimed
@@ -381,28 +384,18 @@ render_reader_missing() { # PATH [MARKER]
 # Whether pr-merge, run from either tree, also answers queue_only=true where
 # only a path no lane claims reached a queue lane: no `:queue` glob produced
 # this run's answer, so ci-lanes.sh in both trees proves nothing about it.
-# Prints nothing where it would, else the cause and what is missing.
-# path-quoted, queue-lane, queue-list-undeclared and repository-queue-path
-# are read off the changed paths, the base's declaration and its settings
-# alike by every render carrying ci-lanes.sh. A base on the default mode
-# answers true from any render reading HARNESS_CI_PER_PUSH_REASON, whatever
-# the cause. No other cause holds at merge: a read failure can pass, the
-# shipped queue list is the action's copy rather than the render's, and the
-# repository's selector answers on a class a failed read moves to standard.
+# Prints nothing where it would, else what is missing. A base on the default
+# mode answers true from any render reading HARNESS_CI_PER_PUSH_REASON,
+# whatever the cause. Otherwise change-class's `inputs=declared` says a
+# later run on the same change and base reads the same answer.
 unclaimed_queue_unproved() {
-  local cause missing
-  cause="$(sed -n 's/^queue-only: queue_only=true cause=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
-    cause=unreadable
-  case "$cause" in
-    path-quoted | queue-lane | queue-list-undeclared | repository-queue-path) return 0 ;;
-  esac
+  local missing
   if [ "$per_push" = unset ]; then
     missing="$(render_reader_missing "$per_push_reader" HARNESS_CI_PER_PUSH_REASON)"
-    [ -n "$missing" ] || return 0
-    printf 'queue_cause=%s tree=%s' "${cause:-absent}" "$missing"
+    [ -z "$missing" ] || printf 'per_push=unset tree=%s' "$missing"
     return 0
   fi
-  printf 'queue_cause=%s' "${cause:-absent}"
+  [ "$queue_inputs" = declared ] || printf 'inputs=%s' "${queue_inputs:-absent}"
 }
 
 # The whole-run stand-down, on pull_request and push: the merge group proves

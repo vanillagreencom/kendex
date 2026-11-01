@@ -676,12 +676,12 @@ endpoint_queue() { # TEMPLATE CONTEXT
 pr_context="$(jq -cn --arg sha "$merge_ref" --arg base "$opened_base" --arg head "$pr_head" \
   '{github: {event_name: "pull_request", sha: $sha, event: {pull_request: {base: {sha: $base}, head: {sha: $head}}}}}')"
 assert_eq "a pull request opened before its base marked a lane reads the mark" \
-  "queue_only=true cause=queue-lane lane=check path=src/app.rs glob=src/*" \
+  "queue_only=true inputs=declared cause=queue-lane lane=check path=src/app.rs glob=src/*" \
   "$(endpoint_queue "$TEMPLATE" "$pr_context")"
 plant "$TEMPLATE" "github.event_name == 'pull_request' && format('{0}^1', github.sha)" \
   "github.event.pull_request.base.sha" "$SANDBOX/opened-base.yml"
 assert_eq "must-fail: the pull request's recorded base misses the mark" \
-  "queue_only=false cause=no-queue-path" "$(endpoint_queue "$SANDBOX/opened-base.yml" "$pr_context")"
+  "queue_only=false inputs=declared cause=no-queue-path" "$(endpoint_queue "$SANDBOX/opened-base.yml" "$pr_context")"
 # The other events keep the base their payload names.
 # EVENT|PAYLOAD|BASE
 endpoint_rows=0

@@ -1837,7 +1837,7 @@ settings_queue_err=$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_L
   "$CHANGE_CLASS" --repo "$settings_repo" --event merge_group --base "$settings_allow" \
   --head HEAD 2>&1 >/dev/null)
 assert_eq "an admitted settings change is trivial and queue-only in its merge group" \
-  "queue-only: queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml
+  "queue-only: queue_only=true inputs=run cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml
 class: $admitted keys=SECOND_OPINION_MODEL lines=2" \
   "$(grep -E '^(queue-only|class): ' <<<"$settings_queue_err")"
 
@@ -2191,7 +2191,7 @@ OLD_SCHEMA
     'schema-bump: path=kendex.toml from=6 to=7' \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^schema-bump: /p')"
   assert_eq "the schema-only refresh keeps its conservative queue answer" \
-    'queue-only: queue_only=true cause=no-changed-paths' \
+    'queue-only: queue_only=true inputs=declared cause=no-changed-paths' \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^queue-only: /p')"
   assert_eq "the schema-only proof weighs the resolved head" "head-rev: $schema_head" \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^head-rev: /p')"

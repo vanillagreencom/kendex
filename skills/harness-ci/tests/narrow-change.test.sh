@@ -281,48 +281,48 @@ while IFS='|' read -r label expected edits declared; do
   # shellcheck disable=SC2086
   assert_eq "$label" "$expected" "$(queue_of "$(run_row "$CHANGE_CLASS" $edits)")"
   case "$expected" in
-    "queue_only=true cause=queue-path path="*) queue_paths="$queue_paths${edits%%=*}"$'\n' ;;
+    "queue_only=true inputs=run cause=queue-path path="*) queue_paths="$queue_paths${edits%%=*}"$'\n' ;;
   esac
 done <<'ROWS'
-a CI workflow is queue-only|queue_only=true cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*|.github/workflows/ci.yml=2
-a CI action is queue-only|queue_only=true cause=queue-path path=.github/actions/change-class/classify glob=.github/actions/*|.github/actions/change-class/classify=2
-the organization-standard report is queue-only|queue_only=true cause=queue-path path=skills/review-gate/scripts/validate-standard.sh glob=*skills/review-gate/scripts/*|skills/review-gate/scripts/validate-standard.sh=2
-the consumer refresh template's render is queue-only|queue_only=true cause=queue-path path=.agents/skills/review-gate/templates/kendex-refresh.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/kendex-refresh.yml=2
-the organization standard is queue-only|queue_only=true cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
-the settings naming required contexts are queue-only|queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
-the machine-local settings naming required contexts are queue-only|queue_only=true cause=queue-path path=.kendex/settings.toml glob=.kendex/settings.toml|.kendex/settings.toml=2
-the classifier is queue-only|queue_only=true cause=queue-path path=skills/harness-ci/scripts/change-class glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/change-class=2
-the trusted bot checker is queue-only|queue_only=true cause=queue-path path=skills/bot-instructions/scripts/lib/manifest.py glob=*skills/bot-instructions/scripts/*|skills/bot-instructions/scripts/lib/manifest.py=2
-the classifier's list is queue-only|queue_only=true cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
-the branch measurement's library is queue-only|queue_only=true cause=queue-path path=.agents/skills/orch/scripts/lib/branch-growth.sh glob=*skills/orch/scripts/lib/branch-growth.sh|.agents/skills/orch/scripts/lib/branch-growth.sh=2
-the measurement's settings reader is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/lib/kendex-env.sh glob=*skills/orch/scripts/lib/kendex-env.sh|skills/orch/scripts/lib/kendex-env.sh=2
-the measurement's base resolver is queue-only|queue_only=true cause=queue-path path=skills/orch/scripts/resolve-base-branch glob=*skills/orch/scripts/resolve-base-branch|skills/orch/scripts/resolve-base-branch=2
-the job selection is queue-only|queue_only=true cause=queue-path path=tools/ci-job-set glob=tools/ci-job-set|tools/ci-job-set=2
-the native eligibility helper is queue-only|queue_only=true cause=queue-path path=tools/macos-test-contracts glob=tools/macos-test-contracts|tools/macos-test-contracts=2
-the native eligibility declaration is queue-only|queue_only=true cause=queue-path path=tools/macos-test-contracts.json glob=tools/macos-test-contracts.json|tools/macos-test-contracts.json=2
-the Rust reads the job selection takes are queue-only|queue_only=true cause=queue-path path=tools/rust-reads glob=tools/rust-reads|tools/rust-reads=2
-the skill requirements the job selection takes are queue-only|queue_only=true cause=queue-path path=tools/lib/skill-requirements.awk glob=tools/lib/skill-requirements.awk|tools/lib/skill-requirements.awk=2
-a skill's test library is queue-only|queue_only=true cause=queue-path path=skills/orch/tests/lib/git-env.sh glob=*skills/*/tests/lib/*|skills/orch/tests/lib/git-env.sh=2
-a tools suite is queue-only|queue_only=true cause=queue-path path=tools/tests/ci-aggregate.test.sh glob=tools/tests/*|tools/tests/ci-aggregate.test.sh=2
-the CI test aggregator is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2
-kendex.toml is queue-only|queue_only=true cause=queue-path path=kendex.toml glob=kendex.toml|kendex.toml=2
-this repository's manifest is queue-only|queue_only=true cause=queue-path path=kendex-local.toml glob=kendex-local.toml|kendex-local.toml=2
-the bot-instruction doctrine is queue-only|queue_only=true cause=queue-path path=skills/bot-instructions/SKILL.md glob=*skills/bot-instructions/SKILL.md|skills/bot-instructions/SKILL.md=2
-the bot-instruction render rules' render are queue-only|queue_only=true cause=queue-path path=.agents/skills/bot-instructions/schemas/renders.md glob=*skills/bot-instructions/schemas/renders.md|.agents/skills/bot-instructions/schemas/renders.md=2
-the Copilot instruction file is queue-only|queue_only=true cause=queue-path path=.github/copilot-instructions.md glob=.github/copilot-instructions.md|.github/copilot-instructions.md=2
-a review-bot instruction file is queue-only|queue_only=true cause=queue-path path=.github/instructions/code-review.md glob=.github/instructions/*|.github/instructions/code-review.md=2
-a queue path beside a product file is queue-only|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|runtime/product.ts=2 tools/ci-aggregate=2
-a diff no entry names is not queue-only where the repository declares an empty list|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30|list=
-a diff no entry names is not queue-only where the repository's list names none of it|queue_only=false cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2|list=scripts/ci/* tools/aggregate
-a diff no entry names is queue-only where the repository declares no list|queue_only=true cause=queue-list-undeclared|docs/guide.md=2 runtime/product.ts=2
-a path the repository's own list names is queue-only|queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*|runtime/product.ts=2 scripts/ci/run.sh=2|list=tools/aggregate scripts/ci/*
-a refusal raised after the paths were read carries their class|queue_only=false cause=no-queue-path|inventory-invalid runtime/product.ts=2|list=
-a workflow path git quotes is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|.github/workflows/we"ird.yml=2
-a quoted workflow path beside a product file is queue-only|queue_only=true cause=path-quoted path=".github/workflows/we\"ird.yml"|runtime/product.ts=2 .github/workflows/we"ird.yml=2
-a repository with no settings takes the queue-only default|queue_only=true cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=base
-the queue-only default precedes the repository's empty list|queue_only=true cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=queue_default_base
-a blank reason takes the queue-only default|queue_only=true cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=blank_reason_base
-a queue path answers ahead of the queue-only default|queue_only=true cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2|base=queue_default_base
+a CI workflow is queue-only|queue_only=true inputs=run cause=queue-path path=.github/workflows/ci.yml glob=.github/workflows/*|.github/workflows/ci.yml=2
+a CI action is queue-only|queue_only=true inputs=run cause=queue-path path=.github/actions/change-class/classify glob=.github/actions/*|.github/actions/change-class/classify=2
+the organization-standard report is queue-only|queue_only=true inputs=run cause=queue-path path=skills/review-gate/scripts/validate-standard.sh glob=*skills/review-gate/scripts/*|skills/review-gate/scripts/validate-standard.sh=2
+the consumer refresh template's render is queue-only|queue_only=true inputs=run cause=queue-path path=.agents/skills/review-gate/templates/kendex-refresh.yml glob=*skills/review-gate/templates/*|.agents/skills/review-gate/templates/kendex-refresh.yml=2
+the organization standard is queue-only|queue_only=true inputs=run cause=queue-path path=skills/review-gate/standard.json glob=*skills/review-gate/standard.json|skills/review-gate/standard.json=2
+the settings naming required contexts are queue-only|queue_only=true inputs=run cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml|kendex.settings.toml=2
+the machine-local settings naming required contexts are queue-only|queue_only=true inputs=run cause=queue-path path=.kendex/settings.toml glob=.kendex/settings.toml|.kendex/settings.toml=2
+the classifier is queue-only|queue_only=true inputs=run cause=queue-path path=skills/harness-ci/scripts/change-class glob=*skills/harness-ci/scripts/*|skills/harness-ci/scripts/change-class=2
+the trusted bot checker is queue-only|queue_only=true inputs=run cause=queue-path path=skills/bot-instructions/scripts/lib/manifest.py glob=*skills/bot-instructions/scripts/*|skills/bot-instructions/scripts/lib/manifest.py=2
+the classifier's list is queue-only|queue_only=true inputs=run cause=queue-path path=skills/orch/references/narrow-change.conf glob=*skills/orch/references/narrow-change.conf|skills/orch/references/narrow-change.conf=2
+the branch measurement's library is queue-only|queue_only=true inputs=run cause=queue-path path=.agents/skills/orch/scripts/lib/branch-growth.sh glob=*skills/orch/scripts/lib/branch-growth.sh|.agents/skills/orch/scripts/lib/branch-growth.sh=2
+the measurement's settings reader is queue-only|queue_only=true inputs=run cause=queue-path path=skills/orch/scripts/lib/kendex-env.sh glob=*skills/orch/scripts/lib/kendex-env.sh|skills/orch/scripts/lib/kendex-env.sh=2
+the measurement's base resolver is queue-only|queue_only=true inputs=run cause=queue-path path=skills/orch/scripts/resolve-base-branch glob=*skills/orch/scripts/resolve-base-branch|skills/orch/scripts/resolve-base-branch=2
+the job selection is queue-only|queue_only=true inputs=run cause=queue-path path=tools/ci-job-set glob=tools/ci-job-set|tools/ci-job-set=2
+the native eligibility helper is queue-only|queue_only=true inputs=run cause=queue-path path=tools/macos-test-contracts glob=tools/macos-test-contracts|tools/macos-test-contracts=2
+the native eligibility declaration is queue-only|queue_only=true inputs=run cause=queue-path path=tools/macos-test-contracts.json glob=tools/macos-test-contracts.json|tools/macos-test-contracts.json=2
+the Rust reads the job selection takes are queue-only|queue_only=true inputs=run cause=queue-path path=tools/rust-reads glob=tools/rust-reads|tools/rust-reads=2
+the skill requirements the job selection takes are queue-only|queue_only=true inputs=run cause=queue-path path=tools/lib/skill-requirements.awk glob=tools/lib/skill-requirements.awk|tools/lib/skill-requirements.awk=2
+a skill's test library is queue-only|queue_only=true inputs=run cause=queue-path path=skills/orch/tests/lib/git-env.sh glob=*skills/*/tests/lib/*|skills/orch/tests/lib/git-env.sh=2
+a tools suite is queue-only|queue_only=true inputs=run cause=queue-path path=tools/tests/ci-aggregate.test.sh glob=tools/tests/*|tools/tests/ci-aggregate.test.sh=2
+the CI test aggregator is queue-only|queue_only=true inputs=run cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2
+kendex.toml is queue-only|queue_only=true inputs=run cause=queue-path path=kendex.toml glob=kendex.toml|kendex.toml=2
+this repository's manifest is queue-only|queue_only=true inputs=run cause=queue-path path=kendex-local.toml glob=kendex-local.toml|kendex-local.toml=2
+the bot-instruction doctrine is queue-only|queue_only=true inputs=run cause=queue-path path=skills/bot-instructions/SKILL.md glob=*skills/bot-instructions/SKILL.md|skills/bot-instructions/SKILL.md=2
+the bot-instruction render rules' render are queue-only|queue_only=true inputs=run cause=queue-path path=.agents/skills/bot-instructions/schemas/renders.md glob=*skills/bot-instructions/schemas/renders.md|.agents/skills/bot-instructions/schemas/renders.md=2
+the Copilot instruction file is queue-only|queue_only=true inputs=run cause=queue-path path=.github/copilot-instructions.md glob=.github/copilot-instructions.md|.github/copilot-instructions.md=2
+a review-bot instruction file is queue-only|queue_only=true inputs=run cause=queue-path path=.github/instructions/code-review.md glob=.github/instructions/*|.github/instructions/code-review.md=2
+a queue path beside a product file is queue-only|queue_only=true inputs=run cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|runtime/product.ts=2 tools/ci-aggregate=2
+a diff no entry names is not queue-only where the repository declares an empty list|queue_only=false inputs=declared cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2 skills/orch/tests/added.test.sh=30|list=
+a diff no entry names is not queue-only where the repository's list names none of it|queue_only=false inputs=declared cause=no-queue-path|docs/guide.md=2 runtime/product.ts=2|list=scripts/ci/* tools/aggregate
+a diff no entry names is queue-only where the repository declares no list|queue_only=true inputs=declared cause=queue-list-undeclared|docs/guide.md=2 runtime/product.ts=2
+a path the repository's own list names is queue-only|queue_only=true inputs=declared cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*|runtime/product.ts=2 scripts/ci/run.sh=2|list=tools/aggregate scripts/ci/*
+a refusal raised after the paths were read carries their class|queue_only=false inputs=declared cause=no-queue-path|inventory-invalid runtime/product.ts=2|list=
+a workflow path git quotes is queue-only|queue_only=true inputs=declared cause=path-quoted path=".github/workflows/we\"ird.yml"|.github/workflows/we"ird.yml=2
+a quoted workflow path beside a product file is queue-only|queue_only=true inputs=declared cause=path-quoted path=".github/workflows/we\"ird.yml"|runtime/product.ts=2 .github/workflows/we"ird.yml=2
+a repository with no settings takes the queue-only default|queue_only=true inputs=declared cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=base
+the queue-only default precedes the repository's empty list|queue_only=true inputs=declared cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=queue_default_base
+a blank reason takes the queue-only default|queue_only=true inputs=declared cause=per-push-unset|docs/guide.md=2 runtime/product.ts=2|base=blank_reason_base
+a queue path answers ahead of the queue-only default|queue_only=true inputs=run cause=queue-path path=tools/ci-aggregate glob=tools/ci-aggregate|tools/ci-aggregate=2|base=queue_default_base
 ROWS
 ROW_BASE=""
 require_rows queue-only "$queue_rows"
@@ -342,13 +342,13 @@ settings_queue() { # BASE [NAME=VALUE] -> the queue-only line
 declared_base="$(settings_base "$(printf '[env]\n%s\nHARNESS_CI_QUEUE_PATHS = "scripts/ci/*"' "$REASON")")"
 rejected_base="$(settings_base $'[env]\nHARNESS_CI_QUEUE_PATHS = ""\nHARNESS_CI_QUEUE_PATHS = ""')"
 assert_eq "the base commit's settings declare the repository's list" \
-  "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
+  "queue_only=true inputs=declared cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
   "$(settings_queue "$declared_base")"
 assert_eq "the base's list decides where the process environment names another" \
-  "queue_only=true cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
+  "queue_only=true inputs=declared cause=repository-queue-path path=scripts/ci/run.sh glob=scripts/ci/*" \
   "$(settings_queue "$declared_base" "HARNESS_CI_QUEUE_PATHS=")"
 assert_eq "a base whose settings the loader rejects reads queue-only" \
-  "queue_only=true cause=queue-settings-unreadable" \
+  "queue_only=true inputs=run cause=queue-settings-unreadable" \
   "$(settings_queue "$rejected_base")"
 
 # The undeclared list's one warning, counted by its key line: once where the
@@ -410,13 +410,13 @@ while IFS='|' read -r label expected edits row_base; do
   # shellcheck disable=SC2086
   assert_eq "$label" "$expected" "$(queue_of "$(run_row "$CHANGE_CLASS" $edits)")"
 done <<'ROWS'
-a path a queue lane claims is queue-only|queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/*|benches/b.rs=2|queued_base
-a glob on the queue lane's unmarked line is a queue glob|queue_only=true cause=queue-lane lane=bench path=Cargo.lock glob=Cargo.lock|Cargo.lock=2|queued_base
-a path only an unmarked lane claims is not queue-only|queue_only=false cause=no-queue-path|src/main.rs=2|queued_base
-a queue glob matches with extglob off|queue_only=true cause=queue-lane lane=paren path=a(x) glob=*(x)|a(x)=2|queued_base
-a malformed declaration marks no lane|queue_only=false cause=no-queue-path|benches/b.rs=2|malformed_base
-a declaration that is not a file is queue-only|queue_only=true cause=lane-declaration-unreadable|benches/b.rs=2|unreadable_base
-the base's declaration decides where the branch unmarks the lane|queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/*|unmark-bench benches/b.rs=2|queued_base
+a path a queue lane claims is queue-only|queue_only=true inputs=declared cause=queue-lane lane=bench path=benches/b.rs glob=benches/*|benches/b.rs=2|queued_base
+a glob on the queue lane's unmarked line is a queue glob|queue_only=true inputs=declared cause=queue-lane lane=bench path=Cargo.lock glob=Cargo.lock|Cargo.lock=2|queued_base
+a path only an unmarked lane claims is not queue-only|queue_only=false inputs=declared cause=no-queue-path|src/main.rs=2|queued_base
+a queue glob matches with extglob off|queue_only=true inputs=declared cause=queue-lane lane=paren path=a(x) glob=*(x)|a(x)=2|queued_base
+a malformed declaration marks no lane|queue_only=false inputs=declared cause=no-queue-path|benches/b.rs=2|malformed_base
+a declaration that is not a file is queue-only|queue_only=true inputs=run cause=lane-declaration-unreadable|benches/b.rs=2|unreadable_base
+the base's declaration decides where the branch unmarks the lane|queue_only=true inputs=declared cause=queue-lane lane=bench path=benches/b.rs glob=benches/*|unmark-bench benches/b.rs=2|queued_base
 ROWS
 ROW_BASE=""
 require_rows queue-lane "$lane_rows"
@@ -427,7 +427,7 @@ queued_unset_base="$(lanes_base 'bench:queue benches/*' unset)"
 ROW_BASE="$queued_unset_base"
 queued_unset_err="$(run_row "$CHANGE_CLASS" benches/b.rs=2)" || :
 assert_eq "a queue lane answers before the undeclared list warns" \
-  "queue_only=true cause=queue-lane lane=bench path=benches/b.rs glob=benches/* warnings=0" \
+  "queue_only=true inputs=declared cause=queue-lane lane=bench path=benches/b.rs glob=benches/* warnings=0" \
   "$(queue_of "$queued_unset_err") warnings=$(unset_warnings_of "$queued_unset_err")"
 ROW_BASE=""
 
@@ -452,13 +452,13 @@ done <<<"$queue_globs"
 unread_err="$("$CHANGE_CLASS" --repo "$repo" --event pull_request \
   --base 0123456789abcdef0123456789abcdef01234567 --head HEAD 2>&1 >/dev/null)" || true
 assert_eq "a diff whose paths were not read is queue-only" \
-  "queue_only=true cause=paths-unread" "$(queue_of "$unread_err")"
+  "queue_only=true inputs=run cause=paths-unread" "$(queue_of "$unread_err")"
 
 # An empty diff is read, and names no path: queue-only, under its own cause.
 empty_err="$("$CHANGE_CLASS" --repo "$repo" --event pull_request \
   --base "$base" --head "$base" 2>&1 >/dev/null)" || true
 assert_eq "an empty diff is queue-only under its own cause" \
-  "queue_only=true cause=no-changed-paths" "$(queue_of "$empty_err")"
+  "queue_only=true inputs=declared cause=no-changed-paths" "$(queue_of "$empty_err")"
 
 # Every row of the boundary group names a file whose edit changes the class
 # the classifier answers, so each is queue-only. The rows are read off the
@@ -474,7 +474,7 @@ while IFS= read -r glob; do
     *[][*?!\(\)]*) assert_eq "the boundary row $glob is a literal path" literal "$glob"; continue ;;
   esac
   row_queue="$(queue_of "$(run_row "$CHANGE_CLASS" "$path=2")")"
-  assert_eq "the boundary row $glob is queue-only" "queue_only=true cause=queue-path path=$path" \
+  assert_eq "the boundary row $glob is queue-only" "queue_only=true inputs=run cause=queue-path path=$path" \
     "${row_queue% glob=*}"
 done <<<"$boundary_rows"
 
@@ -488,7 +488,7 @@ cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-
   "$queueless/harness-ci/scripts/"
 cp -R "$(dirname "$CHANGE_CLASS")/lib" "$queueless/harness-ci/scripts/"
 assert_eq "a list with no queue group reads queue-only" \
-  "queue_only=true cause=queue-list-missing" \
+  "queue_only=true inputs=run cause=queue-list-missing" \
   "$(queue_of "$(run_row "$queueless/harness-ci/scripts/change-class" docs/guide.md=2)")"
 
 # An orch beside the package that carries no list reads queue-only.
@@ -500,7 +500,7 @@ cp "$(dirname "$CHANGE_CLASS")/harness-only" "$(dirname "$CHANGE_CLASS")/change-
   "$listless/harness-ci/scripts/"
 cp -R "$(dirname "$CHANGE_CLASS")/lib" "$listless/harness-ci/scripts/"
 assert_eq "an orch with no list reads queue-only" \
-  "queue_only=true cause=queue-list-unreadable" \
+  "queue_only=true inputs=run cause=queue-list-unreadable" \
   "$(queue_of "$(run_row "$listless/harness-ci/scripts/change-class" docs/guide.md=2)")"
 
 report narrow-change
