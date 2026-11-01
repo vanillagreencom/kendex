@@ -36,11 +36,16 @@ unset SECOND_OPINION_MODELS SECOND_OPINION_COUNT SECOND_OPINION_TARGET \
       SECOND_OPINION_COPILOT_ROOM_CMD SECOND_OPINION_MY_MODEL_ROOM_CMD \
       SECOND_OPINION_CLAUDE_INLINE_DIFF SECOND_OPINION_CODEX_INLINE_DIFF \
       SECOND_OPINION_COPILOT_INLINE_DIFF SECOND_OPINION_MY_MODEL_INLINE_DIFF \
+      SECOND_OPINION_PI_COPILOT_CMD SECOND_OPINION_PI_COPILOT_MODEL \
+      SECOND_OPINION_PI_COPILOT_ROOM_CMD SECOND_OPINION_PI_COPILOT_INLINE_DIFF \
+      SECOND_OPINION_PI_COPILOT_GPT_CMD SECOND_OPINION_PI_COPILOT_GPT_MODEL \
+      SECOND_OPINION_PI_COPILOT_GPT_ROOM_CMD SECOND_OPINION_PI_COPILOT_GPT_INLINE_DIFF \
       SO_TEST_SEAT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 . "$TEST_DIR/lib/install.bash"
+. "$TEST_DIR/lib/path-farm.bash"
 TMP_ROOT="$(mktemp -d)" || { echo "roster-world: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "roster-world: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "roster-world: scratch=resolve-failed" >&2; exit 1; }
@@ -107,7 +112,7 @@ SO=""
 PROJ=""
 # Word state, reset per row.
 W_PS="" W_PAD="" W_CURRENT="" W_MODELS="" W_COUNT="" W_TARGET="" W_STALE=""
-W_RESP_CLAUDE="" W_RESP_CODEX="" W_RESP_EXTRA=""
+W_RESP_CLAUDE="" W_RESP_CODEX="" W_RESP_EXTRA="" W_PI="" W_ORCH="" W_PATH=""
 W_ENV=()
 
 # `_` is a space and TAB a tab inside an identity value: the padded spellings.
@@ -199,6 +204,13 @@ word() {
     # root
     room:*) room_word "${1#room:}" "$ROW/bin" "$ROW/bin/" ;;
     room-rel:*) room_word "${1#room-rel:}" "$PROJ" ./ ;;
+    # the stock Copilot entries' program: pi:stub a pi that records its argv
+    # and answers as the extra lane, pi:missing a PATH without pi
+    pi:stub|pi:missing) W_PI="${1#pi:}" ;;
+    # orch's lanes where the stock room check looks for it, under the project
+    # root: orch:<kind> answers as room:<kind> and records its argv, orch:none
+    # leaves it uninstalled
+    orch:*) W_ORCH="${1#orch:}" ;;
     marker:*) W_ENV+=("${1#marker:}") ;;
     proj:*) project_file "${1#proj:}" ;;
     claude:*) W_RESP_CLAUDE="${1#claude:}" ;;
@@ -287,6 +299,52 @@ room_word() { # NAME=KIND DIR PREFIX
   W_ENV+=("$(so_var "$1" ROOM_CMD)=$3room-${1##*=}-${1%%=*}")
 }
 
+# The PATH a host without pi has, staged once per suite.
+NOPI_PATH="$TMP_ROOT/nopi-bin"
+stage_nopi() {
+  [[ -d "$NOPI_PATH" ]] || path_farm_without "$NOPI_PATH" pi \
+    || { echo "roster-world: nopi-farm=failed" >&2; exit 1; }
+}
+
+# The stock Copilot entries' world: the pi the stock command runs, recording
+# its argv and the Pi root it was handed, then answering as the extra lane;
+# and orch's lanes under the project root, recording ORCH_LANE_HOST and its
+# argv, then answering as a room stub counted as `lanes`.
+make_stock_world() {
+  case "$W_PI" in
+    stub)
+      cat >"$ROW/bin/pi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$ROW/pi-argv"
+printf '%s\n' "\${PI_CODING_AGENT_DIR:--}" >>"$ROW/pi-root"
+exec "$ROW/bin/lane-extra"
+SH
+      chmod +x "$ROW/bin/pi" ;;
+    missing) stage_nopi; W_PATH="$NOPI_PATH" ;;
+  esac
+  [[ -n "$W_ORCH" && "$W_ORCH" != none ]] || return 0
+  make_room_stub "lanes=$W_ORCH" "$ROW/bin"
+  mkdir -p "$PROJ/.agents/skills/orch/scripts"
+  cat >"$PROJ/.agents/skills/orch/scripts/lanes" <<SH
+#!/usr/bin/env bash
+printf '%s %s\n' "\${ORCH_LANE_HOST:--}" "\$*" >>"$ROW/lanes-argv"
+exec "$ROW/bin/room-$W_ORCH-lanes"
+SH
+  chmod +x "$PROJ/.agents/skills/orch/scripts/lanes"
+}
+
+# What the stock entries ran, the suffix a stock row appends: each pi argv and
+# each lanes call (ORCH_LANE_HOST, then argv), `;`-joined, the seat the extra
+# lane ran under, and whether its first request carried the diff inline.
+stock_state() {
+  local inline=-
+  [[ ! -e "$ROW/request-extra-1.txt" ]] || inline="$(request_state extra 1 | jq -r .inline_diff)"
+  printf 'pi=%s lanes=%s seat=%s inline=%s' \
+    "$(paste -s -d ';' "$ROW/pi-argv" 2>/dev/null || printf -- '-')" \
+    "$(paste -s -d ';' "$ROW/lanes-argv" 2>/dev/null || printf -- '-')" \
+    "$(cat "$ROW/seat-extra" 2>/dev/null || printf 'none')" "$inline"
+}
+
 # The account each lane stub ran under, and each room check's run count, the
 # suffix a room-check row appends: seat=<lane>:<seat>,... rooms=<name>:<n>,...
 room_state() {
@@ -338,12 +396,13 @@ build() {
   second_opinion_install "$SKILL_DIR" "$PROJ/skills"
   SO="$PROJ/skills/second-opinion/scripts/second-opinion"
   W_PS=none W_PAD="" W_CURRENT=- W_MODELS=- W_COUNT=- W_TARGET="" W_STALE=""
-  W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean
+  W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean W_PI="" W_ORCH="" W_PATH=""
   W_ENV=()
   for w in "$@"; do word "$w"; done
   make_stub claude
   make_stub codex
   make_stub extra
+  make_stock_world
   mkdir -p "$ROW/private"
   for w in claude codex extra; do ln -s "$ROW/bin/lane-$w" "$ROW/private/so-private-$w"; done
   make_ps
@@ -470,7 +529,7 @@ run() {
     detect) argv=(detect ${argv[@]+"${argv[@]}"}) ;;
     *) echo "UNKNOWN-COMMAND: $verb" >&2; exit 2 ;;
   esac
-  (env -i HOME="$ROW" PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
+  (env -i HOME="$ROW" PATH="$ROW/bin:${W_PATH:-$PATH}" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" >"$ROW/stdout" 2>"$ROW/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=claude:%s,codex:%s,extra:%s art=%s files=%s' "$rc" "$(stdout_text)" \
     "$(selection_log <"$ROW/stderr" | alias_text)" "$(count claude)" "$(count codex)" "$(count extra)" "$(artifact)" "$(files)"
 }
@@ -510,6 +569,11 @@ err_word() {
     roomrefused:*) printf "→ skipping %s: room check refused — SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above, and running SECOND_OPINION_%s_ROOM_CMD's command prints it again" "$a" "$b" "$c" "$b" ;;
     roomsaid:*) printf 'room-check %s: %s' "$a" "$b" ;;
     room:*) printf '→ room: %s has room by SECOND_OPINION_%s_ROOM_CMD%s' "$a" "$b" "$([[ "$c" == - ]] || printf '; runs under SO_TEST_SEAT=%s' "$c")" ;;
+    # the stock room check, by the setting it defaults: stockroom:<name>:<NAME>:<seat>,
+    # stockroomrefused:<name>:<NAME>:<exit>, stockroomunavail:<name>:<NAME>:<model>
+    stockroom:*) printf '→ room: %s has room by the default SECOND_OPINION_%s_ROOM_CMD; runs under SO_TEST_SEAT=%s' "$a" "$b" "$c" ;;
+    stockroomrefused:*) printf "→ skipping %s: room check refused — the default SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above, and running the default SECOND_OPINION_%s_ROOM_CMD's command prints it again" "$a" "$b" "$c" "$b" ;;
+    stockroomunavail:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs a program not installed here: env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/%s' "$a" "$b" "$c" ;;
     noassign:*) printf '→ skipping %s: room check printed a line that is no NAME=value assignment: {"config_dir":"/seat"} — SECOND_OPINION_%s_ROOM_CMD prints the env prefix of the account it judged and nothing else' "$a" "$b" ;;
     target-undeclared:*) printf '→ skipping %s: model undeclared — %s fronts a selectable model; set SECOND_OPINION_%s_MODEL to the model id it runs' "$a" "$a" "$b" ;;
     roster-empty) printf '→ skipping roster: SECOND_OPINION_MODELS is set but empty — no targets to consider' ;;
@@ -537,8 +601,11 @@ declared_in() {
 # run_table TITLE DEFAULTS ROWS [SUFFIX]: every row's world is DEFAULTS then its
 # own words; SUFFIX, a function, renders more of the row's world after the run,
 # and the row's last field asserts it too.
+# A suite may run several tables; each row gets its own directory.
+TABLES=0
 run_table() {
   local title="$1" defaults="$2" rows="$3" suffix="${4:-}" n=0 label world command rc out err want got row field
+  TABLES=$((TABLES + 1))
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
@@ -548,7 +615,7 @@ run_table() {
     done
     n=$((n + 1))
     # shellcheck disable=SC2086
-    build "row-$n" $defaults $world
+    build "table-$TABLES-row-$n" $defaults $world
     got="$(run "$command")"
     [[ -z "$suffix" ]] || got="$got $("$suffix")"
     # A rendering aid for writing rows; the run is refused after the loop.

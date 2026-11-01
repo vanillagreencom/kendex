@@ -9,14 +9,19 @@
 #   second-opinion detect
 #
 # Environment:
-#   SECOND_OPINION_MODELS        Priority-ordered target roster (default: "claude codex")
+#   SECOND_OPINION_MODELS        Priority-ordered target roster
+#                                (default: "pi-copilot claude pi-copilot-gpt codex")
 #   SECOND_OPINION_COUNT         Opinions to collect in review mode (default: 1)
 #   SECOND_OPINION_CURRENT_MODEL Declared model identity of THIS session (overrides detection)
-#   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>;
+#   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>, or
+#                                the stock model of pi-copilot/pi-copilot-gpt;
 #                                pi/opencode/cursor/copilot have none and are skipped until it is set)
-#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
-#   SECOND_OPINION_<NAME>_ROOM_CMD  Room check for target <NAME>'s account (default: none)
+#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude, codex, pi-copilot and
+#                                pi-copilot-gpt have defaults)
+#   SECOND_OPINION_<NAME>_ROOM_CMD  Room check for target <NAME>'s account (default: none;
+#                                orch's lanes pick for pi-copilot/pi-copilot-gpt)
 #   SECOND_OPINION_<NAME>_INLINE_DIFF  Set to 1 to embed the review diff for target <NAME>
+#                                (default: on for pi-copilot/pi-copilot-gpt)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 1080)
 #   SECOND_OPINION_FOREGROUND_CAP  Set to 1 instead of passing --foreground
@@ -93,8 +98,8 @@ Options:
 With --foreground, run the printed wait command and follow Exit codes below until terminal.
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session,
-AND whose account has room by its SECOND_OPINION_<NAME>_ROOM_CMD where it has
-one — the model this session runs is never dispatched to, in any mode, forced
+AND whose account has room by its room check where it has one
+(SECOND_OPINION_<NAME>_ROOM_CMD, or the stock Copilot entries' default) — the model this session runs is never dispatched to, in any mode, forced
 or not.
 A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on
 stderr advances to the next roster name. On a zero exit the stderr refusal
@@ -116,8 +121,9 @@ Environment. Every key below belongs in kendex.settings.toml [env] (or
 .env.local) except SECOND_OPINION_CURRENT_MODEL and
 SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
   SECOND_OPINION_MODELS      Priority-ordered target roster, space/comma
-                             separated (default: "claude codex"); set empty and
-                             the run refuses rather than using the default
+                             separated (default: "pi-copilot claude
+                             pi-copilot-gpt codex"); set empty and the run
+                             refuses rather than using the default
   SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
   SECOND_OPINION_CURRENT_MODEL
                              Model identity of THIS session. A positively
@@ -139,17 +145,24 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              session in the repo, so a value from one is not a
                              declaration for any of them and is refused
   SECOND_OPINION_<NAME>_MODEL
-                             Model identity of target <NAME> (default: <NAME>).
+                             Model identity of target <NAME> (default: <NAME>;
+                             for pi-copilot and pi-copilot-gpt on their
+                             default command, the model that command runs).
                              A target named for a harness that fronts a
                              selectable model (pi, opencode, cursor, copilot,
                              any case) has no default and is skipped until
                              this names the model its command runs
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
-                             hyphens become underscores); claude and codex
-                             have defaults (below). Targets named codex (any
-                             case) also receive --disable hooks --json when
-                             their command directly runs codex, including
-                             overrides with supported env prefixes. Other target
+                             hyphens become underscores); claude, codex,
+                             pi-copilot and pi-copilot-gpt have defaults
+                             (below). Setting it for pi-copilot or
+                             pi-copilot-gpt replaces that entry's default
+                             model, room check and inline diff too, so the
+                             entry reads only its own settings. Targets
+                             named codex (any case) also receive --disable
+                             hooks --json when their command directly runs
+                             codex, including overrides with supported env
+                             prefixes. Other target
                              names, CLIs and opaque wrappers supply their own
                              backend flags. Keep every configured command read-only.
                              copilot has none: Copilot
@@ -158,7 +171,13 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              have checked cannot write
   SECOND_OPINION_<NAME>_ROOM_CMD
                              Whether the account target <NAME> spends has
-                             room now (default: none, no check). Run from the
+                             room now (default: none, no check; for
+                             pi-copilot and pi-copilot-gpt on their default
+                             command, orch's lanes pick, below; set empty for
+                             no check). Before it runs, its program word is
+                             resolved as an entry's command program is; one
+                             not installed skips the target as room check
+                             unavailable. Run from the
                              project root with stdin closed, after every other
                              check passed. Exit 0 is room, and each stdout line
                              is a NAME=value assignment the target command
@@ -177,7 +196,9 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              mode then embeds the git diff of the pinned
                              range in that target's scope block, the prompt
                              otherwise unchanged (default: unset, the target
-                             runs the diff command itself). The embedded copy
+                             runs the diff command itself; on for pi-copilot
+                             and pi-copilot-gpt on their default command,
+                             any other set value turning it off). The embedded copy
                              is capped at 131072 bytes: a longer diff is cut
                              at its last whole line inside the cap, and the
                              whole diff is kept in an owner-only file in the
@@ -231,7 +252,8 @@ Review scope (review mode only):
   The wrapper derives the review scope from the worktree before invoking the
   external CLI — current branch, diff range (--range or origin/BASE...HEAD),
   diffstat, and the changed-file list are embedded in the prompt, and the
-  diff, capped, for a target set to SECOND_OPINION_<NAME>_INLINE_DIFF=1. audit
+  diff, capped, for a target set to SECOND_OPINION_<NAME>_INLINE_DIFF=1 and the
+  stock Copilot entries on their default command. audit
   derives no scope: it reads only its supplied --prompt file and ignores
   --range. review stamps qa_metadata.reviewed_head — the reviewed range's
   endpoint commit, captured when the scope is derived (before the model
@@ -268,6 +290,18 @@ Default commands:
           Claude adds --model from kendex tier-model claude 2 (standard).
           An unresolved class uses the harness default with one notice.
           Codex uses its harness default.
+  pi-copilot, pi-copilot-gpt:
+          pi -p --no-session --no-extensions --model MODEL --thinking high
+            --tools read,grep,find,ls
+          MODEL is github-copilot/claude-opus-5.5 for pi-copilot (identity
+          claude) and github-copilot/gpt-6.1-sol for pi-copilot-gpt
+          (identity codex). Read-only file tools and no shell, so each is
+          sent the review diff inline. Room check:
+          env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick
+            --harness pi --model MODEL
+          from the project root: an entry is taken only where the orch skill
+          is installed there and its check admits the account's Copilot
+          seat; the reviewer runs on this machine's login.
 
 Output clearing and ownership:
   No exit leaves a previous run's output behind. Every mode that writes
@@ -569,7 +603,7 @@ done
 # the argument loop leaves a previous run's artifact behind. `detect` is the one
 # deliberate exclusion: it writes nothing and takes no --output.
 
-DEFAULT_MODELS="claude codex"
+DEFAULT_MODELS="pi-copilot claude pi-copilot-gpt codex"
 FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
 
 # The roster, one entry per line, split with globbing off: an entry is a name,
@@ -850,7 +884,9 @@ detect_current_harness() {
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # What a harness name says about the model it runs, the one table detection,
-# target identities and the built-in commands read: claude and codex each run
+# target identities and the claude and codex built-in commands read; the stock
+# Copilot entries are names no harness is, so stock_copilot_model holds them
+# and nothing keyed on a harness reaches them: claude and codex each run
 # their own vendor's models and name them; pi, opencode, cursor and copilot
 # front a selectable model and name none. Any case. Prints the model or
 # nothing; returns 1 for a name that is no harness detect_current_harness
@@ -1010,9 +1046,10 @@ target_var() {
 target_cmd_var() { target_var "$1" CMD; }
 
 # Declared model identity of a target: SECOND_OPINION_<NAME>_MODEL, else the
-# model harness_model names for it, else the target's own name. A harness that
-# fronts a selectable model names none, and an empty identity is what
-# consider_target skips.
+# model harness_model names for it, else the model a stock Copilot entry's
+# default command runs, else the target's own name. A harness that fronts a
+# selectable model names none, and an empty identity is what consider_target
+# skips.
 target_model() {
   local var named
   var="$(target_var "$1" MODEL)"
@@ -1020,19 +1057,45 @@ target_model() {
     canon_identity "${!var}"
   elif named=$(harness_model "$1"); then
     printf '%s' "$named"
+  elif named=$(stock_copilot_model "$1"); then
+    canon_identity "$named"
   else
     canon_identity "$1"
   fi
 }
 
 # --- Pluggable target commands ------------------------------------------------
-# A target is a NAME plus a full command line. claude and codex carry built-in
-# default commands; any other name resolves ONLY through its
-# SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
-# entry, not code.
+# A target is a NAME plus a full command line. claude, codex and the two stock
+# Copilot entries carry built-in default commands; any other name resolves ONLY
+# through its SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is
+# a settings entry, not code.
 
 DEFAULT_CLAUDE_CMD="claude -p --output-format json --no-session-persistence --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
 DEFAULT_CODEX_CMD="codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+# The stock Copilot entries, %s being the entry's model: Pi on the Copilot
+# provider with read-only file tools and no shell, and the orch skill's room
+# check for the seat that model spends, run on this machine's login because the
+# reviewer runs here. Orch is optional: where its script is not installed under
+# the project root the check is unavailable and the entry is skipped.
+DEFAULT_PI_COPILOT_CMD="pi -p --no-session --no-extensions --model %s --thinking high --tools read,grep,find,ls"
+DEFAULT_PI_COPILOT_ROOM_CMD="env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model %s"
+
+# The model a stock Copilot entry runs: pi-copilot Claude Opus, pi-copilot-gpt
+# GPT, matched on the settings namespace as every other per-target key is.
+# Returns 1 for any other name, and for a stock name whose
+# SECOND_OPINION_<NAME>_CMD is set: that command is the consumer's own, so the
+# stock model, room check and inline diff, which describe the command it
+# replaced, do not apply to it.
+stock_copilot_model() {
+  local var
+  var="$(target_cmd_var "$1")"
+  [[ -z "${!var:-}" ]] || return 1
+  case "$var" in
+    SECOND_OPINION_PI_COPILOT_CMD)     printf 'github-copilot/claude-opus-5.5' ;;
+    SECOND_OPINION_PI_COPILOT_GPT_CMD) printf 'github-copilot/gpt-6.1-sol' ;;
+    *)                                 return 1 ;;
+  esac
+}
 DEFAULT_CLAUDE_RESOLVED=0
 resolve_default_model() {
   local var model
@@ -1049,7 +1112,7 @@ resolve_default_model() {
 # Full command line for a target: its env override, else the built-in default.
 # Empty output = unconfigured target.
 target_cmd() {
-  local target="$1" var
+  local target="$1" var model
   var="$(target_cmd_var "$target")"
   if [[ -n "${!var:-}" ]]; then
     printf '%s' "${!var}"
@@ -1058,27 +1121,31 @@ target_cmd() {
   case "$(harness_model "$target")" in
     claude) printf '%s' "$DEFAULT_CLAUDE_CMD" ;;
     codex)  printf '%s' "$DEFAULT_CODEX_CMD" ;;
+    *)
+      if model=$(stock_copilot_model "$target"); then
+        # shellcheck disable=SC2059 # the format is the stock template above
+        printf "$DEFAULT_PI_COPILOT_CMD" "$model"
+      fi
+      ;;
   esac
 }
 
-# A target with a command is available when its program word is an executable
-# file where the command will look for it: the first word, or past a leading
-# env, its options and its VAR=value assignments, the word env runs, so
-# `env VAR=value copilot ...` is judged on copilot, not env. The command runs
-# from --cwd, and env's PATH=, -i, -u PATH and -C DIR change the PATH searched
-# and the directory a relative name resolves from, as env applies them before
-# it execs; a PATH env clears is the system default, and the last -C names the
-# directory, from --cwd. An env option outside those, such as BSD's -P or
-# GNU's -S, -a or signal options, is not modelled: the command is then judged
-# on env itself, as it was before env prefixes were read, and the runtime
-# reports a missing program. The argv is exec'd as it stands, never by a
-# shell, so a builtin such as exec is no program. An env override may point it
-# away from the target's own name. A command with no program word after its
-# assignments has nothing to run. On success, stdout names the selected
-# program so command construction uses this same resolution.
-target_available() {
-  local cmd assignment='^[A-Za-z_][A-Za-z0-9_]*=' path="$PATH" dir="$CWD" chdir="" entry rest
-  cmd="$(target_cmd "$1")"
+# The program a command line runs from DIR, when it is an executable file
+# where the command will look for it: the first word, or past a leading env,
+# its options and its VAR=value assignments, the word env runs, so
+# `env VAR=value copilot ...` is judged on copilot, not env. env's PATH=, -i,
+# -u PATH and -C change the PATH searched and the directory a relative name
+# resolves from, as env applies them before it execs; a PATH env clears is the
+# system default, and the last -C names the directory, from DIR. An env option
+# outside those, such as BSD's -P or GNU's -S, -a or signal options, is not
+# modelled: the command is then judged on env itself, as it was before env
+# prefixes were read, and the runtime reports a missing program. The argv is
+# exec'd as it stands, never by a shell, so a builtin such as exec is no
+# program. A command with no program word after its assignments has nothing to
+# run. On success, stdout names the selected program so command construction
+# uses this same resolution.
+command_program() { # CMD DIR
+  local cmd="$1" assignment='^[A-Za-z_][A-Za-z0-9_]*=' path="$PATH" dir="$2" chdir="" entry rest
   # shellcheck disable=SC2086
   set -- $cmd
   if [[ "${1:-}" == env ]]; then
@@ -1123,8 +1190,17 @@ target_available() {
   return 1
 }
 
+# A target with a command is available when its command's program resolves
+# from --cwd, where the command runs. An env override may point it away from
+# the target's own name.
+target_available() { command_program "$(target_cmd "$1")" "$CWD"; }
+
 # Whether the account a target spends has room, by its
-# SECOND_OPINION_<NAME>_ROOM_CMD; a target with none has no check. Exit 0 is
+# SECOND_OPINION_<NAME>_ROOM_CMD, or for a stock Copilot entry with that key
+# unset the stock check; a target with none, or with the key set empty, has no
+# check. A check whose program is not installed where it runs is unavailable,
+# not refused, and skips the target before anything runs: a missing optional
+# integration is no reading of the account, and never admits it. Exit 0 is
 # room, and the stdout lines are the NAME=value env prefix naming the account
 # the command judged, which ROOM_ENV carries to the target command: `lanes pick`
 # prints exactly that, and `lanes pick --json` prints a record, which is
@@ -1139,27 +1215,38 @@ target_available() {
 # under a forced target it is the caller's, where a prompt may still wait.
 ROOM_ENV=""
 target_room() {
-  local t="$1" var cmd out rc=0 line shown=""
+  local t="$1" var from cmd="" model out rc=0 line shown=""
   ROOM_ENV=""
   var="$(target_var "$t" ROOM_CMD)"
-  cmd="${!var:-}"
+  from="$var"
+  if [[ -n "${!var+x}" ]]; then
+    cmd="${!var}"
+  elif model=$(stock_copilot_model "$t"); then
+    # shellcheck disable=SC2059 # the format is the stock template
+    printf -v cmd "$DEFAULT_PI_COPILOT_ROOM_CMD" "$model"
+    from="the default $var"
+  fi
   [[ -n "$cmd" ]] || return 0
+  if ! command_program "$cmd" "${PROJECT_ROOT:-.}" >/dev/null; then
+    skip_target "$t" "room check unavailable — $from runs a program not installed here: $cmd"
+    return 1
+  fi
   # shellcheck disable=SC2086
   out="$(cd -- "${PROJECT_ROOT:-.}" && $cmd </dev/null)" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    skip_target "$t" "room check refused — $var exited $rc; its own reason is on stderr above, and running $var's command prints it again"
+    skip_target "$t" "room check refused — $from exited $rc; its own reason is on stderr above, and running $from's command prints it again"
     return 1
   fi
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-      skip_target "$t" "room check printed a line that is no NAME=value assignment: $line — $var prints the env prefix of the account it judged and nothing else"
+      skip_target "$t" "room check printed a line that is no NAME=value assignment: $line — $from prints the env prefix of the account it judged and nothing else"
       return 1
     fi
     ROOM_ENV="$ROOM_ENV$line"$'\n'
     shown="${shown:+$shown }$line"
   done <<<"$out"
-  echo "→ room: $t has room by $var${shown:+; runs under $shown}" >&2
+  echo "→ room: $t has room by $from${shown:+; runs under $shown}" >&2
 }
 
 # --- Target selection ---------------------------------------------------------
@@ -1757,7 +1844,8 @@ REVIEW_CHANGED_FILES=""
 REVIEW_DIFFSTAT=""
 REVIEW_HEAD_SHA=""
 # The full diff of the pinned range, for a target whose
-# SECOND_OPINION_<NAME>_INLINE_DIFF is 1: a reviewer with read-only file tools
+# SECOND_OPINION_<NAME>_INLINE_DIFF is 1, or a stock Copilot entry with that
+# key unset: a reviewer with read-only file tools
 # and no shell cannot run the diff command the prompt names, and would
 # otherwise review only the file list. Empty for every other target. Capped at
 # REVIEW_DIFF_CAP bytes, as each instruction file is capped: a branch carrying
@@ -1774,7 +1862,11 @@ REVIEW_DIFF_FILE=""
 derive_review_diff() {
   local cwd="$1" var git_err diff_file size shown
   var="$(target_var "$TARGET_CLI" INLINE_DIFF)"
-  [[ "${!var:-}" == 1 ]] || return 0
+  if [[ -n "${!var+x}" ]]; then
+    [[ "${!var}" == 1 ]] || return 0
+  else
+    stock_copilot_model "$TARGET_CLI" >/dev/null || return 0
+  fi
   git_err=$(so_tmpfile)
   diff_file=$(so_tmpfile)
   # shellcheck disable=SC2086

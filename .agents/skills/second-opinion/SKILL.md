@@ -1,12 +1,13 @@
 ---
 name: second-opinion
 description: "Load for a cross-model review, challenge, audit, or quick consult."
-summary: "Cross-model second opinion: review, challenge, audit, and consult through an external AI CLI (Claude and Codex, or one a settings entry names)."
+summary: "Cross-model second opinion: review, challenge, audit, and consult through an external AI CLI (Pi on Copilot, Claude and Codex, or one a settings entry names)."
 license: MIT
 user-invocable: true
 argument-hint: "review [scope] | challenge [description] | audit [path] | quick [question]"
 dependencies:
   required: [github]
+  optional: [orch]
 metadata:
   author: vanillagreen
   source: kendex
@@ -25,7 +26,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Second Opinion
 
-Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available, runs a different model and, where it has a room check, has room on its account: Codex from a Claude Code session, Claude from a Codex session; when nothing eligible remains the run refuses and says why. Full contract: `second-opinion --help`.
+Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available, runs a different model and, where it has a room check, has room on its account. The default roster is `pi-copilot claude pi-copilot-gpt codex`: GPT on Copilot, then Codex, from a Claude Code session; Claude on Copilot, then Claude, from a Codex session; when nothing eligible remains the run refuses and says why. Full contract: `second-opinion --help`.
 
 ```bash
 .agents/skills/second-opinion/scripts/second-opinion <mode> [options]
@@ -64,7 +65,7 @@ The `SECOND_OPINION_MODELS` order is the fallback order at both the room check a
 
 ## Configuration
 
-Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_FOREGROUND_CAP` is session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. This skill marks no key `# required`, so an arrival writes nothing into `kendex.settings.toml`; assign a key there only to change a default the scripts already read (`SECOND_OPINION_TARGET` has none). Keys, defaults, and the built-in `claude`/`codex` commands: `second-opinion --help`. A target named for a harness that fronts a selectable model, `copilot` among them, runs only once its `SECOND_OPINION_<NAME>_MODEL` is set. `SECOND_OPINION_<NAME>_ROOM_CMD` gives a target a room check, such as the orch skill's `lanes pick` for the seat it spends: a target whose check refuses is skipped for the next roster entry, and one with room runs under the account prefix the check printed. `SECOND_OPINION_<NAME>_INLINE_DIFF` set to `1` sends a target that cannot run git, such as Pi on read-only file tools, the review diff inside its prompt.
+Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_FOREGROUND_CAP` is session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. This skill marks no key `# required`, so an arrival writes nothing into `kendex.settings.toml`; assign a key there only to change a default the scripts already read (`SECOND_OPINION_TARGET` has none). Keys, defaults, and the built-in `claude`, `codex`, `pi-copilot` and `pi-copilot-gpt` commands: `second-opinion --help`. The two Pi-on-Copilot entries also carry their model, inline diff and a room check through the orch skill's `lanes pick`, where orch is installed in the project; without it, or without pi, they are skipped for the next entry. A target named for a harness that fronts a selectable model, `copilot` among them, runs only once its `SECOND_OPINION_<NAME>_MODEL` is set. `SECOND_OPINION_<NAME>_ROOM_CMD` gives a target a room check, such as the orch skill's `lanes pick` for the seat it spends: a target whose check refuses is skipped for the next roster entry, and one with room runs under the account prefix the check printed. `SECOND_OPINION_<NAME>_INLINE_DIFF` set to `1` sends a target that cannot run git, such as Pi on read-only file tools, the review diff inside its prompt.
 
 ## Error Handling
 

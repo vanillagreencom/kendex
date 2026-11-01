@@ -30,6 +30,7 @@ room skip still precedes execution|room:codex=walled|review|rc=0 [{\"name\":\"cl
 failed model can answer through its next harness|model:codex=claude exit:codex=7|review|rc=0 $FIRST order=codex,claude calls=1,1,0
 COUNT counts valid opinions, not failed attempts|count:2 exit:codex=7|review|rc=0 [{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"my-model\",\"cause\":\"answered\",\"timed\":true}] order=codex,claude,extra calls=1,1,1
 successful model excludes a second harness for it|count:2 model:claude=codex|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"my-model\",\"cause\":\"answered\",\"timed\":true}] order=codex,extra calls=1,0,1
+a stock Copilot entry's failed run falls through to codex|models:pi-copilot-gpt+codex pi:stub orch:room exit:extra=7|review|rc=0 [{\"name\":\"pi-copilot-gpt\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true}] order=extra,codex calls=1,0,1
 forced target never falls through|exit:codex=7|review --target codex|rc=5 [{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true}] order=codex calls=1,0,0
 "
 n=0
