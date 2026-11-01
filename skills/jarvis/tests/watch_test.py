@@ -248,17 +248,26 @@ class Producer(unittest.TestCase):
             for now in (0, 300, 600):
                 step(watch, now, reminder, False, 0, [])
             self.assertFalse(windows.exists())
-            first, second = self.owner_note("first ask"), self.owner_note("second ask")
-            at = {row["id"]: row["at"] for row in self.inbox()}
+            # Distinct stamps, first the older, so a window bound by any row but the oldest drops first.
+            self.clock(-120)
+            first = self.owner_note("first ask")
+            self.bin.joinpath("date").unlink()
+            second = self.owner_note("second ask")
             both, late = [first, second], "EVENT owner-unanswered id=" + second + " "
             # Each row: now, the header counted, whether the poll checks, lines it adds, saved waiting ids.
             # Delivery starts the check at once; young rows stay waiting unreminded.
             watch.accept(watch.acquire(0))
-            for row in ((601, reminder, True, 0, both), (602, reminder, False, 0, both)):
-                step(watch, *row)
-            # Partial coverage: the covered row leaves, the other keeps the check alive.
-            self.mail(self.home, "notice", "first done", "--to", "owner", "--ref", first)
-            for row in ((901, reminder, True, 0, both), (902, reminder, False, 0, [second])):
+            step(watch, 601, reminder, True, 0, both)
+            # A row delivered after the check read the inbox waits for the next check.
+            third = self.owner_note("third ask")
+            watch.accept(watch.acquire(0))
+            step(watch, 602, reminder, False, 0, both + [third])
+            at = {row["id"]: row["at"] for row in self.inbox()}
+            self.assertLess(at[first], at[second])
+            # Partial coverage: the covered rows leave, the other keeps the check alive.
+            for covered in (first, third):
+                self.mail(self.home, "notice", covered + " done", "--to", "owner", "--ref", covered)
+            for row in ((901, reminder, True, 0, both + [third]), (902, reminder, False, 0, [second])):
                 step(watch, *row)
             # Each window starts at the oldest waiting row, never a default window.
             self.assertEqual(re.findall(r"--since (\S+) ", windows.read_text()), [at[first], at[first]])
@@ -991,12 +1000,18 @@ class Producer(unittest.TestCase):
         # Each planted defect, in a disposable producer copy, turns its row red.
         gate = "if self.unanswered_pending is None and waiting and now >= self.next_unanswered:"
         report = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
+        keep = 'if row["id"] not in checked_ids or row["id"] in listed]'
+        window = '"--since", min(row["at"] for row in waiting)'
         for name, old, new in (
                 # The watch never pages a report the cursor has not seen.
                 ("test_report_deadline_restart_and_receipt", report, "if False and " + report[len("if "):]),
                 # An idle interval with no waiting owner row checks nothing.
-                ("test_owner_unanswered_reminder", gate, gate.replace(" waiting ", " (waiting or True) "))):
-            with self.subTest(row=name):
+                ("test_owner_unanswered_reminder", gate, gate.replace(" waiting ", " (waiting or True) ")),
+                # A row delivered during a check waits for the next one.
+                ("test_owner_unanswered_reminder", keep, 'if row["id"] in listed]'),
+                # The window starts at the oldest waiting row.
+                ("test_owner_unanswered_reminder", window, window.replace("min(", "max("))):
+            with self.subTest(row=name, planted=new):
                 case = Producer(methodName=name)
                 case.setUp()
                 try:
