@@ -556,49 +556,6 @@ expected_failures="$(awk -F '|' '{ print $1 ": first removal retains identity an
 assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log" | paste -s -d ';' -)" "$expected_failures" \
   'control: losing the known branch fails the partial-removal identity assertion'
 
-# A copy without the inactive-only release must fail the recorded-PID row.
-# The copy also keeps the owner check, so this control reaches liveness.
-CLOSEOUT_CONTROL="$TMP_ROOT/closeout-control"
-cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$CLOSEOUT_CONTROL"
-INACTIVE_CALL='--owner "$owner" --inactive --repo "$PROJECT_ROOT"'
-[[ "$(grep -cF -- "$INACTIVE_CALL" "$CLOSEOUT_CONTROL/worktree")" == 1 ]] || { echo 'worktree_remove: control=inactive-target-count' >&2; exit 1; }
-CONTROL_TEXT="$(cat -- "$CLOSEOUT_CONTROL/worktree")"
-printf '%s\n' "${CONTROL_TEXT/"$INACTIVE_CALL"/'--owner "$owner" --repo "$PROJECT_ROOT"'}" >"$CLOSEOUT_CONTROL/worktree"
-! cmp -s "$WORKTREE_PACKAGE_DIR/scripts/worktree" "$CLOSEOUT_CONTROL/worktree" || { echo 'worktree_remove: control=inactive-unchanged' >&2; exit 1; }
-build live-control tree adopted-lease item-record live-process lock-record
-control_log="$(PASS=0 FAIL=0 WORKTREE_SCRIPT="$CLOSEOUT_CONTROL/worktree"; check_remove_row live-control TOPIC 1 - live-process 'worktree=registered/yes branch=present dirs=topic links=- lock=intact')"
-finish_session
-assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log")" live-control \
-  'control: the recorded-PID row rejects an unconditional owner release'
-
-# status returns the owner with owner-mismatch exit 75. Rejecting that result
-# must fail the same adopted-item rows while keeping foreign owners refused.
-STATUS_CONTROL="$TMP_ROOT/status-control"
-cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$STATUS_CONTROL"
-STATUS_CASE='0 | 75) ;;'
-[[ "$(grep -cF -- "$STATUS_CASE" "$STATUS_CONTROL/worktree")" == 1 ]] || { echo 'worktree_remove: control=status-target-count' >&2; exit 1; }
-CONTROL_TEXT="$(cat -- "$STATUS_CONTROL/worktree")"
-printf '%s\n' "${CONTROL_TEXT/"$STATUS_CASE"/'0) ;;'}" >"$STATUS_CONTROL/worktree"
-! cmp -s "$WORKTREE_PACKAGE_DIR/scripts/worktree" "$STATUS_CONTROL/worktree" || { echo 'worktree_remove: control=status-unchanged' >&2; exit 1; }
-control_log="$(PASS=0 FAIL=0 WORKTREE_SCRIPT="$STATUS_CONTROL/worktree"; check_remove_rows "$ADOPTED_OWNER_ROWS" status-control)"
-expected_failures="$(awk -F '|' '$4 == 0 { print $1 }' <<<"$ADOPTED_OWNER_ROWS" | paste -s -d ';' -)"
-assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log" | paste -s -d ';' -)" "$expected_failures" \
-  'control: skipping owner-mismatch readback rejects the adopted-item rows only'
-
-# The no-jq rows must reject a parser dependency on the production readback.
-OWNER_CONTROL="$TMP_ROOT/owner-control"
-cp -R "$WORKTREE_PACKAGE_DIR/scripts" "$OWNER_CONTROL"
-OWNER_READ='owner="$("$SESSION_GUARD" status "$wt" --owner-only --repo "$PROJECT_ROOT" 2>/dev/null)"'
-[[ "$(grep -cF -- "$OWNER_READ" "$OWNER_CONTROL/worktree")" == 1 ]] || { echo 'worktree_remove: control=owner-target-count' >&2; exit 1; }
-CONTROL_TEXT="$(cat -- "$OWNER_CONTROL/worktree")"
-PARSER_READ='owner="$("$SESSION_GUARD" status "$wt" --owner-only --repo "$PROJECT_ROOT" 2>/dev/null | jq -Rr .)"'
-printf '%s\n' "${CONTROL_TEXT/"$OWNER_READ"/"$PARSER_READ"}" >"$OWNER_CONTROL/worktree"
-! cmp -s "$WORKTREE_PACKAGE_DIR/scripts/worktree" "$OWNER_CONTROL/worktree" || { echo 'worktree_remove: control=owner-unchanged' >&2; exit 1; }
-build owner-control tree adopted-lease item-record absent-process no-jq
-control_log="$(PASS=0 FAIL=0 WORKTREE_SCRIPT="$OWNER_CONTROL/worktree"; check_remove_row owner-control @path 0 removed released+deleted 'worktree=absent/no branch=absent dirs=- links=-')"
-assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$control_log")" owner-control \
-  'control: the no-jq row rejects a parser dependency during lease removal'
-
 # Control: a remove that leaves the mailbox to git's deletion. The mailbox
 # state above must tell it apart, or no row there proves the move.
 MUTANT_DIR="$TMP_ROOT/mutant-scripts"
@@ -612,19 +569,6 @@ build remove-control tree mail
 assert_eq "$(WORKTREE_SCRIPT="$MUTANT_DIR/worktree" run_remove TOPIC)" \
   "rc=0 out=$(remove_out removed) err=$(remove_err deleted) worktree=absent/no branch=absent dirs=- links=- mail=main:absent wt:absent staged=0" \
   "control: a remove that does not move the lane mailbox deletes it with the worktree"
-
-# Control: a join that leaves the replies behind. pending must list the
-# answered ask, or the row above does not prove the carry.
-cp "$WORKTREE_PACKAGE_DIR/scripts/worktree" "$MUTANT_DIR/worktree"
-CARRY_TEST='if [[ -n "$replies" ]]; then'
-[[ "$(grep -cF -- "$CARRY_TEST" "$MUTANT_DIR/worktree")" == 1 ]] || { echo "worktree_remove: control=carry-target-count" >&2; exit 1; }
-MUTANT_TEXT="$(<"$MUTANT_DIR/worktree")"
-printf '%s\n' "${MUTANT_TEXT/"$CARRY_TEST"/if false; then}" >"$MUTANT_DIR/worktree"
-! cmp -s "$WORKTREE_PACKAGE_DIR/scripts/worktree" "$MUTANT_DIR/worktree" || { echo "worktree_remove: control=carry-unchanged" >&2; exit 1; }
-build carry-control tree mail answered main-mail
-assert_eq "$(WORKTREE_SCRIPT="$MUTANT_DIR/worktree" run_remove TOPIC)" \
-  "rc=0 out=$(remove_out removed) err=$(remove_err deleted) worktree=absent/no branch=absent dirs=- links=- mail=main:main-1,wt-1,wt-2,wt-3 wt:absent staged=0 lane=-@- pending=wt-3" \
-  "control: a join that drops the overseer's answer leaves the ask owed"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

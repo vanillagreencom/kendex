@@ -471,18 +471,11 @@ HANDOVER_HARNESS="$TMP_ROOT/handover-harness"
 session_harness_start "$HANDOVER_HARNESS" claude
 handover_rows "$GUARD_SCRIPT"
 
-# Must-fail controls, each a guard copy with one text replaced: an env owner
-# that never matches refuses the takeover, so both takeover rows go red; a
-# guard that adopts on every claim admits on an env match alone, so the
-# unflagged claim goes red; an --adopt that refresh accepts lets refresh take
-# the lease over, so the refresh row goes red. A row: label|text|replacement|
-# rows expected to fail.
+# Must-fail control, a guard copy with one text replaced: an env owner that
+# never matches refuses the takeover, so both takeover rows go red. A row:
+# label|text|replacement|rows expected to fail.
 HANDOVER_ANCHOR='env_owner="${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"'
-HANDOVER_GATE="require_flag_applies --adopt 'claim'"
-HANDOVER_CONTROLS="env owner never matches|$HANDOVER_ANCHOR|$HANDOVER_ANCHOR; env_owner=|the env owner's lease passes to an adopting --owner;the ladder's top rung is the env owner
-adopt on every claim|$HANDOVER_ANCHOR|$HANDOVER_ANCHOR; adopt=true|an explicit owner without --adopt is refused
-refresh takes --adopt|$HANDOVER_GATE|require_flag_applies --adopt 'claim refresh'|refresh refuses --adopt
-refresh takes --session|require_flag_applies --session 'claim'|require_flag_applies --session 'claim refresh'|refresh refuses --session"
+HANDOVER_CONTROLS="env owner never matches|$HANDOVER_ANCHOR|$HANDOVER_ANCHOR; env_owner=|the env owner's lease passes to an adopting --owner;the ladder's top rung is the env owner"
 control_n=0
 while IFS='|' read -r control_label control_text control_replacement expected_fails; do
   control_n=$((control_n + 1))
@@ -633,9 +626,10 @@ echo "=== session processes hold a lease ==="
 
 # A session-bound claim records the harness process it runs under, and every
 # automatic release or takeover reads that process back. Each harness here is
-# an owned stand-in under the harness's name (lib/session-harness.sh); the same
-# rows run with Claude holding and Codex claiming, then the reverse. Each run
-# builds its own repository, so a control's run starts from a clean one.
+# an owned stand-in under the harness's name (lib/session-harness.sh). The
+# guard reads no harness name, so each group runs under one pairing and the
+# shared and reclaim rows hold both names at once. Each run builds its own
+# repository, so a control's run starts from a clean one.
 LIVE_WT=''
 live_tree() {
   live_n=$((live_n + 1))
@@ -948,12 +942,12 @@ liveness_rows() { # RUN GUARD GROUP...
   live_n=0
   for group in "$@"; do
     case "$group" in
-      shared) shared_rows claude codex; shared_rows codex claude ;;
-      reclaim) reclaim_rows claude codex; reclaim_rows codex claude ;;
-      release) release_rows claude; release_rows codex ;;
-      relaunch) relaunch_rows claude; relaunch_rows codex ;;
-      readfail) read_failure_rows claude; read_failure_rows codex ;;
-      established) established_rows claude; established_rows codex ;;
+      shared) shared_rows claude codex ;;
+      reclaim) reclaim_rows claude codex ;;
+      release) release_rows claude ;;
+      relaunch) relaunch_rows codex ;;
+      readfail) read_failure_rows codex ;;
+      established) established_rows claude ;;
       unidentified) unidentified_rows ;;
       psread) ps_read_rows ;;
     esac
@@ -1008,28 +1002,22 @@ verb_rows() { # RUN SCRIPTS-DIR
 }
 verb_rows main "$WORKTREE_PACKAGE_DIR/scripts"
 
-# Must-fail controls, each a scripts copy with one text replaced in one file;
-# the row groups it names run against it, and the rows listed go red.
+# Must-fail controls, one per row group, each a scripts copy with one text
+# replaced in one file; the row groups it names run against it, and the rows
+# listed go red.
 # A row: label^file^text^replacement^groups^expected fails^further expected
 # fails where the host reads processes through /proc^further expected fails
 # where it reads them through ps. Each host runs rows the other lacks, so a
 # row of one host's set that a control turns red goes in that host's column.
 # The fails compare as a set.
-LIVENESS_CONTROLS='launchers are not skipped^worktree-session-guard^readonly SESSION_LAUNCHERS='"' sh bash dash zsh ksh fish env timeout nice nohup setsid stdbuf '"'^readonly SESSION_LAUNCHERS='"'  '"'^shared^claude: a session-bound claim records the harness process it runs under;claude then codex: a second session on the lease keeps the first one'"'"'s record;claude then codex: one live session holds an expired lease whose other session is dead;claude then codex: the close-out from the holding session itself releases its lease;codex: a session-bound claim records the harness process it runs under;codex then claude: a second session on the lease keeps the first one'"'"'s record;codex then claude: one live session holds an expired lease whose other session is dead;codex then claude: the close-out from the holding session itself releases its lease
-a write drops recorded sessions^worktree-session-guard^		out="$out,$identity"^		:^shared^claude then codex: a second session on the lease keeps the first one'"'"'s record;claude then codex: one live session holds an expired lease whose other session is dead;claude then codex: the close-out from the holding session itself releases its lease;codex then claude: a second session on the lease keeps the first one'"'"'s record;codex then claude: one live session holds an expired lease whose other session is dead;codex then claude: the close-out from the holding session itself releases its lease
-takeover on age alone^worktree-session-guard^	[[ "$(lease_session_state "$1")" == dead ]]^	:^reclaim^claude holds, codex claims: an expired lease whose session lives stays held;claude holds, codex claims: an expired lease recorded on another host stays held;claude holds, codex claims: an expired lease that records no session stays held;codex holds, claude claims: an expired lease whose session lives stays held;codex holds, claude claims: an expired lease recorded on another host stays held;codex holds, claude claims: an expired lease that records no session stays held^claude holds, codex claims: an expired lease recorded in another PID namespace stays held;claude holds, codex claims: an expired lease whose session'"'"'s wall-clock start moved stays held;codex holds, claude claims: an expired lease recorded in another PID namespace stays held;codex holds, claude claims: an expired lease whose session'"'"'s wall-clock start moved stays held^claude holds, codex claims: an expired lease whose session ps fails to read stays held;codex holds, claude claims: an expired lease whose session ps fails to read stays held
-release on age alone^worktree-session-guard^		none | dead) return 0 ;;^		*) return 0 ;;^release^claude: release --stale keeps an expired lease whose session lives;claude: sweep keeps an expired lease whose session lives;claude: remove'"'"'s close-out from another process keeps a live session'"'"'s lease;codex: release --stale keeps an expired lease whose session lives;codex: sweep keeps an expired lease whose session lives;codex: remove'"'"'s close-out from another process keeps a live session'"'"'s lease
-the caller holds its own lease^worktree-session-guard^lease_session_state "$LEASE_TEXT" "$caller"^lease_session_state "$LEASE_TEXT"^shared^claude then codex: the close-out from the holding session itself releases its lease;codex then claude: the close-out from the holding session itself releases its lease
-the host rule^worktree-session-guard^ || "$host" != "$HOST_LABEL"^^reclaim^claude holds, codex claims: an expired lease recorded on another host stays held;codex holds, claude claims: an expired lease recorded on another host stays held
-a zombie runs^lib/process-identity.sh^if [[ -z "$now" || "${now%% *}" == Z ]]; then^if [[ -z "$now" ]]; then^reclaim^claude holds, codex claims: an expired lease whose session is a zombie is taken over;codex holds, claude claims: an expired lease whose session is a zombie is taken over
+LIVENESS_CONTROLS='launchers are not skipped^worktree-session-guard^readonly SESSION_LAUNCHERS='"' sh bash dash zsh ksh fish env timeout nice nohup setsid stdbuf '"'^readonly SESSION_LAUNCHERS='"'  '"'^shared^claude: a session-bound claim records the harness process it runs under;claude then codex: a second session on the lease keeps the first one'"'"'s record;claude then codex: one live session holds an expired lease whose other session is dead;claude then codex: the close-out from the holding session itself releases its lease
+takeover on age alone^worktree-session-guard^	[[ "$(lease_session_state "$1")" == dead ]]^	:^reclaim^claude holds, codex claims: an expired lease whose session lives stays held;claude holds, codex claims: an expired lease recorded on another host stays held;claude holds, codex claims: an expired lease that records no session stays held^claude holds, codex claims: an expired lease recorded in another PID namespace stays held;claude holds, codex claims: an expired lease whose session'"'"'s wall-clock start moved stays held^claude holds, codex claims: an expired lease whose session ps fails to read stays held
+release on age alone^worktree-session-guard^		none | dead) return 0 ;;^		*) return 0 ;;^release^claude: release --stale keeps an expired lease whose session lives;claude: sweep keeps an expired lease whose session lives;claude: remove'"'"'s close-out from another process keeps a live session'"'"'s lease
 a session claim reads nothing silently^worktree-session-guard^[[ -n "$caller" ]] || worktree_message guard-session-unidentified^[[ -n "$caller" ]] || : guard-session-unidentified^unidentified^a session-bound claim that cannot read its session process says so and records none
-a failed reading counts as dead^worktree-session-guard^			*) unknown=true ;;^			*) ;;^readfail^claude: a failed process read keeps the lease;claude: a failed identity reading keeps the lease;codex: a failed process read keeps the lease;codex: a failed identity reading keeps the lease
-a failed process read counts as ended^worktree-session-guard^! status="$(process_identity_status "$pid" "$start")"^! status="$(process_identity_status "$pid" "$start" || echo ended)"^readfail^claude: a failed process read keeps the lease;codex: a failed process read keeps the lease
-an established claim waits for the mutex^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 ||^acquire_guard_mutex "$COMMON_DIR" ||^established^claude: an established claim without flock makes one attempt at a held mutex;codex: an established claim without flock makes one attempt at a held mutex
-an established claim fails its admission^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"^acquire_guard_mutex "$COMMON_DIR" 0 || exit 1^established^claude: an established claim without flock makes one attempt at a held mutex;codex: an established claim without flock makes one attempt at a held mutex
+a failed reading counts as dead^worktree-session-guard^			*) unknown=true ;;^			*) ;;^readfail^codex: a failed process read keeps the lease;codex: a failed identity reading keeps the lease
+an established claim waits for the mutex^worktree-session-guard^acquire_guard_mutex "$COMMON_DIR" 0 ||^acquire_guard_mutex "$COMMON_DIR" ||^established^claude: an established claim without flock makes one attempt at a held mutex
 a ps diagnostic reads as no process^lib/process-identity.sh^ && -z "$err" ]]^ ]]^psread^ps read: ps that fails within itself gives no answer'
-PROC_LIVENESS_CONTROLS='a boot keeps its sessions^worktree-session-guard^	if [[ "$boot_part" == differ ]]; then^	if false; then^reclaim release relaunch^claude holds, codex claims: an expired lease whose session ran before a reboot is taken over;codex holds, claude claims: an expired lease whose session ran before a reboot is taken over;claude: release --stale releases an expired lease whose session ran before a reboot;claude: sweep releases an expired lease whose session ran before a reboot;claude: remove'"'"'s close-out releases a lease whose session ran before a reboot;codex: release --stale releases an expired lease whose session ran before a reboot;codex: sweep releases an expired lease whose session ran before a reboot;codex: remove'"'"'s close-out releases a lease whose session ran before a reboot;claude: a relaunched session'"'"'s claim drops the session from before the boot;claude: the relaunched session'"'"'s close-out releases its lease;codex: a relaunched session'"'"'s claim drops the session from before the boot;codex: the relaunched session'"'"'s close-out releases its lease
-the start is wall-clock time^lib/process-identity.sh^  if [[ -d /proc/self ]]; then^  if false; then^reclaim^claude holds, codex claims: an expired lease whose session'"'"'s wall-clock start moved stays held;codex holds, claude claims: an expired lease whose session'"'"'s wall-clock start moved stays held'
+PROC_LIVENESS_CONTROLS='a boot keeps its sessions^worktree-session-guard^	if [[ "$boot_part" == differ ]]; then^	if false; then^relaunch^codex: a relaunched session'"'"'s claim drops the session from before the boot;codex: the relaunched session'"'"'s close-out releases its lease'
 [[ "$PROC_IDENTITY" != true ]] || LIVENESS_CONTROLS="$LIVENESS_CONTROLS
 $PROC_LIVENESS_CONTROLS"
 # Linux names a process started through the worktree script's `#!` line

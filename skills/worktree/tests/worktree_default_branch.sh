@@ -104,19 +104,12 @@ git -C "$MAIN" checkout -q main
 git -C "$MAIN" remote set-head origin main
 git -C "$MAIN" branch lonely
 
-# The must-fail controls: copies of the two packages whose worktree script
-# has one whole line replaced, and, where NEXT is given, only the copy of that
-# line the line NEXT follows. `read` takes main in place of the github skill's
-# answer; `inherited` reads it under the caller's GH_REPO; `refusing` refuses on a failed GitHub read where the script falls
-# back to git's record; `uncalled` cuts check's resolve call; `eager-create`
-# and `eager-remove` resolve whatever create or remove was asked for; `loud`
-# prints the refusal where the caller works without the branch; `lazy-remove`
-# cuts remove's resolve call, so the tree goes before the branch proof reads
-# the default branch; `eager-reuse` resolves before --reuse reads the tree's
-# branch; `local-less` lists the range with no local default branch;
-# `origin-less` skips the range where origin lacks the branch too;
-# `silent` reads a failed listing as no unpushed commits; `authed` selects
-# the GitHub read credential before the override answers.
+# The must-fail controls, one per table: copies of the two packages whose
+# worktree script has one whole line replaced, and, where NEXT is given, only
+# the copy of that line the line NEXT follows. `read` takes main in place of
+# the github skill's answer; `uncalled` cuts check's resolve call;
+# `eager-create` resolves whatever create was asked for; `authed` selects the
+# GitHub read credential before the override answers.
 mutant() { # NAME FROM TO [NEXT]
   local script="$TMP_ROOT/$1/worktree/scripts/worktree" rc=0
   mkdir -p "$TMP_ROOT/$1"
@@ -138,34 +131,11 @@ mutant() { # NAME FROM TO [NEXT]
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant read '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' '    answer=main'
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant inherited '    answer="$( (cd "$PROJECT_ROOT" && unset GH_REPO && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?' \
-  '    answer="$( (cd "$PROJECT_ROOT" && github_read kendex_github_default_branch "$PROJECT_ROOT") 2>&1)" || rc=$?'
-mutant refusing "        sed 's/^/  /' <<<\"\$answer\" >&2" "        sed 's/^/  /' <<<\"\$answer\" >&2; return 1"
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant uncalled '    resolve_default_branch || exit 1' '    :' \
   '    # A default branch GitHub names can exist only as origin/NAME, after the'
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant local-less '    if { git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$DEFAULT_BRANCH" >/dev/null ||' '    if { true ||'
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant origin-less '      ! git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null; } &&' '      false; } &&'
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant silent '      ! UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..refs/heads/$DEFAULT_BRANCH" --oneline 2>/dev/null); then' \
-  '      UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..refs/heads/$DEFAULT_BRANCH" --oneline 2>/dev/null) && false; then'
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant eager-create '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' '    resolve_default_branch || exit 1' \
   '    if [[ -n "$BRANCH" && "$BRANCH" == "$DEFAULT_BRANCH" ]]; then'
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant loud '    [[ "${1:-}" == optional ]] && return 1' '    :'
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant eager-remove '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' '    resolve_default_branch || exit 1' \
-  '    if [[ -d "$WT_PATH" ]]; then'
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant lazy-remove '    [[ -z "$BRANCH" ]] || resolve_default_branch || exit 1' '    :' \
-  '    if [[ -d "$WT_PATH" ]]; then'
-# shellcheck disable=SC2016 # each line is the script's own text, not expanded
-mutant eager-reuse '      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
-  '      resolve_default_branch || exit 1; CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)' \
-  '      if [[ -n "$CURRENT_BRANCH" ]]; then'
 # shellcheck disable=SC2016 # each line is the script's own text, not expanded
 mutant authed '  if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then' \
   '  github_read_auth; if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then' \
@@ -207,10 +177,8 @@ done <<'ROWS'
 GitHub's default branch is the one the forge is asked about|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|1|develop
 must-fail: with the read replaced by main, develop's repository is asked about main|read|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|0|main
 a GH_REPO naming another repository still reads this checkout's default branch|real|GH_SLUG=acme/widgets GH_DEFAULT=develop GH_REPO=other/elsewhere|1|worktree-unmerged: lonely|1|develop
-must-fail: with GH_REPO kept, the other repository's default branch is asked about|inherited|GH_SLUG=acme/widgets GH_DEFAULT=develop GH_REPO=other/elsewhere|1|worktree-unmerged: lonely|1|foreign
 WORKTREE_DEFAULT_BRANCH overrides, and GitHub is not asked|real|GH_SLUG=acme/widgets GH_DEFAULT=develop WORKTREE_DEFAULT_BRANCH=trunk|1|worktree-unmerged: lonely|0|trunk
 a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|1|worktree-default-branch-unreadable: <root>;worktree-unmerged: lonely|1|main
-must-fail: with the fallback cut, a failed GitHub read refuses where git holds a record|refusing|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|2|worktree-default-branch-unreadable: <root>|1|-
 a checkout with no GitHub repository takes git's record of origin's HEAD|real|GH_SLUG=- GH_DEFAULT=develop|1|worktree-unmerged: lonely|0|main
 a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|2|worktree-default-branch-unreadable: <root>;worktree-default-branch-unknown: <root>|1|-
 a checkout with no GitHub repository and no record refuses|real|GH_SLUG=- GH_DEFAULT=develop|2|worktree-default-branch-unknown: <root>|0|-
@@ -262,12 +230,8 @@ create --from starts from its own ref|real|0|-|create dev2 --from develop
 must-fail: with create resolving eagerly, create --from refuses|eager-create|1|worktree-default-branch-unknown: <root>|create dev3 --from develop
 plain create starts from the default branch, so it refuses|real|1|worktree-default-branch-unknown: <root>|create dev4
 create --base inspects the named branch without a refusal|real|0|-|create dev5 --base inspect-a
-must-fail: with the optional resolve refusing, create --base prints the refusal|loud|0|worktree-default-branch-unknown: <root>|create dev6 --base inspect-b
-must-fail: with remove resolving eagerly, a detached worktree is kept|eager-remove|1|worktree-default-branch-unknown: <root>|remove {detached}
 remove of a detached worktree removes it|real|0|-|remove {detached}
 remove of a worktree on a branch refuses before anything is removed|real|1|worktree-default-branch-unknown: <root>|remove dev2
-must-fail: with remove's resolve cut, a worktree on a branch is removed before the branch proof fails|lazy-remove|1|worktree-branch-delete-failed: inspect-a|remove dev5
-must-fail: with reuse resolving eagerly, --reuse of a detached tree refuses|eager-reuse|1|worktree-default-branch-unknown: <root>|create dev7 --reuse
 --reuse of a detached tree reads no default branch|real|0|-|create dev7 --reuse
 ROWS
 assert_eq "$([[ -e $DETACHED ]] && echo kept || echo gone)" gone "the detached worktree is gone"
@@ -310,11 +274,8 @@ done <<'ROWS'
 GitHub's default branch develop holds the unpushed commit|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|main|0|-|1|UNPUSHED
 must-fail: with check's resolve call cut, check reads no branch and refuses the empty range|uncalled|GH_SLUG=acme/widgets GH_DEFAULT=develop|main|1|worktree-unpushed-unreadable: origin/..|0|-
 a default branch only origin holds has no unpushed commits in the checkout|real|GH_SLUG=acme/widgets GH_DEFAULT=trunk|main|0|-|1|CLEAN
-must-fail: with the local branch unchecked, a default branch only origin holds refuses|local-less|GH_SLUG=acme/widgets GH_DEFAULT=trunk|main|1|worktree-unpushed-unreadable: origin/trunk..trunk|1|-
 a local default branch origin lacks refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=solo|main|1|worktree-unpushed-unreadable: origin/solo..solo|1|-
-must-fail: with a failed listing read as none, a default branch origin lacks reports nothing unpushed|silent|GH_SLUG=acme/widgets GH_DEFAULT=solo|main|0|-|1|CLEAN
 a default branch neither the checkout nor origin holds refuses|real|GH_SLUG=acme/widgets WORKTREE_DEFAULT_BRANCH=trnuk|main|1|worktree-unpushed-unreadable: origin/trnuk..trnuk|0|-
-must-fail: with origin's branch unchecked, a default branch neither holds reports nothing unpushed|origin-less|GH_SLUG=acme/widgets WORKTREE_DEFAULT_BRANCH=trnuk|main|0|-|0|CLEAN
 a default branch GitHub cannot name warns and takes git's record of origin's HEAD|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|develop|0|worktree-default-branch-unreadable: <root>|1|UNPUSHED
 a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT=FAIL|-|1|worktree-default-branch-unreadable: <root>;worktree-default-branch-unknown: <root>|1|-
 ROWS

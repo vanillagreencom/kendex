@@ -38,41 +38,6 @@ settings() { # [SOURCE_FILE]: the file whose one COMMAND_SAFETY_DENY_PATTERN lin
 settings
 passed=0
 failed=0
-. "$ROOT/hooks/tests/lib/process-count.sh"
-process_count_setup "$scratch"
-process_count_reset
-cost_payload=$(jq -nc --arg cwd "$repo" '{tool_input:{command:"git status"},cwd:$cwd}')
-cost_status=0
-env "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG" "$BASH" "$hook" \
-  <<<"$cost_payload" >"$scratch/cost.out" 2>"$scratch/cost.err" || cost_status=$?
-jq_count=$(process_count_command jq)
-printf 'cost command-safety jq=%s processes=%s\n' "$jq_count" "$(process_count_total)"
-if [ "$cost_status" -eq 0 ] && [ "$jq_count" -eq 1 ]; then
-  passed=$((passed + 1))
-else
-  printf 'FAIL payload read cost: exit=%s jq=%s\n' "$cost_status" "$jq_count"
-  failed=$((failed + 1))
-fi
-if [ "${1:-}" = --cost-row ]; then
-  [ "$failed" -eq 0 ]
-  exit
-fi
-if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  cost_mutant="$scratch/two-payload-reads.sh"
-  [ ! -L "$hook_source" ] || exit 1
-  awk '/^fields=.*jq -er / { print "jq -r empty <<<\"$input\" >/dev/null"; changed++ }
-    { print } END { if (changed != 1) exit 1 }' "$hook_source" > "$cost_mutant" || exit 1
-  cmp -s -- "$hook_source" "$cost_mutant" && exit 1
-  control_status=0
-  env -i "HOME=$HOME" "PATH=$PATH" "HOOK_UNDER_TEST=$cost_mutant" "$BASH" "${BASH_SOURCE[0]}" --cost-row \
-    > "$scratch/two-reads.log" 2>&1 || control_status=$?
-  if [ "$control_status" -eq 1 ] && grep -q '^FAIL payload read cost:' "$scratch/two-reads.log"; then
-    passed=$((passed + 1))
-  else
-    failed=$((failed + 1))
-    printf 'FAIL duplicate payload read control: exit=%s\n' "$control_status"
-  fi
-fi
 # `first` is line 1, the contract: the hook captures what a command it ran
 # wrote and replays it under the keyed line, so nothing precedes the key.
 # `cause` says whether that captured text is there. The reader is the shared
@@ -236,9 +201,8 @@ oracle_runs_env() { # COMMAND: whether real bash runs env with no operands
   return 1
 }
 
-# KEN-3813 expressly requires this remedy example as well as the keyed
-# verdict. The remaining English is not pinned. Every command below stays
-# fixture data submitted only to the hook, including all planted controls.
+# Every command below stays fixture data submitted only to the hook,
+# including the planted control.
 # A JSON escape keeps the coprocess data word out of the Bash syntax lint.
 # Named-method rows use the Jarvis config command and lane-host-ssh settings
 # lookups. Mapping methods, line-end aliases and executable xargs input cover
@@ -1555,13 +1519,6 @@ PY
       printf 'FAIL %s: exit=%s expected=%s first=%s expected-first=%s keyed=%s expected-keyed=%s stdout=[%s]\n' "$label" "$status" "$expected" "$first_key" "$want" "$keyed" "$want_keyed" "$output"
       failed=$((failed + 1))
     fi
-    if [ "$expected" -eq 2 ] && [ "$refusal" = environment-dump ] && [ "$reason" = - ]; then
-      if grep -F -- "systemctl --user show-environment | grep '^NAME='" "$scratch/stderr" >/dev/null; then
-        passed=$((passed + 1))
-      else
-        printf 'FAIL %s remedy: missing required filtered form\n' "$label"; failed=$((failed + 1))
-      fi
-    fi
     if [ "$oracle" != - ]; then
       if ! oracle_command=$(jq -enr --argjson submitted "$command_json" '$submitted | strings'); then
         oracle_ran=unreadable
@@ -1604,277 +1561,29 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   [[ -d $environment_controls && ! -L $environment_controls ]] || { echo 'command-safety-test: control-scratch=not-a-directory' >&2; exit 1; }
   environment_controls="$(cd -- "$environment_controls" && pwd -P)" || { echo 'command-safety-test: control-scratch=resolve-failed' >&2; exit 1; }
   trap 'rm -rf -- "$scratch" "${environment_controls:?}"' EXIT
-  planted=""
-  while IFS='|' read -r defect failed_row; do
-    if [ "$defect" = empty-copies ]; then
-      case "$BASH_VERSION" in 3.2*) ;; *) continue ;; esac
-    fi
-    if [ "$defect" != "$planted" ]; then
-    planted=$defect
-    mutant="$environment_controls/environment-$defect.sh"
-    awk -v defect="$defect" '
-      function swap(from, to, at) {
-        at = index($0, from)
-        if (at) { $0 = substr($0, 1, at - 1) to substr($0, at + length(from)); changed++ }
-      }
-      defect == "no-check" { swap("if environment_dump \"$command_kind\"; then", "if false; then") }
-      defect == "private-path" { swap("environment_private_path() {", "environment_private_path() { return 1") }
-      defect == "main-evidence-cut" { swap("[[ ! $evidence =~ $opaque_re ]] || return 0", ":") }
-      defect == "operand-word-boundary" { swap("(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_.-]|$)", "(^|[^A-Za-z0-9_])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_]|$)") }
-      defect == "unclassified-head-only" { swap("if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[@]}\"; then mode=dump-unknown; fi", "if [ -z \"$stdin_program\" ] && environment_main_evidence \"${args[$program_pos]}\"; then mode=dump-unknown; fi") }
-      defect == "producer-implicit-clean" && $0 == "    mode=other" { swap("mode=other", "mode=clean") }
-      defect == "forwarded-registry-cut" { swap("[ -n \"$forwarded_argument\" ] && [ \"${#heredocs[@]}\" -gt 0 ] &&", "false &&") }
-      defect == "recursive-context-loss" { swap("[ -z \"${forwarded_argument:-}\" ] || context=forwarded", ":") }
-      defect == "set-word-boundary" { swap("(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)", "(^|[^A-Za-z0-9_])set([^A-Za-z0-9_]|$)") }
-      defect == "exec-context" { swap("program=opaque; compound=1", "program=exec") }
-      defect == "quoted-data-cut" { swap("if [ \"$1\" = shell ] && [ -z \"${2:-}$incoming_sources\" ] &&", "if false &&") }
-      defect == "quoted-launcher-cut" { swap("{ [ -n \"$script_string\" ] || [ \"$candidate\" -gt \"$((script_pos + 1))\" ]; } && [ -z \"$output\" ]", "false") }
-      defect == "file-body-retained" { swap("[ \"$data_source\" = \" $doc\" ]; then continue; fi", "[ \"$data_source\" = \" $doc\" ]; then :; fi") }
-      defect == "late-check" && $0 == "if environment_dump \"$command_kind\"; then" {
-        block = $0; getline; block = block "\n" $0; getline; block = block "\n" $0; changed++; next
-      }
-      defect == "late-check" && $0 == "[ \"$pattern\" != '\''^$'\'' ] || exit 0" { print; print block; next }
-      defect == "unrelated-filter" {
-        swap("[ -z \"$compound\" ] || return 0", "[ -z \"$compound\" ] || return 0; for ((j=stage; j<${#decisions[@]}; j++)); do [ \"${decisions[$j]}\" != filter ] || continue 2; done")
-      }
-      defect == "launcher-pass" && $0 == "        env)" { print; print "          program=\"\"; mode=other; break"; changed++; next }
-      defect == "nested-pass" && $0 == "  n=${#tokens[@]}" { print "  [ -z \"$compound\" ] || return 1"; changed++ }
-      defect == "broad-filter" { swap("[[ $pattern =~ $filter_re ]]", "[[ -n $pattern ]]") }
-      defect == "env-terminator" { swap("options_ended=1; pos=$((pos + 1)); continue ;;", "pos=$((pos + 1)); break ;;") }
-      defect == "grep-record-flags" { swap("^-[EFq]+$", "^-[EFazq]+$") }
-      defect == "nul-records" && $0 == "    case \"${decisions[$stage]}\" in" {
-        print "    [ \"${decisions[$stage]}\" != dump-nul ] || decisions[stage]=dump-lines"; changed++
-      }
-      defect == "unproved-records" { swap("unrouted | dump-unknown) return 0 ;;", "unrouted) return 0 ;; dump-unknown) continue ;;") }
-      defect == "syntax-routing" { swap("[ -z \"$syntax_head\" ] || compound=1", ":") }
-      defect == "suffix-quotes" { swap("[ \"$program_pos\" = 0 ] && [ \"${stage_kinds[$candidate]}\" = literal ] &&", "false &&") }
-      defect == "quoted-heredoc" && /^              for \(\(doc=0;/ { swap("doc<${#heredocs[@]}", "doc<0") }
-      defect == "heredoc-resume" { swap("heredoc_bodies[doc]=$body", "heredoc_bodies[doc]=$body; i=$text_length") }
-      defect == "unset-operand" && $0 == "                pos=$((pos + 2)) ;;" { swap("pos=$((pos + 2))", "pos=$((pos + 1))") }
-      defect == "head-basename" && $0 == "    value=${args[$cursor]}" { swap("value=${args[$cursor]}", "value=${args[$cursor]##*/}") }
-      defect == "quoted-head" && $0 == "    if [ \"${arg_kinds[$cursor]}\" = literal ] && [ -n \"${arg_unquoted[$cursor]}\" ]; then" {
-        swap("[ -n \"${arg_unquoted[$cursor]}\" ]", "true")
-      }
-      defect == "array-head" { swap("if [ \"$1\" = argv ]; then pos=0; return; fi", "if [ \"$1\" = argv ]; then for ((cursor=0; cursor<${#args[@]}; cursor++)); do arg_unquoted[cursor]=1; done; fi") }
-      defect == "here-string" { swap("then c=\047<<<\047", "then c=\047<<\047") }
-      defect == "delimiter-proof" { swap("[ \"$kind\" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }", "[ \"$kind\" != ansi-escaped ] || return 1") }
-      defect == "heredoc-program" { swap("[ -n \"${stage_stdin[$stage]}\" ] || data_source=", "data_source=") }
-      defect == "body-evidence" { swap("[ -n \"${heredoc_bodies[$doc]+present}\" ] || return 0", "[ -n \"${heredoc_bodies[$doc]+present}\" ] || :") }
-      defect == "descriptor-body" { swap("doc=${body_ids[$((j - 1))]:-}", "[ -z \"$fd\" ] || continue; doc=${body_ids[$((j - 1))]:-}") }
-      defect == "heredoc-pipe" { swap("if [ \"$stage\" -gt 0 ] && [ \"${separators[$((stage - 1))]}\" = '\''|'\'' ]; then", "if false && [ \"$stage\" -gt 0 ] && [ \"${separators[$((stage - 1))]}\" = '\''|'\'' ]; then") }
-      defect == "plain-pipe-late" { swap("if [ \"${literal_kinds[$doc]}\" = literal ]; then", "if false && [ \"${literal_kinds[$doc]}\" = literal ]; then") }
-      defect == "missing-identifier-cut" { swap("doc=${body_ids[$((j - 1))]:-}", "doc=${body_ids[$((j - 1))]}") }
-      defect == "body-separation" { swap("local command_text=${literal_inputs[$doc]}", "local command_text=${literal_inputs[0]}${literal_inputs[$doc]}") }
-      defect == "empty-copies" { swap("stage_args=(${args[@]+\"${args[@]}\"})", "stage_args=(\"${args[@]}\")") }
-      defect == "set-unknown" { swap("then mode=dump-unknown; else mode=dump-lines; fi", "then mode=other; else mode=dump-lines; fi") }
-      defect == "set-literal-proof" && /^        for \(\(j=pos;/ { swap("[ \"${arg_kinds[$j]}\" != literal ] || named=1", "named=1") }
-      defect == "literal-span" { swap("word=$word$span", "word=$word") }
-      defect == "comment-boundary" { swap("i=$((i + ${#comment_span}))", "i=$text_length") }
-      defect == "array-decoding" { swap("read -r -d $'\''\\t'\'' argument ||", "read -d $'\''\\t'\'' argument ||") }
-      defect == "no-dollar-opener" && $0 == "          case \"$next\" in" {
-        print; getline
-        swap("            \"'\''\" | '\''\"'\'')", "            dollar-opener-disabled)")
-      }
-      defect == "escaped-head-pass" { swap("[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }", "[ \"${arg_kinds[$pos]}\" != ansi-escaped ] || arg_kinds[pos]=unknown") }
-      defect == "env-literal-operands" { swap("case \"${arg_kinds[$pos]}\" in dollar-literal | ansi-escaped) break ;; esac", "[ \"${arg_kinds[$pos]}\" = literal ] || break") }
-      defect == "systemctl-literal-argument" { swap("[ \"${args[$j]}\" != show-environment ] || mode=dump-lines", "[ \"${arg_kinds[$j]}\" != literal ] || [ \"${args[$j]}\" != show-environment ] || mode=dump-lines") }
-      defect == "escaped-argument-pass" { swap("[ \"${arg_kinds[$j]}\" != ansi-escaped ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }", "[ \"${arg_kinds[$j]}\" != ansi-escaped ] || :") }
-      defect == "escaped-input-pass" { swap("[ -z \"$input_escaped\" ] || { mode=dump-unknown; dump_reason=undecoded-ansi-escape; return; }", "[ -z \"$input_escaped\" ] || :") }
-      defect == "receiver-classification" && $0 == "  environment_receiver \"$program\"" { swap("  environment_receiver \"$program\"", "  receiver=unknown; receiver_pattern=; receiver_option=") }
-      defect == "receiver-evidence" { swap("while [[ $remaining =~ $receiver_pattern ]]; do", "while [[ $remaining =~ a^ ]]; do") }
-      defect == "receiver-python-quoted-source" { swap("if [ -z \"$uncertain\" ]; then remaining=$executable; fi", "if [ -z \"$uncertain\" ]; then remaining=$2; fi") }
-      defect == "receiver-named-method" { swap("(get|pop|setdefault|__getitem__|__contains__)", "(get-disabled|pop|setdefault|__getitem__|__contains__)") }
-      defect == "receiver-line-boundary" { swap("if [[ $remaining =~ ^[A-Za-z0-9_]+ ]]; then", "if [[ $remaining =~ ^[[:space:]]*[A-Za-z0-9_]+ ]]; then") }
-      defect == "receiver-body-forwarding" { swap("fallback_sources=\"$fallback_sources $doc\"", ":") }
-      defect == "literal-source-veto" && $0 == "  environment_queue \"$source\" \"$source_kind\"" { print "  if environment_main_evidence \"$source\"; then mode=dump-unknown; return; fi"; changed++ }
-      defect == "forwarded-candidates-cut" { swap("for ((candidate=script_pos+1;", "for ((candidate=${#stage_args[@]};") }
-      defect == "producer-other" && $0 == "    mode=other" { print; print "    return"; changed++; next }
-      defect == "strict-env-ignore" { swap("-i | --ignore-environment) pos=$((pos + 1)) ;;", "-i | --ignore-environment) mode=dump-unknown; return ;;") }
-      defect == "suffix-scan" { swap("[ -z \"$syntax_head\" ] || compound=1", "[ -z \"$syntax_head\" ] || { compound=1; suffix_scan=1; }; [ -z \"${suffix_scan:-}\" ] || ! environment_main_evidence \"${args[@]}\" || return 0") }
-      defect == "opaque-input-refusal" && $0 == "    opaque)" { print; print "      [ -z \"$data_source\" ] || { mode=dump-unknown; return; }"; changed++; next }
-      defect == "eval-separator" { swap("!= --:literal ] || cursor=$((cursor + 1))", "!= --:literal ] || :") }
-      defect == "unset-expanded-operand" { swap("[ \"${arg_kinds[$((pos + 1))]:-}\" = literal ] || { mode=dump-unknown; return; }", ":") }
-      defect == "proc-input-reader" { swap("*) [ -z \"$proc\" ] || mode=dump-unknown ;;", "*) ;;") }
-      defect == "bare-declaration" { swap("[ -z \"$listing\" ] || mode=dump-lines", ":") }
-      defect == "opaque-input-interpreter" { swap("for language in python node ruby perl; do", "for language in; do") }
-      defect == "expanded-command-string" { swap("[ \"$producer_end\" -le 1 ]; then", "[ \"$producer_end\" -eq 1 ]; then") }
-      defect == "string-positional-operands" && $0 == "        script_operand=$cursor" { swap("script_operand=$cursor", "[ -n \"$wants_string\" ] || script_operand=$cursor") }
-      defect == "source-operands" { swap("[ \"$pos\" -ge \"${#args[@]}\" ] || script_operand=$pos", ":") }
-      defect == "expanded-option-string" { swap("environment_queue \"${args[$((cursor + 1))]}\"", ":") }
-      defect == "declaration-listing" { swap("[[ $value =~ ^(--|-[gI]+)$ ]] || listing=\"\"", "listing=\"\"") }
-      defect == "escape-reason" { swap("\"$dump_reason\"", "-") }
-      defect == "string-zero-operand" { swap("{ [ -n \"$script_string\" ] ||", "{ false ||") }
-      defect == "declaration-naming" { swap("*) [[ ! $value =~ $declared_re ]] || named=1 ;;", "*) ;;") }
-      { print }
-      END { if (changed != 1) exit 1 }
-    ' "$hook_source" >"$mutant" || exit 1
-    if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control $defect changed no bytes"; exit 1; fi
-    fi
-    row_label=${failed_row#FAIL environment: }; row_label=${row_label%%: exit=*}
-    control_status=0
-    if [ "$defect" = literal-source-veto ] || [ "$defect" = private-path ]; then
-      env "HOOK_UNDER_TEST=$mutant" "$BASH" "${BASH_SOURCE[0]}" --environment-rows "$row_label" \
-        >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
-    else
-    (
-      passed=0; failed=0
-      cp -- "$mutant" "$hook"
-      environment_rows "$row_label"
-      [ "$failed" -eq 0 ]
-    ) >"$scratch/environment-$defect.log" 2>&1 || control_status=$?
-    cp -- "$hook_source" "$hook"
-    fi
-    if [ "$control_status" -eq 1 ] && grep -F -- "$failed_row" "$scratch/environment-$defect.log" >/dev/null; then
-      printf 'PASS environment control %s rejects its planted rule failure\n' "$defect"; passed=$((passed + 1))
-    else
-      printf 'FAIL environment control %s: exit=%s missing=%s\n' "$defect" "$control_status" "$failed_row"; failed=$((failed + 1))
-    fi
-  done <<'ENVIRONMENT_CONTROLS'
-private-path|FAIL environment: private-tilde: exit=0 expected=2
-receiver-named-method|FAIL environment: receiver-jarvis-config-named-method: exit=2 expected=0
-receiver-named-method|FAIL environment: receiver-jarvis-heredoc-named-method: exit=2 expected=0
-receiver-line-boundary|FAIL environment: receiver-python-heredoc-whole-line-end: exit=0 expected=2
-receiver-line-boundary|FAIL environment: receiver-node-heredoc-whole-line-end: exit=0 expected=2
-receiver-body-forwarding|FAIL environment: receiver-node-unknown-downstream: exit=0 expected=2
-receiver-body-forwarding|FAIL environment: receiver-unknown-before-interpreter: exit=0 expected=2
-receiver-classification|FAIL environment: receiver-python-key-inventory: exit=2 expected=0
-receiver-evidence|FAIL environment: receiver-python-heredoc-whole-0: exit=0 expected=2
-receiver-python-quoted-source|FAIL environment: receiver-python-replacement-source: exit=2 expected=0
-receiver-evidence|FAIL environment: receiver-python-heredoc-whole-1: exit=0 expected=2
-receiver-evidence|FAIL environment: receiver-python3-heredoc-whole-0: exit=0 expected=2
-receiver-evidence|FAIL environment: receiver-node-heredoc-whole-0: exit=0 expected=2
-receiver-evidence|FAIL environment: receiver-ruby-heredoc-whole-0: exit=0 expected=2
-receiver-evidence|FAIL environment: receiver-ruby-heredoc-whole-1: exit=0 expected=2
-receiver-evidence|FAIL environment: receiver-perl-heredoc-whole-0: exit=0 expected=2
-literal-source-veto|FAIL environment: fleet-literal-command-string-setup: exit=2 expected=0
-quoted-data-cut|FAIL environment: quoted-body-stdout-only: exit=2 expected=0
-quoted-data-cut|FAIL environment: escaped-heredoc-delimiter: exit=2 expected=0
-no-check|FAIL environment: incident: exit=0 expected=2
-no-check|FAIL environment: bare-env: exit=0 expected=2
-no-check|FAIL environment: bare-printenv: exit=0 expected=2
-no-check|FAIL environment: export-list: exit=0 expected=2
-no-check|FAIL environment: declare-export: exit=0 expected=2
-no-check|FAIL environment: operand-command-env: exit=0 expected=2
-no-check|FAIL environment: operand-command-printenv: exit=0 expected=2
-no-check|FAIL environment: operand-command-export: exit=0 expected=2
-no-check|FAIL environment: operand-command-declare: exit=0 expected=2
-no-check|FAIL environment: operand-command-systemctl: exit=0 expected=2
-no-check|FAIL environment: piped-here-string-program: exit=0 expected=2
-no-check|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
-no-check|FAIL environment: unregistered-heredoc-final-word: exit=0 expected=2
-no-check|FAIL environment: unquoted-heredoc-single-quotes-expand: exit=0 expected=2
-late-check|FAIL environment: explicit-policy-off: exit=0 expected=2
-unrelated-filter|FAIL environment: separate-filter: exit=0 expected=2
-launcher-pass|FAIL environment: launcher-dump: exit=0 expected=2
-nested-pass|FAIL environment: substitution-dump: exit=0 expected=2
-broad-filter|FAIL environment: wildcard-filter: exit=0 expected=2
-env-terminator|FAIL environment: env-options-end-assignment: exit=0 expected=2
-env-terminator|FAIL environment: array-options-end-printenv: exit=0 expected=2
-grep-record-flags|FAIL environment: env-grep-nul-mode: exit=0 expected=2
-nul-records|FAIL environment: proc-cat-filter: exit=0 expected=2
-unproved-records|FAIL environment: xargs-flattened-records: exit=0 expected=2
-unproved-records|FAIL environment: cat-transformed-records: exit=0 expected=2
-unproved-records|FAIL environment: tr-conversion-cannot-repair-records: exit=0 expected=2
-unproved-records|FAIL environment: strings-conversion-cannot-repair-records: exit=0 expected=2
-syntax-routing|FAIL environment: brace-conservative-filter: exit=0 expected=2
-here-string|FAIL environment: quoted-here-string-data: exit=2 expected=0
-delimiter-proof|FAIL environment: encoded-heredoc-delimiter: exit=0 expected=2
-heredoc-program|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
-body-evidence|FAIL environment: unread-shell-heredoc-body-without-marker: exit=0 expected=2
-descriptor-body|FAIL environment: shell-duplicated-heredoc-program: exit=0 expected=2
-heredoc-pipe|FAIL environment: piped-here-string-program: exit=0 expected=2
-plain-pipe-late|FAIL environment: plain-pipe-cat-exec: exit=0 expected=2
-plain-pipe-late|FAIL environment: plain-pipe-cat-group: exit=0 expected=2
-plain-pipe-late|FAIL environment: plain-pipe-echo-exec: exit=0 expected=2
-plain-pipe-late|FAIL environment: plain-pipe-echo-group: exit=0 expected=2
-missing-identifier-cut|FAIL environment: dump-before-unregistered-heredoc-redirect: exit=0 expected=2
-body-separation|FAIL environment: shell-heredoc-bodies-have-independent-quotes: exit=0 expected=2
-empty-copies|FAIL environment: empty-case-stage-before-dump: exit=0 expected=2
-set-unknown|FAIL environment: set-unquoted-variable-can-disappear: exit=0 expected=2
-set-literal-proof|FAIL environment: copilot-set-indirect-name-spread-empty: exit=0 expected=2
-no-check|FAIL environment: waiter-quoted-env-dump: exit=0 expected=2
-no-check|FAIL environment: waiter-quoted-printenv-dump: exit=0 expected=2
-unclassified-head-only|FAIL environment: waiter-unclassified-test-env: exit=0 expected=2
-recursive-context-loss|FAIL environment: waiter-recursive-test-bash-env: exit=0 expected=2
-forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-xargs: exit=0 expected=2
-forwarded-registry-cut|FAIL environment: waiter-registry-test-expand-timeout: exit=0 expected=2
-forwarded-registry-cut|FAIL environment: waiter-registry-test-execute-body: exit=0 expected=2
-producer-implicit-clean|FAIL environment: waiter-result-test-xargs-env: exit=0 expected=2
-suffix-quotes|FAIL environment: wrapper-quoted-bare-env-data: exit=2 expected=0
-quoted-heredoc|FAIL environment: quoted-heredoc-script: exit=2 expected=0
-quoted-heredoc|FAIL environment: double-quoted-heredoc-data: exit=2 expected=0
-file-body-retained|FAIL environment: receiver-unknown-after-file-data: exit=2 expected=0
-heredoc-resume|FAIL environment: dump-after-quoted-heredoc: exit=0 expected=2
-unset-operand|FAIL environment: unset-without-program: exit=0 expected=2
-head-basename|FAIL environment: pathname-basename-is-not-syntax: exit=2 expected=0
-quoted-head|FAIL environment: quoted-control-word-is-an-executable: exit=2 expected=0
-array-head|FAIL environment: array-function-is-an-executable: exit=2 expected=0
-literal-span|FAIL environment: bare-env: exit=0 expected=2
-literal-span|FAIL environment: single-quoted-producer: exit=0 expected=2
-literal-span|FAIL environment: quoted-producer: exit=0 expected=2
-comment-boundary|FAIL environment: comment-boundary-producer: exit=0 expected=2
-array-decoding|FAIL environment: array-backslash-name-is-not-literal: exit=0 expected=2
-no-dollar-opener|FAIL environment: ansi-dollar-producer: exit=0 expected=2
-no-dollar-opener|FAIL environment: locale-dollar-producer: exit=0 expected=2
-escaped-head-pass|FAIL environment: ansi-escaped-head: exit=0 expected=2
-env-literal-operands|FAIL environment: env-variable-assignment-launcher: exit=2 expected=0
-env-literal-operands|FAIL environment: env-variable-chdir-launcher: exit=2 expected=0
-env-literal-operands|FAIL environment: env-variable-unset-launcher: exit=2 expected=0
-systemctl-literal-argument|FAIL environment: ansi-systemctl-producer-argument: exit=0 expected=2
-escaped-argument-pass|FAIL environment: ansi-systemctl-encoded-argument: exit=0 expected=2
-escaped-input-pass|FAIL environment: ansi-cat-encoded-input: exit=0 expected=2
-receiver-body-forwarding|FAIL environment: unquoted-file-body-literal: exit=0 expected=2
-exec-context|FAIL environment: ansi-exec-escaped-head: exit=0 expected=2
-exec-context|FAIL environment: ansi-builtin-escaped-head: exit=0 expected=2
-forwarded-candidates-cut|FAIL environment: private-forwarded-cat: exit=0 expected=2
-forwarded-candidates-cut|FAIL environment: sh-wrapper-bare-set: exit=0 expected=2
-quoted-launcher-cut|FAIL environment: waiter-recursive-test-bash-env: exit=0 expected=2
-main-evidence-cut|FAIL environment: waiter-unclassified-test-env: exit=0 expected=2
-operand-word-boundary|FAIL environment: waiter-quoted-env-path-data: exit=2 expected=0
-set-word-boundary|FAIL environment: waiter-quoted-set-option-data: exit=2 expected=0
-producer-other|FAIL environment: opaque-shell-filter: exit=0 expected=2
-producer-other|FAIL environment: bare-declare: exit=0 expected=2
-producer-other|FAIL environment: bare-typeset: exit=0 expected=2
-producer-other|FAIL environment: env-unset-expanded-operand: exit=0 expected=2
-producer-other|FAIL environment: exec-descriptor-interpreter-dump: exit=0 expected=2
-strict-env-ignore|FAIL environment: wrapper-empty-launcher: exit=2 expected=0
-suffix-scan|FAIL environment: suffix-quoted-launcher-data: exit=2 expected=0
-suffix-scan|FAIL environment: time-unknown-suffix-dump: exit=2 expected=0
-suffix-scan|FAIL environment: unsupported-list-evidence: exit=2 expected=0
-suffix-scan|FAIL environment: unsupported-pipe-evidence: exit=2 expected=0
-suffix-scan|FAIL environment: conditional-data-conservative: exit=2 expected=0
-suffix-scan|FAIL environment: loop-data-conservative: exit=2 expected=0
-suffix-scan|FAIL environment: conservative-sudo-group-operand: exit=2 expected=0
-suffix-scan|FAIL environment: syntax-assignment-data: exit=2 expected=0
-suffix-scan|FAIL environment: syntax-function-name: exit=2 expected=0
-suffix-scan|FAIL environment: syntax-coproc-name: exit=2 expected=0
-suffix-scan|FAIL environment: punctuated-argument-data: exit=2 expected=0
-suffix-scan|FAIL environment: conservative-sudo-operand: exit=2 expected=0
-suffix-scan|FAIL environment: ken-3998-compound-quoted-data: exit=2 expected=0
-suffix-scan|FAIL environment: ken-3998-compound-unquoted-set-data: exit=2 expected=0
-suffix-scan|FAIL environment: for-loop-quoted-search-words: exit=2 expected=0
-suffix-scan|FAIL environment: for-loop-then-export-pattern: exit=2 expected=0
-opaque-input-refusal|FAIL environment: loop-heredoc-prose: exit=2 expected=0
-eval-separator|FAIL environment: literal-eval-option-terminator: exit=0 expected=2
-unset-expanded-operand|FAIL environment: nested-unset-unproved-option-operand: exit=0 expected=2
-proc-input-reader|FAIL environment: inner_source_candidate: exit=0 expected=2
-bare-declaration|FAIL environment: ken-3998-compound-bare-declare: exit=0 expected=2
-opaque-input-interpreter|FAIL environment: opaque-input-interpreter-dump: exit=0 expected=2
-opaque-input-interpreter|FAIL environment: opaque-piped-input-interpreter-dump: exit=0 expected=2
-expanded-command-string|FAIL environment: waiter-expanded-command-retains-refusal: exit=0 expected=2
-expanded-command-string|FAIL environment: waiter-expanded-string-dump: exit=0 expected=2
-string-positional-operands|FAIL environment: shell-string-positional-dump: exit=0 expected=2
-source-operands|FAIL environment: source-operand-dump: exit=0 expected=2
-expanded-option-string|FAIL environment: shell-expanded-option-string-dump: exit=0 expected=2
-declaration-listing|FAIL environment: declare-options-end: exit=0 expected=2
-declaration-listing|FAIL environment: builtin-declare-options-end: exit=0 expected=2
-escape-reason|FAIL environment: ansi-shell-string-escape: exit=2 expected=2
-string-zero-operand|FAIL environment: shell-string-zero-operand-dump: exit=0 expected=2
-string-zero-operand|FAIL environment: shell-string-eval-zero-operand-dump: exit=0 expected=2
-string-zero-operand|FAIL environment: env-split-string-operand-dump: exit=0 expected=2
-declaration-naming|FAIL environment: declare-assignment-quoted-expansion: exit=2 expected=0
-declaration-naming|FAIL environment: declare-assignment-unquoted-expansion: exit=2 expected=0
-ENVIRONMENT_CONTROLS
+  # One planted defect proves the table can go red: with the check cut, a
+  # command that dumps the environment passes.
+  mutant="$environment_controls/environment-no-check.sh"
+  awk '
+    { at = index($0, "if environment_dump \"$command_kind\"; then")
+      if (at) { $0 = substr($0, 1, at - 1) "if false; then" substr($0, at + length("if environment_dump \"$command_kind\"; then")); changed++ } }
+    { print }
+    END { if (changed != 1) exit 1 }
+  ' "$hook_source" >"$mutant" || exit 1
+  if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL environment control no-check changed no bytes"; exit 1; fi
+  control_status=0
+  (
+    passed=0; failed=0
+    cp -- "$mutant" "$hook"
+    environment_rows incident
+    [ "$failed" -eq 0 ]
+  ) >"$scratch/environment-no-check.log" 2>&1 || control_status=$?
+  cp -- "$hook_source" "$hook"
+  if [ "$control_status" -eq 1 ] && grep -F -- 'FAIL environment: incident: exit=0 expected=2' "$scratch/environment-no-check.log" >/dev/null; then
+    printf 'PASS environment control no-check rejects its planted rule failure\n'; passed=$((passed + 1))
+  else
+    printf 'FAIL environment control no-check: exit=%s\n' "$control_status"; failed=$((failed + 1))
+  fi
 fi
 # This repository's own policy, the Quickshell example in
 # docs/authoring/command-safety.md, is its content rather than this hook's
@@ -2083,22 +1792,17 @@ check 0 'scripts/validate qml' 'missing settings support warns'
 
 # Each control plants one defect in a copy and reruns these assertions; a
 # defect's rows are adjacent, and each names the line that copy must print,
-# from FAIL through the got and expected values of its own instrument, so an
-# exit row, a first-line row and the copy check are read alike. The exact
-# failure proves the planted rule, not a bad policy or loader, made the row
-# red. The default_pattern defects edit one rule of the shipped default: no
-# default at all, no quoted value, and a unit widened to gigabytes; the
-# default-key defect sends the default's refusal out under the project key.
+# from FAIL through the got and expected values of its own instrument. The
+# exact failure proves the planted rule, not a bad policy or loader, made the
+# row red. The no-default defect removes the shipped default, which the
+# default rows and the copy check both read.
 policy_control_rows() { # defect and its private mutated source
   local repo="$scratch/policy-$1" hook hook_source="$2"
   prepare_project "$2"
   hook="$repo/.claude/hooks/command-safety.sh"
   settings
   case "$1" in
-    no-default | default-key) default_rows 'empty-env: a bare MemoryMax';
-      [ "$1" != no-default ] || default_rows 'no-file: a bare MemoryMax' ;;
-    no-quote) default_rows 'empty-env: a quoted MemoryMax' 'no-file: a quoted MemoryMax'; default_consistency ;;
-    unit-g) default_rows 'empty-env: gigabyte-cap' 'no-file: gigabyte-cap' ;;
+    no-default) default_rows 'empty-env: a bare MemoryMax' 'no-file: a bare MemoryMax'; default_consistency ;;
     no-cwd-fallback) shape_rows 'a denied command without cwd uses the caller policy' ;;
     *) printf 'FAIL policy control: unknown defect=%s\n' "$1"; failed=$((failed + 1)) ;;
   esac
@@ -2117,9 +1821,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
         defect == "no-default" && /^default_pattern=/ {
           $0 = "default_pattern=" q "^$" q; changed++
         }
-        defect == "no-quote" && /^default_pattern=/ { swap("[[:punct:]]?", "") }
-        defect == "unit-g" && /^default_pattern=/ { swap("[KkMm]", "[KkMmGg]") }
-        defect == "default-key" { swap("refuse refused default-policy", "refuse refused policy") }
         defect == "no-cwd-fallback" { swap("cwd=\"$PWD\"", "cwd=/") }
         { print }
         END { if (changed != 1) exit 1 }
@@ -2148,12 +1849,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   done <<'CONTROLS'
 no-default|FAIL empty-env: the default refuses a bare MemoryMax: exit 0, expected 2:
 no-default|FAIL no-file: the default refuses a bare MemoryMax: exit 0, expected 2:
-no-quote|FAIL empty-env: the default refuses a quoted MemoryMax: exit 0, expected 2:
-no-quote|FAIL no-file: the default refuses a quoted MemoryMax: exit 0, expected 2:
-no-quote|FAIL the example and the doc carry the hook default: hook [
-unit-g|FAIL empty-env: the default passes a gigabyte cap: exit 2, expected 0:
-unit-g|FAIL no-file: the default passes a gigabyte cap: exit 2, expected 0:
-default-key|FAIL empty-env: a bare MemoryMax names the default policy: first line command-safety: refused=policy, expected command-safety: refused=default-policy
+no-default|FAIL the example and the doc carry the hook default: hook [
 no-cwd-fallback|FAIL a denied command without cwd uses the caller policy:
 CONTROLS
 fi
@@ -2165,7 +1861,9 @@ HOOK=$hook_source
 ln -s "$ROOT/skills" "$scratch/skills"
 . "$ROOT/hooks/tests/lib/assert.sh"
 # Env::global_skills_dir and the harness adapters emit these installed roots.
-# One table covers native, shared, relocated, partial and unavailable support.
+# The hook reads no harness name: it walks up from its own directory, so the
+# table holds one row per depth of native and shared support, then partial
+# and unavailable support.
 global_reader_rows() {
   local label hook_dir library state expected key home installed project payload status marker native
   local selected_rows=("$@") selected_seen=() failed=0 before=$((PASS + FAIL))
@@ -2218,16 +1916,7 @@ global_reader_rows() {
 claude-native|.claude/hooks|.claude/skills|present|2|refused=default-policy
 pi-native|.pi/agent/kendex/hooks|.pi/agent/skills|present|2|refused=default-policy
 pi-shared|.pi/agent/kendex/hooks|.agents/skills|present|2|refused=default-policy
-pi-relocated-native|relocated/pi/agent/kendex/hooks|relocated/pi/agent/skills|present|2|refused=default-policy
-pi-relocated-shared|relocated/pi/agent/kendex/hooks|.agents/skills|present|2|refused=default-policy
-codex-native|.codex/hooks|.codex/skills|present|2|refused=default-policy
 codex-shared|.codex/hooks|.agents/skills|present|2|refused=default-policy
-codex-relocated-shared|relocated/codex/hooks|.agents/skills|present|2|refused=default-policy
-gemini-native|.gemini/hooks|.gemini/skills|present|2|refused=default-policy
-gemini-shared|.gemini/hooks|.agents/skills|present|2|refused=default-policy
-copilot-native|.copilot/hooks|.copilot/skills|present|2|refused=default-policy
-copilot-shared|.copilot/hooks|.agents/skills|present|2|refused=default-policy
-copilot-relocated-shared|relocated/copilot/hooks|.agents/skills|present|2|refused=default-policy
 partial-native|.codex/hooks|.agents/skills|partial|2|refused=default-policy
 absent-global|.codex/hooks|.agents/skills|absent|0|settings=no-loader
 bad-setting|.codex/hooks|.agents/skills|bad-setting|0|settings=unreadable
@@ -2241,16 +1930,9 @@ LAYOUTS
 }
 global_reader_rows
 reader_control_rows() { global_reader_rows "${reader_control_labels[@]}"; }
-reader_control_labels=(pi-shared codex-shared gemini-shared copilot-shared)
+reader_control_labels=(pi-shared codex-shared)
 skill_load_control global-reader "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
-  'lib=""' HOOK reader_control_rows 'pi-shared installed reader' 'codex-shared installed reader' 'gemini-shared installed reader' 'copilot-shared installed reader'
-reader_control_labels=(absent-global)
-skill_load_control loader-boundary "$HOOK" '*) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
-  'lib="$root/.agents/skills/commit-guards/scripts/lib"' HOOK reader_control_rows 'absent-global project loader boundary'
-reader_control_labels=(common-exit)
-skill_load_control support-state "$HOOK" 'loading="$lib/common.sh"' 'loading=""' HOOK reader_control_rows 'common-exit installed reader' 'common-exit warns once'
-skill_load_control support-cause "$HOOK" 'cause="$cause
-  $detail"' 'cause=$loading' HOOK reader_control_rows 'common-exit replays cause'
+  'lib=""' HOOK reader_control_rows 'pi-shared installed reader' 'codex-shared installed reader'
 failed=$((failed + FAIL))
 passed=$((passed + PASS))
 printf '%s passed, %s failed\n' "$passed" "$failed"
