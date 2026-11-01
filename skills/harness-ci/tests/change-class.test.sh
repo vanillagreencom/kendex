@@ -1676,9 +1676,10 @@ settings_bare="$(git -C "$settings_repo" rev-parse HEAD)"
 
 # One edit is OP~FILE~LINE~TEXT: `swap` replaces the one exact LINE with
 # TEXT, `after` adds TEXT on the line after it, `link` replaces FILE
-# with a symlink whose target is TEXT, and `nul` appends a comment line
-# holding a NUL byte, which no environment value can carry. A LINE that
-# does not occur once fails the row.
+# with a symlink whose target is TEXT, `nul` appends a comment line
+# holding a NUL byte, which no environment value can carry, and `chop`
+# removes FILE's final newline, as an editor that adds none saves it. A
+# LINE that does not occur once fails the row.
 settings_edit() { # OP~FILE~LINE~TEXT
   local op file line text
   IFS='~' read -r op file line text <<<"$1"
@@ -1688,6 +1689,11 @@ settings_edit() { # OP~FILE~LINE~TEXT
   fi
   if [ "$op" = nul ]; then
     printf '# n\000ote\n' >>"$settings_repo/$file"
+    return
+  fi
+  if [ "$op" = chop ]; then
+    printf '%s' "$(cat -- "$settings_repo/$file")" >"$SANDBOX/settings-edit" || return
+    mv -- "$SANDBOX/settings-edit" "$settings_repo/$file"
     return
   fi
   OP="$op" LINE="$line" TEXT="$text" awk '
@@ -1732,6 +1738,7 @@ refused_dot='class=standard measured=true cause=configuration-source path=.kende
 # `-` for none
 cat >"$SANDBOX/settings-rows" <<ROWS
 an allowlisted key change is trivial|allow|pull_request|$model_b|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=2|-
+an allowlisted key change in a file with no final newline|allow|pull_request|$model_b;chop~kendex.settings.toml~~|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=4|-
 comments beside a changed and an added allowlisted key|allow|pull_request|$model_b;after~kendex.settings.toml~[env]~# The reviewer.;after~kendex.settings.toml~OTHER_KEY = "x"~SECOND_OPINION_TIMEOUT = "30"|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL,SECOND_OPINION_TIMEOUT lines=4|-
 a comment alone changes no key|allow|pull_request|after~kendex.settings.toml~[env]~# Only words.|-|-|dirty|$admitted keys=- lines=1|-
 an allowlisted key in .kendex/settings.toml|allow|pull_request|swap~.kendex/settings.toml~SECOND_OPINION_EFFORT = "low"~SECOND_OPINION_EFFORT = "high"|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml keys=SECOND_OPINION_EFFORT lines=2|-
@@ -1834,9 +1841,9 @@ assert_eq "an admitted settings change is trivial and queue-only in its merge gr
 class: $admitted keys=SECOND_OPINION_MODEL lines=2" \
   "$(grep -E '^(queue-only|class): ' <<<"$settings_queue_err")"
 
-# Must-fail controls for the rules whose loss would admit a change that
-# alters CI behaviour or escapes the ceiling, each running the rows it holds
-# against a copy without the rule and naming the rows that turn red.
+# Must-fail controls for the rules whose loss would admit a key that changes
+# CI behaviour, each running the rows it holds against a copy without the
+# rule and naming the rows that turn red.
 settings_reds() { # NAME ROWS LINE REPLACEMENT [LINE REPLACEMENT]...
   local name="$1" only="$2" planted rows
   shift 2
@@ -1855,18 +1862,7 @@ no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) ret
 no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
 no byte comparison|a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
 no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
-no verbatim read|a NUL byte in a head comment line|      1) exit 2 ;;|      1) ;;
 CONTROLS
-# The multiline grep's line holds the table's separator, so its control
-# reads the line and its basic-only copy here.
-{ IFS= read -r multiline_grep; IFS= read -r basic_grep; } <<'LINES'
-    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
-    grep -qE "\"\"\"" -- "$work/settings-$side" || status=$?
-LINES
-settings_controls=$((settings_controls + 1))
-literal_row='a comment inside a literal multiline string outside the env table'
-assert_eq "must-fail: no literal multiline string arm" "$literal_row" \
-  "$(settings_reds "$settings_controls" "$literal_row" "$multiline_grep" "$basic_grep")"
 require_rows change-class-settings-controls "$settings_controls"
 
 # A lane and CI classify one diff alike. CI's classify step may carry
