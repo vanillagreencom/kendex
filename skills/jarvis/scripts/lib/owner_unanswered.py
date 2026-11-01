@@ -186,7 +186,12 @@ def pairs(rows):
     return paired
 
 
-def unanswered(lane, over, logged):
+def unanswered(lane, over, logged, since, now, older):
+    """The open owner rows stamped at or after since and at least older seconds old at now.
+
+    Coverage reads every row; the window applies before a pair collapses, so
+    a file is hidden only behind a text that is listed.
+    """
     owners = {row["id"]: row for row in lane if watch.owner_row(row)}
     replies = [(row["ref"], thread_key(row, owners) if in_thread(row) else None, row.get("at", ""))
                for row in over if row.get("ref")]
@@ -226,7 +231,11 @@ def unanswered(lane, over, logged):
                    and (not request or "no reply" in record.get("Decision", "").lower())
                    for record in logged)
 
-    open_rows = [row for row in owners.values() if not covered(row)]
+    def eligible(row):
+        at = watch.instant(row["at"])
+        return at >= since and now - at.timestamp() >= older
+
+    open_rows = [row for row in owners.values() if not covered(row) and eligible(row)]
     listed = {row["id"] for row in open_rows}
     # A pair lists once, as its text, while the text waits.
     return [row for row in open_rows if row["id"] not in paired or paired[row["id"]]["id"] not in listed]
@@ -278,10 +287,7 @@ def main():
     except Refusal as refusal:
         print("owner-unanswered: %s=%s\n%s" % refusal.args, file=sys.stderr)
         return 1
-    for row in unanswered(lane, over, logged):
-        at = watch.instant(row["at"])
-        if at < since or now - at.timestamp() < int(args.older) * 60:
-            continue
+    for row in unanswered(lane, over, logged, since, now, int(args.older) * 60):
         print(json.dumps({"id": row["id"], "at": row["at"], "kind": row["kind"], "text": row.get("text", "")}))
     return 0
 

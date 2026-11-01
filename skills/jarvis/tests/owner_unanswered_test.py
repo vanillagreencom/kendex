@@ -172,8 +172,15 @@ class OwnerUnanswered(MailWorld):
         self.owner("watch-loop batch", "--directive", "--delivery-id", "jarvis-0123abcd")
         at(-100)
         self.owner("unanswered", "--directive", "--delivery-id", next(key))
+        # Window pairs: test_table sends a text a day back whose file a
+        # catch-up delivers here; the text of the second file arrives last,
+        # too young for --older 1. A file lists when its text is outside the
+        # window, and hides behind its text when both are in it.
+        self.owner(str(self.home / "tmp/slack/files/F14-day.png"), "--directive", "--delivery-id", "C16:1015.0")
+        self.owner(str(self.home / "tmp/slack/files/F15-old.png"), "--directive", "--delivery-id", "C17:1015.0")
         at(0)
         request = self.owner("request handled without no reply", "--directive", "--delivery-id", next(key))
+        self.owner("text after its file", "--directive", "--delivery-id", "C17:1000.0")
         self.env = plain
         state = self.home / "state"
         (state / "archive/2026").mkdir(parents=True)
@@ -235,7 +242,10 @@ class OwnerUnanswered(MailWorld):
                  ("delegate logged", True, False),
                  ("delegate archived", True, False),
                  ("unanswered", True, True),
-                 ("request handled without no reply", True, True))
+                 (str(self.home / "tmp/slack/files/F14-day.png"), True, True),
+                 (str(self.home / "tmp/slack/files/F15-old.png"), False, False),
+                 ("request handled without no reply", True, True),
+                 ("text after its file", True, True))
         return [text for text, listed, _ in table if listed], [text for text, _, listed in table if listed]
 
     def threaded(self, text, root, delivery):
@@ -248,16 +258,19 @@ class OwnerUnanswered(MailWorld):
     def test_table(self):
         plain, self.env = self.env, self.clocked(-25 * 3600)
         self.owner("a day old", "--directive", "--delivery-id", "C5:1.0")
+        self.owner("text a day old", "--directive", "--delivery-id", "C16:1000.0")
         self.env = plain
         expected, delegate = self.world()
+        day_file, old_file = (str(self.home / "tmp/slack/files" / name) for name in ("F14-day.png", "F15-old.png"))
         past, future, earlier = (datetime.datetime.fromtimestamp(self.base + hours * 3600, datetime.timezone.utc)
                                  .strftime("%Y-%m-%dT%H:%M:%SZ") for hours in (-1, 1, -26))
         selected = str(self.home / "state/delegate/handoff.md")
         runs = (("listed", ["--older", "10", "--since", past], 11 * 60, expected),
                 ("younger than --older", ["--older", "11"], 0, []),
-                ("older than --older", ["--older", "1"], 0, expected[:-1]),
+                ("older than --older", ["--older", "1"], 0, expected[:-2] + [old_file]),
                 ("older than --since", ["--since", future], 0, []),
-                ("earlier --since than the default day", ["--since", earlier], 0, ["a day old"] + expected),
+                ("earlier --since than the default day", ["--since", earlier], 0,
+                 ["a day old", "text a day old"] + [text for text in expected if text != day_file]),
                 ("relative --handoff", ["--handoff", "state/delegate/handoff.md"], 0, delegate),
                 ("absolute --handoff", ["--handoff", selected], 0, delegate))
         for name, args, offset, listed in runs:
