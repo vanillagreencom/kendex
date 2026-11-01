@@ -34,17 +34,8 @@ fn disarming_leaves_a_pre_existing_hook_behind() {
     assert!(!hook.contains("kendex-guards-hook"), "{hook}");
 }
 
-/// `kendex check` reports an unarmed repository and says nothing about an
-/// armed one.
-///
-/// Unarmed is a verdict kendex composes itself, because nothing has
-/// licensed it to ask the package: no helper in the hooks directory means
-/// nothing local armed it. What it may therefore SAY is only what it read —
-/// `kendex guard install` is not named, because under a configured
-/// `core.hooksPath` the installer stands down and writes nothing, and a
-/// remedy that cannot be taken would then be offered every session for
-/// ever. The package is invited instead. Once a helper is there the package
-/// answers, and an armed repository has nothing to report.
+/// Optional installation and clean arming pass; losing the helper after
+/// adoption is drift until uninstall clears that local adoption record.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_reports_whether_the_shims_are_armed() {
@@ -54,35 +45,21 @@ fn check_reports_whether_the_shims_are_armed() {
     install_package(home, &root, &["commit-guards"]);
 
     let unarmed = run(home, &root, "kendex", &["check"]);
-    assert_eq!(unarmed.status.code(), Some(1), "{}", said(&unarmed));
-    assert!(
-        said(&unarmed).contains("commit hooks"),
-        "{}",
-        said(&unarmed)
-    );
-    assert!(
-        said(&unarmed).contains("holds no kendex-guards helper"),
-        "it names the one file it looked for: {}",
-        said(&unarmed)
-    );
-    assert!(
-        said(&unarmed).contains("kendex guard check"),
-        "it hands the reading back to the package: {}",
-        said(&unarmed)
-    );
-    assert!(
-        !said(&unarmed).contains("kendex guard install"),
-        "it names a remedy that can stand down: {}",
-        said(&unarmed)
-    );
+    assert_eq!(unarmed.status.code(), Some(0), "{}", said(&unarmed));
 
-    run(home, &root, "kendex", &["guard", "install"]);
+    let installed = run(home, &root, "kendex", &["guard", "install"]);
+    assert_eq!(installed.status.code(), Some(0), "{}", said(&installed));
     let armed = run(home, &root, "kendex", &["check"]);
-    assert!(
-        !said(&armed).contains("commit hooks"),
-        "an armed repo has nothing to report: {}",
-        said(&armed)
-    );
+    assert_eq!(armed.status.code(), Some(0), "{}", said(&armed));
+
+    std::fs::remove_file(root.join(".git/hooks/kendex-guards")).unwrap();
+    let broken = run(home, &root, "kendex", &["check"]);
+    assert_eq!(broken.status.code(), Some(1), "{}", said(&broken));
+
+    let removed = run(home, &root, "kendex", &["guard", "uninstall"]);
+    assert_eq!(removed.status.code(), Some(0), "{}", said(&removed));
+    let uninstalled = run(home, &root, "kendex", &["check"]);
+    assert_eq!(uninstalled.status.code(), Some(0), "{}", said(&uninstalled));
 }
 
 /// Outside any repository there is no verdict to give.

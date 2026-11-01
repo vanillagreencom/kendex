@@ -19,8 +19,8 @@ use kendex_core::env::Env;
 
 /// Whether commits here are actually gated. The one thing this report
 /// cannot read off a stat: the shims live in `.git/hooks`, which no lock
-/// tracks, and a repository whose shims drifted looks identical on disk to
-/// one that never armed any.
+/// tracks. Local adoption evidence is read by `guard::locally_armed`;
+/// the package alone judges whether the shims still gate commits.
 ///
 /// The verdict is the package's own `install-git-hooks --check`, and its
 /// summary line is folded whole. Nothing here reads the hook files: a
@@ -41,8 +41,7 @@ use kendex_core::env::Env;
 /// The install record is NOT that license: `.kendex-lock.json`
 /// sits under the work tree and arrives with the fetch, so a checkout can
 /// write one declaring anything. It answers a different question — whether
-/// this project asked for a commit gate — and so decides only whether an
-/// unarmed repository hears about it, which is wording.
+/// this project installed the package. Local adoption is a separate fact.
 ///
 /// Only project scopes have a work tree to ask about. Every probe here has
 /// three answers and not two: a state it read, a state it read as absent,
@@ -81,16 +80,11 @@ pub(super) fn fold_commit_hooks(
             }
         };
         let (class, text) = match kendex_core::guard::locally_armed(&repo) {
-            // No helper, so nothing here is ours to run and the package
-            // has nothing to be asked about. The sentence says the one
-            // thing that was measured and stops. Not that nothing armed the
-            // repository, which the helper's absence does not establish —
-            // the lane hooks are three files and this reads one. And no
-            // remedy: `kendex guard install` stands down under a configured
-            // `core.hooksPath`, so offering it here would offer it every
-            // session for ever. What the state means is the package's to
-            // say, and it is invited.
-            Ok(false) => (
+            Ok(kendex_core::guard::LocalArming::NotAdopted) => continue,
+            // Recorded adoption makes the absent helper drift. It grants
+            // no new execution licence, so the package is invited rather
+            // than run. An install remedy can stand down under hooksPath.
+            Ok(kendex_core::guard::LocalArming::MissingHelper) => (
                 Class::Drift,
                 Text::Own(
                     Sentence::from(format!(
@@ -103,10 +97,10 @@ pub(super) fn fold_commit_hooks(
                 ),
             ),
             Err(error) => {
-                fold_unknown(checked, "the hooks directory", &error);
+                fold_unknown(checked, "the local hook adoption state", &error);
                 continue;
             }
-            Ok(true) => match kendex_core::guard::check_repo(&repo) {
+            Ok(kendex_core::guard::LocalArming::HelperPresent) => match kendex_core::guard::check_repo(&repo) {
                 Ok(report) => match verdict_of(&report) {
                     Some(verdict) => verdict,
                     // Armed, checked, and nothing to say.
