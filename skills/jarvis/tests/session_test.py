@@ -138,6 +138,9 @@ class SessionContract(unittest.TestCase):
             argv += ["--origin", origin]
         if kwargs.get("brief"):
             argv += ["--brief-file", str(kwargs["brief"])]
+        for flag in ("model", "effort"):
+            if kwargs.get(flag) is not None:
+                argv += ["--" + flag, kwargs[flag]]
         start = time.monotonic()
         if kwargs.get("own_worker"):
             # The real public owner runs here so its detached worker remains
@@ -158,7 +161,25 @@ class SessionContract(unittest.TestCase):
         else:
             result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=60)
         self.assertLess(time.monotonic() - start, 60)
+        self.stderr = result.stderr
         return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False)), result.returncode
+
+    def model_classes(self):
+        # Model classification is kendex's external boundary. Preserve native
+        # defaults for class entries, as its protocol does, and answer each
+        # with the warning line its JSON consumer prints (model_warning).
+        kendex = self.root / "bin/kendex"
+        kendex.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps({"protocol":"model-resolution-v1","request":{"tag":"class","class":"standard"},'
+                          '"resolution":{"diagnostics":[],"native_selector":"sonnet" if sys.argv[2] == "claude" else None},'
+                          '"warning":"model-resolution: requested=standard harness=" + sys.argv[2]}))\n')
+        kendex.chmod(0o755)
+
+    @staticmethod
+    def model_warning(harness):
+        return "model-resolution: requested=standard harness=" + harness
+
+    def model_lines(self):
+        return [line for line in self.stderr.splitlines() if line.startswith("model-resolution:")]
 
     def wait(self, state="running", reason=None, seconds=20, persisted_stop=False):
         deadline = time.monotonic() + seconds
@@ -406,6 +427,66 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
+
+    def test_start_model_and_effort(self):
+        # The stated pair is read as a preference entry reads it, launched in
+        # the harness's own words and recorded as the session's choice, with
+        # kendex's line for a class printed once per launch. A Pi model is
+        # refused only when it spends another harness's account: openai/
+        # names a provider no reading measures, so it launches.
+        self.model_classes()
+        for harness, model, launched, words, foreign in (
+                ("claude", "standard", "sonnet", ("--model", "--effort"), ()),
+                ("pi", "github-copilot/gpt-5.5", "github-copilot/gpt-5.5", ("--model", "--thinking"),
+                 (("pi-claude/claude-sonnet-4-5", True), ("openai/gpt-5", False)))):
+            with self.subTest(harness=harness):
+                def launch():
+                    argv = self.started()[-1]["argv"]
+                    return {word: argv[argv.index(word) + 1] for word in words if word in argv}, json.loads(self.record.read_text()).get("choice")
+
+                def stated(effort):
+                    return ({words[0]: launched, words[1]: effort},
+                            {"harness": harness, "account": str(self.account), "model": launched, "effort": effort})
+
+                self.call("start", harness, mode="new")
+                self.wait()
+                self.assertEqual(launch(), ({}, None))
+                for other, refused in foreign:
+                    with self.subTest(model=other):
+                        before, count = self.record.read_bytes(), len(self.started())
+                        answer, code = self.call("start", harness, mode="new", model=other, effort="high")
+                        if refused:
+                            self.assertEqual((answer["state"], answer["reason"], code), ("failed", "launch-failed", 1))
+                            self.assertIn("jarvis-session: selection=pi-account-unlaunchable model=" + other, self.stderr.splitlines())
+                            self.assertEqual((self.record.read_bytes(), len(self.started())), (before, count))
+                        else:
+                            self.assertEqual(self.wait()["reason"], "new-selection-changed")
+                            self.assertEqual(json.loads(self.record.read_text())["choice"]["model"], other)
+                count = len(self.started())
+                # Each row: the stated effort, or none; the answer; whether it
+                # launched; and the effort the session then runs.
+                for effort, reason, launches, running in (("high", "new-selection-changed", 1, "high"), ("high", "existing", 0, "high"),
+                                                          (None, "existing", 0, "high"), ("low", "new-selection-changed", 1, "low")):
+                    with self.subTest(effort=effort, reason=reason):
+                        answer, _ = self.call("start", harness, mode="new", **({"model": model, "effort": effort} if effort else {}))
+                        self.assertEqual(self.model_lines(), [self.model_warning(harness)] * launches if harness == "claude" else [])
+                        self.assertEqual(self.wait()["reason"] if launches else answer["reason"], reason)
+                        count += launches
+                        self.assertEqual(len(self.started()), count)
+                        self.assertEqual(launch(), stated(running))
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+                # A resume keeps the recorded choice, restated or not; a new
+                # context that states none runs the app's own default.
+                for mode, restated, reason, running in (("resume", {"model": model, "effort": "low"}, "resumed", stated("low")),
+                                                        ("resume", {}, "resumed", stated("low")),
+                                                        ("new", {}, "new-requested", ({}, None))):
+                    with self.subTest(mode=mode, restated=bool(restated)):
+                        self.call("start", harness, mode=mode, **restated)
+                        self.assertEqual(self.wait()["reason"], reason)
+                        self.assertEqual(launch(), running)
+                        self.call("stop")
+                        self.wait("stopped", persisted_stop=True)
 
     def test_contract_validator_controls(self):
         answer, _ = self.call("status")
@@ -1062,7 +1143,11 @@ class SessionContract(unittest.TestCase):
 
     def test_bad_arguments_have_no_object(self):
         for arguments in ([], ["unknown"], ["status"], ["_worker", "start", str(self.home), "1"],
-                          ["start", "--home", str(self.home), "--harness", "unknown"]):
+                          ["start", "--home", str(self.home), "--harness", "unknown"],
+                          *(["start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
+                             "--mode", "new", "--origin", "manual", *stated]
+                            for stated in (["--model", "standard"], ["--effort", "high"], ["--model", "standard", "--effort", ""],
+                                           ["--model", "claude:standard", "--effort", "high"]))):
             with self.subTest(arguments=arguments):
                 result = subprocess.run([str(SCRIPT), *arguments], env=self.env, capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 2)

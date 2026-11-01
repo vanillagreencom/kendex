@@ -34,11 +34,18 @@ row = json.loads(config.read_text())
 with Path(row["calls"]).open("a") as stream:
     stream.write(json.dumps(args) + "\\n")
 harness = args[args.index("--harness") + 1]
+# A failing dependency answers every walk pick with an error exit.
+if row["harness"] == "fail" and "--lane" not in args:
+    print("lanes: usage fetch failed", file=sys.stderr)
+    sys.exit(2)
 floor = float(args[args.index("--min-headroom-pct") + 1])
 if row.get("shared") and "--for-overseer" not in args:
     floor = max(floor, 50)
 model_wall = harness == "claude" and "--binding-floor" in args
-if ("--lane" in args and row["headroom"] <= floor) or harness != row["harness"] or model_wall:
+# The recorded account's own reading judges its headroom alone; a walk's pick
+# finds an account only on the fixture's harness.
+walled = row["headroom"] <= floor if "--lane" in args else harness != row["harness"] or model_wall
+if walled:
     print('{"walled":1,"unmeasured":0}')
     sys.exit(3)
 print(json.dumps({"config_dir": row["account"]}))
@@ -112,30 +119,40 @@ print(json.dumps({"config_dir": row["account"]}))
         self.record.write_text(json.dumps(saved))
 
     def test_account_succession(self):
-        # unattended is the home's setting: a successor carries its own
-        # harness's permission words only when the setting names it.
-        for state, headroom, target, unattended in (("walled", 0, "claude", ""), ("walled", 0, "codex", "codex"),
-                                                    ("low", 4, "codex", "claude"), ("walled", 0, "copilot", "copilot"),
-                                                    ("shared-reserve", 20, "claude", ""), ("app-missing", 0, "codex", "")):
-            with self.subTest(state=state, target=target):
-                self.call("start", mode="new")
+        # The preference walks claude, codex, then copilot, and the recorded
+        # account comes last: kept as it is when it has room, and otherwise
+        # replaced by another account of its harness, or none, which refuses
+        # before the predecessor ends. target is the one harness with an
+        # account the walk can pick; none names no such harness, and fail a
+        # walk whose every reading fails, which refuses even an account with
+        # room since the walk stops at its first entry unjudged. A Copilot
+        # account whose owner turned extensions off stays untouched when it is
+        # kept, since its session already runs there. The recorded account has
+        # room above the trigger, 5%, and below the work-item reserve, 50%,
+        # that an overseer reading does not take. unattended is the home's
+        # setting: a successor carries its own harness's permission words only
+        # when the setting names it.
+        for state, start, headroom, target, unattended in (
+                ("walled", "claude", 0, "claude", ""), ("walled", "claude", 0, "codex", "codex"),
+                ("low", "claude", 4, "codex", "claude"), ("walled", "claude", 0, "copilot", "copilot"),
+                ("room-first-entry", "codex", 20, "claude", ""), ("room-no-entry", "claude", 20, "none", ""),
+                ("room-no-entry", "copilot", 20, "none", ""), ("walled-no-entry", "claude", 0, "none", ""),
+                ("pick-fails", "claude", 20, "fail", ""), ("app-missing", "claude", 0, "codex", "")):
+            with self.subTest(state=state, start=start, target=target):
+                self.call("start", harness=start, mode="new")
                 previous = self.wait()
                 before = json.loads(self.record.read_text())
                 native_count = len(self.started())
                 predecessor_argv = self.started()[-1]["argv"]
                 contents = self.handoff()
-                account = self.root / ("next-" + state + "-" + target)
+                account = self.root / ("next-" + state + "-" + start + "-" + target)
                 account.mkdir()
-                calls = self.root / ("picks-" + state + "-" + target)
+                calls = self.root / ("picks-" + state + "-" + start + "-" + target)
                 (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom,
-                                                                          "shared": state == "shared-reserve"}))
+                                                                          "shared": True}))
                 (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high,copilot:standard:high"\n'
                                                                 'JARVIS_UNATTENDED_HARNESSES = "' + unattended + '"\n')
-                # Model classification is kendex's external boundary. Preserve
-                # native defaults for these class entries, as its protocol does.
-                kendex = self.root / "bin/kendex"
-                kendex.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps({"protocol":"model-resolution-v1","request":{"tag":"class","class":"standard"},"resolution":{"diagnostics":[],"native_selector":"sonnet" if sys.argv[2] == "claude" else None}}))\n')
-                kendex.chmod(0o755)
+                self.model_classes()
                 if state == "app-missing":
                     missing = self.root / "bin" / target
                     missing.unlink()
@@ -161,32 +178,68 @@ print(json.dumps({"config_dir": row["account"]}))
                     self.wait("stopped", persisted_stop=True)
                     (self.home / ".lane-fixture.json").unlink()
                     continue
+                kept = target == "none"
+                refused = headroom <= 5
+                order = ["claude", "codex", "copilot"]
+                settings = self.account / "settings.json"
+                if start == "copilot":
+                    settings.write_text('{"enabledFeatureFlags":{"EXTENSIONS":false}}\n')
+                failed = target == "fail"
+                if kept and refused or failed:
+                    saved = self.record.read_bytes()
+                    answer, code = self.call("succeed")
+                    self.assertEqual((answer["state"], code), ("failed", 1))
+                    self.assertEqual(self.record.read_bytes(), saved)
+                    self.assertEqual(self.call("status")[0]["terminal"], previous["terminal"])
+                    self.assertEqual(len(self.started()), native_count)
+                    queries = [json.loads(line) for line in calls.read_text().splitlines()]
+                    walked = [query[query.index("--harness") + 1] for query in queries[1:]]
+                    if failed:
+                        # The first failed reading stops the walk.
+                        self.assertEqual(walked, order[:1])
+                    else:
+                        # The caller entry's own pick leaves the spent account out.
+                        self.assertEqual(walked, order + [start])
+                        self.assertEqual(queries[-1][queries[-1].index("--exclude-lane") + 1], str(self.account))
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+                    (self.home / ".lane-fixture.json").unlink()
+                    continue
                 self.call("succeed")
                 current = self.wait()
                 after = json.loads(self.record.read_text())
-                kept = state == "shared-reserve"
-                self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), target, str(self.account if kept else account)))
+                if start == "copilot":
+                    self.assertEqual(settings.read_text(), '{"enabledFeatureFlags":{"EXTENSIONS":false}}\n')
+                    self.assertFalse((self.account / "extensions").exists())
+                    settings.unlink()
+                self.assertEqual((current["home"], current["harness"], current["account"]),
+                                 (str(self.home), start if kept else target, str(self.account if kept else account)))
                 self.assertNotEqual(current["terminal"]["window"], previous["terminal"]["window"])
                 self.assertEqual(Path(after["transfer"]["handoff"]).read_text(), contents)
                 self.assertEqual((self.home / "state/handoff.md").read_text(), contents)
                 queries = [json.loads(line) for line in calls.read_text().splitlines()]
                 self.assertIn(str(self.account), queries[0])
                 self.assertIn("--for-overseer", queries[0])
+                # Every named entry is asked, in order, until one qualifies.
+                walked = [query[query.index("--harness") + 1] for query in queries[1:]]
+                self.assertEqual(walked, order if kept else order[:order.index(target) + 1])
                 for query in queries[1:]:
-                    self.assertEqual(query[query.index("--exclude-lane") + 1], str(self.account))
+                    self.assertEqual("--exclude-lane" in query and query[query.index("--exclude-lane") + 1], str(self.account) if refused else False)
                     if query[query.index("--harness") + 1] == "claude":
                         self.assertNotIn("--binding-floor", query)
-                self.assertEqual(queries[-1][queries[-1].index("--harness") + 1], target)
                 argv = self.started()[-1]["argv"]
                 self.assertEqual(set(argv) & ANY_PERMISSION_WORD, PERMISSION_WORDS[target] if unattended == target else set())
-                if not kept:
+                if kept:
+                    self.assertEqual([word for word in argv if word in ("--model", "--effort", "-m")], [])
+                else:
                     if target == "claude":
                         self.assertIn("--model", argv)
                         self.assertIn("--effort", argv)
                         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
                         self.assertEqual(argv[argv.index("--effort") + 1], "high")
-                        self.assertEqual([word for word in argv if word.startswith("--settings")],
-                                         [word for word in predecessor_argv if word.startswith("--settings")])
+                        if start == "claude":
+                            self.assertEqual([word for word in argv if word.startswith("--settings")],
+                                             [word for word in predecessor_argv if word.startswith("--settings")])
                     elif target == "codex":
                         self.assertIn("model_reasoning_effort=high", argv)
                         self.assertNotIn("-m", argv)
@@ -201,13 +254,45 @@ print(json.dumps({"config_dir": row["account"]}))
                         self.assertEqual(argv[argv.index("--reasoning-effort") + 1], "high")
                         self.assertNotIn("--model", argv)
                         self.assertTrue(set(argv).isdisjoint({"--autopilot", "--max-autopilot-continues", "--context", "--no-auto-update"}))
-                else:
-                    self.assertEqual(len(queries), 1)
                 self.assertEqual(after["transfer"]["phase"], "complete")
                 self.assertNotEqual(after["pending"]["native_session_id"], before["pending"]["native_session_id"])
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
                 (self.home / ".lane-fixture.json").unlink()
+
+    def test_started_choice_survives_succession(self):
+        # No account reading and no preference keep the recorded account, and
+        # with it the model and effort Start stated.
+        self.model_classes()
+        self.handoff()
+        self.call("start", mode="new", model="standard", effort="low")
+        self.wait()
+        started = json.loads(self.record.read_text())["choice"]
+        self.assertEqual(started, {"harness": "claude", "account": str(self.account), "model": "sonnet", "effort": "low"})
+        self.call("succeed")
+        self.wait()
+        self.assertEqual(json.loads(self.record.read_text())["choice"], started)
+        argv = self.started()[-1]["argv"]
+        self.assertEqual((argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]), ("sonnet", "low"))
+
+    def test_pi_successor_skips_unlaunchable_entry(self):
+        # A pi-claude/ entry's pick names a Claude account, which a Jarvis pi
+        # session cannot run on, so the walk passes it by although that
+        # account has room, and the recorded pi account stays.
+        self.handoff()
+        model = "github-copilot/gpt-5.5"
+        self.call("start", harness="pi", mode="new", model=model, effort="high")
+        self.wait()
+        claude = self.root / "claude-account"
+        claude.mkdir()
+        calls = self.root / "picks"
+        (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": "claude", "account": str(claude), "calls": str(calls), "headroom": 20}))
+        (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "pi:pi-claude/claude-sonnet-4-5:high"\n')
+        self.call("succeed")
+        current = self.wait()
+        self.assertEqual((current["harness"], current["account"]), ("pi", str(self.account)))
+        self.assertEqual(json.loads(self.record.read_text())["choice"]["model"], model)
+        self.assertEqual([json.loads(line)[json.loads(line).index("--harness") + 1] for line in calls.read_text().splitlines()], ["pi"])
 
     def test_missing_orch_keeps_predecessor(self):
         self.call("start")
@@ -373,4 +458,4 @@ print(json.dumps({"config_dir": row["account"]}))
 if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
-        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_account_succession", "SuccessionContract.test_missing_orch_keeps_predecessor"])
+        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor"])

@@ -42,6 +42,20 @@ home_pane_live() {
   fi
   return "$rc"
 }
+# pi_session_account MODEL: into PI_SESSION_ACCOUNT what a Jarvis pi session
+# on MODEL spends, from orch's ol_account: pi, a Pi account the session's
+# directory holds; foreign, another harness's account (a pi-claude/ model
+# spends a claude seat), which no Pi account directory holds, so no reading
+# of the session's directory judges it; or unmeasured, an account no reading
+# names.
+pi_session_account() {
+  ol_account pi "$1"
+  case "$OL_ACCOUNT_HARNESS" in
+    pi) PI_SESSION_ACCOUNT=pi ;;
+    none | unknown) PI_SESSION_ACCOUNT=unmeasured ;;
+    *) PI_SESSION_ACCOUNT=foreign ;;
+  esac
+}
 case "$verb" in
   select)
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
@@ -53,6 +67,7 @@ case "$verb" in
     harness="$1" account="$2" model="$4" effort="$5"
     trigger="${ORCH_OVERSEER_HEADROOM_PCT:-5}"
     ol_account "$harness" "$model"
+    caller_account="$OL_ACCOUNT_HARNESS"
     rc=4
     if ol_account_measured "$OL_ACCOUNT_HARNESS"; then
       # The source account and the walk both serve an overseer, so neither
@@ -61,36 +76,81 @@ case "$verb" in
       ol_lanes "$OL_ACCOUNT_HARNESS" pick --lane "$account" --harness "$OL_ACCOUNT_HARNESS" --for-overseer \
         --min-headroom-pct "$trigger" ${OL_ACCOUNT_MODEL:+--native-model "$OL_ACCOUNT_MODEL"} --json >/dev/null || rc=$?
     fi
+    # The preference names the first choice and the recorded account the last
+    # resort, the order an overseer succession walks. An account with room, or
+    # one nothing measured, is kept as it is once no named entry qualifies,
+    # outside ol_walk: its caller entry would set up and could refuse an
+    # account the session already runs on. A handover with room is a context
+    # mark, so an unset preference keeps it. An account whose reading refuses
+    # headroom is left out, and the caller entry picks another of its harness.
+    exclude="" mark=context caller="" OL_WALK_REFUSE_ID=""
     case "$rc" in
-      0|4|5) ;; # An unmeasured account keeps the existing context-only route.
-      3)
-        ol_preference_entries "$(ol_preference)" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
-        OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
-        OL_WALK_CALLER_MODEL="$model" OL_WALK_CALLER_PICK_MODEL="$model" OL_WALK_CALLER_EFFORT="$effort"
-        # Select only. prepare writes the launched harness's own permission
-        # words from the home's setting and carries no predecessor words, so
-        # this asks the walk about harness rows alone.
-        OL_WALK_SOURCE_HARNESS="$harness" OL_WALK_SOURCE_ROWS=1
-        OL_WALK_REFUSE_ID="$(ol_account_id "$account")"
-        walk_rc=0
-        ol_walk "$trigger" "$account" ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"} caller || walk_rc=$?
-        for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
-          IFS=$'\t' read -r -a fields <<<"$skip"
-          printf 'jarvis-session: %s\n' "${fields[*]}" >&2
-        done
-        if (( walk_rc != 0 )); then
-          printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
-          [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-          exit 1
-        fi
-        harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
-        ;;
+      0|4|5) ;;
+      3) exclude="$account" mark="" caller=caller OL_WALK_REFUSE_ID="$(ol_account_id "$account")" ;;
       *) printf 'jarvis-session: selection-failed account=%s exit=%s\n' "$account" "$rc" >&2
          [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
          exit 1 ;;
     esac
+    # A pi model naming no provider names no account any reading judges, so
+    # that session keeps its account without a walk.
+    if [[ "$caller_account" != unknown ]]; then
+      ol_preference_entries "$(ol_preference "$mark")" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
+      OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
+      OL_WALK_CALLER_MODEL="$model" OL_WALK_CALLER_PICK_MODEL="$model" OL_WALK_CALLER_EFFORT="$effort"
+      # Select only. prepare writes the launched harness's own permission
+      # words from the home's setting and carries no predecessor words, so
+      # this asks the walk about harness rows alone.
+      OL_WALK_SOURCE_HARNESS="$harness" OL_WALK_SOURCE_ROWS=1
+      # A Jarvis pi session runs on a pi account directory. A pi entry whose
+      # model spends another account, or none the walk can pick, would hand
+      # that launch a directory of another kind or none.
+      entries=()
+      for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do
+        if [[ "${entry%%:*}" == pi ]]; then
+          ol_entry_model "$entry"
+          pi_session_account "$OL_ENTRY_MODEL"
+          if [[ "$PI_SESSION_ACCOUNT" != pi ]]; then
+            printf 'jarvis-session: successor-entry-skipped entry=%s reason=pi-account-unlaunchable\n' "$entry" >&2
+            continue
+          fi
+        fi
+        entries+=("$entry")
+      done
+      walk_rc=0
+      [[ -z "$caller" ]] || entries+=("$caller")
+      ol_walk "$trigger" "$exclude" ${entries[@]+"${entries[@]}"} || walk_rc=$?
+      for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
+        IFS=$'\t' read -r -a fields <<<"$skip"
+        printf 'jarvis-session: %s\n' "${fields[*]}" >&2
+      done
+      if (( walk_rc == 0 )); then
+        harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
+      elif [[ -n "$caller" || "$walk_rc" != 3 ]]; then
+        printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
+        [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+        exit 1
+      fi
+    fi
     jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" \
       '{harness:$harness,account:$account,model:$model,effort:$effort}' ;;
+  choice)
+    # A Start's stated model and effort, read as task-prepare reads them.
+    source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
+    jarvis_load "$4"
+    source "$SCRIPT_DIR/lib/overseer-launch.sh"
+    DEP_ERR=/dev/stderr
+    ol_entry_model "$1:$2:$3" || { printf 'jarvis-session: selection=model-unread\n%s\n' "$OL_CLASS_ERR" >&2; exit 1; }
+    # Succession judges a pi session's account by its directory, which holds
+    # no account of another harness, the rule the walk skips such entries by.
+    if [[ "$1" == pi ]]; then
+      pi_session_account "$OL_ENTRY_MODEL"
+      [[ "$PI_SESSION_ACCOUNT" != foreign ]] \
+        || { printf 'jarvis-session: selection=pi-account-unlaunchable model=%s\n' "$OL_ENTRY_MODEL" >&2; exit 1; }
+    fi
+    # jarvis-session shows this verb's stderr only on failure, so the answer
+    # carries kendex's model-resolution line for Start to print.
+    jq -cn --arg model "$OL_ENTRY_MODEL" --arg effort "$OL_ENTRY_EFFORT" --arg warning "$OL_ENTRY_WARNING" \
+      '{model:$model,effort:$effort,warning:$warning}' ;;
   task-prepare)
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
     jarvis_load "$5"

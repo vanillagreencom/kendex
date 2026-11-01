@@ -44,6 +44,14 @@ def clean(value):
     return isinstance(value, str) and all(c.isprintable() for c in value)
 
 
+def same_choice(record, requested):
+    # A Start that states no model keeps whatever model the session runs.
+    if requested is None:
+        return True
+    choice = (record or {}).get("choice") or {}
+    return all(choice.get(key) == requested[key] for key in ("model", "effort"))
+
+
 def dialog_question(line):
     # The record holds a detail of at most 200 printable characters.
     return "".join(c for c in DIALOG_FRAME.sub("", line) if c.isprintable())[:200]
@@ -283,7 +291,7 @@ class Session:
             return None
         pending = record.get("pending") or {}
         if pending.get("started_at") and (record.get("identity_verified") or record.get("state") == "running"):
-            return {key: record.get(key) for key in ("harness", "account", "effective_home", "pending")}
+            return {key: record.get(key) for key in ("harness", "account", "choice", "effective_home", "pending")}
         return record.get("history")
 
     def retain_live(self, record, live):
@@ -338,7 +346,12 @@ class Session:
             if not shutil.which(args.harness):
                 raise Refusal("app-missing")
             account = str(Path(args.account).resolve(strict=True))
-            matching = record and record.get("harness") == args.harness and record.get("account") == account
+            requested = stated = None
+            if args.model is not None:
+                stated = json.loads(self.backend("choice", args.harness, args.model, args.effort, self.home).stdout)
+                requested = {"harness": args.harness, "account": account, "model": stated["model"], "effort": stated["effort"]}
+            matching = (record and record.get("harness") == args.harness and record.get("account") == account
+                        and same_choice(record, requested))
             if record and record["state"] == "starting" and not self.worker_live(record):
                 # A completed worker no longer owns a launch. Release only its
                 # recorded terminal before retrying, and retain confirmed history.
@@ -367,7 +380,7 @@ class Session:
             predecessor = record if self.terminal(record) else (record.get("predecessor") if record else None)
             if predecessor and not self.terminal(predecessor):
                 predecessor = None
-            if predecessor is not record and predecessor and predecessor["state"] == "running" and predecessor["harness"] == args.harness and predecessor["account"] == account:
+            if predecessor is not record and predecessor and predecessor["state"] == "running" and predecessor["harness"] == args.harness and predecessor["account"] == account and same_choice(predecessor, requested):
                 # Requests advance generation. A cancelled replacement keeps
                 # the live session's binding in pending.generation.
                 restored = dict(predecessor, generation=record["generation"] + 1, intent="start", app_off=False,
@@ -381,7 +394,8 @@ class Session:
                     raise Refusal("record-unreadable")
                 brief += " " + private
             history_record = self.confirmed_history(predecessor or record)
-            history_matches = history_record and history_record.get("harness") == args.harness and history_record.get("account") == account
+            history_matches = (history_record and history_record.get("harness") == args.harness
+                               and history_record.get("account") == account and same_choice(history_record, requested))
             confirmed = history_record and (history_record.get("pending") or {}).get("started_at")
             reason = "new-no-record" if not confirmed else "new-requested"
             file, native_id = "", str(uuid.uuid4())
@@ -405,6 +419,14 @@ class Session:
                            "app_off": False, "intent": "start", "terminal": None,
                            "launch": {"id": native_id, "file": file, "reason": reason, "brief": brief},
                            "predecessor": predecessor, "history": history_record}
+            # A resumed session keeps the choice it ran on unless Start states one.
+            choice = requested or (history_record.get("choice") if reason == "resumed" else None)
+            if choice:
+                next_record["choice"] = choice
+            if stated and stated["warning"]:
+                # kendex's line for the stated model, once per launch
+                # (crates/cli tier_model.rs); only a launch runs that model.
+                print(stated["warning"], file=sys.stderr)
             self.write(next_record)
             self.detach("start", next_record)
             return self.answer(next_record), 0
@@ -801,11 +823,17 @@ def main():
             command.add_argument("--mode", choices=("resume", "new"), required=True)
             command.add_argument("--origin", choices=("boot", "manual", "app-on"), required=True)
             command.add_argument("--brief-file")
+            command.add_argument("--model")
+            command.add_argument("--effort")
         elif verb == "stop":
             command.add_argument("--origin", choices=("app-off",))
     args = parser.parse_args()
     if not clean(args.home) or (args.verb == "start" and not clean(args.account)):
         parser.error("path")
+    if args.verb == "start" and ((args.model is None) != (args.effort is None) or not all(
+            value is None or clean(value) and value and ":" not in value for value in (args.model, args.effort))):
+        # One preference entry carries both, colon-separated.
+        parser.error("choice")
     try:
         session = Session(args.home)
     except OSError:
