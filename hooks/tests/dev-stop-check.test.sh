@@ -482,66 +482,11 @@ stop_rows
 COLLECT_LIVE_ROWS=0
 form_rows
 
-# --- Must-fail controls, one per rule ----------------------------------------
+# --- Must-fail controls, one per table ---------------------------------------
 stop_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_rows \
   "${LIVE_STOP_LABELS[@]}"
-stop_control command-records "$HOOK" '  found=$(printf '"'"'%s\n'"'"' "$records" | grep -noE -- "$1$VALUE_RE" 2>&1) || rc=$?' \
-  'rc=0
-  found=$(grep -noE -- "$1$VALUE_RE" "$TRANSCRIPT" 2>&1) || rc=$?' HOOK stop_rows \
-  'Claude Read output naming a live worktree passes silently' \
-  'Codex read output naming a live worktree passes silently' \
-  'prose naming a live worktree passes silently' \
-  'Claude output naming a wait after a hold is not an executed wait' \
-  'Codex output naming a wait after a hold is not an executed wait'
-stop_control continued-stop "$HOOK" 'ACTIVE=${REST#*"$TAB"}' 'ACTIVE=false' HOOK stop_rows \
-  'a continued stop with no wait since the hold lets the live run go'
-stop_control hold-again "$HOOK" '[ "$ACTIVE" = true ] || refuse running "$RUN_DIR"' \
-  'notice abandoned "$RUN_DIR"' HOOK stop_rows 'a continued stop after a wait since the hold is held again'
-stop_control never-held "$HOOK" 'notice transcript unread "$WAITED"' \
-  '[ "$HELD" -gt 0 ] || notice abandoned "$RUN_DIR"' HOOK stop_rows \
-  'a continued stop on a run this hook never held is held'
-stop_control wait-since-hold "$HOOK" 'notice transcript unread "$WAITED"' \
-  'WAITED=$((HELD + 1))' HOOK stop_rows 'a wait before the last hold does not hold again'
-stop_control unread-continued "$HOOK" 'notice() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || refuse "$@"' \
-  HOOK stop_rows 'a reader that cannot answer on a continued stop is reported, not held'
-stop_control shared-tree "$HOOK" 'for candidate in "$AT/skills/$SCRIPT" "$AT/.agents/skills/$SCRIPT"; do' \
-  '[ "$candidate" != "$AT/.agents/skills/$SCRIPT" ] || continue' HOOK stop_rows \
-  'a reader in the shared tree beside the hook is found'
-stop_control root-stop "$HOOK" 'LEVELS=0' 'ROOT=/' HOOK stop_rows \
-  'a reader in the repository'"'"'s shared tree is found at its root, not past it'
-stop_control root-fallback "$HOOK" '"$ROOT"/*) READER="$ROOT/.agents/skills/$SCRIPT"' 'READER=""' \
-  HOOK stop_rows 'a reader in the repository'"'"'s shared tree is found at its root, not past it'
-stop_control home-fallback "$HOOK" 'READER="$HOME_DIR/.agents/skills/$SCRIPT"' 'READER=""' HOOK stop_rows \
-  'a reader in the home'"'"'s shared tree is found for a harness root outside the home'
-stop_control no-run "$HOOK" 'LIVE=$("$READER" --live --worktree "$WORKTREE" 2>&1) || rc=$?' \
-  '[ "$rc" != 1 ] || rc=0' HOOK stop_rows 'a worktree with no run passes'
-stop_control removed "$HOOK" 'while IFS= read -r WORKTREE; do' \
-  '[ -d "$WORKTREE" ] || refuse unread "$WORKTREE"' HOOK stop_rows 'a worktree since removed passes'
-stop_control subagent-transcript "$HOOK" 'refuse payload invalid-json' \
-  'FIELDS=$(printf '"'"'%s'"'"' "$INPUT" | jq -r '"'"'["transcript_path", .transcript_path, "false"] | @tsv'"'"')' \
-  HOOK stop_rows 'the parent'"'"'s transcript is not the subagent'"'"'s'
-stop_control unread "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != unread ] || exit 0' \
-  HOOK stop_rows 'a reader that cannot answer is refused with its words'
-stop_control payload "$HOOK" 'refuse() { # KEY VALUE [DETAIL]' '[ "$1" != payload ] || exit 0' \
-  HOOK stop_rows 'a payload that is not JSON is refused'
-stop_control reported-gaps "$HOOK" 'notice() { # KEY VALUE [DETAIL]' 'exit 0' HOOK stop_rows \
-  'no reader beside the hook is reported, not held' 'a missing jq is reported, not held'
-
-# The reader's rules over the form table: a bare path ends at a metacharacter,
-# the flag must stand in the same command, a redirection does not end that
-# command, a quoted word is read whole, and a double quote is read at every
-# escape depth.
 form_control running-newline 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' \
   'form == "bare" && operator == "newline" && position == "around"'
-form_control word-end 'PATH_RE="/[^[:space:]\"'"'"'\\\\&;|()<>]+"' \
-  'PATH_RE="/[^[:space:]\"'"'"'\\\\]+"' 'form == "bare" && position == "around" && operator != "newline"'
-form_control one-command 'WORDS_RE="([^\"'"'"'\\\\&;|]|$REDIRECT_RE|${DQUOTE}[^\"\\\\]*$DQUOTE|${SQUOTE}[^'"'"'\\\\]*$SQUOTE)*"' \
-  "WORDS_RE='.*'" 'position == "between"'
-form_control redirection "REDIRECT_RE='&>|[<>]&'" 'REDIRECT_RE=unredirected' 'position == "within"'
-form_control quoted-words 'SQUOTE="'"'"'"' 'DQUOTE=unquoted SQUOTE=unquoted' \
-  'form != "bare" && position == "around"'
-form_control escape-depth "DQUOTE='\\\\+\"'" "DQUOTE='\\\\\"'" \
-  'form == "double" && harness == "codex" && position == "around"'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

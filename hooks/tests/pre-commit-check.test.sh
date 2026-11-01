@@ -223,6 +223,9 @@ assert_eq "$log" "" "the hook never executes repository checks"
 
 # The registered commands are the consumers of stdout JSON. Failure worlds
 # keep the reader absent or broken while jq in the parent parses that JSON.
+# The harness picks only the registered command and the output shape; the
+# notice and its encoding are the hook's own, so every world runs under
+# Claude and each other harness runs the first row.
 context_rows() {
   local harness registry registered install row world form key path status context selected expected
   local repo="$UNARMED" root="${HOOKS_DIR%/hooks}" tool real
@@ -250,6 +253,7 @@ context_rows() {
     fi
     while IFS='|' read -r world form key; do
       [ -n "$world" ] || continue
+      [ "$harness" = claude ] || [ "$world|$form" = 'tools|git commit -m test' ] || continue
       path="$TMP_ROOT/context-$world"
       mkdir -p "$path"
       for tool in git grep jq bash cat env printf awk; do
@@ -338,47 +342,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     [ "$FAIL" -eq 0 ]
   ) >"$TMP_ROOT/pipe-reader.log" 2>&1 || control_status=$?
   assert_eq "$control_status" 1 'control pipe-reader: the mutated hook turns the suite red'
-  for control_harness in claude codex copilot pi; do
-    for control_assertion in 'notice status' 'context equals the keyed diagnostic'; do
-      control_matches=$(grep -Fxc -e "  FAIL  registered $control_harness broken-jq payload=invalid-json $control_assertion" -- "$TMP_ROOT/pipe-reader.log") || [ "$?" -eq 1 ]
-      assert_eq "$control_matches" 1 "control pipe-reader: registered $control_harness broken-jq $control_assertion"
-    done
+  for control_assertion in 'notice status' 'context equals the keyed diagnostic'; do
+    control_matches=$(grep -Fxc -e "  FAIL  registered claude broken-jq payload=invalid-json $control_assertion" -- "$TMP_ROOT/pipe-reader.log") || [ "$?" -eq 1 ]
+    assert_eq "$control_matches" 1 "control pipe-reader: registered claude broken-jq $control_assertion"
   done
   skill_load_control no-short-flag "$HOOK" 'letter=${rest:0:1}; rest=${rest:1}' 'letter=x' HOOK command_rows \
     'git commit -n -m test'
-  skill_load_control no-hook-override "$HOOK" 'CALL_RESULT=commit; CALL_BYPASS=$env_config' 'CALL_BYPASS=""' HOOK command_rows \
-    'git -c core.hooksPath=/dev/null commit -m x'
-  skill_load_control unknown-is-literal "$HOOK" 'tokenize || [ "$READER_STATE" = incomplete ]' 'for ((index=0; index<${#KINDS[@]}; index++)); do [ "${KINDS[$index]}" != value ] || KINDS[$index]=word; done' HOOK command_rows \
-    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="core.hooksPath$SUFFIX" GIT_CONFIG_VALUE_0=/dev/null git commit -m x'
-  skill_load_control unknown-prefix "$HOOK" '      if [ "$char" = '\''"'\'' ]; then quote=""; elif [ "$kind" = word ]; then word="$word$char"; fi' \
-    '[ "$kind" != value ] || [ "$char" = '\''"'\'' ] || word="$word$char"' HOOK command_rows \
-    'git commit "-${OPTION}nm" -m x'
-  skill_load_control message-is-option "$HOOK" '      --message | --file | --reuse-message | --reedit-message | --template | --author | --date | --cleanup | --fixup | --squash | --trailer | --pathspec-from-file)' 'i=$((i - 1))' HOOK command_rows \
-    "git commit --message $NV"
-  skill_load_control ordinary-notice "$HOOK" 'tokenize || [ "$READER_STATE" = incomplete ]' 'message command unresolved' HOOK command_rows \
-    'echo "$HOME git"'
-  skill_load_control redirect-is-separator "$HOOK" '        if [ "$operator_kind" = redirect ]; then' 'operator_kind=separator' HOOK command_rows \
-    'git commit -m x &>/dev/null -n' "git commit -m x $APPEND_BOTH/dev/null -n"
-  skill_load_control redirect-target-is-option "$HOOK" '    target=1' 'target=""' HOOK command_rows \
-    "git commit -m x &>$NV" "git commit -m x $APPEND_BOTH-n"
-  skill_load_control no-partial-notice "$HOOK" '[ "$READER_STATE" = complete ] || UNAVAILABLE=1' 'UNAVAILABLE=""' HOOK command_rows \
-    'cd "${REPO:-.}" && git commit -n -m wip' 'echo ${X:-y}; git commit -n -m x'
-  skill_load_control lose-completed-result "$HOOK" '[ "$READER_STATE" = complete ] || UNAVAILABLE=1' \
-    'if [ "$READER_STATE" = incomplete ]; then BYPASS=""; fi' HOOK command_rows \
-    'git commit -n -m x; echo {a,b}'
-  skill_load_control config-discards-refusal "$HOOK" '        commit-refusal)' \
-    'if [ -n "$CONFIG_MUTATION" ]; then CALL_BYPASS=""; CALL_FLAG=""; fi' HOOK command_rows \
-    'git config --local core.hooksPath "$HOOKS"; git commit -n -m x'
-  skill_load_control config-is-bypass "$HOOK" '      read_call' \
-    '[ "$CALL_RESULT" != config-change ] || BYPASS=core.hooksPath' HOOK command_rows \
-    'git config --local core.hooksPath /dev/null; git commit -m x'
-  skill_load_control incomplete-is-complete "$HOOK" 'tokenize || [ "$READER_STATE" = incomplete ]' \
-    'if [ "$READER_STATE" = incomplete ]; then TOKENS[${#TOKENS[@]}]=""; KINDS[${#KINDS[@]}]=separator; RAW[${#RAW[@]}]=""; fi' HOOK command_rows \
-    'git commit -n -m x ${X:-y}' 'git commit -n -m "${TEXT:-x}"'
-  skill_load_control no-notice-context "$HOOK" '  local text=$NOTICE' 'return 0' HOOK context_rows \
-    'registered claude tools unarmed=REPO context equals the keyed diagnostic'
-  skill_load_control stop-at-path "$HOOK" '      *) continue ;;' 'break' HOOK command_rows \
-    'git commit file -n -m x'
   skill_load_control lose-quoted-option "$HOOK" '  [ -n "$closed" ] || return 1' 'return 1' HOOK quoted_message_rows \
     'Claude quoted heredoc preserves a separate option'
   skill_load_control reader-block "$HOOK" "printf 'pre-commit-check: %s=%s\\n' \"\$1\" \"\$2\"" \

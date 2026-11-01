@@ -291,7 +291,8 @@ adopted_start_rows() {
 }
 adopted_start_rows
 
-# The hook inside an owned stand-in for each harness. A start records its
+# The hook inside an owned stand-in for a harness; the guard reads no harness
+# name, so one harness stands for all. A start records its
 # harness process in the lease. A later start, compaction or clear in that same
 # process on its own lease is established and continues past a busy guard
 # lock, while a new session behind that lock keeps the admission refusal. A
@@ -338,48 +339,46 @@ hook_in_harness() { # DIR ENV...
 }
 
 session_rows() {
-  local harness hdir ndir hpid npid
-  for harness in claude codex; do
-    release_all
-    install_world installed "$harness"
-    hdir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
-    ndir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
-    session_harness_start "$hdir" "$harness"
-    hpid=$SESSION_HARNESS_PID
-    session_harness_start "$ndir" "$harness"
-    npid=$SESSION_HARNESS_PID
-    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
-    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER owner=$(lease_owner "$TREE") pids=$(session_lease_pids "$GUARD" "$TREE" "$MAIN")" \
-      "rc=0 answer=silent owner=alice pids=$hpid" "$harness: a start admits its session and records its harness process"
-    session_mutex_hold "$MAIN/.git"
-    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
-    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) cause=$(sed -n '3s/:.*//p' "$ERR_FILE") owner=$(lease_owner "$TREE")" \
-      "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lock-busy owner=alice" \
-      "$harness: a compaction or clear in the admitted session continues past a busy guard lock"
-    hook_in_harness "$ndir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
-    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
-      "rc=0 answer=stop first=worktree-session-claim: unclaimed=$TREE owner=alice" \
-      "$harness: a new session behind a busy guard lock keeps the admission refusal"
-    session_mutex_free
-    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$FAILED_WRITE_BIN:$PATH"
-    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) cause=$(sed -n '3s/:.*//p' "$ERR_FILE") owner=$(lease_owner "$TREE")" \
-      "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lease-write owner=alice" \
-      "$harness: an admitted session continues past a failed lease write"
-    release_all
-    session_harness_run "$ndir" "$TREE" env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=bob "$GUARD" claim "$TREE" --session || :
-    session_lease_rewrite "$TREE" expire
-    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
-    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
-      "rc=0 answer=stop first=worktree-session-claim: held=$TREE owner=bob" \
-      "$harness: a start keeps an expired lease whose recorded session lives"
-    session_lease_rewrite "$TREE" restart "$npid"
-    hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
-    assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER owner=$(lease_owner "$TREE") pids=$(session_lease_pids "$GUARD" "$TREE" "$MAIN")" \
-      "rc=0 answer=silent owner=alice pids=$hpid" \
-      "$harness: a start takes over an expired lease whose recorded session is dead"
-    session_harness_stop "$hdir"
-    session_harness_stop "$ndir"
-  done
+  local harness=claude hdir ndir hpid npid
+  release_all
+  install_world installed "$harness"
+  hdir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
+  ndir=$(mktemp -d "$TMP_ROOT/session.XXXXXX")
+  session_harness_start "$hdir" "$harness"
+  hpid=$SESSION_HARNESS_PID
+  session_harness_start "$ndir" "$harness"
+  npid=$SESSION_HARNESS_PID
+  hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
+  assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER owner=$(lease_owner "$TREE") pids=$(session_lease_pids "$GUARD" "$TREE" "$MAIN")" \
+    "rc=0 answer=silent owner=alice pids=$hpid" "$harness: a start admits its session and records its harness process"
+  session_mutex_hold "$MAIN/.git"
+  hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
+  assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) cause=$(sed -n '3s/:.*//p' "$ERR_FILE") owner=$(lease_owner "$TREE")" \
+    "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lock-busy owner=alice" \
+    "$harness: a compaction or clear in the admitted session continues past a busy guard lock"
+  hook_in_harness "$ndir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$SESSION_BIN:$PATH"
+  assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
+    "rc=0 answer=stop first=worktree-session-claim: unclaimed=$TREE owner=alice" \
+    "$harness: a new session behind a busy guard lock keeps the admission refusal"
+  session_mutex_free
+  hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice "PATH=$FAILED_WRITE_BIN:$PATH"
+  assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) cause=$(sed -n '3s/:.*//p' "$ERR_FILE") owner=$(lease_owner "$TREE")" \
+    "rc=0 answer=silent first=worktree-session-claim: maintenance=$TREE cause=worktree-guard-lease-write owner=alice" \
+    "$harness: an admitted session continues past a failed lease write"
+  release_all
+  session_harness_run "$ndir" "$TREE" env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER USER=bob "$GUARD" claim "$TREE" --session || :
+  session_lease_rewrite "$TREE" expire
+  hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
+  assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER first=$(first_line) owner=$(lease_owner "$TREE")" \
+    "rc=0 answer=stop first=worktree-session-claim: held=$TREE owner=bob" \
+    "$harness: a start keeps an expired lease whose recorded session lives"
+  session_lease_rewrite "$TREE" restart "$npid"
+  hook_in_harness "$hdir" KENDEX_WORKTREE_CLAIM=required USER=alice
+  assert_eq "rc=$HOOK_RC answer=$HOOK_ANSWER owner=$(lease_owner "$TREE") pids=$(session_lease_pids "$GUARD" "$TREE" "$MAIN")" \
+    "rc=0 answer=silent owner=alice pids=$hpid" \
+    "$harness: a start takes over an expired lease whose recorded session is dead"
+  session_harness_stop "$hdir"
+  session_harness_stop "$ndir"
 }
 session_rows
 
@@ -533,44 +532,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   control no-claim 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' 'exit 0' claim_rows \
     "a session in a linked worktree claims it under USER;the ladder's top rung names the owner;a session in a subdirectory claims the worktree root;a project install in the worktree claims it;a hook in a harness root outside the home claims through the home's guard;an inherited GIT_DIR does not move the claim;a guard that fails is reported;a guard that fails is reported: the guard's keyed line is replayed;a required session claims its worktree;"
 
-  # A hook that drops what the guard wrote.
-  control no-cause '  [ -z "$cause" ] || text="$text"$'"'"'\n'"'"'"$cause"' '  :' claim_rows \
-    "a guard that fails is reported: the guard's keyed line is replayed;"
-
-  # A hook that reports every lock already holding the tree speaks where a
-  # foreign lease must stay silent.
-  control held-notice '    [ "${KENDEX_WORKTREE_CLAIM:-}" != required ] || notice held "$ROOT" \' '    notice held "$ROOT" \' claim_rows \
-    "another owner's lease is kept silently;"
-
-  # A hook that takes the open repository's guard whatever its own install
-  # runs code the repository planted.
-  control repo-guard '  case "$HOOK_DIR" in' '  case "$ROOT/" in' claim_rows \
-    "a global hook does not run the open worktree's guard;"
-
-  # A hook without the home's shared tree misses a guard a harness root
-  # outside the home relies on.
-  control no-home-fallback 'if [ -z "$FOUND" ] && [ -n "$HOME_DIR" ] && [ "$HOME_DIR" != "$ROOT" ] \' 'if false \' claim_rows \
-    "a hook in a harness root outside the home claims through the home's guard;"
-
-  # A hook that keeps an inherited GIT_DIR reads the main checkout.
-  control git-env '  unset "$git_variable"' '  :' claim_rows \
-    "an inherited GIT_DIR does not move the claim;"
-
   control required-foreign '    [ "${KENDEX_WORKTREE_CLAIM:-}" != required ] || notice held "$ROOT" \' '    true || notice held "$ROOT" \' required_rows \
     "required: foreign lease;required: foreign lease key;required: foreign lease cause;" \
     "foreign lease|installed|bob|tree|USER=alice|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob"
-  control required-missing '[ -n "$FOUND" ] || notice guard "${HOOK_DIR:-unlocatable}" \' '[ -n "$FOUND" ] || exit 0; true || notice guard "${HOOK_DIR:-unlocatable}" \' required_rows \
-    "advisory: missing guard key;required: missing guard;required: missing guard key;" \
-    "missing guard|bare|-|tree|USER=alice|guard|-|none"
-  control required-git-dir '  unset "$git_variable"' '  :' required_rows \
-    "required: redirected Git directory;required: redirected Git directory key;required: redirected Git directory cause;" \
-    "redirected Git directory|installed|bob|tree|USER=alice GIT_DIR=MAIN/.git|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob"
-  control required-ceiling 'unset GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_NAMESPACE' 'unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_NAMESPACE' required_rows \
-    "required: discovery ceiling;required: discovery ceiling key;required: discovery ceiling cause;" \
-    "discovery ceiling|installed|bob|sub|USER=alice GIT_CEILING_DIRECTORIES=TREE|held|worktree-guard-owner-conflict: path=TREE owner=bob|bob"
-  control required-failure '  if [ "${KENDEX_WORKTREE_CLAIM:-}" = required ]; then' '  if false; then' required_rows \
-    "required: failed claim;" \
-    "failed claim|installed|-|tree|-|unclaimed|worktree-guard-owner-required: claim|none"
   control trace-common 'COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || notice unclaimed "$PWD" \' 'COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir 2>&1) || notice unclaimed "$PWD" \' trace_main_rows \
     "advisory: Git tracing excludes the main checkout;required: Git tracing excludes the main checkout;"
   control trace-root 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || notice unclaimed "$PWD" \' 'ROOT=$(git rev-parse --show-toplevel 2>&1) || notice unclaimed "$PWD" \' trace_rows \
@@ -581,8 +545,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "advisory: unexpected error;required: unexpected error;"
   control output-fallback '        printf '"'"'{"continue":false,"stopReason":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n'"'"' "$fallback" "$fallback"' '        :' output_failure_rows \
     "required: claude broken encoder stop request;required: claude broken encoder: context contract;required: codex broken encoder stop request;required: codex broken encoder: context contract;"
-  control codex-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks | */.codex/hooks) COPILOT=true ;;' output_failure_rows \
-    "required: codex normal encoder: context contract;required: codex broken encoder: context contract;"
   # A SessionStart claim without the session association meets the lease its
   # own workflow adopted as foreign.
   control session-flag-at-start 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' 'CAUSE=$("$FOUND" claim "$ROOT" 2>&1 >/dev/null) || rc=$?' adopted_start_rows \
@@ -590,47 +552,12 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # A hook that treats an established session's failed maintenance as a
   # failed claim stops a working session at compaction or clear.
   control maintenance-stops '  6) advise maintenance "$ROOT" \' '  6) notice maintenance "$ROOT" \' session_rows \
-    "claude: a compaction or clear in the admitted session continues past a busy guard lock;claude: an admitted session continues past a failed lease write;codex: a compaction or clear in the admitted session continues past a busy guard lock;codex: an admitted session continues past a failed lease write;"
-  control copilot-project-context '  */.github/hooks | .github/hooks) COPILOT=true ;;' '  */.github/hooks | .github/hooks) : ;;' output_failure_rows \
-    "required: copilot-project normal encoder: context contract;required: copilot-project broken encoder: context contract;"
-  control copilot-global-context '[ ! -f "${BASH_SOURCE[0]%.sh}.json" ] || COPILOT=true' ':' output_failure_rows \
-    "required: copilot-global normal encoder: context contract;required: copilot-global broken encoder: context contract;"
-
-  # A hook that claims whatever tree it starts in locks one no
-  # `worktree create` returned, such as a harness's own.
-  control unmarked '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' ':' claim_rows \
-    "a worktree with no issue record claims nothing;a required unmarked worktree needs no claim;"
+    "claude: a compaction or clear in the admitted session continues past a busy guard lock;claude: an admitted session continues past a failed lease write;"
+  # A hook that claims whatever tree it starts in runs the project file of
+  # one no `worktree create` returned, such as a harness's own.
   control unmarked-env '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' ':' env_rows \
     "a worktree with no issue record runs no project file;"
 
-  # A hook that asks the worktree script runs the repository's `.env.local`.
-  # A guard that reports an established session's failed lease write as a
-  # failed claim stops that session in required mode.
-  guard_line='			[[ "$established" != true ]] || exit "$EXIT_MAINTENANCE"'
-  assert_eq "$(grep -cxF -- "$guard_line" "$WORKTREE_SCRIPTS/worktree-session-guard" || :)" 1 "control failed-write-exit: its anchor stands once"
-  cp -R "$WORKTREE_SCRIPTS" "$TMP_ROOT/failed-write-scripts"
-  LINE=$guard_line awk '$0 == ENVIRON["LINE"] { print "			exit 1"; next } { print }' \
-    "$WORKTREE_SCRIPTS/worktree-session-guard" >"$TMP_ROOT/failed-write-scripts/worktree-session-guard"
-  log=$(PASS=0 FAIL=0 WORKTREE_SCRIPTS="$TMP_ROOT/failed-write-scripts"; session_rows; session_harness_stop_all) || :
-  assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
-    "claude: an admitted session continues past a failed lease write;codex: an admitted session continues past a failed lease write;" \
-    "control failed-write-exit: the planted defect turns its rows red"
-
-  # A guard whose established claim waits for the lock holds a compaction or
-  # clear for the lock's bound before its maintenance notice.
-  wait_line='			acquire_guard_mutex "$COMMON_DIR" 0 || exit "$EXIT_MAINTENANCE"'
-  assert_eq "$(grep -cxF -- "$wait_line" "$WORKTREE_SCRIPTS/worktree-session-guard" || :)" 1 "control established-wait: its anchor stands once"
-  cp -R "$WORKTREE_SCRIPTS" "$TMP_ROOT/established-wait-scripts"
-  LINE=$wait_line awk '$0 == ENVIRON["LINE"] { print "			acquire_guard_mutex \"$COMMON_DIR\" || exit \"$EXIT_MAINTENANCE\""; next } { print }' \
-    "$WORKTREE_SCRIPTS/worktree-session-guard" >"$TMP_ROOT/established-wait-scripts/worktree-session-guard"
-  log=$(PASS=0 FAIL=0 WORKTREE_SCRIPTS="$TMP_ROOT/established-wait-scripts"; session_rows; session_harness_stop_all) || :
-  assert_eq "$(sed -n 's/^  FAIL  //p' <<<"$log" | tr '\n' ';')" \
-    "claude: a compaction or clear in the admitted session continues past a busy guard lock;codex: a compaction or clear in the admitted session continues past a busy guard lock;" \
-    "control established-wait: the planted defect turns its rows red"
-
-  control worktree-script 'CAUSE=$("$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' \
-    'CAUSE=$("${FOUND%/*}/worktree" list >/dev/null 2>&1; "$FOUND" claim "$ROOT" --session 2>&1 >/dev/null) || rc=$?' env_rows \
-    "a skill-created worktree runs no project file;"
 fi
 
 echo

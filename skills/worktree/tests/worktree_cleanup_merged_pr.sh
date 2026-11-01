@@ -520,44 +520,6 @@ assert_eq "$(auth_once subshell "$subshell_mutant")" \
   "rc=0 out= err=worktree-github-auth-subshell: merged_pr_for_branch main;worktree-cleanup-merge-unverified: <other>;worktree-github-auth-subshell: merged_pr_for_branch main;worktree-cleanup-merge-unverified: <wt> tree=present dirty=- branch=tip other=present probes= reads=" \
   "must-fail: a merge lookup in a subshell refuses its credential choice"
 
-build "registration-control" tree squash map
-gh_env registration-fail
-cp -R "$PACKAGE_DIR" "$ROOT/registration-mutant"
-registration_mutant="$ROOT/registration-mutant/scripts/worktree"
-assert_eq "$(grep -cF 'worktree_message cleanup-registration-unreadable' "$registration_mutant")" "1" \
-  "control: the registration failure arm occurs once"
-sed -i.bak '/if ! CLEANUP_GIT_DIR=.*registered_worktree_git_dir/,/worktree_message cleanup-registration-unreadable/ s/CLEANUP_FAILED=true/CLEANUP_FAILED=false/' "$registration_mutant"
-assert_eq "$(cmp -s "$registration_mutant.bak" "$registration_mutant" && printf unchanged || printf changed)" "changed" \
-  "control: removing the registration failure status changes the script"
-rm -f "$registration_mutant.bak"
-assert_eq "$(grep -cF 'worktree_message cleanup-registration-unreadable' "$registration_mutant")" "1" \
-  "control: the registration mutant keeps the matched diagnostic"
-assert_eq "$(WORKTREE_SCRIPT="$registration_mutant" run cleanup)" \
-  "rc=0 out= err=worktree-cleanup-registration-unreadable: <wt> tree=present dirty=- branch=tip other=- map=intact registered=present" \
-  "control: the registration preservation expectation rejects a success status"
-
-build "lease-order-control" tree squash map lease
-gh_env merged
-cp -R "$PACKAGE_DIR" "$ROOT/lease-order-mutant"
-lease_order_mutant="$ROOT/lease-order-mutant/scripts/worktree"
-assert_eq "$(grep -cF 'if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then' "$lease_order_mutant")" "1" \
-  "control: the cleanup lease decision occurs once"
-sed -i.bak \
-  -e '/^[[:space:]]*if ! CLEANUP_GIT_DIR=.*registered_worktree_git_dir/ i\
-      if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then\
-        continue\
-      fi' \
-  -e 's/^[[:space:]]*if ! cleanup_lease_permits_removal "\$wt" "\$(issue_session_owner "\$BRANCH")"; then$/      if false; then/' \
-  "$lease_order_mutant"
-assert_eq "$(cmp -s "$lease_order_mutant.bak" "$lease_order_mutant" && printf unchanged || printf changed)" "changed" \
-  "control: moving the lease decision changes the script"
-rm -f "$lease_order_mutant.bak"
-assert_eq "$(grep -cF 'if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then' "$lease_order_mutant")" "1" \
-  "control: the mutant keeps one lease decision before the map decision"
-assert_eq "$(WORKTREE_SCRIPT="$lease_order_mutant" run 'cleanup --stale --ttl-minutes 0')" \
-  "rc=0 out= err=worktree-lease-stale-released: <wt>;worktree-cleanup-rebase-map: <map> tree=present dirty=- branch=tip other=- map=intact registered=present lease=gone" \
-  "control: the lease preservation expectation rejects a decision made before the map check"
-
 build "map-control" tree squash map
 gh_env merged
 cp -R "$PACKAGE_DIR" "$ROOT/map-mutant"

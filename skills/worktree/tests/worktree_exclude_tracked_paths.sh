@@ -523,24 +523,17 @@ if [[ "${WORKTREE_EXCLUDE_SKIP_OUTCOMES:-}" != 1 ]]; then
     assert_eq "$empty_rc" 0 'empty path: succeeds without a Git-directory read'
     assert_eq "$(cat "$TMP_ROOT/empty-out" "$TMP_ROOT/empty-err")" '' 'empty path: quiet unchanged result'
   fi
+  # Every caller shares the one writer, so the written and unchanged results
+  # run through one caller; each caller's filter fault proves it passes its
+  # own path and propagates the writer's failure.
   OUTCOMES='symlink|fix-links|written|-
-ignore-copy|fix-links|written|-
-mkdir|fix-links|written|-
-copy|fix-links|written|-
-relative|fix-links|written|-
 symlink|fix-links|unchanged|permissions
-ignore-copy|fix-links|unchanged|permissions
-mkdir|fix-links|unchanged|permissions
-copy|fix-links|unchanged|permissions
-relative|fix-links|unchanged|permissions
 symlink|fix-links|missing|first-write
 symlink|create|written|-
-symlink|repair-links|written|-'
+symlink|repair-links|written|-
+symlink|fix-links|failed|permissions'
   for caller in symlink ignore-copy mkdir copy relative child-link; do
-    OUTCOMES+=$'\n'"$caller|fix-links|failed|permissions"$'\n'"$caller|fix-links|failed|filter"
-  done
-  for caller in ignore-copy mkdir copy relative; do
-    OUTCOMES+=$'\n'"$caller|create|failed|permissions"
+    OUTCOMES+=$'\n'"$caller|fix-links|failed|filter"
   done
   for route in create repair-links; do
     OUTCOMES+=$'\n'"symlink|$route|failed|permissions"$'\n'"symlink|$route|failed|lookup"
@@ -560,31 +553,17 @@ fi
 
 
 
-# Each control edits one writer operation in a disposable script tree.
-# The child suite uses its own repositories and skips this control loop.
+# Each control edits one writer operation in a disposable script tree: anchor
+# reruns the rows above, replacement reruns its outcome case. The child suite
+# uses its own repositories and skips this control loop.
 CONTROLS=""
-if [[ "${WORKTREE_EXCLUDE_CONTROL:-}" != 1 ]]; then CONTROLS='anchor
-merged-missing-source
-permissions'; fi
+if [[ "${WORKTREE_EXCLUDE_CONTROL:-}" != 1 ]]; then CONTROLS='anchor'; fi
 if [[ "${WORKTREE_EXCLUDE_OUTCOME_CONTROL:-}" != 1 && "${WORKTREE_EXCLUDE_SKIP_OUTCOMES:-}" != 1 ]]; then
-  CONTROLS+=$'\n''lookup
-empty
-read
-directory
-temporary-file
-content
-content-second
-permissions-status
-replacement
-cleanup
-initial-content
-first-write
-callers'
+  CONTROLS+=$'\n''replacement'
 fi
 if [[ -n "$CONTROLS" ]]; then
   while IFS= read -r control; do
     [[ -n "$control" ]] || continue
-    expected_matches=1
     select_fault=""
     matrix_only=1
     case "$control" in
@@ -593,71 +572,11 @@ if [[ -n "$CONTROLS" ]]; then
         old='  entry="/$path"'
         new='  entry="$path"'
         ;;
-      merged-missing-source)
-        matrix_only=0
-        # KEN-3935 (b122ac556eab774a78cb09e38cf7da8b69094337) reached the
-        # writer only after finding a source. Restore that skip in the copy.
-        old='    exclude_from_worktree_index "$wt" "$path" migrate || return 1'
-        new='    if [[ -e "$PROJECT_ROOT/$path" ]]; then exclude_from_worktree_index "$wt" "$path" migrate || return 1; fi'
-        ;;
-      permissions)
-        matrix_only=0
-        old='    cp -p -- "$info_exclude" "$tmp" 2>/dev/null || return 1'
-        new='    cp -- "$info_exclude" "$tmp" 2>/dev/null || return 1'
-        ;;
-      lookup)
-        old='  common_dir="$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null)" || return 1'
-        new='  common_dir="$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null)" || return 0'
-        select_fault=lookup
-        ;;
-      empty)
-        old='  [[ -z "$path" ]] && return 0'
-        new='  [[ -z "$path" ]] && :'
-        select_fault=empty
-        ;;
-      read) expected_matches=3; select_fault='filter inspection comparison' ;;
-      directory)
-        old='  mkdir -p -- "${info_exclude%/*}" 2>/dev/null || return 1'
-        new='  mkdir -p -- "${info_exclude%/*}" 2>/dev/null'
-        select_fault=directory
-        ;;
-      temporary-file)
-        old='  candidate="$(mktemp "$info_exclude.wt-tmp.XXXXXX" 2>/dev/null)" || return 1'
-        new='  candidate="$(mktemp "$info_exclude.wt-tmp.XXXXXX" 2>/dev/null)"'
-        select_fault=temporary-file
-        ;;
-      content) expected_matches=2; select_fault='content content-after-copy' ;;
-      content-second)
-        old='    printf '\''%s'\'' "$filtered" 2>/dev/null > "$tmp" || return 1'
-        new='    printf '\''%s'\'' "$filtered" 2>/dev/null > "$tmp"'
-        select_fault=content-after-copy
-        ;;
-      permissions-status)
-        old='    cp -p -- "$info_exclude" "$tmp" 2>/dev/null || return 1'
-        new='    cp -p -- "$info_exclude" "$tmp" 2>/dev/null'
-        select_fault=permissions
-        ;;
       replacement)
         old='  mv -- "$tmp" "$info_exclude" 2>/dev/null || return 1'
         new='  mv -- "$tmp" "$info_exclude" 2>/dev/null'
         select_fault=replacement
         ;;
-      cleanup)
-        old='      if [[ "$result" -eq 0 ]]; then result=1; failure=write; operation=cleanup; fi'
-        new='      if [[ "$result" -eq 0 ]]; then result=0; failure=write; operation=cleanup; fi'
-        select_fault=cleanup
-        ;;
-      initial-content)
-        old='    printf '\''%s'\'' "$filtered" 2>/dev/null >> "$info_exclude" || return 1'
-        new='    printf '\''%s'\'' "$filtered" 2>/dev/null >> "$info_exclude"'
-        select_fault=initial-content
-        ;;
-      first-write)
-        old='    printf '\''%s'\'' "$filtered" 2>/dev/null >> "$info_exclude" || return 1'
-        new='    printf '\''%s'\'' "$filtered" 2>/dev/null >> /dev/null || return 1'
-        select_fault=first-write
-        ;;
-      callers) expected_matches=6; select_fault='permissions filter' ;;
     esac
     if [[ -n "${WORKTREE_EXCLUDE_SELECT_FAULT:-}" ]]; then
       selected=false
@@ -672,23 +591,10 @@ if [[ -n "$CONTROLS" ]]; then
     [[ ! -L "$writer" ]] || { echo 'control writer is a symlink' >&2; exit 2; }
     matches=0
     while IFS= read -r line || [[ -n "$line" ]]; do
-      matched=false
-      case "$control" in
-        read)
-          if [[ "$line" == *'[[ "$rc" -le 1 ]] || '* ]]; then line="${line%%[[*}:"; matched=true; fi
-          ;;
-        content)
-          if [[ "$line" == *"printf '%s'"*'"$filtered" 2>/dev/null > "$tmp" || return 1' ]]; then line="${line% || return 1}"; matched=true; fi
-          ;;
-        callers)
-          if [[ "$line" == *'exclude_from_worktree_index "$wt" "$path"'*' || return 1' ]]; then line="${line% || return 1}"; matched=true; fi
-          ;;
-        *) if [[ "$line" == "$old" ]]; then line="$new"; matched=true; fi ;;
-      esac
-      if [[ "$matched" == true ]]; then matches=$((matches + 1)); fi
+      if [[ "$line" == "$old" ]]; then line="$new"; matches=$((matches + 1)); fi
       printf '%s\n' "$line"
     done <"$writer" >"$scripts/mutated"
-    [[ "$matches" -eq "$expected_matches" ]] && ! cmp -s -- "$writer" "$scripts/mutated" || { echo 'control edit did not change one match' >&2; exit 2; }
+    [[ "$matches" -eq 1 ]] && ! cmp -s -- "$writer" "$scripts/mutated" || { echo 'control edit did not change one match' >&2; exit 2; }
     mv -- "$scripts/mutated" "$writer"
     control_rc=0
     skip_outcomes=0

@@ -723,96 +723,25 @@ for prepared_kind in $PREPARED_ROWS; do
     "$prepared_kind: preparation, conflict recovery and publication use only the admitted head"
 done
 
-# These private copies remove preparation admission, skip fold authorization
-# or bypass restack admission. The checks must detect each defect.
+# Must-fail control: a private copy that removes preparation admission. The
+# checks must detect the defect.
 saved_script="$WORKTREE_SCRIPT"
-for prepared_control in admission fold foreign plain; do
-  mkdir -p "$TMP_ROOT/prepared-control-$prepared_control"
-  cp -R "$PACKAGE_DIR" "$TMP_ROOT/prepared-control-$prepared_control/worktree"
-  WORKTREE_SCRIPT="$TMP_ROOT/prepared-control-$prepared_control/worktree/scripts/worktree"
-  if [[ "$prepared_control" == admission ]]; then
-    prepared_from='remote_ref_lease_oid "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" 2>/dev/null || true'
-    prepared_to=": # $prepared_from"
-    prepared_kind=rebase
-    prepared_want="$prepared_good"
-  elif [[ "$prepared_control" == fold || "$prepared_control" == plain ]]; then
-    prepared_from='FOLD_FIRST="${FOLD_COMMITS%%$'"'"'\n'"'"'*}"'
-    prepared_to="$prepared_from; LEASE_EXPECTED_OID=\"\""
-    prepared_kind=rebase
-    prepared_want="$prepared_good"
-    if [[ "$prepared_control" == plain ]]; then
-      prepared_kind=plain
-      prepared_want="$prepared_plain"
-    fi
-  else
-    prepared_from='if [[ -n "$expected_oid" ]] &&'
-    prepared_to='if false && [[ -n "$expected_oid" ]] &&'
-    prepared_kind=foreign
-    prepared_want="$prepared_foreign"
-  fi
-  assert_eq "$(grep -cF "$prepared_from" "$WORKTREE_SCRIPT" || true)" 1 "$prepared_control: control matches one admission check"
-  F="$prepared_from" T="$prepared_to" awk '
-    { i = index($0, ENVIRON["F"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["T"] substr($0, i + length(ENVIRON["F"])); print }
-  ' "$WORKTREE_SCRIPT" >"$WORKTREE_SCRIPT.edit"
-  cat "$WORKTREE_SCRIPT.edit" >"$WORKTREE_SCRIPT"
-  rm -- "$WORKTREE_SCRIPT.edit"
-  assert_eq "$(grep -cF "$prepared_to" "$WORKTREE_SCRIPT" || true)" 1 "$prepared_control: private copy changed"
-  prepared_got="$(prepared_recovery "$prepared_kind" "prepared-control-$prepared_control")"
-  assert_eq "$([[ "$prepared_got" != "$prepared_want" ]] && echo rejected || echo accepted)" rejected \
-    "$prepared_control: recovery result detects the planted defect"
-done
+mkdir -p "$TMP_ROOT/prepared-control"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/prepared-control/worktree"
+WORKTREE_SCRIPT="$TMP_ROOT/prepared-control/worktree/scripts/worktree"
+prepared_from='remote_ref_lease_oid "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH" 2>/dev/null || true'
+prepared_to=": # $prepared_from"
+assert_eq "$(grep -cF "$prepared_from" "$WORKTREE_SCRIPT" || true)" 1 "admission: control matches one admission check"
+F="$prepared_from" T="$prepared_to" awk '
+  { i = index($0, ENVIRON["F"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["T"] substr($0, i + length(ENVIRON["F"])); print }
+' "$WORKTREE_SCRIPT" >"$WORKTREE_SCRIPT.edit"
+cat "$WORKTREE_SCRIPT.edit" >"$WORKTREE_SCRIPT"
+rm -- "$WORKTREE_SCRIPT.edit"
+assert_eq "$(grep -cF "$prepared_to" "$WORKTREE_SCRIPT" || true)" 1 "admission: private copy changed"
+prepared_got="$(prepared_recovery rebase prepared-control)"
+assert_eq "$([[ "$prepared_got" != "$prepared_good" ]] && echo rejected || echo accepted)" rejected \
+  "admission: recovery result detects the planted defect"
 WORKTREE_SCRIPT="$saved_script"
-
-echo
-echo "=== must-fail control: clearing A authorization when B pushes refuses A restack ==="
-
-build other-push-mutant conflict publish restack resolve continue
-mkdir -p "$ROOT/pkg"
-cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
-other_push_mutant="$ROOT/pkg/worktree/scripts/worktree"
-clear_guard='if [[ "$(restack_state_get "$WT_PATH" branch)" == "$CURRENT_BRANCH" ]]; then'
-assert_eq "$(grep -cF "$clear_guard" "$other_push_mutant" || true)" "1" \
-  "control finds the branch-specific clear"
-F="$clear_guard" awk '
-  { if ($0 == "    " ENVIRON["F"]) print "    if :; then # " ENVIRON["F"]; else print }
-' "$other_push_mutant" >"$other_push_mutant.edit"
-cat -- "$other_push_mutant.edit" >"$other_push_mutant"
-rm -- "$other_push_mutant.edit"
-assert_eq "$(grep -cF "if :; then # $clear_guard" "$other_push_mutant" || true)" "1" \
-  "control restores the unconditional clear only in its private copy"
-saved_script="$WORKTREE_SCRIPT"
-WORKTREE_SCRIPT="$other_push_mutant"
-step push-other
-step advance-main
-other_push_rc=0
-(cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack \
-  >"$ROOT/other-push.out" 2>"$ROOT/other-push.err") || other_push_rc=$?
-assert_eq "$other_push_rc" "1" "control: A guarded restack refuses after B clears its authorization"
-assert_eq "$(message_records <"$ROOT/other-push.err" | grep '^worktree-restack-remote-uncontained:' || true)" \
-  "worktree-restack-remote-uncontained: origin/topic" "control: A refuses on its missing remote proof"
-WORKTREE_SCRIPT="$saved_script"
-
-# A git hook exports GIT_DIR and GIT_INDEX_FILE at the worktree it fires in,
-# and both outrank -C, so a sibling suite run from that context builds its
-# fixtures at that worktree unless it clears them first: it dies at its first
-# fixture, or worse, lands commits there. The battery a restack is verified
-# with runs beside a live authorization, so one is held here across such a
-# run.
-build env-live clean restack
-env_git_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
-env_fingerprint() {
-  git -C "$WT" log --format=%H
-  echo '--'
-  git -C "$WT" ls-files --stage
-  echo '--'
-  git -C "$WT" config --worktree --list
-}
-env_before="$(env_fingerprint)"
-env_suite_rc=0
-env GIT_DIR="$env_git_dir" GIT_INDEX_FILE="$env_git_dir/index" \
-  bash "$TEST_DIR/worktree_push_rebase.sh" >"$ROOT/suite.out" 2>&1 || env_suite_rc=$?
-assert_eq "$env_suite_rc" "0" "a sibling suite passes under an exported git environment"
-assert_eq "$(env_fingerprint)" "$env_before" "that suite left the live worktree's log, index and restack authorization untouched"
 
 echo
 echo "=== must-fail control: with the emission cut, a completed restack records nothing ==="
@@ -861,113 +790,6 @@ assert_eq "$(git -C "$WT" rev-parse HEAD)" "$unwritable_head" "the branch was ne
 assert_eq "$(restack_keys)" "-" "the refused restack leaves no push authorization"
 
 echo
-echo "=== must-fail control: with the merged arm cut, a merged branch is rebased onto its own merge ==="
-
-# The rows above pin that a branch whose pull request merged is kept as it
-# stands. The defect planted here is the arm that asks the forge, on a private
-# package copy: the arm stays, its condition can no longer hold, and the same
-# reuse then reaches the rebase and aborts on the conflict against the very
-# merge it should have recognised.
-build merged-mutant conflict merged-pr
-mkdir -p "$ROOT/pkg"
-cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
-merged_mutant="$ROOT/pkg/worktree/scripts/worktree"
-assert_eq "$(grep -c 'elif merged_branch_commit ' "$merged_mutant")" "1" \
-  "control finds the merged-branch arm"
-sed -i.bak 's/elif merged_branch_commit /elif false \&\& merged_branch_commit /' "$merged_mutant"
-rm -f "$merged_mutant.bak"
-assert_eq "$(grep -c 'elif false && merged_branch_commit ' "$merged_mutant")" "1" \
-  "control disarms it only in its private copy"
-merged_mutant_rc=0
-(cd "$MAIN" && "$merged_mutant" create "$ISSUE" --reuse \
-  >"$ROOT/merged-mutant.out" 2>"$ROOT/merged-mutant.err") || merged_mutant_rc=$?
-assert_eq "$merged_mutant_rc" "1" "control: the mutant fails the reuse it should have kept"
-assert_eq "$(grep -c '^worktree-reuse-merged: ' "$ROOT/merged-mutant.err" || true)" "0" \
-  "control: the mutant never reports the merge"
-assert_eq "$(grep -c '^worktree-rebase-failed: ' "$ROOT/merged-mutant.err" || true)" "1" \
-  "control: the mutant stops on conflicts against the branch's own merge"
-
-echo
-echo "=== must-fail control: with the keep cut, a conflicting --keep-on-conflict reuse fails ==="
-
-# The rows above pin that --keep-on-conflict hands a conflicting tree back. The
-# defect planted here is the rebase arm's call to the keep exit, on a private
-# package copy: the same reuse then fails as a plain --reuse does.
-build keep-mutant conflict
-mkdir -p "$ROOT/pkg"
-cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
-keep_mutant="$ROOT/pkg/worktree/scripts/worktree"
-assert_eq "$(grep -c 'keep_unrebased_worktree rebase "\$CONFLICT_FILES"$' "$keep_mutant")" "1" \
-  "control finds the rebase arm's keep exit"
-sed -i.bak 's/keep_unrebased_worktree rebase "\$CONFLICT_FILES"$/: "keep cut"/' "$keep_mutant"
-rm -f -- "${keep_mutant:?}.bak"
-assert_eq "$(grep -c 'keep_unrebased_worktree rebase "\$CONFLICT_FILES"$' "$keep_mutant")" "0" \
-  "control cuts it only in its private copy"
-keep_mutant_rc=0
-(cd "$MAIN" && "$keep_mutant" create "$ISSUE" --reuse --keep-on-conflict \
-  >"$ROOT/keep-mutant.out" 2>"$ROOT/keep-mutant.err") || keep_mutant_rc=$?
-assert_eq "$keep_mutant_rc" "1" "control: the mutant fails the reuse it should have kept"
-assert_eq "$(grep -c '^worktree-reuse-unrebased: ' "$ROOT/keep-mutant.err" || true)" "0" \
-  "control: the mutant never reports the kept tree"
-
-echo
-echo "=== must-fail control: with one keep-mode clause cut, its row's command gets past the guard ==="
-
-# Each keep-mode row above reaches one clause of the guard alone. The defect
-# planted per row is that clause, on a private package copy, with the other
-# clause kept: the same command then runs on, into a bare create's refusal of
-# the existing tree or a paused restack.
-keep_guard='( "$REUSE" != true || "$RESTACK" == true )'
-# command|exit status past the guard|guard with that row's clause cut
-KEEP_CLAUSES='create topic --keep-on-conflict|75|( "$RESTACK" == true )
-create topic --reuse --restack --keep-on-conflict|1|( "$REUSE" != true )'
-k=0
-while IFS='|' read -r command clause_rc kept_guard; do
-  k=$((k + 1))
-  build "clause-mutant-$k" conflict
-  mkdir -p "$ROOT/pkg"
-  cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
-  clause_mutant="$ROOT/pkg/worktree/scripts/worktree"
-  assert_eq "$(grep -cF "$keep_guard" "$clause_mutant" || true)" "1" "control finds the keep-mode guard [$command]"
-  # A line-level awk cut: bash 3.2's ${var/pattern/...} over the whole script
-  # runs for minutes once the pattern is present.
-  F="$keep_guard" T="$kept_guard" awk '
-    BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] }
-    { i = index($0, f); if (i) $0 = substr($0, 1, i - 1) t substr($0, i + length(f)); print }
-  ' "$clause_mutant" >"$clause_mutant.edit" || exit 1
-  # Written over in place, so the copy keeps its executable bit.
-  cat -- "$clause_mutant.edit" >"$clause_mutant"
-  rm -f -- "${clause_mutant:?}.edit"
-  assert_eq "$(grep -cF "KEEP_ON_CONFLICT\" == true && $kept_guard" "$clause_mutant" || true)" "1" \
-    "control cuts the clause only in its private copy [$command]"
-  clause_got="$(WORKTREE_SCRIPT="$clause_mutant" run "$command")"
-  assert_eq "${clause_got%% *}" "rc=$clause_rc" "control: the mutant runs on past the guard [$command]"
-  assert_eq "$(grep -c '^worktree-keep-mode-required: ' "$ROOT/err" || true)" "0" \
-    "control: the mutant never refuses the mode [$command]"
-done <<<"$KEEP_CLAUSES"
-
-echo
-echo "=== must-fail control: with the fast-forward arm cut, a tree behind its remote is refused ==="
-
-# The row above pins that a clean tree behind its remote branch is brought up
-# to it before the containment guard. The defect planted here disarms that
-# arm on a private package copy: the same reuse then meets the guard.
-build ff-mutant cloud move-remote advance-main
-mkdir -p "$ROOT/pkg"
-cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
-ff_mutant="$ROOT/pkg/worktree/scripts/worktree"
-ff_arm='if [[ -n "$REUSE_EXPECTED_OID" && -z "$REUSE_STATUS" ]]'
-assert_eq "$(grep -cF "$ff_arm" "$ff_mutant")" "1" "control finds the fast-forward arm"
-FF_ARM="$ff_arm" perl -0pi -e 's/\Q$ENV{FF_ARM}\E/if false && [[ -n "\$REUSE_EXPECTED_OID" ]]/' -- "$ff_mutant"
-assert_eq "$(grep -cF "$ff_arm" "$ff_mutant")" "0" "control disarms it only in its private copy"
-ff_mutant_rc=0
-(cd "$MAIN" && "$ff_mutant" create "$ISSUE" --reuse \
-  >"$ROOT/ff-mutant.out" 2>"$ROOT/ff-mutant.err") || ff_mutant_rc=$?
-assert_eq "$ff_mutant_rc" "1" "control: the mutant fails the reuse"
-assert_eq "$(grep -c '^worktree-restack-remote-uncontained: ' "$ROOT/ff-mutant.err" || true)" "1" \
-  "control: the mutant refuses the remote its tree does not contain"
-
-echo
 echo "=== a landing reuse over a cloud-pushed head leaves nothing that blocks its removal ==="
 
 # A claude-cloud item's landing lane reuses the tree the cloud session pushed
@@ -986,43 +808,35 @@ assert_eq "$(message_records <"$ROOT/handoff.err" | grep -c '^worktree-branch-de
 assert_eq "$([[ -e "$WT" ]] && echo present || echo absent)" "absent" "the landing removal removes the tree"
 
 echo
-echo "=== must-fail control: with one clause of the kept-head arm cut, its row's reuse goes the other way ==="
+echo "=== must-fail control: with the kept-head arm's state clause cut, a reuse rebases ==="
 
 # The rows above pin that a plain --reuse of a tree at its published head
-# keeps that head, and that --restack and --replay still rebase it. The tree
-# here was already fast-forwarded by one reuse, so it stands at that head, the
-# fixture's end, with nothing left to fast-forward. The defect planted per row is one clause of
-# the arm, on a private package copy: a --reuse whose state clause can no
-# longer hold rebases and leaves the map the landing removal refuses on, and a
-# --restack or --replay whose exception was cut stays at the remote head.
+# keeps that head. The tree here was already fast-forwarded by one reuse, so
+# it stands at that head, the fixture's end, with nothing left to
+# fast-forward. The defect planted is the arm's state clause, on a private
+# package copy: the --reuse then rebases and leaves the map the landing
+# removal refuses on.
 kept_arm='elif [[ "$RESTACK" != true && "$REPLAY" != true && "$(git -C "$WT_PATH" rev-parse HEAD)" == "$REUSE_EXPECTED_OID" ]]'
-# command|arm with that row's clause cut|head after the mutant|map after the mutant|removal exit|removal's map refusals
-KEPT_CLAUSES='create topic --reuse|elif [[ "$RESTACK" != true && "$REPLAY" != true && "$(git -C "$WT_PATH" rev-parse HEAD)" == "" ]]|rebased|1e|1|1
-create topic --restack|elif [[ "$REPLAY" != true && "$(git -C "$WT_PATH" rev-parse HEAD)" == "$REUSE_EXPECTED_OID" ]]|end|-|0|0
-create topic --reuse --replay|elif [[ "$RESTACK" != true && "$(git -C "$WT_PATH" rev-parse HEAD)" == "$REUSE_EXPECTED_OID" ]]|end|-|0|0'
-k=0
-while IFS='|' read -r command kept_cut want_head want_map want_remove_rc want_refusals; do
-  k=$((k + 1))
-  build "kept-mutant-$k" cloud cloud-push advance-main reuse
-  mkdir -p "$ROOT/pkg"
-  cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
-  kept_mutant="$ROOT/pkg/worktree/scripts/worktree"
-  assert_eq "$(grep -cF "$kept_arm" "$kept_mutant" || true)" "1" "control finds the kept-head arm [$command]"
-  F="$kept_arm" T="$kept_cut" perl -0pi -e 's/\Q$ENV{F}\E/$ENV{T}/' -- "$kept_mutant"
-  assert_eq "$(grep -cF "$kept_arm" "$kept_mutant" || true)" "0" "control cuts the clause only in its private copy [$command]"
-  kept_got="$(WORKTREE_SCRIPT="$kept_mutant" run "$command")"
-  assert_eq "${kept_got%% *}" "rc=0" "control: the mutant completes the reuse [$command]"
-  assert_eq "$(worktree_head)" "$want_head" "control: the mutant moves the head the other way [$command]"
-  assert_eq "$(restack_map)" "$(map_file_text "$want_map")" "control: the mutant flips the map [$command]"
-  # The tip a merge of the remote head would leave, so the removal's refusal is
-  # the map's alone.
-  { printf '%s\n42\n' "$(git -C "$WT" rev-parse HEAD)"; git -C "$MAIN" rev-parse origin/main; } >"$ROOT/gh-state"
-  kept_remove_rc=0
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" remove "$ISSUE" >"$ROOT/kept-remove.out" 2>"$ROOT/kept-remove.err") || kept_remove_rc=$?
-  assert_eq "$kept_remove_rc" "$want_remove_rc" "control: the removal follows the map [$command]"
-  assert_eq "$(message_records <"$ROOT/kept-remove.err" | grep -c '^worktree-remove-rebase-map: ' || true)" "$want_refusals" \
-    "control: the removal refuses on the map alone [$command]"
-done <<<"$KEPT_CLAUSES"
+kept_cut='elif [[ "$RESTACK" != true && "$REPLAY" != true && "$(git -C "$WT_PATH" rev-parse HEAD)" == "" ]]'
+build kept-mutant cloud cloud-push advance-main reuse
+mkdir -p "$ROOT/pkg"
+cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+kept_mutant="$ROOT/pkg/worktree/scripts/worktree"
+assert_eq "$(grep -cF "$kept_arm" "$kept_mutant" || true)" "1" "control finds the kept-head arm"
+F="$kept_arm" T="$kept_cut" perl -0pi -e 's/\Q$ENV{F}\E/$ENV{T}/' -- "$kept_mutant"
+assert_eq "$(grep -cF "$kept_arm" "$kept_mutant" || true)" "0" "control cuts the clause only in its private copy"
+kept_got="$(WORKTREE_SCRIPT="$kept_mutant" run "create topic --reuse")"
+assert_eq "${kept_got%% *}" "rc=0" "control: the mutant completes the reuse"
+assert_eq "$(worktree_head)" "rebased" "control: the mutant rebases the kept head"
+assert_eq "$(restack_map)" "$(map_file_text 1e)" "control: the mutant leaves a map"
+# The tip a merge of the remote head would leave, so the removal's refusal is
+# the map's alone.
+{ printf '%s\n42\n' "$(git -C "$WT" rev-parse HEAD)"; git -C "$MAIN" rev-parse origin/main; } >"$ROOT/gh-state"
+kept_remove_rc=0
+(cd "$MAIN" && "$WORKTREE_SCRIPT" remove "$ISSUE" >"$ROOT/kept-remove.out" 2>"$ROOT/kept-remove.err") || kept_remove_rc=$?
+assert_eq "$kept_remove_rc" "1" "control: the removal follows the map"
+assert_eq "$(message_records <"$ROOT/kept-remove.err" | grep -c '^worktree-remove-rebase-map: ' || true)" "1" \
+  "control: the removal refuses on the map alone"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -104,12 +104,26 @@ pub fn fixture() -> Fixture {
     let home = rooted(&tmp);
     let project = home.join("dev/app");
     let catalog = home.join("catalog");
-    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../skills")
-        .canonicalize()
-        .unwrap();
-    for skill in ["commit-guards", "doc-limits", "bot-instructions"] {
-        copy_tree(&shipped.join(skill), &catalog.join("skills").join(skill));
+    // One literal chain per package: tools/rust-reads records each chain as
+    // a read, so a chain to skills/ alone would make every skills/ change
+    // select this crate's tests.
+    let shipped = [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/commit-guards")
+            .canonicalize()
+            .unwrap(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/doc-limits")
+            .canonicalize()
+            .unwrap(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/bot-instructions")
+            .canonicalize()
+            .unwrap(),
+    ];
+    for source in &shipped {
+        let skill = source.file_name().unwrap();
+        copy_tree(source, &catalog.join("skills").join(skill));
     }
     fs::create_dir_all(catalog.join("skills/deploy")).unwrap();
     fs::write(

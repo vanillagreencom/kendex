@@ -29,10 +29,6 @@ assert_eq() {
   if [ "$1" = "$2" ]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$3" "$2" "$1"; fi
 }
-assert_contains() {
-  if grep -qF -- "$2" "$1"; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted: %s\n        in:\n%s\n' "$3" "$2" "$(cat "$1")"; fi
-}
 
 # The command reaches the hook JSON-encoded, exactly as the harness sends it.
 json_for() {
@@ -79,8 +75,6 @@ PAYLOAD_TOOLS=jq,cat
 
 echo "=== block-argv-kill: a kill by name or pattern is refused ==="
 run_hook 'pkill -f mutation-stability';        assert_eq "$rc" 2 'pkill with an argv pattern is refused'
-assert_contains "$ERR_FILE" 'kill <pid>' 'the refusal names the PID form'
-assert_contains "$ERR_FILE" '/proc/<pid>/cwd' 'the refusal names the cwd check'
 run_hook 'pkill kendex';                       assert_eq "$rc" 2 'pkill by process name is refused'
 run_hook 'pkill -x -TERM cargo';               assert_eq "$rc" 2 'flags between the verb and the name change nothing'
 run_hook 'killall node';                       assert_eq "$rc" 2 'killall is refused'

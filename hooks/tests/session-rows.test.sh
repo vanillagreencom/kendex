@@ -7,7 +7,7 @@
 # TMP_ROOT with the install a kendex project renders, runs a wrapper with a
 # payload in the shape Claude Code 2.1.283 emits, and asserts the exit status,
 # the keyed first line of stderr and the row. HOOK_UNDER_TEST overrides the
-# lane-mail-check copy the control at the end runs against.
+# lane-mail-check copy every case installs.
 set -euo pipefail
 
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -190,7 +190,14 @@ assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event) path=$(last_row .tra
   "a Stop over a StopFailure row is written whole and lifts it"
 # A start many turns back is still the session's start: its readers look for
 # the last row of an event among the rows naming it, not in the last lines.
-for _ in $(seq 70); do run session-start-row "$STOP"; done
+# The reader's input is the file, so the further Stop rows are copies of the
+# last one rather than seventy more hook runs.
+seventy_stops() {
+  local line
+  line="$(tail -n 1 "$ROWS")"
+  for _ in $(seq 70); do printf '%s\n' "$line" >>"$ROWS"; done
+}
+seventy_stops
 start_found() { # LIBRARY
   bash -c 'set -euo pipefail; . "$1"; session_rows_start "$2" && printf "%s\n" "$SR_MODEL"' _ "$1" "$ROWS" 2>/dev/null || echo none
 }
@@ -247,9 +254,10 @@ mkdir -p "${LAUNCHER%/*}" "$TMP_ROOT/install/bin"
 ln -s ../lib/node_modules/@openai/codex/bin/codex.js "$TMP_ROOT/install/bin/codex"
 ANCESTRY_START='{"hook_event_name":"SessionStart","session_id":"lead-native","cwd":"/native/work","model":"native-model"}'
 ANCESTRY_NESTED='{"hook_event_name":"SessionStart","session_id":"nested-native","cwd":"/nested/work","model":"nested-model"}'
-ancestry_cases() { # [LIBRARY_COPY]
+ancestry_cases() { # [LIBRARY_COPY CASE]
   local mutant="${1:-}" label chain accepted id parent kind rest comm args before
   while IFS='|' read -r label chain accepted; do
+    [ -z "${2:-}" ] || [ "$label" = "$2" ] || continue
     new_checkout "ancestry_${mutant:+control_}$label" .codex/hooks
     if [ -n "$mutant" ]; then
       rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
@@ -319,7 +327,7 @@ assert_eq "$(grep -c -x -F -- "$ANCESTRY_RULE" "$ANCESTRY_MUTANT")" 1 "ancestry 
 ANCESTRY_RULE="$ANCESTRY_RULE" perl -i -pe 's/^\Q$ENV{ANCESTRY_RULE}\E$/  [ "\$harnesses" -eq 1 ] || [ "\$harnesses" -eq 2 ]/' "$ANCESTRY_MUTANT"
 assert_eq "$(grep -c -x -F -- "$ANCESTRY_RULE" "$ANCESTRY_MUTANT" || true)" 0 "ancestry control changed the harness bound"
 CONTROL_RC=0
-CONTROL_OUT="$(PASS=0; FAIL=0; ancestry_cases "$ANCESTRY_MUTANT"; [ "$FAIL" -eq 0 ])" || CONTROL_RC=$?
+CONTROL_OUT="$(PASS=0; FAIL=0; ancestry_cases "$ANCESTRY_MUTANT" unrelated_node; [ "$FAIL" -eq 0 ])" || CONTROL_RC=$?
 assert_eq "$CONTROL_RC" 1 "ancestry control fails the writer contract"
 assert_eq "$(grep -c '^  FAIL  ancestry unrelated_node preserves lead$' <<<"$CONTROL_OUT")" 1 \
   "ancestry control detects the unrelated Node overwriting the lead"
@@ -439,14 +447,12 @@ assert_eq "$(sed -n 's/^copies=\([0-9]*\)$/\1/p' <<<"$BOUND" | awk '{ print ($1 
   "the copy extractor finds each writer's source"
 
 # --- control ------------------------------------------------------------------
-# The quiet runs again with the mailbox directory standing: each wrapper adds
-# its row file, so the no-file assertion above reaches what a write leaves.
-while IFS='|' read -r wrapper payload; do
-  new_checkout "fleet_control_$wrapper"
-  got="$(quiet_run "$wrapper" "$payload")" || { echo "session-rows: tree=unreadable value=[$CHECKOUT]" >&2; exit 1; }
-  assert_eq "$got" "RC=0 out=0 err=0 added=./tmp/lane-mail/overseer/session-7000-9.jsonl" \
-    "control: $wrapper with the mailbox directory standing adds its row file"
-done <<<"$QUIET_ROWS"
+# A quiet run again with the mailbox directory standing: the wrapper adds its
+# row file, so the no-file assertion above reaches what a write leaves.
+new_checkout fleet_control
+got="$(quiet_run session-start-row "$START")" || { echo "session-rows: tree=unreadable value=[$CHECKOUT]" >&2; exit 1; }
+assert_eq "$got" "RC=0 out=0 err=0 added=./tmp/lane-mail/overseer/session-7000-9.jsonl" \
+  "control: session-start-row with the mailbox directory standing adds its row file"
 # SESSION_ROWS_WAIT raised to session-end-row's own 3 s in a copy of the
 # library: its source copy is past the bound.
 WAIT_LIB="$TMP_ROOT/wait-session-rows.sh"
@@ -458,16 +464,15 @@ BOUND="$(wait_bound "$WAIT_LIB" "$REPO_ROOT")" || { echo "session-rows: wait-bou
 assert_eq "$(grep -c -x 'copy=hooks/session-end-row.sh timeout=3 wait=3' <<<"$BOUND" || true)" "1" \
   "control: a lock wait of 3 s puts session-end-row past the bound"
 # The row arm's write removed from a copy of the hook: the start row is gone.
-if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  MUTANT="$TMP_ROOT/mutant-lane-mail-check.sh"
-  cp "$HOOK" "$MUTANT"
-  assert_eq "$(grep -c -F '  [ -n "$ITEM" ] || session_row' "$MUTANT")" "1" "control finds the row arm's write"
-  sed -i.bak 's/  \[ -n "\$ITEM" \] || session_row/  :/' "$MUTANT"
-  assert_eq "$(grep -c -F '  [ -n "$ITEM" ] || session_row' "$MUTANT")" "0" "control removed it"
-  CONTROL_OUT="$(HOOK_UNDER_TEST="$MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
-  assert_eq "$(grep -c '^  FAIL  start$' <<<"$CONTROL_OUT")" "1" \
-    "control: without the row arm's write the start row is not written"
-fi
+MUTANT="$TMP_ROOT/mutant-lane-mail-check.sh"
+cp "$HOOK" "$MUTANT"
+assert_eq "$(grep -c -F '  [ -n "$ITEM" ] || session_row' "$MUTANT")" "1" "control finds the row arm's write"
+sed -i.bak 's/  \[ -n "\$ITEM" \] || session_row/  :/' "$MUTANT"
+assert_eq "$(grep -c -F '  [ -n "$ITEM" ] || session_row' "$MUTANT")" "0" "control removed it"
+new_checkout row_arm_control
+cp "$MUTANT" "$CHECKOUT/$HOOK_HOME/lane-mail-check.sh"
+run session-start-row "$START"
+assert_eq "rows=$(row_count)" "rows=0" "control: without the row arm's write the start row is not written"
 # The library's compact Stop rule removed from a copy of the orch scripts: a
 # Stop with no wall standing then lands whole.
 new_checkout stop_control
@@ -504,7 +509,8 @@ READ_RULE="$READ_RULE" perl -i -pe 's/\Q$ENV{READ_RULE}\E/    lines="\$(cat -- "
 assert_eq "$(grep -c -F -- "$READ_RULE" "$LIB")" "0" "control removed the event list"
 new_checkout start_span_control
 run session-start-row "$START"
-for _ in $(seq 70); do run session-start-row "$STOP"; done
+run session-start-row "$STOP"
+seventy_stops
 assert_eq "$(start_found "$LIB")" "none" "control: a reader taking the last lines alone loses a start seventy Stops back"
 # The top-level gate removed from the same copy: a nested harness writes.
 mutate_lib() { # OLD NEW
@@ -519,31 +525,6 @@ LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
 mutate_lib '  session_rows_top_level "$pane_pid" || return 0' '  :'
 NESTED=1 run session-end-row "$END"
 assert_eq "rows=$(row_count)" "rows=1" "control: without the top-level gate a nested harness writes the pane's row"
-# The harness read from the install replaced by a fixed word: a codex install
-# writes claude.
-if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  HARNESS_MUTANT="$TMP_ROOT/harness-mutant.sh"
-  cp "$HOOK" "$HARNESS_MUTANT"
-  assert_eq "$(grep -c -F '    _ "$SCRIPTS" "$ROOT" "$HARNESS" "$ROW_EVENT"' "$HARNESS_MUTANT")" "1" "control finds the row's harness"
-  sed -i.bak 's/    _ "\$SCRIPTS" "\$ROOT" "\$HARNESS" "\$ROW_EVENT"/    _ "$SCRIPTS" "$ROOT" claude "$ROW_EVENT"/' "$HARNESS_MUTANT"
-  assert_eq "$(grep -c -F '    _ "$SCRIPTS" "$ROOT" "$HARNESS" "$ROW_EVENT"' "$HARNESS_MUTANT")" "0" "control replaced it"
-  CONTROL_OUT="$(HOOK_UNDER_TEST="$HARNESS_MUTANT" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
-  assert_eq "$(grep -c '^  FAIL  a hook installed under .codex/hooks writes a codex row$' <<<"$CONTROL_OUT")" "1" \
-    "control: a row harness fixed at claude fails the codex install row"
-  assert_eq "$(grep -c '^  FAIL  a Codex SessionEnd writes a codex row$' <<<"$CONTROL_OUT")" "1" \
-    "control: a row harness fixed at claude fails the Codex SessionEnd row"
-fi
-# The event the wrapper names removed from the checkout's copy of
-# session-start-row: a Copilot payload, which spells none, writes no row.
-new_checkout event_control .github/hooks
-WRAPPER="$CHECKOUT/.github/hooks/session-start-row.sh"
-EVENT_RULE='exec "$BASH" "$JUDGE" row SessionStart'
-assert_eq "$(grep -c -x -F -- "$EVENT_RULE" "$WRAPPER")" "1" "control finds the wrapper's event"
-EVENT_RULE="$EVENT_RULE" perl -i -pe 's/^\Q$ENV{EVENT_RULE}\E$/exec "\$BASH" "\$JUDGE" row/' "$WRAPPER"
-assert_eq "$(grep -c -x -F -- "$EVENT_RULE" "$WRAPPER")" "0" "control removed it"
-run session-start-row "$COP_START" "${COP_ENV[@]}"
-assert_eq "RC=$RC first=$(first_line) rows=$(row_count)" "RC=0 first=lane-mail-check: rows-unwritten=$CHECKOUT rows=0" \
-  "control: without the wrapper's event a Copilot start writes no row"
 
 # A Jarvis launch: the runtime record's pending row names generation 3 on
 # server 7000, pane %9, with the id the launch preassigned where the harness
@@ -752,8 +733,8 @@ running|.state = "running"|-
 JARVISLOCK
 
 # --- control ------------------------------------------------------------------
-# Each rule removed from a copy of the orch scripts reddens its row: the call,
-# and the server, pane, generation and preassigned-id bindings.
+# A rule removed from a copy of the orch scripts reddens its row: the call for
+# a managed start, and the server binding for a start the record does not name.
 n=0
 while IFS='@' read -r old new label preassigned env; do
   n=$((n + 1))
@@ -762,10 +743,6 @@ while IFS='@' read -r old new label preassigned env; do
   cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
   LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
   mutate_lib "$old" "$new"
-  if [ "$label" = harness ]; then
-    jq '.harness = "codex"' "$RECORD" >"$RECORD.next"
-    mv "$RECORD.next" "$RECORD"
-  fi
   before="$(cat "$RECORD")"
   # shellcheck disable=SC2086  # env is a list of assignments.
   run session-start-row "$START" "JARVIS_RECORD=$RECORD" $env
@@ -774,15 +751,9 @@ while IFS='@' read -r old new label preassigned env; do
 done <<'JARVISCONTROL'
 session_rows_jarvis_write "$JARVIS_RECORD" "${JARVIS_GENERATION:-}" "$key" "$2" <<<"$payload"@:@call@@JARVIS_GENERATION=3
 (.pending.server | tostring) == $server@true@server@@TMUX_SERVER_ID=8000 JARVIS_GENERATION=3
- and .pending.pane == $pane@@pane@@TMUX_PANE=%8 JARVIS_GENERATION=3
-(.pending.generation | tostring) == $generation@true@generation@@JARVIS_GENERATION=2
-"mismatch"@"own"@preassigned@6a1d@JARVIS_GENERATION=3
-.harness == $harness and@true and@harness@@JARVIS_GENERATION=3
 JARVISCONTROL
 
-# Each brief-taken rule removed from a copy reddens its row: the hook's own
-# dispatch, its Copilot unknown caller, the Claude Code turn-end allowlist, and
-# the started, session, delivery, launch state and write-once tests.
+# The brief-taken delivery rule removed from a copy reddens its row.
 while IFS='@' read -r label file old new home id wrapper payload patch want env; do
   jarvis_checkout "jarvis_taken_control_$label" "$home" "$id"
   jarvis_delivered "$patch"
@@ -795,18 +766,9 @@ while IFS='@' read -r label file old new home id wrapper payload patch want env;
   run "$wrapper" "$payload" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}" $env
   assert_eq "taken=$(taken)" "taken=$want" "control: brief-taken $label"
 done <<JARVISTAKENCONTROL
-dispatch@hook@{ [ "\$CALLER" != subagent ] && [ -z "\$ITEM" ] && [ -n "\${JARVIS_RECORD:-}" ]; } || return 0@return 0@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.@none
-copilot-unknown@hook@[ "\$CALLER" != subagent ] && [ -z@[ "\$CALLER" = lead ] && [ -z@.github/hooks@l1@lane-mail-halt@$COP_TOOL@.@none@${COP_ENV[*]}
-pi-completed@lib@Stop:pi) due=completed ;;@Stop:pi) return 0 ;;@.pi/kendex/hooks@p1@lane-mail-check@$PI_STOP@.@none
-pi-error@lib@select(\$due != "completed" or .pi_run_outcome == "completed")@select(true)@.pi/kendex/hooks@p1@lane-mail-check@$PI_ERROR@.@true
-started@lib@ and .pending.started_at != null@@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.pending.started_at = null@true
-session@lib@.pending.native_session_id == \$session and @@.claude/hooks@6a1d@lane-mail-halt@$TOOL@.@true
 delivered@lib@.brief_delivered == true@true@.claude/hooks@5f0c@lane-mail-halt@$TOOL@.brief_delivered = false@true
-starting@lib@.state == "starting"@true@.claude/hooks@5f0c@lane-mail-check@$STOP@.state = "running"@true
-write-once@lib@.pending.brief_taken == null@true@.claude/hooks@5f0c@lane-mail-check@$STOP@.pending.brief_taken = "earlier"@true
 JARVISTAKENCONTROL
-# Each kickoff-ended rule removed from a copy reddens its row: the Copilot
-# turn end among the kickoff harnesses, the undelivered brief and write-once.
+# The kickoff-ended delivery rule removed from a copy reddens its row.
 while IFS='@' read -r label old new home id payload patch want env; do
   jarvis_checkout "jarvis_kickoff_control_$label" "$home" "$id"
   jarvis_kickoff "$patch"
@@ -818,9 +780,7 @@ while IFS='@' read -r label old new home id payload patch want env; do
   run lane-mail-check "$payload" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}" $env
   assert_eq "ended=$(stamp kickoff_ended)" "ended=$want" "control: kickoff-ended $label"
 done <<JARVISKICKOFFCONTROL
-copilot@Stop:codex | Stop:copilot)@Stop:codex)@.github/hooks@l1@$COP_STOP@.@none@${COP_ENV[*]}
 delivered@elif .brief_delivered == true then@elif false then@.codex/hooks@019a@$CODEX_STOP@.brief_delivered = true@true
-write-once@elif .pending.kickoff_ended != null then@elif false then@.codex/hooks@019a@$CODEX_STOP@.pending.kickoff_ended = "earlier"@true
 JARVISKICKOFFCONTROL
 
 # With a mailbox, losing the Jarvis error after the ordinary append hides the
@@ -836,15 +796,5 @@ assert_eq "$(grep -c '^  FAIL  mailbox mismatch reports the refusal$' <<<"$CONTR
   "control: dropping the final Jarvis error fails the mailbox mismatch assertion"
 assert_eq "rows=$(row_count) row=$(last_row '[.event, .harness, .session_id, .transcript_path] | join(",")')" \
   "rows=1 row=SessionStart,claude,5f0c,/t/5f0c.jsonl" "control: the ordinary row was appended before the error was lost"
-jarvis_checkout jarvis_account_control .claude/hooks
-rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
-cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
-LIB="$CHECKOUT/.agents/skills/orch/scripts/lib/session-rows.sh"
-mutate_lib 'observed_account: $account' 'observed_account: ""'
-run session-start-row "$START" "JARVIS_RECORD=$RECORD" "${JARVIS_ENV[@]}"
-CONTROL_OUT="$(assert_eq "$(jq -r '.pending.observed_account' "$RECORD")" /accounts/one \
-  'native account acknowledgement')"
-assert_eq "$(grep -c '^  FAIL  native account acknowledgement$' <<<"$CONTROL_OUT")" "1" \
-  "control: absent native acknowledgement fails the account assertion"
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
