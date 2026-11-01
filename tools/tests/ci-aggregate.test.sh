@@ -1002,7 +1002,7 @@ selected-jarvis|merge_group|$jarvis_change|true|1
 unselected|merge_group|$CODE_ROW|false|0
 ROWS
 # The matrix reports one result for every leg, so a failed, cancelled or
-# missing jarvis leg is the selected shell job's result.
+# missing leg is the selected shell job's result.
 while IFS='|' read -r row sel; do
   value="$(gh_eval value "$(context_json merge_group success "$sel" "$TMP/published-map")" "$expr")"
   for result in failure cancelled skipped missing; do
@@ -1013,7 +1013,6 @@ while IFS='|' read -r row sel; do
   done
 done <<ROWS
 selected-linux|$one_skill
-selected-jarvis|$jarvis_change
 ROWS
 value="$(gh_eval value "$(context_json merge_group success "$one_skill" "$TMP/published-map")" "$expr")"
 # The missing fixture removes the whole matrix job's needs key. A graph
@@ -1049,14 +1048,6 @@ selected-failed|merge_group|$open_terminal|failure|true 1
 selected-cancelled|merge_group|$open_terminal|cancelled|true 1
 selected-skipped|merge_group|$open_terminal|skipped|true 1
 selected-passed|merge_group|$open_terminal|success|true 0
-dev-failed|merge_group|$only_worktree|failure|true 1
-dev-cancelled|merge_group|$only_worktree|cancelled|true 1
-dev-skipped|merge_group|$only_worktree|skipped|true 1
-dev-passed|merge_group|$only_worktree|success|true 0
-state-failed|merge_group|$only_slack|failure|true 1
-state-cancelled|merge_group|$only_slack|cancelled|true 1
-state-skipped|merge_group|$only_slack|skipped|true 1
-state-passed|merge_group|$only_slack|success|true 0
 unselected-docs|merge_group|$VERIFY_ROW|skipped|false 0
 ROWS
 

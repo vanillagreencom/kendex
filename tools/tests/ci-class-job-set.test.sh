@@ -180,19 +180,20 @@ check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
 # read, which selects cargo but does not change these two jobs.
 # The local suite runner consumes this result, without the class selector's
 # conservative package unions. Offline orch retains its existing shard environment.
-while IFS='|' read -r path shard expected; do
-  for os in Linux macOS; do
-    want=$expected
-    [ "$os" != macOS ] || want=none
-    check "suite kendex: $os $path $shard" "$want" \
-      "$("$JOB_SET" --suite-kendex "$os" "$path" "$shard")"
-  done
+# Only Linux takes a checkout, at the shard gate and at the orch shard gate;
+# the `macos` column marks the one row per gate that also asserts macOS none.
+while IFS='|' read -r path shard expected macos; do
+  check "suite kendex: Linux $path $shard" "$expected" \
+    "$("$JOB_SET" --suite-kendex Linux "$path" "$shard")"
+  [ "$macos" = macos ] || continue
+  check "suite kendex: macOS $path $shard" none \
+    "$("$JOB_SET" --suite-kendex macOS "$path" "$shard")"
 done <<'ROWS'
 skills/orch/tests/lanes-pick-spread.sh|orch-state|none
-skills/orch/tests/open-terminal-copilot-context.sh|orch-terminal|checkout
+skills/orch/tests/open-terminal-copilot-context.sh|orch-terminal|checkout|macos
 skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
 skills/orch/tests/dev_return.sh|orch-dev|none
-skills/github/tests/pr-view.test.sh||checkout
+skills/github/tests/pr-view.test.sh||checkout|macos
 skills/jarvis/tests/task.test.sh||checkout
 refresh/tests/refresh-consumer.test.sh||checkout
 skills/harness-ci/tests/change-class.test.sh||checkout

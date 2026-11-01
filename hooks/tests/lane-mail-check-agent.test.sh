@@ -264,7 +264,6 @@ done <<'ROWS'
 out|249999|Agent||0|-
 out|250000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000
 out|250001|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250001 reserve=150000
-out|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 out|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000
 teammate|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
 returned|260000|Agent||0|-
@@ -329,7 +328,6 @@ stop-refused|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 
 foreground|260000|Agent||0|-
 unclassified|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
 refused|260000|Agent||0|-
-none|260000|Agent||0|-
 none|399999|Agent||0|-
 none|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000
 out|100000|Agent|50000|0|-

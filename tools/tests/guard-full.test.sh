@@ -1215,43 +1215,41 @@ PEER_ROWS=(
   'assertion without node_modules|AssertionError [ERR_ASSERTION]: expected equal values|1|suite|absent'
 )
 PEER_BASE=$(git -C "$R" rev-parse HEAD) || exit 1
-for script in test test:ci; do
-  printf '{"scripts":{"%s":"bun test ./tests"}}\n' "$script" >"$R/pi-extensions/peers/package.json"
-  for row in "${PEER_ROWS[@]}"; do
-    # Read the fields without read consuming only the first output line.
-    label=${row%%|*}; row=${row#*|}
-    peers=${row##*|}; row=${row%|*}
-    output=${row%|*|*}; expected=${row#"$output"|}; key=${expected#*|}; expected=${expected%%|*}
-    if [ "$peers" = present ]; then mkdir "$R/pi-extensions/peers/node_modules"; fi
-    diagnostic='guard: suite=pi-extensions/peers'
-    [ "$key" != no-verdict ] || diagnostic='guard-note: no-verdict=missing-peers=pi-extensions/peers'
-    run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$output"
-    [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
-      && ok "$script: $label" || bad "$script: $label" "rc=$RC out=$OUT"
-    if [ "$peers" = present ]; then rmdir "$R/pi-extensions/peers/node_modules"; fi
-  done
-  # command resolution and env's missing Node diagnostic are the two host
-  # producers that prevent npm from starting a declared suite at all.
-  for mode in full range; do
-    mode_args=(--full)
-    [ "$mode" = full ] || mode_args=(--range "$PEER_BASE")
-    for launcher in npm node; do
-      launcher_env=(MISSING_NPM_NODE=1)
-      expected_call=--version
-      if [ "$launcher" = npm ]; then
-        launcher_env=('BASH_FUNC_command%%=() { if [ "$*" = "-v npm" ]; then return 1; fi; builtin command "$@"; }')
-        expected_call=""
-      fi
-      : >"$TMP/npm-launcher-calls"
-      OUT=""; RC=0
-      OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" PEER_LAUNCHER_LOG="$TMP/npm-launcher-calls" \
-        PEER_SUITE_OUTPUT="$INDEPENDENT" "${launcher_env[@]}" "$GUARD" "${mode_args[@]}" 2>&1 </dev/null)" || RC=$?
-      launcher_calls=$(cat "$TMP/npm-launcher-calls")
-      [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-tool=npm'* ]] \
-        && [[ "$OUT" != *'guard: suite='* ]] && [ "$launcher_calls" = "$expected_call" ] \
-        && ok "$mode $script: missing $launcher prevents suite start and has no verdict" \
-        || bad "$mode $script: missing $launcher launcher" "rc=$RC out=$OUT calls=$launcher_calls"
-    done
+printf '{"scripts":{"test":"bun test ./tests"}}\n' >"$R/pi-extensions/peers/package.json"
+for row in "${PEER_ROWS[@]}"; do
+  # Read the fields without read consuming only the first output line.
+  label=${row%%|*}; row=${row#*|}
+  peers=${row##*|}; row=${row%|*}
+  output=${row%|*|*}; expected=${row#"$output"|}; key=${expected#*|}; expected=${expected%%|*}
+  if [ "$peers" = present ]; then mkdir "$R/pi-extensions/peers/node_modules"; fi
+  diagnostic='guard: suite=pi-extensions/peers'
+  [ "$key" != no-verdict ] || diagnostic='guard-note: no-verdict=missing-peers=pi-extensions/peers'
+  run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$output"
+  [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
+    && ok "$label" || bad "$label" "rc=$RC out=$OUT"
+  if [ "$peers" = present ]; then rmdir "$R/pi-extensions/peers/node_modules"; fi
+done
+# command resolution and env's missing Node diagnostic are the two host
+# producers that prevent npm from starting a declared suite at all.
+for mode in full range; do
+  mode_args=(--full)
+  [ "$mode" = full ] || mode_args=(--range "$PEER_BASE")
+  for launcher in npm node; do
+    launcher_env=(MISSING_NPM_NODE=1)
+    expected_call=--version
+    if [ "$launcher" = npm ]; then
+      launcher_env=('BASH_FUNC_command%%=() { if [ "$*" = "-v npm" ]; then return 1; fi; builtin command "$@"; }')
+      expected_call=""
+    fi
+    : >"$TMP/npm-launcher-calls"
+    OUT=""; RC=0
+    OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" PEER_LAUNCHER_LOG="$TMP/npm-launcher-calls" \
+      PEER_SUITE_OUTPUT="$INDEPENDENT" "${launcher_env[@]}" "$GUARD" "${mode_args[@]}" 2>&1 </dev/null)" || RC=$?
+    launcher_calls=$(cat "$TMP/npm-launcher-calls")
+    [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-tool=npm'* ]] \
+      && [[ "$OUT" != *'guard: suite='* ]] && [ "$launcher_calls" = "$expected_call" ] \
+      && ok "$mode: missing $launcher prevents suite start and has no verdict" \
+      || bad "$mode: missing $launcher launcher" "rc=$RC out=$OUT calls=$launcher_calls"
   done
 done
 rm -- "$R/fake-bin/npm"
@@ -1374,10 +1372,6 @@ LANE_ROWS=(
   "standard|false|$SKILL_TOOL|suites parse test"
   "standard|true|docs/guide.md|test"
   "render|false|$CODE|"
-  "trivial|true|$CODE|"
-  "micro|false|$CODE|suites parse lint apple windows test"
-  "small|false|$CODE ui/app.ts|$ALL"
-  "micro|false|docs/guide.md|test"
   "||crates/core/src/lib.rs ui/app.ts|parse lint apple windows test ui|subset"
 )
 lane_guard

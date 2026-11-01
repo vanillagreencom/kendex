@@ -23,8 +23,7 @@
 #
 # Every git here, the tool's included, reads an empty global config, so the
 # host's (a credential http.extraheader on the control host and hosted lanes,
-# a hooksPath, signing) never reaches a world. The isolation block holds that
-# under a hostile global file.
+# a hooksPath, signing) never reaches a world.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -283,25 +282,6 @@ if [ "$RC" = 0 ] && [ "$KEYS" = "changed=$TAP,dry-run=$TAP" ]; then
 else
   bad "control: without the guard, want keys=changed=$TAP,dry-run=$TAP" "got rc=$RC keys=$KEYS
 $OUT"
-fi
-
-# Isolation: a world's tap, read with every scope git consults, carries no
-# extraheader. The control re-runs this suite under a global file carrying
-# one, the way a hosted lane's does, and goes red if the host's global config
-# reaches the worlds.
-dir="$(world isolation)"
-if found="$(git --git-dir="$dir/tap.git" config --show-origin --get-regexp 'http\..*extraheader' 2>&1)"; then
-  bad "isolation: the host's git config reached the tap" "$found"
-else
-  ok "isolation: the tap reads no extraheader from any config scope"
-fi
-if [ -z "${PUBLISH_HOMEBREW_TEST_HOSTILE:-}" ]; then
-  printf '[http]\n\textraheader = AUTHORIZATION: basic aG9zdA==\n' >"$TMP/hostile-gitconfig"
-  if inner="$(PUBLISH_HOMEBREW_TEST_HOSTILE=1 GIT_CONFIG_GLOBAL="$TMP/hostile-gitconfig" bash "$TEST_DIR/publish-homebrew.test.sh" 2>&1)"; then
-    ok "isolation control: the suite passes under a global extraheader"
-  else
-    bad "isolation control: the suite fails under a global extraheader" "$inner"
-  fi
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

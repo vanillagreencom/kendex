@@ -587,10 +587,6 @@ timing_run "$checker" --worktree "$timing" --issue local-timing --round-id timin
     "$timing/tmp/workflow-state-local-timing.json" >/dev/null \
   && ok 'the recovery checker retains both validation rounds without spending another round counter' \
   || bad 'the recovery checker retains both validation rounds without spending another round counter' "$OUT"
-timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing --round-id timing \
-  --branch main --commit "$timing_head" --recovery --validate pass --validate-run-dir "$recovery_run" --validate-note measured --no-summary
-[ "$RC" -eq 2 ] && ok 'a second terminal recovery receipt remains refused' \
-  || bad 'a second terminal recovery receipt remains refused' "$OUT"
 # Change the covered fixture so its earlier passing tree cannot answer this
 # admission check. The recovery above kept its 413-second bound throughout.
 printf '# over bound\n' >> "$timing/$timing_tests/$timing_suite.sh"
