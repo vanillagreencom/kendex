@@ -211,24 +211,27 @@
 # reads. harness-only removes a byte-exact top-level kendex.toml schema step first.
 # HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of [env] key names read
 # from the base commit alone, admits a changed kendex.settings.toml or
-# .kendex/settings.toml to trivial and to no other class. Admission needs
-# every other changed path in the trivial set, both endpoints of each
-# changed settings file loaded by orch's kendex-env.sh, and changed bytes
-# only in comment lines, blank lines and [env] assignments of keys a glob
-# names. A key in the settings this script reads from the base, or any
-# HARNESS_CI_* key, never qualifies, whatever the globs say, so a change to
-# the allowlist itself is refused. Unset or blank, no key qualifies. The
-# admitted change answers trivial within the trivial ceiling, with no agent
-# instruction file beside it, as `cause=allowlisted-settings
-# settings=<file>[,<file>] keys=<key>[,<key>]|- lines=<n>`, keys naming those
-# whose loaded value differs. Every other answer for it keeps the
-# configuration-source refusal and prints one `settings-admission:
-# admitted=false cause=<c> [<field>=<value>]...` line naming the rule that
-# held it: allowlist-unset, configuration-file, path-outside-trivial,
-# settings-unparsed, unadmitted-change, over-ceiling, instruction-file, or
-# class-<class> where a later rule would grant another class. A settings
-# file that cannot be read answers standard, unmeasured. The queue-only line
-# is judged as before.
+# .kendex/settings.toml to the trivial set, on --event pull_request or
+# merge_group. Admission needs every changed configuration source to be one
+# of those two files, each a regular file at both endpoints, loaded there by
+# orch's kendex-env.sh, holding no multiline string, and changed only in
+# comment lines, blank lines and [env] assignments of keys a glob names. A
+# key in the settings this script reads from the base, or any HARNESS_CI_*
+# key, never qualifies, whatever the globs say, so a change to the allowlist
+# itself is refused. Unset or blank, no key qualifies. The trivial rule then
+# judges every other changed path and the ceiling as it does for any diff,
+# with no agent instruction file beside it, and answers
+# `cause=allowlisted-settings settings=<file>[,<file>] keys=<key>[,<key>]|-
+# lines=<n>`, keys naming those whose loaded value differs. Every other
+# answer for the change, whatever its class or cause, is the
+# configuration-source refusal, measured, and prints one `settings-admission:
+# admitted=false cause=<c> [<field>=<value>]...` line. Its cause is the
+# admission rule that refused: unsupported-event, base-settings-unreadable,
+# allowlist-unset, configuration-file, settings-unreadable,
+# settings-not-regular, multiline-string, settings-unparsed or
+# unadmitted-change. After admission it is class-<class> rule=<cause>, the
+# class and cause a later rule would have answered. The queue-only line is
+# judged as before.
 # A hand edit counts the same as the engine's: that line decides no render or
 # classifier input. The render path still verifies the head. Product paths
 # use the existing size rules without render verification.
@@ -375,8 +378,9 @@ changed=""
 QUEUE_ONLY=true
 QUEUE_CAUSE="cause=paths-unread"
 # A settings change HARNESS_CI_TRIVIAL_SETTINGS admitted: its class-line
-# fields, the refusal it keeps, and the keys one file changed.
+# fields, its files, the refusal it keeps, and the keys one file changed.
 SETTINGS_ADMITTED=""
+SETTINGS_FILES=""
 SETTINGS_REFUSAL=""
 SETTINGS_FILE_KEYS=""
 
@@ -430,6 +434,9 @@ trap 'rm -rf "$work"' EXIT
 paths_file="$work/paths"
 harness_err="$work/harness-stderr"
 
+# Why a settings change the header's admission names is not trivial.
+settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
+
 # The output FILE is written before stdout, as harness-only writes its own: a
 # verdict printed first would already have been read when the append died.
 #
@@ -445,10 +452,16 @@ harness_err="$work/harness-stderr"
 # that measured one says so. An `answer standard` added later is refused until
 # its author decides otherwise, which is the way round that cannot hand a
 # waiver to a diff nothing read. stdout is unchanged: one `change_class=` line.
+#
+# The configuration-source rule holding an admitted settings change read its
+# paths alone, so every answer for that change but trivial, a later read
+# failure included, is that refusal, measured, with the answer it replaced
+# on the admission line.
 answer() { # CLASS FIELDS [measured]
-  local queue_line per_push_line
-  if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ] && [ "$1" != standard ]; then
-    settings_note "cause=class-$1"
+  local queue_line per_push_line rule
+  if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
+    rule="${2%% *}"
+    settings_note "cause=class-$1 rule=${rule#cause=}"
     set -- standard "$SETTINGS_REFUSAL" measured
   fi
   measured=true
@@ -538,7 +551,7 @@ set_globs() { # GLOBS
 
 # One matcher and one glob grammar for the allowlist and the refusal lists.
 PATH_MATCH_HIT=""
-path_matches() { # MODE(every|any) — against GLOB_LIST
+path_matches() { # MODE(every|any) [PATHS] — against GLOB_LIST, PATHS default the changed paths
   local path hit globs
   PATH_MATCH_HIT=""
   globs=""
@@ -554,7 +567,7 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
     else
       [ "$hit" = true ] || return 1
     fi
-  done <<<"$changed"
+  done <<<"${2-$changed}"
   [ "$1" = every ]
 }
 
@@ -595,18 +608,24 @@ BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVI
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
 # The bytes of PATH as commit REV holds it, written to OUT: status 0, 2 where
-# that commit holds no PATH, and 1 where the commit or the file could not be
-# read.
+# that commit holds no PATH, 3 where it holds PATH as anything but a regular
+# file, and 1 where the commit or the file could not be read. A symlink is a
+# blob of its target's name, which no reader of a checkout sees: it follows
+# the link.
 rev_file() { # REV PATH OUT
   local listed kind blob
   listed="$(git -C "$repo" ls-tree "$1" -- "$2" 2>/dev/null)" || return 1
   [ -n "$listed" ] || return 2
+  case "${listed%% *}" in
+    100644 | 100755) ;;
+    *) return 3 ;;
+  esac
   kind="${listed#* }"
   kind="${kind%% *}"
   blob="${listed%%"$TAB"*}"
   blob="${blob##* }"
   [ "$kind" = blob ] || return 1
-  git -C "$repo" cat-file blob "$blob" >"$3" 2>/dev/null
+  git -C "$repo" cat-file blob "$blob" >"$3" 2>/dev/null || return 1
 }
 
 # rev_file at the commit --base names. BASE_REV is that commit, resolved once.
@@ -1023,9 +1042,16 @@ settings_values() { # FILE KEY...
 }
 
 # The keys whose value differs between the range's endpoints of PATH, as
-# SETTINGS_FILE_KEYS. Returns 1 where admission refuses the file.
+# SETTINGS_FILE_KEYS. Returns 1, with the admission line, where admission
+# refuses the file. The line scan cannot tell a comment from a line inside a
+# multiline string, so a multiline string delimiter at either endpoint
+# refuses the file.
 settings_file_admitted() { # PATH
   local side rev status keys base_values head_values key line base_value head_value
+  if ! : >"$work/settings-keys"; then
+    settings_note "cause=settings-unreadable path=$1"
+    return 1
+  fi
   for side in base head; do
     rev="$base_rev"
     [ "$side" = base ] || rev="$head_rev"
@@ -1033,15 +1059,35 @@ settings_file_admitted() { # PATH
     rev_file "$rev" "$1" "$work/settings-$side" || status=$?
     case "$status" in
       0) ;;
-      2) : >"$work/settings-$side" || answer standard "cause=settings-unreadable path=$1" ;;
-      *) answer standard "cause=settings-unreadable path=$1 rev=${rev:-unresolved}" ;;
+      2) : >"$work/settings-$side" || status=1 ;;
+      3)
+        settings_note "cause=settings-not-regular path=$1 side=$side"
+        return 1 ;;
     esac
-    settings_scan "$work/settings-$side" "$work/settings-residue-$side" >>"$work/settings-keys" ||
-      answer standard "cause=settings-unreadable path=$1"
+    [ "$status" = 0 ] || [ "$status" = 2 ] || {
+      settings_note "cause=settings-unreadable path=$1 side=$side rev=${rev:-unresolved}"
+      return 1
+    }
+    status=0
+    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
+    case "$status" in
+      0)
+        settings_note "cause=multiline-string path=$1 side=$side"
+        return 1 ;;
+      1) ;;
+      *)
+        settings_note "cause=settings-unreadable path=$1 side=$side"
+        return 1 ;;
+    esac
+    if ! settings_scan "$work/settings-$side" "$work/settings-residue-$side" >>"$work/settings-keys"; then
+      settings_note "cause=settings-unreadable path=$1 side=$side"
+      return 1
+    fi
   done
-  keys="$(LC_ALL=C sort -u "$work/settings-keys")" ||
-    answer standard "cause=settings-unreadable path=$1"
-  : >"$work/settings-keys" || answer standard "cause=settings-unreadable path=$1"
+  if ! keys="$(LC_ALL=C sort -u "$work/settings-keys")"; then
+    settings_note "cause=settings-unreadable path=$1"
+    return 1
+  fi
   # shellcheck disable=SC2086
   if ! base_values="$(settings_values "$work/settings-base" $keys)"; then
     settings_note "cause=settings-unparsed path=$1 side=base"
@@ -1069,9 +1115,23 @@ settings_file_admitted() { # PATH
   done
 }
 
+# SETTINGS_FILES, the admitted files one per line in byte order, and
+# SETTINGS_ADMITTED, their class-line fields. Returns 1, with the admission
+# line, where admission refuses the change. Another event defines no range
+# the size rules read, and a base whose settings cannot be read holds no
+# allowlist.
 settings_admission() {
-  local path files="" others="" docs globs file key keys=""
-  base_settings || answer standard "$MEASURE_CAUSE"
+  local path files="" file key keys=""
+  case "$event" in
+    pull_request | merge_group) ;;
+    *)
+      settings_note "cause=unsupported-event event=$event"
+      return 1 ;;
+  esac
+  base_settings || {
+    settings_note "$MEASURE_CAUSE"
+    return 1
+  }
   case "${HARNESS_CI_TRIVIAL_SETTINGS:-}" in
     *[![:space:]]*) ;;
     *) settings_note "cause=allowlist-unset"; return 1 ;;
@@ -1079,51 +1139,25 @@ settings_admission() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     change_class_path "$path" before-render
-    if [ "$CHANGE_CLASS_PATH" != standard ]; then
-      others="$others$path"$'\n'
-      continue
-    fi
+    [ "$CHANGE_CLASS_PATH" = standard ] || continue
     case " $BASE_SETTINGS_FILES " in
-      *" $path "*) files="$files $path" ;;
+      *" $path "*) files="$files$path"$'\n' ;;
       *) settings_note "cause=configuration-file path=$path"; return 1 ;;
     esac
   done <<<"$changed"
-  if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
-    set_globs "$HARNESS_CI_TRIVIAL_PATHS"
-    globs=""
-    [ "${#GLOB_LIST[@]}" -eq 0 ] || printf -v globs '%s\n' "${GLOB_LIST[@]}"
-    while IFS= read -r path; do
-      [ -n "$path" ] || continue
-      change_class_path_match "$path" "$globs" ||
-        { settings_note "cause=path-outside-trivial path=$path"; return 1; }
-    done <<<"$others"
-  else
-    # harness-only owns the docs set. A read failure prints docs_only=false
-    # with an empty outside list, so each settings file has to be on it.
-    docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
-      --outside-output "$work/settings-outside" --output /dev/null 2>/dev/null)" || docs=unreadable
-    [ "$docs" = docs_only=false ] || answer standard "cause=documentation-paths-unreadable"
-    for file in $files; do
-      grep -qxF -- "$file" "$work/settings-outside" ||
-        answer standard "cause=documentation-paths-unreadable"
-    done
-    while IFS= read -r path; do
-      [ -n "$path" ] || continue
-      case " $files " in
-        *" $path "*) ;;
-        *) settings_note "cause=path-outside-trivial path=$path"; return 1 ;;
-      esac
-    done <"$work/settings-outside"
+  if ! files="$(printf '%s' "$files" | LC_ALL=C sort -u)"; then
+    settings_note "cause=settings-unreadable"
+    return 1
   fi
-  for file in $files; do
+  while IFS= read -r file; do
     settings_file_admitted "$file" || return 1
     for key in ${SETTINGS_FILE_KEYS//,/ }; do
       case ",$keys," in *",$key,"*) ;; *) keys="$keys,$key" ;; esac
     done
-  done
-  files="${files# }"
+  done <<<"$files"
   keys="${keys#,}"
-  SETTINGS_ADMITTED="settings=${files// /,} keys=${keys:--}"
+  SETTINGS_FILES="$files"
+  SETTINGS_ADMITTED="settings=${files//$'\n'/,} keys=${keys:--}"
 }
 
 if path_class_matches before-render standard; then
@@ -1577,16 +1611,26 @@ case "$trivial_max" in
     die "cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES" \
       "HARNESS_CI_TRIVIAL_MAX_LINES must be a whole number" ;;
 esac
-# An admitted settings change is trivial or keeps its refusal.
+# An admitted settings file is a member of the trivial set, and the rule
+# below judges every other changed path. In the docs set, harness-only lists
+# each admitted file outside it, which also shows its list was read.
+trivial_paths="$changed"
+docs_trivial=false
+[ "$docs_verdict" != "docs_only=true" ] || docs_trivial=true
+settings_cause=""
 if [ -n "$SETTINGS_ADMITTED" ]; then
-  if [ "$total" -gt "$trivial_max" ]; then
-    settings_note "cause=over-ceiling lines=$total max=$trivial_max"
-  elif [ -n "$instruction_file" ]; then
-    settings_note "cause=instruction-file $instruction_file"
-  else
-    answer trivial "cause=allowlisted-settings $SETTINGS_ADMITTED lines=$total"
+  trivial_paths=""
+  while IFS= read -r path; do
+    case $'\n'"$SETTINGS_FILES"$'\n' in
+      *$'\n'"$path"$'\n'*) ;;
+      *) trivial_paths="$trivial_paths$path"$'\n' ;;
+    esac
+  done <<<"$changed"
+  if [ "$docs_verdict" = docs_only=false ] &&
+    outside="$(LC_ALL=C sort -u -- "$docs_outside")" && [ "$outside" = "$SETTINGS_FILES" ]; then
+    docs_trivial=true
   fi
-  answer standard "$SETTINGS_REFUSAL" measured
+  settings_cause="cause=allowlisted-settings $SETTINGS_ADMITTED"
 fi
 # The ceiling bounds what a trivial diff can change unreviewed, and a
 # documentation path can still be one the product reads — compiled into a
@@ -1594,13 +1638,13 @@ fi
 if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
   if [ "$total" -le "$trivial_max" ]; then
     set_globs "$HARNESS_CI_TRIVIAL_PATHS"
-    path_matches every &&
-      answer_narrow trivial "cause=allowlisted-paths lines=$total"
+    path_matches every "$trivial_paths" &&
+      answer_narrow trivial "${settings_cause:-cause=allowlisted-paths} lines=$total"
   fi
 else
   # The shipped allowlist is that mode's own path set, read from its verdict.
-  if [ "$docs_verdict" = "docs_only=true" ] && [ "$total" -le "$trivial_max" ]; then
-    answer_narrow trivial "cause=documentation-paths lines=$total"
+  if [ "$docs_trivial" = true ] && [ "$total" -le "$trivial_max" ]; then
+    answer_narrow trivial "${settings_cause:-cause=documentation-paths} lines=$total"
   fi
 fi
 
