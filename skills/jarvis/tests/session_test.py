@@ -138,6 +138,9 @@ class SessionContract(unittest.TestCase):
             argv += ["--origin", origin]
         if kwargs.get("brief"):
             argv += ["--brief-file", str(kwargs["brief"])]
+        for flag in ("model", "effort"):
+            if kwargs.get(flag) is not None:
+                argv += ["--" + flag, kwargs[flag]]
         start = time.monotonic()
         if kwargs.get("own_worker"):
             # The real public owner runs here so its detached worker remains
@@ -159,6 +162,13 @@ class SessionContract(unittest.TestCase):
             result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=60)
         self.assertLess(time.monotonic() - start, 60)
         return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False)), result.returncode
+
+    def model_classes(self):
+        # Model classification is kendex's external boundary. Preserve native
+        # defaults for class entries, as its protocol does.
+        kendex = self.root / "bin/kendex"
+        kendex.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps({"protocol":"model-resolution-v1","request":{"tag":"class","class":"standard"},"resolution":{"diagnostics":[],"native_selector":"sonnet" if sys.argv[2] == "claude" else None}}))\n')
+        kendex.chmod(0o755)
 
     def wait(self, state="running", reason=None, seconds=20, persisted_stop=False):
         deadline = time.monotonic() + seconds
@@ -404,6 +414,43 @@ class SessionContract(unittest.TestCase):
                 self.wait()
                 words = set(self.started()[-1]["argv"]) & ANY_PERMISSION_WORD
                 self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
+    def test_start_model_and_effort(self):
+        # The stated pair is read as a preference entry reads it, launched in
+        # the harness's own words and recorded as the session's choice.
+        self.model_classes()
+        for harness, model, launched, words in (("claude", "standard", "sonnet", ("--model", "--effort")),
+                                                ("pi", "github-copilot/gpt-5.5", "github-copilot/gpt-5.5", ("--model", "--thinking"))):
+            with self.subTest(harness=harness):
+                def launch():
+                    argv = self.started()[-1]["argv"]
+                    return {word: argv[argv.index(word) + 1] for word in words if word in argv}, json.loads(self.record.read_text()).get("choice")
+
+                def stated(effort):
+                    return ({words[0]: launched, words[1]: effort},
+                            {"harness": harness, "account": str(self.account), "model": launched, "effort": effort})
+
+                self.call("start", harness, mode="new")
+                self.wait()
+                self.assertEqual(launch(), ({}, None))
+                count = len(self.started())
+                # Each row: the stated effort, or none; the answer; whether it
+                # launched; and the effort the session then runs.
+                for effort, reason, launches, running in (("high", "new-selection-changed", 1, "high"), ("high", "existing", 0, "high"),
+                                                          (None, "existing", 0, "high"), ("low", "new-selection-changed", 1, "low")):
+                    with self.subTest(effort=effort, reason=reason):
+                        answer, _ = self.call("start", harness, mode="new", **({"model": model, "effort": effort} if effort else {}))
+                        self.assertEqual(self.wait()["reason"] if launches else answer["reason"], reason)
+                        count += launches
+                        self.assertEqual(len(self.started()), count)
+                        self.assertEqual(launch(), stated(running))
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+                self.call("start", harness, model=model, effort="low")
+                self.assertEqual(self.wait()["reason"], "resumed")
+                self.assertEqual(launch(), stated("low"))
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
 
@@ -1062,7 +1109,11 @@ class SessionContract(unittest.TestCase):
 
     def test_bad_arguments_have_no_object(self):
         for arguments in ([], ["unknown"], ["status"], ["_worker", "start", str(self.home), "1"],
-                          ["start", "--home", str(self.home), "--harness", "unknown"]):
+                          ["start", "--home", str(self.home), "--harness", "unknown"],
+                          *(["start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
+                             "--mode", "new", "--origin", "manual", *stated]
+                            for stated in (["--model", "standard"], ["--effort", "high"], ["--model", "standard", "--effort", ""],
+                                           ["--model", "claude:standard", "--effort", "high"]))):
             with self.subTest(arguments=arguments):
                 result = subprocess.run([str(SCRIPT), *arguments], env=self.env, capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 2)
