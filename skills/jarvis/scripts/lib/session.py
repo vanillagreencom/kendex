@@ -346,7 +346,7 @@ class Session:
             if not shutil.which(args.harness):
                 raise Refusal("app-missing")
             account = str(Path(args.account).resolve(strict=True))
-            requested = None
+            requested = stated = None
             if args.model is not None:
                 stated = json.loads(self.backend("choice", args.harness, args.model, args.effort, self.home).stdout)
                 requested = {"harness": args.harness, "account": account, "model": stated["model"], "effort": stated["effort"]}
@@ -419,8 +419,14 @@ class Session:
                            "app_off": False, "intent": "start", "terminal": None,
                            "launch": {"id": native_id, "file": file, "reason": reason, "brief": brief},
                            "predecessor": predecessor, "history": history_record}
-            if requested:
-                next_record["choice"] = requested
+            # A resumed session keeps the choice it ran on unless Start states one.
+            choice = requested or (history_record.get("choice") if reason == "resumed" else None)
+            if choice:
+                next_record["choice"] = choice
+            if stated and stated["warning"]:
+                # kendex's line for the stated model, once per launch
+                # (crates/cli tier_model.rs); only a launch runs that model.
+                print(stated["warning"], file=sys.stderr)
             self.write(next_record)
             self.detach("start", next_record)
             return self.answer(next_record), 0

@@ -42,6 +42,20 @@ home_pane_live() {
   fi
   return "$rc"
 }
+# pi_session_account MODEL: into PI_SESSION_ACCOUNT what a Jarvis pi session
+# on MODEL spends, from orch's ol_account: pi, a Pi account the session's
+# directory holds; foreign, another harness's account (a pi-claude/ model
+# spends a claude seat), which no Pi account directory holds, so no reading
+# of the session's directory judges it; or unmeasured, an account no reading
+# names.
+pi_session_account() {
+  ol_account pi "$1"
+  case "$OL_ACCOUNT_HARNESS" in
+    pi) PI_SESSION_ACCOUNT=pi ;;
+    none | unknown) PI_SESSION_ACCOUNT=unmeasured ;;
+    *) PI_SESSION_ACCOUNT=foreign ;;
+  esac
+}
 case "$verb" in
   select)
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
@@ -94,8 +108,8 @@ case "$verb" in
       for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do
         if [[ "${entry%%:*}" == pi ]]; then
           ol_entry_model "$entry"
-          ol_account pi "$OL_ENTRY_MODEL"
-          if [[ "$OL_ACCOUNT_HARNESS" != pi ]]; then
+          pi_session_account "$OL_ENTRY_MODEL"
+          if [[ "$PI_SESSION_ACCOUNT" != pi ]]; then
             printf 'jarvis-session: successor-entry-skipped entry=%s reason=pi-account-unlaunchable\n' "$entry" >&2
             continue
           fi
@@ -126,7 +140,17 @@ case "$verb" in
     source "$SCRIPT_DIR/lib/overseer-launch.sh"
     DEP_ERR=/dev/stderr
     ol_entry_model "$1:$2:$3" || { printf 'jarvis-session: selection=model-unread\n%s\n' "$OL_CLASS_ERR" >&2; exit 1; }
-    jq -cn --arg model "$OL_ENTRY_MODEL" --arg effort "$OL_ENTRY_EFFORT" '{model:$model,effort:$effort}' ;;
+    # Succession judges a pi session's account by its directory, which holds
+    # no account of another harness, the rule the walk skips such entries by.
+    if [[ "$1" == pi ]]; then
+      pi_session_account "$OL_ENTRY_MODEL"
+      [[ "$PI_SESSION_ACCOUNT" != foreign ]] \
+        || { printf 'jarvis-session: selection=pi-account-unlaunchable model=%s\n' "$OL_ENTRY_MODEL" >&2; exit 1; }
+    fi
+    # jarvis-session shows this verb's stderr only on failure, so the answer
+    # carries kendex's model-resolution line for Start to print.
+    jq -cn --arg model "$OL_ENTRY_MODEL" --arg effort "$OL_ENTRY_EFFORT" --arg warning "$OL_ENTRY_WARNING" \
+      '{model:$model,effort:$effort,warning:$warning}' ;;
   task-prepare)
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
     jarvis_load "$5"
