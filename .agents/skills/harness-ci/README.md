@@ -41,7 +41,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | `HARNESS_CI_QUEUE_PATHS` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository's own CI inputs that need the merge queue. Set it empty when the shipped list covers them all. Leaving it unset requires the queue for every change. |
 | `HARNESS_CI_QUEUE_SELECTOR` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository command that identifies merge-group jobs. Before you set it: [references/wiring.md § The CI template](references/wiring.md#the-ci-template). |
 | `HARNESS_CI_TRIVIAL_PATHS` | Paths eligible for the trivial-change class. |
-| `HARNESS_CI_TRIVIAL_MAX_LINES` | The line ceiling for that class. |
+| `HARNESS_CI_TRIVIAL_MAX_LINES` | The line ceiling for that class. A diff of allowlisted settings files alone has none. |
 | `HARNESS_CI_TRIVIAL_SETTINGS` | `[env]` keys whose change can be trivial. List only keys that no CI job or review gate reads. |
 | `ORCH_SIZE_TEST_PATHS` | Test paths outside orch's default patterns. |
 
