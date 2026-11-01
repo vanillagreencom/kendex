@@ -1465,16 +1465,22 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #   helper       a shell file under tests/lib/, which suites source
 #   module       any other file below scripts/<dir>/
 #   test-module  any other file under tests/lib/
+#   test-program in a DEV_VALIDATE_SCOPED=true run only, a Python file
+#                directly under tests/, which a suite wrapper runs by
+#                path or a sibling imports; in any other run it is a
+#                path of no role
 #   suite        a member of the tree's whole set: tests/*.sh but
 #                run-all.sh, and tests/*.test.mjs where no run-all.sh runs
 #                the set
 #   doc          a file under references/ and any other .md file: a
 #                skill's SKILL.md, README.md, workflows/ and schemas/
-# A module is scanned as a lib is, and a test module as a helper is, but a
-# changed module seeds its enclosing folder and file name. A changed test
-# module maps to no suite: an import can spell no path. Status 1 is a path of no role:
-# run-all.sh, any other file under tests/<dir>/, a file of hooks/ that is no
-# hook, and anything else.
+# A module is scanned as a lib is, and a test module or test program as a
+# helper is, but a changed module seeds its enclosing folder and file name.
+# A changed test module maps to no suite: an import can spell no path. A
+# changed test program seeds its file name.
+# Status 1 is a path of no role:
+# run-all.sh, any other file under tests/<dir>/, tests/*.py outside a scoped
+# run, a file of hooks/ that is no hook, and anything else.
 path_role() { # DIR REL
   case "$1:$2" in
     *:tests/run-all.sh) return 1 ;;
@@ -1483,6 +1489,10 @@ path_role() { # DIR REL
     *:scripts/*/*) echo module ;;
     *:tests/lib/*) echo test-module ;;
     *:tests/*/*) return 1 ;;
+    *:tests/*.py)
+      [ "$scoped_only" -eq 1 ] || return 1
+      echo test-program
+      ;;
     *:tests/*.sh) echo suite ;;
     *:tests/*.test.mjs)
       if [ -f "$1/tests/run-all.sh" ]; then return 1; fi
@@ -1516,11 +1526,11 @@ skill_suites() { # DIR [shell]
 # file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
-  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
+  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py; do
     [ -f "$f" ] || continue
     role=$(path_role "$1" "${f#"$1"/}") || continue
     case "$role" in
-      script | lib | helper | module | test-module | suite) printf '%s %s\n' "$role" "$f" ;;
+      script | lib | helper | module | test-module | test-program | suite) printf '%s %s\n' "$role" "$f" ;;
     esac
   done
 }
@@ -1597,7 +1607,7 @@ PY
 # What the scan holds of each file skill_files lists for the tree SCAN_DIR,
 # loaded once for all of the tree's changed paths, one index per file:
 # SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
-# spells, and SCAN_SOURCED, each
+# spells and each `/<module>.py` a test program imports, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines,
 # and SCAN_INPUTS, the repository path patterns in its input notes.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
@@ -1651,6 +1661,27 @@ scan_load() { # DIR
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
+    # A test program imports a sibling by module name, which spells no path:
+    # `import a, b` reads /a.py and /b.py, and `from a.c import x` reads /a.py.
+    function scan_imports(reader, text, rest, count, modules, j, name) {
+      rest = text
+      if (sub(/^[[:space:]]*from[[:space:]]+/, "", rest)) {
+        count = 1
+        modules[1] = rest
+      } else if (sub(/^[[:space:]]*import[[:space:]]+/, "", rest)) {
+        count = split(rest, modules, /,/)
+      } else {
+        return
+      }
+      for (j = 1; j <= count; j++) {
+        name = modules[j]
+        sub(/^[[:space:]]+/, "", name)
+        if (!match(name, /^[[:alpha:]_][[:alnum:]_]*/)) continue
+        name = "/" substr(name, 1, RLENGTH) ".py"
+        if (!name_seen["N", reader, name]++)
+          print "N\t" reader "\t" name
+      }
+    }
     function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, j, notes, note_count) {
       path = scan_paths[reader]; role = scan_roles[reader]
       while ((status = (getline text < path)) > 0) {
@@ -1662,6 +1693,7 @@ scan_load() { # DIR
         if (text ~ /^[[:space:]]*#/) continue
         code[++count] = text
         scan_names(reader, text, "N")
+        if (role == "test-program") scan_imports(reader, text)
         if (text ~ /(^|[;&|({[:space:]])(source|\.)[[:space:]]/)
           scan_names(reader, text, "S")
         if (role != "script" && role != "lib") {
@@ -1818,7 +1850,7 @@ reach_join() { # ROLE PATH [changed]
     case "$1" in script | lib | module) return 0 ;; esac
   fi
   case "$1" in
-    lib | helper | module | test-module) next_any+=("${2##*/}") ;;
+    lib | helper | module | test-module | test-program) next_any+=("${2##*/}") ;;
     script)
       next_script+=("${2##*/}")
       reach_scripts+=("$2")
@@ -1831,15 +1863,18 @@ reach_join() { # ROLE PATH [changed]
 # or tools/: REL is inside the tree, or ../ followed by a repository input.
 # This comment, with path_role's table and
 # doc_readers' for a doc, is the one statement of the rule.
-#   - A changed or deleted script, lib or helper starts a scan over
-#     skill_files with its name as the first needle. A file joins the reach
-#     when its code, comment lines dropped, names a needle as `/<name>`, the
-#     whole name. A lib, helper, module or test module that joins adds a
-#     needle any file may name. A script, the changed one or one that joins,
-#     adds a needle a suite, helper or test module may name anywhere and any
-#     other file only on a line that sources it (`source` or `.`): the reach follows what sources a file, never a
-#     script that only runs another. A changed suite seeds no needle and runs
-#     alone, and a suite that joins adds none.
+#   - A changed or deleted script, lib, helper or test program starts a
+#     scan over skill_files with its name as the first needle. A file
+#     joins the reach when its code, comment lines dropped, names a needle
+#     as `/<name>`, the whole name; a test program also
+#     names `/<module>.py` for each module an `import` or `from` line of it
+#     imports. A lib, helper, module, test module or test program that
+#     joins adds a needle any file may name. A script, the changed one or
+#     one that joins, adds a needle a suite, helper, test module or test
+#     program may name anywhere and any other file only on a line that
+#     sources it (`source` or `.`): the reach follows what sources a file,
+#     never a script that only runs another. A changed suite seeds no
+#     needle and runs alone, and a suite that joins adds none.
 #   - Each suite in the reach runs, and so does each suite named for a
 #     script in the reach: the suite's name, `_` read as `-` and `.test`
 #     dropped, is the script's name without extension or starts with it and
@@ -1847,8 +1882,11 @@ reach_join() { # ROLE PATH [changed]
 #   - A changed or deleted doc starts the same scan from the files
 #     doc_readers names, each adding its needle by its role. A doc no file
 #     reads runs nothing.
-#   - A deleted suite whose reach holds no suite runs nothing.
+#   - A deleted suite whose reach holds no suite runs nothing, and so does
+#     a deleted test program.
 #   - A changed module seeds its scripts/<dir> folder and its file name.
+#     The folder needle reaches no test program: the folder a test program
+#     spells is part of a module path it names, which the file name reaches.
 #     A module no suite names runs nothing.
 #   - A path of no role, a changed test module, and a path whose
 #     reach holds no suite map to no suite.
@@ -1859,6 +1897,10 @@ reach_join() { # ROLE PATH [changed]
 # production needles. Readers under tests/ still extend the reach, so a
 # suite can cover the file through its test helpers. Other production
 # readers add no needles or named suites. Merge-group CI keeps the full reach.
+# Only a scoped run gives tests/*.py the test-program role (path_role): a
+# control can run a test program through a bare quoted file name or a sibling
+# suite, which no needle follows. In any other run no scan reads a test
+# program, and a changed one is a path of no role.
 # Scoped too, a changed .md file of a skill package, a source under
 # skills/<name>/ or its render under .agents/skills/<name>/, seeds no suite,
 # neither in its own tree nor as a ../ repository input of tools/ or a
@@ -1879,11 +1921,12 @@ reach_join() { # ROLE PATH [changed]
 # only through another script that runs it. CI's full run owns completeness.
 # The suites land in MAPPED, one per line, rather than on stdout, so the
 # scan stays loaded for the tree's next path. None with status 0 is a
-# deleted suite, a module no suite names or a doc no file reads; status 1 is a path mapped to no
+# deleted suite or test program, a module no suite names or a doc no file
+# reads; status 1 is a path mapped to no
 # suite, status 2 evidence the scan could not read or compare, and status 3 a role
 # reach_join does not know, a broken guard.
 mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" role="" i n hit names readers f t name base input input_path noted="" out="" nl=$'\n'
+  local dir="$1" rel="$2" role="" i n hit names readers f t name base input input_path noted="" out="" folder="" nl=$'\n'
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
   case "$rel" in
@@ -1925,6 +1968,7 @@ mapped_suites() { # DIR REL
     reach_join "$role" "$dir/$rel" changed || return 3
     if [ "$role" = module ]; then
       name=${rel#scripts/}
+      folder=${name%%/*}
       next_any+=("${name%%/*}")
     fi
   fi
@@ -1940,16 +1984,15 @@ mapped_suites() { # DIR REL
       names=${SCAN_NAMES[i]}
       hit=0
       for n in ${any[@]+"${any[@]}"}; do
+        [ "$n:${SCAN_ROLE[i]}" != "$folder:test-program" ] || continue
         if [[ $names == *"$nl/$n$nl"* ]]; then
           hit=1
           break
         fi
       done
-      # A script's needle: in a suite or helper anywhere, elsewhere only
-      # where a line sources it.
       if [ "$hit" -eq 0 ]; then
         case "${SCAN_ROLE[i]}" in
-          suite | helper | test-module) ;;
+          suite | helper | test-module | test-program) ;;
           *) names=${SCAN_SOURCED[i]} ;;
         esac
         for n in ${scripts[@]+"${scripts[@]}"}; do
@@ -2193,7 +2236,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
               else
                 role=$(path_role "$d" "$rel") || continue
               fi
-              case "$role" in script | lib | helper | module | suite | test-module) ;; *) continue ;; esac
+              case "$role" in script | lib | helper | module | suite | test-module | test-program) ;; *) continue ;; esac
             fi
             map_status=0
             mapped_suites "$d" "$rel" || map_status=$?
