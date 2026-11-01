@@ -18,11 +18,27 @@ type RetryAssistantCall = (
 	},
 ) => Promise<any>;
 
-export async function complete(model: unknown, context: unknown, options?: unknown, deps: PiAiCompatDeps = {}): Promise<any> {
-	const rootComplete = (deps.root ?? piAi as any).complete;
-	if (typeof rootComplete === "function") return await rootComplete(model, context, options);
+async function dispatchCompletion(name: "complete" | "completeSimple", model: unknown, context: unknown, options: unknown, deps: PiAiCompatDeps): Promise<any> {
+	const rootFunction = (deps.root ?? piAi as any)[name];
+	if (typeof rootFunction === "function") return await rootFunction(model, context, options);
 	const compat = deps.loadCompat ? await deps.loadCompat() : await dynamicImport("@earendil-works/pi-ai/compat") as any;
-	return await compat.complete(model, context, options);
+	return await compat[name](model, context, options);
+}
+
+export async function complete(model: unknown, context: unknown, options?: unknown, deps: PiAiCompatDeps = {}): Promise<any> {
+	return await dispatchCompletion("complete", model, context, options, deps);
+}
+
+export async function completeSimple(model: unknown, context: unknown, options?: unknown, deps: PiAiCompatDeps = {}): Promise<any> {
+	return await dispatchCompletion("completeSimple", model, context, options, deps);
+}
+
+// The lowest reasoning level the model accepts, as `SimpleStreamOptions.reasoning`
+// takes it. Simple options express "off" by leaving the level out, so a model that
+// can turn reasoning off gets undefined. Levels come from pi-ai's model catalog.
+export function lowestReasoningLevel(model: unknown, deps: { root?: any } = {}): string | undefined {
+	const [lowest] = (deps.root ?? piAi as any).getSupportedThinkingLevels(model) as string[];
+	return lowest === "off" ? undefined : lowest;
 }
 
 export async function retryAssistantCallCompat(

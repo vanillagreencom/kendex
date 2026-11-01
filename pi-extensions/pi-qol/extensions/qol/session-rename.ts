@@ -1,5 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import { complete } from "./pi-ai-compat.js";
+import { completeSimple, lowestReasoningLevel } from "./pi-ai-compat.js";
 import { gatewayPrivacyOnPayload } from "./gateway-privacy.js";
 import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { textFromContent } from "./agent-end.js";
@@ -248,6 +248,21 @@ export function headerRecord(headers: unknown): Record<string, string | null> | 
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+// Pi's agent path sends a request to the base URL the credential resolves, not the
+// catalog's: a Copilot enterprise token names the enterprise proxy host
+// (pi-ai auth/oauth/github-copilot.js `toAuth`, pi-coding-agent
+// core/agent-session.js `_getRequiredRequestAuth`).
+function autoRenameAuth(model: any, auth: { apiKey?: string; baseUrl?: string; env?: Record<string, string>; headers?: unknown }, source: string): AutoRenameAuth {
+	return {
+		apiKey: auth.apiKey,
+		env: auth.env,
+		headers: headerRecord(auth.headers),
+		label: modelLabel(model),
+		model: auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model,
+		source,
+	};
+}
+
 function modelCost(model: any): number {
 	const cost = model?.cost;
 	return Number(cost?.input ?? 0) + Number(cost?.output ?? 0);
@@ -267,8 +282,7 @@ async function cheapestAvailableAutoRenameModel(ctx: ExtensionContext): Promise<
 	for (const model of models) {
 		try {
 			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-			const headers = headerRecord(auth.headers);
-			if (auth.ok) return { apiKey: auth.apiKey, env: auth.env, headers, label: modelLabel(model), model, source: "cheapest" };
+			if (auth.ok) return autoRenameAuth(model, auth, "cheapest");
 		} catch (error) {
 			if (isStaleCtxError(error)) return undefined;
 			// Try the next available model.
@@ -287,12 +301,11 @@ async function resolveAutoRenameModel(ctx: ExtensionContext, configured: string)
 		}
 		try {
 			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-			const headers = headerRecord(auth.headers);
 			if (!auth.ok) {
 				autoRenameDebug(ctx, `auth unavailable for ${modelLabel(model)}: ${auth.error}`, "warning");
 				return undefined;
 			}
-			return { apiKey: auth.apiKey, env: auth.env, headers, label: modelLabel(model), model, source: configured };
+			return autoRenameAuth(model, auth, configured);
 		} catch (error) {
 			if (isStaleCtxError(error)) return undefined;
 			autoRenameDebug(ctx, `auth failed for ${modelLabel(model)}: ${stringifyError(error)}`, "warning");
@@ -329,10 +342,12 @@ export async function generateAutoRenameName(query: string, ctx: ExtensionContex
 			const timeout = setTimeout(() => controller.abort(), timeoutMs);
 			timeout.unref?.();
 			try {
-				const response = await complete(
+				// A reasoning model left at its default effort can spend the whole token
+				// cap reasoning and write no title.
+				const response = await completeSimple(
 					resolved.model,
 					{ messages: [message], systemPrompt: AUTO_RENAME_SYSTEM_PROMPT },
-					{ apiKey: resolved.apiKey, env: resolved.env, headers: resolved.headers, maxTokens, signal: controller.signal, onPayload: gatewayPrivacyOnPayload(ctx) },
+					{ apiKey: resolved.apiKey, env: resolved.env, headers: resolved.headers, maxTokens, reasoning: lowestReasoningLevel(resolved.model), signal: controller.signal, onPayload: gatewayPrivacyOnPayload(ctx) },
 				);
 				if (response.stopReason === "error") {
 					autoRenameDebug(ctx, `${resolved.label} failed: ${response.errorMessage ?? "unknown error"}`, "warning");
