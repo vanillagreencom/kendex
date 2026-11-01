@@ -1,36 +1,59 @@
-//! The standing scheduler: every duty has its own cadence and its own due
-//! time. Running one duty, or an event that makes it due now, moves no other
-//! duty's deadline; in particular mail activity never resets the heartbeat.
+//! The standing scheduler's due times and the one clock: every duty has its
+//! own cadence and its own due time. Running one duty, or an event that
+//! makes it due now, moves no other duty's deadline; in particular mail
+//! activity never resets the heartbeat (decision 121, Q5).
 //!
-//! The logic reads no clock of its own. A caller passes the instant it is
-//! acting at, or a [`Clock`] it owns, so a test drives the schedule with a
-//! fake and asserts ordering without waiting.
+//! The logic reads no clock of its own. The runner (`watch`) passes the
+//! instant it is acting at, so a test drives a schedule with instants it
+//! chooses and asserts ordering without waiting. [`Clock`] is the one clock
+//! every wait and every wall-clock moment of the runtime reads (decision
+//! 121, Q16): `main.rs` builds it and hands it to the operation handle and
+//! the runner alike, so a test supplies one fake and drives both.
 
 use std::time::{Duration, Instant, SystemTime};
 
-/// The duties the legacy fleet watch runs on one clock: the mail turn, the
-/// pane and process observations, tracker work, verification, the report
-/// check and the heartbeat that ends a quiet run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+/// The duties the fleet watch runs on one clock: the mail turn, the pane and
+/// process observations, tracker work, verification, the report check, the
+/// reconcile of every open intent (decision 121, Q4) and the heartbeat. The
+/// serialized word is [`Duty::word`], the key of a duty's baseline row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Duty {
     Mail,
     NativeObservation,
     Tracker,
     Verification,
     Report,
+    Reconcile,
     Heartbeat,
 }
 
 impl Duty {
     /// Every duty, in the order a tie between equal due times is broken.
-    pub const ALL: [Duty; 6] = [
+    pub const ALL: [Duty; 7] = [
         Duty::Mail,
         Duty::NativeObservation,
         Duty::Tracker,
         Duty::Verification,
         Duty::Report,
+        Duty::Reconcile,
         Duty::Heartbeat,
     ];
+
+    /// The duty's word in a reply or a diagnostic.
+    pub fn word(self) -> &'static str {
+        match self {
+            Duty::Mail => "mail",
+            Duty::NativeObservation => "native-observation",
+            Duty::Tracker => "tracker",
+            Duty::Verification => "verification",
+            Duty::Report => "report",
+            Duty::Reconcile => "reconcile",
+            Duty::Heartbeat => "heartbeat",
+        }
+    }
 }
 
 /// Where a cadence counts from once the duty ran.
@@ -54,45 +77,45 @@ pub struct Cadence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cadences {
     pub mail: Cadence,
-    pub native_observation: Cadence,
-    pub tracker: Cadence,
-    pub verification: Cadence,
-    pub report: Cadence,
+    pub long: Cadence,
     pub heartbeat: Cadence,
 }
 
 impl Cadences {
-    /// The legacy watch's settings: `ORCH_WATCH_MAIL_INTERVAL=20` end to
-    /// start; every long-pass check at `--interval 240` start to start; the
-    /// heartbeat after `--max-loops 25` quiet passes, 25 × 240 s.
-    pub fn legacy() -> Cadences {
-        let long = Cadence {
-            every: Duration::from_secs(240),
-            anchor: Anchor::Start,
-        };
+    /// The cadences the watch settings name (step5-map F1): the mail interval
+    /// end to start; every long-pass duty at `interval` start to start; the
+    /// heartbeat every `max_loops × interval` from the last heartbeat.
+    pub fn of_settings(mail: Duration, interval: Duration, max_loops: u32) -> Cadences {
         Cadences {
             mail: Cadence {
-                every: Duration::from_secs(20),
+                every: mail,
                 anchor: Anchor::End,
             },
-            native_observation: long,
-            tracker: long,
-            verification: long,
-            report: long,
+            long: Cadence {
+                every: interval,
+                anchor: Anchor::Start,
+            },
             heartbeat: Cadence {
-                every: Duration::from_secs(25 * 240),
+                every: interval.saturating_mul(max_loops),
                 anchor: Anchor::Start,
             },
         }
     }
 
+    /// The legacy watch's defaults: `ORCH_WATCH_MAIL_INTERVAL=20`,
+    /// `--interval 240`, `--max-loops 25`.
+    pub fn legacy() -> Cadences {
+        Cadences::of_settings(Duration::from_secs(20), Duration::from_secs(240), 25)
+    }
+
     pub fn of(&self, duty: Duty) -> Cadence {
         match duty {
             Duty::Mail => self.mail,
-            Duty::NativeObservation => self.native_observation,
-            Duty::Tracker => self.tracker,
-            Duty::Verification => self.verification,
-            Duty::Report => self.report,
+            Duty::NativeObservation
+            | Duty::Tracker
+            | Duty::Verification
+            | Duty::Report
+            | Duty::Reconcile => self.long,
             Duty::Heartbeat => self.heartbeat,
         }
     }
@@ -102,11 +125,12 @@ impl Cadences {
 /// Q16): `main.rs` builds it and hands it down, so a test supplies the
 /// instants it wants and a bound can be waited without real time passing.
 /// The effects reach it only through the operation handle (decision 124c).
-pub trait Clock {
+/// `Sync`, since the runner's two duty threads share one.
+pub trait Clock: Sync {
     fn now(&self) -> Instant;
     /// The wall-clock time, for a moment a record carries (the instant a
     /// window was asked for, which a session file's appearance is read
-    /// against).
+    /// against; the epoch second a baseline row holds).
     fn wall(&self) -> SystemTime;
     /// Wait `d` on this clock. The system clock sleeps; a fake clock passes
     /// the time it wants.
@@ -150,51 +174,70 @@ struct Entry {
     due: Instant,
 }
 
-/// The due time of every duty.
+/// The due time of a set of duties: the duties one thread of the runner
+/// owns (decision 121, Q16: mail on its own thread, the rest on one).
 #[derive(Debug, Clone)]
 pub struct Schedule {
-    entries: [Entry; 6],
+    entries: Vec<Entry>,
 }
 
 impl Schedule {
-    /// Every duty is due at `start`.
-    pub fn new(cadences: &Cadences, start: Instant) -> Schedule {
+    /// Every duty of `duties` is due at `start`, in [`Duty::ALL`] order.
+    pub fn new(cadences: &Cadences, start: Instant, duties: &[Duty]) -> Schedule {
         Schedule {
-            entries: Duty::ALL.map(|duty| Entry {
-                duty,
-                cadence: cadences.of(duty),
-                due: start,
-            }),
+            entries: Duty::ALL
+                .iter()
+                .filter(|d| duties.contains(d))
+                .map(|duty| Entry {
+                    duty: *duty,
+                    cadence: cadences.of(*duty),
+                    due: start,
+                })
+                .collect(),
         }
     }
 
+    pub fn duties(&self) -> Vec<Duty> {
+        self.entries.iter().map(|e| e.duty).collect()
+    }
+
     fn entry(&self, duty: Duty) -> &Entry {
-        &self.entries[Duty::ALL
+        self.entries
             .iter()
-            .position(|d| *d == duty)
-            .expect("every duty has an entry")]
+            .find(|e| e.duty == duty)
+            .expect("the schedule carries the duty")
     }
 
     fn entry_mut(&mut self, duty: Duty) -> &mut Entry {
-        &mut self.entries[Duty::ALL
-            .iter()
-            .position(|d| *d == duty)
-            .expect("every duty has an entry")]
+        self.entries
+            .iter_mut()
+            .find(|e| e.duty == duty)
+            .expect("the schedule carries the duty")
     }
 
     pub fn due(&self, duty: Duty) -> Instant {
         self.entry(duty).due
     }
 
+    /// Where `duty` counts its next run from once it ran: its anchor.
+    pub fn anchor(&self, duty: Duty) -> Anchor {
+        self.entry(duty).cadence.anchor
+    }
+
+    /// Set `duty`'s due time outright: the runner's first due time from a
+    /// persisted row (the heartbeat from the last heartbeat, the mail turn
+    /// from the last turn's end).
+    pub fn set_due(&mut self, duty: Duty, at: Instant) {
+        self.entry_mut(duty).due = at;
+    }
+
     /// The duty due soonest and when; a tie goes to the earlier of
-    /// [`Duty::ALL`].
-    pub fn next_due(&self) -> (Duty, Instant) {
-        let first = self
-            .entries
+    /// [`Duty::ALL`]. `None` on an empty schedule.
+    pub fn next_due(&self) -> Option<(Duty, Instant)> {
+        self.entries
             .iter()
             .min_by_key(|e| e.due)
-            .expect("six entries");
-        (first.duty, first.due)
+            .map(|e| (e.duty, e.due))
     }
 
     /// The duties due at `now`, in [`Duty::ALL`] order.
@@ -213,77 +256,26 @@ impl Schedule {
         entry.due = ran_at + entry.cadence.every;
     }
 
-    /// An event asks for the duty at `at`: its due time moves earlier to
-    /// `at`, never later, and no other duty moves.
+    /// The duty asks for its next run at `at` (`Produced::next_due`): its
+    /// due time moves earlier to `at`, never later, and no other duty moves.
     pub fn wake(&mut self, duty: Duty, at: Instant) {
         let entry = self.entry_mut(duty);
         if at < entry.due {
             entry.due = at;
         }
     }
-
-    /// Run every duty due on the clock, advancing each from its anchor, and
-    /// return what ran.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the scheduler's one read of the injected clock, which decides what is due"
-    )]
-    pub fn run_due<C: Clock>(&mut self, clock: &C, mut run: impl FnMut(Duty)) -> Vec<Duty> {
-        let now = clock.now();
-        let due = self.due_at(now);
-        for duty in &due {
-            let started = clock.now();
-            run(*duty);
-            let anchor = match self.entry(*duty).cadence.anchor {
-                Anchor::Start => started,
-                Anchor::End => clock.now(),
-            };
-            self.advance(*duty, anchor);
-        }
-        due
-    }
 }
 
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "the rows start the schedule at a real instant and drive it with a fake clock"
+    reason = "the rows start the schedule at a real instant and move it by hand"
 )]
 mod tests {
     use super::*;
-    use std::cell::Cell;
 
     fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
-    }
-
-    /// A clock the test moves by hand.
-    struct FakeClock {
-        now: Cell<Instant>,
-    }
-
-    impl FakeClock {
-        fn at(start: Instant) -> FakeClock {
-            FakeClock {
-                now: Cell::new(start),
-            }
-        }
-
-        fn pass(&self, d: Duration) {
-            self.now.set(self.now.get() + d);
-        }
-    }
-
-    impl Clock for FakeClock {
-        fn now(&self) -> Instant {
-            self.now.get()
-        }
-        fn wall(&self) -> SystemTime {
-            SystemTime::UNIX_EPOCH
-        }
-        fn sleep(&self, d: Duration) {
-            self.pass(d);
-        }
     }
 
     #[test]
@@ -295,6 +287,7 @@ mod tests {
             (Duty::Tracker, 240, Anchor::Start),
             (Duty::Verification, 240, Anchor::Start),
             (Duty::Report, 240, Anchor::Start),
+            (Duty::Reconcile, 240, Anchor::Start),
             (Duty::Heartbeat, 6000, Anchor::Start),
         ];
         for (duty, every, anchor) in rows {
@@ -313,7 +306,7 @@ mod tests {
     fn running_one_duty_moves_no_other_deadline() {
         let start = Instant::now();
         for ran in Duty::ALL {
-            let mut s = Schedule::new(&Cadences::legacy(), start);
+            let mut s = Schedule::new(&Cadences::legacy(), start, &Duty::ALL);
             let before: Vec<Instant> = Duty::ALL.iter().map(|d| s.due(*d)).collect();
             s.advance(ran, start + secs(1));
             for (duty, was) in Duty::ALL.iter().zip(before) {
@@ -332,7 +325,7 @@ mod tests {
     #[test]
     fn mail_events_do_not_reset_the_heartbeat_deadline() {
         let start = Instant::now();
-        let mut s = Schedule::new(&Cadences::legacy(), start);
+        let mut s = Schedule::new(&Cadences::legacy(), start, &Duty::ALL);
         let heartbeat = start + secs(6000);
         s.advance(Duty::Heartbeat, start);
         assert_eq!(s.due(Duty::Heartbeat), heartbeat);
@@ -350,7 +343,7 @@ mod tests {
     #[test]
     fn a_wake_moves_a_duty_earlier_never_later() {
         let start = Instant::now();
-        let mut s = Schedule::new(&Cadences::legacy(), start);
+        let mut s = Schedule::new(&Cadences::legacy(), start, &Duty::ALL);
         s.advance(Duty::Tracker, start);
         s.wake(Duty::Tracker, start + secs(300));
         assert_eq!(s.due(Duty::Tracker), start + secs(240));
@@ -358,61 +351,24 @@ mod tests {
         assert_eq!(s.due(Duty::Tracker), start + secs(30));
     }
 
+    /// A schedule carries only the duties its thread owns, in `ALL` order,
+    /// and a tie between equal due times breaks in that order.
     #[test]
-    fn a_slow_duty_does_not_block_another_duty_becoming_due() {
+    fn a_schedule_carries_its_own_duties_in_order_and_ties_break_in_it() {
         let start = Instant::now();
-        let mut s = Schedule::new(&Cadences::legacy(), start);
-        // The tracker pass started at `start` and took 1000 s; mail was due
-        // at start + 20 the whole time and is the next duty, not the tracker.
-        s.advance(Duty::Tracker, start);
-        s.advance(Duty::Mail, start);
-        for duty in [
-            Duty::NativeObservation,
-            Duty::Verification,
-            Duty::Report,
-            Duty::Heartbeat,
-        ] {
-            s.advance(duty, start);
-        }
-        let after_slow_pass = start + secs(1000);
-        assert_eq!(s.next_due(), (Duty::Mail, start + secs(20)));
-        let due = s.due_at(after_slow_pass);
-        assert_eq!(
-            due,
-            vec![
-                Duty::Mail,
-                Duty::NativeObservation,
-                Duty::Tracker,
-                Duty::Verification,
-                Duty::Report
-            ]
+        let s = Schedule::new(
+            &Cadences::legacy(),
+            start,
+            &[Duty::Heartbeat, Duty::Tracker, Duty::Mail],
         );
-        assert_eq!(s.due(Duty::Heartbeat), start + secs(6000));
-    }
-
-    #[test]
-    fn ties_break_in_duty_order_and_run_due_anchors_each_duty_from_its_own_rule() {
-        let start = Instant::now();
-        let clock = FakeClock::at(start);
-        let mut s = Schedule::new(&Cadences::legacy(), start);
-        assert_eq!(s.next_due(), (Duty::Mail, start));
-        let mut ran = Vec::new();
-        let due = s.run_due(&clock, |duty| {
-            ran.push(duty);
-            // Each duty takes 3 s on the fake clock.
-            clock.pass(secs(3));
-        });
-        assert_eq!(due, Duty::ALL.to_vec());
-        assert_eq!(ran, Duty::ALL.to_vec());
-        // Mail is end-anchored: it started at +0 and ended at +3.
-        assert_eq!(s.due(Duty::Mail), start + secs(3) + secs(20));
-        // The long-pass duties are start-anchored: observation started at +3.
-        assert_eq!(s.due(Duty::NativeObservation), start + secs(3) + secs(240));
-        assert_eq!(s.due(Duty::Tracker), start + secs(6) + secs(240));
-        assert_eq!(s.due(Duty::Heartbeat), start + secs(15) + secs(6000));
-        // Nothing is due again until mail's end-anchored deadline.
-        assert!(s.run_due(&clock, |_| {}).is_empty());
-        clock.pass(secs(5));
-        assert_eq!(s.run_due(&clock, |_| {}), vec![Duty::Mail]);
+        assert_eq!(s.duties(), vec![Duty::Mail, Duty::Tracker, Duty::Heartbeat]);
+        assert_eq!(s.next_due(), Some((Duty::Mail, start)));
+        assert_eq!(
+            s.due_at(start),
+            vec![Duty::Mail, Duty::Tracker, Duty::Heartbeat]
+        );
+        assert!(s.due_at(start - secs(1)).is_empty());
+        let empty = Schedule::new(&Cadences::legacy(), start, &[]);
+        assert_eq!(empty.next_due(), None);
     }
 }

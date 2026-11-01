@@ -22,6 +22,7 @@ use orch_runtime::schedule;
 use orch_runtime::settings::{self, Flags, Settings};
 use orch_runtime::state::{self, Locking};
 use orch_runtime::verify;
+use orch_runtime::watch;
 
 #[derive(Parser)]
 #[command(
@@ -74,6 +75,52 @@ enum Verb {
         target: Target,
         #[arg(long)]
         intent: String,
+    },
+    /// The standing scheduler over one fleet state (decisions 62, 121).
+    Watch {
+        #[command(subcommand)]
+        op: WatchOp,
+    },
+}
+
+#[derive(Subcommand)]
+enum WatchOp {
+    /// Claim the fleet state and run the duties until `watch stop`.
+    Run {
+        #[command(flatten)]
+        target: Target,
+        /// Seconds between two runs of a long-pass duty; the legacy
+        /// `--interval`.
+        #[arg(long, default_value_t = 240, value_parser = clap::value_parser!(u64).range(1..))]
+        interval: u64,
+        /// Long passes per heartbeat; the legacy `--max-loops`.
+        #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u32).range(1..))]
+        max_loops: u32,
+        /// The stamp the heartbeat's `since=` carries; the legacy `--since`.
+        #[arg(long)]
+        since: Option<String>,
+        /// A live runner's pid to stop and replace; the legacy
+        /// `OVERSEE_WATCH_REPLACE`.
+        #[arg(long)]
+        replace: Option<u32>,
+    },
+    /// The claim and whether its identity runs, the due times the records
+    /// imply, and the last event line's number.
+    Status {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Ask the claimed runner to stop and wait for its claim's release.
+    Stop {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// The event log's numbered lines from `--since` on.
+    Log {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long, default_value_t = 1)]
+        since: u64,
     },
 }
 
@@ -327,8 +374,140 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &schedule::SystemClock,
             )?)?
         }
+        Verb::Watch { op } => watch_verb(op, &flags, locking)?,
     };
     Ok(value)
+}
+
+/// The `watch` verbs. `run` claims as this process's identity (decision
+/// 99), records the legacy claim fields (the pane it serves, its program and
+/// directory, its arguments) and registers the two duties this runtime
+/// builds itself: the heartbeat and the reconcile of every open intent on
+/// the long cadence (decision 121, Q4); the later duties register theirs
+/// here as they land.
+fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
+    let settings = resolve_settings(flags)?;
+    let clock = schedule::SystemClock;
+    match op {
+        WatchOp::Run {
+            target,
+            interval,
+            max_loops,
+            since,
+            replace,
+        } => {
+            let path = target_path(&target, &settings);
+            let paths = watch::Paths::of(&path)?;
+            let env = system_env()?;
+            let Some(owner) = env.owner.clone() else {
+                return Err(orch_runtime::error::WatchError::IdentityUnreadable.into());
+            };
+            let identity = agent_runtime::process::Identity {
+                pid: owner.pid as u32,
+                start: owner.start.clone(),
+            };
+            let record = watch::Recorded {
+                pane: std::env::var("TMUX_PANE").unwrap_or_else(|_| "none".to_owned()),
+                script: std::env::current_exe()
+                    .map(|p| p.display().to_string())
+                    .map_err(|e| {
+                        Error::Runtime(agent_runtime::Error::io("exe", PathBuf::from("."), e))
+                    })?,
+                cwd: std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .map_err(|e| {
+                        Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e))
+                    })?,
+                args: std::env::args().skip(1).collect(),
+            };
+            let mut runner = watch::Runner::new(
+                paths,
+                &clock,
+                &settings,
+                watch::Flags {
+                    interval: std::time::Duration::from_secs(interval),
+                    max_loops,
+                    since,
+                    replace,
+                },
+                identity,
+                record,
+            );
+            let reconcile_settings = settings.clone();
+            let nonce = env.nonce;
+            runner.register(
+                schedule::Duty::Reconcile,
+                Box::new(move |tick: &watch::Tick| {
+                    let env = Env {
+                        now_secs: tick.wall,
+                        now_nanos: u128::from(tick.wall) * 1_000_000_000,
+                        nonce,
+                        owner: Some(owner.clone()),
+                    };
+                    let run =
+                        effects::reconcile(&path, &reconcile_settings, &env, locking, tick.clock)?;
+                    Ok(reconcile_lines(&run, tick.baseline))
+                }),
+            );
+            Ok(serde_json::to_value(runner.run()?)?)
+        }
+        WatchOp::Status { target } => {
+            let paths = watch::Paths::of(&target_path(&target, &settings))?;
+            Ok(serde_json::to_value(watch::status(&paths)?)?)
+        }
+        WatchOp::Stop { target } => {
+            let paths = watch::Paths::of(&target_path(&target, &settings))?;
+            Ok(serde_json::to_value(watch::claim::stop(&paths, &clock)?)?)
+        }
+        WatchOp::Log { target, since } => {
+            let paths = watch::Paths::of(&target_path(&target, &settings))?;
+            let lines = watch::events::read_since(&paths.log, since)?;
+            Ok(serde_json::json!({ "lines": lines }))
+        }
+    }
+}
+
+/// The baseline row kind holding each intent the reconcile last refused,
+/// by its refusal key.
+const RECONCILE_REFUSED: &str = "reconcile-refused";
+
+/// What the reconcile duty publishes of its report: a line per open intent
+/// it could not complete or mark, printed when the refusal is new or its
+/// key changed and cleared when the intent is no longer refused, as the
+/// legacy printed a standing `main-workflow-absent`; and a line per owed
+/// notice sent whose mark the store refused. A deferral to a live or
+/// unreadable owner is a reconciled outcome, not a refusal, and prints
+/// nothing (decisions 128 (5), 130).
+fn reconcile_lines(run: &effects::ReconcileRun, baseline: &watch::Baseline) -> watch::Produced {
+    let mut produced = watch::Produced::default();
+    for refused in &run.refused {
+        if baseline.get(RECONCILE_REFUSED, &refused.intent) != Some(refused.refusal.as_str()) {
+            produced.events.push(watch::Event::ReconcileRefused {
+                intent: refused.intent.clone(),
+                refusal: refused.refusal.clone(),
+            });
+            produced.changes.push(watch::Change::Set {
+                kind: RECONCILE_REFUSED.to_owned(),
+                identity: refused.intent.clone(),
+                value: refused.refusal.clone(),
+            });
+        }
+    }
+    for intent in baseline.identities(RECONCILE_REFUSED) {
+        if !run.refused.iter().any(|r| r.intent == intent) {
+            produced.changes.push(watch::Change::Clear {
+                kind: RECONCILE_REFUSED.to_owned(),
+                identity: intent,
+            });
+        }
+    }
+    for notice in &run.notices_unmarked {
+        produced.events.push(watch::Event::NoticeUnmarked {
+            intent: notice.intent.clone(),
+            cause: notice.refusal.clone(),
+        });
+    }
+    produced
 }
 
 /// The lock policy for the host whose `PATH` is `path_var`, as the legacy

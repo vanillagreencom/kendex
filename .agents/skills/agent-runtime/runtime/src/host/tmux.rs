@@ -337,6 +337,63 @@ pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
     })
 }
 
+/// The windows of `session` on the confirmed server: each window's id, its
+/// active pane's id and its name, for a sweep that reports a window nothing
+/// records (decision 96) and adopts none. The server is confirmed first; a
+/// server that does not answer, a session the server has not, or a listing
+/// that cannot be read is `Unreadable` or `Gone`, never an empty session.
+pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, String, String)>> {
+    if let Err(e) = confirm(server) {
+        return Reading::Unreadable { cause: e.key() };
+    }
+    let socket = server.socket.display().to_string();
+    let target = format!("={session}");
+    let output = match run_with(
+        "tmux",
+        "list-windows",
+        &[
+            "-S",
+            &socket,
+            "list-windows",
+            "-t",
+            &target,
+            "-F",
+            "#{window_id}\t#{pane_id}\t#{window_name}",
+        ],
+        &[],
+        None,
+        TIMEOUT,
+    ) {
+        Ok(output) => output,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "tmux-unavailable",
+            };
+        }
+    };
+    if !output.status.success() {
+        return if stderr_text(&output).starts_with("can't find session") {
+            Reading::Gone
+        } else {
+            Reading::Unreadable {
+                cause: "tmux-failed",
+            }
+        };
+    }
+    let mut rows = Vec::new();
+    for line in stdout_text(&output).lines() {
+        let mut parts = line.splitn(3, '\t');
+        let (Some(window), Some(pane), Some(name)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return Reading::Unreadable {
+                cause: "windows-unparsed",
+            };
+        };
+        rows.push((window.to_owned(), pane.to_owned(), name.to_owned()));
+    }
+    Reading::Live(rows)
+}
+
 /// Run one `kill-*` command against an exact target and read what it did.
 fn close(server: &Server, operation: &'static str, target: &str) -> Close {
     if let Err(e) = confirm(server) {

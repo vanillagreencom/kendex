@@ -71,8 +71,8 @@ pub(in crate::effects) use agent_runtime::process::{Identity, Stop};
 pub(in crate::effects) use agent_runtime::reading::Reading;
 pub(crate) use host::Recorded;
 pub(in crate::effects) use host::{
-    Binding, Foreground, Observed, ProcessRead, Proof, SessionFloor, WindowClose, adopt_controller,
-    default_home, fixed_file, owner, session_present,
+    Binding, Foreground, Observed, ProcessRead, Proof, SessionFloor, WindowClose, WorktreeRelease,
+    adopt_controller, default_home, fixed_file, owner, session_present,
 };
 pub(in crate::effects) use obligations::{EffectOutcome, Published, Wire, Word};
 pub(in crate::effects) use window::{
@@ -88,6 +88,11 @@ use crate::schedule::Clock;
 use crate::state::{
     self, EffectOp, Intent, LaneKeys, Obligation, OpenedPane, Overseer, Owner, Phase, Role,
 };
+
+/// The `kind` a Claude cloud lane records: hosted, with its `mail_root`
+/// the item's worktree on this machine. The same word the cloud cap reads
+/// (`ops::occupancy`'s `CLOUD_KIND`).
+const CLOUD_KIND: &str = "claude-cloud";
 
 /// The operation handle: the one owner of the intent's recorded set for this
 /// run (decision 120 (1)).
@@ -307,6 +312,29 @@ impl<'a> Operation<'a> {
     /// runner's answer (decision 108 (7)): acquired before the first signal.
     pub(in crate::effects) fn owe_validation(&mut self) -> Result<()> {
         self.add_as(Obligation::Validation, Role::Validation)
+    }
+
+    /// A close about to run owes the lane's local worktree, the record's
+    /// `mail_root` (`lane-close`: a local lane's mail root is its worktree),
+    /// to its own release or keep (decision 128 (9)): acquired before the
+    /// first signal. A hosted lane's worktree is its host's (decision 57),
+    /// except a `claude-cloud` lane's, whose `mail_root` is the item's
+    /// worktree on this machine (the `lanes` row of the schema), the one
+    /// worktree `lane-close` removes for a hosted lane; a record naming
+    /// none owes nothing.
+    pub(in crate::effects) fn owe_worktree(&mut self, lane: &state::Lane) -> Result<()> {
+        if lane.host.is_some() && lane.kind.as_deref() != Some(CLOUD_KIND) {
+            return Ok(());
+        }
+        let Some(root) = lane.mail_root.as_deref() else {
+            return Ok(());
+        };
+        self.add_as(
+            Obligation::Worktree {
+                path: root.to_owned(),
+            },
+            Role::Worktree,
+        )
     }
 
     /// Whether the predecessor's handles the overseer record names were

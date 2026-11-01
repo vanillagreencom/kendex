@@ -20,7 +20,8 @@
 #[path = "support.rs"]
 mod support;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -4437,4 +4438,1383 @@ fn a_stale_secondary_identity_settles_on_the_second_independent_reading() {
         "settled by its stale count: {second}"
     );
     assert!(live(held.pid()), "the reused pid was never signalled");
+}
+
+/// `git args` in `cwd`, which must succeed; its stdout.
+fn git(cwd: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} in {}: {}",
+        cwd.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// The repository under `dir` every worktree row plants a linked worktree
+/// in. `tmp/` is ignored, as this repository ignores it, so a lane mailbox
+/// under it is invisible to `git status`. The repository is its own
+/// `origin` with `origin/HEAD` on `main`: the worktree package's `remove`
+/// reads that for its branch-deletion proof and refuses before anything is
+/// removed where no default branch can be named.
+fn repository_fixture(dir: &Path) -> PathBuf {
+    let repo = dir.join("repo");
+    git(dir, &["init", "-q", "-b", "main", "repo"]);
+    std::fs::write(repo.join(".gitignore"), "tmp/\n").unwrap();
+    git(&repo, &["add", ".gitignore"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+    );
+    let repo_s = repo.display().to_string();
+    git(&repo, &["remote", "add", "origin", &repo_s]);
+    git(&repo, &["fetch", "-q", "origin"]);
+    git(&repo, &["remote", "set-head", "origin", "main"]);
+    repo
+}
+
+/// A repository under `dir` with one checked-out linked worktree on branch
+/// `lane` at the same commit as `main`: (repository, worktree). The fixture
+/// every worktree row plants and then varies. The linked worktree is
+/// registered in the repository's `git worktree list`, which the package
+/// reads from the main worktree the runtime runs it in; an unregistered
+/// target it refuses.
+fn worktree_fixture(dir: &Path) -> (PathBuf, PathBuf) {
+    let repo = repository_fixture(dir);
+    let wt = dir.join("wt");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            &wt.display().to_string(),
+            "-b",
+            "lane",
+        ],
+    );
+    (repo, wt)
+}
+
+/// A repository under `dir` with one linked worktree on branch `lane` as
+/// the shipped cloud launcher makes a `claude-cloud` lane's
+/// (`open-terminal` runs `worktree create <id> --no-checkout`), set up as
+/// the package's `setup_app_worktree` does for a no-checkout create:
+/// `extensions.worktreeConfig` on the repository, the index read from
+/// `HEAD`, no file written, and the mark `kendex-worktree.checkoutMode
+/// claim` in the worktree's own config.
+fn claim_worktree_fixture(dir: &Path) -> (PathBuf, PathBuf) {
+    let repo = repository_fixture(dir);
+    let wt = dir.join("wt");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--no-checkout",
+            &wt.display().to_string(),
+            "-b",
+            "lane",
+        ],
+    );
+    git(&repo, &["config", "extensions.worktreeConfig", "true"]);
+    git(&wt, &["read-tree", "HEAD"]);
+    git(
+        &wt,
+        &[
+            "config",
+            "--worktree",
+            "kendex-worktree.checkoutMode",
+            "claim",
+        ],
+    );
+    (repo, wt)
+}
+
+/// One commit of `repo`'s index as the fixture's author.
+fn commit(repo: &Path, message: &str) {
+    git(
+        repo,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ],
+    );
+}
+
+/// A repository under `dir/name` with one committed file: the source a
+/// row's superproject adds as a submodule.
+fn submodule_source(dir: &Path, name: &str) -> PathBuf {
+    let source = dir.join(name);
+    git(dir, &["init", "-q", "-b", "main", name]);
+    std::fs::write(source.join("tracked.txt"), "o\n").unwrap();
+    git(&source, &["add", "tracked.txt"]);
+    commit(&source, "base");
+    source
+}
+
+/// Adds `source` to `repo`'s checked-out branch as the submodule `name`
+/// and commits it, `ignore` written first as `submodule.<name>.ignore` in
+/// the committed `.gitmodules`.
+fn add_submodule(repo: &Path, source: &Path, name: &str, ignore: Option<&str>) {
+    git(
+        repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            &source.display().to_string(),
+            name,
+        ],
+    );
+    if let Some(ignore) = ignore {
+        let key = format!("submodule.{name}.ignore");
+        git(repo, &["config", "-f", ".gitmodules", &key, ignore]);
+    }
+    git(repo, &["add", ".gitmodules", name]);
+    commit(repo, "submodule");
+}
+
+/// Fast-forwards the fixture worktree's `lane` onto `main` after `main`
+/// moved, `origin/main` with it (the package's branch-deletion proof reads
+/// it); the worktree then holds `main`'s gitlinks, each uninitialized.
+fn merge_main(repo: &Path, wt: &Path) {
+    git(repo, &["fetch", "-q", "origin"]);
+    git(wt, &["merge", "-q", "--ff-only", "main"]);
+}
+
+/// Initializes every submodule of `wt`, nested ones included, as a lane
+/// that checked out a superproject does.
+fn init_submodules(wt: &Path) {
+    git(
+        wt,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "-q",
+            "--init",
+            "--recursive",
+        ],
+    );
+}
+
+/// A commit made only inside `wt`'s initialized submodule `sub`, its
+/// gitlink bump committed on `lane`, `main` fast-forwarded onto it and
+/// `origin` fetched: the superproject reads merged and clean while the
+/// commit's only copy is the worktree's module store. Returns the commit
+/// and the store's path.
+fn unpushed_submodule_commit(repo: &Path, wt: &Path) -> (String, PathBuf) {
+    let sub = wt.join("sub");
+    std::fs::write(sub.join("work.txt"), "w\n").unwrap();
+    git(&sub, &["add", "work.txt"]);
+    commit(&sub, "work");
+    let work = git(&sub, &["rev-parse", "HEAD"]);
+    let store = PathBuf::from(git(
+        &sub,
+        &["rev-parse", "--path-format=absolute", "--git-dir"],
+    ));
+    git(wt, &["add", "sub"]);
+    commit(wt, "bump");
+    git(repo, &["merge", "-q", "--ff-only", "lane"]);
+    git(repo, &["fetch", "-q", "origin"]);
+    (work, store)
+}
+
+/// The close's pinned status listing of `wt`, the superproject's evidence
+/// of a dirty tree.
+fn pinned_status(wt: &Path) -> String {
+    git(
+        wt,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )
+}
+
+/// The report of `item`'s terminal close, `wt` recorded as the lane's
+/// worktree, through the real worktree package.
+fn close_lane_with_worktree(runner: &Runner, item: &str, wt: &Path) -> Value {
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane(item, runner, wt)]);
+    runner.write_fleet(&fleet);
+    close_with_worktree(runner, item)
+}
+
+/// Whether the module store at `store` holds `commit`, by `git cat-file
+/// -e` run against that store alone.
+fn commit_in_store(store: &Path, commit: &str) -> bool {
+    Command::new("git")
+        .args([
+            "--git-dir",
+            &store.display().to_string(),
+            "cat-file",
+            "-e",
+            commit,
+        ])
+        .status()
+        .expect("git")
+        .success()
+}
+
+/// Asserts `report` is a confirmed close that kept `wt` with `reason` on
+/// the lane, the worktree standing.
+fn assert_kept(report: &Value, wt: &Path, reason: &str) {
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "kept",
+        "{report}"
+    );
+    assert_eq!(report["lane"]["kept"], reason, "{report}");
+    assert!(wt.exists(), "the worktree stands");
+}
+
+/// Asserts `report` is a confirmed close that released `wt` with no `kept`
+/// on the lane, the path gone.
+fn assert_released(report: &Value, wt: &Path) {
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "released",
+        "{report}"
+    );
+    assert_eq!(report["lane"]["kept"], Value::Null, "{report}");
+    assert!(!wt.exists(), "the worktree was not removed");
+}
+
+/// The report of `item`'s terminal close with the worktree package at
+/// `cli` as `WORKTREE_CLI`.
+fn close_with_worktree_cli(runner: &Runner, item: &str, cli: &str) -> Value {
+    effect_report(&runner.op_fleet_env(&terminal_close(item), &[("WORKTREE_CLI", cli)]))
+}
+
+/// A running lane with no recorded identity or pane whose worktree is `wt`:
+/// its close takes the pane route to the finish, where the worktree is
+/// released or kept.
+fn worktree_lane(item: &str, runner: &Runner, wt: &Path) -> Value {
+    let mut row = lane(item, "running", runner, Value::Null);
+    row["mail_root"] = json!(wt.display().to_string());
+    row
+}
+
+/// The worktree package's script in this checkout, the owner a close
+/// removes a worktree through: the sibling catalog package of the orch
+/// skill under test.
+fn worktree_cli() -> String {
+    fixtures()
+        .ancestors()
+        .nth(4)
+        .expect("the catalog's skills directory")
+        .join("worktree/scripts/worktree")
+        .display()
+        .to_string()
+}
+
+/// The report of `item`'s terminal close with the real worktree package as
+/// `WORKTREE_CLI`.
+fn close_with_worktree(runner: &Runner, item: &str) -> Value {
+    close_with_worktree_cli(runner, item, &worktree_cli())
+}
+
+/// One unread notice a lane wrote to its mailbox under the worktree's
+/// ignored `tmp/`, where the shipped `lane-mail` writes it: the row's bytes
+/// and the file's path under `wt`.
+fn plant_lane_notice(wt: &Path, item: &str) -> (Vec<u8>, PathBuf) {
+    let row = format!("{{\"kind\":\"notice\",\"id\":\"n1\",\"item\":\"{item}\"}}\n").into_bytes();
+    let dir = wt.join("tmp/lane-mail").join(item);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("to-overseer.jsonl");
+    std::fs::write(&path, &row).unwrap();
+    (row, path)
+}
+
+/// The standing and discharged worktree rows of `intent`'s set.
+fn worktree_rows(intent: &Value) -> Vec<Value> {
+    let standing = intent["obligations"]["standing"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let discharged = intent["obligations"]["discharged"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    standing
+        .into_iter()
+        .filter(|o| o["kind"] == "worktree")
+        .chain(
+            discharged
+                .into_iter()
+                .filter(|d| d["obligation"]["kind"] == "worktree"),
+        )
+        .collect()
+}
+
+/// Decision 128 (9): the lane's worktree is an owned resource of the close,
+/// released through the worktree package's `remove` when clean and merged,
+/// else kept with its reason on the lane record and the close still
+/// settled. Each row varies the fixture worktree and names the defect it
+/// catches: a removal over unmerged commits or a dirty tree (work lost), a
+/// refusal read as released (the record lying about the disk), a released
+/// worktree with no `kept` or a kept one without its reason (prune cannot
+/// judge the state). The locked row is the package's own refusal, issued
+/// before anything is removed.
+#[test]
+fn a_close_releases_a_clean_merged_worktree_and_keeps_one_it_would_lose_work_on() {
+    type Plant = fn(&Path, &Path);
+    /// The lane's `kept` after the close: none for a release, the reason
+    /// word, or a refusal carrying the package's keyed line.
+    enum Kept {
+        Released,
+        Reason(&'static str),
+        Refusal(&'static str),
+    }
+    // (name, how the fixture is varied, the observation's worktree word, the
+    // lane's `kept`, whether the path still stands)
+    let rows: Vec<(&str, Plant, &str, Kept, bool)> = vec![
+        (
+            "clean and merged: released",
+            |_, _| {},
+            "released",
+            Kept::Released,
+            false,
+        ),
+        (
+            "unmerged commits: kept",
+            |_, wt| {
+                git(
+                    wt,
+                    &[
+                        "-c",
+                        "user.email=t@t",
+                        "-c",
+                        "user.name=t",
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "work",
+                    ],
+                );
+            },
+            "kept",
+            Kept::Reason("unmerged"),
+            true,
+        ),
+        (
+            "an untracked file: kept dirty",
+            |_, wt| std::fs::write(wt.join("draft.txt"), "x\n").unwrap(),
+            "kept",
+            Kept::Reason("dirty"),
+            true,
+        ),
+        (
+            "the removal refuses a locked worktree: kept with the refusal",
+            |repo, wt| {
+                git(repo, &["worktree", "lock", &wt.display().to_string()]);
+            },
+            "kept",
+            Kept::Refusal("worktree-worktree-locked: "),
+            true,
+        ),
+    ];
+    for (name, plant, word, kept, stands) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let (repo, wt) = worktree_fixture(runner.state_dir());
+        plant(&repo, &wt);
+        let mut fleet = runner.fleet();
+        fleet["lanes"] = json!([worktree_lane("KEN-W", &runner, &wt)]);
+        runner.write_fleet(&fleet);
+        let report = close_with_worktree(&runner, "KEN-W");
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{name}: {report}");
+        assert_eq!(report["lane"]["status"], "done", "{name}: {report}");
+        assert_eq!(
+            report["intent"]["observation"]["worktree"], word,
+            "{name}: {report}"
+        );
+        assert_eq!(wt.exists(), stands, "{name}: the path on disk");
+        let lane_kept = report["lane"]["kept"].as_str();
+        match kept {
+            Kept::Released => assert_eq!(
+                lane_kept, None,
+                "{name}: a released worktree records no reason"
+            ),
+            // The package's own keyed line, not the `refused:` prefix alone,
+            // which a package that cannot start would also carry.
+            Kept::Refusal(line) => assert!(
+                lane_kept.is_some_and(|k| k.starts_with("refused:status=1 ") && k.contains(line)),
+                "{name}: the package's refusal is recorded: {report}"
+            ),
+            Kept::Reason(reason) => assert_eq!(lane_kept, Some(reason), "{name}: {report}"),
+        }
+        let rows = worktree_rows(&report["intent"]);
+        assert_eq!(rows.len(), 1, "{name}: one worktree row: {report}");
+        assert_eq!(
+            rows[0]["obligation"]["path"],
+            wt.display().to_string(),
+            "{name}: the discharge names the recorded path"
+        );
+        let by = rows[0]["by"].as_str().unwrap_or_default();
+        match kept {
+            Kept::Released => assert_eq!(by, "released", "{name}"),
+            Kept::Reason(_) | Kept::Refusal(_) => {
+                assert!(by.starts_with("kept:"), "{name}: {by}");
+            }
+        }
+        // A locked fixture worktree would stand in the way of the tempdir's
+        // removal only through git's own metadata; the directory removes as
+        // files.
+    }
+}
+
+/// Decision 151 (1): the dirty read lists every untracked file whatever the
+/// repository's `status.showUntrackedFiles` setting, so a draft that
+/// setting hides from a plain `git status` still keeps the worktree. The
+/// defect: a listing that obeys the setting reads the tree clean, and the
+/// close deletes the draft with the worktree.
+#[test]
+fn a_close_keeps_a_worktree_whose_untracked_draft_git_status_config_hides() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    git(&wt, &["config", "status.showUntrackedFiles", "no"]);
+    let draft = wt.join("draft.txt");
+    std::fs::write(&draft, "x\n").unwrap();
+    assert_eq!(
+        git(&wt, &["status", "--porcelain"]),
+        "",
+        "the probe's draft is hidden from a plain status"
+    );
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane("KEN-H", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let report = close_with_worktree(&runner, "KEN-H");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "kept",
+        "{report}"
+    );
+    assert_eq!(report["lane"]["kept"], "dirty", "{report}");
+    assert!(
+        draft.exists(),
+        "untracked work deleted under status.showUntrackedFiles=no"
+    );
+}
+
+/// R-U5j5 L1 and follow-up 1. Defect: a person's file standing at a
+/// gitlink's path (a vendored submodule turned into one script, not yet
+/// staged) holding the close `worktree-unreadable` forever, where git reads
+/// the gitlink as unpopulated; and, once it continues to the status read,
+/// `submodule.<name>.ignore=all` hiding that ` T` line from a status read
+/// without `--ignore-submodules=none`, so the forced removal deletes the
+/// file. The close reads it dirt and keeps the worktree, the file intact.
+#[test]
+fn a_close_keeps_a_worktree_whose_file_over_an_ignored_gitlink_is_dirt() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let source = submodule_source(runner.state_dir(), "sub-source");
+    add_submodule(&repo, &source, "sub", Some("all"));
+    merge_main(&repo, &wt);
+    let file = wt.join("sub");
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::write(&file, "person's file\n").unwrap();
+    assert_eq!(
+        git(&wt, &["status", "--porcelain", "--untracked-files=all"]),
+        "",
+        "the producer's ignore setting hides the replaced gitlink"
+    );
+    assert_eq!(
+        pinned_status(&wt).trim(),
+        "T sub",
+        "the pinned read lists it"
+    );
+    let report = close_lane_with_worktree(&runner, "KEN-T", &wt);
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(report["lane"]["kept"], "dirty", "{report}");
+    assert_eq!(
+        std::fs::read_to_string(&file).ok().as_deref(),
+        Some("person's file\n"),
+        "the file at the gitlink path stands"
+    );
+}
+
+/// Decision 169: the keep reads the worktree's module store and its
+/// populated gitlinks, whatever the nested repositories' settings say. The
+/// defect (R-U5j3, both reviews): a nested submodule's
+/// own `.gitmodules` `ignore=all` empties the superproject's pinned status
+/// listing for a draft in the inner tree, the tree reads clean, and the
+/// package's forced removal deletes the draft with the worktree.
+#[test]
+fn a_close_keeps_a_worktree_whose_nested_submodule_setting_hides_a_draft() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let inner = submodule_source(runner.state_dir(), "inner-source");
+    let middle = submodule_source(runner.state_dir(), "middle-source");
+    add_submodule(&middle, &inner, "inner", Some("all"));
+    add_submodule(&repo, &middle, "sub", None);
+    merge_main(&repo, &wt);
+    init_submodules(&wt);
+    let draft = wt.join("sub/inner/draft.txt");
+    std::fs::write(&draft, "x\n").unwrap();
+    assert_eq!(
+        pinned_status(&wt),
+        "",
+        "the probe's draft is hidden by the nested submodule's ignore=all"
+    );
+    let report = close_lane_with_worktree(&runner, "KEN-N", &wt);
+    assert_kept(&report, &wt, "submodules");
+    assert_eq!(
+        std::fs::read(&draft).ok().as_deref(),
+        Some(b"x\n".as_slice()),
+        "the nested submodule draft was deleted under a nested setting"
+    );
+}
+
+/// Decision 163: a submodule's commits are the worktree's as much as its
+/// files. The defect (R-U5j3): a lane commits inside a submodule and merges
+/// the gitlink bump, so the superproject's `rev-list` pre-check reads the
+/// worktree merged and its status listing clean, while the submodule
+/// commit's only copy is the worktree's submodule store, which the
+/// package's forced removal deletes; `main` then names a commit that
+/// exists nowhere.
+#[test]
+fn a_close_keeps_a_worktree_whose_submodule_holds_an_unpushed_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let source = submodule_source(runner.state_dir(), "sub-source");
+    add_submodule(&repo, &source, "sub", None);
+    merge_main(&repo, &wt);
+    init_submodules(&wt);
+    let (work, store) = unpushed_submodule_commit(&repo, &wt);
+    assert_eq!(
+        pinned_status(&wt),
+        "",
+        "the probe's superproject listing reads clean"
+    );
+    assert_eq!(
+        git(&repo, &["rev-parse", "main"]),
+        git(&wt, &["rev-parse", "HEAD"]),
+        "the probe's gitlink bump is merged"
+    );
+    let report = close_lane_with_worktree(&runner, "KEN-C", &wt);
+    assert_kept(&report, &wt, "submodules");
+    assert!(
+        store.is_dir(),
+        "the submodule store was deleted: {}",
+        store.display()
+    );
+    assert_eq!(
+        git(&wt.join("sub"), &["rev-parse", "HEAD"]),
+        work,
+        "the submodule's unpushed commit was lost"
+    );
+}
+
+/// Decision 169: a gitlink never initialized, with no store and no
+/// populated directory, has nothing to lose, so a clean merged worktree
+/// whose `.gitmodules` names one is released, as git's own unforced removal
+/// removes it. The defect: every gitlink read as a populated submodule
+/// keeps every worktree of a repository with submodules, and no lane there
+/// is ever released.
+#[test]
+fn a_close_releases_a_clean_worktree_whose_submodule_was_never_initialized() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let source = submodule_source(runner.state_dir(), "sub-source");
+    add_submodule(&repo, &source, "sub", None);
+    merge_main(&repo, &wt);
+    assert!(
+        git(&wt, &["ls-files", "--stage"]).contains("160000 "),
+        "the probe's index holds the gitlink"
+    );
+    assert!(
+        !wt.join("sub/.git").exists(),
+        "the probe's submodule is populated"
+    );
+    let report = close_lane_with_worktree(&runner, "KEN-U", &wt);
+    assert_released(&report, &wt);
+}
+
+/// Decision 166: the keep reads the index's gitlink, which no activation
+/// setting changes. The defect (R-U5j4 C1): `submodule.<name>.active=false`,
+/// or a `submodule.active` pattern excluding the submodule with the entry's
+/// own `active` unset (gitsubmodules(7) § Active submodules), makes `git
+/// submodule status` prefix a populated submodule `-`, so U5j4's keep read
+/// it absent, the nested `ignore=all` emptied the pinned status, and the
+/// forced removal deleted the inner draft.
+#[test]
+fn a_close_keeps_a_worktree_whose_submodule_activation_setting_hides_a_nested_draft() {
+    // (name, the settings written to the worktree's config after `submodule
+    // update --init` wrote `submodule.sub.active=true`)
+    let rows: [(&str, &[&[&str]]); 2] = [
+        (
+            "submodule.sub.active=false",
+            &[&["config", "submodule.sub.active", "false"]],
+        ),
+        (
+            "submodule.active=:(exclude)sub",
+            &[
+                &["config", "--unset", "submodule.sub.active"],
+                &["config", "submodule.active", ":(exclude)sub"],
+            ],
+        ),
+    ];
+    for (name, settings) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let (repo, wt) = worktree_fixture(runner.state_dir());
+        let inner = submodule_source(runner.state_dir(), "inner-source");
+        let middle = submodule_source(runner.state_dir(), "middle-source");
+        add_submodule(&middle, &inner, "inner", Some("all"));
+        add_submodule(&repo, &middle, "sub", None);
+        merge_main(&repo, &wt);
+        init_submodules(&wt);
+        for setting in settings {
+            git(&wt, setting);
+        }
+        let draft = wt.join("sub/inner/draft.txt");
+        std::fs::write(&draft, "x\n").unwrap();
+        assert!(
+            git(&wt, &["submodule", "status"]).starts_with('-'),
+            "{name}: the probe's populated submodule lists as uninitialized"
+        );
+        assert_eq!(
+            pinned_status(&wt),
+            "",
+            "{name}: the probe's draft is hidden by the nested ignore=all"
+        );
+        let report = close_lane_with_worktree(&runner, "KEN-A", &wt);
+        assert_kept(&report, &wt, "submodules");
+        assert_eq!(
+            std::fs::read(&draft).ok().as_deref(),
+            Some(b"x\n".as_slice()),
+            "{name}: the nested draft was deleted under an activation setting"
+        );
+    }
+}
+
+/// Decision 166: the index's gitlink names the submodule's module store
+/// whatever the activation setting says. The defect (R-U5j4 C1): a lane
+/// commits inside its submodule and merges the gitlink bump, and
+/// `submodule.sub.active=false` makes `git submodule status` list the
+/// populated submodule `-`, so U5j4's keep read it absent, the superproject
+/// read merged and clean, and the forced removal deleted the worktree's
+/// module store, the commit's only copy.
+#[test]
+fn a_close_keeps_a_worktree_whose_inactive_submodule_holds_an_unpushed_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let source = submodule_source(runner.state_dir(), "sub-source");
+    add_submodule(&repo, &source, "sub", None);
+    merge_main(&repo, &wt);
+    init_submodules(&wt);
+    let (work, store) = unpushed_submodule_commit(&repo, &wt);
+    git(&wt, &["config", "submodule.sub.active", "false"]);
+    assert!(
+        git(&wt, &["submodule", "status"]).starts_with('-'),
+        "the probe's populated submodule lists as uninitialized"
+    );
+    assert_eq!(
+        pinned_status(&wt),
+        "",
+        "the probe's superproject listing reads clean"
+    );
+    let report = close_lane_with_worktree(&runner, "KEN-I", &wt);
+    assert_kept(&report, &wt, "submodules");
+    assert!(
+        commit_in_store(&store, &work),
+        "the submodule's unpushed commit {work} is gone with its store {}",
+        store.display()
+    );
+}
+
+/// Decision 169: `git submodule deinit` empties the submodule's directory
+/// and leaves its module store under the worktree's git directory, which
+/// the keep reads. The defect (R-U5j4 C1 and P2, both reviews): the
+/// deinitialized entry lists `-`, its `.git` is gone with the tree and the
+/// pinned status lists nothing, so a keep reading `submodule status` or the
+/// populated directory alone released the worktree, and the forced removal
+/// deleted the store, the only copy of a commit made inside the submodule,
+/// and a draft a person wrote into the emptied directory.
+#[test]
+fn a_close_keeps_a_worktree_whose_deinitialized_submodule_left_its_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let source = submodule_source(runner.state_dir(), "sub-source");
+    add_submodule(&repo, &source, "sub", None);
+    merge_main(&repo, &wt);
+    init_submodules(&wt);
+    let (work, store) = unpushed_submodule_commit(&repo, &wt);
+    git(&wt, &["submodule", "deinit", "-q", "sub"]);
+    let draft = wt.join("sub/draft.txt");
+    std::fs::write(&draft, "x\n").unwrap();
+    assert!(
+        !wt.join("sub/.git").exists(),
+        "the probe's deinit left the submodule populated"
+    );
+    assert_eq!(
+        pinned_status(&wt),
+        "",
+        "the probe's draft under the gitlink is listed by nothing"
+    );
+    let report = close_lane_with_worktree(&runner, "KEN-D", &wt);
+    assert_kept(&report, &wt, "submodules");
+    assert_eq!(
+        std::fs::read(&draft).ok().as_deref(),
+        Some(b"x\n".as_slice()),
+        "the draft written after deinit was deleted"
+    );
+    assert!(
+        commit_in_store(&store, &work),
+        "the submodule's unpushed commit {work} is gone with its store {}",
+        store.display()
+    );
+}
+
+/// Decision 169: the keep reads the module store and the populated
+/// gitlinks of the index, so a submodule a person cloned by hand into the
+/// gitlink path, its repository a `.git` directory inside the worktree's
+/// tree and no store under the worktree's git directory, keeps the
+/// worktree as git's own unforced removal refuses it. The defect: a keep
+/// reading the store alone releases it, and the forced removal deletes the
+/// clone with a draft its nested `ignore=all` hides from the pinned status.
+#[test]
+fn a_close_keeps_a_worktree_whose_submodule_is_a_clone_with_no_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let inner = submodule_source(runner.state_dir(), "inner-source");
+    let middle = submodule_source(runner.state_dir(), "middle-source");
+    add_submodule(&middle, &inner, "inner", Some("all"));
+    add_submodule(&repo, &middle, "sub", None);
+    merge_main(&repo, &wt);
+    let sub = wt.join("sub");
+    git(&wt, &["clone", "-q", &middle.display().to_string(), "sub"]);
+    init_submodules(&sub);
+    let draft = sub.join("inner/draft.txt");
+    std::fs::write(&draft, "x\n").unwrap();
+    assert!(
+        sub.join(".git").is_dir(),
+        "the probe's clone is no repository of its own"
+    );
+    let modules = git(
+        &wt,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "modules",
+        ],
+    );
+    assert!(
+        !Path::new(&modules).exists(),
+        "the probe's worktree holds a module store: {modules}"
+    );
+    assert_eq!(
+        pinned_status(&wt),
+        "",
+        "the probe's draft is hidden by the nested ignore=all"
+    );
+    let report = close_lane_with_worktree(&runner, "KEN-H", &wt);
+    assert_kept(&report, &wt, "submodules");
+    assert_eq!(
+        std::fs::read(&draft).ok().as_deref(),
+        Some(b"x\n".as_slice()),
+        "the hand clone's nested draft was deleted"
+    );
+}
+
+/// Decision 169: the keep reads no `.gitmodules`, so a gitlink with no
+/// mapping there, an embedded repository `git add` took as one, is judged
+/// like any other and a clean merged worktree is released. The defect
+/// (R-U5j4 M1): a read through `.gitmodules` (`git submodule status`) exits
+/// 128 on the unmapped gitlink, so the close held the worktree
+/// `worktree-unreadable` on every repeat and the lane never ended.
+#[test]
+fn a_close_releases_a_clean_worktree_whose_gitlink_has_no_gitmodules_mapping() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let embedded = repo.join("emb");
+    git(&repo, &["init", "-q", "-b", "main", "emb"]);
+    std::fs::write(embedded.join("tracked.txt"), "o\n").unwrap();
+    git(&embedded, &["add", "tracked.txt"]);
+    commit(&embedded, "base");
+    git(&repo, &["add", "emb"]);
+    commit(&repo, "embedded");
+    merge_main(&repo, &wt);
+    let unmapped = Command::new("git")
+        .current_dir(&wt)
+        .args(["submodule", "status"])
+        .output()
+        .expect("git");
+    assert!(
+        !unmapped.status.success(),
+        "the probe's gitlink has a .gitmodules mapping: {}",
+        String::from_utf8_lossy(&unmapped.stdout)
+    );
+    assert_eq!(pinned_status(&wt), "", "the probe's tree reads clean");
+    let report = close_lane_with_worktree(&runner, "KEN-G", &wt);
+    assert_released(&report, &wt);
+}
+
+/// Decision 151 (2): the removal goes through the worktree package, which
+/// moves a lane's mailboxes to the main checkout's `tmp/lane-mail/` before
+/// git deletes the tree, so an unread notice under the worktree's ignored
+/// `tmp/`, invisible to the dirty read, outlives the removal where the
+/// overseer's watch reads a removed lane's mail. The defect: a raw `git
+/// worktree remove` deletes the notice before its reader took it, and the
+/// lane reads `done` with no `kept`.
+#[test]
+fn a_close_releasing_a_worktree_moves_its_unread_lane_mail_to_the_main_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let (row, _) = plant_lane_notice(&wt, "KEN-M");
+    assert_eq!(
+        git(&wt, &["status", "--porcelain", "--untracked-files=all"]),
+        "",
+        "the probe's mailbox is under the ignored tmp/: the dirty read does not keep it"
+    );
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane("KEN-M", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let report = close_with_worktree(&runner, "KEN-M");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "released",
+        "{report}"
+    );
+    assert_eq!(report["lane"].get("kept"), None, "{report}");
+    assert_eq!(report["lane"].get("kept_mail"), None, "{report}");
+    assert!(!wt.exists(), "the worktree was released");
+    let moved = repo.join("tmp/lane-mail/KEN-M/to-overseer.jsonl");
+    assert_eq!(
+        std::fs::read(&moved).ok(),
+        Some(row),
+        "unread lane mail was deleted instead of kept or moved: {}",
+        moved.display()
+    );
+}
+
+/// Decision 151 (2), the package's rc 2: a lane mailbox the package cannot
+/// move to the main checkout's refuses the removal with nothing removed, and
+/// the close keeps the worktree `mail-unmoved`, the notice where the lane
+/// wrote it. The defect: a refusal read as released, or a kept worktree
+/// without the reason the mail stands for.
+#[test]
+fn a_close_keeps_a_worktree_whose_lane_mail_cannot_be_moved() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let (row, notice) = plant_lane_notice(&wt, "KEN-R");
+    // The main checkout's mailbox directory stands but takes no entry.
+    let main_mail = repo.join("tmp/lane-mail");
+    std::fs::create_dir_all(&main_mail).unwrap();
+    std::fs::set_permissions(&main_mail, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane("KEN-R", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let report = close_with_worktree(&runner, "KEN-R");
+    std::fs::set_permissions(&main_mail, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "kept",
+        "{report}"
+    );
+    assert_eq!(report["lane"]["kept"], "mail-unmoved", "{report}");
+    assert!(wt.exists(), "nothing was removed");
+    assert_eq!(
+        std::fs::read(&notice).ok(),
+        Some(row),
+        "the notice stands where the lane wrote it"
+    );
+    assert!(
+        !main_mail.join("KEN-R").exists(),
+        "no mailbox reached the main checkout"
+    );
+}
+
+/// Decision 151 (2), the package's rc 3: a mailbox that cannot join the one
+/// already in the main checkout is kept beside it, the worktree removed all
+/// the same, and the close records where the package kept it on the lane
+/// as `kept_mail`, the mail readable there. The defect: a released worktree
+/// whose unread mail was set aside with no record of where.
+#[test]
+fn a_close_releasing_a_worktree_records_the_lane_mail_kept_beside_the_main_checkouts() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (repo, wt) = worktree_fixture(runner.state_dir());
+    let (row, _) = plant_lane_notice(&wt, "KEN-J");
+    // The main checkout's mailbox for the item is one no mail can join:
+    // its to-overseer.jsonl a symlink, which the package's join refuses.
+    let main_box = repo.join("tmp/lane-mail/KEN-J");
+    std::fs::create_dir_all(&main_box).unwrap();
+    std::os::unix::fs::symlink("/nonexistent", main_box.join("to-overseer.jsonl")).unwrap();
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane("KEN-J", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let report = close_with_worktree(&runner, "KEN-J");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "released",
+        "{report}"
+    );
+    assert_eq!(report["lane"].get("kept"), None, "{report}");
+    assert!(!wt.exists(), "the worktree was released");
+    let kept = report["lane"]["kept_mail"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the kept mailbox is recorded on the lane: {report}"));
+    assert_eq!(
+        std::fs::read(Path::new(kept).join("KEN-J/to-overseer.jsonl")).ok(),
+        Some(row),
+        "the notice is readable where the record says: {kept}"
+    );
+}
+
+/// R-U5j L1: the close is the one writer of the lane's `kept` and
+/// `kept_mail`, and a relaunch keeps every field it does not write, so a
+/// lane closed `kept: dirty`, relaunched and closed again with its worktree
+/// released must read neither. The defect: a stale `kept` outlives a
+/// release, and the retention duty keeps a worktree that is gone.
+#[test]
+fn a_later_close_that_releases_clears_an_earlier_closes_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let mut fleet = runner.fleet();
+    let mut lane = worktree_lane("KEN-S", &runner, &wt);
+    lane["kept"] = json!("dirty");
+    lane["kept_mail"] = json!("/stale");
+    fleet["lanes"] = json!([lane]);
+    runner.write_fleet(&fleet);
+    let report = close_with_worktree(&runner, "KEN-S");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "released",
+        "{report}"
+    );
+    assert!(!wt.exists(), "the worktree was released");
+    assert_eq!(
+        report["lane"].get("kept"),
+        None,
+        "a later close that releases leaves a stale kept: {report}"
+    );
+    assert_eq!(report["lane"].get("kept_mail"), None, "{report}");
+}
+
+/// R-U5j M2: a `claude-cloud` lane records `host: claude-cloud` with its
+/// `mail_root` the item's worktree on this machine, the one worktree the
+/// legacy `lane-close` removes for a hosted lane, so its close owes that
+/// worktree and releases it through the package like a local lane's. The
+/// defect: the worktree standing after a done close with no `kept`, which
+/// the retention duty would read as released.
+#[test]
+fn a_claude_cloud_lanes_local_worktree_is_owed_and_released() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = claim_worktree_fixture(runner.state_dir());
+    let tracked = git(&wt, &["ls-files"]);
+    assert!(
+        !tracked.is_empty() && git(&wt, &["ls-files", "--deleted"]) == tracked,
+        "the claim holds every tracked file in its index and none on disk: {tracked:?}"
+    );
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([cloud_lane("KEN-C", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let report = close_with_worktree(&runner, "KEN-C");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "released",
+        "{report}"
+    );
+    assert!(!wt.exists(), "the cloud lane's local worktree was released");
+    let rows = worktree_rows(&report["intent"]);
+    assert_eq!(rows.len(), 1, "one worktree row: {report}");
+    assert_eq!(rows[0]["by"], "released", "{report}");
+    assert_eq!(report["lane"].get("kept"), None, "{report}");
+}
+
+/// R-U5j2 M1, the other side: in a claim worktree only the ` D` lines are
+/// the claim's design; an untracked draft under it is work, and the close
+/// keeps the worktree `dirty` with the draft intact. The defect: a claim
+/// read as clean whatever it holds, the draft deleted with the worktree.
+#[test]
+fn a_claude_cloud_lanes_claim_worktree_holding_a_draft_is_kept_dirty() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = claim_worktree_fixture(runner.state_dir());
+    let draft = wt.join("draft.txt");
+    std::fs::write(&draft, "x\n").unwrap();
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([cloud_lane("KEN-D", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let report = close_with_worktree(&runner, "KEN-D");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["status"], "done", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "kept",
+        "{report}"
+    );
+    assert_eq!(report["lane"]["kept"], "dirty", "{report}");
+    assert!(wt.exists(), "the claim worktree stands");
+    assert!(draft.exists(), "the draft under the claim was deleted");
+}
+
+/// A `claude-cloud` lane on `wt`, its local worktree, as `open-terminal`
+/// records it: `host` and `kind` the cloud word.
+fn cloud_lane(item: &str, runner: &Runner, wt: &Path) -> Value {
+    let mut lane = worktree_lane(item, runner, wt);
+    lane["host"] = json!("claude-cloud");
+    lane["kind"] = json!("claude-cloud");
+    lane
+}
+
+/// R-U5j2 L1: a worktree package that cannot start (a script that is not
+/// there never starts: the runner's cause, no `worktree-` keyed line) is no answer
+/// from the package, so the worktree is held `removal-unanswered`: the
+/// close `unconfirmed`, the worktree in `remaining`, the lane not `done`,
+/// nothing removed, and the repeat reads it again once the install is
+/// repaired. The defect: a start that failed read as the package's refusal
+/// records a terminal `kept: refused:...` on a lane whose close is never
+/// retried.
+#[test]
+fn a_worktree_package_that_cannot_start_holds_the_close_removal_unanswered() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane("KEN-N", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let missing = runner.state_dir().join("no-such-package/worktree");
+    let report = close_with_worktree_cli(&runner, "KEN-N", &missing.display().to_string());
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "unreadable",
+        "{report}"
+    );
+    assert!(
+        report["intent"]["observation"]["cause"]
+            .as_str()
+            .is_some_and(|c| c.contains("removal-unanswered:")),
+        "held as no answer from the package: {report}"
+    );
+    assert_eq!(
+        remaining(&report["intent"]["observation"], "worktree")["path"],
+        wt.display().to_string(),
+        "the worktree stands in what remains: {report}"
+    );
+    assert!(
+        worktree_rows(&report["intent"])
+            .iter()
+            .all(|r| r.get("by").is_none()),
+        "nothing discharged it: {report}"
+    );
+    let lane = &runner.fleet()["lanes"][0];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(
+        lane.get("kept"),
+        None,
+        "no terminal reason recorded: {lane}"
+    );
+    assert!(wt.exists(), "nothing was removed");
+}
+
+/// Decision 128 (9), the hold: a worktree whose path cannot be read is
+/// neither released nor kept; the obligation stands `worktree-unreadable`
+/// and the close does not settle, so a repeated close reads it again. The
+/// defect: an unreadable path discharged as released or kept would record a
+/// state nothing read.
+#[test]
+fn an_unreadable_worktree_holds_the_close_worktree_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane("KEN-U", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    // The worktree itself unreadable: its own metadata reads (the validation
+    // stop's read of the root passes), its `.git` entry does not.
+    std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let unread = std::fs::metadata(wt.join(".git")).is_err();
+    let report = close_with_worktree(&runner, "KEN-U");
+    std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(unread, "the probe's `.git` entry is unreadable");
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "unreadable",
+        "{report}"
+    );
+    assert_eq!(
+        remaining(&report["intent"]["observation"], "worktree")["path"],
+        wt.display().to_string(),
+        "the worktree stands in what remains: {report}"
+    );
+    assert!(
+        discharged_by(&report["intent"], "released").is_empty()
+            && worktree_rows(&report["intent"])
+                .iter()
+                .all(|r| r.get("by").is_none()),
+        "nothing discharged it: {report}"
+    );
+    assert_eq!(runner.fleet()["lanes"][0]["status"], "running");
+    assert!(wt.exists(), "nothing was removed");
+}
+
+/// Decision 128 (9): a close whose lane record names no local worktree
+/// acquires none, so a lane with no mail root and a hosted lane (whose
+/// worktree is its host's, decision 57) settle with no worktree row. The
+/// defect: a worktree obligation on a path this machine does not hold would
+/// never settle.
+#[test]
+fn a_lane_with_no_local_worktree_acquires_no_worktree_obligation() {
+    // (name, the lane fields that name no local worktree)
+    let rows: Vec<(&str, Value)> = vec![
+        ("no mail root", json!({"mail_root": Value::Null})),
+        (
+            "a hosted lane",
+            json!({"host": "/host", "mail_root": "/srv/worktree"}),
+        ),
+    ];
+    for (name, fields) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let mut row = lane("KEN-N", "running", &runner, Value::Null);
+        for (key, value) in fields.as_object().unwrap() {
+            row[key] = value.clone();
+        }
+        let mut fleet = runner.fleet();
+        fleet["lanes"] = json!([row]);
+        runner.write_fleet(&fleet);
+        let report = effect_report(&runner.op_fleet(&terminal_close("KEN-N")));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{name}: {report}");
+        assert!(
+            worktree_rows(&report["intent"]).is_empty(),
+            "{name}: no worktree acquired: {report}"
+        );
+        assert!(
+            report["intent"]["observation"].get("worktree").is_none(),
+            "{name}"
+        );
+        assert_eq!(report["lane"].get("kept"), None, "{name}");
+    }
+}
+
+/// Decision 128 (9) with 115 (A): the worktree is acquired, written on the
+/// intent, before the removal runs, so a close that dies at its removal
+/// leaves the record naming the worktree it owes and the repeated close
+/// releases it. The git shim, on the PATH the worktree package inherits,
+/// holds the run at the package's `git worktree remove`; the row reads the
+/// record there, kills the run, and repeats the close. The defect: a
+/// removal before its acquisition is written leaves a dead close with no
+/// record of the worktree it was removing.
+#[test]
+fn a_close_crashed_at_its_removal_holds_the_worktree_acquired_for_the_repeat() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([worktree_lane("KEN-X", &runner, &wt)]);
+    runner.write_fleet(&fleet);
+    let fifo = runner.state_dir().join("hold.fifo");
+    mkfifo(&fifo);
+    let mark = runner.state_dir().join("hold.mark");
+    let real_git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("which git");
+    let real_git = String::from_utf8_lossy(&real_git.stdout).trim().to_owned();
+    assert!(!real_git.is_empty(), "a real git on PATH");
+    let skip = runner.state_dir().join("hold.skip");
+    let fifo_s = fifo.display().to_string();
+    let mark_s = mark.display().to_string();
+    let skip_s = skip.display().to_string();
+    let cli = worktree_cli();
+    let mut child = runner.spawn_op_fleet(
+        &terminal_close("KEN-X"),
+        &[
+            ("WORKTREE_CLI", cli.as_str()),
+            ("GIT_REAL", real_git.as_str()),
+            ("GIT_HOLD_FIFO", fifo_s.as_str()),
+            ("GIT_HOLD_MARK", mark_s.as_str()),
+            ("GIT_HOLD_SKIP", skip_s.as_str()),
+        ],
+        &fixtures().join("git-hold"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !mark.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the close never reached its removal: {}",
+            runner.fleet()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // The record at the removal: the worktree standing under its role, the
+    // signal written, nothing discharged about it.
+    let held = runner.fleet()["intents"][0].clone();
+    let standing = held["obligations"]["standing"].as_array().unwrap().clone();
+    assert!(
+        standing.iter().any(|o| o["kind"] == "worktree"
+            && o["path"] == wt.display().to_string()
+            && o["role"] == "worktree"),
+        "the worktree is acquired before the removal: {held}"
+    );
+    assert_eq!(held["obligations"]["signalled"], true, "{held}");
+    assert!(discharged_by(&held, "released").is_empty(), "{held}");
+    // The crash: the close is killed at its removal and the held shim
+    // released with the skip file in place, so it exits without running the
+    // removal its caller is dead for.
+    child.kill().unwrap();
+    child.wait().unwrap();
+    std::fs::write(&skip, "").unwrap();
+    release_hold(&fifo, Duration::from_secs(10), || {
+        runner.fleet().to_string()
+    });
+    assert!(wt.exists(), "the held removal never ran");
+    // The repeated close reads the standing worktree and releases it.
+    let report = close_with_worktree(&runner, "KEN-X");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["worktree"], "released",
+        "{report}"
+    );
+    assert!(!wt.exists(), "the repeat released the worktree");
+    assert_eq!(
+        runner.fleet()["intents"].as_array().unwrap().len(),
+        1,
+        "no second intent"
+    );
+}
+
+/// Decisions 124e (24) and 128 (9): a signalled close owing its worktree
+/// under a lane that moved releases that obligation `lane-moved`, as it does
+/// the validation stop, since the worktree is the session's that now holds
+/// the lane; the close settles and the worktree stands. The defect: a moved
+/// close removing the new session's worktree.
+#[test]
+fn a_moved_close_owing_its_worktree_releases_it_lane_moved() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_repo, wt) = worktree_fixture(runner.state_dir());
+    let new_harness = Owned::sleep();
+    let new_pane = server.open_idle("KEN-MW", runner.state_dir());
+    let mut fleet = runner.fleet();
+    let mut row = lane(
+        "KEN-MW",
+        "running",
+        &runner,
+        json!({
+            "pane": new_pane, "server": server.pid, "server_start": server.start,
+            "pid": new_harness.pid(), "start": new_harness.start(),
+        }),
+    );
+    row["session_since"] = json!("2026-01-29T16:00:00Z");
+    row["mail_root"] = json!(wt.display().to_string());
+    fleet["lanes"] = json!([row]);
+    fleet["intents"] = json!([{
+        "id": "close-owned-resources:KEN-MW:1-1", "op": "close-owned-resources", "target": "KEN-MW", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "lane_since": "2026-01-29T15:20:00Z",
+        "observation": {"identity": "stopped", "worktree": "unreadable", "cause": "worktree-unreadable:permission denied"},
+        "obligations": {"standing": [{"kind": "worktree", "path": wt.display().to_string(), "role": "worktree"}], "discharged": [], "signalled": true},
+    }]);
+    runner.write_fleet(&fleet);
+    let report = effect_report(&runner.op_fleet(&terminal_close("KEN-MW")));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert!(
+        discharged_by(&report["intent"], "lane-moved")
+            .iter()
+            .any(|o| o["kind"] == "worktree"),
+        "the owed worktree is released to the session holding the lane: {report}"
+    );
+    assert!(wt.exists(), "the new session's worktree stands");
+    assert!(live(new_harness.pid()), "the new session stands");
+    assert_eq!(runner.fleet()["lanes"][0]["status"], "running");
 }

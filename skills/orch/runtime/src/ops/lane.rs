@@ -23,7 +23,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::state::{
     self, CloseGround, Document, EffectOp, Intent, Lane, LaneKeys, LaneStatus, LaunchIdentity,
-    Phase, Reservation, Selection, TerminalVerdict,
+    ObligationRecord, Phase, Reservation, Selection, TerminalVerdict,
 };
 
 /// Open a lane for an item: judge the fleet cap, write its record as
@@ -970,9 +970,11 @@ pub(super) fn record_launch_outcome(
 /// The close arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` on an exited or terminal ground reads
 /// the lane done and drops the PR identities and the reservation a close
-/// ends; on a `no-landing` ground it reads the lane stopped and keeps
-/// everything else, the attempt retired with the item's work and history
-/// intact (decision 98). `failed` and `unconfirmed` move nothing.
+/// ends, and records the reason the close kept the lane's worktree as
+/// `kept` where its set says it did (decision 128 (9)); on a `no-landing`
+/// ground it reads the lane stopped and keeps everything else, the attempt
+/// retired with the item's work and history intact (decision 98). `failed`
+/// and `unconfirmed` move nothing.
 pub(super) fn record_close_outcome(
     path: &Path,
     doc: &mut Document,
@@ -1004,6 +1006,25 @@ pub(super) fn record_close_outcome(
                     state::delete(lane, "pending_pr");
                     state::delete(lane, "parked");
                     state::delete(lane, "reservation");
+                    // This close is the one writer of both: an earlier
+                    // close's reason, which a relaunch keeps, never outlives
+                    // a release.
+                    state::delete(lane, "kept");
+                    state::delete(lane, "kept_mail");
+                    if let Some(reason) = intent
+                        .obligations
+                        .as_ref()
+                        .and_then(ObligationRecord::worktree_kept)
+                    {
+                        state::set(lane, "kept", reason);
+                    }
+                    if let Some(mail) = intent
+                        .obligations
+                        .as_ref()
+                        .and_then(ObligationRecord::worktree_mail_kept)
+                    {
+                        state::set(lane, "kept_mail", mail);
+                    }
                     row["text"] = json!(format!("lane closed; intent {}", intent.id));
                     if let Some(CloseGround::Terminal { verdict, source }) = &intent.close {
                         row["verdict"] = serde_json::to_value(verdict)?;

@@ -15,9 +15,158 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
+
+use orch_runtime::schedule::Clock;
+
+/// The one injected clock as a test drives it (decision 121, Q16): time
+/// moves only when the test passes it, and a `sleep` blocks its thread
+/// until the clock has reached its wake time. Shared by the runner's two
+/// duty threads and the operation handle alike, so one `pass` wakes every
+/// wait that came due and the test proves order by what ran, never by
+/// waiting real time.
+pub struct FakeClock {
+    state: Mutex<FakeState>,
+    woke: Condvar,
+    /// How long a `pass` waits, in real time, for the woken threads to come
+    /// back to sleep before it reports them stuck.
+    pub settle: Duration,
+}
+
+struct FakeState {
+    start: Instant,
+    now: Instant,
+    /// The epoch second the fake wall clock reads.
+    wall: u64,
+    /// The wake time of every thread blocked in `sleep`.
+    sleepers: Vec<Instant>,
+}
+
+impl Default for FakeClock {
+    fn default() -> FakeClock {
+        FakeClock::new()
+    }
+}
+
+impl FakeClock {
+    pub fn new() -> FakeClock {
+        let start = Instant::now();
+        FakeClock {
+            state: Mutex::new(FakeState {
+                start,
+                now: start,
+                wall: 1_769_700_000,
+                sleepers: Vec::new(),
+            }),
+            woke: Condvar::new(),
+            settle: Duration::from_secs(20),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, FakeState> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Fake time since the clock was made.
+    pub fn elapsed(&self) -> Duration {
+        let s = self.lock();
+        s.now.duration_since(s.start)
+    }
+
+    /// The fake wall clock's epoch second.
+    pub fn wall_secs(&self) -> u64 {
+        self.lock().wall
+    }
+
+    /// Advance `d` and wait until every sleeper that came due has run and
+    /// gone back to sleep: the sleeper count is back to what it was and no
+    /// sleeper's wake time has passed. A thread that ended instead of
+    /// sleeping again makes this fail with the sleepers it still sees; use
+    /// [`FakeClock::release`] to wake threads that are about to stop.
+    pub fn pass(&self, d: Duration) {
+        let mut s = self.lock();
+        let before = s.sleepers.len();
+        s.now += d;
+        s.wall += d.as_secs();
+        self.woke.notify_all();
+        let deadline = Instant::now() + self.settle;
+        loop {
+            let settled = s.sleepers.len() >= before && s.sleepers.iter().all(|w| *w > s.now);
+            if settled {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the woken threads did not come back to sleep: {} of {before} sleeping, now+{:?}",
+                s.sleepers.len(),
+                s.now.duration_since(s.start)
+            );
+            let (guard, _) = self
+                .woke
+                .wait_timeout(s, Duration::from_millis(20))
+                .unwrap_or_else(|p| p.into_inner());
+            s = guard;
+        }
+    }
+
+    /// Advance `d` and wake what came due, waiting for nothing: for a thread
+    /// that will see a stop and end rather than sleep again.
+    pub fn release(&self, d: Duration) {
+        let mut s = self.lock();
+        s.now += d;
+        s.wall += d.as_secs();
+        self.woke.notify_all();
+    }
+
+    /// How many threads are blocked in `sleep` now.
+    pub fn sleepers(&self) -> usize {
+        self.lock().sleepers.len()
+    }
+
+    /// Wait, in real time, until `n` threads are blocked in `sleep`.
+    pub fn await_sleepers(&self, n: usize) {
+        let mut s = self.lock();
+        let deadline = Instant::now() + self.settle;
+        while s.sleepers.len() < n {
+            assert!(
+                Instant::now() < deadline,
+                "{} of {n} threads reached sleep",
+                s.sleepers.len()
+            );
+            let (guard, _) = self
+                .woke
+                .wait_timeout(s, Duration::from_millis(20))
+                .unwrap_or_else(|p| p.into_inner());
+            s = guard;
+        }
+    }
+}
+
+impl Clock for FakeClock {
+    fn now(&self) -> Instant {
+        self.lock().now
+    }
+
+    fn wall(&self) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(self.lock().wall)
+    }
+
+    fn sleep(&self, d: Duration) {
+        let mut s = self.lock();
+        let wake = s.now + d;
+        s.sleepers.push(wake);
+        self.woke.notify_all();
+        while s.now < wake {
+            s = self.woke.wait(s).unwrap_or_else(|p| p.into_inner());
+        }
+        if let Some(i) = s.sleepers.iter().position(|w| *w == wake) {
+            s.sleepers.swap_remove(i);
+        }
+        self.woke.notify_all();
+    }
+}
 
 pub fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_orch-runtime"))

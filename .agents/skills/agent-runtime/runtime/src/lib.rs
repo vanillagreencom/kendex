@@ -16,6 +16,7 @@ pub mod process;
 pub mod protocol;
 pub mod reading;
 pub mod record;
+pub mod rows;
 pub mod session;
 
 pub use error::{Error, Result};

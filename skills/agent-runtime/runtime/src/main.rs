@@ -11,7 +11,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::error::ErrorKind;
 use clap::{Parser, Subcommand};
@@ -45,6 +45,10 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the parsed command line, built once; `deliver` names a session by its facts in place of a record"
+)]
 enum Verb {
     /// Print the protocol and crate version.
     Version,
@@ -73,16 +77,66 @@ enum Verb {
         #[arg(long)]
         record: PathBuf,
     },
-    /// Paste a file's text into the recorded pane, only when the session
-    /// is positively idle.
+    /// Type text into the session's pane, only when the session is
+    /// positively idle, and confirm it by a user turn the harness wrote to
+    /// its own session file. The session is a launch record, or its facts
+    /// on the line (`--harness` with the pane, the server and the session).
     Deliver {
+        #[arg(long, conflicts_with = "harness")]
+        record: Option<PathBuf>,
+        /// The text to type, from a file.
+        #[arg(long, conflicts_with = "line")]
+        file: Option<PathBuf>,
+        /// The text to type, as given.
         #[arg(long)]
-        record: PathBuf,
-        #[arg(long)]
-        file: PathBuf,
+        line: Option<String>,
         /// Deliver whatever the screen says; for a probe that knows better.
         #[arg(long)]
         force: bool,
+        /// The session's harness, with the facts below in place of a record.
+        #[arg(long, requires_all = ["socket", "server_pid", "pane", "cwd"])]
+        harness: Option<String>,
+        /// The harness executable, where it runs from a configured path.
+        #[arg(long)]
+        program: Option<PathBuf>,
+        /// The tmux socket and server pid the pane sits on, and the server's
+        /// start where the caller recorded one; without it the server at
+        /// the socket stands for the pid alone (decision 66).
+        #[arg(long)]
+        socket: Option<PathBuf>,
+        #[arg(long)]
+        server_pid: Option<u32>,
+        #[arg(long)]
+        server_start: Option<u64>,
+        #[arg(long)]
+        pane: Option<String>,
+        /// The harness process the session runs as; only that identity is
+        /// the harness (decision 99).
+        #[arg(long, requires = "start")]
+        pid: Option<u32>,
+        #[arg(long)]
+        start: Option<String>,
+        /// The account home the session file is read under; the harness's
+        /// default home when omitted.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// The session id the file is named by; without one no delivery is
+        /// confirmable, which the reply says as its limit.
+        #[arg(long)]
+        session_id: Option<String>,
+        /// The file's user-turn count before the paste, as an earlier
+        /// `--no-paste` read it; read now when omitted. The delivery is
+        /// confirmed by a turn beyond it.
+        #[arg(long)]
+        turns_before: Option<u64>,
+        /// Read the state and the turn count alone: nothing is typed.
+        #[arg(long)]
+        no_paste: bool,
+        /// How long the confirming turn is waited for after the paste.
+        #[arg(long, default_value_t = 15)]
+        bound_secs: u64,
     },
     /// End the recorded harness exactly, then close its window.
     Stop {
@@ -283,8 +337,79 @@ fn bound_session(rec: &LaunchRecord, home: &Path) -> Binding {
     }
 }
 
+/// A pane read and its screen judged once: the pane by its exact id, who
+/// holds its terminal against the recorded identity, and the state.
+struct Judged {
+    pane: Reading<PaneFields>,
+    /// Who holds the terminal; none when the pane was not read live.
+    reading: Option<ProcessReading>,
+    state: State,
+    screen_tail: Vec<String>,
+}
+
+/// Read `pane` and judge its screen for `harness`. Who holds the pane's
+/// terminal is read against `recorded` where the caller has one: that
+/// identity alone is the harness, and an ended one is read as other, never
+/// replaced (decision 99). With none, the harness-named process now in the
+/// foreground is read, for the caller to record.
+fn judge_pane(
+    harness: Harness,
+    owns: &dyn Fn(&str) -> bool,
+    pane: &tmux::Pane,
+    recorded: Option<&Identity>,
+) -> Result<Judged> {
+    let fields = match tmux::pane_fields(&pane.server, &pane.id) {
+        Reading::Live(fields) => fields,
+        Reading::Gone => {
+            return Ok(Judged {
+                pane: Reading::Gone,
+                reading: None,
+                state: State::Unjudged {
+                    cause: "pane-gone".to_owned(),
+                },
+                screen_tail: Vec::new(),
+            });
+        }
+        Reading::Unreadable { cause } => {
+            return Ok(Judged {
+                pane: Reading::Unreadable { cause },
+                reading: None,
+                state: State::Unjudged {
+                    cause: "pane-unreadable".to_owned(),
+                },
+                screen_tail: Vec::new(),
+            });
+        }
+    };
+    let reading = observe::foreground(fields.pid, owns, recorded);
+    let screen = tmux::capture(pane)?;
+    let state = observe::judge(&screen, harness, &reading, None);
+    let screen_tail: Vec<String> = screen
+        .lines()
+        .rev()
+        .filter(|l| !l.trim().is_empty())
+        .take(12)
+        .map(str::to_owned)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    Ok(Judged {
+        pane: Reading::Live(fields),
+        reading: Some(reading),
+        state,
+        screen_tail,
+    })
+}
+
 fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
-    let fields = match tmux::pane_fields(&rec.pane.server, &rec.pane.id) {
+    let judged = judge_pane(
+        rec.harness,
+        &owns(rec),
+        &rec.pane,
+        rec.harness_process.as_ref(),
+    )?;
+    let fields = match judged.pane {
         Reading::Live(fields) => fields,
         Reading::Gone => return Ok(unjudged(rec, Reading::Gone, "pane-gone")),
         Reading::Unreadable { cause } => {
@@ -295,12 +420,7 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
             ));
         }
     };
-    // Who holds the pane's terminal, read against the recorded identity
-    // where the record has one: that identity alone is the harness, and an
-    // ended one is read as other, never replaced (decision 99). A record
-    // with none takes the harness-named process now in the foreground.
-    let reading = observe::foreground(fields.pid, &owns(rec), rec.harness_process.as_ref());
-    if let ProcessReading::Harness { identity } = &reading
+    if let Some(ProcessReading::Harness { identity }) = &judged.reading
         && rec.harness_process.is_none()
     {
         rec.harness_process = Some(identity.clone());
@@ -321,27 +441,229 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
             }
         }
     }
-    let screen = tmux::capture(&rec.pane)?;
-    let state = observe::judge(&screen, rec.harness, &reading, None);
-    let tail: Vec<String> = screen
-        .lines()
-        .rev()
-        .filter(|l| !l.trim().is_empty())
-        .take(12)
-        .map(str::to_owned)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
     Ok(Inspection {
         pane: Reading::Live(fields),
         harness_process: rec.harness_process.clone(),
         harness_live,
         native_session: rec.native_session.clone(),
         native_session_unreadable,
-        state,
-        screen_tail: tail,
+        state: judged.state,
+        screen_tail: judged.screen_tail,
     })
+}
+
+/// What a delivery is confirmed by: the session file bound once (a launch
+/// record's), or the id the file is found by (decision 65), or nothing,
+/// which no paste can be confirmed against.
+enum SessionFile {
+    Bound(PathBuf),
+    ById {
+        home: Option<PathBuf>,
+        cwd: PathBuf,
+        id: String,
+    },
+    Unbound,
+}
+
+/// The session `deliver` types into: its pane, the harness and the identity
+/// holding it, and the file its turn is confirmed in.
+struct Session {
+    harness: Harness,
+    program: Option<PathBuf>,
+    pane: tmux::Pane,
+    recorded: Option<Identity>,
+    file: SessionFile,
+}
+
+/// The session a launch record names, inspected once and healed as
+/// `inspect` heals it, with the pane judged by that same read.
+fn recorded_session(path: &Path) -> Result<(Session, Judged)> {
+    let (mut rec, revision, extra) = read_record(path)?;
+    let inspection = inspect(&mut rec)?;
+    record::write(
+        path,
+        RECORD_VERSION,
+        &rec,
+        &extra,
+        Expect::Revision(revision),
+    )?;
+    let judged = Judged {
+        pane: inspection.pane,
+        reading: None,
+        state: inspection.state,
+        screen_tail: inspection.screen_tail,
+    };
+    let file = match rec.native_session {
+        Some(bound) => SessionFile::Bound(bound.file),
+        None => SessionFile::Unbound,
+    };
+    Ok((
+        Session {
+            harness: rec.harness,
+            program: rec.intent.program,
+            pane: rec.pane,
+            recorded: rec.harness_process,
+            file,
+        },
+        judged,
+    ))
+}
+
+/// How a delivery ended. A paste alone settles nothing: `confirmed` is a
+/// user turn the harness wrote to the session's own file after the paste
+/// (decisions 61, 65), `unconfirmed` the bound passed with no such turn,
+/// `limit` a session with no confirmable route, into which nothing is typed.
+#[derive(Debug, Serialize)]
+#[serde(tag = "delivery", rename_all = "kebab-case")]
+enum Delivery {
+    /// `--no-paste`: the state read and the bound file's turn count.
+    Read {
+        state: State,
+        file: PathBuf,
+        turns: u64,
+    },
+    Confirmed {
+        outcome: Outcome,
+        route: &'static str,
+        pane: String,
+        bytes: usize,
+        file: PathBuf,
+        turns_before: u64,
+        turns_after: u64,
+    },
+    Unconfirmed {
+        outcome: Outcome,
+        cause: &'static str,
+        pane: String,
+        file: PathBuf,
+        turns_before: u64,
+    },
+    Limit {
+        harness: Harness,
+        cause: &'static str,
+    },
+}
+
+/// How often the session file is read for the confirming turn.
+const TURN_POLL: Duration = Duration::from_millis(250);
+
+/// Type `text` into the session's pane when `judged` read it idle, and
+/// confirm the delivery by a user turn in its own file within `bound`.
+/// `None` text reads the state and the turn count alone. `turns_before` is
+/// the count an earlier read gave, else the file is counted now, before
+/// the paste.
+fn deliver(
+    session: &Session,
+    judged: Judged,
+    text: Option<&str>,
+    force: bool,
+    turns_before: Option<u64>,
+    bound: Duration,
+) -> Result<Delivery> {
+    let pane_id = session.pane.id.as_str();
+    match &judged.pane {
+        Reading::Live(_) => {}
+        Reading::Gone => return Err(Error::refused("pane-gone", &[("pane", pane_id)])),
+        Reading::Unreadable { cause } => {
+            return Err(Error::refused(
+                "pane-unreadable",
+                &[("pane", pane_id), ("cause", cause)],
+            ));
+        }
+    }
+    if !force && judged.state != State::Idle {
+        let word = serde_json::to_value(&judged.state)
+            .ok()
+            .and_then(|v| v.get("state").and_then(|s| s.as_str()).map(str::to_owned))
+            .unwrap_or_else(|| "unjudged".to_owned());
+        return Err(Error::refused(
+            "deliver-refused",
+            &[("pane", pane_id), ("state", &word)],
+        ));
+    }
+    let harness = session.harness;
+    let file = match &session.file {
+        SessionFile::Bound(path) => path.clone(),
+        SessionFile::Unbound => {
+            return Ok(Delivery::Limit {
+                harness,
+                cause: "session-unbound",
+            });
+        }
+        SessionFile::ById { home, cwd, id } => {
+            let Some(home) = home else {
+                return Ok(Delivery::Limit {
+                    harness,
+                    cause: "home-unknown",
+                });
+            };
+            match session::fixed_id_file(harness, home, cwd, id) {
+                Reading::Live(path) => path,
+                // Not written yet: a harness whose fixed id names the path
+                // writes it with the first turn, which is the turn awaited;
+                // one that names no path has no file to confirm in.
+                Reading::Gone => match session::fixed_file(harness, home, cwd, id) {
+                    Some(path) => path,
+                    None => {
+                        return Ok(Delivery::Limit {
+                            harness,
+                            cause: "session-file-absent",
+                        });
+                    }
+                },
+                Reading::Unreadable { cause } => {
+                    return Err(Error::refused(
+                        "session-store-unreadable",
+                        &[("home", &home.display().to_string()), ("cause", cause)],
+                    ));
+                }
+            }
+        }
+    };
+    let before = match turns_before {
+        Some(n) => n,
+        None => session::user_turns(harness, &file)? as u64,
+    };
+    let Some(text) = text else {
+        return Ok(Delivery::Read {
+            state: judged.state,
+            file,
+            turns: before,
+        });
+    };
+    let text = text.trim_end_matches('\n');
+    tmux::send_line(&session.pane, text)?;
+    let deadline = Instant::now() + bound;
+    let unconfirmed = |cause: &'static str| Delivery::Unconfirmed {
+        outcome: Outcome::Unconfirmed,
+        cause,
+        pane: pane_id.to_owned(),
+        file: file.clone(),
+        turns_before: before,
+    };
+    loop {
+        let after = session::user_turns(harness, &file)? as u64;
+        if after > before {
+            return Ok(Delivery::Confirmed {
+                outcome: Outcome::Confirmed,
+                route: "pane-paste",
+                pane: pane_id.to_owned(),
+                bytes: text.len(),
+                file,
+                turns_before: before,
+                turns_after: after,
+            });
+        }
+        match tmux::pane_fields(&session.pane.server, pane_id) {
+            Reading::Live(_) => {}
+            Reading::Gone => return Ok(unconfirmed("pane-gone")),
+            Reading::Unreadable { .. } => return Ok(unconfirmed("pane-unreadable")),
+        }
+        if Instant::now() >= deadline {
+            return Ok(unconfirmed("turn-pending"));
+        }
+        std::thread::sleep(TURN_POLL);
+    }
 }
 
 fn run(cli: Cli) -> Result<serde_json::Value> {
@@ -469,47 +791,116 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         Verb::Deliver {
             record: record_path,
             file,
+            line,
             force,
+            harness,
+            program,
+            socket,
+            server_pid,
+            server_start,
+            pane,
+            pid,
+            start,
+            home,
+            cwd,
+            session_id,
+            turns_before,
+            no_paste,
+            bound_secs,
         } => {
-            let (mut rec, revision, extra) = read_record(&record_path)?;
-            let text = std::fs::read_to_string(&file).map_err(|e| Error::io("read", &file, e))?;
-            let inspection = inspect(&mut rec)?;
-            record::write(
-                &record_path,
-                RECORD_VERSION,
-                &rec,
-                &extra,
-                Expect::Revision(revision),
-            )?;
-            match &inspection.pane {
-                Reading::Live(_) => {}
-                Reading::Gone => {
-                    return Err(Error::refused("pane-gone", &[("pane", &rec.pane.id)]));
+            let text = match (&file, line, no_paste) {
+                (_, _, true) => None,
+                (Some(file), None, false) => {
+                    Some(std::fs::read_to_string(file).map_err(|e| Error::io("read", file, e))?)
                 }
-                Reading::Unreadable { cause } => {
-                    return Err(Error::refused(
-                        "pane-unreadable",
-                        &[("pane", &rec.pane.id), ("cause", cause)],
-                    ));
+                (None, Some(line), false) => Some(line),
+                (None, None, false) => {
+                    return Err(Error::refused("deliver-text-missing", &[]));
                 }
-            }
-            if !force && inspection.state != State::Idle {
-                let word = serde_json::to_value(&inspection.state)
-                    .ok()
-                    .and_then(|v| v.get("state").and_then(|s| s.as_str()).map(str::to_owned))
-                    .unwrap_or_else(|| "unjudged".to_owned());
-                return Err(Error::refused(
-                    "deliver-refused",
-                    &[("pane", &rec.pane.id), ("state", &word)],
-                ));
-            }
-            tmux::send_line(&rec.pane, text.trim_end_matches('\n'))?;
-            Ok(serde_json::json!({
-                "outcome": Outcome::Confirmed,
-                "route": "pane-paste",
-                "pane": rec.pane.id,
-                "bytes": text.len(),
-            }))
+                (Some(_), Some(_), false) => unreachable!("clap refuses --file with --line"),
+            };
+            let (session, judged) = match (record_path, harness) {
+                (Some(path), None) => recorded_session(&path)?,
+                (None, Some(name)) => {
+                    let harness = Harness::parse(&name)
+                        .ok_or_else(|| Error::refused("harness-unknown", &[("harness", &name)]))?;
+                    let (Some(socket), Some(server_pid), Some(pane), Some(cwd)) =
+                        (socket, server_pid, pane, cwd)
+                    else {
+                        unreachable!("clap requires the pane and session facts with --harness")
+                    };
+                    let recorded = match (pid, start) {
+                        (Some(pid), Some(start)) => Some(Identity { pid, start }),
+                        (None, _) => None,
+                        (Some(_), None) => unreachable!("clap requires --start with --pid"),
+                    };
+                    let server = match server_start {
+                        Some(start) => tmux::Server {
+                            socket,
+                            pid: server_pid,
+                            start,
+                        },
+                        None => {
+                            let live = tmux::server(&socket)?;
+                            if live.pid != server_pid {
+                                return Err(Error::refused(
+                                    "server-unmatched",
+                                    &[
+                                        ("socket", &socket.display().to_string()),
+                                        ("recorded", &server_pid.to_string()),
+                                        ("live", &live.pid.to_string()),
+                                    ],
+                                ));
+                            }
+                            live
+                        }
+                    };
+                    let pane = tmux::Pane {
+                        server,
+                        id: pane,
+                        window: String::new(),
+                        session: String::new(),
+                    };
+                    let file = match session_id {
+                        Some(id) => SessionFile::ById {
+                            home: home.or_else(|| session::default_home(harness)),
+                            cwd,
+                            id,
+                        },
+                        None => SessionFile::Unbound,
+                    };
+                    let session = Session {
+                        harness,
+                        program,
+                        pane,
+                        recorded,
+                        file,
+                    };
+                    let owns = |name: &str| {
+                        session
+                            .harness
+                            .owns_process_of(session.program.as_deref(), name)
+                    };
+                    let judged = judge_pane(
+                        session.harness,
+                        &owns,
+                        &session.pane,
+                        session.recorded.as_ref(),
+                    )?;
+                    (session, judged)
+                }
+                (None, None) => return Err(Error::refused("deliver-session-missing", &[])),
+                (Some(_), Some(_)) => unreachable!("clap refuses --record with --harness"),
+            };
+            Ok(serde_json::to_value(deliver(
+                &session,
+                judged,
+                text.as_deref(),
+                force,
+                turns_before,
+                Duration::from_secs(bound_secs),
+            )?)
+            .unwrap_or_default())
         }
         Verb::Stop {
             record: record_path,

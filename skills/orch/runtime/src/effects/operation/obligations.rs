@@ -145,6 +145,76 @@ pub(super) enum ValidationEnd {
     LaneMoved,
 }
 
+/// Why the close kept the lane's worktree instead of removing it (decision
+/// 128 (9)): each a read of the worktree itself through the handle's runner,
+/// recorded as the lane's `kept` reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::effects) enum KeptReason {
+    /// The worktree holds a submodule by the reads of git's own unforced
+    /// removal, its module store or a populated gitlink of its index: the
+    /// worktree is never judged, as that removal refuses it and the reads
+    /// are data no setting changes (decision 169).
+    Submodules,
+    /// `HEAD` carries commits no other local or remote ref reaches:
+    /// removal would lose them.
+    Unmerged,
+    /// The pinned status read of `judge_worktree` (`host.rs`) names
+    /// modified or untracked files, a claim worktree's by-design deletions
+    /// aside.
+    Dirty,
+    /// The path holds no `.git` entry: it is no git worktree this close can
+    /// release.
+    NotAWorktree,
+    /// The path's `.git` is a directory: the repository's main worktree,
+    /// which the worktree package's `remove` never removes.
+    MainWorktree,
+    /// The worktree package's `remove` could not move a lane mailbox under
+    /// the worktree to the main checkout's, so it removed nothing: the mail
+    /// stands where the lane wrote it.
+    MailUnmoved,
+    /// The worktree package's `remove` refused a clean, merged worktree
+    /// (git's refusal, a lock, an unreconciled rebase map, an unregistered
+    /// target); `detail` is its exit status and its keyed stderr lines.
+    Refused { detail: String },
+}
+
+impl KeptReason {
+    /// The reason's word, what the lane record's `kept` carries.
+    pub(in crate::effects) fn word(&self) -> String {
+        match self {
+            KeptReason::Submodules => "submodules".to_owned(),
+            KeptReason::Unmerged => "unmerged".to_owned(),
+            KeptReason::Dirty => "dirty".to_owned(),
+            KeptReason::NotAWorktree => "not-a-worktree".to_owned(),
+            KeptReason::MainWorktree => "main-worktree".to_owned(),
+            KeptReason::MailUnmoved => "mail-unmoved".to_owned(),
+            KeptReason::Refused { detail } => format!("refused:{detail}"),
+        }
+    }
+}
+
+/// What ended the lane's worktree obligation, by the release method's own
+/// reads: the path read gone before any removal, the removal succeeded and
+/// the path read gone after it, or the worktree kept for a recorded reason;
+/// a path or a read that failed leaves the obligation standing. Under a
+/// lane that moved, the worktree is the new session's, released to it as
+/// the validation stop is (decision 124e (24)).
+pub(super) enum WorktreeEnd {
+    Gone,
+    /// Removed by the worktree package, its lane mailboxes moved to the main
+    /// checkout's; `kept_mail` names a mailbox the package could not join
+    /// with the one already there and kept beside it, from its
+    /// `lane-mail-kept` line.
+    Released {
+        kept_mail: Option<String>,
+    },
+    Kept(KeptReason),
+    LaneMoved,
+    Unreadable {
+        cause: String,
+    },
+}
+
 /// What a read of the pane's receipt settled: a receipt read, or one absent
 /// past the bound within which the pane could still register, discharges the
 /// obligation; an invalid or unreadable receipt leaves it standing.
@@ -203,12 +273,17 @@ pub(super) enum Discharge {
     /// The launcher's record was read: a handle it names becomes the job's
     /// obligation through the caller's `add`.
     Sidecar(SidecarRead),
+    Worktree {
+        path: String,
+        end: WorktreeEnd,
+    },
 }
 
 impl Discharge {
     /// The one obligation this evidence is about.
     pub(super) fn names(&self) -> Obligation {
         match self {
+            Discharge::Worktree { path, .. } => Obligation::Worktree { path: path.clone() },
             Discharge::Process { identity, .. } => Obligation::Process(identity.clone()),
             Discharge::Pid { pid, .. } => Obligation::Pid { pid: *pid },
             Discharge::Pane { pane, .. } => pane.obligation(),
@@ -531,7 +606,8 @@ impl Obligations {
             | Obligation::JobSidecar
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. } => None,
+            | Obligation::JobPgid { .. }
+            | Obligation::Worktree { .. } => None,
         })
     }
 
@@ -571,7 +647,8 @@ impl Obligations {
                 | Obligation::JobSidecar
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. } => None,
+                | Obligation::JobPgid { .. }
+                | Obligation::Worktree { .. } => None,
             })
     }
 
@@ -590,7 +667,8 @@ impl Obligations {
             | Obligation::JobSidecar
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. } => None,
+            | Obligation::JobPgid { .. }
+            | Obligation::Worktree { .. } => None,
         })
     }
 
@@ -636,7 +714,8 @@ impl Obligations {
                 | Obligation::JobSidecar
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. } => None,
+                | Obligation::JobPgid { .. }
+                | Obligation::Worktree { .. } => None,
             })
             .collect()
     }
@@ -656,7 +735,8 @@ impl Obligations {
             | Obligation::JobSidecar
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. } => false,
+            | Obligation::JobPgid { .. }
+            | Obligation::Worktree { .. } => false,
         };
         self.record.standing_obligations().any(names)
             || self.record.discharged.iter().any(|d| names(&d.obligation))
@@ -682,6 +762,29 @@ impl Obligations {
             Obligation::Pane { .. } => None,
             Obligation::Process(_)
             | Obligation::Pid { .. }
+            | Obligation::PaneUnaddressed { .. }
+            | Obligation::Window { .. }
+            | Obligation::Receipt
+            | Obligation::Validation
+            | Obligation::JobSidecar
+            | Obligation::JobUnit { .. }
+            | Obligation::JobGroup(_)
+            | Obligation::JobPgid { .. }
+            | Obligation::Worktree { .. } => None,
+        })
+    }
+
+    /// The standing worktree path recorded under the worktree role: what a
+    /// close releases or keeps (decision 128 (9)).
+    pub(super) fn worktree(&self) -> Option<String> {
+        self.record.standing_obligations().find_map(|o| match o {
+            Obligation::Worktree { path } if self.record.role_of(o) == Some(Role::Worktree) => {
+                Some(path.clone())
+            }
+            Obligation::Worktree { .. }
+            | Obligation::Process(_)
+            | Obligation::Pid { .. }
+            | Obligation::Pane { .. }
             | Obligation::PaneUnaddressed { .. }
             | Obligation::Window { .. }
             | Obligation::Receipt
@@ -727,7 +830,8 @@ impl Obligations {
                 | Obligation::JobSidecar
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. } => None,
+                | Obligation::JobPgid { .. }
+                | Obligation::Worktree { .. } => None,
             })
             .collect()
     }
@@ -787,6 +891,18 @@ impl Obligations {
                 SidecarRead::Present(_) => Ok("sidecar-read".to_owned()),
                 SidecarRead::Failed { status } => Ok(format!("launch-failed:{status}")),
                 SidecarRead::Unreadable { cause } => Err(format!("job-unread:{cause}")),
+            },
+            Discharge::Worktree { end, .. } => match end {
+                WorktreeEnd::Gone => Ok("worktree-gone".to_owned()),
+                WorktreeEnd::Released { kept_mail: None } => Ok("released".to_owned()),
+                WorktreeEnd::Released {
+                    kept_mail: Some(mail),
+                } => Ok(format!("{}{mail}", state::WORKTREE_MAIL_KEPT)),
+                WorktreeEnd::Kept(reason) => {
+                    Ok(format!("{}{}", state::WORKTREE_KEPT, reason.word()))
+                }
+                WorktreeEnd::LaneMoved => Ok("lane-moved".to_owned()),
+                WorktreeEnd::Unreadable { cause } => Err(format!("worktree-unreadable:{cause}")),
             },
         };
         if !self.record.stands(&named) {
@@ -896,6 +1012,7 @@ fn observation_value(obligation: &Obligation) -> Value {
         Obligation::JobUnit { unit } => json!({"kind": "job", "unit": unit}),
         Obligation::JobGroup(id) => json!({"kind": "job", "pid": id.pid, "start": id.start}),
         Obligation::JobPgid { pgid } => json!({"kind": "job", "pgid": pgid}),
+        Obligation::Worktree { path } => json!({"kind": "worktree", "path": path}),
     }
 }
 

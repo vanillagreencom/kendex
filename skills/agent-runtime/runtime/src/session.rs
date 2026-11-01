@@ -113,18 +113,39 @@ pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option
 /// fresh.
 pub fn resume_present(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<()> {
     match harness {
-        Harness::Claude => {
-            let Some(file) = fixed_file(harness, home, cwd, id) else {
-                return Reading::Gone;
-            };
-            match fs::metadata(&file) {
-                Ok(_) => Reading::Live(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
-                Err(_) => Reading::Unreadable {
-                    cause: STORE_UNREADABLE.cause,
-                },
+        Harness::Claude | Harness::Codex | Harness::Copilot => {
+            match fixed_id_file(harness, home, cwd, id) {
+                Reading::Live(_) => Reading::Live(()),
+                Reading::Gone => Reading::Gone,
+                Reading::Unreadable { cause } => Reading::Unreadable { cause },
             }
         }
+        Harness::Pi => Reading::Gone,
+    }
+}
+
+/// The one session file the id `id` names for `cwd` under `home`, read
+/// three-valued: `Live(path)` where the harness has written it, `Gone`
+/// where no file carries the id yet, `Unreadable` where a listing or a
+/// metadata read failed. Each harness names the file by its id (module
+/// doc): Claude by the path its fixed id gives, Copilot by its session-state
+/// directory, Codex and Pi by the id in the file name under their store. A
+/// file is found by the id its launch bound and never by its age (decision
+/// 92), so a neighbour's or a subagent's file is never named in its place.
+pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<PathBuf> {
+    let present = |file: PathBuf| match fs::metadata(&file) {
+        Ok(meta) if meta.is_file() => Reading::Live(file),
+        Ok(_) => Reading::Gone,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
+        Err(_) => Reading::Unreadable {
+            cause: STORE_UNREADABLE.cause,
+        },
+    };
+    match harness {
+        Harness::Claude => match fixed_file(harness, home, cwd, id) {
+            Some(file) => present(file),
+            None => Reading::Gone,
+        },
         Harness::Codex => {
             // The id is the tail of the rollout file name
             // `rollout-<stamp>-<id>.jsonl`, under `sessions/YYYY/MM/DD/`. The
@@ -142,28 +163,35 @@ pub fn resume_present(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Re
             if let Err(Unreadable { cause }) = walk(&root, &mut found, 3) {
                 return Reading::Unreadable { cause };
             }
-            if found.iter().any(|c| {
+            match found.into_iter().find(|c| {
                 c.path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(&suffix))
             }) {
-                Reading::Live(())
-            } else {
-                Reading::Gone
+                Some(found) => Reading::Live(found.path),
+                None => Reading::Gone,
             }
         }
-        Harness::Copilot => {
-            let dir = home.join("session-state").join(id);
-            match fs::metadata(dir.join("workspace.yaml")) {
-                Ok(_) => Reading::Live(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
-                Err(_) => Reading::Unreadable {
-                    cause: STORE_UNREADABLE.cause,
-                },
+        Harness::Copilot => present(home.join("session-state").join(id).join("workspace.yaml")),
+        Harness::Pi => {
+            // `<stamp>_<id>.jsonl` under the cwd's slug directory.
+            let dir = home.join("sessions").join(pi_slug(cwd));
+            let paths = match listed(&dir) {
+                Reading::Live(paths) => paths,
+                Reading::Gone => return Reading::Gone,
+                Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+            };
+            let suffix = format!("_{id}.jsonl");
+            match paths.into_iter().find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.ends_with(&suffix))
+            }) {
+                Some(file) => present(file),
+                None => Reading::Gone,
             }
         }
-        Harness::Pi => Reading::Gone,
     }
 }
 
@@ -986,6 +1014,73 @@ mod tests {
         assert_eq!(leads(&[]).len(), 2);
         // Nothing has appeared when every lead stood in the baseline.
         assert!(leads(&["N".to_owned(), "R".to_owned()]).is_empty());
+    }
+
+    /// The file an id names, per harness, found by the id and never by the
+    /// file's age: the newest file in the store is another session's and is
+    /// not named; an absent file is `Gone`, never a neighbour's. Defect: a
+    /// delivery confirmed on whatever file was written last, a subagent's
+    /// or a neighbour's (decision 92).
+    #[test]
+    fn a_fixed_id_names_its_own_file_and_never_the_newest_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let cwd = Path::new("/w");
+        let rows: [(Harness, &str, &str); 4] = [
+            (
+                Harness::Claude,
+                "projects/-w/own.jsonl",
+                "projects/-w/newer.jsonl",
+            ),
+            (
+                Harness::Codex,
+                "sessions/2026/10/26/rollout-a-own.jsonl",
+                "sessions/2026/10/27/rollout-b-newer.jsonl",
+            ),
+            (
+                Harness::Copilot,
+                "session-state/own/workspace.yaml",
+                "session-state/newer/workspace.yaml",
+            ),
+            (
+                Harness::Pi,
+                "sessions/--w--/2026-10-26T02-08-44-396Z_own.jsonl",
+                "sessions/--w--/2026-10-27T02-08-44-396Z_newer.jsonl",
+            ),
+        ];
+        for (harness, own, newer) in rows {
+            assert_eq!(
+                fixed_id_file(harness, home, cwd, "own"),
+                Reading::Gone,
+                "{harness:?}: nothing written yet"
+            );
+            let own_path = home.join(own);
+            fs::create_dir_all(own_path.parent().unwrap()).unwrap();
+            fs::write(&own_path, "{}\n").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let newer_path = home.join(newer);
+            fs::create_dir_all(newer_path.parent().unwrap()).unwrap();
+            fs::write(&newer_path, "{}\n").unwrap();
+            assert_eq!(
+                fixed_id_file(harness, home, cwd, "own"),
+                Reading::Live(own_path.clone()),
+                "{harness:?}: the id's own file"
+            );
+            assert_eq!(
+                fixed_id_file(harness, home, cwd, "absent"),
+                Reading::Gone,
+                "{harness:?}: an id with no file"
+            );
+        }
+        // A subagent's file under Claude's `subagents/` carries no id of
+        // the lead's, whatever it is named.
+        let sub = home.join("projects/-w/subagents/own.jsonl");
+        fs::create_dir_all(sub.parent().unwrap()).unwrap();
+        fs::write(&sub, "{}\n").unwrap();
+        assert_eq!(
+            fixed_id_file(Harness::Claude, home, cwd, "own"),
+            Reading::Live(home.join("projects/-w/own.jsonl"))
+        );
     }
 
     /// Every Claude lead for the cwd counts, oldest and newest alike, and a

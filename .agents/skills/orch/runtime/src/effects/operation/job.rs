@@ -306,7 +306,7 @@ fn launch_job(
     operation.read_sidecar(&record_path, &line)?;
     // The job's first act is its claim (`claim-intent`); until then this
     // process holds the lease, so a contender defers to it (decision 72).
-    let deadline = operation.now() + run.settings.verify;
+    let deadline = operation.now() + run.settings.claim;
     loop {
         let current = read_intent(run.path, id)?;
         if let Some(owner) = &current.owner
@@ -511,7 +511,8 @@ impl Operation<'_> {
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Window { .. }
                 | Obligation::Receipt
-                | Obligation::Validation => {}
+                | Obligation::Validation
+                | Obligation::Worktree { .. } => {}
             }
         }
         Ok(())

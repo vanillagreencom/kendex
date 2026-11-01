@@ -98,15 +98,60 @@ pub const WATCH_HANDOVER_DEFAULT: &str = ".agents/skills/orch/scripts/lib/watch-
 pub const DEV_VALIDATE_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/dev-validate-run";
 /// The claim store under the main checkout when no directory is named.
 pub const CLAIM_STORE_DEFAULT: &str = "tmp/oversee-watch/claims";
+/// Seconds a transfer's or a stop's caller waits for its detached job to
+/// claim the intent (decision 143): the claim's own bound, apart from the
+/// tmux verification bound a test shortens to force a failed delivery.
+pub const JOB_CLAIM_SECS_KEY: &str = "ORCH_JOB_CLAIM_SECS";
+/// Seconds between the end of one mail turn and the start of the next
+/// (step5-map F1).
+pub const WATCH_MAIL_INTERVAL_KEY: &str = "ORCH_WATCH_MAIL_INTERVAL";
+/// Long passes between two repeats of a standing mark or stall line.
+pub const OVERSEER_MARK_REPEAT_KEY: &str = "ORCH_OVERSEER_MARK_REPEAT";
+/// Long passes an overseer pane reads dead before the watch reports it.
+pub const OVERSEER_DEAD_PASSES_KEY: &str = "ORCH_OVERSEER_DEAD_PASSES";
+/// Pane lines a lane event carries under it.
+pub const WATCH_TAIL_LINES_KEY: &str = "ORCH_WATCH_TAIL_LINES";
+/// Seconds a lane may read `preparing` before `lane-prepare-stuck`.
+pub const WATCH_PREPARE_SECS_KEY: &str = "ORCH_WATCH_PREPARE_SECS";
+/// Seconds a sent directive may stay unread before `directive-unread`.
+pub const DIRECTIVE_UNREAD_SECS_KEY: &str = "ORCH_DIRECTIVE_UNREAD_SECS";
+/// Seconds since `running_at` with no status file before `start-stalled`.
+pub const WATCH_START_STALL_SECS_KEY: &str = "ORCH_WATCH_START_STALL_SECS";
+/// Seconds a cloud lane's head and status may stand before `lane-stalled`.
+pub const WATCH_LANE_STALL_SECS_KEY: &str = "ORCH_WATCH_LANE_STALL_SECS";
+/// Minutes a stalled cloud lane's directive may stay unanswered before the
+/// watch closes it.
+pub const CLOUD_STALL_MINUTES_KEY: &str = "ORCH_CLOUD_STALL_MINUTES";
+/// Seconds past `launched_at` before `lane-long`.
+pub const WATCH_LANE_AGE_SECS_KEY: &str = "ORCH_WATCH_LANE_AGE_SECS";
+/// Whether the watch relaunches a walled lane itself (`auto`) or leaves the
+/// wall to the overseer (`ask`).
+pub const WALL_RELAUNCH_KEY: &str = "ORCH_WALL_RELAUNCH";
+/// The `owner/repo:workflow.yml` entries whose main-branch runs the watch
+/// reads, separated by whitespace.
+pub const MAIN_WORKFLOWS_KEY: &str = "ORCH_MAIN_WORKFLOWS";
+/// The Linear team the tracker duties read; unset leaves them off.
+pub const LINEAR_TEAM_KEY: &str = "LINEAR_TEAM";
 
 const DEFAULT_STATE_DIR: &str = "tmp";
 const DEFAULT_VERIFY_SECS: u64 = 15;
 const DEFAULT_CLOSE_SECS: u64 = 15;
+const DEFAULT_CLAIM_SECS: u64 = 15;
 const DEFAULT_LANE_CAP: u32 = 4;
+const DEFAULT_MAIL_INTERVAL_SECS: u64 = 20;
+const DEFAULT_MARK_REPEAT: u32 = 5;
+const DEFAULT_DEAD_PASSES: u32 = 2;
+const DEFAULT_TAIL_LINES: u32 = 12;
+const DEFAULT_PREPARE_SECS: u64 = 1800;
+const DEFAULT_DIRECTIVE_UNREAD_SECS: u64 = 300;
+const DEFAULT_START_STALL_SECS: u64 = 600;
+const DEFAULT_LANE_STALL_SECS: u64 = 3600;
+const DEFAULT_CLOUD_STALL_MINUTES: u64 = 30;
+const DEFAULT_LANE_AGE_SECS: u64 = 12600;
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The keys this runtime reads from the private env file.
-const READ_KEYS: [&str; 15] = [
+const READ_KEYS: [&str; 29] = [
     STATE_DIR_KEY,
     TMUX_SESSION_KEY,
     VERIFY_SECS_KEY,
@@ -122,6 +167,20 @@ const READ_KEYS: [&str; 15] = [
     LANE_MAIL_CLI_KEY,
     DEV_VALIDATE_CLI_KEY,
     WATCH_HANDOVER_KEY,
+    JOB_CLAIM_SECS_KEY,
+    WATCH_MAIL_INTERVAL_KEY,
+    OVERSEER_MARK_REPEAT_KEY,
+    OVERSEER_DEAD_PASSES_KEY,
+    WATCH_TAIL_LINES_KEY,
+    WATCH_PREPARE_SECS_KEY,
+    DIRECTIVE_UNREAD_SECS_KEY,
+    WATCH_START_STALL_SECS_KEY,
+    WATCH_LANE_STALL_SECS_KEY,
+    CLOUD_STALL_MINUTES_KEY,
+    WATCH_LANE_AGE_SECS_KEY,
+    WALL_RELAUNCH_KEY,
+    MAIN_WORKFLOWS_KEY,
+    LINEAR_TEAM_KEY,
 ];
 
 /// What the command line says about the settings: a state directory that
@@ -167,6 +226,47 @@ pub enum Succession {
     Off,
 }
 
+impl Succession {
+    /// The setting's word, as the legacy `succession=` field printed it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Succession::On => "on",
+            Succession::Off => "off",
+        }
+    }
+}
+
+/// Whether the watch relaunches a walled lane itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WallRelaunch {
+    Auto,
+    Ask,
+}
+
+/// The fleet watch's settings, read once at the runner's start (step5-map
+/// A2-A10): the cadence the mail duty keeps and the bounds the observation,
+/// mail and tracker duties judge against, each with the legacy
+/// `oversee-watch` default. `--interval` and `--max-loops` are the runner's
+/// own flags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchSettings {
+    pub mail_interval: Duration,
+    pub mark_repeat: u32,
+    pub dead_passes: u32,
+    pub tail_lines: u32,
+    pub prepare: Duration,
+    pub directive_unread: Duration,
+    pub start_stall: Duration,
+    pub lane_stall: Duration,
+    pub cloud_stall: Duration,
+    pub lane_age: Duration,
+    pub wall_relaunch: WallRelaunch,
+    /// `owner/repo:workflow.yml` entries, lowercased repository, as the
+    /// legacy read them; an entry of another shape is refused.
+    pub main_workflows: Vec<String>,
+    pub linear_team: Option<String>,
+}
+
 /// The settings the runtime acts on, resolved once per process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -175,6 +275,10 @@ pub struct Settings {
     pub tmux_session: Option<String>,
     pub verify: Duration,
     pub close_grace: Duration,
+    /// How long a caller waits for its detached job to claim the intent
+    /// (decision 143).
+    pub claim: Duration,
+    pub watch: WatchSettings,
     pub question_tool: QuestionToolSetting,
     pub permission: Permission,
     pub harness_binaries: BTreeMap<Harness, PathBuf>,
@@ -345,6 +449,16 @@ pub fn load(
             },
         }
     };
+    // The legacy watch's `^(0|[1-9][0-9]*)$` (`oversee-watch:623`, `:636`):
+    // a wait of none is a documented value (the mail read once a turn, a
+    // directive reported unread at once).
+    let secs_or_none = |key: &str, default: u64| -> Result<Duration> {
+        match get(key) {
+            None => Ok(Duration::from_secs(default)),
+            Some("0") => Ok(Duration::ZERO),
+            Some(_) => secs(key, default),
+        }
+    };
     let question_tool = match get(QUESTION_TOOL_KEY) {
         None | Some("off") => QuestionToolSetting::Off,
         Some("overseer") => QuestionToolSetting::Overseer,
@@ -385,13 +499,72 @@ pub fn load(
         None => roots.project.join(JOB_UNIT_DEFAULT),
     };
     // Base ten, no sign and no leading zero, as the legacy launcher parses
-    // it; a cap of none admits no lane and names a misconfiguration.
-    let lane_cap = match get(LANE_CAP_KEY) {
-        None => DEFAULT_LANE_CAP,
-        Some(text) => match text.parse::<u32>() {
-            Ok(n) if n > 0 && !text.starts_with('0') && !text.starts_with('+') => n,
-            Ok(_) | Err(_) => return Err(value_refusal(LANE_CAP_KEY, text)),
-        },
+    // it; a count of none names a misconfiguration (a cap of none admits no
+    // lane, a repeat of none repeats every pass).
+    let count = |key: &str, default: u32| -> Result<u32> {
+        match get(key) {
+            None => Ok(default),
+            Some(text) => match text.parse::<u32>() {
+                Ok(n) if n > 0 && !text.starts_with('0') && !text.starts_with('+') => Ok(n),
+                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+            },
+        }
+    };
+    let lane_cap = count(LANE_CAP_KEY, DEFAULT_LANE_CAP)?;
+    // The legacy watch's `^[0-9]+$` with the value at least 1
+    // (`oversee-watch:603`): a leading zero is admitted there.
+    let passes = |key: &str, default: u32| -> Result<u32> {
+        match get(key) {
+            None => Ok(default),
+            Some(text) => match text.parse::<u32>() {
+                Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+            },
+        }
+    };
+    let wall_relaunch = match get(WALL_RELAUNCH_KEY) {
+        None | Some("auto") => WallRelaunch::Auto,
+        Some("ask") => WallRelaunch::Ask,
+        Some(other) => return Err(value_refusal(WALL_RELAUNCH_KEY, other)),
+    };
+    let mut main_workflows = Vec::new();
+    if let Some(text) = get(MAIN_WORKFLOWS_KEY) {
+        for entry in text.split_whitespace() {
+            let Some((repo, workflow)) = entry.split_once(':') else {
+                return Err(value_refusal(MAIN_WORKFLOWS_KEY, text));
+            };
+            let word = |s: &str| {
+                !s.is_empty()
+                    && s.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+            };
+            let repo_ok = repo
+                .split_once('/')
+                .is_some_and(|(o, n)| word(o) && word(n));
+            let workflow_ok = workflow
+                .strip_suffix(".yml")
+                .or_else(|| workflow.strip_suffix(".yaml"))
+                .is_some_and(word);
+            if !repo_ok || !workflow_ok {
+                return Err(value_refusal(MAIN_WORKFLOWS_KEY, text));
+            }
+            main_workflows.push(format!("{}:{workflow}", repo.to_ascii_lowercase()));
+        }
+    }
+    let watch = WatchSettings {
+        mail_interval: secs_or_none(WATCH_MAIL_INTERVAL_KEY, DEFAULT_MAIL_INTERVAL_SECS)?,
+        mark_repeat: count(OVERSEER_MARK_REPEAT_KEY, DEFAULT_MARK_REPEAT)?,
+        dead_passes: passes(OVERSEER_DEAD_PASSES_KEY, DEFAULT_DEAD_PASSES)?,
+        tail_lines: count(WATCH_TAIL_LINES_KEY, DEFAULT_TAIL_LINES)?,
+        prepare: secs(WATCH_PREPARE_SECS_KEY, DEFAULT_PREPARE_SECS)?,
+        directive_unread: secs_or_none(DIRECTIVE_UNREAD_SECS_KEY, DEFAULT_DIRECTIVE_UNREAD_SECS)?,
+        start_stall: secs(WATCH_START_STALL_SECS_KEY, DEFAULT_START_STALL_SECS)?,
+        lane_stall: secs(WATCH_LANE_STALL_SECS_KEY, DEFAULT_LANE_STALL_SECS)?,
+        cloud_stall: secs(CLOUD_STALL_MINUTES_KEY, DEFAULT_CLOUD_STALL_MINUTES)?.saturating_mul(60),
+        lane_age: secs(WATCH_LANE_AGE_SECS_KEY, DEFAULT_LANE_AGE_SECS)?,
+        wall_relaunch,
+        main_workflows,
+        linear_team: get(LINEAR_TEAM_KEY).map(str::to_owned),
     };
     let claim_store = match get(CLAIM_STATE_DIR_KEY) {
         Some(dir) => {
@@ -418,6 +591,8 @@ pub fn load(
         tmux_session: get(TMUX_SESSION_KEY).map(str::to_owned),
         verify: secs(VERIFY_SECS_KEY, DEFAULT_VERIFY_SECS)?,
         close_grace: secs(CLOSE_SECS_KEY, DEFAULT_CLOSE_SECS)?,
+        claim: secs(JOB_CLAIM_SECS_KEY, DEFAULT_CLAIM_SECS)?,
+        watch,
         question_tool,
         permission,
         harness_binaries,
@@ -831,6 +1006,26 @@ mod tests {
         assert_eq!(settings.question_tool, QuestionToolSetting::Off);
         assert_eq!(settings.verify, Duration::from_secs(15));
         assert_eq!(settings.close_grace, Duration::from_secs(15));
+        assert_eq!(settings.claim, Duration::from_secs(15));
+        assert_eq!(
+            settings.watch,
+            WatchSettings {
+                mail_interval: Duration::from_secs(20),
+                mark_repeat: 5,
+                dead_passes: 2,
+                tail_lines: 12,
+                prepare: Duration::from_secs(1800),
+                directive_unread: Duration::from_secs(300),
+                start_stall: Duration::from_secs(600),
+                lane_stall: Duration::from_secs(3600),
+                cloud_stall: Duration::from_secs(1800),
+                lane_age: Duration::from_secs(12600),
+                wall_relaunch: WallRelaunch::Auto,
+                main_workflows: Vec::new(),
+                linear_team: None,
+            },
+            "the legacy oversee-watch defaults"
+        );
         assert!(settings.harness_binaries.is_empty());
         assert_eq!(
             settings.worktree_cli,
@@ -869,10 +1064,46 @@ mod tests {
                 (LANE_MAIL_CLI_KEY, "/opt/lane-mail"),
                 (DEV_VALIDATE_CLI_KEY, "/opt/dev-validate-run"),
                 (WATCH_HANDOVER_KEY, "/opt/watch-handover.sh"),
+                (JOB_CLAIM_SECS_KEY, "40"),
+                (WATCH_MAIL_INTERVAL_KEY, "5"),
+                (OVERSEER_MARK_REPEAT_KEY, "3"),
+                (OVERSEER_DEAD_PASSES_KEY, "1"),
+                (WATCH_TAIL_LINES_KEY, "20"),
+                (WATCH_PREPARE_SECS_KEY, "60"),
+                (DIRECTIVE_UNREAD_SECS_KEY, "30"),
+                (WATCH_START_STALL_SECS_KEY, "90"),
+                (WATCH_LANE_STALL_SECS_KEY, "120"),
+                (CLOUD_STALL_MINUTES_KEY, "2"),
+                (WATCH_LANE_AGE_SECS_KEY, "600"),
+                (WALL_RELAUNCH_KEY, "ask"),
+                (MAIN_WORKFLOWS_KEY, "Owner/Repo:ci.yml  other/one:x.yaml"),
+                (LINEAR_TEAM_KEY, "KEN"),
             ]),
             &FLAGS,
         )
         .unwrap();
+        assert_eq!(settings.claim, Duration::from_secs(40));
+        assert_eq!(
+            settings.watch,
+            WatchSettings {
+                mail_interval: Duration::from_secs(5),
+                mark_repeat: 3,
+                dead_passes: 1,
+                tail_lines: 20,
+                prepare: Duration::from_secs(60),
+                directive_unread: Duration::from_secs(30),
+                start_stall: Duration::from_secs(90),
+                lane_stall: Duration::from_secs(120),
+                cloud_stall: Duration::from_secs(120),
+                lane_age: Duration::from_secs(600),
+                wall_relaunch: WallRelaunch::Ask,
+                main_workflows: vec![
+                    "owner/repo:ci.yml".to_owned(),
+                    "other/one:x.yaml".to_owned()
+                ],
+                linear_team: Some("KEN".to_owned()),
+            }
+        );
         assert_eq!(settings.succession, Succession::Off);
         assert_eq!(settings.job_unit, PathBuf::from("/opt/job-unit.sh"));
         assert_eq!(settings.lane_cap, 7);
@@ -917,11 +1148,57 @@ mod tests {
             (LANE_CAP_KEY, "03"),
             (LANE_CAP_KEY, "+4"),
             (LANE_CAP_KEY, "four"),
+            (JOB_CLAIM_SECS_KEY, "0"),
+            (WATCH_MAIL_INTERVAL_KEY, "x"),
+            (WATCH_MAIL_INTERVAL_KEY, "01"),
+            (WATCH_MAIL_INTERVAL_KEY, "-1"),
+            (OVERSEER_MARK_REPEAT_KEY, "0"),
+            (OVERSEER_DEAD_PASSES_KEY, "0"),
+            (OVERSEER_DEAD_PASSES_KEY, "00"),
+            (OVERSEER_DEAD_PASSES_KEY, "+1"),
+            (OVERSEER_DEAD_PASSES_KEY, "two"),
+            (DIRECTIVE_UNREAD_SECS_KEY, "01"),
+            (DIRECTIVE_UNREAD_SECS_KEY, "5s"),
+            (WATCH_TAIL_LINES_KEY, "-1"),
+            (WATCH_PREPARE_SECS_KEY, "1m"),
+            (CLOUD_STALL_MINUTES_KEY, "0"),
+            (WALL_RELAUNCH_KEY, "maybe"),
+            (MAIN_WORKFLOWS_KEY, "owner/repo"),
+            (MAIN_WORKFLOWS_KEY, "repo:ci.yml"),
+            (MAIN_WORKFLOWS_KEY, "owner/repo:ci.txt"),
         ];
         for (key, value) in refused {
             let err = load(&roots, &env(&[(key, value)]), &FLAGS).unwrap_err();
             assert_eq!(err.key(), "setting-invalid", "{key}={value}");
-            assert_eq!(err.fields()[0], ("key".into(), key.into()), "{key}={value}");
+            assert_eq!(
+                err.fields(),
+                vec![("key".into(), key.into()), ("value".into(), value.into())],
+                "{key}={value}"
+            );
         }
+    }
+
+    /// R-U5a F2. Defect: the three watch keys read through the stricter
+    /// parsers of the launcher's keys, refusing values the legacy watch
+    /// admits (`oversee-watch:603`, `:623`, `:636`) and so refusing every
+    /// runtime verb on a fleet that sets them. Each key's legacy-valid edge
+    /// reads as the legacy read it.
+    #[test]
+    fn the_watch_keys_admit_the_legacy_grammars_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots_in(dir.path());
+        let settings = load(
+            &roots,
+            &env(&[
+                (WATCH_MAIL_INTERVAL_KEY, "0"),
+                (DIRECTIVE_UNREAD_SECS_KEY, "0"),
+                (OVERSEER_DEAD_PASSES_KEY, "02"),
+            ]),
+            &FLAGS,
+        )
+        .unwrap();
+        assert_eq!(settings.watch.mail_interval, Duration::ZERO);
+        assert_eq!(settings.watch.directive_unread, Duration::ZERO);
+        assert_eq!(settings.watch.dead_passes, 2);
     }
 }

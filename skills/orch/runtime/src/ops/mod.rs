@@ -25,6 +25,8 @@
 mod controller;
 mod item;
 mod lane;
+/// The mail duty's types (U5c).
+pub mod mail;
 mod occupancy;
 #[cfg(test)]
 #[allow(
@@ -32,6 +34,8 @@ mod occupancy;
     reason = "the rows' shared store entry point"
 )]
 mod testing;
+/// The wake duty's types (U5g).
+pub mod wake;
 
 pub(crate) use controller::apply_adoption;
 pub use controller::{

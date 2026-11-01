@@ -303,6 +303,110 @@ pub enum Error {
     /// stop (`lane-close --park`, `park-refused reason=local`).
     #[error("the lane for {item} cannot be parked: {reason}")]
     ParkRefused { item: String, reason: &'static str },
+    /// The standing scheduler's refusals: its claim, its records and its
+    /// duties (`watch run|status|stop|log`).
+    #[error(transparent)]
+    Watch(#[from] WatchError),
+}
+
+/// Why the fleet watch refused: one family, keyed `watch-*`. The claim is
+/// bound to a process identity (decision 99), so a refusal names the pid
+/// and start it read.
+#[derive(Debug, thiserror::Error)]
+pub enum WatchError {
+    /// A runner whose identity reads live holds the claim on this fleet
+    /// state; a second runner is refused and nothing is written.
+    #[error("{path}: a watch runs on this fleet state (pid {pid}, start {start})")]
+    Running {
+        path: PathBuf,
+        pid: u32,
+        start: String,
+    },
+    /// Whether the claim's identity still runs could not be read; an
+    /// unreadable owner is never taken over (decision 99).
+    #[error("{path}: the claim's process (pid {pid}) could not be read: {cause}")]
+    ClaimUnreadable {
+        path: PathBuf,
+        pid: u32,
+        cause: String,
+    },
+    /// A record of the watch could not be written or read: the claim, its
+    /// argv, the event log, the baseline or the stop request.
+    #[error("{path}: the watch record could not be {op}: {cause}")]
+    Record {
+        path: PathBuf,
+        op: &'static str,
+        cause: String,
+    },
+    /// A stop was requested and the claimed runner had not released its
+    /// claim within the bound; it may still be finishing a duty.
+    #[error("the watch (pid {pid}, start {start}) did not release its claim within the bound")]
+    StopTimeout { pid: u32, start: String },
+    /// A live legacy `oversee-watch` holds the claim: its record carries no
+    /// start, and it reads no stop request. Nothing is written; the legacy
+    /// watch is stopped through `job-unit.sh stop-job`, its launcher's route.
+    #[error(
+        "{path}: a legacy oversee-watch holds the claim (pid {pid}); stop it through job-unit.sh stop-job"
+    )]
+    LegacyLive { path: PathBuf, pid: u32 },
+    /// The claim no longer names the running runner: another start wrote
+    /// the record. The run ends and the record stands as its holder wrote it.
+    #[error("{path}: the claim no longer names this runner (pid {pid}, start {start})")]
+    ClaimMoved {
+        path: PathBuf,
+        pid: u32,
+        start: String,
+    },
+    /// The runner has no readable identity of its own to claim with
+    /// (decision 90): a claim without one could not be told live from dead.
+    #[error("no readable process identity to claim the watch with")]
+    IdentityUnreadable,
+}
+
+impl WatchError {
+    pub fn key(&self) -> &'static str {
+        match self {
+            WatchError::Running { .. } => "watch-running",
+            WatchError::ClaimUnreadable { .. } => "watch-claim-unreadable",
+            WatchError::Record { .. } => "watch-record",
+            WatchError::StopTimeout { .. } => "watch-stop-timeout",
+            WatchError::LegacyLive { .. } => "watch-legacy-live",
+            WatchError::ClaimMoved { .. } => "watch-claim-moved",
+            WatchError::IdentityUnreadable => "watch-identity-unreadable",
+        }
+    }
+
+    fn fields(&self) -> Vec<(String, String)> {
+        let pair = |k: &str, v: String| (k.to_owned(), v);
+        match self {
+            WatchError::Running { path, pid, start } => vec![
+                pair("path", path.display().to_string()),
+                pair("pid", pid.to_string()),
+                pair("start", start.clone()),
+            ],
+            WatchError::ClaimUnreadable { path, pid, .. } => vec![
+                pair("path", path.display().to_string()),
+                pair("pid", pid.to_string()),
+            ],
+            WatchError::Record { path, op, .. } => vec![
+                pair("path", path.display().to_string()),
+                pair("op", (*op).to_owned()),
+            ],
+            WatchError::StopTimeout { pid, start } => {
+                vec![pair("pid", pid.to_string()), pair("start", start.clone())]
+            }
+            WatchError::LegacyLive { path, pid } => vec![
+                pair("path", path.display().to_string()),
+                pair("pid", pid.to_string()),
+            ],
+            WatchError::ClaimMoved { path, pid, start } => vec![
+                pair("path", path.display().to_string()),
+                pair("pid", pid.to_string()),
+                pair("start", start.clone()),
+            ],
+            WatchError::IdentityUnreadable => Vec::new(),
+        }
+    }
 }
 
 fn word(outcome: Outcome) -> String {
@@ -374,6 +478,7 @@ impl Error {
             Error::ReservationInvalid { .. } => "reservation-invalid",
             Error::AttemptStale { .. } => "attempt-stale",
             Error::ParkRefused { .. } => "park-refused",
+            Error::Watch(e) => e.key(),
         }
     }
 
@@ -572,6 +677,7 @@ impl Error {
                     pair("reason", (*reason).to_owned()),
                 ]
             }
+            Error::Watch(e) => e.fields(),
         }
     }
 }

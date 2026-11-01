@@ -16,6 +16,9 @@
 //! `kendex.settings.toml` keys the runtime acts on; the keys and their
 //! defaults are its constants. `verify` reads GitHub for a published head
 //! through agent-runtime's one process runner and records the verdict.
+//! `watch` is the standing scheduler: the one long-lived runner per fleet
+//! state, its claim, its event log and its baseline, driving the duties on
+//! `schedule`'s due times.
 
 pub mod effects;
 pub mod error;
@@ -25,5 +28,6 @@ pub mod schedule;
 pub mod settings;
 pub mod state;
 pub mod verify;
+pub mod watch;
 
 pub use error::{Error, Result};

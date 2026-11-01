@@ -780,3 +780,225 @@ fn an_unreadable_session_store_binds_nothing_and_names_its_cause() {
     assert_eq!(result["native_session"]["id"], "S1", "{result}");
     assert!(result.get("native_session_unreadable").is_none());
 }
+
+/// A composer stub named `claude` under `dir`, recording each line it
+/// reads as a user turn in the session file its `--session-id` names under
+/// `home` (Claude Code's shape, as `session::user_turns` counts it), or
+/// recording nothing when `drops`. Returns its path.
+#[cfg(unix)]
+fn turns_stub(dir: &std::path::Path, home: &std::path::Path, drops: bool) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join(if drops { "drops" } else { "keeps" });
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = bin.join("claude");
+    let record = if drops {
+        ""
+    } else {
+        "printf '{\"type\":\"user\",\"message\":{\"content\":\"%s\"},\"sessionId\":\"%s\",\"cwd\":\"%s\"}\\n' \"$line\" \"$session\" \"$PWD\" >> \"$rows\""
+    };
+    let script = format!(
+        "#!/bin/bash\nhome='{}'\nsession=stub\nwhile [ $# -gt 0 ]; do case \"$1\" in --session-id) session=\"$2\"; shift ;; esac; shift; done\nslug=\"${{PWD//[\\/.]/-}}\"\nmkdir -p \"$home/projects/$slug\"\nrows=\"$home/projects/$slug/$session.jsonl\"\n: > \"$rows\"\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n  ? for shortcuts\\n'\nwhile IFS= read -r line; do\n  {record}\n  printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\ndone\n",
+        home.display()
+    );
+    std::fs::write(&stub, script).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stub
+}
+
+/// `deliver` on a session named by its facts, the reply's JSON and exit.
+fn deliver_on(
+    pane: &PrivatePane,
+    home: &std::path::Path,
+    args: &[&str],
+) -> (serde_json::Value, i32) {
+    let out = Command::new(binary())
+        .args([
+            "deliver",
+            "--harness",
+            "claude",
+            "--socket",
+            &pane.socket.display().to_string(),
+            "--server-pid",
+            &pane.server_pid.to_string(),
+            "--server-start",
+            &pane.server_start.to_string(),
+            "--pane",
+            &pane.pane,
+            "--home",
+            &home.display().to_string(),
+            "--cwd",
+            &pane.socket.parent().unwrap().display().to_string(),
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "no reply: {e}\nstderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    (reply, out.status.code().unwrap_or(-1))
+}
+
+/// Decisions 61, 65. Defect: a delivery read as confirmed from the paste
+/// alone, with no turn the harness itself recorded; a confirmation read
+/// from a file the id does not name; a session with no id typed into. A
+/// `--no-paste` read gives the idle state and the fixed file's turn count;
+/// a paste into a stub that records the line is confirmed by that file; a
+/// paste into one that records nothing is `unconfirmed` once the bound
+/// passes; a session naming no id is a limit, nothing typed; a server the
+/// socket does not answer for under the recorded pid is refused; a server
+/// start left out matches the live server by its pid.
+#[test]
+#[cfg(unix)]
+fn deliver_confirms_by_the_fixed_file_s_user_turn_and_never_by_the_paste_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let pane = PrivatePane::start(dir.path());
+    let keeps = turns_stub(dir.path(), &home, false);
+    pane.tmux(&[
+        "respawn-pane",
+        "-k",
+        "-t",
+        &pane.pane,
+        &format!("{} --session-id keeps-1", keeps.display()),
+    ]);
+    pane.await_row(&|l| l == "\u{276f}\u{a0}");
+    let file = home
+        .join("projects")
+        .join(agent_runtime::session::claude_slug(dir.path()))
+        .join("keeps-1.jsonl");
+    let (read, code) = deliver_on(&pane, &home, &["--session-id", "keeps-1", "--no-paste"]);
+    assert_eq!(code, 0, "{read}");
+    assert_eq!(read["result"]["delivery"], "read", "{read}");
+    assert_eq!(read["result"]["state"]["state"], "idle", "{read}");
+    assert_eq!(read["result"]["turns"], 0, "{read}");
+    assert_eq!(read["result"]["file"], file.display().to_string(), "{read}");
+    let (confirmed, code) = deliver_on(
+        &pane,
+        &home,
+        &[
+            "--session-id",
+            "keeps-1",
+            "--turns-before",
+            "0",
+            "--line",
+            "you have mail",
+            "--bound-secs",
+            "5",
+        ],
+    );
+    assert_eq!(code, 0, "{confirmed}");
+    assert_eq!(confirmed["result"]["delivery"], "confirmed", "{confirmed}");
+    assert_eq!(confirmed["result"]["outcome"], "confirmed");
+    assert_eq!(confirmed["result"]["turns_before"], 0);
+    assert_eq!(confirmed["result"]["turns_after"], 1);
+    assert_eq!(
+        agent_runtime::session::user_turns(agent_runtime::Harness::Claude, &file).unwrap(),
+        1
+    );
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("you have mail"),
+        "the harness's own record of the line"
+    );
+    // The server start left out: the live server at the socket stands for
+    // the pid; a pid the socket does not answer for is refused before any
+    // read of the pane.
+    let out = Command::new(binary())
+        .args([
+            "deliver",
+            "--harness",
+            "claude",
+            "--socket",
+            &pane.socket.display().to_string(),
+            "--server-pid",
+            &pane.server_pid.to_string(),
+            "--pane",
+            &pane.pane,
+            "--home",
+            &home.display().to_string(),
+            "--cwd",
+            &dir.path().display().to_string(),
+            "--session-id",
+            "keeps-1",
+            "--no-paste",
+        ])
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reply["result"]["turns"], 1, "{reply}");
+    let out = Command::new(binary())
+        .args([
+            "deliver",
+            "--harness",
+            "claude",
+            "--socket",
+            &pane.socket.display().to_string(),
+            "--server-pid",
+            &(pane.server_pid + 1).to_string(),
+            "--pane",
+            &pane.pane,
+            "--cwd",
+            &dir.path().display().to_string(),
+            "--session-id",
+            "keeps-1",
+            "--no-paste",
+        ])
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reply["refusal"]["key"], "server-unmatched", "{reply}");
+    // No id: a limit, and the stub reads no line.
+    let (limit, code) = deliver_on(&pane, &home, &["--line", "lost"]);
+    assert_eq!(code, 0, "{limit}");
+    assert_eq!(limit["result"]["delivery"], "limit", "{limit}");
+    assert_eq!(limit["result"]["cause"], "session-unbound", "{limit}");
+    assert_eq!(
+        agent_runtime::session::user_turns(agent_runtime::Harness::Claude, &file).unwrap(),
+        1,
+        "nothing typed for a limit"
+    );
+    // A stub that records nothing: the paste goes in, no turn arrives.
+    let drops = turns_stub(dir.path(), &home, true);
+    pane.tmux(&[
+        "respawn-pane",
+        "-k",
+        "-t",
+        &pane.pane,
+        &format!("{} --session-id drops-1", drops.display()),
+    ]);
+    pane.await_row(&|l| l == "\u{276f}\u{a0}");
+    let started = std::time::Instant::now();
+    let (unconfirmed, code) = deliver_on(
+        &pane,
+        &home,
+        &[
+            "--session-id",
+            "drops-1",
+            "--line",
+            "you have mail",
+            "--bound-secs",
+            "1",
+        ],
+    );
+    assert_eq!(code, 0, "{unconfirmed}");
+    assert_eq!(
+        unconfirmed["result"]["delivery"], "unconfirmed",
+        "{unconfirmed}"
+    );
+    assert_eq!(unconfirmed["result"]["outcome"], "unconfirmed");
+    assert_eq!(unconfirmed["result"]["cause"], "turn-pending");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(1),
+        "the bound was waited out"
+    );
+    // A pane that is no composer is refused, nothing typed.
+    pane.run_stub(dir.path(), "claude", "printf 'starting up\\n'\n");
+    pane.await_row(&|l| l == "starting up");
+    let (refused, code) = deliver_on(&pane, &home, &["--session-id", "x", "--line", "lost"]);
+    assert_eq!(code, 1, "{refused}");
+    assert_eq!(refused["refusal"]["key"], "deliver-refused", "{refused}");
+}

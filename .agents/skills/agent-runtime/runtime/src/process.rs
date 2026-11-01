@@ -33,14 +33,14 @@ use std::fs;
 use std::os::unix::process::ExitStatusExt;
 #[cfg(not(target_os = "linux"))]
 use std::path::Path;
-use std::process::{Command, ExitStatus, Output};
+use std::process::{ExitStatus, Output};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::host::run_with;
+use crate::host::{self, run_with};
 use crate::reading::{Reading, Unreadable};
 
 /// The bound on one `ps` run.
@@ -519,16 +519,32 @@ fn unreadable(pid: u32, cause: &'static str, signalled: bool) -> Stop {
     }
 }
 
+/// The bound on `kill`, which sends one signal and exits.
+const KILL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Send `SIG<name>` to `pid` through the one runner, counted under
+/// `signal`. `true` when `kill` delivered it; `false` when it refused,
+/// as for a pid no process holds.
 fn signal(pid: u32, name: &str) -> Result<bool> {
-    let status = Command::new("kill")
-        .args([format!("-{name}"), pid.to_string()])
-        .status()
-        .map_err(|e| Error::Process {
-            operation: "kill",
-            pid,
-            cause: e.to_string(),
-        })?;
-    Ok(status.success())
+    let caller = host::Caller {
+        program: "kill",
+        operation: "kill",
+        tag: Some("signal"),
+    };
+    let output = host::start(
+        caller,
+        OsStr::new("kill"),
+        &[&format!("-{name}"), &pid.to_string()],
+        host::Place::default(),
+        None,
+        KILL_TIMEOUT,
+    )
+    .map_err(|failed| Error::Process {
+        operation: "kill",
+        pid,
+        cause: failed.cause(),
+    })?;
+    Ok(output.status.success())
 }
 
 /// End the processes `targets` names, each only while its start still
@@ -645,8 +661,14 @@ pub fn stop_tree(root: &Identity, matches: &dyn Fn(&str) -> bool, grace: Duratio
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::process::Command;
 
     use super::*;
+
+    /// Held by every test that signals: the `kill` start count is
+    /// process-wide, so two signalling tests at once would read each
+    /// other's starts.
+    static SIGNALLING: Mutex<()> = Mutex::new(());
 
     fn rows(spec: &[(u32, u32, &str)]) -> Vec<Row> {
         spec.iter()
@@ -1039,6 +1061,7 @@ mod tests {
 
     #[test]
     fn stopping_a_child_this_test_owns_ends_it_exactly_once() {
+        let _signalling = SIGNALLING.lock().unwrap_or_else(PoisonError::into_inner);
         let mut child = Held::sleep();
         let Reading::Live(id) = identity(child.pid()) else {
             panic!("a held child is live");
@@ -1051,5 +1074,40 @@ mod tests {
             stop_identities(std::slice::from_ref(&id), Duration::from_secs(1)).unwrap(),
             Stop::AlreadyGone
         );
+    }
+
+    /// A signal to a child this test owns is one counted `kill` start under
+    /// `signal`, delivered, and the child reads ended by that signal.
+    /// Defect: a signal sent past the runner, which the start count never
+    /// sees, so a measurement of starts per duty misses every stop.
+    #[test]
+    fn a_signal_to_a_held_child_counts_one_kill_start_and_ends_it() {
+        let _signalling = SIGNALLING.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut child = Held::sleep();
+        let before = host::counts().of("kill", Some("signal"));
+        assert!(signal(child.pid(), "TERM").unwrap());
+        let status = child.0.wait().unwrap();
+        assert_eq!(status.signal(), Some(15));
+        assert_eq!(host::counts().of("kill", Some("signal")), before + 1);
+    }
+
+    /// A signal to a pid no process holds reads refused, as `kill`'s ESRCH
+    /// exit, and still counts the one start. The pid is above the kernel's
+    /// `pid_max`, which proc(5) says is never allocated, so nothing is
+    /// signalled by accident. Defect: a gone pid read as an error or as
+    /// delivered, or its start uncounted.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_signal_to_a_pid_nobody_holds_reads_refused_and_counts_one_start() {
+        let _signalling = SIGNALLING.lock().unwrap_or_else(PoisonError::into_inner);
+        let pid_max: u32 = fs::read_to_string("/proc/sys/kernel/pid_max")
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let gone = pid_max.checked_add(1).unwrap();
+        let before = host::counts().of("kill", Some("signal"));
+        assert!(!signal(gone, "TERM").unwrap());
+        assert_eq!(host::counts().of("kill", Some("signal")), before + 1);
     }
 }

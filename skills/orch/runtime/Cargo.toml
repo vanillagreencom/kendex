@@ -59,6 +59,10 @@ path = "../tests/rust/lane.rs"
 name = "controller"
 path = "../tests/rust/controller.rs"
 
+[[test]]
+name = "watch_core"
+path = "../tests/rust/watch_core.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

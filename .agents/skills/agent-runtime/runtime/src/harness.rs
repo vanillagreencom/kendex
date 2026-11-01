@@ -6,13 +6,15 @@
 //! that has no word for a setting says so with `None`, and a caller that
 //! needs the setting refuses rather than guessing.
 
+use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
-use std::process::Command;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::host;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -335,11 +337,31 @@ pub struct Installed {
     pub version: Option<String>,
 }
 
+/// The bound on a harness answering `--version`.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Ask the installed harness its version. A harness missing from PATH is a
 /// refusal; a binary that answers nothing readable records `None`.
 pub fn probe(harness: Harness) -> Result<Installed> {
-    let output = Command::new(harness.binary()).arg("--version").output();
-    match output {
+    probe_executable(harness, OsStr::new(harness.binary()))
+}
+
+/// `probe` at `executable`: the harness's name as found on `PATH`, or a
+/// stand-in by path under test. The start is counted under `probe`.
+fn probe_executable(harness: Harness, executable: &OsStr) -> Result<Installed> {
+    let caller = host::Caller {
+        program: harness.binary(),
+        operation: "version",
+        tag: Some("probe"),
+    };
+    match host::start(
+        caller,
+        executable,
+        &["--version"],
+        host::Place::default(),
+        None,
+        PROBE_TIMEOUT,
+    ) {
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout);
             let line = text
@@ -352,15 +374,13 @@ pub fn probe(harness: Harness) -> Result<Installed> {
                 version: line,
             })
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Error::refused(
-            "harness-missing",
-            &[("harness", harness.name()), ("binary", harness.binary())],
-        )),
-        Err(e) => Err(Error::External {
-            program: harness.binary(),
-            operation: "version",
-            cause: e.to_string(),
-        }),
+        Err(host::Failed::Spawn(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(Error::refused(
+                "harness-missing",
+                &[("harness", harness.name()), ("binary", harness.binary())],
+            ))
+        }
+        Err(failed) => Err(failed.into_error(caller)),
     }
 }
 
@@ -371,6 +391,41 @@ const COMM_LEN: usize = 15;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A probe of a stand-in harness is one counted start under `probe`
+    /// and reads the first non-blank line it prints; a binary that is not
+    /// there is the `harness-missing` refusal and no start. Defects: a
+    /// probe past the runner, uncounted; a missing binary read as an
+    /// external failure or as a start.
+    #[test]
+    fn a_probe_counts_one_start_under_probe_and_a_missing_binary_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let stub = dir.path().join("claude");
+        // A child shell writes the stand-in: a write descriptor open in
+        // this process leaks into any sibling test's child between its
+        // fork and exec, and an exec of the file meanwhile fails with
+        // ETXTBSY.
+        let written = std::process::Command::new("sh")
+            .args(["-c", "printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"", "_"])
+            .arg(&stub)
+            .arg("#!/bin/sh\nprintf '\\n2.1.0 (Claude Code)\\n'\n")
+            .status()
+            .unwrap();
+        assert!(written.success());
+        let before = host::counts().of("claude", Some("probe"));
+        let installed = probe_executable(Harness::Claude, stub.as_os_str()).unwrap();
+        assert!(matches!(installed.harness, Harness::Claude));
+        assert_eq!(installed.binary, "claude");
+        assert_eq!(installed.version.as_deref(), Some("2.1.0 (Claude Code)"));
+        assert_eq!(host::counts().of("claude", Some("probe")), before + 1);
+        let missing = dir.path().join("none").join("claude");
+        let refused = probe_executable(Harness::Claude, missing.as_os_str()).unwrap_err();
+        assert!(
+            matches!(&refused, Error::Refused { key, .. } if *key == "harness-missing"),
+            "{refused:?}"
+        );
+        assert_eq!(host::counts().of("claude", Some("probe")), before + 1);
+    }
 
     /// The harness's own names, and the configured program's basename as the
     /// kernel records it, whole or cut to its first 15 bytes.

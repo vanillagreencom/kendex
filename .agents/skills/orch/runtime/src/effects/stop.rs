@@ -2,8 +2,10 @@
 //! wake turn it names and its window, by the identity recorded or the one
 //! read in its pane's foreground, on the ground the close intent recorded. A
 //! live harness is asked for its unanswered asks first, a `no-landing`
-//! disposition stops only the attempt's own identity and only idle, and the
-//! worktree's validation runs are ended before the window closes. Every
+//! disposition stops only the attempt's own identity and only idle, the
+//! worktree's validation runs are ended before the window closes, and the
+//! worktree itself is released after it, or kept with its reason on the lane
+//! record (decision 128 (9)). Every
 //! handle the lane records is an obligation of the close intent's set, read
 //! and discharged through the operation handle, which acts only on a standing
 //! token. The lane's launch record is read once, at the open's bootstrap; the
@@ -17,7 +19,7 @@ use serde_json::{Value, json};
 
 use super::operation::{
     EffectOutcome, Foreground, Identity, Observed, Operation, ProcessRead, ProcessReading, Reading,
-    State, Stop, Word,
+    State, Stop, Word, WorktreeRelease,
 };
 use super::{Run, Target, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
@@ -49,8 +51,13 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         return moved_lane(run, operation, close.observed(json!({})));
     }
     // The worktree's validation runs are owed from the close's start,
-    // acquired before the first signal.
+    // acquired before the first signal; so is the worktree itself, except
+    // under a `no-landing` disposition, which keeps the attempt's work
+    // (decision 98).
     operation.owe_validation()?;
+    if !close.no_landing() {
+        operation.owe_worktree(&lane)?;
+    }
     // The harness is the set's, by role, never the lane's launch record.
     let Some(identity) = operation.harness_identity() else {
         // No recorded process identity: a legacy record may name a pid with
@@ -254,8 +261,9 @@ impl Close<'_> {
     /// The close of what remains once every process the close names has
     /// ended: the worktree's validation runs are stopped, whose answer
     /// discharges that obligation, then the set's standing window is closed,
-    /// then the obligations are judged. A validation stop or a handle that did
-    /// not settle leaves the lane, with the cause, for a repeated close.
+    /// then the worktree is released or kept with its reason, then the
+    /// obligations are judged. A validation stop or a handle that did not
+    /// settle leaves the lane, with the cause, for a repeated close.
     fn finish(&self, mut operation: Operation, mut observation: Value) -> Result<EffectOutcome> {
         if let Err(cause) = operation.stop_validations(self.lane)? {
             observation["validate"] = json!("stop-failed");
@@ -264,6 +272,18 @@ impl Close<'_> {
         }
         let window = operation.close_lane_window()?;
         observation["window"] = json!(window.word());
+        // The run's diagnostic of the release; the set's discharge word and
+        // the lane's `kept` and `kept_mail` are the reading.
+        match operation.release_worktree()? {
+            None => {}
+            Some(WorktreeRelease::Gone) => observation["worktree"] = json!("gone"),
+            Some(WorktreeRelease::Released { .. }) => observation["worktree"] = json!("released"),
+            Some(WorktreeRelease::Kept { .. }) => observation["worktree"] = json!("kept"),
+            Some(WorktreeRelease::Held { cause }) => {
+                observation["worktree"] = json!("unreadable");
+                observation["cause"] = json!(cause);
+            }
+        }
         Ok(self.judged(operation, observation))
     }
 
@@ -412,8 +432,8 @@ fn with_pane(operation: &Operation, mut observation: Value) -> Value {
 /// A moved lane (decision 124d (20)): before any signal the close refuses
 /// `lane-moved` with no effect; after one it retries on the recorded set
 /// alone, every standing process stopped by its own token and the set's own
-/// pane closed by its full key, the worktree's validation runs released to
-/// the session that now holds the lane (decision 124e (24)), then settles by
+/// pane closed by its full key, the worktree and its validation runs released
+/// to the session that now holds the lane (decision 124e (24)), then settles by
 /// that set. The processes a stop may signal below a recorded root are
 /// named by the harness kind the set recorded at its bootstrap, never by
 /// the harness the relaunched session runs (decision 124g (29)). Nothing
@@ -434,6 +454,7 @@ fn moved_lane(
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
     operation.read_standing(None)?;
     operation.release_validation_moved()?;
+    operation.release_worktree_moved()?;
     if let Some(cause) = operation.stop_standing_processes(&owns, None)? {
         observation["cause"] = json!(cause);
     }

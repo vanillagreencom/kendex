@@ -15,7 +15,9 @@ use agent_runtime::reading::Reading;
 use agent_runtime::session;
 use serde_json::{Value, json};
 
-use super::obligations::{Discharge, PaneEnd, PaneRef, ProcessEnd, Standing, ValidationEnd};
+use super::obligations::{
+    Discharge, KeptReason, PaneEnd, PaneRef, ProcessEnd, Standing, ValidationEnd, WorktreeEnd,
+};
 use super::{Close, Operation, Pane, Server, WatchHandoverCall};
 use crate::error::{Error, Result};
 use crate::ops::{self, AdoptController, AdoptionRead, Applied};
@@ -689,7 +691,8 @@ impl Operation<'_> {
                 | Obligation::JobSidecar
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. } => None,
+                | Obligation::JobPgid { .. }
+                | Obligation::Worktree { .. } => None,
             })
             .collect();
         for (pane, server_pid, server_start) in panes {
@@ -753,7 +756,8 @@ impl Operation<'_> {
                 | Obligation::JobSidecar
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. } => None,
+                | Obligation::JobPgid { .. }
+                | Obligation::Worktree { .. } => None,
             })
             .collect();
         for pid in pids {
@@ -1371,6 +1375,73 @@ impl Operation<'_> {
         self.discharge(Discharge::Validation(ValidationEnd::LaneMoved))
     }
 
+    /// Release the lane's worktree the set records, or keep it with its
+    /// reason (decision 128 (9)), by this method's own reads through the
+    /// handle's runner: the path gone discharges `worktree-gone`; a linked
+    /// worktree (its `.git` a file, git-worktree(1) § DETAILS) with a dirty
+    /// tree or commits no other ref reaches is kept `dirty` or `unmerged`;
+    /// a clean, merged one is removed, after the signal is written, by the
+    /// worktree package's `remove`, the one owner of what a removal must
+    /// preserve (it moves every lane mailbox under the worktree to the main
+    /// checkout's `tmp/lane-mail/` before git deletes the tree, and refuses
+    /// a locked worktree, an unreconciled rebase map or an unregistered
+    /// target before anything is removed), discharged `released` once the
+    /// path reads gone, `kept:mail-unmoved` where the package moved no
+    /// mailbox and removed nothing, or kept with the package's refusal; a
+    /// path with no `.git`, or the main worktree, is kept as such. A path
+    /// or a read that fails leaves the obligation standing
+    /// `worktree-unreadable`: never released, never kept. Nothing to
+    /// release where the set records no worktree.
+    pub(in crate::effects) fn release_worktree(&mut self) -> Result<Option<WorktreeRelease>> {
+        let Some(path) = self.obligations.worktree() else {
+            return Ok(None);
+        };
+        let release = match read_worktree(&path) {
+            WorktreeRead::Gone => WorktreeRelease::Gone,
+            WorktreeRead::Unreadable { cause } => WorktreeRelease::Held { cause },
+            WorktreeRead::NotAWorktree => WorktreeRelease::Kept {
+                reason: KeptReason::NotAWorktree,
+            },
+            WorktreeRead::Main => WorktreeRelease::Kept {
+                reason: KeptReason::MainWorktree,
+            },
+            WorktreeRead::Linked => match judge_worktree(&path).and_then(|kept| match kept {
+                Some(reason) => Ok(Err(reason)),
+                None => main_worktree(&path).map(Ok),
+            }) {
+                Err(cause) => WorktreeRelease::Held { cause },
+                Ok(Err(reason)) => WorktreeRelease::Kept { reason },
+                Ok(Ok(main)) => {
+                    // The removal is an action: recorded before it runs.
+                    self.signal()?;
+                    match package_remove(&self.run.settings.worktree_cli, &main, &path) {
+                        Err(cause) => WorktreeRelease::Held { cause },
+                        Ok(reply) => reply.judge(read_worktree(&path)),
+                    }
+                }
+            },
+        };
+        self.discharge(Discharge::Worktree {
+            path,
+            end: WorktreeEnd::from(&release),
+        })?;
+        Ok(Some(release))
+    }
+
+    /// The worktree under a lane that moved belongs to the session that now
+    /// holds the lane: the obligation is discharged `lane-moved` where it
+    /// stands, as the validation stop is, and nothing of this close touches
+    /// that worktree.
+    pub(in crate::effects) fn release_worktree_moved(&mut self) -> Result<()> {
+        if let Some(path) = self.obligations.worktree() {
+            self.discharge(Discharge::Worktree {
+                path,
+                end: WorktreeEnd::LaneMoved,
+            })?;
+        }
+        Ok(())
+    }
+
     /// Wait for the process that handed this intent to the job to exit,
     /// within the launch bound: the pane about to be retired is its own as
     /// often as not. A caller still live past the bound, or one that cannot
@@ -1471,6 +1542,436 @@ impl Operation<'_> {
     pub(in crate::effects) fn user_turns(&self, harness: Harness, file: &Path) -> Result<u64> {
         Ok(session::user_turns(harness, file)? as u64)
     }
+}
+
+/// How the close's release of the lane's worktree went, by the release's
+/// own reads: what it discharges the obligation by, and what its
+/// observation reports.
+pub(in crate::effects) enum WorktreeRelease {
+    /// The path read gone before any removal.
+    Gone,
+    /// Removed by the worktree package; `kept_mail` is a lane mailbox it
+    /// kept beside the main checkout's, where one could not join.
+    Released {
+        kept_mail: Option<String>,
+    },
+    Kept {
+        reason: KeptReason,
+    },
+    /// The obligation stands: the path or a read of it failed.
+    Held {
+        cause: String,
+    },
+}
+
+impl From<&WorktreeRelease> for WorktreeEnd {
+    fn from(release: &WorktreeRelease) -> WorktreeEnd {
+        match release {
+            WorktreeRelease::Gone => WorktreeEnd::Gone,
+            WorktreeRelease::Released { kept_mail } => WorktreeEnd::Released {
+                kept_mail: kept_mail.clone(),
+            },
+            WorktreeRelease::Kept { reason } => WorktreeEnd::Kept(reason.clone()),
+            WorktreeRelease::Held { cause } => WorktreeEnd::Unreadable {
+                cause: cause.clone(),
+            },
+        }
+    }
+}
+
+/// What the path a lane records as its worktree reads as: a linked
+/// worktree, whose `.git` is a file naming its repository's directory
+/// (git-worktree(1) § DETAILS); the main worktree, whose `.git` is a
+/// directory; a directory with no `.git` entry; gone; or unreadable.
+enum WorktreeRead {
+    Gone,
+    NotAWorktree,
+    Main,
+    Linked,
+    Unreadable { cause: String },
+}
+
+fn read_worktree(path: &str) -> WorktreeRead {
+    match std::fs::metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return WorktreeRead::Gone,
+        Err(e) => {
+            return WorktreeRead::Unreadable {
+                cause: e.kind().to_string(),
+            };
+        }
+        Ok(meta) if !meta.is_dir() => return WorktreeRead::NotAWorktree,
+        Ok(_) => {}
+    }
+    match std::fs::symlink_metadata(Path::new(path).join(".git")) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => WorktreeRead::NotAWorktree,
+        Err(e) => WorktreeRead::Unreadable {
+            cause: format!("git-entry:{}", e.kind()),
+        },
+        Ok(meta) if meta.is_dir() => WorktreeRead::Main,
+        Ok(meta) if meta.is_file() => WorktreeRead::Linked,
+        Ok(_) => WorktreeRead::NotAWorktree,
+    }
+}
+
+/// Whether a linked worktree at `path` must be kept: it holds a submodule
+/// (`holds_submodule`), its tree is dirty (the status read below lists a
+/// line that is dirt), or its `HEAD` carries a commit no other local or
+/// remote ref reaches (`git rev-list` with every ref but its own branch
+/// negated), which removal would lose. `Err` is a read that failed.
+///
+/// A worktree holding a submodule is kept `submodules` and never judged
+/// (decision 169): git's own unforced `worktree remove` refuses it
+/// (git-worktree(1)), while the package's removal is forced and a
+/// submodule's tree and commits are read under settings the superproject's
+/// command line does not reach. The keep reads exactly what that refusal
+/// reads, the worktree's module store and the populated gitlinks of its
+/// index, data no activation, ignore or status setting changes, where `git
+/// submodule status` lists a populated submodule as uninitialized under a
+/// documented setting (gitsubmodules(7) § Active submodules) and fails on
+/// a gitlink with no `.gitmodules` mapping. A never-initialized gitlink
+/// with no store has nothing to lose, and its worktree continues to the
+/// status read.
+///
+/// A listing used as evidence names its completeness flags. The status
+/// read is `git status --porcelain --untracked-files=all
+/// --ignore-submodules=none`: `--untracked-files=all` overrides
+/// `status.showUntrackedFiles` (git-status(1), git-config(1));
+/// `--ignore-submodules=none` overrides `submodule.<name>.ignore` and
+/// `diff.ignoreSubmodules` (gitmodules(5), git-status(1)), whose `all`
+/// hides a gitlink path a person replaced with a file (` T`), the one
+/// case left to it once a populated submodule is kept above. The listing
+/// then proves the superproject's tracked and untracked files. Ignored
+/// files are not work and are not listed; a lane mailbox under an ignored
+/// `tmp/` is the worktree package's to move at the removal.
+///
+/// A worktree the package made with `create --no-checkout` is a claim: its
+/// index read from `HEAD`, no file written, marked
+/// `kendex-worktree.checkoutMode claim` in its own config (the package's
+/// `setup_app_worktree`), so every tracked file lists ` D`, the
+/// worktree-side deletion the claim makes by design. In a claim a ` D`
+/// line is not dirt and every other line (an untracked file, an index
+/// change, a modification) still is; in any other mode, or none, every
+/// line is dirt. The mark is read with `--default ""`, so an absent key is
+/// no mode and a config that cannot be read is a failed read.
+fn judge_worktree(path: &str) -> std::result::Result<Option<KeptReason>, String> {
+    if holds_submodule(path)? {
+        return Ok(Some(KeptReason::Submodules));
+    }
+    let status = git_lines(
+        path,
+        "status",
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )?;
+    if !status.is_empty() {
+        let claim = git_lines(
+            path,
+            "checkout-mode",
+            &[
+                "config",
+                "--get",
+                "--default",
+                "",
+                "kendex-worktree.checkoutMode",
+            ],
+        )?
+        .first()
+        .is_some_and(|mode| mode == "claim");
+        if !claim || status.iter().any(|line| !line.starts_with(" D ")) {
+            return Ok(Some(KeptReason::Dirty));
+        }
+    }
+    let branch = git_lines(path, "branch", &["branch", "--show-current"])?;
+    let mut args = vec!["rev-list", "-n", "1", "HEAD", "--not"];
+    let own_branch;
+    let own_remote;
+    // `--exclude` takes the ref's name under the set the next option names,
+    // without its `refs/heads/` or `refs/remotes/` prefix (git-rev-list(1)).
+    if let Some(branch) = branch.first() {
+        own_branch = format!("--exclude={branch}");
+        own_remote = format!("--exclude=*/{branch}");
+        args.extend([
+            own_branch.as_str(),
+            "--branches",
+            own_remote.as_str(),
+            "--remotes",
+        ]);
+    } else {
+        args.extend(["--branches", "--remotes"]);
+    }
+    let unreached = git_lines(path, "rev-list", &args)?;
+    Ok((!unreached.is_empty()).then_some(KeptReason::Unmerged))
+}
+
+/// The main checkout of the repository the linked worktree at `path`
+/// belongs to: the parent of its common git directory (`git rev-parse
+/// --path-format=absolute --git-common-dir`, git-rev-parse(1)), as the
+/// worktree package resolves its own `PROJECT_ROOT`. The package takes its
+/// repository from the directory it runs in, so the removal runs there,
+/// never inside the tree it deletes.
+fn main_worktree(path: &str) -> std::result::Result<String, String> {
+    let common = git_path(
+        path,
+        "common-dir",
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    common
+        .parent()
+        .map(|main| main.display().to_string())
+        .ok_or_else(|| format!("common-dir:no-parent:{}", common.display()))
+}
+
+/// Run the worktree package's `remove` on `path` through the one runner,
+/// which bounds and counts it under the `worktree` tag, with `main` as the
+/// child's working directory: the package takes its repository from the
+/// directory it runs in, so the removal runs in the main worktree, never
+/// inside the tree it deletes. The package inherits the runtime's
+/// environment. `Err` is a run that did not answer, keyed
+/// `removal-unanswered`: a `main` that cannot be entered, a package that
+/// could not start, or one that outran the bound.
+fn package_remove(cli: &Path, main: &str, path: &str) -> std::result::Result<RemoveReply, String> {
+    let output = host::run_tagged_in(
+        "worktree",
+        "worktree",
+        cli,
+        "remove",
+        &["remove", path],
+        host::Place {
+            cwd: Some(Path::new(main)),
+            env: &[],
+        },
+        CLI_TIMEOUT,
+    )
+    .map_err(|e| format!("removal-unanswered:{e}"))?;
+    let stdout = host::stdout_text(&output);
+    let stderr = host::stderr_text(&output);
+    Ok(RemoveReply {
+        status: output.status.code().unwrap_or(-1),
+        success: output.status.success(),
+        removed: keyed_lines(&stdout).any(|(key, _)| key == "removed"),
+        keyed: keyed_lines(&stderr)
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect(),
+        first_stderr: stderr.lines().next().unwrap_or_default().trim().to_owned(),
+    })
+}
+
+/// The worktree package's keyed lines in `text`, `worktree-<key>: <value>`
+/// (`worktree --help`: the stable message records), as (key, value).
+fn keyed_lines(text: &str) -> impl Iterator<Item = (&str, &str)> {
+    text.lines()
+        .filter_map(|line| line.strip_prefix("worktree-")?.split_once(": "))
+}
+
+/// What the worktree package's `remove` answered: its exit, whether it
+/// reported the worktree removed (`worktree-removed` on stdout, the
+/// `remove` arm's last line, `skills/worktree/scripts/worktree:3719`), and
+/// its keyed stderr lines, among which `lane-mail-move-failed` says a lane
+/// mailbox could not be moved and nothing was removed
+/// (`git_remove_worktree`, `worktree:2569`), and `lane-mail-kept` names a
+/// mailbox kept beside the main checkout's after the removal
+/// (`lane_mail_settle`, `worktree:2495`); `worktree remove --help` § Lane
+/// mailboxes states both.
+struct RemoveReply {
+    status: i32,
+    success: bool,
+    removed: bool,
+    keyed: Vec<(String, String)>,
+    first_stderr: String,
+}
+
+impl RemoveReply {
+    /// The worktree's end from this reply and the path read `after` it. A
+    /// reply that is no success and carries no `worktree-` keyed line is no
+    /// answer from the package (an executable at the package's path that is
+    /// not the package, or a package ended by a signal; one that cannot
+    /// start, or a main worktree that cannot be entered, never reaches a
+    /// reply: `package_remove` returns the runner's `Err`) and is held
+    /// `removal-unanswered` whatever the path reads: every refusal the
+    /// package's `remove` arm issues writes a keyed line. Else the path
+    /// gone after a removal the package reported, or a success, is
+    /// `released`, carrying the mailbox it kept where it named one; a path
+    /// gone after a refusal that reported no removal is held, the package's
+    /// recovery steps apply (`worktree --help` § Recovering a failed
+    /// removal); a path standing after a success is held `worktree-present`;
+    /// one standing after a refusal is kept `mail-unmoved` where the package
+    /// moved no mailbox, else `refused` with the package's lines.
+    fn judge(&self, after: WorktreeRead) -> WorktreeRelease {
+        if !self.success && !self.removed && self.keyed.is_empty() {
+            return WorktreeRelease::Held {
+                cause: format!("removal-unanswered:{}", self.detail()),
+            };
+        }
+        match after {
+            WorktreeRead::Gone if self.removed || self.success => WorktreeRelease::Released {
+                kept_mail: self.value("lane-mail-kept").map(str::to_owned),
+            },
+            WorktreeRead::Gone => WorktreeRelease::Held {
+                cause: format!("removal-unanswered:{}", self.detail()),
+            },
+            WorktreeRead::Unreadable { cause } => WorktreeRelease::Held { cause },
+            WorktreeRead::NotAWorktree | WorktreeRead::Main | WorktreeRead::Linked => {
+                if self.success {
+                    WorktreeRelease::Held {
+                        cause: "worktree-present".to_owned(),
+                    }
+                } else if self.value("lane-mail-move-failed").is_some() {
+                    WorktreeRelease::Kept {
+                        reason: KeptReason::MailUnmoved,
+                    }
+                } else {
+                    WorktreeRelease::Kept {
+                        reason: KeptReason::Refused {
+                            detail: self.detail(),
+                        },
+                    }
+                }
+            }
+        }
+    }
+
+    /// The value of the keyed stderr line `key`, where the package wrote one.
+    fn value(&self, key: &str) -> Option<&str> {
+        self.keyed
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The reply as a refusal's record: the exit status and the keyed
+    /// stderr lines, or the first stderr line where the package wrote none.
+    fn detail(&self) -> String {
+        let lines = if self.keyed.is_empty() {
+            self.first_stderr.clone()
+        } else {
+            self.keyed
+                .iter()
+                .map(|(k, v)| format!("worktree-{k}: {v}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        format!("status={} {lines}", self.status)
+    }
+}
+
+/// Whether the worktree at `path` holds a submodule, by the two reads of
+/// git's own unforced `worktree remove` (`worktree.c`
+/// `validate_no_submodules`): the worktree's module store, `git rev-parse
+/// --git-path modules`, is a directory, or a gitlink of its index (`git
+/// ls-files --stage -z`, an entry of mode `160000`, NUL-separated so a path
+/// with special characters is not quoted) has a `.git` under its path.
+/// `Err` is a read that failed.
+fn holds_submodule(path: &str) -> std::result::Result<bool, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let modules = git_path(
+        path,
+        "modules-path",
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "modules",
+        ],
+    )?;
+    match std::fs::metadata(&modules) {
+        Ok(meta) if meta.is_dir() => return Ok(true),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!("modules-path:{}:{}", modules.display(), e.kind()));
+        }
+    }
+    let index = git_output(path, "ls-files", &["ls-files", "--stage", "-z"])?;
+    for entry in index.stdout.split(|byte| *byte == 0) {
+        // `<mode> <object> <stage>\t<path>` (git-ls-files(1)).
+        let Some(rest) = entry.strip_prefix(b"160000 ") else {
+            continue;
+        };
+        let Some(tab) = rest.iter().position(|byte| *byte == b'\t') else {
+            return Err("ls-files:a gitlink entry names no path".to_owned());
+        };
+        let git_entry = Path::new(path)
+            .join(std::ffi::OsStr::from_bytes(&rest[tab + 1..]))
+            .join(".git");
+        // A file standing at the gitlink's path (a person's replacement of
+        // a vendored submodule) is no populated submodule, as git reads it;
+        // the status read lists it as dirt.
+        match std::fs::symlink_metadata(&git_entry) {
+            Ok(_) => return Ok(true),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
+            Err(e) => {
+                return Err(format!("ls-files:{}:{}", git_entry.display(), e.kind()));
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// The output of a git read that must succeed: a run that could not start
+/// or exited non-zero is `Err`, naming the operation, the exit and the
+/// first stderr line.
+fn git_output(
+    path: &str,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<std::process::Output, String> {
+    let mut argv = vec!["-C", path];
+    argv.extend_from_slice(args);
+    let output = host::run("git", Path::new("git"), operation, &argv, CLI_TIMEOUT)
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let line = host::stderr_text(&output)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        return Err(format!(
+            "{operation}:status={} {line}",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+    Ok(output)
+}
+
+/// The one pathname a git read that must succeed prints (`rev-parse
+/// --git-path`, `--git-common-dir`): its stdout less the one newline git
+/// ends it with, as bytes, since a pathname is one value whatever
+/// characters it holds; an empty answer is a failed read.
+fn git_path(
+    path: &str,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<PathBuf, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let output = git_output(path, operation, args)?;
+    let bytes = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
+    if bytes.is_empty() {
+        return Err(format!("{operation}:no path printed"));
+    }
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+}
+
+/// The non-empty stdout lines of a git read that must succeed.
+fn git_lines(
+    path: &str,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<Vec<String>, String> {
+    let output = git_output(path, operation, args)?;
+    Ok(host::stdout_text(&output)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_owned)
+        .collect())
 }
 
 /// Run orch's own validation runner's stop for the worktree `root`

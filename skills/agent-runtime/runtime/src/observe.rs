@@ -248,6 +248,90 @@ static PI_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(^|\s)[0-9]+(\.[0-9]+)?%/[0-9]+(\.[0-9]+)?[kKmMgG]?(\s|$)").unwrap()
 });
 
+/// Codex's refusal of one turn for the selected model's capacity
+/// (`lane-state.sh` `MODEL_CAPACITY`), drawn above the composer the lane
+/// then sits at: the one marker that tells this idle from a finished turn's
+/// (decision 121, Q6).
+static CODEX_CAPACITY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Selected model is at capacity").unwrap());
+
+/// Whether a Codex slice judged idle sits at its composer under the capacity
+/// refusal: the refusal line and the marker line are both drawn in it.
+pub fn codex_capacity_refused(slice: &str) -> bool {
+    slice.lines().any(|l| CODEX_CAPACITY.is_match(l))
+        && slice.lines().any(|l| CODEX_MARKER.is_match(l))
+}
+
+/// Whether a wall screen is the live process's (decision 125 (1) as decision
+/// 130 shrank it): a screen first seen before the process holding the pane
+/// started was drawn by an earlier process and is scrollback, not a wall.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "age", rename_all = "kebab-case")]
+pub enum WallAge {
+    /// First seen at or after the live process's start.
+    Current,
+    /// First seen before the live process's start.
+    Older,
+    /// The process's start could not be read, so the wall is unjudged.
+    Unjudged { cause: &'static str },
+}
+
+/// The wall first seen at epoch second `first_seen`, against the live
+/// process's start as [`start_epoch`] read it.
+pub fn wall_age(first_seen: u64, started: &Reading<u64>) -> WallAge {
+    match started {
+        Reading::Live(start) if first_seen >= *start => WallAge::Current,
+        Reading::Live(_) => WallAge::Older,
+        Reading::Gone => WallAge::Unjudged {
+            cause: "process-gone",
+        },
+        Reading::Unreadable { cause } => WallAge::Unjudged { cause },
+    }
+}
+
+/// `USER_HZ`, 100 on every Linux architecture (`include/asm-generic/
+/// param.h`): the unit of the `ticks:` start the identity reader records.
+const USER_HZ: u64 = 100;
+
+/// The epoch second the identity's process started, confirmed live first:
+/// Linux's boot time (`/proc/stat` `btime`) plus the recorded start ticks.
+/// Both are truncated to the second, so the moment is never later than the
+/// true one, and a wall first seen in the same second reads current. A host
+/// without the `ticks:` form, or a `/proc/stat` that cannot be read, is
+/// unreadable, never a moment.
+pub fn start_epoch(identity: &Identity) -> Reading<u64> {
+    match process::still_runs(identity) {
+        Reading::Live(_) => {}
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    }
+    let Some(ticks) = identity
+        .start
+        .strip_prefix("ticks:")
+        .and_then(|t| t.parse::<u64>().ok())
+    else {
+        return Reading::Unreadable {
+            cause: "start-form",
+        };
+    };
+    let Ok(stat) = std::fs::read_to_string("/proc/stat") else {
+        return Reading::Unreadable {
+            cause: "boot-time-unreadable",
+        };
+    };
+    let Some(btime) = stat
+        .lines()
+        .find_map(|l| l.strip_prefix("btime "))
+        .and_then(|b| b.trim().parse::<u64>().ok())
+    else {
+        return Reading::Unreadable {
+            cause: "boot-time-unreadable",
+        };
+    };
+    Reading::Live(btime + ticks / USER_HZ)
+}
+
 /// The StopFailure error kinds that refuse every turn on the account until
 /// a person acts: a login wall, never a usage mark.
 pub const AUTH_FAILURE_ERRORS: [&str; 4] = [
@@ -806,6 +890,81 @@ mod tests {
             judge(&pi, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Unjudged { .. }
         ));
+    }
+
+    /// Decision 121, Q6: the Codex capacity refusal reads `idle` through the
+    /// judge, and the one marker tells it from a finished turn's idle; a
+    /// Claude screen quoting the phrase, with no Codex marker, is not it.
+    #[test]
+    fn the_codex_capacity_refusal_is_idle_and_its_marker_tells_it_apart() {
+        let screen = "› Continue the task.\n\n▲ Selected model is at capacity. Try again later.\n\n› Ask Codex to do anything";
+        assert_eq!(
+            judge(screen, Harness::Codex, &ProcessReading::HarnessUp, None),
+            State::Idle
+        );
+        let slice = below_last_turn(screen);
+        assert!(codex_capacity_refused(&slice));
+        assert!(!codex_capacity_refused("› first turn\nsome answer\n› "));
+        assert!(!codex_capacity_refused(
+            "❯ note\n● Selected model is at capacity, it said.\n❯\u{a0}"
+        ));
+    }
+
+    /// Decision 125 (1), 130: a wall first seen before the live process
+    /// started is older, one seen at or after it is current, and a start
+    /// that cannot be read leaves the wall unjudged, never current.
+    #[test]
+    fn a_wall_older_than_the_live_process_s_start_is_not_its_wall() {
+        assert_eq!(wall_age(100, &Reading::Live(100)), WallAge::Current);
+        assert_eq!(wall_age(101, &Reading::Live(100)), WallAge::Current);
+        assert_eq!(wall_age(99, &Reading::Live(100)), WallAge::Older);
+        assert_eq!(
+            wall_age(99, &Reading::Gone),
+            WallAge::Unjudged {
+                cause: "process-gone"
+            }
+        );
+        assert_eq!(
+            wall_age(
+                99,
+                &Reading::Unreadable {
+                    cause: "start-form"
+                }
+            ),
+            WallAge::Unjudged {
+                cause: "start-form"
+            }
+        );
+        // This process's own start reads as a moment at or before now, and
+        // an identity under another start reads gone.
+        let pid = std::process::id();
+        let Reading::Live(me) = process::identity(pid) else {
+            panic!("this process reads live")
+        };
+        if me.start.starts_with("ticks:") {
+            let Reading::Live(started) = start_epoch(&me) else {
+                panic!("a live ticks start reads as an epoch")
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            assert!(started <= now, "{started} <= {now}");
+            assert_eq!(
+                start_epoch(&Identity {
+                    pid,
+                    start: "ticks:1".to_owned()
+                }),
+                Reading::Gone
+            );
+        }
+        assert_eq!(
+            start_epoch(&Identity {
+                pid: 2_000_000_000,
+                start: "ticks:1".to_owned()
+            }),
+            Reading::Gone
+        );
     }
 
     #[test]

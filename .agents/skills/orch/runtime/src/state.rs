@@ -1022,13 +1022,17 @@ pub enum Obligation {
     /// the group is read in the kernel's table until it empties (decision
     /// 124h (33)).
     JobPgid { pgid: u32 },
+    /// The lane's local worktree at `path`, an owned resource of the close
+    /// (decision 128 (9)): released through `git worktree remove`, or kept
+    /// with its reason recorded where removal would lose work.
+    Worktree { path: String },
 }
 
 /// The part a recorded handle plays in its intent (decision 124d (15)): the
 /// lane's own harness and pane, its detached wake turn, the runner a
 /// succession opens, the predecessor it retires, the worktree's validation
-/// runs, or the detached job. A selection from the set reads the role and
-/// never the target's record.
+/// runs, the detached job, or the lane's worktree itself. A selection from
+/// the set reads the role and never the target's record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Role {
@@ -1038,6 +1042,7 @@ pub enum Role {
     Predecessor,
     Validation,
     Job,
+    Worktree,
 }
 
 /// One standing obligation as the record holds it: the handle, flattened
@@ -1094,6 +1099,17 @@ pub struct ObligationRecord {
 fn is_zero(n: &u64) -> bool {
     *n == 0
 }
+
+/// The prefix of the word a worktree obligation is discharged by when the
+/// close keeps the worktree: `kept:<reason>`, the reason being what the
+/// lane record's `kept` field carries.
+pub const WORKTREE_KEPT: &str = "kept:";
+
+/// The prefix of the word a worktree obligation is discharged by when the
+/// close released the worktree but the worktree package kept a lane mailbox
+/// beside the main checkout's: `released:mail-kept:<path>`, the path being
+/// what the lane record's `kept_mail` field carries.
+pub const WORKTREE_MAIL_KEPT: &str = "released:mail-kept:";
 
 /// The keys a lane intent's terminal carries (decision 124d (14)): the
 /// lane's `session_since` when the intent was written and every identity,
@@ -1230,7 +1246,8 @@ impl ObligationRecord {
                 | Obligation::JobSidecar
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. } => false,
+                | Obligation::JobPgid { .. }
+                | Obligation::Worktree { .. } => false,
             })
             .cloned()
             .collect();
@@ -1238,6 +1255,42 @@ impl ObligationRecord {
             lane_since,
             harness,
         }
+    }
+
+    /// The reason the close kept the lane's worktree, where its worktree
+    /// obligation was discharged `kept:<reason>` (decision 128 (9)); `None`
+    /// where it was released, read gone, or never acquired. The one reader
+    /// of that word, which the close's outcome writes onto the lane record
+    /// as `kept`.
+    pub fn worktree_kept(&self) -> Option<&str> {
+        self.worktree_word()?.strip_prefix(WORKTREE_KEPT)
+    }
+
+    /// The path of a lane mailbox the worktree package kept beside the main
+    /// checkout's when the close released the lane's worktree, where its
+    /// worktree obligation was discharged `released:mail-kept:<path>`;
+    /// `None` otherwise. The one reader of that word, which the close's
+    /// outcome writes onto the lane record as `kept_mail`.
+    pub fn worktree_mail_kept(&self) -> Option<&str> {
+        self.worktree_word()?.strip_prefix(WORKTREE_MAIL_KEPT)
+    }
+
+    /// The word the worktree obligation was discharged by, where one was.
+    fn worktree_word(&self) -> Option<&str> {
+        self.discharged.iter().find_map(|d| match &d.obligation {
+            Obligation::Worktree { .. } => Some(d.by.as_str()),
+            Obligation::Process(_)
+            | Obligation::Pid { .. }
+            | Obligation::Pane { .. }
+            | Obligation::PaneUnaddressed { .. }
+            | Obligation::Window { .. }
+            | Obligation::Receipt
+            | Obligation::Validation
+            | Obligation::JobSidecar
+            | Obligation::JobUnit { .. }
+            | Obligation::JobGroup(_)
+            | Obligation::JobPgid { .. } => None,
+        })
     }
 
     /// Whether `obligation` is a detached job's handle or its unread record.

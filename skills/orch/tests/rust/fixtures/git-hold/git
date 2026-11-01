@@ -1,0 +1,26 @@
+#!/bin/bash
+# A pass-through git for the orch-runtime close rows: it execs the real git,
+# $GIT_REAL, for every call, except that before a `worktree remove` it
+# creates $GIT_HOLD_MARK, where set, and blocks on the FIFO $GIT_HOLD_FIFO
+# until the row releases it, so the close is held alive at its removal with
+# the worktree's acquisition and the signal already written. Once released,
+# it runs the removal unless $GIT_HOLD_SKIP names a file that exists by then,
+# the row's way of killing the close without the removal running after it.
+# Put ahead of PATH for the one run that plants it; the reads before the
+# removal pass straight through.
+prev=""
+held=0
+for arg in "$@"; do
+  if [ "$prev" = "worktree" ] && [ "$arg" = "remove" ]; then
+    held=1
+  fi
+  prev="$arg"
+done
+if [ "$held" -eq 1 ] && [ -n "${GIT_HOLD_FIFO:-}" ]; then
+  [ -z "${GIT_HOLD_MARK:-}" ] || : > "$GIT_HOLD_MARK"
+  cat "$GIT_HOLD_FIFO" >/dev/null
+  if [ -n "${GIT_HOLD_SKIP:-}" ] && [ -e "$GIT_HOLD_SKIP" ]; then
+    exit 128
+  fi
+fi
+exec "${GIT_REAL:-git}" "$@"
