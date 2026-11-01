@@ -169,10 +169,17 @@ export async function importMainRuntime(repo = resolve(import.meta.dir, "../../.
 	config: typeof import("../extensions/subagent/package-config.js");
 	ref: string;
 }> {
+	const paths = ["pi-extensions/pi-agents-tmux/extensions", "pi-extensions/pi-agents-tmux/scripts", "pi-extensions/pi-agents-tmux/package.json"];
+	// A blob:none partial clone lacks baseline blobs. A caller's repository that
+	// borrows these objects cannot fetch them, and per-object lazy reads outlast
+	// the row, so this checkout fetches them first in one batch: a diff against
+	// the empty tree, under its own environment.
+	const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+	execFileSync("git", ["diff", "--numstat", emptyTree, BENCHMARK_BASELINE, "--", ...paths], { cwd: resolve(import.meta.dir, "../../.."), stdio: ["ignore", "ignore", "pipe"] });
 	const root = allocateRuntime();
 	const env = { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root };
 	const ref = execFileSync("git", ["rev-parse", `${BENCHMARK_BASELINE}^{commit}`], { cwd: repo, env, encoding: "utf8" }).trim();
-	const archive = execFileSync("git", ["archive", ref, "pi-extensions/pi-agents-tmux/extensions", "pi-extensions/pi-agents-tmux/scripts", "pi-extensions/pi-agents-tmux/package.json"], { cwd: repo, env, maxBuffer: 16 * 1024 * 1024 });
+	const archive = execFileSync("git", ["archive", ref, ...paths], { cwd: repo, env, maxBuffer: 16 * 1024 * 1024 });
 	execFileSync("tar", ["-x", "-C", root], { input: archive, env });
 	const pkg = join(root, "pi-extensions/pi-agents-tmux");
 	fs.symlinkSync(resolve(import.meta.dir, "../node_modules"), join(pkg, "node_modules"), "dir");
