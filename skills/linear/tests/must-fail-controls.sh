@@ -265,7 +265,7 @@ flush() {
 			for ((k = 1; k <= n; k++)); do
 				[[ -f "$WORK/$stem/mutation$k.rc" ]] || return 0
 			done
-			sed -n '/^BASELINE /p' "$WORK/$stem.log"
+			sed -n -e '/^BASELINE /p' -e '/^ROWLESS /p' "$WORK/$stem.log"
 			for ((k = 1; k <= n; k++)); do
 				sed -n '/^MUTATION /p' "$WORK/$stem/mutation$k.log"
 			done
@@ -278,7 +278,7 @@ flush() {
 		if [[ -n "$log" ]]; then
 			sed '/^MUTATION /d' "$log"
 			FAILURES=$((FAILURES + 1))
-		else
+		elif [[ "$n" -gt 0 ]]; then
 			printf 'ok       %s.test.sh\n' "$stem"
 		fi
 		NEXT=$((NEXT + 1))
@@ -407,7 +407,7 @@ prepare_one() {
 	local suite="$1" stem="$2"
 	local control="$CONTROLS_DIR/$stem.control.sh"
 	local root="$WORK/$stem/linear"
-	local mutations k shared trailing out rc started cap_note snapshot="$WORK/$stem/staged"
+	local mutations k shared trailing out rc started cap_note line rowless="" summary=0 snapshot="$WORK/$stem/staged"
 
 	if [[ ! -f "$control" ]]; then
 		printf 'MISSING  %-52s no controls/%s.control.sh\n' "$suite" "$stem"
@@ -436,6 +436,20 @@ prepare_one() {
 			printf '%s\n' "$out" | tail -n 40
 		} | sed 's/^/         | /'
 		return 1
+	fi
+
+	# A green suite that prints run-all.sh's `rowless: ` opt-out and no
+	# summary ran no assertion, so no mutation has one to redden.
+	while IFS= read -r line; do
+		case "$line" in
+		"rowless: "?*) [[ -n "$rowless" ]] || rowless="${line#rowless: }" ;;
+		"pass: "*) summary=1 ;;
+		esac
+	done <"$WORK/$stem/suite.out"
+	if [[ -n "$rowless" && "$summary" -eq 0 ]]; then
+		printf 'ROWLESS  %-52s mutations=0 %s\n' "$suite" "$rowless"
+		printf '0\n' >"$WORK/$stem.count"
+		return 0
 	fi
 
 	# What the copy holds now, the suite's own residue included: a suite that
