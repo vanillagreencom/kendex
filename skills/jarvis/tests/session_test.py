@@ -476,12 +476,15 @@ class SessionContract(unittest.TestCase):
                         self.assertEqual(launch(), stated(running))
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
-                # A resume keeps the recorded choice, restated or not.
-                for restated in ({"model": model, "effort": "low"}, {}):
-                    with self.subTest(restated=bool(restated)):
-                        self.call("start", harness, **restated)
-                        self.assertEqual(self.wait()["reason"], "resumed")
-                        self.assertEqual(launch(), stated("low"))
+                # A resume keeps the recorded choice, restated or not; a new
+                # context that states none runs the app's own default.
+                for mode, restated, reason, running in (("resume", {"model": model, "effort": "low"}, "resumed", stated("low")),
+                                                        ("resume", {}, "resumed", stated("low")),
+                                                        ("new", {}, "new-requested", ({}, None))):
+                    with self.subTest(mode=mode, restated=bool(restated)):
+                        self.call("start", harness, mode=mode, **restated)
+                        self.assertEqual(self.wait()["reason"], reason)
+                        self.assertEqual(launch(), running)
                         self.call("stop")
                         self.wait("stopped", persisted_stop=True)
 
