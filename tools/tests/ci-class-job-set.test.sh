@@ -113,30 +113,35 @@ while IFS= read -r p; do
     "$(queue_only_of "$p" | sed 's/ glob=.*//')"
 done <<<"$sources"
 
-# A row that forgets a lane is refused before any lane reads it. shell_os is
-# the lane no aggregate holds, so this refusal is what keeps a forgotten
-# runner list from collapsing the matrix in silence. The copy drops one lane
-# from the render row.
+# A row that omits a job lane or the `macos` bit is refused: sel_get ends the
+# step before emit() writes anything, so a forgotten bit cannot stand the
+# macOS shell matrix down in silence. Each copy drops one lane from the
+# render row.
 mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-[ "$(grep -c '^      printf .%s. "linux=false macos=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$' "$JOB_SET")" -eq 1 ] ||
+RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$/'
+[ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
-awk '
-  /^      printf .%s. "linux=false macos=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$/ {
-    sub(/ cargo_windows_check=false/, "")
-  }
-  { print }
-' "$JOB_SET" >"$forgot"
-chmod +x "$forgot"
-! cmp -s "$JOB_SET" "$forgot" || { echo "the forgotten-lane copy changed nothing" >&2; exit 1; }
-forgot_status=0
-CHANGE_CLASS=render DOCS_ONLY=false CHANGED_PATHS=CLAUDE.md EVENT=pull_request GITHUB_OUTPUT="$TMP/forgot-out" \
-  "$forgot" 2>"$TMP/forgot-err" || forgot_status=$?
-check "a row that forgets a lane is refused" \
-  "exit=2 lane-unselected lane=cargo_windows_check" \
-  "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
+# LANE|WORD dropped from the render row
+forgot_rows=0
+while IFS='|' read -r lane word; do
+  forgot_rows=$((forgot_rows + 1))
+  WORD="$word" awk "$RENDER_ROW"' { sub(ENVIRON["WORD"], "") } { print }' "$JOB_SET" >"$forgot"
+  chmod +x "$forgot"
+  ! cmp -s "$JOB_SET" "$forgot" || { echo "the copy forgetting $lane changed nothing" >&2; exit 1; }
+  forgot_status=0
+  CHANGE_CLASS=render DOCS_ONLY=false CHANGED_PATHS=CLAUDE.md EVENT=pull_request GITHUB_OUTPUT="$TMP/forgot-out" \
+    "$forgot" 2>"$TMP/forgot-err" || forgot_status=$?
+  check "a row that forgets $lane is refused" \
+    "exit=2 lane-unselected lane=$lane" \
+    "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
+done <<'ROWS'
+cargo_windows_check| cargo_windows_check=false
+macos|macos=false[ ]
+ROWS
+[ "$forgot_rows" -eq 2 ] || { echo "the forgotten-lane table read $forgot_rows rows" >&2; exit 1; }
 
 # A `trivial` diff changing a path tools/rust-reads names takes the measured
 # row. The fixture crate reads docs/a.md and assets/x.json through

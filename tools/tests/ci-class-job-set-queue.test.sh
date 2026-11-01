@@ -77,7 +77,7 @@ while IFS='@' read -r edit paths; do
     esac
   done
 done <<'CONTROLS'
-s/^if \[ "\$(sel_get "\$now" macos)" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md
+s/^if \[ "\$macos_on" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md
 CONTROLS
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

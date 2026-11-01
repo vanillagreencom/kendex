@@ -26,8 +26,9 @@
 #      and CI passes there without its aggregate, whatever the diff. A merge
 #      group runs the job set its class selects, the two diff checks and
 #      the macOS legs its queue_macos_shards list names. A push to main runs
-#      the cargo compile legs, catalog, smoke and full eligible shell roster;
-#      the nightly run, schedule or dispatch, runs the native macOS roster, and the macOS and
+#      the cargo compile legs, catalog, smoke, the main-only suites and the
+#      shell shards its same-head merge group left unproved, the whole
+#      eligible roster where the changes job failed; the nightly run, schedule or dispatch, runs the native macOS roster, and the macOS and
 #      Windows cargo test steps run there and in the group, never on the
 #      push. The queue's legs expand to that list, or to the macOS-capable
 #      roster where nothing classified, and CI's lane for them is true
@@ -362,9 +363,9 @@ ROWS
 [ "$job_rows" -ge 10 ] || { echo "the job table read $job_rows rows" >&2; exit 1; }
 
 # Every job of the workflow, gated or not, per event: the event's whole run.
-# The changes job runs on a merge group alone, so every other event reads
-# it skipped and its outputs empty; every other job a condition reads reads
-# skipped, as nothing ran ahead of it. A job with no `if:` runs under
+# The changes job runs on a merge group and a main push, so the pull request
+# and the nightly run read it skipped and its outputs empty; every other job
+# a condition reads reads skipped, as nothing ran ahead of it. A job with no `if:` runs under
 # GitHub's implicit success().
 event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted and spaced
   local wf="$1" event="$2" result="$3" sel="$4" ctx job needs expr
@@ -377,7 +378,13 @@ event_jobs() { # WORKFLOW EVENT RESULT SELECTION — every job that runs, sorted
     printf '%s\t%s\t%s\n' "$job" "$needs" "${expr:-success()}"
   done | gh_eval jobs "$ctx" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
 }
-MAIN_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos skill-suites-main-only skill-suites-shard smoke"
+# A main push runs its fixed jobs and the shell shards its group left
+# unproved: none, some on both runners, or every one where changes failed.
+MAIN_FIXED="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog changes"
+MAIN_JOBS="$MAIN_FIXED skill-suites-macos-queue skill-suites-main-only skill-suites-shard smoke"
+PUSH_PROVED='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[]'
+PUSH_REST='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["rest"] queue_macos_shards=["rest"]'
+PUSH_LINUX='shell_shards=true shell_os=["ubuntu-latest"] shards=["node"] queue_macos_shards=[]'
 NIGHTLY_JOBS="cargo-check-windows cargo-linux cargo-macos cargo-tests-windows catalog skill-suites-macos smoke"
 # EVENT|RESULT|SELECTION|EXPECTED. A pull request runs `CI` alone for a
 # Rust-only diff, a docs-only diff and a dead classifier alike.
@@ -392,11 +399,14 @@ pull_request|success|$PROSE_ROW|ci
 pull_request|failure|$ALL_OFF|ci
 merge_group|success|$VERIFY_ROW|bot-instructions changes ci markdown preflight
 merge_group|success|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows changes ci markdown preflight
-push|skipped|$ALL_OFF|$MAIN_JOBS
+push|success|$PUSH_PROVED|$MAIN_FIXED skill-suites-main-only smoke
+push|success|$PUSH_REST|$MAIN_JOBS
+push|success|$PUSH_LINUX|$MAIN_FIXED skill-suites-main-only skill-suites-shard smoke
+push|failure|$ALL_OFF|$MAIN_JOBS
 schedule|skipped|$ALL_OFF|$NIGHTLY_JOBS
 workflow_dispatch|skipped|$ALL_OFF|$NIGHTLY_JOBS
 ROWS
-[ "$event_rows" -ge 9 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
+[ "$event_rows" -ge 12 ] || { echo "the event table read $event_rows rows" >&2; exit 1; }
 
 # A classifier that died published nothing. Every gated job a merge group
 # runs, runs, which is what each condition's status function and result
@@ -432,7 +442,7 @@ done <<'ROWS'
 pull_request|skipped|false
 merge_group|success|false
 merge_group|failure|false
-push|skipped|true
+push|success|false
 schedule|skipped|true
 workflow_dispatch|skipped|true
 ROWS
@@ -499,10 +509,13 @@ merge_group|success|$linux_only|none
 merge_group|failure|$ALL_OFF|$QUEUE_ALL
 pull_request|success|$ALL_ON|none
 pull_request|skipped|$ALL_OFF|none
-push|skipped|$ALL_OFF|none
+push|success|$PUSH_PROVED|none
+push|success|$PUSH_REST|["rest"]
+push|success|$PUSH_LINUX|none
+push|failure|$ALL_OFF|$QUEUE_ALL
 schedule|skipped|$ALL_OFF|none
 ROWS
-[ "$queue_rows" -ge 14 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
+[ "$queue_rows" -ge 17 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
 
 
 # The shard key expands to the published list, and to the whole roster where
@@ -832,7 +845,7 @@ done
 # report, checked by review-gate's standard-ci-context row.
 # Every other merge-group job reports into it; it runs on a pull request and
 # a merge group whatever its needs did, and the classifier it reads runs on
-# the merge group alone.
+# the merge group and the main push alone.
 
 ci_needs_gap() { # WORKFLOW — `missing=` and `extra=` against jobs that can run on a merge group
   local wf="$1" ci job expr main_only=""
@@ -879,18 +892,18 @@ merge_group|every needed job succeeded|yes
 pull_request|a pull request runs no lane|yes
 merge_group|a pull request runs no lane|no
 ROWS
-# The workflow's events; the classifier every lane and CI read runs on the
-# merge group alone.
+# The workflow's events; the changes job every lane and CI read runs on the
+# merge group and, for its push route alone, the main push.
 check "the workflow runs on its five events" "merge_group pull_request push schedule workflow_dispatch" \
   "$(triggers "$WORKFLOW" | tr '\n' ' ' | sed 's/ $//')"
 changes_if="$(job_ifs "$WORKFLOW" | awk -F '\t' '$1 == "changes" { print $2 }')"
 while IFS='|' read -r event classifies; do
   check "the changes job classifies on $event: $classifies" "$classifies" \
-    "$(gh_eval value "$(jq -cn --arg e "$event" '{github: {event_name: $e}}')" "$changes_if")"
+    "$(gh_eval value "$(jq -cn --arg e "$event" '{github: {event_name: $e, ref: "refs/heads/main"}}')" "$changes_if")"
 done <<'ROWS'
 merge_group|true
 pull_request|false
-push|false
+push|true
 schedule|false
 workflow_dispatch|false
 ROWS
