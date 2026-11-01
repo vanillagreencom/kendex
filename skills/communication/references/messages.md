@@ -1,6 +1,6 @@
 # Messages to a person
 
-Read before writing any message to a person.
+Apply these rules before every message to a person. Read this file once per revision, as the [reading routes](../SKILL.md#reading-routes) define it.
 
 ## Reader modes
 
