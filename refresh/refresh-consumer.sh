@@ -5,7 +5,8 @@
 # published head, it merges directly where the base has no rules or protection,
 # or requests auto-merge. SKILL.md defines the arm outcomes.
 # Output records: refresh-state=current pr=none class=none, or
-# refresh-state=unchanged|pushed|merged pr=NUMBER class=CLASS, or
+# refresh-state=pushed|merged pr=NUMBER class=CLASS, or
+# refresh-state=unchanged pr=NUMBER|none class=CLASS head=REVISION published=false, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
 # refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
 # whose render did not run also gets
@@ -91,24 +92,12 @@ refresh_lifecycle() {
     exit 1
   fi
 }
-# GitHub refuses a push to a branch the queue holds. A queued, merged or
-# closed pull request ends the run before any refresh, push, body update or
-# auto-merge change. An armed one is disarmed first: the arm survives a push,
-# and the queue does not re-check approval, so the old arm could merge the
-# new head before its review. The arm after publication re-arms that head.
+# The queue can already own the pull request. An arm alone can stay in place
+# until this run proves it has a replacement head to publish.
 if [ -n "$pr" ]; then
   refresh_lifecycle
-  if [ "$reason" = armed ] && ! gh pr merge "$pr" --repo "$GH_REPO" --disable-auto; then
-    refresh_lifecycle
-    case "$reason" in
-      queued | merged | closed) ;;
-      *)
-        printf 'refresh-error=disarm pr=%s value=%s\n' "$pr" "$reason" >&2
-        exit 1 ;;
-    esac
-  fi
   case "$reason" in
-    queued | merged | closed)
+    queued | merged | closed | branch-gone)
       printf 'refresh-state=deferred reason=%s\n' "$reason"
       exit 0 ;;
   esac
@@ -560,6 +549,15 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] ||
   exit 1
 fi
 report_settings
+# An identical tree publishes no new head. Only a new publication belongs to
+# this automatic admission route; absence of an open PR proves no first arm.
+if [ "$state" = unchanged ]; then
+  printf 'refresh-state=unchanged pr=%s class=%s head=%s published=false\n' "${pr:-none}" "$class" "$head"
+  printf 'Refresh retained head `%s`; no new head was published. Automatic admission was deferred.\n\n%s\n\n%s\n' "$head" "$version_report" "$class_line" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+  [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
+  [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
+  exit 0
+fi
 merge_note='The refresh workflow waits for GitHub to show the published head. It merges directly where the base branch has no rules or protection, or requests auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
 if [ -n "$catalog_report" ]; then
@@ -572,6 +570,25 @@ if [ -n "$retired_items" ]; then
   printf -v body '%s\nRetired items:\n```text\n%s```\n' "$body" "$retired_items"
 fi
 if [ "$state" = pushed ]; then
+  # An old arm survives a push and could merge the replacement before review.
+  # Read lifecycle again after rendering; disarm only for this new publication.
+  if [ -n "$pr" ] || [ -n "$old" ]; then
+    refresh_lifecycle
+    if [ "$reason" = armed ] && ! gh pr merge "$pr" --repo "$GH_REPO" --disable-auto; then
+      refresh_lifecycle
+      case "$reason" in
+        queued | merged | closed) ;;
+        *)
+          printf 'refresh-error=disarm pr=%s value=%s\n' "$pr" "$reason" >&2
+          exit 1 ;;
+      esac
+    fi
+    case "$reason" in
+      queued | merged | closed | branch-gone)
+        printf 'refresh-state=deferred reason=%s\n' "$reason"
+        exit 0 ;;
+    esac
+  fi
   push_status=0
   git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh 2>"$TMP/push-stderr" || push_status=$?
   cat -- "$TMP/push-stderr" >&2
