@@ -341,6 +341,16 @@ GUARD_FULL_CROSS_DOC = "run"
 # own scans and compile checks for changed crates or UI files.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
+# The paths tools/guard reads when the chain runs it, so the chain runs it only
+# for a commit that touches one: the trees its scans read (skills, hooks,
+# agents, pi-extensions, refresh, crates, ui, packaging), the command-safety
+# document, the render roots and the manifests its render rule reads, the
+# workspace Rust inputs tools/rust-reads lists, and tools/ itself. A commit
+# touching none of them, such as settings, changelog fragments or other
+# Markdown, keeps the other lanes and skips tools/guard. A tools/guard rule
+# over a path outside this list adds the path here in the same change.
+COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = "tools/* crates/* ui/* skills/* hooks/* agents/* pi-extensions/* refresh/* packaging/* .agents/* .claude/* .codex/* .pi/* docs/authoring/command-safety.md kendex.toml kendex-local.toml Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo .cargo/* clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml"
+
 # The fragment scope of the changelog-entries lane. The two-segment glob
 # keeps changelog.d/README.md out: its bullets document the format and are
 # not entries. Catalog content uses no kendex release fragment.

@@ -8,7 +8,9 @@
 # the markdown agents load, md-format and md-refs hold that markdown to one
 # paragraph per line with live references, and the opt-in comments lane
 # judges source comments. What is here is what none of them ships.
-# Repository scans read the working tree. Bot instructions use the index at
+# Repository scans read the working tree. COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS
+# in kendex.settings.toml names the paths this default mode reads; a rule over
+# a new path adds it there. Bot instructions use the index at
 # commit time so their configuration, doctrine and outputs agree.
 # Every finding opens with `guard: <key>=<value>` and explains itself below
 # that line; say() and finding_text() hold the shape and the text. A notice,
