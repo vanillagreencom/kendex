@@ -6,6 +6,10 @@ JARVIS_CONTROL_HOST = ""
 JARVIS_LOG_DIR = "~/.local/state/jarvis"
 # A fixed window from the first complete event. Zero sends immediately.
 JARVIS_WAKE_SETTLE_SECS = "15"
+# Comma-separated start harnesses (claude, codex, copilot, pi) whose managed
+# session launches unattended, with the full-bypass permission words orch
+# writes for overseers. Empty launches every harness with its native defaults.
+JARVIS_UNATTENDED_HARNESSES = ""
 # Optional existing Slack hold. Set this in each root whose relay is held.
 # Accepts an absolute path, ~/path, or a path relative to that root.
 SLACK_JARVIS_SESSION_FILE = ""

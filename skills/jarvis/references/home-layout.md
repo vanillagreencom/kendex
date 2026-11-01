@@ -21,7 +21,7 @@ Read when setting up an assistant home, choosing a home path or starting a conti
 
 ## Copilot folder trust
 
-Before the first Jarvis Start with Copilot CLI, open this home in native Copilot with the selected account. Approve its folder-trust request once. Jarvis does not approve native security requests. Without this setup, Start ends the native session and reports Blocked with reason `trust-required`, naming the dialog's question in its detail.
+A home whose `JARVIS_UNATTENDED_HARNESSES` names `copilot` skips this step: Copilot then launches with `--allow-all`, which also trusts the folder without the dialog. Otherwise, before the first Jarvis Start with Copilot CLI, open this home in native Copilot with the selected account. Approve its folder-trust request once. Jarvis does not approve native security requests. Without this setup, Start ends the native session and reports Blocked with reason `trust-required`, naming the dialog's question in its detail.
 
 ## Session record
 
