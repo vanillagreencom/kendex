@@ -1651,6 +1651,178 @@ assert_eq "a base settings file the reader refuses answers standard, unmeasured"
   "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
 
+# HARNESS_CI_TRIVIAL_SETTINGS admits a settings change to trivial and to
+# nothing else: every other answer keeps the configuration-source refusal,
+# and the admission note names the rule that held it. The base allowlist
+# names a gate key and a HARNESS_CI_ key on purpose, so only the floor can
+# refuse them.
+settings_repo="$(new_repo change-class-settings)"
+mkdir -p "$settings_repo/.kendex"
+cat >"$settings_repo/kendex.settings.toml" <<'SETTINGS'
+# Shared settings.
+[env]
+SECOND_OPINION_MODEL = "a"
+OTHER_KEY = "x"
+ORCH_SIZE_TEST_PATHS = "none/*"
+HARNESS_CI_EXTRA = "x"
+
+[tool]
+SECOND_OPINION_TOOL = "a"
+SETTINGS
+printf '[env]\nSECOND_OPINION_EFFORT = "low"\n' >"$settings_repo/.kendex/settings.toml"
+commit_paths "$settings_repo" 'settings with no allowlist' seed.txt
+settings_bare="$(git -C "$settings_repo" rev-parse HEAD)"
+
+# One edit is OP~FILE~LINE~TEXT: `swap` replaces the one exact LINE with
+# TEXT, and `after` adds TEXT on the line after it. A LINE that does not
+# occur once fails the row.
+settings_edit() { # OP~FILE~LINE~TEXT
+  local op file line text
+  IFS='~' read -r op file line text <<<"$1"
+  OP="$op" LINE="$line" TEXT="$text" awk '
+    $0 == ENVIRON["LINE"] {
+      hits++
+      if (ENVIRON["OP"] == "after") print
+      print ENVIRON["TEXT"]
+      next
+    }
+    { print }
+    END { exit hits == 1 ? 0 : 3 }
+  ' "$settings_repo/$file" >"$SANDBOX/settings-edit" || return
+  mv -- "$SANDBOX/settings-edit" "$settings_repo/$file"
+}
+
+settings_allow_line='HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* ORCH_SIZE_TEST_PATHS HARNESS_CI_EXTRA"'
+settings_edit "after~kendex.settings.toml~[env]~$settings_allow_line"
+git -C "$settings_repo" commit -q -am 'the base allowlists settings keys'
+settings_allow="$(git -C "$settings_repo" rev-parse HEAD)"
+
+model_b='swap~kendex.settings.toml~SECOND_OPINION_MODEL = "a"~SECOND_OPINION_MODEL = "b"'
+admitted='class=trivial measured=true cause=allowlisted-settings settings=kendex.settings.toml'
+# label | base | edits, `;`-separated | other files as PATH:LINES, `-` none |
+# one process-environment assignment, `-` none | verifier | the class line
+# after `class: `, `refused` for the configuration-source refusal | the
+# admission note after `admitted=false `, `-` for none
+cat >"$SANDBOX/settings-rows" <<ROWS
+an allowlisted key change is trivial|allow|$model_b|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=2|-
+comments beside a changed and an added allowlisted key|allow|$model_b;after~kendex.settings.toml~[env]~# The reviewer.;after~kendex.settings.toml~OTHER_KEY = "x"~SECOND_OPINION_TIMEOUT = "30"|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL,SECOND_OPINION_TIMEOUT lines=4|-
+a comment alone changes no key|allow|after~kendex.settings.toml~[env]~# Only words.|-|-|dirty|$admitted keys=- lines=1|-
+an allowlisted key in .kendex/settings.toml|allow|swap~.kendex/settings.toml~SECOND_OPINION_EFFORT = "low"~SECOND_OPINION_EFFORT = "high"|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml keys=SECOND_OPINION_EFFORT lines=2|-
+one key both settings files change is named once|allow|$model_b;after~.kendex/settings.toml~[env]~SECOND_OPINION_MODEL = "c"|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml,kendex.settings.toml keys=SECOND_OPINION_MODEL lines=3|-
+beside docs-set markdown within the ceiling|allow|$model_b|docs/guide.md:5|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=7|-
+beside a path the repository's trivial set names|allow|$model_b|notes/plan.txt:5|HARNESS_CI_TRIVIAL_PATHS=notes/*|dirty|$admitted keys=SECOND_OPINION_MODEL lines=7|-
+beside markdown the repository's trivial set replaces|allow|$model_b|docs/guide.md:5|HARNESS_CI_TRIVIAL_PATHS=notes/*|dirty|refused|cause=path-outside-trivial path=docs/guide.md
+beside one added script line|allow|$model_b|runtime/tool.sh:1|-|dirty|refused|cause=path-outside-trivial path=runtime/tool.sh
+a key the allowlist does not name|allow|swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|refused|cause=unadmitted-change path=kendex.settings.toml
+a gate key the allowlist names|allow|swap~kendex.settings.toml~ORCH_SIZE_TEST_PATHS = "none/*"~ORCH_SIZE_TEST_PATHS = "checks/*"|-|-|dirty|refused|cause=unadmitted-change path=kendex.settings.toml
+a HARNESS_CI_ key the allowlist names|allow|swap~kendex.settings.toml~HARNESS_CI_EXTRA = "x"~HARNESS_CI_EXTRA = "y"|-|-|dirty|refused|cause=unadmitted-change path=kendex.settings.toml
+a head the settings reader refuses|allow|swap~kendex.settings.toml~SECOND_OPINION_MODEL = "a"~SECOND_OPINION_MODEL = 'b'c'|-|-|dirty|refused|cause=settings-unparsed path=kendex.settings.toml side=head
+an allowlisted name outside the env table|allow|swap~kendex.settings.toml~SECOND_OPINION_TOOL = "a"~SECOND_OPINION_TOOL = "b"|-|-|dirty|refused|cause=unadmitted-change path=kendex.settings.toml
+an allowlist only the head adds|bare|after~kendex.settings.toml~[env]~$settings_allow_line;$model_b|-|-|dirty|refused|cause=allowlist-unset
+an allowlist the head widens|allow|swap~kendex.settings.toml~$settings_allow_line~HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* OTHER_KEY";swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|refused|cause=unadmitted-change path=kendex.settings.toml
+an allowlist only the caller's environment names|bare|$model_b|-|HARNESS_CI_TRIVIAL_SETTINGS=SECOND_OPINION_*|dirty|refused|cause=allowlist-unset
+an admitted change over the trivial ceiling|allow|$model_b|docs/guide.md:19|-|dirty|refused|cause=over-ceiling lines=21 max=20
+beside an agent instruction file|allow|$model_b|AGENTS.md:2|-|dirty|refused|cause=instruction-file path=AGENTS.md glob=AGENTS.md
+beside another configuration file|allow|$model_b|kendex.toml:1|-|dirty|refused|cause=configuration-file path=kendex.toml
+beside a render the proof owns|allow|$model_b|GEMINI.md:2|-|settings-owned|refused|cause=class-render
+ROWS
+
+# Every settings row run against SCRIPT, or the rows LABELS names one per
+# line, as one `LABEL<TAB>WANT<TAB>GOT` line each. WANT and GOT carry the
+# stdout verdict, the class line and the admission note.
+settings_rows() { # SCRIPT [LABELS]
+  local script="$1" only="${2:-}" label from edits files env verifier class note
+  local spec edit status out line admission class_word
+  while IFS='|' read -r label from edits files env verifier class note; do
+    if [ -n "$only" ] && ! grep -qxF -- "$label" <<<"$only"; then continue; fi
+    if [ "$from" = bare ]; then from="$settings_bare"; else from="$settings_allow"; fi
+    git -C "$settings_repo" checkout -q -B settings-case "$from" || return
+    while IFS= read -r edit; do
+      [ -z "$edit" ] || settings_edit "$edit" || return
+    done <<<"$(tr ';' '\n' <<<"$edits")"
+    for spec in $files; do
+      [ "$spec" = - ] || write_lines "$settings_repo" "${spec%:*}" "${spec##*:}" || return
+    done
+    git -C "$settings_repo" add -A || return
+    git -C "$settings_repo" commit -q -m "$label" || return
+    if [ "$verifier" = settings-owned ]; then
+      set_verifier clean
+      jq '.rows += [{"kind":"shim","name":"GEMINI.md","state":"ok","positions":[
+        {"path":"GEMINI.md","owns":"file"},
+        {"path":"kendex.settings.toml","owns":"keys","foreign":"unchanged"}]}]' \
+        "$KENDEX_STUB_LEDGER" >"$SANDBOX/settings-ledger" || return
+      mv -- "$SANDBOX/settings-ledger" "$KENDEX_STUB_LEDGER" || return
+    else
+      set_verifier "$verifier"
+    fi
+    if [ "$class" = refused ]; then
+      class='class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml'
+    fi
+    [ "$env" != - ] || env=""
+    if out=$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
+      -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS ${env:+"$env"} PATH="$stub_bin:$PATH" \
+      "$script" --repo "$settings_repo" --event pull_request --base "$from" --head HEAD \
+      2>"$SANDBOX/settings-err"); then
+      status=0
+    else
+      status=$?
+    fi
+    line=$(sed -n 's/^class: //p' "$SANDBOX/settings-err") || return
+    admission=$(sed -n 's/^settings-admission: admitted=false //p' "$SANDBOX/settings-err") || return
+    class_word="${class#class=}"
+    printf '%s\t%s\t%s\n' "$label" \
+      "change_class=${class_word%% *} exit 0 | $class | $note" \
+      "$out exit $status | $line | ${admission:--}"
+  done <"$SANDBOX/settings-rows"
+}
+settings_out=$(settings_rows "$CHANGE_CLASS")
+settings_row_count=0
+while IFS=$'\t' read -r label want got; do
+  settings_row_count=$((settings_row_count + 1))
+  assert_eq "$label" "$want" "$got"
+done <<<"$settings_out"
+require_rows change-class-settings "$settings_row_count"
+
+# The admitted diff keeps the queue route: a settings file is a `queue` line.
+git -C "$settings_repo" checkout -q -B settings-case "$settings_allow"
+settings_edit "$model_b"
+git -C "$settings_repo" commit -q -am 'an admitted settings change'
+settings_queue_err=$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
+  "$CHANGE_CLASS" --repo "$settings_repo" --event merge_group --base "$settings_allow" \
+  --head HEAD 2>&1 >/dev/null)
+assert_eq "an admitted settings change stays queue-only" \
+  'queue-only: queue_only=true cause=queue-path path=kendex.settings.toml glob=kendex.settings.toml' \
+  "$(sed -n '/^queue-only: /p' <<<"$settings_queue_err")"
+
+# Must-fail controls, one per admission rule, each running the rows it holds
+# against a copy without the rule and naming the rows that turn red.
+settings_reds() { # NAME ROWS LINE REPLACEMENT [LINE REPLACEMENT]...
+  local name="$1" only="$2" planted rows
+  shift 2
+  planted=$(mutant "settings-control-$name" change-class "$@") || return
+  rows=$(settings_rows "$planted" "$only") || return
+  awk -F '\t' '$2 != $3 { print $1 }' <<<"$rows"
+}
+settings_controls=0
+while IFS='|' read -r control rows line replacement; do
+  settings_controls=$((settings_controls + 1))
+  rows="$(tr ';' '\n' <<<"$rows")"
+  assert_eq "must-fail: $control" "$rows" \
+    "$(settings_reds "$settings_controls" "$rows" "$line" "$replacement")"
+done <<'CONTROLS'
+no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) return 1 ;;|-
+no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
+no byte comparison|a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
+no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
+the caller's allowlist kept|an allowlist only the caller's environment names|unset HARNESS_CI_TRIVIAL_SETTINGS|-
+no docs-set check|beside one added script line|        *) settings_note "cause=path-outside-trivial path=$path"; return 1 ;;|        *) ;;
+no repository trivial-set check|beside markdown the repository's trivial set replaces|        { settings_note "cause=path-outside-trivial path=$path"; return 1; }|        true
+no ceiling|an admitted change over the trivial ceiling|  if [ "$total" -gt "$trivial_max" ]; then|  if false; then
+no instruction-file hold|beside an agent instruction file|  elif [ -n "$instruction_file" ]; then|  elif false; then
+no class hold|beside a render the proof owns|  if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ] && [ "$1" != standard ]; then|  if false; then
+CONTROLS
+require_rows change-class-settings-controls "$settings_controls"
+
 # A lane and CI classify one diff alike. CI's classify step may carry
 # ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
 # item-tier or dev-validate-run through orch's lib/change-class.sh, which the

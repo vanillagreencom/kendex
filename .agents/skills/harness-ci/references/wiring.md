@@ -201,6 +201,8 @@ Every trigger the ruleset requires the context on must appear under `on:`, `merg
 
 Set `HARNESS_CI_STANDARD_PATHS` in the base endpoint's `kendex.settings.toml` or `.kendex/settings.toml` `[env]` table to blank-separated globs for high-risk paths. The second table wins. Before render proof and size classification, a match selects `standard` with `measured=true` and `cause=repository-standard-path path=<p> glob=<g>`. This includes generated files with proved ownership. The globs use the shared exclusion grammar and add to its exclusions. Unset or empty adds none. Caller environment values and edits in the judged head cannot change this setting for their own classification.
 
+Set `HARNESS_CI_TRIVIAL_SETTINGS` in the same tables to blank-separated globs of `[env]` key names. List only keys that no CI job or review gate reads, such as a second-opinion model choice. A settings change confined to those keys, comments and blank lines, beside paths in the trivial set and within `HARNESS_CI_TRIVIAL_MAX_LINES`, answers `trivial`, so every lane stands down. It stays queue-only. A key `change-class` reads from the base and every `HARNESS_CI_*` key never qualify. Unset or empty admits no key. The head's copy of the setting and the caller's environment decide nothing. Rules and refusals: `change-class --help`.
+
 The shape has TWO checkouts, and that is the whole point of it. The verdict decides whether a required lane may be skipped, so the script that produces it comes from the default branch, where the pull request's author cannot change it, and the pull request's tree is what `--repo` points at.
 
 ```yaml

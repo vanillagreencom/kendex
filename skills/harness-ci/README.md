@@ -42,6 +42,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | `HARNESS_CI_QUEUE_SELECTOR` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository command that identifies merge-group jobs. Before you set it: [references/wiring.md § The CI template](references/wiring.md#the-ci-template). |
 | `HARNESS_CI_TRIVIAL_PATHS` | Paths eligible for the trivial-change class. |
 | `HARNESS_CI_TRIVIAL_MAX_LINES` | The line ceiling for that class. |
+| `HARNESS_CI_TRIVIAL_SETTINGS` | `[env]` keys whose change can be trivial. List only keys that no CI job or review gate reads. |
 | `ORCH_SIZE_TEST_PATHS` | Test paths outside orch's default patterns. |
 
 For several test groups, declare their input paths in `.github/ci-lanes.conf`. The [per-lane wiring contract](references/wiring.md#per-lane-verdicts) defines the declaration, the queue mark, the nightly mark for platform lanes and the steps before a queue mark lands. A `:queue` mark removed while an open pull request predates it can need one step before that pull request merges: [§ The endpoint expressions](references/wiring.md#the-endpoint-expressions).
