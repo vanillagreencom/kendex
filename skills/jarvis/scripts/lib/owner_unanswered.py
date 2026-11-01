@@ -237,8 +237,7 @@ def main():
         "Print one JSON line {id, at, kind, text} per owner message in the Jarvis home's overseer inbox "
         "that no reply reference, later reply in its thread, closed ask or progress record covers. "
         "A file the owner sent as its own message within %d seconds of its text, in the same thread or "
-        "both top level, counts as that message; a cover that names only the other message counts for it once "
-        "it has arrived." % PAIR_SECS), epilog=(
+        "both top level, counts as that message." % PAIR_SECS), epilog=(
         "Records come from the selected handoff and the archive beside it, whose INDEX.md skips files that "
         "ended before the window. A file INDEX.md lists inside the window that is gone prints "
         "`owner-unanswered: archive-pruned=PATH` on stderr and the run goes on: the messages that file "
