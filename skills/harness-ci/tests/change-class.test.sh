@@ -1675,7 +1675,7 @@ commit_paths "$settings_repo" 'settings with no allowlist' seed.txt
 settings_bare="$(git -C "$settings_repo" rev-parse HEAD)"
 
 # One edit is OP~FILE~LINE~TEXT: `swap` replaces the one exact LINE with
-# TEXT, `after` adds TEXT on the line after it, `link` replaces FILE
+# TEXT, `after` adds TEXT on the line after it, `drop` removes it, `link` replaces FILE
 # with a symlink whose target is TEXT, `nul` appends a comment line
 # holding a NUL byte, which no environment value can carry, and `chop`
 # removes FILE's final newline, as an editor that adds none saves it. A
@@ -1700,7 +1700,7 @@ settings_edit() { # OP~FILE~LINE~TEXT
     $0 == ENVIRON["LINE"] {
       hits++
       if (ENVIRON["OP"] == "after") print
-      print ENVIRON["TEXT"]
+      if (ENVIRON["OP"] != "drop") print ENVIRON["TEXT"]
       next
     }
     { print }
@@ -1727,6 +1727,34 @@ git -C "$settings_repo" checkout -q -B settings-case "$settings_allow"
 printf "[tool]\nMESSAGE = '''\n# before\n'''\n" >>"$settings_repo/.kendex/settings.toml"
 git -C "$settings_repo" commit -q -am 'the base settings hold a literal multiline string'
 settings_literal="$(git -C "$settings_repo" rev-parse HEAD)"
+# A base shaped like vsys#708's second-opinion settings: a blank line, then a
+# comment above each of eight allowlisted keys, 17 lines in all. Its rewrite
+# drops the blank, four comments and two keys and edits the other ten lines,
+# 10 added and 17 deleted, past the default 20-line ceiling.
+git -C "$settings_repo" checkout -q -B settings-case "$settings_allow"
+{
+  printf '\n'
+  for n in 1 2 3 4 5 6 7 8; do
+    printf '# Route %d.\nSECOND_OPINION_ROUTE_%d = "a"\n' "$n" "$n"
+  done
+} >>"$settings_repo/.kendex/settings.toml"
+git -C "$settings_repo" commit -q -am 'the base settings hold a block of allowlisted keys'
+settings_wide="$(git -C "$settings_repo" rev-parse HEAD)"
+wide_edits='drop~.kendex/settings.toml~~'
+wide_keys=""
+for n in 1 2 3 4 5 6 7 8; do
+  wide_keys="$wide_keys,SECOND_OPINION_ROUTE_$n"
+  if [ "$n" -le 4 ]; then
+    wide_edits="$wide_edits;drop~.kendex/settings.toml~# Route $n.~"
+  else
+    wide_edits="$wide_edits;swap~.kendex/settings.toml~# Route $n.~# Route $n, kept."
+  fi
+  if [ "$n" -le 6 ]; then
+    wide_edits="$wide_edits;swap~.kendex/settings.toml~SECOND_OPINION_ROUTE_$n = \"a\"~SECOND_OPINION_ROUTE_$n = \"b\""
+  else
+    wide_edits="$wide_edits;drop~.kendex/settings.toml~SECOND_OPINION_ROUTE_$n = \"a\"~"
+  fi
+done
 
 model_b='swap~kendex.settings.toml~SECOND_OPINION_MODEL = "a"~SECOND_OPINION_MODEL = "b"'
 admitted='class=trivial measured=true cause=allowlisted-settings settings=kendex.settings.toml'
@@ -1743,6 +1771,8 @@ comments beside a changed and an added allowlisted key|allow|pull_request|$model
 a comment alone changes no key|allow|pull_request|after~kendex.settings.toml~[env]~# Only words.|-|-|dirty|$admitted keys=- lines=1|-
 an allowlisted key in .kendex/settings.toml|allow|pull_request|swap~.kendex/settings.toml~SECOND_OPINION_EFFORT = "low"~SECOND_OPINION_EFFORT = "high"|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml keys=SECOND_OPINION_EFFORT lines=2|-
 one key both settings files change is named once|allow|pull_request|$model_b;after~.kendex/settings.toml~[env]~SECOND_OPINION_MODEL = "c"|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml,kendex.settings.toml keys=SECOND_OPINION_MODEL lines=3|-
+a settings-only rewrite past the trivial ceiling|wide|pull_request|$wide_edits|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml keys=${wide_keys#,} lines=27|-
+the same rewrite beside a key the allowlist does not name|wide|pull_request|$wide_edits;after~.kendex/settings.toml~[env]~OTHER_KEY = "y"|-|-|dirty|$refused_dot|cause=unadmitted-change path=.kendex/settings.toml
 beside docs-set markdown within the ceiling|allow|pull_request|$model_b|docs/guide.md:5|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=7|-
 beside a path the repository's trivial set names|allow|pull_request|$model_b|notes/plan.txt:5|HARNESS_CI_TRIVIAL_PATHS=notes/*|dirty|$admitted keys=SECOND_OPINION_MODEL lines=7|-
 beside markdown the repository's trivial set replaces|allow|pull_request|$model_b|docs/guide.md:5|HARNESS_CI_TRIVIAL_PATHS=notes/*|dirty|$refused|cause=class-micro rule=production-within-micro
@@ -1781,6 +1811,7 @@ settings_rows() { # SCRIPT [LABELS]
       refused) from="$settings_refused" ;;
       multiline) from="$settings_multiline" ;;
       literal) from="$settings_literal" ;;
+      wide) from="$settings_wide" ;;
       *) from="$settings_allow" ;;
     esac
     git -C "$settings_repo" checkout -q -B settings-case "$from" || return
@@ -1860,7 +1891,7 @@ while IFS='|' read -r control rows line replacement; do
 done <<'CONTROLS'
 no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) return 1 ;;|-
 no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
-no byte comparison|a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
+no byte comparison|the same rewrite beside a key the allowlist does not name;a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
 no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
 CONTROLS
 require_rows change-class-settings-controls "$settings_controls"
