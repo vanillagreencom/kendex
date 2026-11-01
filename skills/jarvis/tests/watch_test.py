@@ -282,10 +282,16 @@ class Producer(unittest.TestCase):
                      if data[span[0]:span[1]].startswith(b"EVENT owner-unanswered id=")]
             self.assertEqual([data[span[0]:span[1]].decode().split("\n")[1] for span in spans], ["second ask"])
             self.assertEqual(spans[0][2], ["local", str(self.home)])
+            # A day after delivery the watch's own window still lists the row,
+            # past the helper's default day, and the default handoff is read.
+            self.clock(25 * 3600)
+            for row in ((1801, reminder, True, 0, [second]), (1802, reminder, False, 0, [second])):
+                step(watch, *row)
+            self.assertNotIn("--handoff", windows.read_text())
             # A failed read is reported once and covers nothing.
             self.intercept_mail('[ "$1" != events ] || exit 1')
-            for row in ((1801, failed, True, 0, [second]), (1802, failed, False, 1, [second]),
-                        (2101, failed, True, 0, [second]), (2102, failed, False, 0, [second])):
+            for row in ((2101, failed, True, 0, [second]), (2102, failed, False, 1, [second]),
+                        (2401, failed, True, 0, [second]), (2402, failed, False, 0, [second])):
                 step(watch, *row)
             shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
             # Restart with a waiting row checks at once and keeps the reminder deduplicated.

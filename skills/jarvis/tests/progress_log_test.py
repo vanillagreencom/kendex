@@ -146,9 +146,9 @@ class ProgressLog(MailWorld):
             shutil.copytree(SCRIPTS.parent / "scripts", copy / "scripts")
             script = copy / "scripts/progress-log"
             source = script.read_text()
-            old = " / args.handoff, values)"
+            old = ", args.handoff), values)"
             self.assertEqual(source.count(old), 1)
-            script.write_text(source.replace(old, ' / "state/handoff.md", values)'))
+            script.write_text(source.replace(old, ", DEFAULT_HANDOFF), values)"))
             scripts, self.scripts = self.scripts, copy / "scripts"
             try:
                 with self.assertRaises(AssertionError):
@@ -158,6 +158,58 @@ class ProgressLog(MailWorld):
                     self.assertEqual(records(selected.read_text())[-1]["at"], STAMP)
             finally:
                 self.scripts = scripts
+
+    def test_archive_index(self):
+        # Each row: archived files under state/, the INDEX.md text before,
+        # --handoff, --archived, then the INDEX.md text after or the
+        # refusal. owner-unanswered reads this line to skip an archive.
+        dated = ("## Progress log\n\n- Id and time: P-20261018T230559Z 2026-10-18T23:05:59Z\n  - Operation: later\n"
+                 "- Id and time: P-20261017T220000Z 2026-10-17T22:00:00Z\n  - Operation: earlier\n")
+        line = "- 2026/h.md dates=2026-10-17T22:00Z..2026-10-18T23:05Z\n"
+        archive = self.home / "state/archive"
+        rows = (
+            ("dated", {"archive/2026/h.md": dated}, None, None, "state/archive/2026/h.md", line),
+            ("absolute and appended", {"archive/2026/h.md": dated}, "- old.md dates=x..y", None,
+             archive / "2026/h.md", "- old.md dates=x..y\n" + line),
+            ("legacy entry", {"archive/l.md": dated + "- 22:00Z Handled 1791680510\n"}, None, None,
+             "state/archive/l.md", "- l.md dates=unread..unread\n"),
+            ("no record", {"archive/e.md": "# Handoff\n"}, None, None, "state/archive/e.md",
+             "- e.md dates=unread..unread\n"),
+            ("selected handoff", {"delegate/archive/h.md": dated}, None, "state/delegate/handoff.md",
+             "state/delegate/archive/h.md", "- h.md dates=2026-10-17T22:00Z..2026-10-18T23:05Z\n"),
+            ("outside the archive", {"handoff.md": dated}, None, None, "state/handoff.md", "archive-outside"),
+            ("another handoff's archive", {"archive/h.md": dated}, None, "state/delegate/handoff.md",
+             "state/archive/h.md", "archive-outside"),
+            ("missing", {}, None, None, "state/archive/h.md", "archive-missing"),
+            ("unreadable", {"archive/h.md": b"\xff"}, None, None, "state/archive/h.md", "archive-unreadable"),
+        )
+        for name, files, before, handoff, archived, expected in rows:
+            with self.subTest(row=name):
+                shutil.rmtree(self.home / "state", ignore_errors=True)
+                for path, data in files.items():
+                    target = self.home / "state" / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data if isinstance(data, bytes) else data.encode())
+                index = self.home / ("state/delegate/archive" if handoff else "state/archive") / "INDEX.md"
+                if before is not None:
+                    index.write_text(before)
+                args = ["--archived", str(archived)] + (["--handoff", handoff] if handoff else [])
+                result = self.command([sys.executable, "-B", self.scripts / "progress-log", *args], self.home)
+                if not expected.startswith("- "):
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: " + expected)
+                    self.assertFalse(index.exists())
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(index.read_text(), expected)
+        # An INDEX.md that cannot take the line refuses.
+        shutil.rmtree(self.home / "state")
+        (archive / "INDEX.md").mkdir(parents=True)
+        archive.joinpath("h.md").write_text(dated)
+        result = self.command([sys.executable, "-B", self.scripts / "progress-log", "--archived",
+                               "state/archive/h.md"], self.home)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: index-unwritable")
 
     def test_instrument_control(self):
         # A typed-in time, not the clock read, must fail the record row.

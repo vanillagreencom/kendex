@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Append one progress record to the home handoff's Progress log section.
+"""Append one progress record to the home handoff's Progress log section, or index an archived handoff.
 
 Usage: progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
+       progress-log [--handoff PATH] --archived FILE
 
 The record takes the field form of references/long-session.md § Progress
 records. Its id and time come from `date -u` at this call. Run it anywhere in
 the Jarvis home; --handoff selects an absolute or home-relative path and
 defaults to state/handoff.md. A refusal prints
-`progress-log: KEY=VALUE fix=PATH#progress-records` on stderr, exits 2 and
+`progress-log: KEY=VALUE fix=PATH#ANCHOR` on stderr, exits 2 and
 writes nothing. Keys: field-empty, time-typed, clock-unreadable,
 handoff-missing, handoff-unwritable, handoff-unreadable, section-missing,
 section-ambiguous. Success prints `progress-log: recorded id=ID at=TIME`.
+
+--archived FILE, an absolute or home-relative path inside the archive beside
+the selected handoff, appends FILE's line to that archive's INDEX.md in the
+form of references/long-session.md § Handoff, dated by FILE's records. Keys:
+archive-outside, archive-missing, archive-unreadable, index-unwritable.
+Success prints the line after `progress-log: indexed `.
 """
 import argparse
 import fcntl
@@ -22,11 +29,13 @@ import sys
 
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "scripts/lib"))
-from progress import FIELDS, format_record, ids, record_id  # noqa: E402
+from progress import (DEFAULT_HANDOFF, FIELDS, INDEX, archive_dir, format_record, handoff_path, ids,  # noqa: E402
+                      index_line, record_id)
 from sections import section  # noqa: E402
 from watch import home_root  # noqa: E402
 
 FIX = "fix=" + str(PACKAGE / "references/long-session.md") + "#progress-records"
+FIX_INDEX = "fix=" + str(PACKAGE / "references/long-session.md") + "#handoff"
 # The clock stamps every record; a value that opens with a time was typed.
 TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}(?!\d))")
 
@@ -85,13 +94,58 @@ def append(handoff, values):
     return identity, stamp
 
 
+def index(handoff, archived):
+    """Append archived's INDEX.md line to the archive beside handoff, after the file it already holds."""
+    archive = archive_dir(handoff).resolve()
+    archived = archived.resolve()
+    if archive not in archived.parents:
+        raise Refusal("archive-outside", archived)
+    try:
+        text = archived.read_text(encoding="utf-8")
+    except FileNotFoundError as error:
+        raise Refusal("archive-missing", archived) from error
+    except (OSError, UnicodeError) as error:
+        raise Refusal("archive-unreadable", archived) from error
+    line = index_line(archived.relative_to(archive).as_posix(), text)
+    path = archive / INDEX
+    try:
+        with path.open("a+b") as out:
+            fcntl.flock(out, fcntl.LOCK_EX)
+            out.seek(0)
+            held = out.read()
+            # An unterminated last line gets its newline before this one.
+            out.write(((b"\n" if held and not held.endswith(b"\n") else b"") + line.encode("utf-8")))
+            out.flush()
+            os.fsync(out.fileno())
+    except OSError as error:
+        raise Refusal("index-unwritable", path) from error
+    return line
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--handoff", type=Path, default=Path("state/handoff.md"))
-    for option, field in zip(("--operation", "--result", "--decision", "--state-change"), FIELDS):
-        parser.add_argument(option, required=True, help=field)
+    parser.add_argument("--handoff", type=Path, default=DEFAULT_HANDOFF)
+    parser.add_argument("--archived", type=Path, help="index this archived file in place of writing a record")
+    options = ("--operation", "--result", "--decision", "--state-change")
+    for option, field in zip(options, FIELDS):
+        parser.add_argument(option, help=field)
     args = parser.parse_args()
     values = dict(zip(FIELDS, (args.operation, args.result, args.decision, args.state_change)))
+    given = [option for option, value in zip(options, values.values()) if value is not None]
+    home = home_root(Path.cwd())
+    if args.archived is not None:
+        if given:
+            parser.error("--archived takes no record field: " + ", ".join(given))
+        try:
+            line = index(handoff_path(home, args.handoff), handoff_path(home, args.archived))
+        except Refusal as refusal:
+            print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX_INDEX), file=sys.stderr)
+            return 2
+        print("progress-log: indexed " + line, end="")
+        return 0
+    missing = [option for option in options if option not in given]
+    if missing:
+        parser.error("the following arguments are required: " + ", ".join(missing))
     try:
         for option, field in (("operation", "Operation"), ("decision", "Decision")):
             if not values[field].strip():
@@ -99,7 +153,7 @@ def main():
         for field, value in values.items():
             if TYPED_TIME.match(value):
                 raise Refusal("time-typed", field.lower().replace(" ", "-"))
-        identity, stamp = append(home_root(Path.cwd()) / args.handoff, values)
+        identity, stamp = append(handoff_path(home, args.handoff), values)
     except Refusal as refusal:
         print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX), file=sys.stderr)
         return 2

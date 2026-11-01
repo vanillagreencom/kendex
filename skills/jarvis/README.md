@@ -76,11 +76,11 @@ Three scripts in `.agents/skills/jarvis/scripts/` serve the session. Each reads 
 
 | Script | Use |
 |---|---|
-| `owner-unanswered` | Lists your messages that no reply, closed question or progress record covers, one JSON line each. `--since TIME` and `--older MINUTES` narrow the list. |
-| `progress-log` | Adds one progress record to `state/handoff.md`. The clock supplies its id and time. An id is `P-` and the UTC time as `YYYYMMDDTHHMMSSZ`, with `-2`, `-3` added for later records in the same second. |
+| `owner-unanswered` | Lists your messages that no reply, later reply in their Slack thread, closed question or progress record covers, one JSON line each. A file you send as its own message within 30 seconds of its text, in the same thread or both at the top of the channel, counts as that message. It reads the records in `state/handoff.md` and the archive beside it; `--handoff PATH` selects another handoff as `progress-log` does. It lists the last 24 hours; `--since TIME` replaces that window and `--older MINUTES` narrows the list. |
+| `progress-log` | Adds one progress record to `state/handoff.md`, or to the handoff `--handoff PATH` selects. The clock supplies its id and time. An id is `P-` and the UTC time as `YYYYMMDDTHHMMSSZ`, with `-2`, `-3` added for later records in the same second. `--archived FILE` instead adds an archived handoff's dated line to the archive's `INDEX.md`. |
 | `owner-note` | Sends a note file as your directive to a repository's agent, on the control host first, then on this machine. The note ends with a request to check its facts and approach. |
 
-The loop adds `EVENT owner-unread` once when a message from you stays unread in the home inbox for 10 minutes. Key a page on that event. When a message from you arrives, the loop checks it every 5 minutes until a reply, closed question or progress record covers it, and adds `EVENT owner-unanswered` once if it is still uncovered after 10 minutes. With no message waiting, it runs no check. That event reminds the session; it never means the message is unread.
+The loop adds `EVENT owner-unread` once when a message from you stays unread in the home inbox for 10 minutes. Key a page on that event. When a message from you arrives, the loop checks it every 5 minutes until a reply, a later reply in its thread, a closed question or a progress record covers it, and adds `EVENT owner-unanswered` once if it is still uncovered after 10 minutes. With no message waiting, it runs no check. Each check reads the records in `state/handoff.md` and its archive, from the oldest waiting message on. That event reminds the session; it never means the message is unread.
 
 Claude Code runs the loop through Monitor and receives a pointer for each batch. Pi uses its installed mailbox wake. Copilot receives mail through its installed hooks; idle delivery depends on its native extension.
 
