@@ -270,26 +270,31 @@ require_issue_reach() {
 }
 
 # require_issue_header_shape DESCRIPTION [STORED] — 0 to proceed, 1 + a JSON
-# error on stderr naming the line and its length. The issue template puts the
-# quoted Story and Why blocks first, after an optional owner action line,
-# and keeps each header short; an invalid opening, or a header over
-# ISSUE_HEADER_MAX characters, is refused. It is held by the reach guard's
-# setting so one key turns the filing bar on or off.
+# error on stderr for the caller to return on. A post-merge Done-when box whose
+# release trigger names no repository, or whose Deadline is outside the window
+# completion enforces, is refused. The template's presentation, the quoted
+# Story and Why blocks first after an optional owner action line and each
+# header within ISSUE_HEADER_MAX characters, is advisory: each miss prints one
+# `linear: advisory=RULE line=N length=N` line on stderr and the write
+# proceeds. A refused body prints the refusal alone. It is held by the reach
+# guard's setting so one key turns the filing bar on or off.
 #
 # STORED is the issue's current description, which `issues update` passes. A
 # body equal to it apart from a leading owner action line only places,
 # replaces or removes that line, as the mailbox owner ask, its rollback and
 # close and the oversee-watch repair do; it is judged on that line's length
-# alone, so an ask on a body filed in the older header-first form is written.
+# alone, so an ask on a body filed in the older header-first form is written
+# without notes on text its writer did not author.
 # Every other body, and every body with no STORED, takes the full check.
 ISSUE_HEADER_MAX=500
 require_issue_header_shape() {
 	[[ -n ${LINEAR_REQUIRE_REACH-1} ]] || return 0
 
-	local refusal parsed has_stored=false
+	local verdict parsed has_stored=false
 	[[ $# -lt 2 ]] || has_stored=true
 	parsed=$(done_when_parse "$1" '[]') || return 1
-	refusal=$(jq -cn --arg desc "$1" --arg stored "${2-}" --argjson has_stored "$has_stored" \
+	# One line per advisory, or the refusal alone as one JSON line.
+	verdict=$(jq -rn --arg desc "$1" --arg stored "${2-}" --argjson has_stored "$has_stored" \
 		--argjson max "$ISSUE_HEADER_MAX" --argjson parsed "$parsed" '
 		def header: test("^(\\*\\*[^*]+(\\*\\*:|:\\*\\*)|[Rr]eached [Bb]y:)");
 		def owner_action: test("^\\*\\*[^*\\s]+, what you do:\\*\\* [^\\r\\n]*$");
@@ -304,16 +309,15 @@ require_issue_header_shape() {
 		def opening:
 			(try capture("^> \\*\\*Story:\\*\\*(?<story>[^\\n]*(?:\\n>[^\\n]*)*)\\n[ \\t]*\\n(?:[ \\t]*\\n)*> \\*\\*Why this matters:\\*\\*(?<why>[^\\n]*(?:\\n>[^\\n]*)*)(?:\\n[ \\t]*\\n(?:[ \\t]*\\n)*(?:#{1,6}[ \\t]+[\\s\\S]*)?|\\n?)$") catch null) // null
 			| . != null and (.story | opening_value) and (.why | opening_value);
-		def long_header($max): {error: "issue-header-length line=\(.line) length=\(.length) max=\($max)\nRefusing an issue body with a header line over \($max) characters. Keep each header to one short sentence and move the detail under a section.",
-			rule: "issue-header-length", line: .line, length: .length};
+		def long_header($max): "linear: advisory=issue-header-length line=\(.line) length=\(.length) max=\($max) fix=Keep each header to one short sentence and move the detail under a section.";
 		[$desc | gsub("\r\n"; "\n") | split("\n") | to_entries[]
 			| {line: (.key + 1), length: (.value | length), text: .value}] as $lines
 		| ($has_stored and ($desc | without_owner_action) == ($stored | without_owner_action)) as $moves_action
 		| [$lines[] | select(.text | test("\\S"))] as $content
 		| ($content | if length > 0 and (.[0].text | owner_action) then .[1:] else . end | first) as $first
-		| ([$lines[] | select((.text | header) or (.text | startswith("> **Why this matters:**")))
+		| [$lines[] | select((.text | header) or (.text | startswith("> **Why this matters:**")))
 			| .length -= (if (.text | startswith("> ")) then 2 else 0 end)
-			| select(.length > $max)] | first) as $long
+			| select(.length > $max)] as $long
 		| ([$parsed.boxes[] | select(.post_merge)
 			| if (.trigger | test("^release(?: |$)")) and .trigger_kind != "release" then
 				{rule: "post-merge-release-repository", box: .number, fix: "Use Trigger: release OWNER/REPO TAG-GLOB."}
@@ -321,17 +325,18 @@ require_issue_header_shape() {
 				{rule: "post-merge-deadline", box: .number, fix: "Use Deadline: +Nh with N from 1 through 72, or after a merge or time trigger a real UTC time in YYYY-MM-DDTHH:MM:SSZ form at most 72 hours after it."}
 			  else empty end] | first) as $post
 		| if $moves_action then
-			([$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)] | first // empty)
-		  elif ($lines | map(select($first != null and .line >= $first.line) | .text) | join("\n") | opening | not) then
-			{error: "issue-header-opening line=\($first.line // 1) length=\($first.length // 0)\nOpen with nonempty quoted Story and Why this matters blocks, separated by an unquoted blank line, before a blank line and the first heading.",
-			 rule: "issue-header-opening", line: ($first.line // 1), length: ($first.length // 0)}
-		  elif $long != null then $long | long_header($max)
-		  elif $post != null then $post + {error: ($post.rule + " box=\($post.box)\nfix=" + $post.fix)}
-		  else empty end') || return 1
-	if [ -n "$refusal" ]; then
-		printf '%s\n' "$refusal" >&2
-		return 1
-	fi
+			$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)
+		  elif $post != null then
+			$post + {error: ($post.rule + " box=\($post.box)\nfix=" + $post.fix)} | tojson
+		  else
+			(if ($lines | map(select($first != null and .line >= $first.line) | .text) | join("\n") | opening) then empty
+			 else "linear: advisory=issue-header-opening line=\($first.line // 1) length=\($first.length // 0) fix=Open with nonempty quoted Story and Why this matters blocks, separated by an unquoted blank line, before a blank line and the first heading." end),
+			($long[] | long_header($max))
+		  end') || return 1
+	[[ -n $verdict ]] || return 0
+	printf '%s\n' "$verdict" >&2
+	# A refusal is a JSON line; every advisory line starts with `linear:`.
+	[[ $verdict != "{"* ]]
 }
 
 # One parser owns checklist numbering, ticking, triggers, and post-merge deadlines.
