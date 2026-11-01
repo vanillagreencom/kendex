@@ -148,7 +148,11 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::ReleaseLane(_)
         | Request::RecordOutcome(_)
         | Request::RecordPhase(_)
-        | Request::RecordProgress(_) => false,
+        | Request::RecordProgress(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_) => false,
     }
 }
 
@@ -235,7 +239,11 @@ pub fn run(
         | Report::ReleaseLane(_)
         | Report::RecordOutcome(_)
         | Report::RecordPhase(_)
-        | Report::RecordProgress(_) => return Ok(None),
+        | Report::RecordProgress(_)
+        | Report::RecordDirectiveSend(_)
+        | Report::RecordWallPauses(_)
+        | Report::AdmitPaths(_)
+        | Report::PruneRecords(_) => return Ok(None),
     };
     run_effect(&run, request, effect).map(Some)
 }
@@ -287,7 +295,11 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::ReleaseLane(_)
                     | Request::RecordOutcome(_)
                     | Request::RecordPhase(_)
-                    | Request::RecordProgress(_) => {
+                    | Request::RecordProgress(_)
+                    | Request::RecordDirectiveSend(_)
+                    | Request::RecordWallPauses(_)
+                    | Request::AdmitPaths(_)
+                    | Request::PruneRecords(_) => {
                         unreachable!("a request without a live effect reports no effect")
                     }
                 };
@@ -333,7 +345,11 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::ReleaseLane(_)
         | Request::RecordOutcome(_)
         | Request::RecordPhase(_)
-        | Request::RecordProgress(_) => {
+        | Request::RecordProgress(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_) => {
             unreachable!("a request without a live effect reports no effect")
         }
     }?;

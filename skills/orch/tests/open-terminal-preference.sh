@@ -119,7 +119,7 @@ observe() { # PREFERENCE WALL MODE TEXT
   if [[ "$mode" == cmd ]]; then args=(--cmd "$text" --brief-file "$TMP_ROOT/brief")
   elif [[ -n "$text" ]]; then args=(--launch-flags "$text"); fi
   (cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_HOST=local \
-    ORCH_LANE_PREFERENCE="$preference" ORCH_OVERSEER_LANES=3 ORCH_TMUX_SESSION= \
+    ORCH_RUNTIME_CLI="$ORCH_RUNTIME_CLI" ORCH_LANE_PREFERENCE="$preference" ORCH_OVERSEER_LANES=3 ORCH_TMUX_SESSION= \
     OVERSEE_WATCH_STATE_DIR="$RUN/claims" WORKTREE_CLI="$BIN/worktree" LANES_CLI="$BIN/lanes" \
     PI_CODING_AGENT_DIR="$TMP_ROOT/pi" CODEX_TEST_HOME="$TMP_ROOT/codex" \
     WALL="$wall" PICK_LOG="$RUN/picks" OT_WT_LOG="$RUN/worktrees" PREFERENCE_ARGV="$RUN/argv" TERMINAL=ghostty \
@@ -439,7 +439,7 @@ for surface in batch wait; do
     fi
     rc=0
     (cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$WAIT_BIN:$BIN:$PATH" HOME="$TMP_ROOT/home" ORCH_LANE_HOST=local \
-      ORCH_LANE_PREFERENCE='claude:fable:high,claude:opus:medium' ORCH_OVERSEER_LANES="$cap" ORCH_TMUX_SESSION=stub \
+      ORCH_RUNTIME_CLI="$ORCH_RUNTIME_CLI" ORCH_LANE_PREFERENCE='claude:fable:high,claude:opus:medium' ORCH_OVERSEER_LANES="$cap" ORCH_TMUX_SESSION=stub \
       ORCH_LANE_DIRS="$TMP_ROOT/home/.claude" ORCH_LANE_BURN_PCT_PER_HOUR=50 ORCH_LANES_USAGE_TTL=0 \
       ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/usage" OVERSEE_WATCH_STATE_DIR="$RUN/claims" \
       WORKTREE_CLI="$BIN/worktree" LANES_CLI="$REPO/scripts/lanes" TEST_SCRIPTS="$REPO/scripts" TEST_STATE="$RUN/state" TEST_REPO="$REPO" \
@@ -512,7 +512,7 @@ cloud_observe() { # ROW [SCRIPT_ROOT] [PREFERENCE]
   ot_fleet_state "$REPO/scripts/workflow-state" "$RUN/state" "$REPO" || exit 1
   [[ "$row" == no-brief ]] || brief_args=(--brief-file "$TMP_ROOT/brief")
   (cd -- "$REPO" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$BIN:$PATH" HOME="$TMP_ROOT/home" LANES_HOME="$TMP_ROOT/home" \
-    ORCH_LANE_HOST="$REPO/daytona" ORCH_LANE_PREFERENCE="$pref" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 \
+    ORCH_RUNTIME_CLI="$ORCH_RUNTIME_CLI" ORCH_LANE_HOST="$REPO/daytona" ORCH_LANE_PREFERENCE="$pref" ORCH_LANE_CLOUD_CREDIT_FLOOR=5 \
     ORCH_LANE_CLOUD_REPOS="$repos" ORCH_LANE_DIRS="$TMP_ROOT/home/.$cloud_account:$TMP_ROOT/home/.codex" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$TMP_ROOT/cloud-usage" ORCH_LANES_USAGE_TTL=0 \
     OVERSEE_WATCH_STATE_DIR="$RUN/claims" ORCH_TMUX_SESSION="$tmux_session" ORCH_OVERSEER_LANES=3 \

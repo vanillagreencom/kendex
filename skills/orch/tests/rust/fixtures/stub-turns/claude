@@ -1,0 +1,65 @@
+#!/bin/bash
+# A composer stub for the wake rows (step5-map § B rows 3, 7, 8), named
+# `claude` so the kernel records the harness's own process name for it;
+# the `#!` line names bash directly, since `env` would exec bash under its
+# own name. It draws Claude Code's composer marker (❯ then U+00A0) so the
+# judge reads the pane idle, takes `--session-id <uuid>` and ignores every
+# other launch flag, and records each line it reads as one user turn in a
+# session file of Claude Code's shape named by that id under
+# CLAUDE_CONFIG_DIR (`tmp/orch-rebuild/native/run2/claude/home`: a `user`
+# row with a string `content`, `sessionId` and `cwd`), then draws the
+# composer again. Its turn state is a file the row reads:
+#   STUB_TURNS_STATE  written `idle` at rest and `working` from a line
+#                     read until the turn ends (whole-file replace).
+#   STUB_TURNS_HOLD   a FIFO the turn blocks on twice, before its row is
+#                     written and after, so a row can hold the turn open
+#                     on either side of the harness's own record and
+#                     release each with one line written to the FIFO.
+#   STUB_TURNS_DROP   non-empty: no row is written, as a harness that lost
+#                     the pasted line.
+# It launches no model and reaches no account; it stands until its stdin
+# closes, which a kill-server or a window kill does.
+state="${STUB_TURNS_STATE:-}"
+hold="${STUB_TURNS_HOLD:-}"
+drop="${STUB_TURNS_DROP:-}"
+set_state() {
+  [ -n "$state" ] || return 0
+  printf '%s\n' "$1" > "$state.tmp" && mv -f "$state.tmp" "$state"
+}
+composer() {
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+  printf '  ? for shortcuts\n'
+}
+session="stub-$$"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) session="${2:-$session}"; shift ;;
+  esac
+  shift
+done
+rows=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  slug="${PWD//[\/.]/-}"
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
+  rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
+  printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+fi
+composer
+set_state idle
+held() {
+  [ -n "$hold" ] || return 0
+  read -r _ < "$hold"
+}
+while IFS= read -r line; do
+  set_state working
+  held
+  if [ -n "$rows" ] && [ -z "$drop" ]; then
+    escaped="${line//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s"}\n' \
+      "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" >> "$rows"
+  fi
+  held
+  composer
+  set_state idle
+done

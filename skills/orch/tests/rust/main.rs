@@ -7,18 +7,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod support;
+
+use std::process::Output;
 
 const ITEM: &str = include_str!("fixtures/workflow-state-KEN-4687.json");
 const FLEET: &str = include_str!("fixtures/workflow-state-oversee.json");
 const NEWER: &str = include_str!("fixtures/workflow-state-newer.json");
 
-fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_orch-runtime"))
-}
-
 fn run(args: &[&str], paths: &[&Path]) -> Output {
-    let mut command = Command::new(binary());
+    let mut command = support::isolated();
     command.args(args);
     for path in paths {
         command.arg(path);

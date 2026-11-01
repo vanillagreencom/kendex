@@ -18,12 +18,16 @@
 //! then writes the baseline, so a crash between the two reprints the line on
 //! the duty's next run and never loses it.
 //!
-//! Failure policy (decision 148 (4); decisions 133, 142 (1)): a duty body
-//! that fails is loud in the log, `EVENT watch-step-failed step=<duty>
-//! count=N` with the consecutive count, its cause on stderr, and its due
-//! time moves one cadence on; the other duties and the other thread go on.
-//! Only the runner's own records failing (the log, the baseline, the claim,
-//! the stop request) end the run, `watch-record`, which releases the claim.
+//! Failure policy (decisions 148 (4), 156 (1); decisions 133, 142 (1)): a
+//! duty body that fails, whole or in part, is loud in the log, `EVENT
+//! watch-step-failed step=<duty> count=N` with the consecutive count, its
+//! cause on stderr, and its due time moves one cadence on from its anchor;
+//! the other duties and the other thread go on. The line goes out on the
+//! first failure and every `ORCH_OVERSEER_MARK_REPEAT`th after, so a
+//! standing failure does not wake the session it follows every pass; a run
+//! with no failure ends the count. Only the runner's own records failing
+//! (the log, the baseline, the claim, the stop request) end the run,
+//! `watch-record`, which releases the claim.
 //!
 //! The runner reconciles every open intent on the long cadence through the
 //! existing `reconcile` request, which is read-only toward a live or
@@ -35,6 +39,21 @@
 pub mod baseline;
 pub mod claim;
 pub mod events;
+pub mod github;
+pub mod lanes;
+pub mod mail;
+pub mod overseer;
+// U5e2: the GitHub duty's readings (decision 162 (2)).
+pub mod outside;
+pub mod pr_watch;
+pub mod security;
+pub mod tracker;
+pub mod wake;
+// U5f: the verification, report, heartbeat-body and retention duties.
+pub mod heartbeat;
+pub mod report;
+pub mod retention;
+pub mod verifying;
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -64,14 +83,22 @@ const SLICE: Duration = Duration::from_secs(1);
 const CLAIM_TRIES: u32 = 2;
 
 /// What a duty hands back from one run: the lines to append, in order, the
-/// baseline changes those lines settle, and the instant it asks to run
-/// again at where that is earlier than its cadence gives (the overseer
-/// box's poll). Nothing found is nothing of either.
+/// baseline changes those lines settle, the instant it asks to run again
+/// at where that is earlier than its cadence gives (the overseer box's
+/// poll), and the cause where part of the run failed (a mailbox the turn
+/// could not read, a due ask that would not close) while its lines and
+/// rows stand: the runner counts it under the one failure rule and says
+/// the cause. Nothing found is nothing of any.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Produced {
     pub events: Vec<Event>,
     pub changes: Vec<Change>,
     pub next_due: Option<Instant>,
+    pub failed: Option<String>,
+    /// The run judged nothing the failure count is about (the mail duty's
+    /// one-second poll between full turns): it neither counts a failure
+    /// nor ends a standing one.
+    pub unjudged: bool,
 }
 
 /// What a duty runs with: the instant and epoch second it was started at,
@@ -125,6 +152,7 @@ pub struct Runner<'a> {
     record: Recorded,
     flags: Flags,
     cadences: Cadences,
+    mark_repeat: u32,
     bodies: Vec<(Duty, Body<'a>)>,
 }
 
@@ -197,6 +225,7 @@ impl<'a> Runner<'a> {
             record,
             flags,
             cadences,
+            mark_repeat: settings.watch.mark_repeat,
             bodies: Vec::new(),
         };
         // The heartbeat's placeholder body (step5-map A1): the line with the
@@ -344,6 +373,12 @@ impl<'a> Runner<'a> {
                 let every = self.cadences.of(duty).every;
                 let first = match duty {
                     Duty::Heartbeat => every,
+                    // U5g: the wake is due at once, like the mail turn.
+                    Duty::Wake => Duration::ZERO,
+                    // U5e2: the GitHub duty is a long duty, due at once.
+                    Duty::GitHub => Duration::ZERO,
+                    // U5f: the retention is a long duty, due at once.
+                    Duty::Retention => Duration::ZERO,
                     Duty::Mail
                     | Duty::NativeObservation
                     | Duty::Tracker
@@ -370,6 +405,7 @@ impl<'a> Runner<'a> {
             clock: self.clock,
             paths: &self.paths,
             identity: &self.identity,
+            mark_repeat: self.mark_repeat,
         };
         std::thread::scope(|s| {
             if !mail_body.is_empty() {
@@ -404,6 +440,8 @@ struct Thread<'r, 'a> {
     clock: &'a dyn Clock,
     paths: &'r Paths,
     identity: &'r Identity,
+    /// Every how many failures in a row the failure line repeats.
+    mark_repeat: u32,
 }
 
 impl Thread<'_, '_> {
@@ -463,43 +501,56 @@ impl Thread<'_, '_> {
                     baseline: &snapshot,
                     clock: self.clock,
                 };
-                match body(&tick) {
-                    Ok(produced) => {
+                // A body that fails whole hands back nothing but its cause
+                // and earns no pass stamp; one that fails in part hands back
+                // its lines and rows with the cause, and its pass is stamped.
+                let (mut produced, stamped) = match body(&tick) {
+                    Ok(produced) => (produced, true),
+                    Err(cause) => (
+                        Produced {
+                            failed: Some(cause.to_string()),
+                            ..Produced::default()
+                        },
+                        false,
+                    ),
+                };
+                match produced.failed.take() {
+                    None if produced.unjudged => {}
+                    None => {
                         failures.remove(&duty);
-                        let ended = self.clock.now();
-                        let ended_wall = epoch(self.clock);
-                        let (anchor, at) = match schedule.anchor(duty) {
-                            Anchor::Start => (started, started_wall),
-                            Anchor::End => (ended, ended_wall),
-                        };
-                        let next_due = produced.next_due;
-                        commit(self.store, produced, Some(Change::Pass { duty, at }))?;
-                        schedule.advance(duty, anchor);
-                        if let Some(at) = next_due {
-                            schedule.wake(duty, at);
-                        }
                     }
-                    Err(cause) => {
+                    Some(cause) => {
                         let count = failures.entry(duty).or_insert(0);
                         *count += 1;
                         // The cause is said once, here, for the launcher's
                         // record of this run's stderr; the line carries the
-                        // legacy's fields alone.
+                        // legacy's fields alone and repeats on the
+                        // `mark_repeat` rule, after the lines the run earned.
                         let _ = writeln!(
                             std::io::stderr(),
                             "watch-step-failed step={} count={count}\n{cause}",
                             duty.word()
                         );
-                        let failed = Produced {
-                            events: vec![Event::WatchStepFailed {
+                        if *count == 1 || count.is_multiple_of(u64::from(self.mark_repeat)) {
+                            produced.events.push(Event::WatchStepFailed {
                                 step: duty,
                                 count: *count,
-                            }],
-                            ..Produced::default()
-                        };
-                        commit(self.store, failed, None)?;
-                        schedule.advance(duty, started);
+                            });
+                        }
                     }
+                }
+                let ended = self.clock.now();
+                let ended_wall = epoch(self.clock);
+                let (anchor, at) = match schedule.anchor(duty) {
+                    Anchor::Start => (started, started_wall),
+                    Anchor::End => (ended, ended_wall),
+                };
+                let next_due = produced.next_due;
+                let stamp = stamped.then_some(Change::Pass { duty, at });
+                commit(self.store, produced, stamp)?;
+                schedule.advance(duty, anchor);
+                if let Some(at) = next_due {
+                    schedule.wake(duty, at);
                 }
             }
             let now = self.clock.now();
@@ -583,6 +634,12 @@ pub fn status(paths: &Paths) -> Result<Status> {
             .map(|(duty, at)| {
                 let every = match duty {
                     Duty::Mail => c.mail_secs,
+                    // U5g: the wake on the mail cadence.
+                    Duty::Wake => c.mail_secs,
+                    // U5e2: the GitHub duty on the long cadence.
+                    Duty::GitHub => c.interval_secs,
+                    // U5f: the retention on the long cadence.
+                    Duty::Retention => c.interval_secs,
                     Duty::Heartbeat => c.interval_secs * u64::from(c.max_loops),
                     Duty::NativeObservation
                     | Duty::Tracker

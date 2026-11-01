@@ -13,6 +13,7 @@ use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
+use super::admission::{AdmissionReads, Clis, ItemRead, ScopeRange};
 use super::{
     AdoptSession, Applied, CloseOwnedResources, Effect, Env, Host, LaunchLane, OverseerExpected,
     RecordOutcome, Report, Request, RequestTransfer, apply_on,
@@ -77,6 +78,28 @@ pub(super) fn host() -> Host<'static> {
         claim_store: None,
         still_runs: &gone,
         pane_foreground: &no_pane,
+        admission: Some(no_reads()),
+    }
+}
+
+/// Programs no row here runs: the admission reads are planted.
+pub(super) fn no_clis() -> Clis {
+    Clis {
+        tracker: PathBuf::from("/nonexistent/linear.sh"),
+        gh: PathBuf::from("/nonexistent/gh"),
+        scope_paths: PathBuf::from("/nonexistent/harness-only"),
+    }
+}
+
+/// The admission reads of a fixture launch: an item whose body names no
+/// Location, with no label and no child, and a range with no path, so the
+/// admission judges nothing from them.
+pub(super) fn no_reads() -> AdmissionReads<'static> {
+    AdmissionReads {
+        clis: no_clis(),
+        item: Box::new(|_: &Clis, _: &str, _: &str, _: Option<&str>| Ok(ItemRead::default())),
+        range_paths: Box::new(|_: &Clis, _: &Path, _: &ScopeRange| Ok(Vec::new())),
+        pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
     }
 }
 
@@ -180,6 +203,9 @@ pub(super) fn launch_fields(item: &str) -> LaunchLane {
         over_cap: None,
         exclude_account: None,
         brief_file: None,
+        repo_dir: None,
+        scope_range: None,
+        in_scope: Vec::new(),
     }
 }
 

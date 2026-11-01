@@ -735,6 +735,9 @@ mod tests {
             over_cap: None,
             launch: None,
             reservation: None,
+            touched: None,
+            in_scope: None,
+            rebase: Vec::new(),
             extra: Default::default(),
         }
     }
@@ -754,6 +757,9 @@ mod tests {
             over_cap: None,
             exclude_account: None,
             brief_file: None,
+            repo_dir: None,
+            scope_range: None,
+            in_scope: Vec::new(),
         }
     }
 

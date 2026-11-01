@@ -22,12 +22,16 @@
 //! report envelopes, the dispatch, the intent contract every effect
 //! operation shares and the `record-outcome` frame that closes an intent.
 
+/// The admission judgement a launch and a running lane's added path run
+/// (decisions 118 (3), (4), (6), 142 (4); U5i).
+mod admission;
 mod controller;
 mod item;
 mod lane;
 /// The mail duty's types (U5c).
 pub mod mail;
 mod occupancy;
+pub mod prune;
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
@@ -36,7 +40,10 @@ mod occupancy;
 mod testing;
 /// The wake duty's types (U5g).
 pub mod wake;
+// U5d2: the wall records (decision 160 (1)).
+pub mod wall;
 
+pub use admission::{AdmitPaths, Clis, ItemRead, PathsAdmitted, ReadFailure, ScopeRange};
 pub(crate) use controller::apply_adoption;
 pub use controller::{
     AdoptController, AdoptionRead, ClaimIntent, ControllerAdopted, ControllerStarted,
@@ -54,6 +61,7 @@ pub use lane::{
     LaneReleased, LaneReserved, LaunchLane, NoLanding, ParkLane, PhaseRecorded, RecordPhase,
     ReleaseLane, ReserveLane, Terminal, lane_moved,
 };
+pub(crate) use occupancy::CLOUD_KIND;
 pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
 
 use std::path::Path;
@@ -203,6 +211,16 @@ pub enum Request {
     /// An effect's phase, obligation set and watch handover, written before
     /// the wait that follows (decisions 62, 115).
     RecordProgress(Box<RecordProgress>),
+    /// A directive's send receipt onto the lane (decision 31; the mail
+    /// duty's).
+    RecordDirectiveSend(mail::RecordDirectiveSend),
+    /// The lanes' walls as the observation duty read them this pass.
+    RecordWallPauses(wall::RecordWallPauses),
+    /// The admission judgement of a candidate's paths against the fleet's
+    /// holders (decision 142 (4)), under the launch lock.
+    AdmitPaths(Box<AdmitPaths>),
+    /// The retention duty's judged records leaving the fleet state.
+    PruneRecords(prune::PruneRecords),
 }
 
 impl Request {
@@ -231,6 +249,10 @@ impl Request {
             Request::RecordOutcome(_) => "record-outcome",
             Request::RecordPhase(_) => "record-phase",
             Request::RecordProgress(_) => "record-progress",
+            Request::RecordDirectiveSend(_) => "record-directive-send",
+            Request::RecordWallPauses(_) => "record-wall-pauses",
+            Request::AdmitPaths(_) => "admit-paths",
+            Request::PruneRecords(_) => "prune-records",
         }
     }
 
@@ -258,7 +280,11 @@ impl Request {
             | Request::ReleaseLane(_)
             | Request::RecordOutcome(_)
             | Request::RecordPhase(_)
-            | Request::RecordProgress(_) => Kind::Fleet,
+            | Request::RecordProgress(_)
+            | Request::RecordDirectiveSend(_)
+            | Request::RecordWallPauses(_)
+            | Request::AdmitPaths(_)
+            | Request::PruneRecords(_) => Kind::Fleet,
         }
     }
 }
@@ -321,6 +347,10 @@ pub enum Report {
     RecordOutcome(Box<OutcomeRecorded>),
     RecordPhase(Box<PhaseRecorded>),
     RecordProgress(Box<ProgressRecorded>),
+    RecordDirectiveSend(mail::DirectiveSendRecorded),
+    RecordWallPauses(wall::WallPausesRecorded),
+    AdmitPaths(Box<PathsAdmitted>),
+    PruneRecords(prune::RecordsPruned),
 }
 
 /// What `apply` returns: the report of the transition the write committed.
@@ -393,7 +423,11 @@ fn owner_conditional(request: &Request) -> bool {
         | Request::ParkLane(_)
         | Request::ReserveLane(_)
         | Request::ReleaseLane(_)
-        | Request::RecordPhase(_) => false,
+        | Request::RecordPhase(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_) => false,
     }
 }
 
@@ -441,14 +475,16 @@ fn apply_interleaved(
             }
         };
     }
-    if matches!(request, Request::LaunchLane(_)) {
-        // A lane admission runs under the fleet launch lock the legacy
-        // launcher holds around its own count and reservation write
-        // (`lane-cap.sh` `cap_take`: `flock` on `<fleet>.launch.lock`),
-        // from before the snapshot read through the committed preparing
-        // row, so a legacy count and this admission exclude each other
-        // (decision 108 (3)); the state file's own lock is taken inside, by
-        // the write, in the legacy's order.
+    if matches!(request, Request::LaunchLane(_) | Request::AdmitPaths(_)) {
+        // A lane admission, and the path admission that judges against the
+        // same holders (decisions 108 (5), 142 (4)), run under the fleet
+        // launch lock the legacy launcher holds around its own count and
+        // reservation write (`lane-cap.sh` `cap_take`: `flock` on
+        // `<fleet>.launch.lock`), from before the snapshot read through the
+        // committed row, so a legacy count and this admission exclude each
+        // other and two contenders on one path are judged one after the
+        // other (decision 108 (3)); the state file's own lock is taken
+        // inside, by the write, in the legacy's order.
         return state::locked(&occupancy::launch_lock_base(path), locking, transition);
     }
     transition()
@@ -535,7 +571,11 @@ pub fn item_transition(
         | Request::ReleaseLane(_)
         | Request::RecordOutcome(_)
         | Request::RecordPhase(_)
-        | Request::RecordProgress(_) => Err(kind_error(request, path, Kind::Item)),
+        | Request::RecordProgress(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_) => Err(kind_error(request, path, Kind::Item)),
     }
 }
 
@@ -599,6 +639,22 @@ pub fn fleet_transition(
         Request::RecordProgress(r) => Ok(Report::RecordProgress(Box::new(
             controller::record_progress(path, doc, r)?,
         ))),
+        Request::RecordDirectiveSend(r) => Ok(Report::RecordDirectiveSend(
+            mail::record_directive_send(path, doc, r, env)?,
+        )),
+        Request::RecordWallPauses(r) => Ok(Report::RecordWallPauses(wall::record_wall_pauses(
+            path, doc, r, env,
+        )?)),
+        Request::AdmitPaths(r) => Ok(Report::AdmitPaths(Box::new(admission::admit_paths(
+            path,
+            doc,
+            r,
+            env,
+            host()?,
+        )?))),
+        Request::PruneRecords(r) => Ok(Report::PruneRecords(prune::prune_records(
+            path, doc, r, env,
+        )?)),
         Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
         | Request::AcceptResult(_)

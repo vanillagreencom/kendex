@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# The mailbox CLI as the tracker duty's owner-tracker rows run it: the four
+# verbs the owner's tracker answers and the due tracker asks use, answered
+# from files beside the path this was invoked as (the rows symlink the
+# fixture into their world as `lane-mail`), every call logged as one argv
+# line to `lane-mail.log` there.
+#   pending ... --to owner         prints `owner-asks.jsonl`, one row per line
+#   pending ... --to owner --due   prints `owner-due.jsonl`
+#   resolve --id ID --default      prints the resolved receipt
+#   send --re ASK --delivery-id K --file F
+#                                  prints the sent receipt and appends
+#                                  `sent K <first line of F>` to the log; a
+#                                  delivery id sent before is refused as the
+#                                  real program refuses it, exit 2 with
+#                                  `lane-mail: delivery-repeated=K id=<id>`
+# A `pending` with `pending.fail` beside exits 2 with a keyed line, so a
+# row proves a refused read is never an empty one.
+set -u
+here="$(dirname "${BASH_SOURCE[0]}")"
+log="$here/lane-mail.log"
+printf '%s\n' "$*" >> "$log"
+verb="${1:-}"
+due=0 id="" delivery="" file="" ask=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in
+    --id) id="$arg" ;;
+    --delivery-id) delivery="$arg" ;;
+    --file) file="$arg" ;;
+    --re) ask="$arg" ;;
+  esac
+  [ "$arg" != --due ] || due=1
+  prev="$arg"
+done
+case "$verb" in
+  pending)
+    if [ -e "$here/pending.fail" ]; then
+      echo "lane-mail: file-unreadable=$here/to-overseer.jsonl" >&2
+      exit 2
+    fi
+    if [ "$due" -eq 1 ]; then
+      [ ! -f "$here/owner-due.jsonl" ] || cat "$here/owner-due.jsonl"
+    else
+      [ ! -f "$here/owner-asks.jsonl" ] || cat "$here/owner-asks.jsonl"
+    fi ;;
+  resolve)
+    printf 'lane-mail: resolved id=%s by=default answer=close-%s\n' "$id" "$id" ;;
+  send)
+    if [ -f "$here/sent.ids" ] && grep -qxF -- "$delivery" "$here/sent.ids"; then
+      printf 'lane-mail: delivery-repeated=%s id=answer-1\n' "$delivery" >&2
+      exit 2
+    fi
+    printf '%s\n' "$delivery" >> "$here/sent.ids"
+    printf 'sent %s %s re=%s\n' "$delivery" "$(sed -n 1p -- "$file")" "$ask" >> "$log"
+    printf 'lane-mail: sent item=overseer id=answer-1 bytes=1 to=overseer ref=%s\n' "$ask" ;;
+  *) echo "lane-mail-owner: verb=$verb" >&2; exit 2 ;;
+esac
+exit 0

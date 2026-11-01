@@ -68,6 +68,12 @@ pub const DEFAULT_ENV_FILE: &str = ".env.local";
 pub const SETTINGS_FILES: [&str; 2] = ["kendex.settings.toml", ".kendex/settings.toml"];
 /// The worktree package's program under the project's install.
 pub const WORKTREE_CLI_DEFAULT: &str = ".agents/skills/worktree/scripts/worktree";
+// U5g: the agent-runtime command the wake duty delivers through.
+/// The agent-runtime command the wake duty delivers through; empty finds
+/// the installed agent-runtime package's own wrapper.
+pub const AGENT_RUNTIME_KEY: &str = "ORCH_AGENT_RUNTIME";
+/// The agent-runtime package's wrapper under the project's install.
+pub const AGENT_RUNTIME_DEFAULT: &str = ".agents/skills/agent-runtime/scripts/agent-runtime";
 /// The orch package's job-unit launcher under the project's install.
 pub const JOB_UNIT_DEFAULT: &str = ".agents/skills/orch/scripts/lib/job-unit.sh";
 /// The lanes the fleet cap admits at once: every lane kind but
@@ -96,6 +102,12 @@ pub const WATCH_HANDOVER_KEY: &str = "ORCH_WATCH_HANDOVER";
 pub const WATCH_HANDOVER_DEFAULT: &str = ".agents/skills/orch/scripts/lib/watch-handover.sh";
 /// The orch package's validation runner under the project's install.
 pub const DEV_VALIDATE_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/dev-validate-run";
+/// The program the lane admission reads a diff range's changed paths
+/// through (decision 118 (4)); empty finds the installed change-scope
+/// package's `harness-only`.
+pub const SCOPE_PATHS_CLI_KEY: &str = "CHANGE_SCOPE_PATHS_CLI";
+/// The change-scope package's path reader under the project's install.
+pub const SCOPE_PATHS_CLI_DEFAULT: &str = ".agents/skills/change-scope/scripts/harness-only";
 /// The claim store under the main checkout when no directory is named.
 pub const CLAIM_STORE_DEFAULT: &str = "tmp/oversee-watch/claims";
 /// Seconds a transfer's or a stop's caller waits for its detached job to
@@ -132,6 +144,65 @@ pub const WALL_RELAUNCH_KEY: &str = "ORCH_WALL_RELAUNCH";
 pub const MAIN_WORKFLOWS_KEY: &str = "ORCH_MAIN_WORKFLOWS";
 /// The Linear team the tracker duties read; unset leaves them off.
 pub const LINEAR_TEAM_KEY: &str = "LINEAR_TEAM";
+/// The tracker program the tracker duty reads through (the legacy
+/// `oversee-watch` key); empty finds the installed linear package's own.
+pub const TRACKER_CLI_KEY: &str = "OVERSEE_WATCH_TRACKER";
+/// The linear package's program under the project's install.
+pub const TRACKER_CLI_DEFAULT: &str = ".agents/skills/linear/scripts/linear.sh";
+// U5e2: the reducer the GitHub duty runs per repository.
+/// The github skill's reducer the GitHub duty runs per repository with
+/// `GH_REPO` (the legacy `oversee-watch` key); empty finds the installed
+/// github package's own.
+pub const PR_WATCH_CLI_KEY: &str = "OVERSEE_WATCH_PR_WATCH";
+/// The github package's reducer under the project's install.
+pub const PR_WATCH_CLI_DEFAULT: &str = ".agents/skills/github/scripts/pr-watch.sh";
+/// Whether the GitHub duty reads each repository's open security alerts:
+/// `on`, the default, or `off` (`lib/security-alerts.sh`).
+pub const SECURITY_ALERTS_KEY: &str = "ORCH_SECURITY_ALERTS";
+/// The file holding the installation token the alert reads run under; no
+/// default, and an unset file reads the alerts with no token.
+pub const SECURITY_ALERT_TOKEN_FILE_KEY: &str = "ORCH_SECURITY_ALERT_TOKEN_FILE";
+/// Whether the GitHub duty reports outside contributions: `on`, the
+/// default, or `off` (`lib/outside-contribution.sh`).
+pub const EXTERNAL_TRIAGE_KEY: &str = "ORCH_EXTERNAL_TRIAGE";
+/// Further `owner/repo` names the GitHub duty reads beside the fleet's,
+/// separated by whitespace, lowercased and deduplicated as the legacy
+/// `orch_connected_repos` read them.
+pub const CONNECTED_REPOS_KEY: &str = "ORCH_CONNECTED_REPOS";
+/// The owner's tracker account, whose comments answer a tracker-posted ask
+/// (`mailbox-append.sh` `owner_tracker_settings`); `KENDEX_USER_EMAIL`
+/// stands in when unset.
+pub const OWNER_EMAIL_KEY: &str = "ORCH_OWNER_EMAIL";
+/// The fallback for `ORCH_OWNER_EMAIL`.
+pub const USER_EMAIL_KEY: &str = "KENDEX_USER_EMAIL";
+/// The label a tracker-posted ask carries; the owner-answer read is
+/// configured only with both the label and an email.
+pub const OWNER_ASK_LABEL_KEY: &str = "ORCH_OWNER_ASK_LABEL";
+// U5d2: the overseer mark line's payload names the preference.
+/// The `harness:model:effort` entries a succession walks for the
+/// successor lane (`lib/overseer-launch.sh`, `ol_preference`); the mark
+/// line's payload names its value.
+pub const OVERSEER_PREFERENCE_KEY: &str = "ORCH_OVERSEER_PREFERENCE";
+/// The standard class on each harness (`OL_DEFAULT_PREFERENCE`).
+pub const DEFAULT_OVERSEER_PREFERENCE: &str = "claude:standard:high,codex:standard:high";
+// U5f: the retention, report and heartbeat duties' keys.
+/// Days past a record's own recorded end before the retention duty removes
+/// it (the key `workflow-state prune` and `lane-mail compact` read): the
+/// event log's rotated segments and an ended lane's paths. A count of none
+/// is a misconfiguration, as the legacy `find -mtime -0` kept everything.
+pub const RECORD_RETENTION_DAYS_KEY: &str = "ORCH_RECORD_RETENTION_DAYS";
+/// The report judge the report duty calls each long cadence (the legacy
+/// `oversee-watch` key); empty finds the installed orch package's own.
+pub const REPORT_CLI_KEY: &str = "OVERSEE_WATCH_REPORT";
+/// The orch package's report judge under the project's install.
+pub const REPORT_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/oversee-report";
+/// The account reader the heartbeat's roster and owed verdicts run (the
+/// legacy `oversee-watch` key; decision 121 Q9); empty finds the installed
+/// orch package's own.
+pub const LANES_CLI_KEY: &str = "OVERSEE_WATCH_LANES";
+/// The orch package's account reader under the project's install.
+pub const LANES_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/lanes";
+const DEFAULT_RECORD_RETENTION_DAYS: u32 = 5;
 
 const DEFAULT_STATE_DIR: &str = "tmp";
 const DEFAULT_VERIFY_SECS: u64 = 15;
@@ -151,7 +222,16 @@ const DEFAULT_LANE_AGE_SECS: u64 = 12600;
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The keys this runtime reads from the private env file.
-const READ_KEYS: [&str; 29] = [
+const READ_KEYS: [&str; 44] = [
+    TRACKER_CLI_KEY,
+    PR_WATCH_CLI_KEY, // U5e2
+    SECURITY_ALERTS_KEY,
+    SECURITY_ALERT_TOKEN_FILE_KEY,
+    EXTERNAL_TRIAGE_KEY,
+    CONNECTED_REPOS_KEY,
+    OWNER_EMAIL_KEY,
+    USER_EMAIL_KEY,
+    OWNER_ASK_LABEL_KEY,
     STATE_DIR_KEY,
     TMUX_SESSION_KEY,
     VERIFY_SECS_KEY,
@@ -160,12 +240,14 @@ const READ_KEYS: [&str; 29] = [
     LAUNCH_PERMISSION_KEY,
     HARNESS_BINARIES_KEY,
     WORKTREE_CLI_KEY,
+    AGENT_RUNTIME_KEY, // U5g
     SUCCESSION_KEY,
     JOB_UNIT_KEY,
     LANE_CAP_KEY,
     CLAIM_STATE_DIR_KEY,
     LANE_MAIL_CLI_KEY,
     DEV_VALIDATE_CLI_KEY,
+    SCOPE_PATHS_CLI_KEY,
     WATCH_HANDOVER_KEY,
     JOB_CLAIM_SECS_KEY,
     WATCH_MAIL_INTERVAL_KEY,
@@ -181,6 +263,11 @@ const READ_KEYS: [&str; 29] = [
     WALL_RELAUNCH_KEY,
     MAIN_WORKFLOWS_KEY,
     LINEAR_TEAM_KEY,
+    OVERSEER_PREFERENCE_KEY, // U5d2
+    // U5f
+    RECORD_RETENTION_DAYS_KEY,
+    REPORT_CLI_KEY,
+    LANES_CLI_KEY,
 ];
 
 /// What the command line says about the settings: a state directory that
@@ -267,10 +354,45 @@ pub struct WatchSettings {
     pub linear_team: Option<String>,
 }
 
+/// Whether a GitHub audit runs: the legacy `on`/`off` switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audit {
+    On,
+    Off,
+}
+
+/// The owner's tracker account and the label a tracker-posted ask carries,
+/// read together: the owner-answer read is configured only with both
+/// (`mailbox-append.sh` `owner_tracker_settings`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerTracker {
+    pub email: String,
+    pub label: String,
+}
+
+/// What the tracker and GitHub read duties consume (step5-map A4, A10),
+/// each with its legacy `oversee-watch` default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadSettings {
+    /// The tracker program the tracker duty reads through.
+    pub tracker_cli: PathBuf,
+    /// The reducer the GitHub duty runs per repository (U5e2).
+    pub pr_watch_cli: PathBuf,
+    pub security_alerts: Audit,
+    /// The installation token file the alert reads run under.
+    pub security_alert_token_file: Option<PathBuf>,
+    pub external_triage: Audit,
+    /// Lowercased, deduplicated, in the order given.
+    pub connected_repos: Vec<String>,
+    pub owner_tracker: Option<OwnerTracker>,
+}
+
 /// The settings the runtime acts on, resolved once per process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub roots: Roots,
+    /// The tracker and GitHub read duties' keys.
+    pub reads: ReadSettings,
     pub state_dir: PathBuf,
     pub tmux_session: Option<String>,
     pub verify: Duration,
@@ -283,6 +405,8 @@ pub struct Settings {
     pub permission: Permission,
     pub harness_binaries: BTreeMap<Harness, PathBuf>,
     pub worktree_cli: PathBuf,
+    /// U5g: the agent-runtime command the wake duty delivers through.
+    pub agent_runtime: PathBuf,
     pub succession: Succession,
     /// The job-unit launcher a transfer's effect is detached through.
     pub job_unit: PathBuf,
@@ -294,8 +418,24 @@ pub struct Settings {
     pub lane_mail_cli: PathBuf,
     /// The program a close ends a worktree's validation runs through.
     pub dev_validate_cli: PathBuf,
+    /// The program the lane admission reads a range's changed paths
+    /// through.
+    pub scope_paths_cli: PathBuf,
     /// The watch handover library a confirmed publication sources.
     pub watch_handover: PathBuf,
+    /// U5d2: the succession's preference entries, which the overseer mark
+    /// line's payload names; an empty value reads as the default, as this
+    /// reader takes every key.
+    pub overseer_preference: String,
+    // U5f: the retention, report and heartbeat duties.
+    /// Days past its own recorded end before the retention duty removes a
+    /// record.
+    pub retention_days: u32,
+    /// The report judge the report duty calls (`oversee-report due`).
+    pub report_cli: PathBuf,
+    /// The account reader the heartbeat runs (`lanes list --json`, `lanes
+    /// pick`).
+    pub lanes_cli: PathBuf,
 }
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::Error {
@@ -583,10 +723,56 @@ pub fn load(
         None => roots.project.join(default),
     };
     let lane_mail_cli = program(LANE_MAIL_CLI_KEY, LANE_MAIL_CLI_DEFAULT);
+    let agent_runtime = program(AGENT_RUNTIME_KEY, AGENT_RUNTIME_DEFAULT); // U5g
     let dev_validate_cli = program(DEV_VALIDATE_CLI_KEY, DEV_VALIDATE_CLI_DEFAULT);
+    let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
     let watch_handover = program(WATCH_HANDOVER_KEY, WATCH_HANDOVER_DEFAULT);
+    let overseer_preference = get(OVERSEER_PREFERENCE_KEY)
+        .unwrap_or(DEFAULT_OVERSEER_PREFERENCE)
+        .to_owned(); // U5d2
+    // U5f
+    let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS)?;
+    let report_cli = program(REPORT_CLI_KEY, REPORT_CLI_DEFAULT);
+    let lanes_cli = program(LANES_CLI_KEY, LANES_CLI_DEFAULT);
+    // The read duties' keys (`security_alerts_init`, `outside_contribution_init`,
+    // `orch_connected_repos`, `owner_tracker_settings`).
+    let audit = |key: &str| match get(key) {
+        None | Some("on") => Ok(Audit::On),
+        Some("off") => Ok(Audit::Off),
+        Some(other) => Err(value_refusal(key, other)),
+    };
+    let mut connected_repos: Vec<String> = Vec::new();
+    for entry in get(CONNECTED_REPOS_KEY)
+        .unwrap_or_default()
+        .split_whitespace()
+    {
+        let entry = entry.to_ascii_lowercase();
+        if !connected_repos.contains(&entry) {
+            connected_repos.push(entry);
+        }
+    }
+    let owner_tracker = match (
+        get(OWNER_EMAIL_KEY).or_else(|| get(USER_EMAIL_KEY)),
+        get(OWNER_ASK_LABEL_KEY),
+    ) {
+        (Some(email), Some(label)) => Some(OwnerTracker {
+            email: email.to_owned(),
+            label: label.to_owned(),
+        }),
+        (None, _) | (_, None) => None,
+    };
+    let reads = ReadSettings {
+        tracker_cli: program(TRACKER_CLI_KEY, TRACKER_CLI_DEFAULT),
+        pr_watch_cli: program(PR_WATCH_CLI_KEY, PR_WATCH_CLI_DEFAULT), // U5e2
+        security_alerts: audit(SECURITY_ALERTS_KEY)?,
+        security_alert_token_file: get(SECURITY_ALERT_TOKEN_FILE_KEY).map(PathBuf::from),
+        external_triage: audit(EXTERNAL_TRIAGE_KEY)?,
+        connected_repos,
+        owner_tracker,
+    };
     Ok(Settings {
         roots: roots.clone(),
+        reads,
         state_dir,
         tmux_session: get(TMUX_SESSION_KEY).map(str::to_owned),
         verify: secs(VERIFY_SECS_KEY, DEFAULT_VERIFY_SECS)?,
@@ -597,13 +783,20 @@ pub fn load(
         permission,
         harness_binaries,
         worktree_cli,
+        agent_runtime, // U5g
         succession,
         job_unit,
         lane_cap,
         claim_store,
         lane_mail_cli,
         dev_validate_cli,
+        scope_paths_cli,
         watch_handover,
+        overseer_preference, // U5d2
+        // U5f
+        retention_days,
+        report_cli,
+        lanes_cli,
     })
 }
 
@@ -1031,6 +1224,11 @@ mod tests {
             settings.worktree_cli,
             roots.project.join(WORKTREE_CLI_DEFAULT)
         );
+        // U5g
+        assert_eq!(
+            settings.agent_runtime,
+            roots.project.join(AGENT_RUNTIME_DEFAULT)
+        );
         assert_eq!(settings.succession, Succession::On);
         assert_eq!(settings.job_unit, roots.project.join(JOB_UNIT_DEFAULT));
         assert_eq!(settings.lane_cap, 4);
@@ -1042,6 +1240,10 @@ mod tests {
         assert_eq!(
             settings.dev_validate_cli,
             roots.project.join(DEV_VALIDATE_CLI_DEFAULT)
+        );
+        assert_eq!(
+            settings.scope_paths_cli,
+            roots.project.join(SCOPE_PATHS_CLI_DEFAULT)
         );
         assert_eq!(
             settings.watch_handover,
@@ -1063,6 +1265,7 @@ mod tests {
                 (CLAIM_STATE_DIR_KEY, "/var/watch"),
                 (LANE_MAIL_CLI_KEY, "/opt/lane-mail"),
                 (DEV_VALIDATE_CLI_KEY, "/opt/dev-validate-run"),
+                (SCOPE_PATHS_CLI_KEY, "/opt/harness-only"),
                 (WATCH_HANDOVER_KEY, "/opt/watch-handover.sh"),
                 (JOB_CLAIM_SECS_KEY, "40"),
                 (WATCH_MAIL_INTERVAL_KEY, "5"),
@@ -1113,6 +1316,7 @@ mod tests {
             settings.dev_validate_cli,
             PathBuf::from("/opt/dev-validate-run")
         );
+        assert_eq!(settings.scope_paths_cli, PathBuf::from("/opt/harness-only"));
         assert_eq!(
             settings.watch_handover,
             PathBuf::from("/opt/watch-handover.sh")
@@ -1178,6 +1382,89 @@ mod tests {
         }
     }
 
+    /// The read duties' keys (U5e): each default is the legacy's, the words
+    /// and shapes are the legacy readers', the rest is refused by key and
+    /// value, and the owner tracker is configured only by both its halves.
+    #[test]
+    fn the_read_duties_keys_take_their_legacy_defaults_words_and_refusals() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots_in(dir.path());
+        let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
+        assert_eq!(
+            settings.reads,
+            ReadSettings {
+                tracker_cli: roots.project.join(TRACKER_CLI_DEFAULT),
+                pr_watch_cli: roots.project.join(PR_WATCH_CLI_DEFAULT),
+                security_alerts: Audit::On,
+                security_alert_token_file: None,
+                external_triage: Audit::On,
+                connected_repos: Vec::new(),
+                owner_tracker: None,
+            }
+        );
+        let settings = load(
+            &roots,
+            &env(&[
+                (TRACKER_CLI_KEY, "/opt/linear.sh"),
+                (PR_WATCH_CLI_KEY, "/opt/pr-watch.sh"),
+                (SECURITY_ALERTS_KEY, "off"),
+                (SECURITY_ALERT_TOKEN_FILE_KEY, "/run/token"),
+                (EXTERNAL_TRIAGE_KEY, "off"),
+                (CONNECTED_REPOS_KEY, " Owner/Repo\tother/one owner/repo "),
+                (USER_EMAIL_KEY, "user@example.com"),
+                (OWNER_ASK_LABEL_KEY, "owner-ask"),
+            ]),
+            &FLAGS,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.reads,
+            ReadSettings {
+                tracker_cli: PathBuf::from("/opt/linear.sh"),
+                pr_watch_cli: PathBuf::from("/opt/pr-watch.sh"),
+                security_alerts: Audit::Off,
+                security_alert_token_file: Some(PathBuf::from("/run/token")),
+                external_triage: Audit::Off,
+                connected_repos: vec!["owner/repo".to_owned(), "other/one".to_owned()],
+                owner_tracker: Some(OwnerTracker {
+                    email: "user@example.com".to_owned(),
+                    label: "owner-ask".to_owned(),
+                }),
+            }
+        );
+        // The owner's own key outranks the user email; a label alone or an
+        // email alone configures nothing.
+        let both = load(
+            &roots,
+            &env(&[
+                (OWNER_EMAIL_KEY, "owner@example.com"),
+                (USER_EMAIL_KEY, "user@example.com"),
+                (OWNER_ASK_LABEL_KEY, "owner-ask"),
+            ]),
+            &FLAGS,
+        )
+        .unwrap();
+        assert_eq!(
+            both.reads.owner_tracker.map(|o| o.email),
+            Some("owner@example.com".to_owned())
+        );
+        for half in [
+            (OWNER_EMAIL_KEY, "owner@example.com"),
+            (OWNER_ASK_LABEL_KEY, "l"),
+        ] {
+            let one = load(&roots, &env(&[half]), &FLAGS).unwrap();
+            assert_eq!(one.reads.owner_tracker, None, "{half:?}");
+        }
+        for (key, value) in [(SECURITY_ALERTS_KEY, "yes"), (EXTERNAL_TRIAGE_KEY, "1")] {
+            let err = load(&roots, &env(&[(key, value)]), &FLAGS).unwrap_err();
+            assert_eq!(err.key(), "setting-invalid", "{key}={value}");
+            assert_eq!(
+                err.fields(),
+                vec![("key".into(), key.into()), ("value".into(), value.into())]
+            );
+        }
+    }
+
     /// R-U5a F2. Defect: the three watch keys read through the stricter
     /// parsers of the launcher's keys, refusing values the legacy watch
     /// admits (`oversee-watch:603`, `:623`, `:636`) and so refusing every
@@ -1200,5 +1487,49 @@ mod tests {
         assert_eq!(settings.watch.mail_interval, Duration::ZERO);
         assert_eq!(settings.watch.directive_unread, Duration::ZERO);
         assert_eq!(settings.watch.dead_passes, 2);
+    }
+
+    // U5f: the retention, report and heartbeat duties' keys.
+    /// Decision 141 (3). Defect: a mistyped retention read as the default
+    /// (the legacy `orch-env` handed `find -mtime` whatever stood), or a
+    /// count of none, which the legacy `find -mtime -0` kept everything
+    /// under; and a report or account program read from anywhere but the
+    /// legacy's own keys. Each default is the legacy's, a set value is
+    /// taken as given, and a value outside `[1-9][0-9]*` is refused by key
+    /// and value.
+    #[test]
+    fn the_retention_report_and_lanes_keys_take_their_defaults_and_refuse_by_key_and_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots_in(dir.path());
+        let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
+        assert_eq!(settings.retention_days, 5);
+        assert_eq!(settings.report_cli, roots.project.join(REPORT_CLI_DEFAULT));
+        assert_eq!(settings.lanes_cli, roots.project.join(LANES_CLI_DEFAULT));
+        let settings = load(
+            &roots,
+            &env(&[
+                (RECORD_RETENTION_DAYS_KEY, "12"),
+                (REPORT_CLI_KEY, "/opt/oversee-report"),
+                (LANES_CLI_KEY, "/opt/lanes"),
+            ]),
+            &FLAGS,
+        )
+        .unwrap();
+        assert_eq!(settings.retention_days, 12);
+        assert_eq!(settings.report_cli, PathBuf::from("/opt/oversee-report"));
+        assert_eq!(settings.lanes_cli, PathBuf::from("/opt/lanes"));
+        for value in ["0", "05", "x", "-1", "5d", "+5"] {
+            let err =
+                load(&roots, &env(&[(RECORD_RETENTION_DAYS_KEY, value)]), &FLAGS).unwrap_err();
+            assert_eq!(err.key(), "setting-invalid", "{value:?}");
+            assert_eq!(
+                err.fields(),
+                vec![
+                    ("key".into(), RECORD_RETENTION_DAYS_KEY.into()),
+                    ("value".into(), value.into())
+                ],
+                "{value:?}"
+            );
+        }
     }
 }

@@ -22,6 +22,7 @@
 
 pub mod effects;
 pub mod error;
+pub mod mailbox;
 pub mod ops;
 pub mod protocol;
 pub mod schedule;

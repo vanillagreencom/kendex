@@ -77,7 +77,7 @@ impl Fleet {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        let mut command = Command::new(binary());
+        let mut command = isolated();
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
             .args(args)
@@ -95,8 +95,6 @@ impl Fleet {
                 "DEV_VALIDATE_CLI",
                 fixtures().join("dev-validate-quiet/dev-validate-run"),
             )
-            // No project settings or private env reach the test's own tree.
-            .env("ORCH_STATE_DIR", "")
             .current_dir(self.state_dir());
         for (name, value) in &self.env {
             command.env(name, value);
@@ -851,7 +849,7 @@ fn spawn_op(
     let name = format!("request-{}.json", request["item"].as_str().unwrap());
     let path = fleet.state_dir().join(name);
     std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
-    let mut command = Command::new(binary());
+    let mut command = isolated();
     command
         .args(["--state-dir", &fleet.state_dir().display().to_string()])
         .args(["op", "--fleet", "--request", &path.display().to_string()])
@@ -869,7 +867,6 @@ fn spawn_op(
             "DEV_VALIDATE_CLI",
             fixtures().join("dev-validate-quiet/dev-validate-run"),
         )
-        .env("ORCH_STATE_DIR", "")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .current_dir(fleet.state_dir());

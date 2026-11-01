@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# The fake gh for the admission rows: it answers
+# `issue view N --repo R --json body,labels`, the one read the admission
+# makes of a GitHub item, with the JSON at $GH_ISSUES_DIR/N.json, the
+# shape gh prints for those fields ({body, labels: [{name, ...}]}). An
+# issue with no file is a failed read (exit 1, gh's `HTTP 404` line on
+# stderr); any other call is refused. Every call appends its arguments to
+# $GH_FAKE_LOG, one line each.
+set -u
+printf '%s\n' "$*" >> "${GH_FAKE_LOG:?}"
+if [ "${1:-} ${2:-} ${4:-} ${6:-} ${7:-}" != "issue view --repo --json body,labels" ]; then
+  echo "gh-issue: unexpected-call args=[$*]" >&2
+  exit 1
+fi
+file="${GH_ISSUES_DIR:?}/$3.json"
+if [ ! -r "$file" ]; then
+  echo "gh: HTTP 404: Not Found (https://api.github.com/repos/$5/issues/$3)" >&2
+  exit 1
+fi
+cat -- "$file"

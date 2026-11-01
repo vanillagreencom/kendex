@@ -15,11 +15,15 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
+use agent_runtime::process::Identity;
+use orch_runtime::error::Error;
 use orch_runtime::schedule::Clock;
+use orch_runtime::watch;
 
 /// The one injected clock as a test drives it (decision 121, Q16): time
 /// moves only when the test passes it, and a `sleep` blocks its thread
@@ -172,6 +176,95 @@ pub fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_orch-runtime"))
 }
 
+/// The binary as every suite starts it (decision 164): its environment
+/// selected by [`isolation_env`], never inherited, no private environment
+/// file, and the temporary root as its working directory, so no caller's
+/// settings, team, repositories, tokens or mailbox and no checkout above a
+/// test directory reach a row whatever starts it. A duty's program then
+/// defaults to a path under the test directory that does not exist and
+/// fails loudly; a row that wants a duty to work names its program, and a
+/// row that wants another directory sets it after.
+pub fn isolated() -> Command {
+    // A directory strictly below the ceiling: git exempts a working
+    // directory that is the ceiling itself and would walk up from it.
+    let cwd = std::env::temp_dir().join("isolated-cwd");
+    std::fs::create_dir_all(&cwd).expect("the isolated working directory");
+    let mut command = program(binary());
+    command.arg("--no-private-env").current_dir(cwd);
+    command
+}
+
+/// `name` as a test child under [`isolation_env`]: the one constructor for
+/// every program a row starts that reads a home or a configuration (`git`,
+/// a shipped script), so no row's own start reaches the operator's files
+/// (R-RECON2 C1: a fixture's `git` and the mailbox handler started raw read
+/// the operator's `~/.gitconfig` and its includes).
+pub fn program(name: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(name);
+    isolation_env(&mut command);
+    command
+}
+
+/// Git's ceilings for a test child: the temporary root and, where these
+/// tests live in a repository (a clean copy of the index does not), its
+/// root, so a row that hands the binary a fixture path inside the
+/// repository (`tests/rust/fixtures/...`) resolves no project root there
+/// either; git stops below each ceiling, never at it.
+fn ceilings(root: &Path) -> std::ffi::OsString {
+    let mut ceilings = root.as_os_str().to_owned();
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while dir.pop() {
+        if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+            ceilings.push(":");
+            ceilings.push(dir.as_os_str());
+            break;
+        }
+    }
+    ceilings
+}
+
+/// The environment a test child runs with: cleared, then the tools' path,
+/// the locale, the temporary root, a scratch home under that root (a tool
+/// that reads a home, `gh` or `git`, finds nothing of the operator there),
+/// a fixed git identity (a fixture commit needs one, and the operator's
+/// is in the configuration no child reads) and git's ceiling at the root,
+/// so no checkout above a test directory is a project root
+/// (`settings::roots` then reads the working directory). A row adds what
+/// it needs after. [`program`] applies it to a program a row starts,
+/// [`isolated`] to the binary, and the private tmux server to every pane.
+pub fn isolation_env(command: &mut Command) -> &mut Command {
+    let root = std::env::temp_dir();
+    let home = root.join("isolated-home");
+    std::fs::create_dir_all(&home).expect("the scratch home");
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env(
+            "LANG",
+            std::env::var_os("LANG").unwrap_or_else(|| "C.UTF-8".into()),
+        )
+        .env("TMPDIR", &root)
+        .env("HOME", &home)
+        .env("GIT_CEILING_DIRECTORIES", ceilings(&root));
+    for (name, value) in [
+        ("GIT_AUTHOR_NAME", "t"),
+        ("GIT_AUTHOR_EMAIL", "t@t"),
+        ("GIT_COMMITTER_NAME", "t"),
+        ("GIT_COMMITTER_EMAIL", "t@t"),
+    ] {
+        command.env(name, value);
+    }
+    // The user manager's bus: the session fact the detached job's launcher
+    // starts its unit through (decision 76); a test row is the one place a
+    // unit starts, and without the bus the launcher falls to setsid.
+    for bus in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
+        if let Some(value) = std::env::var_os(bus) {
+            command.env(bus, value);
+        }
+    }
+    command
+}
+
 pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -226,9 +319,18 @@ impl Server {
     /// row plants a hook on the server before any window opens.
     pub fn start_with_config(dir: &Path, session: &str, config: &Path) -> Server {
         let socket = dir.join("tmux.sock");
-        let out = tmux(
-            &socket,
-            &[
+        // The server's environment is every pane's: selected, never the
+        // test process's own (decision 164).
+        let mut command = Command::new("tmux");
+        isolation_env(&mut command);
+        // The first window opens before `default-shell` is set below and
+        // would run the passwd login shell: name the pane shell here too
+        // (decision 69).
+        command.env("SHELL", pane_shell());
+        let out = command
+            .arg("-S")
+            .arg(&socket)
+            .args([
                 "-f",
                 &config.display().to_string(),
                 "new-session",
@@ -241,8 +343,9 @@ impl Server {
                 "50",
                 "-c",
                 &dir.display().to_string(),
-            ],
-        );
+            ])
+            .output()
+            .expect("tmux");
         assert!(out.status.success(), "new-session: {}", stderr(&out));
         let shell = tmux(
             &socket,
@@ -412,8 +515,20 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        // The server's own socket only; never a kill by name.
+        // The server's own socket first. Where a row's directory dropped
+        // before the server, the socket is gone and `kill-server` reaches
+        // nothing (R-RECON S4's class, whatever a row's drop order): then
+        // the pid the server started as is signalled, by pid alone and only
+        // while its command line still names this socket, so a reused pid
+        // is never touched.
         let _ = tmux(&self.socket, &["kill-server"]);
+        let cmdline = std::fs::read(format!("/proc/{}/cmdline", self.pid)).unwrap_or_default();
+        let socket = self.socket.as_os_str().as_encoded_bytes();
+        if cmdline.windows(socket.len()).any(|w| w == socket) {
+            let _ = Command::new("kill")
+                .args(["-TERM", &self.pid.to_string()])
+                .output();
+        }
     }
 }
 
@@ -601,7 +716,7 @@ impl Runner {
 
     /// The binary with `extra` environment over the runner's own.
     pub fn run_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
-        let mut command = Command::new(binary());
+        let mut command = isolated();
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
             .args(args)
@@ -628,8 +743,6 @@ impl Runner {
                 "ORCH_WATCH_HANDOVER",
                 fixtures().join("watch-handover-quiet/watch-handover.sh"),
             )
-            // No project settings or private env reach the test's own tree.
-            .env("ORCH_STATE_DIR", "")
             .current_dir(self.state_dir());
         if let Some(verify) = self.verify {
             command.env("ORCH_TMUX_VERIFY_SECS", verify.to_string());
@@ -661,7 +774,7 @@ impl Runner {
         std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
         let inherited = std::env::var("PATH").unwrap_or_default();
         let combined = format!("{}:{inherited}", path_prefix.display());
-        let mut command = Command::new(binary());
+        let mut command = isolated();
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
             .args(["op", "--fleet", "--request", &path.display().to_string()])
@@ -686,7 +799,6 @@ impl Runner {
                 "ORCH_WATCH_HANDOVER",
                 fixtures().join("watch-handover-quiet/watch-handover.sh"),
             )
-            .env("ORCH_STATE_DIR", "")
             .env("PATH", combined)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1134,4 +1246,104 @@ pub fn remaining<'a>(observation: &'a Value, kind: &str) -> &'a Value {
         .as_array()
         .and_then(|standing| standing.iter().find(|o| o["kind"] == kind))
         .unwrap_or(&Value::Null)
+}
+
+/// `n` seconds, the unit every row's clock step is in.
+pub fn secs(n: u64) -> Duration {
+    Duration::from_secs(n)
+}
+
+/// A duty body that counts its runs and records the fake epoch second of
+/// each, emitting `event` (with a tick-specific id where it takes one) and
+/// the changes `changes` gives.
+pub struct Counting {
+    pub runs: Arc<AtomicUsize>,
+    pub at: Arc<std::sync::Mutex<Vec<u64>>>,
+}
+
+impl Counting {
+    pub fn new() -> Counting {
+        Counting {
+            runs: Arc::new(AtomicUsize::new(0)),
+            at: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn body(
+        &self,
+        mut produce: impl FnMut(&watch::Tick) -> watch::Produced + Send + 'static,
+    ) -> watch::Body<'static> {
+        self.body_result(move |tick| Ok(produce(tick)))
+    }
+
+    /// A body whose runs may refuse: the count and the stamps are taken
+    /// before the result is known.
+    pub fn body_result(
+        &self,
+        mut produce: impl FnMut(&watch::Tick) -> Result<watch::Produced, Error> + Send + 'static,
+    ) -> watch::Body<'static> {
+        let runs = self.runs.clone();
+        let at = self.at.clone();
+        Box::new(move |tick: &watch::Tick| {
+            runs.fetch_add(1, Ordering::SeqCst);
+            at.lock().unwrap().push(tick.wall);
+            produce(tick)
+        })
+    }
+
+    pub fn runs(&self) -> usize {
+        self.runs.load(Ordering::SeqCst)
+    }
+
+    pub fn at(&self) -> Vec<u64> {
+        self.at.lock().unwrap().clone()
+    }
+}
+
+/// Run `runner` to its end on a thread while `drive` works the clock; the
+/// run's result. A `drive` that fails still stops the runner, so a failed
+/// assertion is reported rather than hanging the row on the scope's join.
+/// The stop wakes only threads asleep on the clock, so a drive returns with
+/// every runner thread asleep (a strict `pass` or `await_sleepers` leaves
+/// them so).
+pub fn run_driven(
+    runner: watch::Runner<'_>,
+    clock: &FakeClock,
+    paths: &watch::Paths,
+    identity: &Identity,
+    drive: impl FnOnce(),
+) -> Result<watch::Ended, Error> {
+    std::thread::scope(|s| {
+        let handle = s.spawn(move || runner.run());
+        let drove = std::panic::catch_unwind(std::panic::AssertUnwindSafe(drive));
+        if let Err(panic) = &drove {
+            // Said before the join, which a body the drive was to release
+            // can hold.
+            let text = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_default();
+            let _ = std::io::Write::write_all(
+                &mut std::io::stderr(),
+                format!("drive failed before the runner stopped: {text}\n").as_bytes(),
+            );
+        }
+        let _ = watch::claim::request_stop(paths, identity);
+        // One release wakes the threads asleep now; a thread still in a body
+        // sleeps again past the clock, so the release repeats, in real time,
+        // until the runner has ended or the bound passes.
+        let bound = Instant::now() + secs(10);
+        loop {
+            clock.release(secs(1));
+            if handle.is_finished() || Instant::now() >= bound {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if let Err(panic) = drove {
+            std::panic::resume_unwind(panic);
+        }
+        handle.join().expect("the runner thread")
+    })
 }

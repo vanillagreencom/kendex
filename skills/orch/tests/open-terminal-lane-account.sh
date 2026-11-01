@@ -69,7 +69,7 @@ if [[ "${1:-}" == --case ]]; then
     if [[ "$MODE" == auto-* ]]; then harness_args=(); lane="auto:$HARNESS"; fi
     RC=0
     env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$ROOT/real-bin:$ROOT/bin:$PATH" HOME="$ROOT/home" SHELL="$BASH" ORCH_TMUX_SESSION=fixture \
-      LINEAR_TEAM= ORCH_LANE_HOST=local WORKTREE_CLI="$ROOT/bin/worktree" LANES_CLI="$ROOT/bin/lanes" \
+      ORCH_RUNTIME_CLI="$ORCH_RUNTIME_CLI" LINEAR_TEAM= ORCH_LANE_HOST=local WORKTREE_CLI="$ROOT/bin/worktree" LANES_CLI="$ROOT/bin/lanes" \
       OT_WT_LOG="$ROOT/worktree.log" OT_WT_FIXED="$ROOT/worktree-$item" ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SETTLE_MS=1 \
       ORCH_OVERSEER_LANES=1 OVERSEE_WATCH_STATE_DIR="$ROOT/claims" \
       "$OT" --tmux --state-dir "$ROOT/state" ${harness_args[@]+"${harness_args[@]}"} --lane "$lane" \

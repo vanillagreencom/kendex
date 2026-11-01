@@ -169,9 +169,11 @@ source "$SCRIPT_DIR/lib/lane-cap.sh"
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
 # shellcheck source=lib/cloud-close-log.sh
 source "$SCRIPT_DIR/lib/cloud-close-log.sh"
-# shellcheck source=lib/launch-overlap.sh
-source "$SCRIPT_DIR/lib/launch-overlap.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
+# The orch runtime this launcher asks which intents are open and for the
+# admission judgement of a fleet launch; the wrapper beside this script runs
+# the binary scripts/setup placed for these sources.
+ORCH_RUNTIME="${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}"
 # `worktree create --reuse --keep-on-conflict` handed back a tree whose rebase
 # conflicted, unrebased (`worktree create --help`).
 readonly WORKTREE_REUSE_UNREBASED_EXIT=76
@@ -1593,9 +1595,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
   # caller's own checkout rather than anything this lane's item lives in. A
   # launch ORCH_CONNECTED_REPOS admitted records the listed repository where
   # neither named one, so lane-close reads its pull request there.
-  record_repo="$REPO"
-  [[ "$TRACKER" != github ]] || record_repo="$repo"
-  [[ -n "$record_repo" ]] || record_repo="$CONNECTED_REPO"
+  record_repo="$(lane_record_repo)"
   rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$record_model" --arg effort "$LAUNCH_EFFORT" --arg preference_entry "$PREFERENCE_ENTRY" \
@@ -1604,10 +1604,11 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
     --argjson tier_record "$LAUNCH_TIER_RECORD" --arg pane "$LAUNCH_PANE" --arg server "$LAUNCH_SERVER" --arg kind "$HOST_KIND" \
     --arg harness_pid "${LAUNCH_HARNESS_ID%% *}" --arg harness_start "${LAUNCH_HARNESS_ID#* }" --argjson wake "${LAUNCH_WAKE:-null}" \
     --argjson pick "${LANE_PICK_RECORD:-null}" --argjson cloud_repo_access "${LAUNCH_REPO_ACCESS:-null}" \
-    --argjson touched "${LAUNCH_TOUCHED:-null}" --argjson in_scope "${IN_SCOPE:-[]}" --argjson obligation "${OBLIGATION:-null}" \
+    --argjson touched "${LAUNCH_TOUCHED:-null}" --argjson in_scope "${IN_SCOPE:-[]}" --argjson rebase "${LAUNCH_REBASE:-[]}" --argjson obligation "${OBLIGATION:-null}" \
     --arg recovery_cwd "$CLAIM_ROOT" --arg recovery_flags "$LAUNCH_FLAGS" --arg recovery_session "$LAUNCH_SESSION" --argjson recovery_refresh "$LANE_REFRESH" --arg custom "$CMD_TEMPLATE" \
     '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, kind: $kind, mail_root: $mail_root, surface: $surface, model: $model, effort: $effort, session_id: $session_id, session_since: $launched_at, launched_at: $launched_at, running_at: $running_at, status: $status, over_cap: $over_cap}
-     | map_values(if . == "" then null else . end) + {allow_all: $allow_all, touched: $touched, in_scope: $in_scope, obligation: $obligation} + $tier_record
+     | map_values(if . == "" then null else . end) + {allow_all: $allow_all, touched: $touched, in_scope: $in_scope, obligation: $obligation}
+       + (if $rebase == [] then {} else {rebase: $rebase} end) + $tier_record
        + {recovery: (if $custom != "" then null else {cwd: $recovery_cwd, flags: $recovery_flags, session: $recovery_session, refresh: $recovery_refresh} end)}
        + (if $preference_entry == "" then {} else {preference_entry: $preference_entry} end)
        + (if $live_display then {live_display: true} else {} end)
@@ -1649,7 +1650,7 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT [STATU
      | if $known != null and $rec.obligation != null and $known != $rec.obligation
        then {state: ., report: "obligation-conflict"}
        else ($rec + {obligation: ($known // $rec.obligation)}) as $rec
-     | ($rec | if $mode == "wake" then {session_id, status, wake, obligation} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope)
+     | ($rec | if $mode == "wake" then {session_id, status, wake, obligation} elif $mode == "relaunch" then del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope, .rebase)
        | if $rec.over_cap == null then . else . + {over_cap: $rec.over_cap} end
        | if .status == "running" or .prepare.step == "selection" then . else del(.harness, .model, .effort, .preference_entry, .pick, .account, .session_id, .recovery) end else . end) as $patch
      | if any($l[]; .item == $rec.item)
@@ -1692,7 +1693,7 @@ lane_intent_clear() { # WT_ID ITEM
     return 1
   fi
   [[ "$intents" != 0 ]] || return 0
-  open="$("$SCRIPT_DIR/orch-runtime" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} state inspect --fleet \
+  open="$("$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} state inspect --fleet \
     | jq -r --arg item "$1" '[.result.open_intents[]? | select(.target == $item) | .id] | first // empty')" \
     || { ot_message runtime-unavailable "item=$2" >&2; return 1; }
   [[ -z "$open" ]] || { ot_message intent-open "item=$2" "intent=$open" >&2; return 1; }
@@ -3992,34 +3993,66 @@ launch_blockers_gate() { # ITEM
   return 1
 }
 
-# The file-overlap hold (../workflows/oversee.md § 2), judged by
-# lib/launch-overlap.sh after the cap, whose count owns a fleet state that does not parse, and
-# before the worktree or a host launch. LAUNCH_TOUCHED is the touched set the
-# lane record keeps for later launches to compare with.
+# The repository a lane record names: the launch's, the item's for a GitHub
+# item, else the connected repository; empty where the launch names none.
+lane_record_repo() {
+  local record_repo="$REPO"
+  [[ "$TRACKER" != github ]] || record_repo="$repo"
+  [[ -n "$record_repo" ]] || record_repo="$CONNECTED_REPO"
+  printf '%s\n' "$record_repo"
+}
+
+# The admission judgement (../workflows/oversee.md § 2), the orch runtime's:
+# the item's eligibility from its body, its touched set as the union of its
+# Location paths and the brief's, and each holder of a shared path judged by
+# its lane's liveness, after the cap and before the worktree or a host
+# launch. The runtime answers `admit`; this launcher records what it minted:
+# LAUNCH_TOUCHED, the touched set, and LAUNCH_REBASE, the rebase obligations
+# a stopped or held holder yielded, each on the lane record.
 LAUNCH_TOUCHED=null
+LAUNCH_REBASE='[]'
 launch_overlap_gate() { # ITEM KEY
-  local lanes rc=0 null_repo=""
-  LAUNCH_TOUCHED=null
+  local rc=0 request file reply key
+  LAUNCH_TOUCHED=null LAUNCH_REBASE='[]'
   [[ "$FLEET" == true ]] || return 0
   launch_recorded "$2" || rc=$?
   [[ "$rc" -ne 0 ]] || return 0
-  if [[ "$rc" -ne 1 ]] || ! lanes="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.lanes // []')"; then
-    ot_message launch-overlap-unread "item=$1" read=state >&2
-    return 1
-  fi
-  # A lane record with no repo is the overseer's own repository's, which a
-  # connected launch's repository never is.
-  [[ "$OVERSEER_BIND" == connected ]] || null_repo="$repo"
+  [[ "$rc" -eq 1 ]] || { ot_message launch-overlap-unread "item=$1" read=state >&2; return 1; }
+  request="$(jq -cn --arg item "$2" --arg tracker "$TRACKER" --arg repo "$(lane_record_repo)" \
+      --arg brief "$BRIEF_FILE" --arg dir "$CLAIM_ROOT" --argjson in_scope "$IN_SCOPE" '
+    {item: $item, tracker: $tracker, repo_dir: $dir, in_scope: $in_scope}
+    + (if $repo == "" then {} else {repo: $repo} end)
+    + (if $brief == "" then {} else {brief_file: $brief} end)')" || return 1
+  file="$(mktemp "${TMPDIR:-/tmp}/open-terminal-admit.XXXXXX")" \
+    || { ot_message launch-overlap-unread "item=$1" read=request >&2; return 1; }
+  printf '%s\n' "$request" > "$file" || { rm -f -- "$file"; ot_message launch-overlap-unread "item=$1" read=request >&2; return 1; }
   rc=0
-  overlap_judge "$2" "$TRACKER" "$repo" "$CLAIM_ROOT" "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$lanes" "$IN_SCOPE" "$null_repo" || rc=$?
-  case "$rc" in
-    0) LAUNCH_TOUCHED="$OVERLAP_TOUCHED" ;;
-    1) ot_message launch-overlap "item=$1" "file=$OVERLAP_FILE" "holder=$OVERLAP_HOLDER" \
-         "fix=wait for $OVERLAP_HOLDER to merge, or name $OVERLAP_FILE in scope in the brief and pass --in-scope $OVERLAP_FILE" >&2
-       return 1 ;;
-    *) ot_message launch-overlap-unread "item=$1" "read=$OVERLAP_UNREAD" >&2
-       return 1 ;;
+  reply="$("$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} admit --fleet --request "$file" 2>"$file.err")" || rc=$?
+  rm -f -- "$file"
+  if [[ "$rc" -eq 0 ]]; then
+    if LAUNCH_TOUCHED="$(jq -ce '.result.touched' <<<"$reply")" && LAUNCH_REBASE="$(jq -ce '.result.rebase' <<<"$reply")"; then
+      rm -f -- "$file.err"
+      return 0
+    fi
+    LAUNCH_TOUCHED=null LAUNCH_REBASE='[]'
+    key=""
+  else
+    key="$(jq -r '.refusal.key // empty' <<<"$reply" 2>/dev/null)" || key=""
+  fi
+  # A refusal's field, from the runtime's reply.
+  admit_field() { jq -r --arg k "$1" '[.refusal.fields[] | select(.[0] == $k) | .[1]] | first // ""' <<<"$reply"; }
+  case "$key" in
+    launch-overlap)
+      ot_message launch-overlap "item=$1" "file=$(admit_field file)" "holder=$(admit_field holder)" \
+        "fix=wait for $(admit_field holder) to end, or name $(admit_field file) in scope in the brief and pass --in-scope $(admit_field file)" >&2 ;;
+    item-ineligible) ot_message item-ineligible "item=$1" "cause=$(admit_field cause)" >&2 ;;
+    holder-unreadable) ot_message launch-overlap-unread "item=$1" "read=holder:$(admit_field holder):$(admit_field read)" >&2 ;;
+    touched-unreadable) ot_message launch-overlap-unread "item=$1" "read=$(admit_field read)" >&2 ;;
+    *) cat -- "$file.err" >&2
+       ot_message launch-overlap-unread "item=$1" "read=runtime${key:+:$key}" >&2 ;;
   esac
+  rm -f -- "$file.err"
+  return 1
 }
 
 # linear_team_key TEAM [DIR] — prints the key of the Linear team named TEAM, or

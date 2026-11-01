@@ -133,6 +133,21 @@ git -C "$REPO" config gc.auto 0
 git -C "$REPO" config maintenance.auto false
 OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
+# The orch runtime every launch here asks, named by ORCH_RUNTIME_CLI for the
+# shipped script and each mutant copy: the admission is answered admitted,
+# this suite being the cap's, and `state inspect --fleet` from the reply a
+# row plants in $OT_RUNTIME_REPLY; with no reply planted the stub is a
+# runtime not set up, exit 69.
+cat > "$TMP_ROOT/orch-runtime" <<'EOF'
+#!/usr/bin/env bash
+case " $* " in
+  *' admit '*) echo '{"ok":true,"result":{"touched":[],"in_scope":[],"rebase":[],"recorded":false}}'; exit 0 ;;
+esac
+[[ -n "${OT_RUNTIME_REPLY:-}" ]] || { printf 'orch-runtime: setup-required key=none\n' >&2; exit 69; }
+cat -- "$OT_RUNTIME_REPLY"
+EOF
+chmod +x "$TMP_ROOT/orch-runtime"
+export ORCH_RUNTIME_CLI="$TMP_ROOT/orch-runtime"
 LANE_A="$TMP_ROOT/.lane-a"
 LANE_B="$TMP_ROOT/.lane-b"
 mkdir -p "$LANE_A" "$LANE_B"
@@ -772,19 +787,6 @@ echo "=== a lane the orch runtime holds an open intent on is not launched ==="
 # never builds it, and the one question open-terminal asks of it is which
 # intents are open. With no reply planted the stub is a runtime not set up.
 RUNTIME_REPLY="$TMP_ROOT/runtime-reply"
-runtime_stub() { # OPEN_TERMINAL
-  local target
-  target="$(dirname "$1")/orch-runtime"
-  # The mutant tree links the shipped wrapper: the link is replaced, never
-  # written through into the shipped script.
-  [[ ! -L "$target" ]] || rm -- "${target:?}"
-  cat > "$target" <<'EOF'
-#!/usr/bin/env bash
-[[ -n "${OT_RUNTIME_REPLY:-}" ]] || { printf 'orch-runtime: setup-required key=none\n' >&2; exit 69; }
-cat -- "$OT_RUNTIME_REPLY"
-EOF
-  chmod +x "$target"
-}
 # intent_row NAME OPEN — a fleet with CC-1 running on lane A and one runtime
 # intent row on it; the runtime's reply names it open (OPEN=yes) or not.
 intent_row() {
@@ -803,7 +805,6 @@ intent_line() { # TAG
     "$(grep -hE '^open-terminal: (intent-open|runtime-unavailable) ' "$ROW/$1.err" || true)" \
     "$([[ -e "$ROW/opened.$1" ]] && echo yes || echo no)" "$(running)"
 }
-runtime_stub "$OT"
 intent_row intent-open yes
 launch one 5 --lane "$LANE_A" --relaunch CC-1
 assert_eq "$(intent_line one)" "rc=1 open-terminal: intent-open item=CC-1 intent=launch-lane:CC-1:1-1 opened=no running=CC-1" \
@@ -821,7 +822,6 @@ assert_eq "$(intent_line one)" "rc=1 open-terminal: runtime-unavailable item=CC-
 # relaunch opens its window under the open intent.
 CTL_OT="$(mutant_scripts intent-open-control open-terminal)/open-terminal" || exit 1
 orch_fixture_shared_libs "$TMP_ROOT/intent-open-control"
-runtime_stub "$CTL_OT"
 mutate_file "$CTL_OT" '  [[ -z "$open" ]] || { ot_message intent-open "item=$2" "intent=$open" >&2; return 1; }' \
   '  [[ -z "$open" ]] || ot_message intent-open "item=$2" "intent=$open" >&2'
 intent_row intent-open-control yes

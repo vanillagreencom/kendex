@@ -141,7 +141,7 @@ TOML
 # one_job_issue_body NUMBER DELTA — the GitHub issue body the job's admission
 # reads: a Location line and an Expected delta, which item-tier judges.
 one_job_issue_body() { # NUMBER DELTA
-  printf '## Done-when\n\n- [ ] greet answers for a name\n\n## Filing record\n\n**Location**: lib.sh\n**Expected delta**: %s lines\n' "$2"
+  printf '## Done-when\n\n- [ ] greet answers for a name\n\n## Filing record\n\n**Location**: `lib.sh`\n**Expected delta**: %s lines\n' "$2"
 }
 
 # one_job_stage_gh NUMBER BODY_FILE — the tracker's gh answers for issue
@@ -151,6 +151,9 @@ one_job_stage_gh() { # NUMBER BODY_FILE
   local body
   body="$(cat -- "$2")"
   gh_stub_answer 'pr-list' ''
+  # The admission's open pull requests of the repository (decision 165), the
+  # REST list the runtime pages: none.
+  gh_stub_answer 'api-repos/owner/repo/pulls?state=open&per_page=100&page=1' '[]'
   gh_stub_answer "issue-view:number,title,body,url,labels,state" \
     "$(jq -cn --argjson n "$1" --arg body "$body" \
       '{number: $n, title: "Greet by name", body: $body, url: ("https://github.com/owner/repo/issues/" + ($n | tostring)), labels: [], state: "OPEN"}')"

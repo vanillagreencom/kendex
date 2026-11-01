@@ -1,0 +1,1 @@
+verifying KEN-1 box=1 trigger="2026-10-01T12:00:00Z" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read health" where="service" why="live release"

@@ -68,12 +68,15 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::admission::{AdmissionReads, Clis};
 use crate::error::{Error, Result};
 use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
 
-/// The `kind` of a lane record or claim row the cloud cap counts, not this
-/// one (`lane-cap.sh`'s `cap_kind`).
-const CLOUD_KIND: &str = "claude-cloud";
+/// The `kind` a Claude cloud lane records: hosted, its `mail_root` the
+/// item's worktree on this machine. The cloud cap counts it, not this one
+/// (`lane-cap.sh`'s `cap_kind`); the lane observation duty does not observe
+/// it; the close owes its worktree (decision 154 (1)).
+pub(crate) const CLOUD_KIND: &str = "claude-cloud";
 
 /// The host facts a fleet transition judges beside the record: the lane cap
 /// setting, the legacy claim store, the liveness read of the one identity
@@ -95,6 +98,12 @@ pub struct Host<'a> {
     /// lane's live launch identity and its harness. Consulted only for a
     /// claim at the numbers of a live launch identity.
     pub(super) pane_foreground: PaneForeground<'a>,
+    /// The admission's reads (decision 118 (4), (6)): the item read
+    /// eligibility and the Location paths are judged from, for the
+    /// launching item and for a holder with no recorded touched set, and
+    /// the changed paths of a diff range. `None` on a host built for an
+    /// entry that launches no lane.
+    pub(super) admission: Option<AdmissionReads<'a>>,
 }
 
 impl Host<'static> {
@@ -110,6 +119,16 @@ impl Host<'static> {
             claim_store,
             still_runs: &process::still_runs,
             pane_foreground: &pane_foreground,
+            admission: None,
+        }
+    }
+
+    /// The kernel host with the admission's reads through the named
+    /// programs: what the launch and admit entries judge against.
+    pub fn admitting(self, clis: Clis) -> Host<'static> {
+        Host {
+            admission: Some(AdmissionReads::through(clis)),
+            ..self
         }
     }
 }
@@ -488,7 +507,7 @@ fn parse_row(file: &str, line: &str, fleet: &str) -> Option<ClaimRow> {
 }
 
 /// Whether an open launch intent stands on `item`.
-fn launch_open(intents: &[Intent], item: &str) -> bool {
+pub(super) fn launch_open(intents: &[Intent], item: &str) -> bool {
     intents
         .iter()
         .any(|i| i.open() && i.op == EffectOp::LaunchLane && i.target == item)
@@ -635,6 +654,7 @@ mod tests {
 
     use serde_json::json;
 
+    use super::super::testing::no_reads;
     use super::*;
     use crate::state::Reservation;
 
@@ -718,6 +738,7 @@ mod tests {
             claim_store: None,
             still_runs: &reader,
             pane_foreground: &never_a_pane,
+            admission: Some(no_reads()),
         };
         for status in [
             LaneStatus::Running,
@@ -865,6 +886,7 @@ mod tests {
             claim_store: None,
             still_runs: &reader,
             pane_foreground: &never_a_pane,
+            admission: Some(no_reads()),
         };
         let mut held = lane("A", LaneStatus::Stopped, Some((900, "ticks:1")));
         held.reservation = Some(Reservation {
@@ -1040,6 +1062,7 @@ mod tests {
             claim_store: None,
             still_runs: &reader,
             pane_foreground: &pane_reader,
+            admission: Some(no_reads()),
         };
         let mut cloud = lane("KEN-CLOUD", LaneStatus::Running, None);
         cloud.kind = Some("claude-cloud".into());

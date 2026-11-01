@@ -167,7 +167,7 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     std::fs::write(
         &script,
         format!(
-            "exec env {} {} --state-dir {} op --fleet --request {} > {} 2> {}\n",
+            "exec env {} {} --no-private-env --state-dir {} op --fleet --request {} > {} 2> {}\n",
             quoted.join(" "),
             binary().display(),
             runner.state_dir().display(),
@@ -1484,7 +1484,7 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
     std::fs::write(
         &script,
         format!(
-            "exec env {} {} --state-dir {} op --fleet --request {} > {} 2> {}\n",
+            "exec env {} {} --no-private-env --state-dir {} op --fleet --request {} > {} 2> {}\n",
             quoted.join(" "),
             binary().display(),
             runner.state_dir().display(),

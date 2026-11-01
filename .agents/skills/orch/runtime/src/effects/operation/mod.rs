@@ -83,16 +83,13 @@ use obligations::{Discharge, Obligations, PaneRef, Terminal};
 
 use super::{Run, lane_for_intent, overseer_identity, read_intent, read_overseer};
 use crate::error::{Error, Result};
-use crate::ops::{self, Applied, Progress, RecordOutcome, RecordProgress, Report, Request};
+use crate::ops::{
+    self, Applied, CLOUD_KIND, Progress, RecordOutcome, RecordProgress, Report, Request,
+};
 use crate::schedule::Clock;
 use crate::state::{
     self, EffectOp, Intent, LaneKeys, Obligation, OpenedPane, Overseer, Owner, Phase, Role,
 };
-
-/// The `kind` a Claude cloud lane records: hosted, with its `mail_root`
-/// the item's worktree on this machine. The same word the cloud cap reads
-/// (`ops::occupancy`'s `CLOUD_KIND`).
-const CLOUD_KIND: &str = "claude-cloud";
 
 /// The operation handle: the one owner of the intent's recorded set for this
 /// run (decision 120 (1)).

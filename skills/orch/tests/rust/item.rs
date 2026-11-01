@@ -12,6 +12,8 @@
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+mod support;
+
 use std::process::{Child, Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
@@ -1265,12 +1267,8 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
 
 // --- the binary: the wire names a workflow writes ------------------------
 
-fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_orch-runtime"))
-}
-
 fn op(path: &Path, request: &Path) -> Output {
-    Command::new(binary())
+    support::isolated()
         .args(["op", "--file"])
         .arg(path)
         .arg("--request")

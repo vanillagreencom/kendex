@@ -1,0 +1,33 @@
+#!/bin/bash
+# The mailbox CLI as the mail duty's rows run it: it execs the real
+# `lane-mail` ($LANE_MAIL_REAL) from the root the call names with --root, as
+# the runtime runs it from the project root in production, so an overseer
+# write judged against the caller's checkout passes. One exception, the
+# crash the partial-send row models: with $LANE_MAIL_HOLD_FIFO set, a `send`
+# runs the real program to its end, so its envelope is appended under the
+# mailbox lock and its receipt captured, then writes its own pid to
+# $LANE_MAIL_HOLD_MARK and blocks on the FIFO before relaying the receipt.
+# The row kills it there: the append landed, the receipt never reached the
+# caller. The FIFO reader holds no pipe of the caller's, so the kill ends
+# the call at once; the row releases the FIFO after. The real program is the
+# sibling mailbox package's, found from this file's own place in the tree
+# unless $LANE_MAIL_REAL names another.
+real="${LANE_MAIL_REAL:-$(cd "$(dirname "$0")/../../../../.." && pwd -P)/mailbox/scripts/lane-mail}"
+root=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--root" ]; then root="$arg"; fi
+  prev="$arg"
+done
+if [ -n "$root" ]; then
+  cd -- "$root" || exit 2
+fi
+if [ "${1:-}" = send ] && [ -n "${LANE_MAIL_HOLD_FIFO:-}" ]; then
+  out="$("$real" "$@")"
+  status=$?
+  [ -z "${LANE_MAIL_HOLD_MARK:-}" ] || printf '%s\n' "$$" > "$LANE_MAIL_HOLD_MARK"
+  cat "$LANE_MAIL_HOLD_FIFO" >/dev/null 2>&1
+  printf '%s\n' "$out"
+  exit "$status"
+fi
+exec "$real" "$@"

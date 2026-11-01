@@ -1,0 +1,29 @@
+#!/bin/bash
+# A Codex composer stub for the wake rows, named `codex` so the kernel
+# records Codex's process name for it: it draws Codex's composer line
+# (`› ` then its placeholder) so the judge reads the pane idle, writes the
+# rollout file a Codex session records under CODEX_HOME
+# (`sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl`, its first row the
+# `session_meta` of a lead, as `tmp/orch-rebuild/native/run2/codex/home`
+# holds it), named by the `--session-id` it is given, and appends every
+# line it reads to the file STUB_TURNS_LINES names, so a row proves nothing
+# was typed into it. It stands until its stdin closes.
+lines="${STUB_TURNS_LINES:-}"
+session="stub-$$"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) session="${2:-$session}"; shift ;;
+  esac
+  shift
+done
+if [ -n "${CODEX_HOME:-}" ]; then
+  day="$CODEX_HOME/sessions/$(date -u +%Y/%m/%d)"
+  mkdir -p "$day"
+  printf '{"timestamp":"%s","type":"session_meta","payload":{"id":"%s","cwd":"%s","parent_thread_id":null,"source":"cli"}}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" > "$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$session.jsonl"
+fi
+printf '\xe2\x80\xba Ask Codex to do anything\n'
+while IFS= read -r line; do
+  [ -z "$lines" ] || printf '%s\n' "$line" >> "$lines"
+  printf '\xe2\x80\xba Ask Codex to do anything\n'
+done

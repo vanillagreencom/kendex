@@ -391,6 +391,23 @@ pub struct Reservation {
     pub until: String,
 }
 
+/// A rebase obligation the admission recorded on the launching item's lane
+/// record (decision 118 (3)): a holder of a path the item touches whose
+/// lane read stopped or held yielded the path, and the lane rebases onto
+/// the holder's branch, or after it merges, before it publishes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebaseObligation {
+    /// The holder's item.
+    pub holder: String,
+    /// The holder's branch, where its item state records one.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The paths both touch, the longer of each overlapping pair.
+    pub paths: Vec<String>,
+    /// When the obligation was recorded.
+    pub at: String,
+}
+
 /// A lane's launch identity `{pane, server, server_start, pid, start}`.
 /// `server_start` is the tmux server's start the runtime's launch published
 /// (decision 120, L4), so the pane is keyed on the server's pid and start; a
@@ -453,6 +470,20 @@ pub struct Lane {
     pub launch: Option<LaunchIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reservation: Option<Reservation>,
+    /// The touched set the admission judged (decision 118 (4)): the union
+    /// of the item's Location paths, the brief's paths, the change-scope
+    /// paths over the named range and the paths a running lane added,
+    /// sorted and unique. `None` on a record the legacy launcher wrote
+    /// with no judgement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub touched: Option<Vec<String>>,
+    /// The paths the launch named in scope: a file the brief names as an
+    /// append-only addition, left out of the overlap judgement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_scope: Option<Vec<String>>,
+    /// The rebase obligations the admission recorded (decision 118 (3)).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rebase: Vec<RebaseObligation>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

@@ -32,6 +32,7 @@ Resources:
   session-status  Aggregated session status for /start workflow
   auth-check      Credential, actor and team preflight (--strict fails with no team)
   auth-mint       Mint app token JSON from the client pair without writing files
+  done-when       Parse a description's Done-when checklist (parse); reads nothing
   journal         Opt-in bounded attempt metadata (start, stop, read)
 
 Every read goes to Linear's API as it runs; no local copy is kept. The
@@ -125,6 +126,43 @@ case "$resource" in
         LINEAR_SKIP_API_KEY_RESOLUTION=1
         source "$SCRIPT_DIR/lib/common.sh"
         linear_journal_command "$@"
+        ;;
+    # The one Done-when parse other packages read (orch's watch, which keeps
+    # no parser of its own): the checklist JSON `done_when_parse` builds for
+    # a description given inline or by file, with no credential and no
+    # request. `--merged-at` is the merge stamp the post-merge rules judge
+    # against, as `issues complete --post-merge-at` passes it.
+    done-when)
+        action="${1:-}"
+        shift || true
+        [[ "$action" == parse ]] || {
+            echo "linear: done-when takes one action, parse: linear.sh done-when parse (--description TEXT | --description-file PATH) [--merged-at UTC]" >&2
+            exit 1
+        }
+        dw_description="" dw_file="" dw_merged="" dw_given=0
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --description | --description-file | --merged-at)
+                    [[ $# -ge 2 ]] || { echo "linear: done-when parse: $1 needs a value" >&2; exit 1; }
+                    case "$1" in
+                        --description) dw_description="$2"; dw_given=$((dw_given + 1)) ;;
+                        --description-file) dw_file="$2"; dw_given=$((dw_given + 1)) ;;
+                        --merged-at) dw_merged="$2" ;;
+                    esac
+                    shift 2
+                    ;;
+                *) echo "linear: done-when parse: unknown option $1" >&2; exit 1 ;;
+            esac
+        done
+        [[ "$dw_given" -eq 1 ]] || { echo "linear: done-when parse takes exactly one of --description and --description-file" >&2; exit 1; }
+        if [[ -n "$dw_file" ]]; then
+            # The sentinel keeps the file's trailing newlines through the
+            # substitution, as the lib's own callers keep them.
+            dw_description="$(cat -- "$dw_file" && printf .)" || { echo "linear: done-when parse: unreadable $dw_file" >&2; exit 1; }
+            dw_description="${dw_description%.}"
+        fi
+        source "$SCRIPT_DIR/lib/issue-validation.sh"
+        done_when_parse "$dw_description" '[]' "$dw_merged"
         ;;
     # The local store is gone. Each removed verb answers with one line naming
     # what to run instead and exits nonzero, so a caller still running it fails

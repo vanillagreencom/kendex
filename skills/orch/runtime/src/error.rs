@@ -303,6 +303,53 @@ pub enum Error {
     /// stop (`lane-close --park`, `park-refused reason=local`).
     #[error("the lane for {item} cannot be parked: {reason}")]
     ParkRefused { item: String, reason: &'static str },
+    /// A path the item touches is held by a lane whose harness runs or is
+    /// about to (decision 118 (3)); nothing is launched until the holder
+    /// ends, or the brief names the file in scope.
+    #[error("the lane for {item} would touch {file}, which {holder} holds")]
+    LaunchOverlap {
+        item: String,
+        file: String,
+        holder: String,
+    },
+    /// A holder of a path the item touches could not be judged: its
+    /// identity, its touched set or its branch could not be read. An
+    /// unreadable holder is unknown, never free (decisions 99, 105).
+    #[error("the holder {holder} of a path {item} touches: its {read} could not be read: {cause}")]
+    HolderUnreadable {
+        item: String,
+        holder: String,
+        read: &'static str,
+        cause: String,
+    },
+    /// The item is a container by its body (decision 118 (6)): children, or
+    /// the `agent:multi` label, outside an in-PR bundle. Never launched.
+    #[error("{item} is not launchable: {cause}")]
+    ItemIneligible { item: String, cause: &'static str },
+    /// A source of the item's touched set could not be read: its body, a
+    /// Location line naming no path, the brief file, or the change-scope
+    /// paths over the named range.
+    #[error("the touched set of {item} could not be read from its {read}: {cause}")]
+    TouchedUnreadable {
+        item: String,
+        read: &'static str,
+        cause: String,
+    },
+    /// The open pull requests of the item's repository, holders of the
+    /// paths they change (decision 165), could not be read whole: a
+    /// checkout naming no GitHub repository, a failed `gh` call, a pull
+    /// request or its files answering nothing, a member outside the
+    /// documented shape, or a files list short of the pull request's
+    /// count. An unread inventory is never an empty one.
+    #[error(
+        "the open pull requests of {repo}, holders of paths {item} touches, could not be read: {read}: {cause}"
+    )]
+    HoldersUnreadable {
+        item: String,
+        repo: String,
+        read: &'static str,
+        cause: String,
+    },
     /// The standing scheduler's refusals: its claim, its records and its
     /// duties (`watch run|status|stop|log`).
     #[error(transparent)]
@@ -478,6 +525,11 @@ impl Error {
             Error::ReservationInvalid { .. } => "reservation-invalid",
             Error::AttemptStale { .. } => "attempt-stale",
             Error::ParkRefused { .. } => "park-refused",
+            Error::LaunchOverlap { .. } => "launch-overlap",
+            Error::HolderUnreadable { .. } => "holder-unreadable",
+            Error::ItemIneligible { .. } => "item-ineligible",
+            Error::TouchedUnreadable { .. } => "touched-unreadable",
+            Error::HoldersUnreadable { .. } => "holders-unreadable",
             Error::Watch(e) => e.key(),
         }
     }
@@ -677,6 +729,34 @@ impl Error {
                     pair("reason", (*reason).to_owned()),
                 ]
             }
+            Error::LaunchOverlap { item, file, holder } => vec![
+                pair("item", item.clone()),
+                pair("file", file.clone()),
+                pair("holder", holder.clone()),
+            ],
+            Error::HolderUnreadable {
+                item, holder, read, ..
+            } => vec![
+                pair("item", item.clone()),
+                pair("holder", holder.clone()),
+                pair("read", (*read).to_owned()),
+            ],
+            Error::ItemIneligible { item, cause } => {
+                vec![
+                    pair("item", item.clone()),
+                    pair("cause", (*cause).to_owned()),
+                ]
+            }
+            Error::TouchedUnreadable { item, read, .. } => {
+                vec![pair("item", item.clone()), pair("read", (*read).to_owned())]
+            }
+            Error::HoldersUnreadable {
+                item, repo, read, ..
+            } => vec![
+                pair("item", item.clone()),
+                pair("repo", repo.clone()),
+                pair("read", (*read).to_owned()),
+            ],
             Error::Watch(e) => e.fields(),
         }
     }

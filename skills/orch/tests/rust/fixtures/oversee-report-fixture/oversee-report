@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# The fake `oversee-report` for the watch_report rows: `due ...` answers
+# from `oversee-report.json` beside the path this was invoked as (the rows
+# symlink the fixture into their world as `oversee-report`): `{exit?,
+# text?}`, `text` printed as raw bytes, `exit` the status, 0 when absent;
+# no file is the real program's "not due", nothing printed at exit 0.
+# Every call appends its argv to `oversee-report.log` there.
+set -u
+here="$(dirname "${BASH_SOURCE[0]}")"
+printf '%s\n' "$*" >> "$here/oversee-report.log"
+[ -f "$here/oversee-report.json" ] || exit 0
+jq -rj '.text // empty' -- "$here/oversee-report.json"
+exit "$(jq -r '.exit // 0' -- "$here/oversee-report.json")"

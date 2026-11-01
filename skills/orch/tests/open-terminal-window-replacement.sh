@@ -119,7 +119,7 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [OWNER] [TRACKER]
   fi
   RC=0
   OUT="$(cd -- "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" \
-    TMUX="$ADDR" ORCH_TMUX_SESSION=fleet ORCH_LANE_HOST=local ORCH_OVERSEER_LANES=1000 \
+    ORCH_RUNTIME_CLI="$ORCH_RUNTIME_CLI" TMUX="$ADDR" ORCH_TMUX_SESSION=fleet ORCH_LANE_HOST=local ORCH_OVERSEER_LANES=1000 \
     WORKTREE_CLI="$BIN/worktree" OT_WT_LOG="$RUN/worktree.log" OT_WT_FIXED="$RUN/tree" \
     REPLACEMENT_FAIL="$failure" ${host_env[@]+"${host_env[@]}"} \
     "$launcher" --state-dir "$RUN/state" --repo o/r ${tracker_args[@]+"${tracker_args[@]}"} --harness claude --cmd "claude --model opus --effort high --disallowedTools=AskUserQuestion,EnterPlanMode --settings='{\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}}' $UNATTENDED_ALL" \

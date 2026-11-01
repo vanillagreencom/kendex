@@ -111,9 +111,24 @@ pub enum Event {
     DirectiveUnread { item: String, id: String, age: u64 },
     /// `oversee-watch:2747`, `age` in seconds.
     StartStalled { item: String, age: u64 },
-    /// Decision 118 (2): a lane read idle with unread mail, which the wake
-    /// duty delivers to.
+    /// Decision 118 (2): a lead or lane read idle with unread mail, which
+    /// the wake duty delivers to; `lane` is the item key, or `overseer`.
     IdleUnread { lane: String },
+    // U5g: the wake duty's own lines.
+    /// This runtime's own (decisions 61, 65): the wake's line confirmed by
+    /// a new user turn in the target's own bound session file.
+    WakeDelivered { target: String },
+    /// This runtime's own: the wake's line typed and the bound passed with
+    /// no such turn, `cause` the verb's word (`turn-pending`, `pane-gone`,
+    /// `pane-unreadable`); nothing is typed again for that unread state.
+    WakeUnconfirmed { target: String, cause: String },
+    /// This runtime's own (decision 121 Q6): the target read idle with
+    /// unread mail and no confirmable route for its harness; nothing typed.
+    WakeLimit {
+        target: String,
+        harness: String,
+        cause: String,
+    },
     /// `oversee-watch:2162`.
     LaneReady { item: String },
     /// `oversee-watch:2161` (`age` in seconds, printed with its unit) and
@@ -242,6 +257,103 @@ pub enum Event {
     },
     /// `oversee-watch:5610` (`row` is `boxes=0`) and `:5621` (the due row).
     VerifyingDeadline { id: String, row: String },
+    // U5d: the observation duty's lines (decision 152).
+    /// `oversee-watch:4960`: `usage-limit` or `usage-limit-passed`, then
+    /// the body the legacy composed from its optional parts, the lane, the
+    /// claimed account, `resets=` and `wall_kind=auth`, as one line.
+    UsageLimit { passed: bool, line: String },
+    /// This runtime's own (decisions 96, 121 Q11): a window of the fleet
+    /// session that no lane record, controller record, open intent or
+    /// receipt names, reported and never adopted or closed.
+    StrayWindow {
+        pane: String,
+        window: String,
+        server: u64,
+        name: String,
+    },
+    /// This runtime's own (decision 99): a lane whose pane, process or
+    /// screen could not be read this pass, with the reader's cause; never
+    /// `window-gone` or `lane-exited`.
+    LaneUnreadable { lane: String, cause: String },
+    /// One line of a pane tail or a banner window under a lane or overseer
+    /// line (`oversee-watch:3266`, `:3291`, `:3339`): the text itself,
+    /// unindented, as the legacy printed it; one variant per physical line.
+    Tail(String),
+    // U5c: the mail duty's lines (decision 152).
+    /// `oversee-watch:3195` and `:3199`: one line of a message's payload
+    /// under its `lane-question`, `lane-notice`, `owner-note`,
+    /// `owner-ask-resolved` or `peer-note` line (the text, line by line,
+    /// then `options: a, b`), indented two spaces so only a watch record
+    /// begins with `EVENT`. One variant per physical line, since the
+    /// follow numbers lines.
+    Payload { line: String },
+    // U5e: the tracker and GitHub read duty's lines (decision 152).
+    /// `oversee-watch:5345`: the tracker's quota refusal, the one limit
+    /// event (decision 142 (1)), its body composed by `tracker_quota_line`
+    /// (`:5307`) from the receipt: `tracker-quota status=<future|elapsed|
+    /// missing|invalid> reset=<ISO|unavailable> limit=<requests|complexity|
+    /// endpoint|unknown>`.
+    TrackerQuota { line: String },
+    // U5d2: the local-lane readings' lines (decision 152).
+    /// `lib/watch-host-kinds.sh:462`: a running or parked lane past the
+    /// age bound, once per age interval; each count is a number or
+    /// `unread`, `stage` the status file's `Step` line, `parked`, `unread`
+    /// or `none`.
+    LaneLong {
+        item: String,
+        age: u64,
+        review_rounds: String,
+        fix_receipts: String,
+        validation_runs: String,
+        restacks: String,
+        repeated_class_rounds: String,
+        stage: String,
+    },
+    // U5e2: the GitHub duty's readings' lines (decision 152).
+    /// `lib/pr-watch-pass.sh:191`: the reducer pass found a new attention
+    /// key; `rc` the highest status any repository's reducer returned. The
+    /// reducer lines and the pass's stderr follow as `Tail` lines.
+    PrWatch { rc: i32 },
+    /// `lib/security-alerts.sh:235-245`: one open alert, its optional
+    /// fields in the legacy's order, `report=repeat` on a pass that lists
+    /// an alert already reported with no verdict recorded.
+    SecurityAlert {
+        repo: String,
+        kind: String,
+        number: u64,
+        severity: Option<String>,
+        /// `package` or `rule`.
+        subject_key: String,
+        subject: String,
+        manifest: Option<String>,
+        scope: Option<String>,
+        advisory: Option<String>,
+        validity: Option<String>,
+        url: String,
+        pr: Option<u64>,
+        repeat: bool,
+    },
+    /// `lib/security-alerts.sh:298`: `reads` the comma-joined
+    /// `<source>:<cause>` set, printed when the set changes.
+    SecurityAlertsUnread { reads: String },
+    /// `lib/outside-contribution.sh:116-117`: `key` is `<repo>#<number>`,
+    /// `head` present on a pull request alone.
+    OutsideContribution {
+        key: String,
+        kind: String,
+        author: String,
+        head: Option<String>,
+    },
+    // U5f: the report and heartbeat duties' lines (decision 152).
+    /// `oversee-watch:5248` (`check_report`): `oversee-report due`'s one
+    /// line, `report-due reason=<minutes|issues> since=<UTC> [landed=<N>]`,
+    /// as that script composed it.
+    ReportDue { line: String },
+    /// A line of the heartbeat's body (`oversee-watch:5715-5733`) or of the
+    /// report's (decision 141 (6)) under its `EVENT` line: the text as the
+    /// legacy printed it, unprefixed; one variant per physical line, since
+    /// the follow numbers lines.
+    Body { line: String },
 }
 
 fn with_unit(secs: u64) -> String {
@@ -289,6 +401,16 @@ impl Event {
             }
             Event::StartStalled { item, age } => format!("EVENT start-stalled {item} age={age}"),
             Event::IdleUnread { lane } => format!("EVENT idle-unread {lane}"),
+            // U5g: the wake duty's own lines.
+            Event::WakeDelivered { target } => format!("EVENT wake-delivered {target}"),
+            Event::WakeUnconfirmed { target, cause } => {
+                format!("EVENT wake-unconfirmed {target} cause={cause}")
+            }
+            Event::WakeLimit {
+                target,
+                harness,
+                cause,
+            } => format!("EVENT wake-limit {target} harness={harness} cause={cause}"),
             Event::LaneReady { item } => format!("EVENT lane-ready {item}"),
             Event::LanePrepareStuck {
                 item,
@@ -426,6 +548,101 @@ impl Event {
                 was_verdict,
             } => format!("EVENT account {fields} change={change} was={was_status}/{was_verdict}"),
             Event::VerifyingDeadline { id, row } => format!("EVENT verifying-deadline {id} {row}"),
+            // U5d: the observation duty's render arms (decision 152).
+            Event::UsageLimit { passed, line } => {
+                let event = if *passed {
+                    "usage-limit-passed"
+                } else {
+                    "usage-limit"
+                };
+                format!("EVENT {event} {line}")
+            }
+            Event::StrayWindow {
+                pane,
+                window,
+                server,
+                name,
+            } => format!("EVENT stray-window {pane} window={window} server={server} name={name}"),
+            Event::LaneUnreadable { lane, cause } => {
+                format!("EVENT lane-unreadable {lane} cause={cause}")
+            }
+            Event::Tail(line) => line.clone(),
+            // U5c: the mail duty's render arms (decision 152).
+            Event::Payload { line } => format!("  {line}"),
+            // U5e: the tracker and GitHub read duty's render arms (decision 152).
+            Event::TrackerQuota { line } => format!("EVENT {line}"),
+            // U5d2: the local-lane readings' render arms (decision 152).
+            Event::LaneLong {
+                item,
+                age,
+                review_rounds,
+                fix_receipts,
+                validation_runs,
+                restacks,
+                repeated_class_rounds,
+                stage,
+            } => format!(
+                "EVENT lane-long {item} age={age} review_rounds={review_rounds} fix_receipts={fix_receipts} validation_runs={validation_runs} restacks={restacks} repeated_class_rounds={repeated_class_rounds} stage={stage}"
+            ),
+            // U5e2: the GitHub duty's readings' render arms (decision 152).
+            Event::PrWatch { rc } => format!("EVENT pr-watch rc={rc}"),
+            Event::SecurityAlert {
+                repo,
+                kind,
+                number,
+                severity,
+                subject_key,
+                subject,
+                manifest,
+                scope,
+                advisory,
+                validity,
+                url,
+                pr,
+                repeat,
+            } => {
+                let mut line = format!("EVENT security-alert {repo} kind={kind} number={number}");
+                if let Some(severity) = severity {
+                    line.push_str(&format!(" severity={severity}"));
+                }
+                line.push_str(&format!(" {subject_key}={subject}"));
+                for (name, value) in [
+                    ("manifest", manifest),
+                    ("scope", scope),
+                    ("advisory", advisory),
+                    ("validity", validity),
+                ] {
+                    if let Some(value) = value {
+                        line.push_str(&format!(" {name}={value}"));
+                    }
+                }
+                line.push_str(&format!(" url={url}"));
+                if let Some(pr) = pr {
+                    line.push_str(&format!(" pr={pr}"));
+                }
+                if *repeat {
+                    line.push_str(" report=repeat");
+                }
+                line
+            }
+            Event::SecurityAlertsUnread { reads } => {
+                format!("EVENT security-alerts-unread reads={reads}")
+            }
+            Event::OutsideContribution {
+                key,
+                kind,
+                author,
+                head,
+            } => {
+                let head = head
+                    .as_deref()
+                    .map(|h| format!(" head={h}"))
+                    .unwrap_or_default();
+                format!("EVENT outside-contribution {key} kind={kind} author={author}{head}")
+            }
+            // U5f: the report and heartbeat duties' render arms (decision 152).
+            Event::ReportDue { line } => format!("EVENT {line}"),
+            Event::Body { line } => line.clone(),
         }
     }
 }
@@ -442,6 +659,9 @@ pub struct EventLog {
     path: PathBuf,
     file: File,
     last: u64,
+    // U5f: the lines rotated out before the live file, which its numbering
+    // continues from (decision 148: rotation with a base offset).
+    base: u64,
 }
 
 fn record_error(path: &Path, op: &'static str, e: std::io::Error) -> WatchError {
@@ -452,31 +672,52 @@ fn record_error(path: &Path, op: &'static str, e: std::io::Error) -> WatchError 
     }
 }
 
-/// The number of lines `path` holds; none where no log stands yet.
+/// The number of lines the log holds, its rotated segments counted: the
+/// number of its last line; none where no log stands yet.
 pub fn line_count(path: &Path) -> Result<u64> {
-    match File::open(path) {
-        Ok(file) => Ok(BufReader::new(file).lines().count() as u64),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(e) => Err(record_error(path, "read", e).into()),
-    }
+    Ok(live_base(path)? + file_lines(path)?)
 }
 
-/// The lines from number `since` (1-based) on; none where no log stands.
+/// The lines from number `since` (1-based) on, the rotated segments read
+/// through; none where no log stands.
 pub fn read_since(path: &Path, since: u64) -> Result<Vec<Numbered>> {
+    let mut out = Vec::new();
+    let mut base = 0;
+    for segment in segments(path)? {
+        if segment.base + segment.lines >= since {
+            read_numbered(&segment.path, segment.base, since, &mut out)?;
+        }
+        base = segment.base + segment.lines;
+    }
+    read_numbered(path, base, since, &mut out)?;
+    Ok(out)
+}
+
+/// The lines of one file numbered from `base + 1`, those at or past
+/// `since` appended to `out`; an absent file holds none.
+fn read_numbered(path: &Path, base: u64, since: u64, out: &mut Vec<Numbered>) -> Result<()> {
     let file = match File::open(path) {
         Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(record_error(path, "read", e).into()),
     };
-    let mut out = Vec::new();
     for (index, line) in BufReader::new(file).lines().enumerate() {
-        let n = index as u64 + 1;
+        let n = base + index as u64 + 1;
         let line = line.map_err(|e| record_error(path, "read", e))?;
         if n >= since {
             out.push(Numbered { n, line });
         }
     }
-    Ok(out)
+    Ok(())
+}
+
+/// The number of lines one file holds; none where it does not stand.
+fn file_lines(path: &Path) -> Result<u64> {
+    match File::open(path) {
+        Ok(file) => Ok(BufReader::new(file).lines().count() as u64),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(record_error(path, "read", e).into()),
+    }
 }
 
 /// Whether the open log ends in a partial line: a last byte that is no
@@ -502,12 +743,7 @@ impl EventLog {
         reason = "the event log's one open for appending: the runner's own record beside the fleet state"
     )]
     pub fn open(path: &Path) -> Result<EventLog> {
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .read(true)
-            .create(true)
-            .open(path)
-            .map_err(|e| record_error(path, "open", e))?;
+        let mut file = open_live(path)?;
         let terminate = |file: &mut File| -> std::io::Result<()> {
             if ends_unterminated(file)? {
                 file.write_all(b"\n")?;
@@ -516,11 +752,13 @@ impl EventLog {
             Ok(())
         };
         terminate(&mut file).map_err(|e| record_error(path, "terminate", e))?;
-        let last = line_count(path)?;
+        let base = live_base(path)?;
+        let last = base + file_lines(path)?;
         Ok(EventLog {
             path: path.to_path_buf(),
             file,
             last,
+            base,
         })
     }
 
@@ -545,8 +783,108 @@ impl EventLog {
             .and_then(|()| self.file.sync_data())
             .map_err(|e| record_error(&self.path, "append", e))?;
         self.last += events.len() as u64;
+        if self.last - self.base >= SEGMENT_LINES {
+            self.rotate()?;
+        }
         Ok(self.last)
     }
+
+    // U5f: the log's rotation (decision 148: a base offset the numbering
+    // keeps; step5-map § A11).
+    /// Rotate the live file out as the segment `<log>.<base>` and open a
+    /// fresh one whose first line is `last + 1`: the live log stays within
+    /// [`SEGMENT_LINES`], and the numbering a handoff names continues
+    /// across the segments, which `read_since` reads through. Under the
+    /// runner's record lock, as every append is.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the event log's own rotation: the one rename of the live file onto its segment name, the runner's own record beside the fleet state"
+    )]
+    fn rotate(&mut self) -> Result<()> {
+        let segment = segment_path(&self.path, self.base);
+        std::fs::rename(&self.path, &segment).map_err(|e| record_error(&self.path, "rotate", e))?;
+        self.file = open_live(&self.path)?;
+        self.base = self.last;
+        Ok(())
+    }
+}
+
+// U5f: the rotated segments (decision 148; step5-map § A11).
+
+/// Lines a live log holds before it is rotated out: small enough that the
+/// follow and `watch log` read it whole, large enough that a quiet fleet
+/// rotates seldom or never.
+pub const SEGMENT_LINES: u64 = 10_000;
+
+/// One rotated segment of the log, `<log>.<base>`: it holds the lines
+/// `base + 1` to `base + lines`. The newest segment fixes the live log's
+/// base, so the retention duty never removes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Segment {
+    pub path: PathBuf,
+    pub base: u64,
+    pub lines: u64,
+}
+
+fn segment_path(log: &Path, base: u64) -> PathBuf {
+    let name = log
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    log.with_file_name(format!("{name}.{base}"))
+}
+
+/// The rotated segments beside `log`, oldest first: every sibling named
+/// `<log>.<number>`; none where the directory does not stand.
+pub fn segments(log: &Path) -> Result<Vec<Segment>> {
+    let dir = log.parent().unwrap_or(Path::new("."));
+    let prefix = format!(
+        "{}.",
+        log.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    );
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(record_error(dir, "read-dir", e).into()),
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| record_error(dir, "read-dir", e))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(suffix) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Ok(base) = suffix.parse::<u64>() else {
+            continue;
+        };
+        let path = entry.path();
+        let lines = file_lines(&path)?;
+        out.push(Segment { path, base, lines });
+    }
+    out.sort_by_key(|s| s.base);
+    Ok(out)
+}
+
+/// The number of lines before the live log's first: the newest segment's
+/// end, or none with no segment.
+fn live_base(log: &Path) -> Result<u64> {
+    Ok(segments(log)?.last().map_or(0, |s| s.base + s.lines))
+}
+
+/// The live log open for appending, created where none stands.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the event log's one open for appending: the runner's own record beside the fleet state"
+)]
+fn open_live(path: &Path) -> Result<File> {
+    std::fs::OpenOptions::new()
+        .append(true)
+        .read(true)
+        .create(true)
+        .open(path)
+        .map_err(|e| record_error(path, "open", e).into())
 }
 
 #[cfg(test)]
@@ -589,5 +927,87 @@ mod tests {
         let log = EventLog::open(&empty).unwrap();
         assert_eq!(log.last(), 0);
         assert_eq!(std::fs::read(&empty).unwrap(), b"");
+    }
+
+    // U5f: the rotation (decision 148).
+    /// R-U5a follow-up 8. Defect: a rotation that renumbers, so the line a
+    /// handoff names points elsewhere in the successor's follow, or a
+    /// reopened log that counts the live file alone. The live file rotates
+    /// out at `SEGMENT_LINES` as `<log>.<base>`; the next line's number,
+    /// the count and a `read_since` across the boundary continue the
+    /// numbering, a reopen resumes from it, and the segment is listed with
+    /// its base and its lines.
+    #[test]
+    fn a_rotation_keeps_the_numbering_and_a_read_crosses_the_segment_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oversee-watch.log");
+        let mut log = EventLog::open(&path).unwrap();
+        let first: Vec<Event> = (1..=SEGMENT_LINES)
+            .map(|n| Event::Triage {
+                id: format!("KEN-{n}"),
+            })
+            .collect();
+        assert_eq!(log.append(&first).unwrap(), SEGMENT_LINES);
+        let segment = dir.path().join("oversee-watch.log.0");
+        assert_eq!(
+            segments(&path).unwrap(),
+            vec![Segment {
+                path: segment.clone(),
+                base: 0,
+                lines: SEGMENT_LINES
+            }]
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"", "a fresh live file");
+        let n = log
+            .append(&[Event::Handoff {
+                item: "KEN-A".into(),
+            }])
+            .unwrap();
+        assert_eq!(n, SEGMENT_LINES + 1);
+        assert_eq!(line_count(&path).unwrap(), SEGMENT_LINES + 1);
+        assert_eq!(
+            read_since(&path, SEGMENT_LINES - 1).unwrap(),
+            vec![
+                Numbered {
+                    n: SEGMENT_LINES - 1,
+                    line: format!("EVENT triage KEN-{}", SEGMENT_LINES - 1)
+                },
+                Numbered {
+                    n: SEGMENT_LINES,
+                    line: format!("EVENT triage KEN-{SEGMENT_LINES}")
+                },
+                Numbered {
+                    n: SEGMENT_LINES + 1,
+                    line: "EVENT handoff KEN-A".into()
+                },
+            ]
+        );
+        drop(log);
+        let mut again = EventLog::open(&path).unwrap();
+        assert_eq!(
+            again.last(),
+            SEGMENT_LINES + 1,
+            "a reopen resumes the numbering"
+        );
+        assert_eq!(
+            again
+                .append(&[Event::Handoff {
+                    item: "KEN-B".into()
+                }])
+                .unwrap(),
+            SEGMENT_LINES + 2
+        );
+        assert_eq!(
+            read_since(&path, SEGMENT_LINES + 2).unwrap(),
+            vec![Numbered {
+                n: SEGMENT_LINES + 2,
+                line: "EVENT handoff KEN-B".into()
+            }]
+        );
+        // The segment's bytes are the lines it took, untouched.
+        assert_eq!(
+            std::fs::read_to_string(&segment).unwrap().lines().count() as u64,
+            SEGMENT_LINES
+        );
     }
 }

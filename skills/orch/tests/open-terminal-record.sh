@@ -613,7 +613,7 @@ assert_eq "$(retired_under "$OT")" "rc=0 retired=1 session=launched since=iso la
   "a record only the lane's worktree state holds retires its session though --state-dir names another directory, and the fresh start renews session_since while launched_at stands"
 assert_eq "$(obligation CC-1)" "$OBLIGATION" 'a fresh context handoff session keeps the accepted original binding'
 SINCE_MUTANT="$(mutant_scripts since-mutant open-terminal)" || exit 1
-mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs, .touched, .in_scope)'
+mutate_file "$SINCE_MUTANT/open-terminal" 'del(.launched_at, .over_cap, .tier, .tier_inputs, .touched, .in_scope, .rebase)' 'del(.launched_at, .session_since, .over_cap, .tier, .tier_inputs, .touched, .in_scope, .rebase)'
 assert_eq "$(retired_under "$SINCE_MUTANT/open-terminal")" "rc=0 retired=1 session=launched since=kept launched_at=$LAUNCHED_AT" \
   "control: a relaunch that keeps session_since leaves the fresh start bound to the launch whose session it retired"
 RETIRED_MUTANT="$(mutant_scripts retired-mutant open-terminal)" || exit 1

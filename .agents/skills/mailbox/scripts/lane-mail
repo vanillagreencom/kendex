@@ -32,6 +32,7 @@ usage() {
   cat <<'USAGE'
 Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
+       lane-mail drain-many --file REQUEST
        lane-mail compact --item ITEM [--root ROOT]
        lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
@@ -133,10 +134,15 @@ Overseer side:
               and --halt refuse as channel-session, since such a lane never
               asks and no hook enforces a halt there. Every session send
               writes the record's directive_send, {at, result, text,
-              credit}: its epoch, sent, archived or failed, the CLI's words,
-              and the account's cloud credit {remaining_dollars,
-              locked_reason} from `lanes list`, "unread" where that read
-              failed; a write that fails is noted as send-unrecorded.
+              credit}: its epoch, sent, archived or failed, the CLI's words
+              (at most 300 characters), and the account's cloud credit
+              {remaining_dollars, locked_reason} from `lanes list`, "unread"
+              where that read failed; a write that fails is noted as
+              send-unrecorded. The same record, less its epoch, is printed
+              on stderr as a keyed line whatever the result, after a
+              refusal's own keyed line where it refuses, `lane-mail:
+              directive-send item=ITEM record=<JSON>`, the object {result,
+              text, credit}, for orch's record-directive-send operation
   drain --item ITEM --after N [--receipts]
               print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers.
@@ -151,6 +157,16 @@ Overseer side:
               receipt: a directive on a line at or below N is one the lane
               has read. A directive whose id is outside the item alphabet is
               not listed
+  drain-many --file REQUEST
+              one process draining every lane named in REQUEST, one line per
+              lane, `<item> <after> <root>` (the root, a local path, is the
+              rest of the line). For each line in order, print `item=<item>`
+              and then exactly what `drain --item <item> --root <root>
+              --after <after> --receipts` prints for a local mailbox. A lane
+              whose read refuses stops the whole call with that refusal and
+              no `item=` line of its own, so a caller never reads a lane it
+              was not told about as empty; nothing of the lanes before it is
+              retracted. Takes no --host: a hosted lane is drained on its own
   pending --item ITEM [--to owner|peer] [--due]
               print every open to-overseer.jsonl ask: for a lane
               item, what a restarted overseer owes a reply; for `--item
@@ -448,6 +464,9 @@ A `notice` receipt replaces `monitor=<m>` with `to=<owner|peer> ref=<ref>`;
 ref is empty when no --ref was given, and a lane notice has an empty to field.
 Only --progress adds ` progress=1` to that receipt.
 `oversee-report write` reads the notice receipt's id for its report-written line.
+A session send prints `lane-mail: directive-send item=<item> record=<JSON>`
+on stderr, after its refusal's keyed line where it refuses, the record
+`send --item` describes; its stdout is the `sent` receipt alone.
 Silence is not a success: a send or notice that printed no receipt appended nothing.
 
 Hosts with older append libraries skip the minute repeat check and can deliver
@@ -659,7 +678,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | pending | events | resolve | compact | peer) ;;
+  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | compact | peer) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -764,6 +783,12 @@ if [ "$VERB" = compact ]; then
     case "$given" in --item | --root) ;; *) refuse option-unknown "$given" ;; esac
   done
 fi
+# The batch names its lanes and roots in its request file alone.
+if [ "$VERB" = drain-many ]; then
+  for given in $OPTS_GIVEN; do
+    case "$given" in --file) ;; *) refuse option-unknown "$given" ;; esac
+  done
+fi
 
 # A peer verb addresses a repository, not a lane, and writes that repository's
 # overseer mailbox. One rule rather than a list of rejects: these are the
@@ -843,7 +868,7 @@ fi
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
 # otherwise select a directory of the caller's choosing.
 case "$ITEM" in
-  '') refuse option-required --item ;;
+  '') [ "$VERB" = drain-many ] || refuse option-required --item ;;
   . | ..) refuse item-invalid "$ITEM" ;;
 esac
 case "$ITEM" in
@@ -970,7 +995,7 @@ case "$TMP_ROOT" in
 esac
 WORK_DIR=""
 FAST_READ=0
-case "$HOST:$VERB" in *:drain | *:pending | 0:inbox) FAST_READ=1 ;; esac
+case "$HOST:$VERB" in *:drain | *:drain-many | *:pending | 0:inbox) FAST_READ=1 ;; esac
 CACHED_READ=0
 if [ "$HOST:$FAST_READ" = 1:1 ] && [ -n "${LANE_HOST_READ_DIR:-}" ] && [ ! -s "$LANE_HOST_READ_DIR/failed" ]; then
   CACHED_READ=1
@@ -991,7 +1016,12 @@ trap lm_cleanup EXIT
 # documents none), so these are the only causes it can name. A credit read
 # that fails, or a reading with no credit body, records "unread", never an
 # empty credit. The send already ran, so a record write that fails is noted
-# and the send's outcome stands.
+# and the send's outcome stands. The write stays here while the session send
+# runs from a shell (the overseer's own `send --directive` and the cloud
+# launcher's): the legacy watch's cloud stall close reads the record's `at`.
+# The same record is also printed on stderr as a keyed receipt line, after
+# the write, for the orch runtime's reader, whose record-directive-send
+# operation takes the write over once a runtime verb owns the session send.
 lm_send_record() { # RESULT CAUSE
   local credit
   credit="$(ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/lanes" list --harness claude --local --json 2>/dev/null |
@@ -1002,6 +1032,9 @@ lm_send_record() { # RESULT CAUSE
     '(.lanes[] | select(.item == $item)).directive_send = {at: (now | floor), result: $result, text: ($text | .[0:300]), credit: $credit}' \
     >/dev/null 2>"$WORK_DIR/state.err" ||
     { lm_message send-unrecorded "$ITEM" >&2; cat -- "$WORK_DIR/state.err" >&2; }
+  jq -rn --arg item "$ITEM" --arg result "$1" --arg text "$2" --argjson credit "$credit" \
+    '"lane-mail: directive-send item=\($item) record=" + ({result: $result, text: ($text | .[0:300]), credit: $credit} | tojson)' >&2 ||
+    refuse write-failed /dev/stderr
 }
 
 # A send to a lane is matched on the channel its record's host kind declares.
@@ -1067,10 +1100,20 @@ lm_send_channel() {
   answer="$(jq -r 'if .ok == true then "sent" elif (.error // "" | tostring | test("archived"; "i")) then "archived" else "failed" end' <<<"$out" 2>/dev/null)" || answer=failed
   cause="$(jq -r '.error // empty | tostring' <<<"$out" 2>/dev/null || true) $(cat -- "$WORK_DIR/claude.err")"
   [ "$rc" -eq 0 ] || [ "$answer" = archived ] || answer=failed
+  # stdout is the `sent` receipt alone; the record goes to stderr whatever
+  # the result, after a refusal's keyed line so that line stays stderr's
+  # first, as `refuse` would print it less the exit.
+  key=""
+  if [ "$answer" = archived ]; then
+    key=session-archived; detail="$cause"
+  elif [ "$rc" -ne 0 ] || [ "$answer" != sent ]; then
+    key=session-send-failed; detail="exit=$rc $cause"
+  else
+    printf 'lane-mail: sent item=%s channel=session session=%s\n' "$ITEM" "$session"
+  fi
+  [ -z "$key" ] || { lm_message "$key" "$session" >&2; printf '%s\n' "$detail" >&2; }
   lm_send_record "$answer" "$cause"
-  [ "$answer" != archived ] || refuse session-archived "$session" "$cause"
-  { [ "$rc" -eq 0 ] && [ "$answer" = sent ]; } || refuse session-send-failed "$session" "exit=$rc $cause"
-  printf 'lane-mail: sent item=%s channel=session session=%s\n' "$ITEM" "$session"
+  [ -z "$key" ] || exit 2
   exit 0
 }
 if [ "$VERB" = send ] && [ "$ITEM" != overseer ]; then
@@ -1176,7 +1219,8 @@ if [ "$VERB" = peer ]; then
 elif [ "$HOST" -eq 1 ] && [ -z "$ROOT" ]; then
   refuse option-required --root
 fi
-if [ -z "$ROOT" ]; then
+# A batch resolves no root of its own: each request line carries its lane's.
+if [ -z "$ROOT" ] && [ "$VERB" != drain-many ]; then
   case "$ITEM:$VERB" in
     # One overseer mailbox per project: a shell in any checkout, main or a lane
     # worktree, and the watch in the overseer's meet at the main checkout.
@@ -1294,7 +1338,7 @@ lm_one_spelling() {
       refuse item-case-variant "$ITEM" "Existing mailbox: $entry"
   done
 }
-[ "$HOST" -eq 1 ] || lm_one_spelling
+[ "$HOST" -eq 1 ] || [ "$VERB" = drain-many ] || lm_one_spelling
 
 # A single transport call that failed is a host out of reach or a provider
 # that answered and declined, and only the probe tells them apart. The dispatcher
@@ -2037,7 +2081,6 @@ if [ "$FAST_READ" -eq 1 ]; then
   esac
   # These functions are defined below for the other verbs. The fast path does
   # not use their scratch files or per-file filters.
-  READ_BOX="$BOX"
   READ_DELIVER=0
   if [ "$VERB:$PEEK:$ACK" = inbox:0: ]; then
     # Keep plain delivery outside READ_OUT so the locked helper can flush the
@@ -2045,7 +2088,17 @@ if [ "$FAST_READ" -eq 1 ]; then
     exec 6>&1
     READ_DELIVER=1
   fi
-  READ_ARGS=("$ITEM" "$VERB" "$AFTER" "$RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
+  # The verb the helper reads as: a batch reads each lane as `drain
+  # --receipts` does.
+  READ_VERB="$VERB"
+  READ_RECEIPTS="$RECEIPTS"
+  if [ "$VERB" = drain-many ]; then READ_VERB=drain; READ_RECEIPTS=1; fi
+fi
+# One mailbox read on the fast path, printed as its verb prints it: ITEM,
+# AFTER and the lm_box paths name the mailbox. A refusal ends the process.
+lm_fast_read() {
+  READ_BOX="$BOX"
+  READ_ARGS=("$ITEM" "$READ_VERB" "$AFTER" "$READ_RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
   if [ "$CACHED_READ" -eq 1 ]; then
     READ_OUT="$(exec python3 "$SCRIPT_DIR/lib/lane-mail-store.py" read-cached "$LANE_HOST_READ_DIR" "$BOX" "${READ_ARGS[@]}")" || exit "$?"
   elif [ "$HOST" -eq 1 ]; then
@@ -2090,7 +2143,43 @@ if [ "$FAST_READ" -eq 1 ]; then
   done
   READ_OUT="${READ_OUT#output}"
   READ_OUT="${READ_OUT#$'\n'}"
+  # A batch names each lane once its read answered, so a refused lane
+  # leaves no half section.
+  [ "$VERB" != drain-many ] || printf 'item=%s\n' "$ITEM"
   [ -z "$READ_OUT" ] || printf '%s\n' "$READ_OUT"
+}
+# Every lane of the request, in its order, each read as `drain --receipts`
+# reads it under its own mailbox locks and printed under its `item=` line. A
+# line short of its three fields, an item outside the alphabet or a cursor
+# that is no count refuses as the single verb refuses it, naming the lane;
+# the lanes already printed stand.
+lm_drain_many() {
+  local line item after root
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    item="${line%% *}"
+    [ "$item" != "$line" ] || refuse root-unresolved "$item"
+    line="${line#* }"
+    after="${line%% *}"
+    [ "$after" != "$line" ] || refuse root-unresolved "$item"
+    root="${line#* }"
+    case "$item" in
+      . | .. | *[!A-Za-z0-9._-]*) refuse item-invalid "$item" ;;
+    esac
+    case "$after" in '' | *[!0-9]*) REFUSE_EXTRA="item=$item"; refuse after-invalid "$after" ;; esac
+    ITEM="$item"
+    AFTER="$after"
+    lm_box "$root"
+    lm_fast_read
+  done <"$FILE"
+}
+if [ "$FAST_READ" -eq 1 ]; then
+  if [ "$VERB" = drain-many ]; then
+    lm_read_file
+    lm_drain_many
+  else
+    lm_fast_read
+  fi
   exit 0
 fi
 

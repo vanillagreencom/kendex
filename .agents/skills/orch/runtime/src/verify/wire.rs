@@ -46,7 +46,7 @@ pub(super) type Object = serde_json::Map<String, serde_json::Value>;
 
 /// A field GitHub documents as optional and not nullable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Optional<T> {
+pub enum Optional<T> {
     Absent,
     Present(T),
 }
@@ -64,7 +64,7 @@ impl<T> Default for Optional<T> {
 }
 
 impl<T> Optional<T> {
-    pub(super) fn present(&self) -> Option<&T> {
+    pub fn present(&self) -> Option<&T> {
         match self {
             Optional::Absent => None,
             Optional::Present(value) => Some(value),
@@ -88,7 +88,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Optional<T> {
 
 /// A field GitHub documents as nullable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Nullable<T> {
+pub enum Nullable<T> {
     Absent,
     Null,
     Present(T),

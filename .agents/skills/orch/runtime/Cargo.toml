@@ -31,6 +31,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 clap = { version = "4.6", features = ["derive"] }
+# U5d2: the reset a usage-limit banner names, resolved in the zone it names
+# or the runner's own, with the fall-back hour's two instants (decision 160 (1)).
+jiff = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
@@ -62,6 +65,30 @@ path = "../tests/rust/controller.rs"
 [[test]]
 name = "watch_core"
 path = "../tests/rust/watch_core.rs"
+
+[[test]]
+name = "watch_reads"
+path = "../tests/rust/watch_reads.rs"
+
+[[test]]
+name = "watch_observe"
+path = "../tests/rust/watch_observe.rs"
+
+[[test]]
+name = "watch_mail"
+path = "../tests/rust/watch_mail.rs"
+
+[[test]]
+name = "wake"
+path = "../tests/rust/wake.rs"
+
+[[test]]
+name = "admission"
+path = "../tests/rust/admission.rs"
+
+[[test]]
+name = "watch_report"
+path = "../tests/rust/watch_report.rs"
 
 [lints.rust]
 unsafe_code = "forbid"

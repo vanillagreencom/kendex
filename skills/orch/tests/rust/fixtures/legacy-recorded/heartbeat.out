@@ -1,0 +1,20 @@
+EVENT heartbeat loops=1 interval=0s since=none
+owner/repo	16	ken-6	the review item
+account-roster accounts=4
+account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z
+account claude2 config_dir=/home/u/.claude2 harness=claude through=local status=ok verdict=walled headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-02T00:00:00Z
+account codex config_dir=/home/u/.codex harness=codex through=local status=ok verdict=walled headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-05T00:00:00Z
+account codex2 config_dir=/home/u/.codex2 harness=codex through=local status=ok verdict=walled headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-03T00:00:00Z
+verifying KEN-1 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=- reading="Read deployed health" where="live service" why="needs deployment"
+verifying KEN-1 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read consumer refresh" where="consumer PR" why="needs rollout"
+verifying KEN-4 box=2 trigger="merge" status=overdue deadline=2026-10-02T00:00:00Z blocked_by=- reading="Read deployed health" where="live service" why="needs deployment"
+verifying KEN-4 box=3 trigger="merge" status=due deadline=2026-10-03T00:00:00Z blocked_by=- reading="Read consumer refresh" where="consumer PR" why="needs rollout"
+owed KEN-10 state=in-progress priority=2 lane=stopped verdict=merged pr=21
+owed KEN-11 state=in-progress priority=1 lane=stopped verdict=dated harness=claude until=2026-10-04T00:00:00Z
+owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue
+owed KEN-13 state=in-review priority=2 lane=done verdict=merged commit=0123456789abcdef0123456789abcdef01234567
+owed KEN-2 state=in-progress priority=2 lane=stopped verdict=queue
+owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+owed KEN-5 state=in-review priority=2 lane=done verdict=merged pr=15
+owed KEN-6 state=in-review priority=3 lane=none verdict=queue
+owed KEN-9 state=in-progress priority=- lane=stopped verdict=queue

@@ -40,7 +40,7 @@ mod differential;
 mod evidence;
 mod judge;
 mod selection;
-mod wire;
+pub mod wire;
 
 use std::path::Path;
 use std::time::Duration;

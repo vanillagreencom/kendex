@@ -47,6 +47,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # clears every lane.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
+# The orch runtime every fleet launch asks for its admission: admitted.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-stubs.sh"
+ot_stub_runtime "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 printf '#!/usr/bin/env bash\ncase "${1:-}" in check) exit 0 ;; list) echo "[]" ;; esac\nexit 0\n' > "$BIN/lanes"

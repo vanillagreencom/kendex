@@ -1965,7 +1965,7 @@ parts = []
 start = text.index("UNPARK_JQ='")
 end = text.index("'\n", start) + 2
 parts.append(text[start:end])
-for name in ("lane_record_write", "host_launch_pending"):
+for name in ("lane_record_repo", "lane_record_write", "host_launch_pending"):
     marker = f"\n{name}() {{"
     if text.count(marker) != 1:
         raise SystemExit(f"writer match count={text.count(marker)} name={name}")

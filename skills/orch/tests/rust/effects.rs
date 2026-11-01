@@ -4442,7 +4442,7 @@ fn a_stale_secondary_identity_settles_on_the_second_independent_reading() {
 
 /// `git args` in `cwd`, which must succeed; its stdout.
 fn git(cwd: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = program("git")
         .current_dir(cwd)
         .args(args)
         .output()
@@ -4671,7 +4671,7 @@ fn close_lane_with_worktree(runner: &Runner, item: &str, wt: &Path) -> Value {
 /// Whether the module store at `store` holds `commit`, by `git cat-file
 /// -e` run against that store alone.
 fn commit_in_store(store: &Path, commit: &str) -> bool {
-    Command::new("git")
+    program("git")
         .args([
             "--git-dir",
             &store.display().to_string(),
@@ -5301,7 +5301,7 @@ fn a_close_releases_a_clean_worktree_whose_gitlink_has_no_gitmodules_mapping() {
     git(&repo, &["add", "emb"]);
     commit(&repo, "embedded");
     merge_main(&repo, &wt);
-    let unmapped = Command::new("git")
+    let unmapped = program("git")
         .current_dir(&wt)
         .args(["submodule", "status"])
         .output()

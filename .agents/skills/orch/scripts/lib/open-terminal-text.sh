@@ -17,8 +17,9 @@ ot_message() { # REASON FIELD=VALUE...
     helper-missing) text='The required helper is not executable.' ;;
     launch-blocked) text='An item or its ancestor has a blocker that still holds launch. Merge or complete the named blockers before launching this item.' ;;
     launch-blocked-unread) text='The live blocker read failed. Restore the tracker read before launching this item.' ;;
-    launch-overlap) text='The item touches a file a held lane or an open pull request is changing. Nothing was launched. Wait for the holder to merge, or name the file in scope in the brief, as an append-only addition, and pass --in-scope with it.' ;;
-    launch-overlap-unread) text='A read the file-overlap judgement needs failed, as read names; read=location is a Location line in this item that names no backticked path, and read=lane:ITEM:location is one in the item of held lane ITEM. Nothing was launched. Restore that read, or backtick the paths on that Location line, before launching this item.' ;;
+    launch-overlap) text='The item touches a file a lane whose harness runs, or is about to, is changing. Nothing was launched. Wait for the holder to end, or name the file in scope in the brief, as an append-only addition, and pass --in-scope with it.' ;;
+    launch-overlap-unread) text='A read the admission judgement needs failed, as read names: read=item is the item body, read=location a Location line in this item that names no backticked path, read=brief the brief file, read=holder:ITEM:touched the touched set of lane ITEM, read=holder:ITEM:identity whether lane ITEM still runs, read=state the fleet state and read=runtime the orch runtime itself. Nothing was launched. Restore that read, or backtick the paths on that Location line, before launching this item.' ;;
+    item-ineligible) text='The item is a container by its body, with children or the agent:multi label, and is never launched; its children are the launch units. Nothing was launched.' ;;
     in-scope-unanchored) text='--in-scope answers the file-overlap hold, which a launch meets only where --state-dir names its fleet. Nothing was launched. Pass --state-dir, or drop the option.' ;;
     entry-permission-untransferable) text='The caller permissions cannot transfer to this harness. The preference walk skips this entry.' ;;
     items-missing) text='Specify a work item.' ;;
@@ -837,22 +838,21 @@ this launch check. In Progress and Backlog blockers still hold launch.
 launch-blocked-unread means the live read could not be completed. A relaunch
 or wake of a recorded lane passes this check.
 
-A new fleet launch then refuses as launch-overlap when its touched set shares
-a file with a held lane (running, preparing or parked) of the launch's
-repository or an open same-repository pull request, under
-workflows/oversee.md § 2. The touched set is the backticked paths on the
-item's Location line, less a :N or :N-M line suffix, plus every file tracked
-here that names a backticked path on a body line that deletes or renames it,
-on the base and on each such pull request's head; a deleted or renamed token
-counts only where the base tracks it as a file. A pull request's files are
-its files endpoint's, a rename's previous path included. A held lane's set is
-its record's touched, else its item's, read now; the item's own pull request
-is no holder. changelog.d/ paths never count. holder is the lane item or #N
-for a pull request. A launch-overlap-unread names the read that failed, led
-by lane:ITEM where held lane ITEM's item needed it; read=location is a
-Location line in this item that names no backticked path, and
-read=lane:ITEM:location one in held lane ITEM's item. A relaunch or wake of
-a recorded lane passes this check.
+A new fleet launch is then judged by the orch runtime's admission
+(`orch-runtime admit`, under workflows/oversee.md § 2), which this launcher
+asks and records; ORCH_RUNTIME_CLI names the runtime, the wrapper beside
+this script by default. It refuses an item that is a container by its body
+(children, or the agent:multi label) as item-ineligible, and refuses as
+launch-overlap when the item's touched set shares a file with a lane of the
+launch's repository whose harness runs or is about to, by the lane's
+recorded identity, never by its status word; a stopped or held lane that
+shares a file yields it, and the launch records a rebase obligation naming
+that lane and its branch. The touched set is the backticked paths on the
+item's Location line, less a :N or :N-M line suffix, plus the backticked
+paths the brief file names. A lane's set is its record's touched, else its
+item's, read now. changelog.d/ paths never count. holder is the lane item. A
+launch-overlap-unread names the read that failed, as its message lists. A
+relaunch or wake of a recorded lane passes this check.
   --in-scope PATH   A file the brief names in scope beside its holder, an
                     append-only addition: that shared file passes the
                     overlap hold. Repeatable; a directory ending in / covers
@@ -874,8 +874,10 @@ worktree), mail_root, surface, model, session_id, session_since
 (the time this launch or relaunch read before its terminal opened), allow_all
 (whether a copilot command grants --allow-all or --yolo), live_display
 (true on a --live-display launch, absent otherwise), touched (the touched
-set the overlap hold judged, null where it judged none), in_scope (the
---in-scope paths), and recovery,
+set the admission judged, null where it judged none), in_scope (the
+--in-scope paths), rebase (the rebase obligations the admission recorded,
+each the holder lane's item, its branch and the shared paths; absent where
+it recorded none), and recovery,
 whose private choices lib/lane-relaunch.sh uses for automatic same-harness
 recovery. Legacy records without those choices require a manual relaunch.
 The record also carries launched_at,

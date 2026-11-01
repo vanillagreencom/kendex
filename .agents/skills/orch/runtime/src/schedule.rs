@@ -28,11 +28,27 @@ pub enum Duty {
     Report,
     Reconcile,
     Heartbeat,
+    // U5g: the wake of a lead or lane idle with unread mail, on the mail
+    // cadence, on the shared thread, last in the tie order.
+    Wake,
+    // U5e2: the GitHub inventories (decision 162 (2)): the merged index,
+    // the parked dependency, the refresh and main-branch incidents, the
+    // reducer pass, the alerts and the outside contributions, on the long
+    // cadence, on the shared thread, after the tracker so a pass reads the
+    // tracker's verdicts first; its refusal discards no tracker news. The
+    // word is one, `github`, which the case rule would split.
+    #[serde(rename = "github")]
+    GitHub,
+    // U5f: the retention duty (decisions 141 (1), (2); step5-map § A11):
+    // the event log's rotated segments and each ended lane's paths judged
+    // by their own recorded end, on the long cadence, on the shared thread,
+    // last in the tie order.
+    Retention,
 }
 
 impl Duty {
     /// Every duty, in the order a tie between equal due times is broken.
-    pub const ALL: [Duty; 7] = [
+    pub const ALL: [Duty; 10] = [
         Duty::Mail,
         Duty::NativeObservation,
         Duty::Tracker,
@@ -40,6 +56,12 @@ impl Duty {
         Duty::Report,
         Duty::Reconcile,
         Duty::Heartbeat,
+        // U5g
+        Duty::Wake,
+        // U5e2
+        Duty::GitHub,
+        // U5f
+        Duty::Retention,
     ];
 
     /// The duty's word in a reply or a diagnostic.
@@ -52,6 +74,12 @@ impl Duty {
             Duty::Report => "report",
             Duty::Reconcile => "reconcile",
             Duty::Heartbeat => "heartbeat",
+            // U5g
+            Duty::Wake => "wake",
+            // U5e2
+            Duty::GitHub => "github",
+            // U5f
+            Duty::Retention => "retention",
         }
     }
 }
@@ -117,6 +145,12 @@ impl Cadences {
             | Duty::Report
             | Duty::Reconcile => self.long,
             Duty::Heartbeat => self.heartbeat,
+            // U5g: the mail cadence.
+            Duty::Wake => self.mail,
+            // U5e2: the long cadence.
+            Duty::GitHub => self.long,
+            // U5f: the long cadence.
+            Duty::Retention => self.long,
         }
     }
 }
@@ -289,6 +323,12 @@ mod tests {
             (Duty::Report, 240, Anchor::Start),
             (Duty::Reconcile, 240, Anchor::Start),
             (Duty::Heartbeat, 6000, Anchor::Start),
+            // U5g
+            (Duty::Wake, 20, Anchor::End),
+            // U5e2
+            (Duty::GitHub, 240, Anchor::Start),
+            // U5f
+            (Duty::Retention, 240, Anchor::Start),
         ];
         for (duty, every, anchor) in rows {
             assert_eq!(
@@ -370,5 +410,26 @@ mod tests {
         assert!(s.due_at(start - secs(1)).is_empty());
         let empty = Schedule::new(&Cadences::legacy(), start, &[]);
         assert_eq!(empty.next_due(), None);
+    }
+
+    // U5e2: the serialized word is the duty's word (decision 162 (2)).
+    /// The word a duty's baseline row and `watch status` carry is
+    /// [`Duty::word`] for every duty. Defect: a duty whose serialized name
+    /// the case rule renders apart from its word (`git-hub`), so its pass
+    /// stamp is read under one key and reported under another.
+    #[test]
+    fn every_duty_serializes_as_its_word() {
+        for duty in Duty::ALL {
+            assert_eq!(
+                serde_json::to_value(duty).unwrap(),
+                serde_json::Value::String(duty.word().to_owned()),
+                "{duty:?}"
+            );
+            assert_eq!(
+                serde_json::from_value::<Duty>(serde_json::Value::String(duty.word().to_owned()))
+                    .unwrap(),
+                duty
+            );
+        }
     }
 }

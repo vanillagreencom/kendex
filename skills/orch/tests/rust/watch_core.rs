@@ -30,10 +30,6 @@ use orch_runtime::watch::{self, Change, Event, Flags, Paths, Produced, Recorded,
 use serde_json::{Value, json};
 use support::*;
 
-fn secs(n: u64) -> Duration {
-    Duration::from_secs(n)
-}
-
 /// The settings a runner in `dir` runs under, with the mail interval
 /// `mail` seconds; nothing is read from the test's own tree.
 fn settings_in(dir: &Path, mail: u64) -> Settings {
@@ -107,53 +103,6 @@ fn log_lines(paths: &Paths) -> Vec<String> {
         .collect()
 }
 
-/// A duty body that counts its runs and records the fake epoch second of
-/// each, emitting `event` (with a tick-specific id where it takes one) and
-/// the changes `changes` gives.
-struct Counting {
-    runs: Arc<AtomicUsize>,
-    at: Arc<std::sync::Mutex<Vec<u64>>>,
-}
-
-impl Counting {
-    fn new() -> Counting {
-        Counting {
-            runs: Arc::new(AtomicUsize::new(0)),
-            at: Arc::new(std::sync::Mutex::new(Vec::new())),
-        }
-    }
-
-    fn body(
-        &self,
-        mut produce: impl FnMut(&Tick) -> Produced + Send + 'static,
-    ) -> watch::Body<'static> {
-        self.body_result(move |tick| Ok(produce(tick)))
-    }
-
-    /// A body whose runs may refuse: the count and the stamps are taken
-    /// before the result is known.
-    fn body_result(
-        &self,
-        mut produce: impl FnMut(&Tick) -> Result<Produced, Error> + Send + 'static,
-    ) -> watch::Body<'static> {
-        let runs = self.runs.clone();
-        let at = self.at.clone();
-        Box::new(move |tick: &Tick| {
-            runs.fetch_add(1, Ordering::SeqCst);
-            at.lock().unwrap().push(tick.wall);
-            produce(tick)
-        })
-    }
-
-    fn runs(&self) -> usize {
-        self.runs.load(Ordering::SeqCst)
-    }
-
-    fn at(&self) -> Vec<u64> {
-        self.at.lock().unwrap().clone()
-    }
-}
-
 /// Plant a claim record naming `pid` and `start` on `paths`.
 fn plant_claim(paths: &Paths, pid: u32, start: &str) {
     std::fs::write(
@@ -188,54 +137,6 @@ fn legacy_holder() -> Owned {
             .spawn()
             .expect("oversee-watch holder"),
     )
-}
-
-/// Run `runner` to its end on a thread while `drive` works the clock; the
-/// run's result. A `drive` that fails still stops the runner, so a failed
-/// assertion is reported rather than hanging the row on the scope's join.
-/// The stop wakes only threads asleep on the clock, so a drive returns with
-/// every runner thread asleep (a strict `pass` or `await_sleepers` leaves
-/// them so).
-fn run_driven(
-    runner: Runner<'_>,
-    clock: &FakeClock,
-    paths: &Paths,
-    identity: &Identity,
-    drive: impl FnOnce(),
-) -> Result<watch::Ended, Error> {
-    std::thread::scope(|s| {
-        let handle = s.spawn(move || runner.run());
-        let drove = std::panic::catch_unwind(std::panic::AssertUnwindSafe(drive));
-        if let Err(panic) = &drove {
-            // Said before the join, which a body the drive was to release
-            // can hold.
-            let text = panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                .unwrap_or_default();
-            let _ = std::io::Write::write_all(
-                &mut std::io::stderr(),
-                format!("drive failed before the runner stopped: {text}\n").as_bytes(),
-            );
-        }
-        let _ = watch::claim::request_stop(paths, identity);
-        // One release wakes the threads asleep now; a thread still in a body
-        // sleeps again past the clock, so the release repeats, in real time,
-        // until the runner has ended or the bound passes.
-        let bound = Instant::now() + secs(10);
-        loop {
-            clock.release(secs(1));
-            if handle.is_finished() || Instant::now() >= bound {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        if let Err(panic) = drove {
-            std::panic::resume_unwind(panic);
-        }
-        handle.join().expect("the runner thread")
-    })
 }
 
 /// Row (a). Defect: a claim judged by its pid alone, which a reused pid
@@ -753,9 +654,10 @@ fn a_zero_mail_interval_runs_the_mail_duty_once_per_slice() {
 /// Decision 148 (4), R-U5a follow-up 1. Defect: a duty body's error ending
 /// the run (both threads, the claim released), under which one transient
 /// read failure stops mail and verification until a restart. A body that
-/// fails twice then succeeds: two `watch-step-failed` lines with the
-/// consecutive counts, mail running throughout, and the third run's own
-/// line; the run goes on until it is stopped.
+/// fails twice then succeeds: the first failure's `watch-step-failed` line
+/// (the second is under the repeat rule, the row below), mail running
+/// throughout, and the third run's own line; the run goes on until it is
+/// stopped.
 #[test]
 fn a_failing_body_is_a_counted_line_and_the_run_goes_on() {
     let dir = tempfile::tempdir().unwrap();
@@ -795,7 +697,6 @@ fn a_failing_body_is_a_counted_line_and_the_run_goes_on() {
         log_lines(&paths),
         vec![
             "EVENT watch-step-failed step=tracker count=1",
-            "EVENT watch-step-failed step=tracker count=2",
             "EVENT handoff KEN-9",
         ]
     );
@@ -810,6 +711,110 @@ fn a_failing_body_is_a_counted_line_and_the_run_goes_on() {
         baseline.passes.get(&Duty::Tracker),
         Some(&tracker.at()[2]),
         "the stamp is the successful run's"
+    );
+}
+
+/// Decision 156 (1), R-U5a2 follow-up 1. Defect: a standing failure waking
+/// the session the log follows on every pass (a `watch-step-failed` line
+/// each 240 s with no news), and a body's partial failure said by the body
+/// under a count of its own, outside the one rule. Under
+/// `ORCH_OVERSEER_MARK_REPEAT=3`, a body failing on every one of seven runs
+/// is said at the first, third and sixth; a body whose first and third runs
+/// hand back a line and a cause has its line, then the failure line, and
+/// its pass stamped before any clean run; its clean second run ends the
+/// count, so the third is said as a first failure again. The failing duty
+/// keeps its cadence from its anchor.
+#[test]
+fn a_standing_failure_repeats_its_line_on_the_mark_repeat_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths_in(dir.path());
+    let roots = Roots {
+        project: dir.path().to_path_buf(),
+        common: dir.path().to_path_buf(),
+    };
+    let settings = settings::load(
+        &roots,
+        &[
+            ("ORCH_WATCH_MAIL_INTERVAL".into(), "20".into()),
+            ("ORCH_OVERSEER_MARK_REPEAT".into(), "3".into()),
+        ],
+        &SettingsFlags {
+            state_dir: Some(dir.path().to_path_buf()),
+            private_env: false,
+        },
+    )
+    .unwrap();
+    let clock = FakeClock::new();
+    let mail = Counting::new();
+    let tracker = Counting::new();
+    let report = Counting::new();
+    let mut runner = runner(dir.path(), &clock, &settings, me());
+    runner.register(Duty::Mail, mail.body(|_| Produced::default()));
+    runner.register(
+        Duty::Tracker,
+        tracker.body_result(|_| {
+            Err(Error::RecordMissing {
+                path: PathBuf::from("/x/tracker"),
+            })
+        }),
+    );
+    let partial = Arc::new(AtomicUsize::new(0));
+    let first = partial.clone();
+    runner.register(
+        Duty::Report,
+        report.body(move |_| {
+            if matches!(first.fetch_add(1, Ordering::SeqCst), 0 | 2) {
+                Produced {
+                    events: vec![Event::Handoff {
+                        item: "KEN-1".into(),
+                    }],
+                    failed: Some("a span that could not be read".into()),
+                    ..Produced::default()
+                }
+            } else {
+                Produced::default()
+            }
+        }),
+    );
+    let identity = me();
+    let ended = run_driven(runner, &clock, &paths, &identity, || {
+        clock.await_sleepers(2);
+        let baseline = watch::Baseline::load(&paths.baseline).unwrap();
+        assert_eq!(
+            baseline.passes.get(&Duty::Report),
+            Some(&report.at()[0]),
+            "a run that fails in part is stamped before any clean run"
+        );
+        assert_eq!(baseline.passes.get(&Duty::Tracker), None);
+        for _ in 0..6 {
+            clock.pass(secs(240));
+        }
+    });
+    assert!(ended.is_ok(), "{ended:?}");
+    assert_eq!(tracker.runs(), 7, "one run at start and one per cadence");
+    assert_eq!(report.runs(), 7);
+    assert_eq!(
+        log_lines(&paths),
+        vec![
+            "EVENT watch-step-failed step=tracker count=1",
+            "EVENT handoff KEN-1",
+            "EVENT watch-step-failed step=report count=1",
+            "EVENT watch-step-failed step=tracker count=3",
+            "EVENT handoff KEN-1",
+            "EVENT watch-step-failed step=report count=1",
+            "EVENT watch-step-failed step=tracker count=6",
+        ]
+    );
+    let baseline = watch::Baseline::load(&paths.baseline).unwrap();
+    assert_eq!(
+        baseline.passes.get(&Duty::Tracker),
+        None,
+        "a run that fails whole earns no pass stamp"
+    );
+    assert_eq!(
+        tracker.at()[1] - tracker.at()[0],
+        240,
+        "the failing duty keeps its cadence from its anchor"
     );
 }
 
@@ -1058,6 +1063,26 @@ fn every_event_renders_to_the_legacy_bytes() {
                 reason: watch::Takeover::Gone,
             },
             "EVENT watch-taken-over pid=4242 start=none reason=gone",
+        ),
+        // U5g: the wake duty's own lines.
+        (
+            Event::WakeDelivered { target: s("KEN-1") },
+            "EVENT wake-delivered KEN-1",
+        ),
+        (
+            Event::WakeUnconfirmed {
+                target: s("overseer"),
+                cause: s("turn-pending"),
+            },
+            "EVENT wake-unconfirmed overseer cause=turn-pending",
+        ),
+        (
+            Event::WakeLimit {
+                target: s("KEN-1"),
+                harness: s("codex"),
+                cause: s("process-running"),
+            },
+            "EVENT wake-limit KEN-1 harness=codex cause=process-running",
         ),
         // oversee-watch:2162
         (
@@ -1358,6 +1383,187 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT verifying-deadline KEN-1 box=2 trigger={\"kind\":\"ci\"} status=due deadline=2026-01-01T00:00:00Z",
         ),
+        // U5d: the observation duty's lines (decision 152).
+        // oversee-watch:4960, the bytes tests/oversee_watch_pi_lanes.sh and
+        // tests/oversee_watch_usage_limit.sh pin
+        (
+            Event::UsageLimit {
+                passed: false,
+                line: s("gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z"),
+            },
+            "EVENT usage-limit gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z",
+        ),
+        (
+            Event::UsageLimit {
+                passed: true,
+                line: s("gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z"),
+            },
+            "EVENT usage-limit-passed gh-2 /home/me/.eclaude resets=2026-10-04T18:00:00Z",
+        ),
+        (
+            Event::UsageLimit {
+                passed: false,
+                line: s("gh-2 wall_kind=auth"),
+            },
+            "EVENT usage-limit gh-2 wall_kind=auth",
+        ),
+        // this runtime's own
+        (
+            Event::StrayWindow {
+                pane: s("%7"),
+                window: s("@3"),
+                server: 41020,
+                name: s("gh-9"),
+            },
+            "EVENT stray-window %7 window=@3 server=41020 name=gh-9",
+        ),
+        (
+            Event::Tail(s("⏺ Working through the queue.")),
+            "⏺ Working through the queue.",
+        ),
+        (
+            Event::LaneUnreadable {
+                lane: s("gh-3"),
+                cause: s("server-unreachable"),
+            },
+            "EVENT lane-unreadable gh-3 cause=server-unreachable",
+        ),
+        // U5c: the mail duty's lines (decision 152).
+        // oversee-watch:3195 and :3199, the bytes tests/oversee_watch_mail.sh pins
+        (
+            Event::Payload {
+                line: s("Hold KEN-7 for the owner."),
+            },
+            "  Hold KEN-7 for the owner.",
+        ),
+        (
+            Event::Payload {
+                line: s("options: cut, keep"),
+            },
+            "  options: cut, keep",
+        ),
+        (Event::Payload { line: s("") }, "  "),
+        // U5e: the tracker and GitHub read duty's lines (decision 152).
+        (
+            Event::TrackerQuota {
+                line: s("tracker-quota status=future reset=2026-01-01T00:10:00Z limit=requests"),
+            },
+            "EVENT tracker-quota status=future reset=2026-01-01T00:10:00Z limit=requests",
+        ),
+        // U5d2: the local-lane readings' lines (decision 152).
+        // lib/watch-host-kinds.sh:462, the bytes tests/oversee_watch_start_stall.sh
+        // pins (`separate_counts`, `parked`)
+        (
+            Event::LaneLong {
+                item: s("issue-1"),
+                age: 12601,
+                review_rounds: s("5"),
+                fix_receipts: s("3"),
+                validation_runs: s("4"),
+                restacks: s("4"),
+                repeated_class_rounds: s("1"),
+                stage: s("dev round 1"),
+            },
+            "EVENT lane-long issue-1 age=12601 review_rounds=5 fix_receipts=3 validation_runs=4 restacks=4 repeated_class_rounds=1 stage=dev round 1",
+        ),
+        (
+            Event::LaneLong {
+                item: s("issue-3"),
+                age: 12600,
+                review_rounds: s("unread"),
+                fix_receipts: s("unread"),
+                validation_runs: s("unread"),
+                restacks: s("unread"),
+                repeated_class_rounds: s("unread"),
+                stage: s("parked"),
+            },
+            "EVENT lane-long issue-3 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked",
+        ),
+        // U5e2: the GitHub duty's readings' lines (decision 152).
+        // lib/pr-watch-pass.sh:191, the bytes tests/oversee_watch.sh § 1 pins
+        (Event::PrWatch { rc: 1 }, "EVENT pr-watch rc=1"),
+        // lib/security-alerts.sh:235-245, the bytes tests/oversee_watch_security.sh
+        // pins (LINE_DEPENDABOT with pr=12, LINE_SECRET, a repeat)
+        (
+            Event::SecurityAlert {
+                repo: s("owner/repo"),
+                kind: s("dependabot"),
+                number: 7,
+                severity: Some(s("high")),
+                subject_key: s("package"),
+                subject: s("fast-uri"),
+                manifest: Some(s("ui/package-lock.json")),
+                scope: Some(s("runtime")),
+                advisory: Some(s("GHSA-aaaa-bbbb-cccc")),
+                validity: None,
+                url: s("https://github.com/owner/repo/security/dependabot/7"),
+                pr: Some(12),
+                repeat: false,
+            },
+            "EVENT security-alert owner/repo kind=dependabot number=7 severity=high package=fast-uri manifest=ui/package-lock.json scope=runtime advisory=GHSA-aaaa-bbbb-cccc url=https://github.com/owner/repo/security/dependabot/7 pr=12",
+        ),
+        (
+            Event::SecurityAlert {
+                repo: s("owner/repo"),
+                kind: s("secret-scanning"),
+                number: 3,
+                severity: None,
+                subject_key: s("rule"),
+                subject: s("github_personal_access_token"),
+                manifest: None,
+                scope: None,
+                advisory: None,
+                validity: Some(s("active")),
+                url: s("https://github.com/owner/repo/security/secret-scanning/3"),
+                pr: None,
+                repeat: true,
+            },
+            "EVENT security-alert owner/repo kind=secret-scanning number=3 rule=github_personal_access_token validity=active url=https://github.com/owner/repo/security/secret-scanning/3 report=repeat",
+        ),
+        // lib/security-alerts.sh:298
+        (
+            Event::SecurityAlertsUnread {
+                reads: s("owner/repo/dependabot:permission,owner/repo/code-scanning:http-502"),
+            },
+            "EVENT security-alerts-unread reads=owner/repo/dependabot:permission,owner/repo/code-scanning:http-502",
+        ),
+        // lib/outside-contribution.sh:116-117, the bytes tests/oversee_watch_outside.sh pins
+        (
+            Event::OutsideContribution {
+                key: s("owner/repo#3100"),
+                kind: s("pr"),
+                author: s("fixture-visitor"),
+                head: Some(s("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")),
+            },
+            "EVENT outside-contribution owner/repo#3100 kind=pr author=fixture-visitor head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        (
+            Event::OutsideContribution {
+                key: s("owner/repo#3101"),
+                kind: s("issue"),
+                author: s("fixture-visitor"),
+                head: None,
+            },
+            "EVENT outside-contribution owner/repo#3101 kind=issue author=fixture-visitor",
+        ),
+        // U5f: the report and heartbeat duties' lines (decision 152).
+        // oversee-watch:5248 (`echo "EVENT $out"` on `oversee-report due`'s
+        // line), the bytes tests/oversee_watch_report.sh pins
+        (
+            Event::ReportDue {
+                line: s("report-due reason=minutes since=2026-10-01T00:00:00Z"),
+            },
+            "EVENT report-due reason=minutes since=2026-10-01T00:00:00Z",
+        ),
+        // oversee-watch:5715-5733: a heartbeat body line, printed as the
+        // legacy printed it, unprefixed (tests/oversee_watch_owed.sh pins
+        // the `owed` line)
+        (
+            Event::Body {
+                line: s("owed KEN-6 state=in-review priority=3 lane=none verdict=queue"),
+            },
+            "owed KEN-6 state=in-review priority=3 lane=none verdict=queue",
+        ),
     ];
     for (event, line) in rows {
         assert_eq!(event.render(), line, "{event:?}");
@@ -1367,26 +1573,55 @@ fn every_event_renders_to_the_legacy_bytes() {
 /// Run the binary's `watch` verb against `dir` with the fleet server's
 /// environment kept off it: the watch reads no tmux.
 fn watch_cmd(dir: &Path, args: &[&str]) -> std::process::Output {
-    let mut command = Command::new(binary());
+    let mut command = isolated();
     command
         .args(["--state-dir", &dir.display().to_string()])
         .args(args)
-        .env("ORCH_STATE_DIR", "")
         .env("ORCH_JOB_UNIT", job_unit().display().to_string())
         .current_dir(dir);
     command.output().expect("orch-runtime watch")
 }
 
+/// The shipped `lane-mail`, run over the test directory as its root, where
+/// it finds no mailbox; a row that plants one names it here.
+fn lane_mail() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("mailbox/scripts/lane-mail")
+}
+
 /// Spawn the binary's `watch run --fleet` in `dir`, under the program name
-/// `name` (`exec -a`), its output piped.
+/// `name` (`exec -a`), its output piped, with every duty registered and
+/// each one's program named so the run is quiet on an empty fleet
+/// (decision 164): the shipped mailbox client over the test directory, the
+/// alert pass off (with no token file it would print its credential line),
+/// and the report judge as the fixture that answers "not due" (it reads its
+/// reply beside the path it is invoked as, so the row links it in).
 fn spawn_watch_run(dir: &Path, name: &str) -> std::process::Child {
-    Command::new("bash")
+    let report = dir.join("oversee-report");
+    std::os::unix::fs::symlink(
+        fixtures().join("oversee-report-fixture/oversee-report"),
+        &report,
+    )
+    .expect("link the report fixture");
+    let mut command = Command::new("bash");
+    isolation_env(&mut command);
+    command
         .args(["-c", "exec -a \"$0\" \"$@\"", name])
         .arg(binary())
-        .args(["--state-dir", &dir.display().to_string()])
+        .args([
+            "--no-private-env",
+            "--state-dir",
+            &dir.display().to_string(),
+        ])
         .args(["watch", "run", "--fleet"])
-        .env("ORCH_STATE_DIR", "")
         .env("ORCH_JOB_UNIT", job_unit().display().to_string())
+        .env("LANE_MAIL_CLI", lane_mail())
+        .env("ORCH_SECURITY_ALERTS", "off")
+        .env("OVERSEE_WATCH_REPORT", &report)
         .current_dir(dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1494,9 +1729,19 @@ fn the_legacy_watch_pid_library_reads_the_runner_live_and_gone_after_stop() {
     assert_eq!(answer["result"]["events"], 0, "{answer}");
     let due: BTreeMap<String, u64> = serde_json::from_value(answer["result"]["due"].clone())
         .unwrap_or_else(|e| panic!("{e}: {answer}"));
+    // Every other duty ran at start too, on an empty fleet with no unread
+    // row, no controller record, no team and no repository, and emitted no
+    // line; their stamps are the other due times reported. The heartbeat
+    // alone is not stamped before its period.
+    let mut expected: Vec<String> = Duty::ALL
+        .iter()
+        .filter(|d| **d != Duty::Heartbeat)
+        .map(|d| d.word().to_owned())
+        .collect();
+    expected.sort();
     assert_eq!(
         due.keys().cloned().collect::<Vec<_>>(),
-        vec!["reconcile".to_owned()],
+        expected,
         "{answer}"
     );
 }

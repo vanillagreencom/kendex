@@ -94,7 +94,11 @@ impl Op {
             | Request::ReleaseLane(_)
             | Request::RecordOutcome(_)
             | Request::RecordPhase(_)
-            | Request::RecordProgress(_) => None,
+            | Request::RecordProgress(_)
+            | Request::RecordDirectiveSend(_)
+            | Request::RecordWallPauses(_)
+            | Request::AdmitPaths(_)
+            | Request::PruneRecords(_) => None,
         }
     }
 

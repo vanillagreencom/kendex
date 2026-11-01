@@ -15,6 +15,7 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, Host, Identities, Occupancy, Read};
 use super::{
     Effect, Env, OutcomeRecorded, RecordOutcome, Standing, intents, lane_at, lane_doc_mut, lanes,
@@ -60,9 +61,20 @@ pub struct LaunchLane {
     #[serde(default)]
     pub exclude_account: Option<String>,
     /// The opening instruction, read by the harness at its start. Not a
-    /// record field: the effect carries it to the launch.
+    /// record field: the effect carries it to the launch, and the
+    /// admission reads the paths it names (decision 118 (4)).
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
+    /// The checkout the change-scope paths are read in, for `scope_range`.
+    #[serde(default)]
+    pub repo_dir: Option<PathBuf>,
+    /// The diff range whose changed paths join the touched set.
+    #[serde(default)]
+    pub scope_range: Option<ScopeRange>,
+    /// The paths the brief names in scope as append-only additions: a
+    /// holder of one does not hold the launch. Recorded as `in_scope`.
+    #[serde(default)]
+    pub in_scope: Vec<String>,
 }
 
 impl LaunchLane {
@@ -427,6 +439,31 @@ pub(super) fn launch_lane(
         // (decision 97): a relaunch over one would make a second.
         no_live_harness(previous, ids)?;
     }
+    // The admission judgement (decisions 118 (3), (4), (6)), under the
+    // same launch lock and before the cap, so one transition admits or
+    // refuses with one cause: a first launch is judged on its item, its
+    // brief and the range it names; a relaunch keeps the record's sets,
+    // as the legacy launcher passes a recorded lane's relaunch unjudged.
+    let judged = match position {
+        Some(_) => None,
+        None => Some(admission::judge(
+            path,
+            &lanes,
+            &intents,
+            &Admission {
+                item: &r.item,
+                tracker: r.tracker.as_deref(),
+                repo: r.repo.as_deref(),
+                brief_file: r.brief_file.as_deref(),
+                repo_dir: r.repo_dir.as_deref(),
+                scope_range: r.scope_range.as_ref(),
+                in_scope: &r.in_scope,
+                paths: &[],
+            },
+            env,
+            host,
+        )?),
+    };
     if admission.occupancy >= host.lane_cap && r.over_cap.is_none() {
         let lanes = admission
             .charges
@@ -473,7 +510,11 @@ pub(super) fn launch_lane(
         None => {
             let rows = state::array_mut(path, doc, "lanes")?;
             rows.push(new_lane_record(r, &at));
-            rows.len() - 1
+            let index = rows.len() - 1;
+            if let Some(judged) = &judged {
+                admission::record(path, doc, index, judged)?;
+            }
+            index
         }
     };
     let mut intent = new_intent(EffectOp::LaunchLane, &r.item, env)?;
@@ -1122,12 +1163,19 @@ mod tests {
                 "running_at",
                 "status",
                 "over_cap",
-                "launch"
+                "launch",
+                "touched",
+                "in_scope"
             ]
         );
         assert_eq!(record["kind"], Value::from("local"));
         assert_eq!(record["surface"], Value::from("tmux"));
         assert_eq!(record["repo"], Value::Null);
+        // The admission's sets, judged on an item naming no Location: empty,
+        // and no obligation key where none was recorded.
+        assert_eq!(record["touched"], json!([]));
+        assert_eq!(record["in_scope"], json!([]));
+        assert!(record.get("rebase").is_none());
         let body = fleet(&path);
         assert_eq!(body.lanes.len(), 2);
         assert_eq!(body.intents.len(), 1);
@@ -1269,6 +1317,7 @@ mod tests {
             claim_store: None,
             still_runs: &process::still_runs,
             pane_foreground: &no_pane,
+            admission: Some(no_reads()),
         }
     }
 
@@ -1491,6 +1540,7 @@ mod tests {
         let host = Host {
             lane_cap: 1,
             claim_store: None,
+            admission: Some(no_reads()),
             still_runs: &unread,
             pane_foreground: &no_pane,
         };

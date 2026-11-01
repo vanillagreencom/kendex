@@ -16,7 +16,9 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+mod support;
+
+use std::process::Output;
 
 use orch_runtime::error::Error;
 use orch_runtime::ops::{Env, Request, VerifyHead, apply};
@@ -42,10 +44,6 @@ const WORKFLOW_PATH: &str = ".github/workflows/required.yml";
 /// `repository_id`.
 const SOURCE_REPO: &str = "owner/source";
 const SOURCE_REPO_ID: u64 = 7;
-
-fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_orch-runtime"))
-}
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -547,9 +545,8 @@ impl Github {
         )
         .unwrap();
         let inherited = std::env::var("PATH").unwrap_or_default();
-        Command::new(binary())
+        support::isolated()
             .args(["--state-dir", &self.dir.path().display().to_string()])
-            .arg("--no-private-env")
             .arg("op")
             .args(target)
             .arg("--request")
@@ -557,7 +554,6 @@ impl Github {
             .env("PATH", format!("{}:{inherited}", fixtures().display()))
             .env("GH_FAKE_REPLIES", &replies)
             .env("GH_FAKE_LOG", self.dir.path().join("gh.log"))
-            .env("ORCH_STATE_DIR", "")
             .current_dir(self.dir.path())
             .output()
             .unwrap()

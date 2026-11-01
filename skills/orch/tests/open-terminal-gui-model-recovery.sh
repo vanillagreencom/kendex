@@ -11,8 +11,11 @@ source "$TEST_ROOT/skills/orch/tests/lib/shared-skill-libs.sh"
 source "$TEST_ROOT/skills/orch/tests/lib/growth-state.sh"
 source "$TEST_ROOT/skills/orch/scripts/lib/lane-state.sh"
 source "$TEST_ROOT/skills/orch/scripts/lib/lane-launch.sh"
+source "$TEST_ROOT/skills/orch/tests/lib/open-terminal-stubs.sh"
 
 mkdir -p "$TMP_ROOT/bin/hold"
+# The orch runtime every fleet launch asks for its admission: admitted.
+ot_stub_runtime "$TMP_ROOT/bin"
 fixture_named_process "$TMP_ROOT/bin/hold/claude"
 cat > "$TMP_ROOT/bin/claude" <<'HARNESS'
 #!/usr/bin/env bash

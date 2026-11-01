@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 #
 # The stub commands an open-terminal suite puts ahead of PATH: worktree, gh,
-# tmux, sleep and ghostty. Each but sleep logs what the launcher asked of it
+# tmux, sleep and ghostty, and the orch runtime the launcher asks for its
+# admission judgement, named by ORCH_RUNTIME_CLI. Each but sleep logs what the launcher asked of it
 # and answers as the real command would, so a row reads the windows a launch
 # opened, the lines it typed and the worktrees it created without opening a
 # real window; sleep logs nothing, and returns at once for a whole-second
@@ -15,9 +16,41 @@
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
 # this file out of the run.
 
-# ot_stub_bin DIR — writes those stubs into DIR, which it creates.
+# ot_stub_runtime DIR — writes the orch-runtime stub into DIR and names it
+# as ORCH_RUNTIME_CLI for every open-terminal the suite runs. It answers the
+# two questions the launcher asks: `admit` with an admitted judgement, the
+# request's in_scope echoed and an empty touched set, or with the reply at
+# $OT_RUNTIME_ADMIT where a row plants one; `state inspect` with the reply
+# at $OT_RUNTIME_REPLY, else no open intent. Every request file's content
+# is appended to $OT_RUNTIME_LOG where set, so a row can read what the
+# launcher asked. Anything else is a runtime not set up, exit 69.
+ot_stub_runtime() {
+mkdir -p "$1"
+cat > "$1/orch-runtime" <<'STUBEOF'
+#!/usr/bin/env bash
+request=""
+for ((i = 1; i <= $#; i++)); do
+  [[ "${!i}" != --request ]] || { j=$((i + 1)); request="${!j}"; }
+done
+[[ -z "${OT_RUNTIME_LOG:-}" || -z "$request" ]] || cat -- "$request" >> "$OT_RUNTIME_LOG"
+case " $* " in
+  *' admit '*)
+    if [[ -n "${OT_RUNTIME_ADMIT:-}" ]]; then cat -- "$OT_RUNTIME_ADMIT"; exit "${OT_RUNTIME_ADMIT_EXIT:-0}"; fi
+    jq -c '{protocol: "orch-runtime-v1", ok: true, result: {touched: [], in_scope: (.in_scope // []), rebase: [], recorded: false}}' -- "$request" ;;
+  *' state inspect '*)
+    if [[ -n "${OT_RUNTIME_REPLY:-}" ]]; then cat -- "$OT_RUNTIME_REPLY"; else echo '{"ok":true,"result":{"open_intents":[]}}'; fi ;;
+  *) printf 'orch-runtime: setup-required key=none\n' >&2; exit 69 ;;
+esac
+STUBEOF
+chmod +x "$1/orch-runtime"
+export ORCH_RUNTIME_CLI="$1/orch-runtime"
+}
+
+# ot_stub_bin DIR — writes those stubs into DIR, which it creates, the
+# runtime stub among them.
 ot_stub_bin() {
 mkdir -p "$1"
+ot_stub_runtime "$1"
 # `worktree create` hands back a fresh directory beside its log, under the
 # run the suite's trap removes, and logs the call, so a row can assert that
 # no worktree was created when the lane refused.

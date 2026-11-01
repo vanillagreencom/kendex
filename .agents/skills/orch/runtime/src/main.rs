@@ -81,6 +81,18 @@ enum Verb {
         #[command(subcommand)]
         op: WatchOp,
     },
+    /// Judge the paths a running lane adds, or a launch before its record
+    /// stands, against the fleet's holders under the launch lock, and widen
+    /// the lane record where one stands (decisions 118 (3), 142 (4)).
+    Admit {
+        #[command(flatten)]
+        target: Target,
+        /// A JSON `admit-paths` request: the item, its tracker and
+        /// repository, the paths added, the brief, the checkout and range
+        /// the change-scope paths are read over, and the in-scope paths.
+        #[arg(long)]
+        request: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -103,6 +115,10 @@ enum WatchOp {
         /// `OVERSEE_WATCH_REPLACE`.
         #[arg(long)]
         replace: Option<u32>,
+        /// A repository (`owner/repo`) the GitHub inventories read beside
+        /// the lanes' own and the connected ones; the legacy `--repo`.
+        #[arg(long = "repo")]
+        repos: Vec<String>,
     },
     /// The claim and whether its identity runs, the due times the records
     /// imply, and the last event line's number.
@@ -241,7 +257,9 @@ fn parse_array(text: Option<&str>) -> Result<Option<serde_json::Value>> {
     }
 }
 
-fn read_request(path: &PathBuf) -> Result<Request> {
+/// The JSON request at `path`, as `T`: an operation request, or the
+/// `admit` verb's.
+fn read_request<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T> {
     let bytes = std::fs::read(path)
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("read-request", path.clone(), e)))?;
     serde_json::from_slice(&bytes).map_err(|e| Error::Request {
@@ -375,16 +393,22 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             )?)?
         }
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
+        Verb::Admit { target, request } => {
+            let settings = resolve_settings(&flags)?;
+            let path = target_path(&target, &settings);
+            let request: ops::AdmitPaths = read_request(&request)?;
+            let env = system_env()?;
+            serde_json::to_value(admit(&path, &request, &env, locking, &settings)?)?
+        }
     };
     Ok(value)
 }
 
 /// The `watch` verbs. `run` claims as this process's identity (decision
 /// 99), records the legacy claim fields (the pane it serves, its program and
-/// directory, its arguments) and registers the two duties this runtime
-/// builds itself: the heartbeat and the reconcile of every open intent on
-/// the long cadence (decision 121, Q4); the later duties register theirs
-/// here as they land.
+/// directory, its arguments) and registers every duty, one registration
+/// line each (decision 153 (2)): the reconcile of every open intent on the
+/// long cadence (decision 121, Q4) and the duties under `watch/`.
 fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
     let settings = resolve_settings(flags)?;
     let clock = schedule::SystemClock;
@@ -395,6 +419,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             max_loops,
             since,
             replace,
+            repos,
         } => {
             let path = target_path(&target, &settings);
             let paths = watch::Paths::of(&path)?;
@@ -427,14 +452,51 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 watch::Flags {
                     interval: std::time::Duration::from_secs(interval),
                     max_loops,
-                    since,
+                    since: since.clone(),
                     replace,
                 },
                 identity,
                 record,
             );
+            // The tracker read duty (U5e): the inventories once per pass,
+            // the terminal closes, the heartbeat's inputs; the GitHub duty
+            // (U5e2) shares its slot.
+            let shared = watch::tracker::register(
+                &mut runner,
+                &path,
+                &settings,
+                &env,
+                locking,
+                since.clone(),
+            )?;
+            // U5f: the verification duty on the tracker's slot, the
+            // heartbeat's body on both slots, the report and the retention.
+            let verifying = watch::verifying::register(&mut runner, &settings, shared.clone());
+            watch::heartbeat::register(
+                &mut runner,
+                &settings,
+                std::time::Duration::from_secs(interval),
+                max_loops,
+                since.clone(),
+                repos.clone(),
+                shared.clone(),
+                verifying,
+            );
+            watch::report::register(&mut runner, &path, &settings, repos.clone());
+            watch::retention::register(&mut runner, &path, &settings, locking)?;
+            watch::github::register(&mut runner, &path, &settings, since.clone(), repos, shared)?;
+            watch::mail::register(&mut runner, &path, &settings)?;
             let reconcile_settings = settings.clone();
             let nonce = env.nonce;
+            watch::overseer::register(
+                &mut runner,
+                &path,
+                &settings,
+                &env,
+                locking,
+                watch::overseer::Slot::new(),
+            );
+            watch::wake::register(&mut runner, &path, &settings);
             runner.register(
                 schedule::Duty::Reconcile,
                 Box::new(move |tick: &watch::Tick| {
@@ -575,8 +637,44 @@ fn persist(
     locking: Locking,
     settings: &Settings,
 ) -> Result<ops::Applied> {
-    let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+    let host = kernel_host(settings);
     ops::apply_on(path, request, env, locking, &host)
+}
+
+/// The host a fleet transition judges against: the cap, the legacy claim
+/// store, the kernel's reads and the programs the admission reads through.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one construction of the kernel host, handed to the store entries alone"
+)]
+fn kernel_host(settings: &Settings) -> ops::Host<'static> {
+    ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone())).admitting(ops::Clis {
+        tracker: settings.reads.tracker_cli.clone(),
+        gh: PathBuf::from("gh"),
+        scope_paths: settings.scope_paths_cli.clone(),
+    })
+}
+
+/// The `admit` verb's one store entry: the judgement committed under the
+/// launch lock (decision 108 (5)) through the one dispatcher.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one admission store entry; no effect runs after it"
+)]
+fn admit(
+    path: &Path,
+    request: &ops::AdmitPaths,
+    env: &Env,
+    locking: Locking,
+    settings: &Settings,
+) -> Result<ops::PathsAdmitted> {
+    let host = kernel_host(settings);
+    let request = ops::Request::AdmitPaths(Box::new(request.clone()));
+    let applied = ops::apply_on(path, &request, env, locking, &host)?;
+    match applied.report {
+        ops::Report::AdmitPaths(admitted) => Ok(*admitted),
+        other => unreachable!("an admit-paths request reports its admission, not {other:?}"),
+    }
 }
 
 /// Exit status of a usage error, clap's convention.
