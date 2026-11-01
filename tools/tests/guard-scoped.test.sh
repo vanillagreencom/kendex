@@ -229,8 +229,9 @@ done
 # declares FIXTURE_AREA_KEY, commented out, and no test of it names the key;
 # no example declares FIXTURE_LOOSE_KEY. skills/second-opinion declares its
 # reviewer key family alone, and no test of it names a key. tools/ holds a
-# copier noting the file alone and one noting it first in a comma list.
-printf '\nFIXTURE_READ_KEY = "a"\nFIXTURE_AREA_KEY = "b"\nFIXTURE_LOOSE_KEY = "c"\n' >> "$R/kendex.settings.toml"
+# copier noting the file alone and one noting it first in a comma list. Every
+# key a row edits is appended here, never one of the copied live file.
+printf '\nFIXTURE_READ_KEY = "a"\nFIXTURE_AREA_KEY = "b"\nFIXTURE_LOOSE_KEY = "c"\nSECOND_OPINION_FIXTURE_CMD = "d"\n' >> "$R/kendex.settings.toml"
 mkdir -p "$R/skills/settings/tests" "$R/skills/area/tests" "$R/skills/second-opinion/tests"
 printf '[env]\n# keys: SECOND_OPINION_<NAME>_CMD SECOND_OPINION_<NAME>_MODEL\n' > "$R/skills/second-opinion/kendex.settings.toml.example"
 printf '[env]\nFIXTURE_READ_KEY = "a"\n' > "$R/skills/settings/kendex.settings.toml.example"
@@ -253,7 +254,7 @@ settings_change() { # CHANGE: one edit of the settings world, then a clean SUITE
     read-key) sed -i.bak 's/^FIXTURE_READ_KEY = "a"$/FIXTURE_READ_KEY = "z"/' "$R/kendex.settings.toml" ;;
     area-key) sed -i.bak 's/^FIXTURE_AREA_KEY = "b"$/FIXTURE_AREA_KEY = "z"/' "$R/kendex.settings.toml" ;;
     loose-key) sed -i.bak 's/^FIXTURE_LOOSE_KEY = "c"$/FIXTURE_LOOSE_KEY = "z"/' "$R/kendex.settings.toml" ;;
-    family-key) sed -i.bak 's/^SECOND_OPINION_PI_COPILOT_GPT_CMD = "/&z /' "$R/kendex.settings.toml" ;;
+    family-key) sed -i.bak 's/^SECOND_OPINION_FIXTURE_CMD = "d"$/SECOND_OPINION_FIXTURE_CMD = "z"/' "$R/kendex.settings.toml" ;;
     foreign-table) printf '[other]\nFIXTURE_READ_KEY = "z"\n' >> "$R/kendex.settings.toml" ;;
     comment) printf '# changed\n\n' >> "$R/kendex.settings.toml" ;;
     noted-example) printf '# changed\n' >> "$R/skills/settings/kendex.settings.toml.example" ;;
