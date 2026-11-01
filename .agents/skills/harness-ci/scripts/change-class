@@ -187,7 +187,8 @@
 #            allowlist as blank-separated globs, it replaces that set, within
 #            the same ceiling. A changed kendex.settings.toml or
 #            .kendex/settings.toml joins the set where the base commit's
-#            HARNESS_CI_TRIVIAL_SETTINGS admits it, below.
+#            HARNESS_CI_TRIVIAL_SETTINGS admits it, below; a diff of
+#            admitted settings files alone has no ceiling.
 #   micro    production additions within the micro ceiling.
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
@@ -231,9 +232,10 @@
 # lines and [env] assignments of keys a glob names. A key in the settings
 # this script reads from the base, or any HARNESS_CI_* key, never
 # qualifies, whatever the globs say, so a change to the allowlist itself is
-# refused. Unset or blank, no key qualifies. The trivial rule then
-# judges every other changed path and the ceiling as it does for any diff,
-# with no agent instruction file beside it, and answers
+# refused. Unset or blank, no key qualifies. A diff of admitted settings
+# files alone is trivial at any line count. Beside any other path, the trivial rule
+# judges those paths and the ceiling, over the whole diff, as it does for any
+# diff, with no agent instruction file beside it. It answers
 # `cause=allowlisted-settings settings=<file>[,<file>] keys=<key>[,<key>]|-
 # lines=<n>`, keys naming those whose loaded value differs. harness-only's
 # refusals, cause=base-inventory-absent and an empty path list answer ahead
@@ -984,8 +986,8 @@ fi
 # The settings admission the header states. A key no CI job reads decides no
 # render or classifier input, the reason a configuration source is refused.
 # A table other than [env] counts as a change: the reader ignores it and
-# other tools may read it. The ceiling is read at the trivial rule below,
-# and answer() turns any other class an admitted change reaches into the
+# other tools may read it. The trivial rule below reads the ceiling where
+# any other path is beside the admitted files, and answer() turns any other class an admitted change reaches into the
 # refusal.
 settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
 
@@ -1647,7 +1649,14 @@ esac
 # An admitted settings file is a member of the trivial set, and the rule
 # below judges every other changed path. In the docs set, harness-only lists
 # each admitted file outside it, which also shows its list was read.
+# The ceiling bounds what a trivial diff can change unreviewed, and a
+# documentation path can still be one the product reads — compiled into a
+# binary, shipped as a template. Admitted settings bytes are only keys no CI
+# job or gate reads, comments and blanks, so a diff of those files alone
+# holds at any size; beside any other path the whole diff keeps the ceiling.
 trivial_paths="$changed"
+within_trivial=false
+[ "$total" -gt "$trivial_max" ] || within_trivial=true
 docs_trivial=false
 [ "$docs_verdict" != "docs_only=true" ] || docs_trivial=true
 settings_cause=""
@@ -1659,24 +1668,22 @@ if [ -n "$SETTINGS_ADMITTED" ]; then
       *) trivial_paths="$trivial_paths$path"$'\n' ;;
     esac
   done <<<"$changed"
+  [ -n "$trivial_paths" ] || within_trivial=true
   if [ "$docs_verdict" = docs_only=false ] &&
     outside="$(LC_ALL=C sort -u -- "$docs_outside")" && [ "$outside" = "$SETTINGS_FILES" ]; then
     docs_trivial=true
   fi
   settings_cause="cause=allowlisted-settings $SETTINGS_ADMITTED"
 fi
-# The ceiling bounds what a trivial diff can change unreviewed, and a
-# documentation path can still be one the product reads — compiled into a
-# binary, shipped as a template.
 if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
-  if [ "$total" -le "$trivial_max" ]; then
+  if [ "$within_trivial" = true ]; then
     set_globs "$HARNESS_CI_TRIVIAL_PATHS"
     path_matches every "$trivial_paths" &&
       answer_narrow trivial "${settings_cause:-cause=allowlisted-paths} lines=$total"
   fi
 else
   # The shipped allowlist is that mode's own path set, read from its verdict.
-  if [ "$docs_trivial" = true ] && [ "$total" -le "$trivial_max" ]; then
+  if [ "$docs_trivial" = true ] && [ "$within_trivial" = true ]; then
     answer_narrow trivial "${settings_cause:-cause=documentation-paths} lines=$total"
   fi
 fi
