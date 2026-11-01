@@ -191,52 +191,29 @@ ORCH_LANE_OUTPUT = "quiet"
 # start floor and validates warm; one full run writes about 3.0 GiB.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
-# Priority-ordered roster, space/comma separated. Per entry:
-# SECOND_OPINION_<NAME>_CMD (claude and codex have defaults),
-# SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model)
-# and SECOND_OPINION_<NAME>_ROOM_CMD (the check that its account has room).
-# pi-copilot runs Claude Opus on Copilot first, then the native claude entry,
-# then pi-copilot-gpt, GPT on Copilot, so a Claude session whose lane has
-# Copilot room reaches GPT there before codex, the fallback. Room checks and
-# execution failures use that order. The checks assume the orch fleet's
-# accounts, which lanes pick measures; a contributor off the fleet overrides
-# SECOND_OPINION_MODELS in .env.local. Each check runs under
-# ORCH_LANE_HOST=local: the reviewer runs on this machine's login, and a
-# lane-host provider's reading of an account would judge a copy it never
-# spends.
-SECOND_OPINION_MODELS = "pi-copilot claude pi-copilot-gpt codex"
+# The roster, pi-copilot claude pi-copilot-gpt codex, and the two Copilot
+# entries' command, model, room check and inline diff are the package
+# defaults (second-opinion --help). The keys below are kendex's differences:
+# the claude and codex entries pin their model and run on a fleet seat with
+# room. The checks assume the orch fleet's accounts, which lanes pick
+# measures; a contributor off the fleet overrides them in .env.local. Each
+# check runs under ORCH_LANE_HOST=local: the reviewer runs on this machine's
+# login, and a lane-host provider's reading of an account would judge a copy
+# it never spends.
 
 # Opinions a review collects; 2+ unions distinct models on one diff.
 SECOND_OPINION_COUNT = "1"
 
-# Roster commands (identities claude / codex).
+# Claude pinned to Opus 5.5, where the package default takes the standard tier.
 SECOND_OPINION_CLAUDE_CMD = "claude -p --output-format json --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
+# A Claude review runs on the seat lanes pick finds room on; a walled seat is skipped.
 SECOND_OPINION_CLAUDE_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness claude --model claude-opus-5-5"
 
+# Codex pinned to GPT-6.1 Sol, where the package default takes Codex's own.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=xhigh --disable hooks --ephemeral"
-
 # A Codex review runs on the seat lanes pick finds room on, as a codex lane
 # would; a walled seat is skipped.
 SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6.1-sol --binding-floor"
-
-# Claude Opus on the Copilot pool, read-only tools only, on the Pi account
-# ORCH_LANE_COPILOT_POOL states room for; unstated, it is skipped. That
-# reading comes from the settings in the lane's own tree: a hosted lane states
-# it in .env.local until its provider forwards it, and one without it records
-# the check's refusal. With no shell, it is sent the diff inline.
-SECOND_OPINION_PI_COPILOT_CMD = "pi -p --no-session --no-extensions --model github-copilot/claude-opus-5.5 --thinking high --tools read,grep,find,ls"
-SECOND_OPINION_PI_COPILOT_MODEL = "github-copilot/claude-opus-5.5"
-SECOND_OPINION_PI_COPILOT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/claude-opus-5.5"
-SECOND_OPINION_PI_COPILOT_INLINE_DIFF = "1"
-
-# GPT on the Copilot pool through Pi. A room check admits it: only a lane
-# admitted to the Copilot seat holds the Pi Copilot session (fleet D093), so a
-# lane without the seat skips it and goes on to codex. The reviewer has no
-# shell tool (--tools read,grep,find,ls), so it is sent the diff inline.
-SECOND_OPINION_PI_COPILOT_GPT_CMD = "pi -p --no-session --no-extensions --model github-copilot/gpt-6.1-sol --thinking high --tools read,grep,find,ls"
-SECOND_OPINION_PI_COPILOT_GPT_MODEL = "github-copilot/gpt-6.1-sol"
-SECOND_OPINION_PI_COPILOT_GPT_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/gpt-6.1-sol"
-SECOND_OPINION_PI_COPILOT_GPT_INLINE_DIFF = "1"
 
 # Seconds to wait for the external CLI.
 SECOND_OPINION_TIMEOUT = "1080"

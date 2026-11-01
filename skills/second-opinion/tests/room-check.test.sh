@@ -123,4 +123,32 @@ SH
     assert_eq "$(grep -c 'skipping claude: room check refused' "$ROW/stderr")" 1 "$label: selection records the room refusal"
   fi
 done <<<"$CLAUDE_ROWS"
+
+# The stock Copilot entries' default room check with the real chooser, from a
+# Claude session on the package roster: the pool ORCH_LANE_COPILOT_POOL states
+# for a Pi root is what pick judges, and the root it picks is the Pi
+# configuration the stock pi command runs on. Only pi is a fixture.
+# label|pool used/granted|reviewer|Pi root the reviewer ran on
+PI_ROWS='
+GPT on Copilot reviews on the Pi root whose Copilot pool has room|10/100|pi-copilot-gpt|.pi-copilot
+a Copilot pool at its grant is walled and codex reviews|100/100|codex|none
+'
+pi_row=0
+while IFS='|' read -r label pool reviewer root; do
+  [[ -n "$label" ]] || continue
+  pi_row=$((pi_row + 1))
+  build "pi-pool-$pi_row" ps:none current:claude models:- count:1 cmd:claude=claude cmd:codex=codex pi:stub
+  H="$ROW/home"
+  mkdir -p "$H/.pi-copilot" "$PROJ/.agents/skills"
+  ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"
+  printf '{}\n' > "$H/.pi-copilot/settings.json"
+  printf '{}\n' > "$H/.pi-copilot/auth.json"
+  W_ENV+=("LANES_HOME=$H" "ORCH_LANE_COPILOT_POOL=$H/.pi-copilot=$pool" "OVERSEE_WATCH_STATE_DIR=$ROW/state")
+  got="$(run review)"
+  assert_eq "${got%% *}" rc=0 "$label: review completes"
+  assert_eq "$(jq -r '.qa_metadata.attempts | map(.name) | join(",")' "$ROW/out/out.json")" "$reviewer" "$label: artifact names the executed reviewer"
+  expected_root=none
+  [[ "$root" == none ]] || expected_root="$H/$root"
+  assert_eq "$(cat "$ROW/pi-root" 2>/dev/null || printf none)" "$expected_root" "$label: pi runs on the Pi root the chooser picked"
+done <<<"$PI_ROWS"
 finish
