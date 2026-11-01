@@ -35,6 +35,11 @@ REASONS = {
                 "trust-required"},
     "failed": {"launch-failed", "handover-failed"},
 }
+# The full-bypass words each harness's CLI takes for an unattended launch.
+# Pi has none.
+PERMISSION_WORDS = {"claude": {"--dangerously-skip-permissions"}, "codex": {"--dangerously-bypass-approvals-and-sandbox"},
+                    "copilot": {"--allow-all"}, "pi": set()}
+ANY_PERMISSION_WORD = set().union(*PERMISSION_WORDS.values())
 # A blocked answer whose detail tells the person what to do.
 DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required")}
 
@@ -384,6 +389,21 @@ class SessionContract(unittest.TestCase):
                 expected = str(account) if harness == "claude" else (caller or None) if harness == "pi" else None
                 self.assertEqual(native["claude_config_dir"], expected)
                 self.assertEqual(native["excluded_env"], [])
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
+    def test_unattended_start_posture(self):
+        # The home's setting decides the launch line's permission words.
+        settings = self.home / "kendex.settings.toml"
+        for harness, named, unattended in (("claude", "claude", True), ("codex", " pi , codex ", True),
+                                           ("copilot", "copilot", True), ("pi", "pi", False),
+                                           ("claude", "", False), ("claude", "codex,copilot", False)):
+            with self.subTest(harness=harness, named=named):
+                settings.write_text('[env]\nJARVIS_UNATTENDED_HARNESSES = "' + named + '"\n')
+                self.call("start", harness, mode="new")
+                self.wait()
+                words = set(self.started()[-1]["argv"]) & ANY_PERMISSION_WORD
+                self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
 

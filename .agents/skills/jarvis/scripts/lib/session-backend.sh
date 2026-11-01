@@ -67,8 +67,9 @@ case "$verb" in
         ol_preference_entries "$(ol_preference)" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
         OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
         OL_WALK_CALLER_MODEL="$model" OL_WALK_CALLER_PICK_MODEL="$model" OL_WALK_CALLER_EFFORT="$effort"
-        # Select only. Jarvis launches native permission defaults and transfers
-        # no predecessor flags, so this asks the walk about harness rows alone.
+        # Select only. prepare writes the launched harness's own permission
+        # words from the home's setting and carries no predecessor words, so
+        # this asks the walk about harness rows alone.
         OL_WALK_SOURCE_HARNESS="$harness" OL_WALK_SOURCE_ROWS=1
         OL_WALK_REFUSE_ID="$(ol_account_id "$account")"
         walk_rc=0
@@ -159,8 +160,24 @@ case "$verb" in
     lane_trust_prepare "$harness" "$account" "$home" || exit 1
     lane_session_command "$harness" "$id" "$file" || exit 1
     cmd="$LANE_SESSION_CMD" var="$LANE_SESSION_ACCOUNT_VAR"
-    if [[ -n "${8:-}${9:-}" ]]; then
-      flags="$(launch_choice_write "$harness" "${8:-}" "${9:-}")" || exit 1
+    # The home names the harnesses whose managed session runs with nobody at
+    # its pane. The subshell reads that one key, so no other home setting
+    # reaches this launch.
+    unattended="$(
+      source "$ROOT/jarvis/scripts/lib/jarvis-env.sh" || exit 1
+      jarvis_load "$home" || exit 1
+      IFS=, read -r -a named <<<"${JARVIS_UNATTENDED_HARNESSES:-}"
+      for entry in ${named[@]+"${named[@]}"}; do
+        kendex_trim entry "$entry"
+        [[ "$entry" != "$harness" ]] || printf 'named\n'
+      done
+    )" || exit 1
+    flags="$(launch_choice_write "$harness" "${8:-}" "${9:-}")" || exit 1
+    if [[ -n "$unattended" ]]; then
+      permission="$(launch_choice_permission_write "$harness")" || exit 1
+      flags="${flags:+$flags }$permission"
+    fi
+    if [[ -n "$flags" ]]; then
       launch_choice_shell_words "$flags" || exit 1
       flags="$(printf ' %q' ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})" || exit 1
       cmd="$harness$flags${cmd#"$harness"}"

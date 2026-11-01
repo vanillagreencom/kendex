@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 import session_test
-from session_test import SessionContract, SKILLS
+from session_test import ANY_PERMISSION_WORD, PERMISSION_WORDS, SessionContract, SKILLS
 from fixtures.harness import native_launcher
 
 
@@ -57,6 +57,9 @@ print(json.dumps({"config_dir": row["account"]}))
     def test_succession_contract(self):
         # Real tmux and the native hook carrier; CLI behaviour is a fixture.
         # One table covers every launch shape, including deferred kickoff.
+        # Every harness is named unattended, so each successor launch line
+        # carries its own harness's permission words.
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_UNATTENDED_HARNESSES = "claude,codex,copilot,pi"\n')
         for harness in ("claude", "codex", "copilot", "pi"):
             with self.subTest(harness=harness):
                 self.call("start", harness=harness, mode="new")
@@ -82,6 +85,7 @@ print(json.dumps({"config_dir": row["account"]}))
                 self.assertEqual(Path(successor["transfer"]["handoff"]).read_text(), contents)
                 self.assertEqual((self.home / "state/handoff.md").read_text(), contents)
                 self.assertEqual(len(self.started()), native_count + 1)
+                self.assertEqual(set(self.started()[-1]["argv"]) & ANY_PERMISSION_WORD, PERMISSION_WORDS[harness])
                 pid = predecessor["process"]["pid"]
                 result = subprocess.run([self.env["JARVIS_TEST_BASH"], str(SKILLS / "jarvis/scripts/lib/session-backend.sh"),
                                          "worker-live", str(pid), predecessor["process"]["started_at"]],
@@ -108,8 +112,11 @@ print(json.dumps({"config_dir": row["account"]}))
         self.record.write_text(json.dumps(saved))
 
     def test_account_succession(self):
-        for state, headroom, target in (("walled", 0, "claude"), ("walled", 0, "codex"), ("low", 4, "codex"),
-                                        ("walled", 0, "copilot"), ("shared-reserve", 20, "claude"), ("app-missing", 0, "codex")):
+        # unattended is the home's setting: a successor carries its own
+        # harness's permission words only when the setting names it.
+        for state, headroom, target, unattended in (("walled", 0, "claude", ""), ("walled", 0, "codex", "codex"),
+                                                    ("low", 4, "codex", "claude"), ("walled", 0, "copilot", "copilot"),
+                                                    ("shared-reserve", 20, "claude", ""), ("app-missing", 0, "codex", "")):
             with self.subTest(state=state, target=target):
                 self.call("start", mode="new")
                 previous = self.wait()
@@ -122,7 +129,8 @@ print(json.dumps({"config_dir": row["account"]}))
                 calls = self.root / ("picks-" + state + "-" + target)
                 (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom,
                                                                           "shared": state == "shared-reserve"}))
-                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high,copilot:standard:high"\n')
+                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high,copilot:standard:high"\n'
+                                                                'JARVIS_UNATTENDED_HARNESSES = "' + unattended + '"\n')
                 # Model classification is kendex's external boundary. Preserve
                 # native defaults for these class entries, as its protocol does.
                 kendex = self.root / "bin/kendex"
@@ -170,6 +178,7 @@ print(json.dumps({"config_dir": row["account"]}))
                         self.assertNotIn("--binding-floor", query)
                 self.assertEqual(queries[-1][queries[-1].index("--harness") + 1], target)
                 argv = self.started()[-1]["argv"]
+                self.assertEqual(set(argv) & ANY_PERMISSION_WORD, PERMISSION_WORDS[target] if unattended == target else set())
                 if not kept:
                     if target == "claude":
                         self.assertIn("--model", argv)
