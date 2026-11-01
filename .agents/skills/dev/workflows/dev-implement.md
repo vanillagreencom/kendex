@@ -140,7 +140,7 @@ Implement per your domain expertise and run quality gates before completion.
 
 Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
-When writing a new or changed check, apply [code-quality § Tests](../../code-quality/SKILL.md#tests) at this step.
+When writing a new or changed check, apply [code-quality § Tests](../../code-quality/SKILL.md#tests) at this step, its protection-against-cost and time-injection rules included: each real-clock wait and real device effect the check performs is part of its cost.
 
 - **Scope growing?** Report the discovered scope in § 9 for every tracker; never create issues here. Follow [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination) for issue creation.
 - **Work outside scope?** Note it under Discovered Work in § 9.
@@ -178,6 +178,8 @@ The validation gate is this complete list:
 - `fleet-mac-run test` passes once for an item the Apple gate in `dev-return-write --help` names, run through the orch job runner as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. The gate names an item when the base branch holds its workflow and an entry of the delegation's `Labels:` line, or a path the branch changes, matches its trigger. Fleet installs `fleet-mac-run` on the `PATH` of a lane in a repository it runs Apple builds for. A nonzero exit, or no `fleet-mac-run` on `PATH`, is `FAILING: mac run test`. A pass is the `--validate-note` line `mac run test: pass run=[RUN_ID]`, with the run id `fleet-mac-run` prints. An item the gate does not name runs nothing here.
 - A `ci` run accepts completed local edits and records CI as pending. Where the project sets `DEV_VALIDATE_SELECTION_CMD`, it first runs that selector's changed-file suites once, scoped, at the round's final contents, and a red scoped run is a failing `validate=` value like any other. It starts no local full command and waits on no unpublished head. This does not satisfy a CI gate; submit's existing § 5 wait proves the required checks on the exact published head.
 - After the dev agent returns its local result, the orchestrator gets green CI and a passing review gate. The dev agent does not claim or reproduce these downstream results.
+
+Read the run's selection and per-check time, where the project's output reports them, against [code-quality § Tests](../../code-quality/SKILL.md#tests): they are evidence for its selection and protection-against-cost rules, never a limit on the round, and change no verdict. Report under § 9's Discovered Work a shared-input change that selected every check where the entry point could trace which checks reach it, and a selected check outside this round's changes whose time goes to a real-clock wait or a real device effect its claim does not need.
 
 A start `dev-validate-run` refuses as `run-live`, with exit 2 and the line `dev-validate-run: run-live run-dir=[RUN_DIR] pid=[PID]`, ran nothing: another run in the worktree still holds the host. It is no verdict on the change, never a validation failure, and does not end the round. Wait for that run with `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, polled as a cut-off start is, or end it with `.agents/skills/orch/scripts/dev-validate-run --stop --worktree [WORKTREE_PATH]` where it belongs to an abandoned round, then start the run again. The verdict of a run that refusal named is this round's only where this round started that run.
 
