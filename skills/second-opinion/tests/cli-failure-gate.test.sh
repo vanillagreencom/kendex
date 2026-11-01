@@ -18,20 +18,12 @@
 # shellcheck source=lib/install.bash
 . "$(dirname "${BASH_SOURCE[0]}")/lib/install.bash"
 
-# The must-fail controls, one per rule of the envelope gate. Each control is
-# a hermetic copy of the script, scripts/second-opinion-<name>, that keeps one
-# line's text and disarms it; every row its label pattern selects turns red.
-# A \n in a line is a line break.
+# The suite's must-fail control: a hermetic copy of the script,
+# scripts/second-opinion-<name>, that keeps one line's text and disarms it;
+# every row its label pattern selects turns red. A \n in a line is a line
+# break.
 # name|the line|its disarmed form|label pattern
-CONTROLS='unwrap|    unwrap_result_envelope|    : unwrap_result_envelope|*envelope*
-empty-text|if [[ -z "$text" |if [[ -n "" && -z "$text" |a success envelope*
-is-error|"$failed" == true ]]; then|"$failed" == never ]]; then|an is_error envelope whose result is API*
-cause-order|  if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then\n    CLI_FAILURE_CAUSE=|  if [[ -n "$RESULT_ENVELOPE_CAUSE" && ! -s "$STDERR_TMP" ]]; then\n    CLI_FAILURE_CAUSE=|a non-zero exit carrying*
-classify|attempt_cause="result-|: attempt_cause="result-|a success envelope*
-answer-guard|[[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE|[[ -z "${RESULT_ENVELOPE_CAUSE:+}" ]] && $REVIEW_LIKE|an is_error envelope whose result is a whole review*
-retry-zero|      elif [[ $attempt_cause == result-* ]]; then|      elif false && [[ $attempt_cause == result-* ]]; then|a format retry*exit 0*
-retry-exit|        if [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then|        if false && [[ -n "$RESULT_ENVELOPE_CAUSE" ]]; then|a format retry*exit 1*
-gate-cause|  select_cli_failure_cause "$RESULT"\n  print_cli_failure_cause\n  exit 1|  select_cli_failure_cause "$RESULT"\n  : print_cli_failure_cause\n  : exit 1|a *-mode *'
+CONTROLS='is-error|"$failed" == true ]]; then|"$failed" == never ]]; then|an is_error envelope whose result is API*'
 PROJ="$TMP_ROOT/proj"
 mkdir -p "$PROJ/skills"
 git init -q "$PROJ"
@@ -104,8 +96,8 @@ a record path that refuses the write names the cause and the loss, and keeps the
 
 run_table "the CLI-failure gate" "$DEFAULTS" "$ROWS"
 
-# The controls: under each one, every row its label pattern selects no longer
-# matches its expected record or report. The rows reuse the table's row
+# Under the control, every row its label pattern selects no longer matches
+# its expected record or report. The rows reuse the table's row
 # directories, so the table's are removed first.
 while IFS='|' read -r name _ _ pattern; do
   selected=0

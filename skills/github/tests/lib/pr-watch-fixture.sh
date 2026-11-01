@@ -250,8 +250,6 @@ if [ "$*" = "+%s" ]; then printf '%s\n' "$WATCH_NOW"; exit 0; fi
 exec "$REAL_DATE" "$@"
 EOF
 chmod +x "$TMP_ROOT/bin/date"
-FUTURE_EPOCH="$(date -u -d '2030-01-01T00:00:00Z' +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' '2030-01-01T00:00:00Z' +%s)"
-FUTURE_SKEW=$((FUTURE_EPOCH - WATCH_NOW))
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 OLD='2026-01-01T00:00:00Z'
@@ -286,11 +284,9 @@ run_watch() {
 #   subjects         PR number and head prefix of each finding, or none
 #   threads          the count a threads-open line reports, or `overflow`
 #   queued_notes     finding lines carrying the queued dequeue note
-#   protocol         whole stdout record, tabs as ~, spaces as +, lines as ;
-#   error_payload    complete error TSV record when attention precedes it
 #   diagnostic       exact global refusal record, spaces as +
 observe() {
-  local got="" token name value field_sep='~'
+  local got="" token name value
   for token in $1; do
     name="${token%%=*}"
     case "$name" in
@@ -302,16 +298,8 @@ observe() {
         else value="$(grep -o '[0-9]* unresolved review thread' <<<"$OUT" | head -1 | grep -o '^[0-9]*' || true)"; value="${value:-none}"; fi
         ;;
       queued_notes) value="$(grep -c 'QUEUED: dequeue' <<<"$OUT" || true)" ;;
-      protocol)
-        value="${OUT//$'\t'/$field_sep}"
-        value="${value//$'\n'/;}"
-        value="${value// /+}" ;;
       diagnostic)
         value="$(sed -n '/^review-gate-error=/p' <<<"$OUT")"
-        value="${value// /+}" ;;
-      error_payload)
-        value="$(awk -F'\t' '$3 == "error" {print}' <<<"$OUT")"
-        value="${value//$'\t'/$field_sep}"
         value="${value// /+}" ;;
       *) value=UNKNOWN_FIELD ;;
     esac

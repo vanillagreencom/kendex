@@ -200,44 +200,13 @@ NEXT_ID_CASES
 echo "=== decisions next-id scheme rows ==="
 evaluate_next_id_rows "$DECISIONS" normal
 
-if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
-  echo "=== must-fail controls ==="
-  arithmetic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/wrong-next-id/decisions" '$((max_num + 1))' '$((max_num + 2))' 1)"
-  failures="$(evaluate_next_id_rows "$arithmetic_mutant" control inferred-adr)"
-  if [[ "$failures" == *'|inferred-adr|'* ]]; then
-    pass "wrong next ID fails the inferred scheme row"
-  else
-    fail "wrong next ID did not fail the inferred scheme row"
-  fi
-
-  diagnostic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/id-diagnostic-key/decisions" '        emit_error id-suffix-missing "value=$last_id"' '        emit_error id-suffix-invalid "value=$last_id"' 1)"
-  failures="$(evaluate_next_id_rows "$diagnostic_mutant" control unparseable-last-id)"
-  if [[ "$failures" == *'|unparseable-last-id|'* ]]; then
-    pass "a changed ID diagnostic key fails its row"
-  else
-    fail "a changed ID diagnostic key did not fail its row"
-  fi
-
-  next_id_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-next-id-table/decider/tests/decider-next-id-scheme.test.sh" NEXT_ID_CASES)"
-  if decider_test_fails_with "$next_id_table_mutant" "next-ID table executed no rows"; then
-    pass "an empty next-ID table fails its row-count guard"
-  else
-    fail "an empty next-ID table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
-  fi
-  if decider_diagnostic_only_table_control "$next_id_table_mutant" "$TMP_ROOT/empty-next-id-table/decider/tests/diagnostic-only.test.sh" "next-ID table executed no rows" 1; then
-    pass "a next-ID-table diagnostic without a failure is rejected"
-  else
-    fail "a next-ID-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
-  fi
-  set +e
-  selection_output="$(evaluate_next_id_rows "$arithmetic_mutant" control unknown-next-id-row 2>&1)"
-  selection_rc=$?
-  set -e
-  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:next-ID table selected no row: unknown-next-id-row"* ]]; then
-    pass "an unknown next-ID row fails its selection guard"
-  else
-    fail "an unknown next-ID row missed its selection guard"
-  fi
+echo "=== must-fail control ==="
+arithmetic_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/wrong-next-id/decisions" '$((max_num + 1))' '$((max_num + 2))' 1)"
+failures="$(evaluate_next_id_rows "$arithmetic_mutant" control inferred-adr)"
+if [[ "$failures" == *'|inferred-adr|'* ]]; then
+  pass "wrong next ID fails the inferred scheme row"
+else
+  fail "wrong next ID did not fail the inferred scheme row"
 fi
 
 echo

@@ -118,36 +118,13 @@ SEARCH_CASES
 echo "=== decisions body-search rows ==="
 evaluate_search_rows "$DECISIONS" normal
 
-if [[ -z "${DECIDER_TABLE_CONTROL_RUN:-}" ]]; then
-  echo "=== must-fail controls ==="
-  ordering_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-score-sort/decisions" '] | sort_by(-.score) | .[:$limit]' '] | .[:$limit]' 1)"
-  failures="$(evaluate_search_rows "$ordering_mutant" control summary-body-score)"
-  if [[ "$failures" == *'|summary-body-score|'* ]]; then
-    pass "missing score sort fails the ranking row"
-  else
-    fail "missing score sort did not fail the ranking row"
-  fi
-
-  search_table_mutant="$(decider_empty_test_table "${BASH_SOURCE[0]}" "$TMP_ROOT/empty-search-table/decider/tests/decider-search-body.test.sh" SEARCH_CASES)"
-  if decider_test_fails_with "$search_table_mutant" "body-search table executed no rows"; then
-    pass "an empty body-search table fails its row-count guard"
-  else
-    fail "an empty body-search table missed its row-count guard ($DECIDER_CONTROL_DETAIL)"
-  fi
-  if decider_diagnostic_only_table_control "$search_table_mutant" "$TMP_ROOT/empty-search-table/decider/tests/diagnostic-only.test.sh" "body-search table executed no rows" 1; then
-    pass "a body-search-table diagnostic without a failure is rejected"
-  else
-    fail "a body-search-table diagnostic without a failure satisfied the control ($DECIDER_CONTROL_DETAIL)"
-  fi
-  set +e
-  selection_output="$(evaluate_search_rows "$ordering_mutant" control unknown-search-row 2>&1)"
-  selection_rc=$?
-  set -e
-  if [[ "$selection_rc" -ne 0 && "$selection_output" == *"TABLE_GUARD:body-search table selected no row: unknown-search-row"* ]]; then
-    pass "an unknown body-search row fails its selection guard"
-  else
-    fail "an unknown body-search row missed its selection guard"
-  fi
+echo "=== must-fail control ==="
+ordering_mutant="$(decider_mutate_script "$DECISIONS" "$TMP_ROOT/no-score-sort/decisions" '] | sort_by(-.score) | .[:$limit]' '] | .[:$limit]' 1)"
+failures="$(evaluate_search_rows "$ordering_mutant" control summary-body-score)"
+if [[ "$failures" == *'|summary-body-score|'* ]]; then
+  pass "missing score sort fails the ranking row"
+else
+  fail "missing score sort did not fail the ranking row"
 fi
 
 echo

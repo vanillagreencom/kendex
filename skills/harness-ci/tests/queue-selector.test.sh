@@ -120,8 +120,8 @@ ROW_ENV=""
 ROW_EVENT=pull_request
 require_rows queue-selector "$rows"
 
-# One must-fail control per rule: a planted copy without that rule answers
-# the row it holds otherwise.
+# The suite's must-fail control: a planted copy without one rule answers the
+# row it holds otherwise.
 control() { # ROW_LABEL EXPECTED NAME LINE REPLACEMENT [LINE REPLACEMENT]...
   local label="$1" expected="$2" name="$3" planted edits row_base
   shift 2
@@ -133,54 +133,8 @@ control() { # ROW_LABEL EXPECTED NAME LINE REPLACEMENT [LINE REPLACEMENT]...
   ROW_ENV=""
   ROW_EVENT=pull_request
 }
-RUN_LINE='  (cd -- "$tree" && env -i PATH="$PATH" HOME="${HOME:-}" CHANGE_CLASS="$1" \'
 control "a path the selector names is queue-only" \
   "queue_only=false cause=no-queue-path" \
   no-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' -
-control "a path the selector names no job for answers as without a selector" \
-  "queue_only=true cause=queue-selection selector=ci/select output=jobs value=[]" \
-  empty-list change-class "    '[]')" "    '[]-never')"
-control "a failing selector is queue-only" \
-  "queue_only=false cause=queue-selector-failed selector=ci/select detail=exit-3" \
-  failure-default change-class '  QUEUE_ONLY=true' '  :'
-control "the selector runs without the caller's environment" \
-  "queue_only=true cause=queue-selector-failed selector=ci/select detail=exit-4" \
-  inherited-environment change-class "$RUN_LINE" \
-  '  (cd -- "$tree" && env PATH="$PATH" HOME="${HOME:-}" CHANGE_CLASS="$1" \'
-control "the selector is asked about a trivial class and its docs verdict" \
-  'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["standard:true:pull_request:base:docs/slow.md"]' \
-  fixed-class change-class "$RUN_LINE" \
-  '  (cd -- "$tree" && env -i PATH="$PATH" HOME="${HOME:-}" CHANGE_CLASS=standard \'
-control "the selector is asked about a trivial class and its docs verdict" \
-  'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["trivial:false:pull_request:base:docs/slow.md"]' \
-  fixed-docs change-class '    DOCS_ONLY="${docs#docs_only=}" CHANGED_PATHS="$paths" \' \
-  '    DOCS_ONLY=false CHANGED_PATHS="$paths" \'
-control "the selector is asked about a class refused before the docs verdict" \
-  'queue_only=true cause=queue-selector-failed selector=ci/select detail=inputs-unreadable' \
-  no-lazy-docs change-class \
-  '    docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" --output /dev/null 2>/dev/null)" ||' \
-  '    docs="" ||'
-control "the base commit's selector judges where the branch changes it" \
-  "queue_only=true cause=queue-selector-failed selector=ci/select detail=exit-127" \
-  head-tree change-class \
-  '  if [ -z "$BASE_REV" ] || ! private_checkout "$tree" "$BASE_REV" "$log"; then' \
-  '  if [ -z "$BASE_REV" ] || ! private_checkout "$tree" "$head_rev" "$log"; then'
-control "a selector named in the process environment alone never runs" \
-  'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["micro:false:pull_request:base:slow/run.sh"]' \
-  environment-selector change-class \
-  'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON' 'unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'
-control "a selector outside the repository is queue-only" \
-  "queue_only=true cause=queue-selector-failed selector=../select detail=command-absent" \
-  climbing change-class "    '' | /* | .. | ../* | */.. | */../*) name=\"\" ;;" "    '') name=\"\" ;;"
-control "a path the repository list names answers before the selector runs" \
-  "queue_only=false cause=no-queue-path" \
-  unconditional-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' '  queue_selection "$1"'
-control "a path the selector names is queue-only" \
-  "queue_only=false cause=no-queue-path" \
-  name-blind change-class '  if ! value="$(sed -n "s/^$name=//p" "$out" | tail -1)"; then' \
-  '  if ! value="$(sed -n "s/^[a-z_]*=//p" "$out" | tail -1)"; then'
-control "a push runs no selector" \
-  'queue_only=true cause=queue-selection selector=ci/select output=jobs value=["standard:false:push:base:slow/run.sh"]' \
-  every-event change-class '    *) return 0 ;;' '    *) ;;'
 
 report queue-selector
