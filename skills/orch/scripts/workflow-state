@@ -1006,9 +1006,11 @@ cmd_set_now() {
 
 # Generate a unique per-delegation round token, store it at <field>, and print
 # it. The token binds a dev completion artifact to exactly the delegation that
-# produced it: the writer names its file dev-return-<issue>-<RID>.json
-# and embeds "round_id": RID, and dev-artifact-check resolves that exact path and
-# rejects any receipt whose internal round_id differs. The token proves WHICH
+# produced it: the writer names its file dev-return-<issue>-<RID>-<RUNID>.json
+# after the run it reports (dev-return-<issue>-<RID>.json with no run) and embeds
+# "round_id": RID, and dev-artifact-check resolves the receipt of the run the
+# round's validate stage names and rejects any receipt whose internal round_id
+# differs. The token proves WHICH
 # delegation wrote the bytes; mtime proves only WHEN they were written.
 #
 # The token is a nanosecond-resolution timestamp (`date +%s%N`) plus a random

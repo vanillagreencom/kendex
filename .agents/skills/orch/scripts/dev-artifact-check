@@ -8,12 +8,15 @@
 # IDENTITY IS BY ROUND ID, NOT MTIME. Each delegation stamps a unique
 # round token (`workflow-state new-round-id [ISSUE] dev_round_id`) that is embedded
 # in the delegation. `dev-return-write` names its file
-# [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json and writes "round_id":
-# ROUND_ID inside. This check resolves that exact path and requires the internal
-# `.round_id` to equal the expected token — clock-independent, and immune to the
-# same-second re-stamp / late-rewriting-old-round / cross-group / cross-workflow
-# receipt confusion that an `mtime >= delegated_at` heuristic at a single reused
-# path allowed. The mtime freshness gate is gone entirely.
+# [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID]-[RUN_ID].json after the
+# validation run it reports, or [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json
+# when it names no run, and writes "round_id": ROUND_ID inside. Round mode
+# resolves the receipt of the run the round's newest validate stage names
+# (the runtime's record) and requires the internal `.round_id` to equal the
+# expected token — clock-independent, and immune to the same-second re-stamp /
+# late-rewriting-old-round / cross-group / cross-workflow receipt confusion that
+# an `mtime >= delegated_at` heuristic at a single reused path allowed. The
+# mtime freshness gate is gone entirely.
 #
 # Artifact schema (written by `dev-return-write`; canonical:
 # skills/orch/schemas/dev-return.md):
@@ -117,10 +120,14 @@ the per-wake check. Codex uses references/codex-runtime.md, Delegated round
 wait. OpenCode runs it via scheduled re-entry, or falls back to the per-wake
 check alone.
 
-Round mode selects WT/tmp/dev-return-ISSUE-RID-recovery.json when present,
-otherwise WT/tmp/dev-return-ISSUE-RID.json. An invalid companion refuses without
-fallback. recovery_of binds the same issue, round, kind and branch to a valid
-failed original. File mode checks only its explicit path.
+Round mode selects the receipt of the run the round's newest validate stage
+names in workflow state, WT/tmp/dev-return-ISSUE-RID-RUNID.json, falling back
+to WT/tmp/dev-return-ISSUE-RID.json, the receipt of a round that names no run;
+with no stage recorded, the one receipt of the round on disk, and two or more
+refuse receipt-ambiguous. A later run of the same round (the runtime's next
+attempt after a failed one) has its own stage and its own receipt; the
+earlier receipt stays readable in file mode. File mode checks only its
+explicit path.
 Round mode (the production path):
 requires it exists, its internal .round_id == RID, then the scalar/kind, commit
 object (against WT's git repo, kendex#994), and items gates. A kind fix receipt
@@ -156,14 +163,17 @@ round.
 A record carrying "cut": true records a reviewer or orchestrator scope choice.
 Protected-addition scope, and what the gate does once a rebase orphans base_sha:
 skills/orch/schemas/dev-round.md § Protected additions.
-A kind fix receipt checked against its round record also carries the mode a
-fix round runs: the mode `dev-validate-run --resolve-mode` reports for WT,
-range, or full where the project sets no DEV_VALIDATE_RANGE_CMD, or ci, a run
-whose local edits are complete with required CI pending, on a round whose record
-carries pr_open=true or pr-order resolves push-first
-(dev-round-write --pr-open). Any other recorded mode is
+A kind fix receipt checked against its round record also carries the mode its
+run ran: the mode the runtime resolved from the project's declaration and
+recorded as the run's stage proof (`orch-runtime validate start`), range, full
+or ci. A receipt recording another mode than its run's stage is
 reason=mode_mismatch; a null mode, a failing round without completed evidence, is
-not judged. A resolution that cannot be read exits 2.
+not judged. A run with no stage proof (an ad-hoc run, or a foreground record
+naming no run) is judged as before: the mode `dev-validate-run
+--resolve-mode` reports for WT, range, or full where the project sets no
+DEV_VALIDATE_RANGE_CMD, or ci on a round whose record carries pr_open=true or
+pr-order resolves push-first (dev-round-write --pr-open). A resolution that
+cannot be read exits 2.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
@@ -389,8 +399,16 @@ message() {
       printf 'The emitted artifact verdict could not be read.\n'
       ;;
     mode-unresolved)
-      printf 'dev-artifact-check: mode-unresolved worktree=%s\n' "$repo"
-      printf 'dev-validate-run --resolve-mode could not name the mode this fix round runs.\n'
+      printf 'dev-artifact-check: mode-unresolved worktree=%s file=%s\n' "$repo" "$file"
+      printf 'Neither the run stage proof nor dev-validate-run --resolve-mode could name the mode this fix round runs.\n'
+      ;;
+    state-unreadable)
+      printf 'dev-artifact-check: state-unreadable issue=%s round=%s\n' "$issue" "$round_id"
+      printf 'The workflow state names which run receipt the round reads, and it could not be read; the receipts on disk decide.\n'
+      ;;
+    receipt-ambiguous)
+      printf 'dev-artifact-check: receipt-ambiguous issue=%s round=%s receipts=%s\n' "$issue" "$round_id" "$1"
+      printf 'The round records no validate stage and more than one receipt stands; nothing names which run the round reads.\n'
       ;;
     mode-mismatch)
       printf 'dev-artifact-check: mode-mismatch validate-mode=%s round-mode=%s\n' "$recorded_mode" "$round_mode"
@@ -715,8 +733,10 @@ collect_unapproved_additions() {
 # (round mode always passes its worktree). A round-mode worktree that is not a
 # git repo skips the commit checks — production worktrees always are, and a
 # check that cannot run proves nothing either way.
+# stage_mode is the mode the receipt's run stage records (round mode reads it
+# beside the receipt), "" for a receipt naming no run.
 validate_artifact() {
-  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" round_record="${5:-}" warning="" historical="${6:-false}"
+  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" round_record="${5:-}" warning="" stage_mode="${6:-}"
   if [[ ! -f "$file" ]]; then
     emit false "" "missing"
     return 1
@@ -729,52 +749,43 @@ validate_artifact() {
     emit false "$file" "invalid"
     return 1
   fi
-  if jq -e 'has("recovery_of")' "$file" >/dev/null 2>&1; then
-    local parent
-    if ! parent="$(jq -r '"dev-return-\(.issue)-\(.round_id).json"' "$file")"; then
-      emit false "$file" "invalid"; return 1
-    fi
-    if [[ "$historical" == true || -L "$file" || "$parent" == */* || "$parent" == *..* \
-      || ! -f "${file%/*}/$parent" || -L "${file%/*}/$parent" ]] \
-      || ! jq -e --arg parent "$parent" --slurpfile original "${file%/*}/$parent" '
-        .recovery_of == $parent and ($original[0] as $p
-          | (.issue == $p.issue and .round_id == $p.round_id and .kind == $p.kind and .branch == $p.branch)
-          and ($p | has("recovery_of") | not) and ($p.validate | startswith("FAILING:")))
-      ' "$file" >/dev/null 2>&1; then
-      emit false "$file" "invalid"; return 1
-    fi
-    if ! validate_artifact "${file%/*}/$parent" "$want_round" "$expect_items" "$repo" "$round_record" true >/dev/null; then
-      emit false "$file" "invalid"; return 1
-    fi
-  fi
-  # A fix receipt's mode is the one its round runs. It is judged before the
-  # commit gate, whose warning would otherwise precede this gate's status 2
-  # refusal on stderr.
+  # A fix receipt's mode is the one its run ran. Where the runtime recorded
+  # the run, its stage proof names the mode (a value handed on, never
+  # resolved here) and the receipt must record that one. A run with no stage
+  # proof (the ad-hoc path, or a foreground record naming no run) keeps the
+  # legacy reading until step 8: the mode the resolver names for the
+  # worktree, with ci admitted for an open pull request or push-first. It is
+  # judged before the commit gate, whose warning would otherwise precede
+  # this gate's status 2 refusal on stderr.
   if [[ -n "$round_record" ]] && jq -e '.kind == "fix" and .validate_mode != null' "$file" >/dev/null 2>&1; then
-    local recorded_mode round_mode
+    local recorded_mode round_mode mode_ok=false
     recorded_mode="$(jq -r '.validate_mode' "$file")"
-    # The mode is read from stdout alone: the resolver loads the project env,
-    # whose private file writes to stderr. A resolution that exits non-zero is
-    # unresolved whatever it printed.
-    if round_mode="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$repo" 2>/dev/null)" \
-      && [[ "$round_mode" == validate-mode=full || "$round_mode" == validate-mode=range ]]; then
-      round_mode="${round_mode#validate-mode=}"
+    if [[ -n "$stage_mode" ]]; then
+      [[ "$recorded_mode" != "$stage_mode" ]] || mode_ok=true
+      round_mode="$stage_mode"
     else
-      message mode-unresolved >&2; return 2
+      # The mode is read from stdout alone: the resolver loads the project
+      # env, whose private file writes to stderr. A resolution that exits
+      # non-zero is unresolved whatever it printed.
+      if round_mode="$("$SCRIPT_DIR/dev-validate-run" --resolve-mode --worktree "$repo" 2>/dev/null)" \
+        && [[ "$round_mode" == validate-mode=full || "$round_mode" == validate-mode=range ]]; then
+        round_mode="${round_mode#validate-mode=}"
+      else
+        message mode-unresolved >&2; return 2
+      fi
+      # The orchestrator stamps the PR state before delegation. Source alone
+      # cannot tell whether a review round has pull request CI.
+      case "$recorded_mode" in
+        ci)
+          if jq -e '.pr_open == true' "$round_record" >/dev/null 2>&1; then
+            mode_ok=true
+          elif order_line="$("$SCRIPT_DIR/pr-order" "$repo")" && [[ "$order_line" == pr-order=push-first ]]; then
+            mode_ok=true
+          fi
+          ;;
+        "$round_mode") mode_ok=true ;;
+      esac
     fi
-    # The orchestrator stamps the PR state before delegation. Source alone
-    # cannot tell whether a review round has pull request CI.
-    local mode_ok=false
-    case "$recorded_mode" in
-      ci)
-        if jq -e '.pr_open == true' "$round_record" >/dev/null 2>&1; then
-          mode_ok=true
-        elif order_line="$("$SCRIPT_DIR/pr-order" "$repo")" && [[ "$order_line" == pr-order=push-first ]]; then
-          mode_ok=true
-        fi
-        ;;
-      "$round_mode") mode_ok=true ;;
-    esac
     if [[ "$mode_ok" == false ]]; then
       message mode-mismatch >&2
       emit false "$file" "mode_mismatch"
@@ -803,7 +814,7 @@ validate_artifact() {
     fi
     # A deferred CI receipt authorizes publication of only its current commit.
     # Both round acceptance and submit's --file reuse use this one reader.
-    if [[ "$historical" != true ]] && jq -e '.validate_mode == "ci"' "$file" >/dev/null 2>&1 \
+    if jq -e '.validate_mode == "ci"' "$file" >/dev/null 2>&1 \
       && [[ "$commit" != "$(git -C "$repo" rev-parse HEAD)" ]]; then
       emit false "$file" "ci_head_mismatch"
       return 1
@@ -926,8 +937,8 @@ if [[ "${1:-}" == "--file" ]]; then
     esac
   done
   # schemas/dev-return.md binds an artifact to its worktree by path alone,
-  # WORKTREE/tmp/dev-return-ISSUE-RID.json. Any other layout, or any git
-  # failure, leaves repo empty, and the commit gate refuses.
+  # WORKTREE/tmp/dev-return-ISSUE-RID[-RUNID].json. Any other layout, or any
+  # git failure, leaves repo empty, and the commit gate refuses.
   if file_dir="$(dirname -- "$file")" && [[ "${file_dir##*/}" == tmp ]] \
     && [[ "$(git -C "$(dirname -- "$file_dir")" rev-parse --is-inside-work-tree 2>/dev/null)" == true ]]; then
     repo="$(dirname -- "$file_dir")"
@@ -1025,20 +1036,71 @@ require_round_record_flag() {
   fi
 }
 
-check_once() {
-  local out rc=0 verdict parent_file=""
-  if [[ "$round_mode" == true ]]; then
-    file="$worktree/tmp/dev-return-$issue-$round_id.json"
-    parent_file="$file"
-    if [[ -e "${file%.json}-recovery.json" || -L "${file%.json}-recovery.json" ]]; then
-      file="${file%.json}-recovery.json"
-      if [[ -L "$file" ]] || ! jq -e 'has("recovery_of")' "$file" >/dev/null 2>&1; then
-        emit false "$file" "invalid"; return 1
-      fi
+# The round's validate stages as the runtime recorded them, newest first,
+# `[{run_dir, mode}]` with mode the stage's proof mode or null: the record
+# that names which run's receipt the round reads. `[]` where the item has
+# no state file, and, said on stderr, where the state cannot be read: the
+# receipts on disk then decide, one alone or none, never a choice among
+# several, and a fix receipt's mode gate still needs its stage.
+round_stages() {
+  local state
+  if ! state="$("$SCRIPT_DIR/workflow-state" path "$issue" 2>/dev/null)" || [[ ! -f "$state" ]]; then
+    printf '[]'
+    return 0
+  fi
+  jq -c --arg round "$round_id" '
+    [.stages[]? | select(.kind == "validate" and .round_id == $round and (.run_dir | type) == "string")]
+    | sort_by(.start) | reverse
+    | map({run_dir, mode: (.proof.mode // null)})' "$state" 2>/dev/null || {
+    message state-unreadable >&2
+    printf '[]'
+  }
+}
+
+# Round mode's receipt: the newest validate stage's run receipt, else the
+# round's run-less receipt; with no stage, the one receipt on disk. Sets file
+# and STAGE_MODE, the stage's proof mode where the receipt is a run's.
+select_receipt() {
+  local stages run_dir run_key bare keyed candidates=() candidate
+  stages="$(round_stages)"
+  bare="$worktree/tmp/dev-return-$issue-$round_id.json"
+  STAGE_MODE=""
+  # The newest stage's run and mode, read from the stages as one record: a
+  # read that fails names no run, and the receipts on disk decide.
+  if run_dir="$(jq -r 'first(.[].run_dir) // empty' <<<"$stages")" && [[ -n "$run_dir" ]]; then
+    run_key="${run_dir%/}"
+    run_key="${run_key##*/}"
+    run_key="${run_key#dev-validate-}"
+    keyed="$worktree/tmp/dev-return-$issue-$round_id-$run_key.json"
+    STAGE_MODE="$(jq -r 'first(.[].mode) // empty' <<<"$stages")" || STAGE_MODE=""
+    # A stage the runtime started (its proof recorded) has its run's
+    # receipt or none yet; a stage with no proof, a foreground project's
+    # admission that started no run, reads the run-less receipt where one
+    # stands.
+    if [[ -n "$STAGE_MODE" || -e "$keyed" || -L "$keyed" || ! -e "$bare" ]]; then
+      file="$keyed"
+    else
+      file="$bare"
     fi
+    return 0
+  fi
+  for candidate in "$bare" "$worktree/tmp/dev-return-$issue-$round_id"-*.json; do
+    [[ -e "$candidate" || -L "$candidate" ]] && candidates+=("$candidate")
+  done
+  case "${#candidates[@]}" in
+    0) file="$bare" ;;
+    1) file="${candidates[0]}" ;;
+    *) die receipt-ambiguous "$(printf '%s,' "${candidates[@]##*/}")" ;;
+  esac
+}
+
+check_once() {
+  local out rc=0 verdict
+  if [[ "$round_mode" == true ]]; then
+    select_receipt
   fi
   require_round_record_flag
-  out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
+  out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record" "${STAGE_MODE:-}")" || rc=$?
   if (( rc == 0 )); then
     verdict="$(jq -r '.verdict' <<<"$out" 2>/dev/null)" || {
       message verdict-unreadable >&2
@@ -1047,9 +1109,6 @@ check_once() {
   fi
   if [[ "$round_mode" == true ]] && (( rc == 0 || rc == 1 )) \
     && jq -e '.reason != "missing" and .reason != "invalid"' >/dev/null 2>&1 <<<"$out"; then
-    if [[ -n "$parent_file" && "$file" != "$parent_file" ]]; then
-      (file="$parent_file"; record_stage "$(emit true "$file" valid)") || printf 'dev-artifact-check: parent-stage-unrecorded issue=%s round=%s\n' "$issue" "$round_id" >&2
-    fi
     record_stage "$out" || printf 'dev-artifact-check: stage-unrecorded issue=%s round=%s\n' "$issue" "$round_id" >&2
   fi
   printf '%s\n' "$out"

@@ -430,9 +430,15 @@ if [[ "$state_present" == "true" ]]; then
 	active_round="$("$WORKFLOW_STATE" ${state_flags[@]+"${state_flags[@]}"} get "$issue" '.dev_round_id // ""')" \
 		|| fail round-read "issue=$issue"
 	if [[ -n "$active_round" ]] \
-		&& [[ -e "$worktree_abs/tmp/dev-round-$issue-$active_round.json" ]] \
-		&& [[ ! -e "$worktree_abs/tmp/dev-return-$issue-$active_round.json" ]]; then
-		refuse_live_round "$active_round"
+		&& [[ -e "$worktree_abs/tmp/dev-round-$issue-$active_round.json" ]]; then
+		# A receipt is keyed by its run, dev-return-ISSUE-RID-RUNID.json, or
+		# bare where it names no run; any receipt of the round ends it.
+		round_receipts=("$worktree_abs/tmp/dev-return-$issue-$active_round".json "$worktree_abs/tmp/dev-return-$issue-$active_round"-*.json)
+		round_receipt_found=false
+		for round_receipt in "${round_receipts[@]}"; do
+			[[ -e "$round_receipt" ]] && round_receipt_found=true
+		done
+		[[ "$round_receipt_found" == true ]] || refuse_live_round "$active_round"
 	fi
 fi
 # The question is answered and the answer is no. In check mode that is the

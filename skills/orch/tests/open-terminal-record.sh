@@ -346,6 +346,52 @@ assert_eq "rc=$RC live_display=$("$WS" --state-dir "$STATE" get oversee '.lanes[
 gui_launch="$(launch_of CC-1)"
 assert_eq "launch=$gui_launch" 'launch=null' "a GUI launch records no launch identity"
 
+echo "=== a fleet relaunch's room is the runtime's judge, asked with the replaced lane named ==="
+# CC-1's record is the lane the relaunch replaces, so the runtime judges the
+# account with that lane's charge left out (step6-map A5, decision 168 (3));
+# the planted answer is the judge's walled verdict on the session window,
+# read as the legacy judge's answer was: the relaunch is refused with the
+# judge's figures and launches nothing.
+WALLED_REPLY="$TMP_ROOT/walled-reply.json"
+jq -cn --arg dir "$LANE_DIR" '{protocol: "orch-runtime-v1", ok: true, result: {answer: "walled", exit: 3, record: {
+  config_dir: $dir, wall: 46, binding_bucket: "weekly", projected_headroom_pct: -2,
+  projected_window: {bucket: "session", pct: 2, resets_at: "2026-10-06T08:00:00Z"}, verdict: "walled"}}}' > "$WALLED_REPLY"
+walled_of() { grep -c "^open-terminal: lane-model-walled lane=$LANE_DIR model=opus pct=2 bucket=session projected-headroom=-2$" <<<"$ERR" || true; }
+: > "$TMP_ROOT/runtime.log"
+OT_RUNTIME_PICK="$WALLED_REPLY" OT_RUNTIME_LOG="$TMP_ROOT/runtime.log" RUN_TMUX=stub,1,0 \
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-1
+assert_eq "rc=$RC walled=$(walled_of) summary=$(grep -c '^open-terminal: summary launched=0 skipped=0 failed=1 ' <<<"$ERR" || true)" \
+  'rc=1 walled=1 summary=1' "a fleet relaunch the runtime judges walled is lane-model-walled with the judge's figures and launches nothing"
+assert_eq "$(grep -o -- 'accounts pick .*' "$TMP_ROOT/runtime.log")" \
+  "accounts pick --fleet --lane $LANE_DIR --harness claude --native-model opus --projected --replaces CC-1" \
+  'the judge is asked for the named lane on the launch model with the replaced lane named'
+JUDGE_OT="$(mutant_scripts judge-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$JUDGE_OT" '|| RELAUNCH_JUDGE=true' '|| RELAUNCH_JUDGE=false'
+: > "$TMP_ROOT/runtime.log"
+OT_RUNTIME_PICK="$WALLED_REPLY" OT_RUNTIME_LOG="$TMP_ROOT/runtime.log" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$JUDGE_OT" --relaunch --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-1
+assert_eq "walled=$(walled_of) asked=$(grep -c 'accounts pick' "$TMP_ROOT/runtime.log" || true)" 'walled=0 asked=0' \
+  "control: a fleet relaunch judged by the legacy pick never asks the runtime and misses its walled verdict"
+# An account the judge refuses by its word, reserved or retired from its
+# day, is refused by that word: the launcher prints no window, since the
+# account's room is no part of the reason (the judge's own line is the key
+# and the word, never `pct=`).
+WORD_REPLY="$TMP_ROOT/word-reply.json"
+jq -cn --arg dir "$LANE_DIR" '{protocol: "orch-runtime-v1", ok: true, result: {answer: "reserved", exit: 3, record: {
+  config_dir: $dir, wall: 10, binding_bucket: "weekly", projected_headroom_pct: 80, word: "reserve",
+  projected_window: {bucket: "weekly", pct: 10, resets_at: "2026-10-06T08:00:00Z"}, verdict: "reserved"}}}' > "$WORD_REPLY"
+OT_RUNTIME_PICK="$WORD_REPLY" RUN_TMUX=stub,1,0 \
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-1
+assert_eq "rc=$RC reserved=$(grep -c "^open-terminal: lane-reserved lane=$LANE_DIR model=opus$" <<<"$ERR" || true) walled=$(grep -c 'lane-model-walled' <<<"$ERR" || true) summary=$(grep -c '^open-terminal: summary launched=0 skipped=0 failed=1 ' <<<"$ERR" || true)" \
+  'rc=1 reserved=1 walled=0 summary=1' "a fleet relaunch onto an account the judge reserves is lane-reserved with no window and launches nothing"
+jq -cn --arg dir "$LANE_DIR" '{protocol: "orch-runtime-v1", ok: true, result: {answer: "retired", exit: 3, record: {
+  config_dir: $dir, wall: 10, binding_bucket: "weekly", projected_headroom_pct: 80, word: "retired:2026-10-01",
+  projected_window: {bucket: "weekly", pct: 10, resets_at: "2026-10-06T08:00:00Z"}, verdict: "retired"}}}' > "$WORD_REPLY"
+OT_RUNTIME_PICK="$WORD_REPLY" RUN_TMUX=stub,1,0 \
+  run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-1
+assert_eq "rc=$RC retired=$(grep -c "^open-terminal: lane-retired lane=$LANE_DIR model=opus ends=2026-10-01$" <<<"$ERR" || true) walled=$(grep -c 'lane-model-walled' <<<"$ERR" || true)" \
+  'rc=1 retired=1 walled=0' "a fleet relaunch onto an account the judge retires is lane-retired with the day and no window"
+
 # The launch identity lane-close stops the harness by: the pane and its tmux
 # server from the window's creation and, once the launch stands, the harness
 # process under the pane's own with its start time. This shell stands in for

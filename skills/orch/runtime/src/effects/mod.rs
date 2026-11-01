@@ -140,6 +140,7 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -152,7 +153,8 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
-        | Request::PruneRecords(_) => false,
+        | Request::PruneRecords(_)
+        | Request::Validate(_) => false,
     }
 }
 
@@ -195,6 +197,10 @@ pub struct ReconcileRun {
     pub refused: Vec<IntentRefused>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notices_unmarked: Vec<NoticeUnmarked>,
+    // U6d: the directive sends settled from their kept receipts, and the
+    // owed ones no kept receipt could settle (step6-map § A6).
+    #[serde(flatten)]
+    pub directive_sends: crate::send::Settled,
 }
 
 /// Run the effect a just-persisted intent names and record its outcome, or
@@ -243,7 +249,8 @@ pub fn run(
         | Report::RecordDirectiveSend(_)
         | Report::RecordWallPauses(_)
         | Report::AdmitPaths(_)
-        | Report::PruneRecords(_) => return Ok(None),
+        | Report::PruneRecords(_)
+        | Report::Validate(_) => return Ok(None),
     };
     run_effect(&run, request, effect).map(Some)
 }
@@ -287,6 +294,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::AcceptResult(_)
                     | Request::RecordVerification(_)
                     | Request::VerifyHead(_)
+                    | Request::VerifyPr(_)
                     | Request::ReconcileRound(_)
                     | Request::RecordHandoff(_)
                     | Request::ResumeHandoff(_)
@@ -299,7 +307,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::RecordDirectiveSend(_)
                     | Request::RecordWallPauses(_)
                     | Request::AdmitPaths(_)
-                    | Request::PruneRecords(_) => {
+                    | Request::PruneRecords(_)
+                    | Request::Validate(_) => {
                         unreachable!("a request without a live effect reports no effect")
                     }
                 };
@@ -337,6 +346,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -349,7 +359,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
-        | Request::PruneRecords(_) => {
+        | Request::PruneRecords(_)
+        | Request::Validate(_) => {
             unreachable!("a request without a live effect reports no effect")
         }
     }?;
@@ -687,10 +698,15 @@ pub fn reconcile(
     // send left behind is run once here (decision 124f (28)); a mark the
     // store refused goes into the reply (decision 124i (36)).
     let notices_unmarked = job::send_owed_notices(&run)?;
+    // U6d: a directive send whose mark the store refused stands owed with
+    // its receipt kept beside the state; it is stamped here, never sent
+    // again (step6-map § A6).
+    let directive_sends = crate::send::settle(path, settings, env, locking)?;
     Ok(ReconcileRun {
         reconciled,
         refused,
         notices_unmarked,
+        directive_sends,
     })
 }
 

@@ -1039,6 +1039,7 @@ fi
 # machine has one, an env prefix where it does not.
 LANE_AUTO=false
 LANE_GATE=false
+RELAUNCH_JUDGE=false
 LANE_HARNESS=""
 CLAIM_WRITE_FAILED=false
 # The item's pane once its window is open, and the preparation a hosted launch
@@ -1212,19 +1213,36 @@ host_account_read() { # CONFIG_DIR HARNESS
 # The usage judge for a lane the caller NAMED, asked of `lanes pick --lane` on
 # the model the launch passes, with --projected: this launch adds a lane to the
 # account, so it is judged on the wall `--lane auto` judges, the reading plus
-# the expected burn of the lanes already on it. Returns 1 with its refusal
-# printed. The block that calls it below says why each answer is what it is.
-named_lane_judge() {
+# the expected burn of the lanes already on it. With REPLACES, the item of a
+# fleet lane this relaunch replaces, the question goes to the orch runtime's
+# `accounts pick` instead, which judges the same reading with that lane's
+# charge left out (step6-map A5): a replacement adds no lane. Its reply
+# carries `lanes pick`'s exit by number and the record it judged, so the arms
+# below read either judge alike. Returns 1 with its refusal printed. The block
+# that calls it below says why each answer is what it is.
+named_lane_judge() { # [REPLACES]
   local lane_rc=0 lane_record lane_wall lane_bucket lane_projected lane_status lane_detail
-  local lane_refusal lane_cause lane_retry
+  local lane_refusal lane_cause lane_retry lane_reply
   # `held`, `missing` or `unanswered`, and empty until something asks. Only the
   # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
   LANE_PICK_RECORD=""
-  [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
   lane_rc=0
-  lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
-    --native-model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
+  if [[ -n "${1:-}" ]]; then
+    lane_reply="$(ORCH_LANE_HOST="$LANE_HOST" "$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet \
+      --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" --native-model "$LAUNCH_MODEL" --projected --replaces "$1" \
+      ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"})" || lane_rc=$?
+    [[ "$lane_rc" -eq 0 ]] || { ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=runtime:$lane_rc" >&2; return 1; }
+    # A `null` record is the judge printing none (exit 4, a directory it holds
+    # no row for), read as the empty output the legacy call gave.
+    lane_rc="$(jq -er '.result.exit | numbers' <<<"$lane_reply")" \
+      && lane_record="$(jq -r 'if .result.record == null then "" else (.result.record | tojson) end' <<<"$lane_reply")" \
+      || { ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-reply" >&2; return 1; }
+  else
+    [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
+    lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
+      --native-model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
+  fi
   if [[ "$lane_rc" == 3 || "$lane_rc" == 5 ]]; then
     lane_refusal="$(jq -r 'if .refusal == null then empty
       elif .refusal.cause == "cloud-credit" or .refusal.cause == "api-credit" then [.refusal.cause, (.refusal.retry_at // "none")] | @tsv
@@ -1251,6 +1269,21 @@ named_lane_judge() {
     # so the launch proceeds exactly as it did before this gate existed.
     4) ;;
     3)
+      # The runtime's judge refuses a reserved account, or one whose stated
+      # end has come, by its word: the record's `verdict` names it, and the
+      # account's room is no part of the reason, so no window is printed.
+      lane_verdict="$(jq -r '.verdict // ""' <<<"$lane_record" 2>/dev/null)" || lane_verdict=""
+      case "$lane_verdict" in
+        reserved)
+          ot_message lane-reserved "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" >&2
+          return 1
+          ;;
+        retired)
+          ot_message lane-retired "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
+            "ends=$(jq -r '.word // "" | ltrimstr("retired:")' <<<"$lane_record")" >&2
+          return 1
+          ;;
+      esac
       # The window whose projected room decided, which `lanes` names; the
       # reading's binding bucket where it made no projection.
       lane_wall="$(jq -er 'if .projected_window != null then .projected_window.pct else .wall end' <<<"$lane_record")" || {
@@ -1432,7 +1465,13 @@ if [[ -n "$LANE" ]]; then
   # A --wait-slot launch asks again once its wait ends, the window having had
   # that long to move.
   [[ "$LANE_AUTO" == true || -z "$(lane_pick_harness "$LAUNCH_HARNESS" "$LAUNCH_MODEL")" ]] || LANE_GATE=true
-  [[ "$LANE_GATE" != true || -n "$PREFERENCE_ENTRY" ]] || named_lane_judge || exit 1
+  # A local fleet relaunch is judged per item below, once the lane it
+  # replaces is keyed: the runtime judges the account with that lane's charge
+  # left out (step6-map A5, decision 168 (3)), so a relaunch is never refused
+  # on its own lane's use. A hosted relaunch keeps this judge with its hosted
+  # arms, which move together.
+  [[ "$LANE_GATE" != true || -n "$PREFERENCE_ENTRY" || "$FLEET" != true || "$RELAUNCH" != true || "$LANE_HOST" != local ]] || RELAUNCH_JUDGE=true
+  [[ "$LANE_GATE" != true || -n "$PREFERENCE_ENTRY" || "$RELAUNCH_JUDGE" == true ]] || named_lane_judge || exit 1
   ot_message lane-selected "lane=$LANE_ENV"
   pi_lane_root_apply || exit 1
 fi
@@ -4239,6 +4278,13 @@ for raw in "${ITEMS[@]}"; do
   host_pending_step="" host_line="" host_command_restart=none
   if [[ "$LANE_HOST" != local ]]; then
     host_launch_resume || { failed=$((failed + 1)); continue; }
+  fi
+  # A fleet relaunch's room is the runtime's judgement, asked here where the
+  # record it replaces is keyed (decision 94 (b)); a refusal stops the batch
+  # as the up-front judge's did.
+  if [[ "$RELAUNCH_JUDGE" == true ]] && ! named_lane_judge "$wt_id"; then
+    failed=$((failed + 1))
+    break
   fi
   # A lane the runtime holds an open intent on is not this launcher's to
   # move (decision 44); judged before the cap, so nothing is reserved for it.

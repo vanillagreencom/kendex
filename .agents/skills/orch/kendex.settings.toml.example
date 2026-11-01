@@ -277,8 +277,11 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # pairs. Lanes are always discovered; this only renames them.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
-# Lanes never listed, measured or picked, and lanes retired from a date.
-# Each is named by its own name or its alias, never by a path.
+# Lanes never listed, measured or picked, and lanes retired from a date: the
+# runtime's judge picks such a lane until that UTC day and measures it after,
+# saying in the roster where its credential still answers; `lanes` alone lists
+# it retired unread. Each is named by its own name or its alias, never by a
+# path.
 # ORCH_LANE_EXCLUDE = "sclaude"
 # ORCH_LANE_RETIRE = "oldclaude=YYYY-MM-DD"
 

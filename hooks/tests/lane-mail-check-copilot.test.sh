@@ -609,6 +609,9 @@ assert_eq "RC=$RC keyed=$(hook_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 key
 # it is the overseer's, whose marks a judge rules on.
 new_copilot_named() { # NAME [JUDGE]
   new_copilot_lane "$1" main "${2:-$HOOK}"
+  # The named session's install beside its hooks, whose runtime answers the
+  # watch claim read (no claim until a row plants one).
+  plant_copilot_install
   # Mailbox delivery uses a configured reader. The missing-reader SessionStart
   # rule has its own fixture in orch/tests/oversee_launch.sh.
   env -i PATH="$PATH" HOME="$COP_HOME" bash -euo pipefail -c \
@@ -815,7 +818,7 @@ assert_eq "$REFUSED_MARK" "RC=0 context=lane-mail-check: context=400000 fleet=1"
   "a Copilot tool call past the mark whose mailbox check refuses hands the mark over ahead of the refusal" "$ERR_FILE"
 mutant refuse-drops-notice -e 's/^  \[ "\$ARM" != deliver \] || text="\$TOOL_NOTICE\$text"$/  :/'
 refused_mark_rows control_copilot_refused_mark "$MUTANT_PATH"
-assert_eq "${REFUSED_MARK% fleet=*}" "RC=0 context=lane-mail-check: fleet-state=$LANE/.github/skills/orch/scripts/lib/watch-pid.sh" \
+assert_eq "${REFUSED_MARK% fleet=*}" "RC=0 context=lane-mail-check: fleet-state=$LANE/.github/skills/orch/scripts/orch-runtime" \
   "control: a hook whose refusal drops the notice withholds the crossed mark"
 
 # --- a Copilot call reaching the Claude copy ------------------------------

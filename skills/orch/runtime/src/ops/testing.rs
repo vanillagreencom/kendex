@@ -79,6 +79,7 @@ pub(super) fn host() -> Host<'static> {
         still_runs: &gone,
         pane_foreground: &no_pane,
         admission: Some(no_reads()),
+        accounts: None,
     }
 }
 
@@ -202,6 +203,7 @@ pub(super) fn launch_fields(item: &str) -> LaunchLane {
         surface: None,
         over_cap: None,
         exclude_account: None,
+        judge_account: false,
         brief_file: None,
         repo_dir: None,
         scope_range: None,
@@ -263,6 +265,7 @@ pub(super) fn outcome(id: &str, outcome: Outcome) -> Request {
         window: None,
         tmux_session: None,
         launch_line: None,
+        watch: None,
         observation: None,
         while_owner: None,
         lane_keys: None,
@@ -288,6 +291,7 @@ pub(super) fn confirmed_with(
         window: None,
         tmux_session: None,
         launch_line: None,
+        watch: None,
         observation: None,
         while_owner: None,
         lane_keys: None,

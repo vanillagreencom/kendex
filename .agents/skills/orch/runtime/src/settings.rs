@@ -96,6 +96,28 @@ pub const DEV_VALIDATE_CLI_KEY: &str = "DEV_VALIDATE_CLI";
 pub const LANE_MAIL_CLI_DEFAULT: &str = ".agents/skills/mailbox/scripts/lane-mail";
 /// The orch package's validation runner under the project's install.
 pub const DEV_VALIDATE_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/dev-validate-run";
+// U6a: the project's validation declaration, which `validate start`
+// resolves the mode from (step6-map § A4; `dev-validate-run --help`).
+/// The project's whole battery; empty is no declaration, which a start
+/// refuses.
+pub const DEV_VALIDATE_CMD_KEY: &str = "DEV_VALIDATE_CMD";
+/// The command that validates the changes since a base; empty declares no
+/// range mode.
+pub const DEV_VALIDATE_RANGE_CMD_KEY: &str = "DEV_VALIDATE_RANGE_CMD";
+/// The required status-check context that runs the project's validation;
+/// empty declares no CI deferral.
+pub const DEV_VALIDATE_CI_CONTEXT_KEY: &str = "DEV_VALIDATE_CI_CONTEXT";
+/// The selector that previews the command's own selection; empty is none.
+pub const DEV_VALIDATE_SELECTION_CMD_KEY: &str = "DEV_VALIDATE_SELECTION_CMD";
+/// The prefix the project's commands print each finding with; empty is
+/// none recorded, and such a run is never reuse evidence.
+pub const DEV_VALIDATE_FINDING_PREFIX_KEY: &str = "DEV_VALIDATE_FINDING_PREFIX";
+/// The bound on the command, seconds.
+pub const DEV_VALIDATE_TIMEOUT_SECS_KEY: &str = "DEV_VALIDATE_TIMEOUT_SECS";
+/// `pr`, the default, or `push-base`: direct delivery keeps every ci
+/// request on local validation.
+pub const DELIVERY_KEY: &str = "ORCH_DELIVERY";
+const DEFAULT_VALIDATE_TIMEOUT_SECS: u64 = 3600;
 /// The program the lane admission reads a diff range's changed paths
 /// through (decision 118 (4)); empty finds the installed change-scope
 /// package's `harness-only`.
@@ -197,6 +219,31 @@ pub const LANES_CLI_KEY: &str = "OVERSEE_WATCH_LANES";
 /// The orch package's account reader under the project's install.
 pub const LANES_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/lanes";
 const DEFAULT_RECORD_RETENTION_DAYS: u32 = 5;
+// U6h: the accounts judge's keys (step6-map § A10; decision 183 Q11).
+/// A providerless machine's own statement of a plan's end, `<name>=<YYYY-
+/// MM-DD>` pairs: the account is picked until that UTC day and measured
+/// after it, so a stated end a live reading contradicts is seen. The judge
+/// reads it; the legacy reader is run with it emptied, so it measures the
+/// account instead of listing it `retired` unread.
+pub const LANE_RETIRE_KEY: &str = "ORCH_LANE_RETIRE";
+/// The bound a pick admits an account under, in percent used (`lanes`'
+/// `--max-pct` default).
+pub const LANE_MAX_PCT_KEY: &str = "ORCH_LANE_MAX_PCT";
+/// Points of the 5-hour session window one live lane is expected to spend
+/// an hour where its account measured no rate.
+pub const LANE_BURN_PCT_KEY: &str = "ORCH_LANE_BURN_PCT_PER_HOUR";
+/// The room kept in each plan window for the overseer's own seat.
+pub const OVERSEER_SEAT_RESERVE_PCT_KEY: &str = "ORCH_OVERSEER_SEAT_RESERVE_PCT";
+/// The Codex credit balance a window wall is lifted above (`lanes`'
+/// `ORCH_LANE_CODEX_CREDIT_FLOOR`).
+pub const CODEX_CREDIT_FLOOR_KEY: &str = "ORCH_LANE_CODEX_CREDIT_FLOOR";
+/// The lane host a pick runs under; `local` or unset is this machine's
+/// own reading.
+pub const LANE_HOST_KEY: &str = "ORCH_LANE_HOST";
+const DEFAULT_LANE_MAX_PCT: u32 = 95;
+const DEFAULT_LANE_BURN_PCT: u32 = 5;
+const DEFAULT_SEAT_RESERVE_PCT: u32 = 50;
+const DEFAULT_CODEX_CREDIT_FLOOR: u64 = 5000;
 
 const DEFAULT_STATE_DIR: &str = "tmp";
 const DEFAULT_VERIFY_SECS: u64 = 15;
@@ -216,7 +263,7 @@ const DEFAULT_LANE_AGE_SECS: u64 = 12600;
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The keys this runtime reads from the private env file.
-const READ_KEYS: [&str; 43] = [
+const READ_KEYS: [&str; 50] = [
     TRACKER_CLI_KEY,
     PR_WATCH_CLI_KEY, // U5e2
     SECURITY_ALERTS_KEY,
@@ -241,6 +288,14 @@ const READ_KEYS: [&str; 43] = [
     CLAIM_STATE_DIR_KEY,
     LANE_MAIL_CLI_KEY,
     DEV_VALIDATE_CLI_KEY,
+    // U6a
+    DEV_VALIDATE_CMD_KEY,
+    DEV_VALIDATE_RANGE_CMD_KEY,
+    DEV_VALIDATE_CI_CONTEXT_KEY,
+    DEV_VALIDATE_SELECTION_CMD_KEY,
+    DEV_VALIDATE_FINDING_PREFIX_KEY,
+    DEV_VALIDATE_TIMEOUT_SECS_KEY,
+    DELIVERY_KEY,
     SCOPE_PATHS_CLI_KEY,
     JOB_CLAIM_SECS_KEY,
     WATCH_MAIL_INTERVAL_KEY,
@@ -380,6 +435,53 @@ pub struct ReadSettings {
     pub owner_tracker: Option<OwnerTracker>,
 }
 
+/// U6a: how a change is delivered, which decides whether a ci request may
+/// defer to the pull request's required CI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    Pr,
+    PushBase,
+}
+
+/// U6a: the project's validation declaration, the one source `validate
+/// start` resolves a run's mode from (step6-map § A4): the whole battery,
+/// the range command where declared, the CI context where declared, the
+/// selector, the finding prefix and the bound. A command is its text,
+/// trimmed of nothing; an empty or blank value is no declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidateSettings {
+    pub cmd: Option<String>,
+    pub range_cmd: Option<String>,
+    pub ci_context: Option<String>,
+    pub selection_cmd: Option<String>,
+    pub finding_prefix: Option<String>,
+    pub timeout: Duration,
+    pub delivery: Delivery,
+}
+
+/// U6h: one stated retirement, `<name>=<YYYY-MM-DD>`: the account whose
+/// alias or directory name is `name` ends its plan on that UTC day.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retirement {
+    pub name: String,
+    pub date: String,
+}
+
+/// U6h: what the accounts judge reads beside the listing (step6-map
+/// § A10): the local retirement statement and the pick's bounds, each the
+/// legacy `lanes` default where unset, refused by key and value as `lanes`
+/// refused them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountSettings {
+    pub retire: Vec<Retirement>,
+    pub max_pct: u32,
+    pub burn_pct_per_hour: u32,
+    pub seat_reserve_pct: u32,
+    pub codex_credit_floor: u64,
+    /// The provider a pick runs under, `None` for this machine's own read.
+    pub host: Option<String>,
+}
+
 /// The settings the runtime acts on, resolved once per process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -411,6 +513,8 @@ pub struct Settings {
     pub lane_mail_cli: PathBuf,
     /// The program a close ends a worktree's validation runs through.
     pub dev_validate_cli: PathBuf,
+    /// U6a: the project's validation declaration.
+    pub validate: ValidateSettings,
     /// The program the lane admission reads a range's changed paths
     /// through.
     pub scope_paths_cli: PathBuf,
@@ -427,6 +531,8 @@ pub struct Settings {
     /// The account reader the heartbeat runs (`lanes list --json`, `lanes
     /// pick`).
     pub lanes_cli: PathBuf,
+    /// U6h: the accounts judge's statement and bounds.
+    pub accounts: AccountSettings,
 }
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::Error {
@@ -723,6 +829,39 @@ pub fn load(
     let lane_mail_cli = program(LANE_MAIL_CLI_KEY, LANE_MAIL_CLI_DEFAULT);
     let agent_runtime = program(AGENT_RUNTIME_KEY, AGENT_RUNTIME_DEFAULT); // U5g
     let dev_validate_cli = program(DEV_VALIDATE_CLI_KEY, DEV_VALIDATE_CLI_DEFAULT);
+    // U6a: a command whose value is blank is no declaration, as the legacy
+    // `${cmd//[[:space:]]/}` read it; a prefix with a newline inside can
+    // prefix no line, which the legacy left unrecorded, and is refused.
+    let command = |key: &str| get(key).filter(|v| !v.trim().is_empty()).map(str::to_owned);
+    let finding_prefix = match get(DEV_VALIDATE_FINDING_PREFIX_KEY) {
+        Some(text) if text.contains('\n') => {
+            return Err(value_refusal(DEV_VALIDATE_FINDING_PREFIX_KEY, text));
+        }
+        other => other.map(str::to_owned),
+    };
+    // The legacy `check_seconds`: every byte a digit and the value above
+    // zero, a leading zero admitted.
+    let validate_timeout = match get(DEV_VALIDATE_TIMEOUT_SECS_KEY) {
+        None => Duration::from_secs(DEFAULT_VALIDATE_TIMEOUT_SECS),
+        Some(text) => match text.parse::<u64>() {
+            Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Duration::from_secs(n),
+            Ok(_) | Err(_) => return Err(value_refusal(DEV_VALIDATE_TIMEOUT_SECS_KEY, text)),
+        },
+    };
+    let delivery = match get(DELIVERY_KEY) {
+        None | Some("pr") => Delivery::Pr,
+        Some("push-base") => Delivery::PushBase,
+        Some(other) => return Err(value_refusal(DELIVERY_KEY, other)),
+    };
+    let validate = ValidateSettings {
+        cmd: command(DEV_VALIDATE_CMD_KEY),
+        range_cmd: command(DEV_VALIDATE_RANGE_CMD_KEY),
+        ci_context: command(DEV_VALIDATE_CI_CONTEXT_KEY),
+        selection_cmd: command(DEV_VALIDATE_SELECTION_CMD_KEY),
+        finding_prefix,
+        timeout: validate_timeout,
+        delivery,
+    };
     let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
     let overseer_preference = get(OVERSEER_PREFERENCE_KEY)
         .unwrap_or(DEFAULT_OVERSEER_PREFERENCE)
@@ -731,6 +870,59 @@ pub fn load(
     let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS)?;
     let report_cli = program(REPORT_CLI_KEY, REPORT_CLI_DEFAULT);
     let lanes_cli = program(LANES_CLI_KEY, LANES_CLI_DEFAULT);
+    // U6h: the accounts judge's keys, held to `lanes`' own grammar
+    // (`validate_lane_settings`, `pct_valid`): a retirement names a lane
+    // (no `/`, no `~`) and a real calendar day; a percentage is a whole
+    // number 0 to 100; a value nobody can read is refused, never defaulted.
+    let mut retire = Vec::new();
+    if let Some(text) = get(LANE_RETIRE_KEY) {
+        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+            let valid = item.split_once('=').filter(|(name, date)| {
+                let name = name.trim();
+                !name.is_empty()
+                    && !name.contains('/')
+                    && !name.contains('~')
+                    && calendar_date_valid(date.trim())
+            });
+            let Some((name, date)) = valid else {
+                return Err(value_refusal(LANE_RETIRE_KEY, item));
+            };
+            retire.push(Retirement {
+                name: name.trim().to_owned(),
+                date: date.trim().to_owned(),
+            });
+        }
+    }
+    let pct = |key: &str, default: u32| -> Result<u32> {
+        match get(key) {
+            None => Ok(default),
+            Some(text) => match text.parse::<u32>() {
+                Ok(n)
+                    if n <= 100 && text.len() <= 3 && text.bytes().all(|b| b.is_ascii_digit()) =>
+                {
+                    Ok(n)
+                }
+                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+            },
+        }
+    };
+    let codex_credit_floor = match get(CODEX_CREDIT_FLOOR_KEY) {
+        None => DEFAULT_CODEX_CREDIT_FLOOR,
+        Some(text) => match text.parse::<u64>() {
+            Ok(n) if text.bytes().all(|b| b.is_ascii_digit()) => n,
+            Ok(_) | Err(_) => return Err(value_refusal(CODEX_CREDIT_FLOOR_KEY, text)),
+        },
+    };
+    let accounts = AccountSettings {
+        retire,
+        max_pct: pct(LANE_MAX_PCT_KEY, DEFAULT_LANE_MAX_PCT)?,
+        burn_pct_per_hour: pct(LANE_BURN_PCT_KEY, DEFAULT_LANE_BURN_PCT)?,
+        seat_reserve_pct: pct(OVERSEER_SEAT_RESERVE_PCT_KEY, DEFAULT_SEAT_RESERVE_PCT)?,
+        codex_credit_floor,
+        host: get(LANE_HOST_KEY)
+            .filter(|h| *h != "local")
+            .map(str::to_owned),
+    };
     // The read duties' keys (`security_alerts_init`, `outside_contribution_init`,
     // `orch_connected_repos`, `owner_tracker_settings`).
     let audit = |key: &str| match get(key) {
@@ -787,13 +979,46 @@ pub fn load(
         claim_store,
         lane_mail_cli,
         dev_validate_cli,
+        validate, // U6a
         scope_paths_cli,
         overseer_preference, // U5d2
         // U5f
         retention_days,
         report_cli,
         lanes_cli,
+        accounts, // U6h
     })
+}
+
+/// U6h: whether `text` is a `YYYY-MM-DD` naming a real calendar day
+/// (`lanes`' `calendar_date_valid`, arithmetic rather than `date(1)`).
+pub fn calendar_date_valid(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
+    {
+        return false;
+    }
+    let (Ok(y), Ok(m), Ok(d)) = (
+        text[0..4].parse::<u32>(),
+        text[5..7].parse::<u32>(),
+        text[8..10].parse::<u32>(),
+    ) else {
+        return false;
+    };
+    let days = match m {
+        4 | 6 | 9 | 11 => 30,
+        2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
+        2 => 28,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return false,
+    };
+    (1..=days).contains(&d)
 }
 
 /// The private env file's project-relative name: the default, or the

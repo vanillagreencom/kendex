@@ -321,7 +321,53 @@ impl Harness {
             Harness::Copilot | Harness::Pi => None,
         }
     }
+
+    /// The context capacity a harness declares for a model, in tokens: the
+    /// one table of orch's context judge, read where a reading names no
+    /// window of its own (a provider row's or an adapter's measured
+    /// `window` wins where one is carried). Claude Code's is per model
+    /// family, matched on the lowercased model word as orch's
+    /// `lib/adapters/claude.sh` matched it (`LANE_ADAPTER_CLAUDE_WINDOWS`,
+    /// `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`): a family word anywhere in the
+    /// model, the first row that matches, the default for a model naming
+    /// none. Codex, Copilot and Pi declare no capacity here: each names
+    /// its window in its own session record, which the adapter reads. A
+    /// harness update re-reads this table beside the launch words.
+    ///
+    /// ```text
+    /// harness  model word  capacity
+    /// claude   fable       1000000
+    ///          opus        1000000
+    ///          sonnet       200000
+    ///          haiku        200000
+    ///          (other)      200000
+    /// ```
+    pub fn context_capacity(self, model: &str) -> Option<u64> {
+        match self {
+            Harness::Claude => {
+                let model = model.to_ascii_lowercase();
+                Some(
+                    CLAUDE_CONTEXT_CAPACITY
+                        .iter()
+                        .find(|(word, _)| model.contains(word))
+                        .map_or(CLAUDE_CONTEXT_DEFAULT, |(_, capacity)| *capacity),
+                )
+            }
+            Harness::Codex | Harness::Copilot | Harness::Pi => None,
+        }
+    }
 }
+
+/// Claude Code's declared capacity per model family, in row order.
+const CLAUDE_CONTEXT_CAPACITY: [(&str, u64); 4] = [
+    ("fable", 1_000_000),
+    ("opus", 1_000_000),
+    ("sonnet", 200_000),
+    ("haiku", 200_000),
+];
+
+/// Claude Code's capacity for a model naming no family in the table.
+const CLAUDE_CONTEXT_DEFAULT: u64 = 200_000;
 
 impl fmt::Display for Harness {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -391,6 +437,36 @@ const COMM_LEN: usize = 15;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Defect: a model's declared capacity read from another family's row
+    /// (the judge then reads a 1,000,000-token model as 200,000, or the
+    /// reverse), or a harness whose window the adapter measures answered a
+    /// figure here. The rows are `lib/adapters/claude.sh`'s patterns on the
+    /// spellings orch records: a family word inside a full id or a class
+    /// alias, case ignored, the default for a model naming no family, and
+    /// `None` for every other harness.
+    #[test]
+    fn the_declared_capacity_follows_the_model_family_and_only_claude_declares_one() {
+        let rows = [
+            ("claude-fable-5-1", Some(1_000_000)),
+            ("Fable", Some(1_000_000)),
+            ("opus[1m]", Some(1_000_000)),
+            ("claude-sonnet-5-5", Some(200_000)),
+            ("haiku", Some(200_000)),
+            ("", Some(200_000)),
+            ("some-other-model", Some(200_000)),
+        ];
+        for (model, want) in rows {
+            assert_eq!(Harness::Claude.context_capacity(model), want, "{model}");
+        }
+        for harness in [Harness::Codex, Harness::Copilot, Harness::Pi] {
+            assert_eq!(
+                harness.context_capacity("claude-sonnet-5-5"),
+                None,
+                "{harness}"
+            );
+        }
+    }
 
     /// A probe of a stand-in harness is one counted start under `probe`
     /// and reads the first non-blank line it prints; a binary that is not

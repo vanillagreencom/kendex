@@ -38,6 +38,8 @@
 
 pub mod baseline;
 pub mod claim;
+// U6h: the overseer's context record and its three judgements.
+pub mod context;
 pub mod events;
 pub mod github;
 pub mod lanes;
@@ -587,7 +589,10 @@ fn commit(store: &Mutex<Store>, produced: Produced, stamp: Option<Change>) -> Re
 }
 
 /// What `watch status` reports: the claim and whether its identity runs,
-/// the due times the records imply and the last event line's number.
+/// the due times the records imply, the event log's path and the last
+/// event line's number. The overseer's turn-end hook (`lane-mail-check.sh`,
+/// `watch_live` and `wake_check`) reads `claim.standing`, `claim.cwd`,
+/// `claim.origin` and `log` off it (step6-map A7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Status {
     pub claim: Option<ClaimStatus>,
@@ -595,6 +600,8 @@ pub struct Status {
     /// the recorded cadences; a duty with no row yet is absent.
     pub due: BTreeMap<Duty, u64>,
     pub events: u64,
+    /// The event log beside the fleet state, the file a reader follows.
+    pub log: std::path::PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -602,6 +609,10 @@ pub struct ClaimStatus {
     pub pid: u32,
     pub start: Option<String>,
     pub pane: String,
+    /// `hand` or `succession`, as the claim records it.
+    pub origin: String,
+    /// The directory the watch runs from, as the claim records it.
+    pub cwd: String,
     /// `live`, `gone` or `unreadable`.
     pub standing: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -621,6 +632,8 @@ pub fn status(paths: &Paths) -> Result<Status> {
                 pid: claim.pid,
                 start: claim.start,
                 pane: claim.pane,
+                origin: claim.origin,
+                cwd: claim.cwd,
                 standing,
                 cause,
             })
@@ -656,5 +669,6 @@ pub fn status(paths: &Paths) -> Result<Status> {
         claim,
         due,
         events: events::line_count(&paths.log)?,
+        log: paths.log.clone(),
     })
 }

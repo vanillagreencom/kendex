@@ -328,11 +328,11 @@ fi
 
 ci_fix_workflow="$SKILL_DIR/workflows/ci-fix.md"
 ci_fix_gate="$(grep -n -m1 -F 'approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]' "$ci_fix_workflow" | cut -d: -f1)"
-ci_fix_wait="$(grep -n -m1 -F 'scripts/ci-wait [PR_NUMBER]' "$ci_fix_workflow" | cut -d: -f1)"
+ci_fix_wait="$(grep -n -m1 -F '"verify-pr"' "$ci_fix_workflow" | cut -d: -f1)"
 if [[ -n "$ci_fix_gate" && -n "$ci_fix_wait" && "$ci_fix_gate" -lt "$ci_fix_wait" ]]; then
   pass "ci-fix re-confirms the review gate before waiting on CI"
 else
-  fail "ci-fix must re-confirm the review gate before ci-wait (got gate=$ci_fix_gate wait=$ci_fix_wait)"
+  fail "ci-fix must re-confirm the review gate before the CI verification (got gate=$ci_fix_gate wait=$ci_fix_wait)"
 fi
 
 # Post-merge base sync: `merge --ff-only` advances whatever branch the target

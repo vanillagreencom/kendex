@@ -70,6 +70,7 @@ use serde_json::Value;
 
 use super::admission::{AdmissionReads, Clis};
 use crate::error::{Error, Result};
+use crate::settings::Settings;
 use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
 
 /// The `kind` a Claude cloud lane records: hosted, its `mail_root` the
@@ -104,6 +105,11 @@ pub struct Host<'a> {
     /// the changed paths of a diff range. `None` on a host built for an
     /// entry that launches no lane.
     pub(super) admission: Option<AdmissionReads<'a>>,
+    /// The settings the accounts judge reads a launch's account under
+    /// (step6-map A5): the listing reader and the account bounds. `None`
+    /// on a host built for an entry that launches no lane, which judges no
+    /// account.
+    pub(super) accounts: Option<&'a Settings>,
 }
 
 impl Host<'static> {
@@ -120,14 +126,26 @@ impl Host<'static> {
             still_runs: &process::still_runs,
             pane_foreground: &pane_foreground,
             admission: None,
+            accounts: None,
+        }
+    }
+}
+
+impl<'a> Host<'a> {
+    /// The kernel host with the admission's reads through the named
+    /// programs: what the launch and admit entries judge against.
+    pub fn admitting(self, clis: Clis) -> Host<'a> {
+        Host {
+            admission: Some(AdmissionReads::through(clis)),
+            ..self
         }
     }
 
-    /// The kernel host with the admission's reads through the named
-    /// programs: what the launch and admit entries judge against.
-    pub fn admitting(self, clis: Clis) -> Host<'static> {
+    /// The host with the accounts judge's settings: a launch that names
+    /// an account is judged on that account's room.
+    pub fn judging(self, settings: &'a Settings) -> Host<'a> {
         Host {
-            admission: Some(AdmissionReads::through(clis)),
+            accounts: Some(settings),
             ..self
         }
     }
@@ -739,6 +757,7 @@ mod tests {
             still_runs: &reader,
             pane_foreground: &never_a_pane,
             admission: Some(no_reads()),
+            accounts: None,
         };
         for status in [
             LaneStatus::Running,
@@ -887,6 +906,7 @@ mod tests {
             still_runs: &reader,
             pane_foreground: &never_a_pane,
             admission: Some(no_reads()),
+            accounts: None,
         };
         let mut held = lane("A", LaneStatus::Stopped, Some((900, "ticks:1")));
         held.reservation = Some(Reservation {
@@ -1063,6 +1083,7 @@ mod tests {
             still_runs: &reader,
             pane_foreground: &pane_reader,
             admission: Some(no_reads()),
+            accounts: None,
         };
         let mut cloud = lane("KEN-CLOUD", LaneStatus::Running, None);
         cloud.kind = Some("claude-cloud".into());

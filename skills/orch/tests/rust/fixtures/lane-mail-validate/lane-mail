@@ -1,0 +1,33 @@
+#!/bin/bash
+# The mailbox CLI as the validate rows see it: `send --item ITEM --directive
+# --file F --delivery-id KEY` is the outbound route the validation end notice
+# takes to its lane (decision 184 (1)). The call's argv is logged, and the
+# file's first line as `send-text <line>`. With $LANE_MAIL_SNAPSHOT set the
+# state file $LANE_MAIL_STATE names is copied there the moment the first send
+# is made, never a later one: what the record held when the notice first went
+# out. The receipt `lane-mail: sent item=ITEM id=... bytes=... monitor=none`
+# is printed on stdout, as the real program prints it, unless $LANE_MAIL_STATUS
+# is a nonzero exit (a refusal the sender records). Every call is appended to
+# $LANE_MAIL_LOG when set.
+[ -z "${LANE_MAIL_LOG:-}" ] || printf '%s\n' "$*" >> "$LANE_MAIL_LOG"
+case "${1:-}" in
+  send)
+    item=""; file=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --item) item="${2:-}"; shift ;;
+        --file) file="${2:-}"; shift ;;
+      esac
+      shift
+    done
+    [ -z "${LANE_MAIL_LOG:-}" ] || [ -z "$file" ] || { printf 'send-text '; sed -n 1p "$file"; } >> "$LANE_MAIL_LOG"
+    [ -z "${LANE_MAIL_SNAPSHOT:-}" ] || [ -e "$LANE_MAIL_SNAPSHOT" ] || cp -- "${LANE_MAIL_STATE:?}" "$LANE_MAIL_SNAPSHOT"
+    status="${LANE_MAIL_STATUS:-0}"
+    if [ "$status" != 0 ]; then
+      echo "lane-mail: send-refused item=$item" >&2
+      exit "$status"
+    fi
+    printf 'lane-mail: sent item=%s id=fixture bytes=0 monitor=none\n' "$item" ;;
+  *) echo "lane-mail-validate: verb=$1" >&2; exit 2 ;;
+esac
+exit 0

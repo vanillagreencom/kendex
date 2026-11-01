@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # oversee-watch starts the fleet's standing scheduler, `orch-runtime watch
-# run`, under this name: the overseer's turn-end hook reads a live watch off
-# the claim record beside the fleet state through lib/watch-pid.sh, whose
-# liveness test is a pid whose command line names oversee-watch, so the
-# runtime is exec'd here as that name and its claim reads as the live watch
-# until the hook moves onto the runtime's own verbs. The claim, the event log
-# and the baseline are the runtime's (`orch-runtime watch --help`); this
-# entry's one write is the overseer's launch line, below.
+# run`, under this name: the runtime is exec'd here as `oversee-watch`, so
+# a watch of the retired repeat loop reads the runtime's claim as a live
+# watch and refuses to start beside it (lib/watch-pid.sh's liveness test is
+# a pid whose command line names oversee-watch). The overseer's turn-end
+# hook reads the watch through `orch-runtime watch status`. The claim, the
+# event log and the baseline are the runtime's (`orch-runtime watch
+# --help`); this entry's one write is the overseer's launch line, below.
 #
 # Usage:
 #   oversee-watch --state PATH [--repeat SECS] [--interval SECS] [--max-loops N]

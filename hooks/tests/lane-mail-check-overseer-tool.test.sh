@@ -297,8 +297,7 @@ told_refused_rows() { # NAME [JUDGE]
   overseer_tool "$TRANSCRIPT" s2
   local refused
   refused="RC=$RC first=$(first_line) fleet=$(grep -c '^lane-mail-check: fleet-state=' "$ERR_FILE")"
-  rm -f -- "$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh"
-  ln -s -- "$REPO_ROOT/skills/orch/scripts/lib/watch-pid.sh" "$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh"
+  runtime_stub "$LANE/.claude/skills/orch/scripts" none
   state_stub delegate
   overseer_tool "$TRANSCRIPT" s2
   HELD="$refused then=$(context_line)"
@@ -308,7 +307,7 @@ assert_eq "$HELD" "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT fl
   "a refused call carries the gap ahead of its refusal, and the next call does not tell it again" "$ERR_FILE"
 variant refuse-drops-notice -e 's/^  \[ "\$ARM" != deliver \] || text="\$TOOL_NOTICE\$text"$/  :/'
 told_refused_rows control_overseer_tool_told_refused "$VARIANT_PATH"
-assert_eq "${HELD%% fleet=*}" "RC=2 first=lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
+assert_eq "${HELD%% fleet=*}" "RC=2 first=lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/orch-runtime" \
   "control: a hook whose refusal drops the notice refuses the call with the gap withheld"
 
 # A transcript the payload names and nothing can read is a refusal the

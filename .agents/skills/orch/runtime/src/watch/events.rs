@@ -64,7 +64,8 @@ impl OverseerCase {
 /// The variants are the lines whose shape the legacy watch fixed with one
 /// `echo` or `printf`, each cited to that site, and this runtime's own
 /// (`watch-taken-over`, `idle-unread`, `reconcile-refused`,
-/// `notice-unmarked`, and `watch-step-failed` for any duty). A shape whose
+/// `notice-unmarked`, `directive-send-unsettled`, and `watch-step-failed`
+/// for any duty). A shape whose
 /// legacy tail is free-form carries the tail as one string field. The lines
 /// whose whole body the legacy composed elsewhere (`usage-limit*`,
 /// `report-due`, `tracker-quota`) are their duties' to add here.
@@ -93,6 +94,11 @@ pub enum Event {
     /// This runtime's own: an owed notice was sent and the store refused
     /// its mark (decision 124i (36)), `cause` the refusal's key.
     NoticeUnmarked { intent: String, cause: String },
+    /// This runtime's own (U6d2, decision 184 (5)): a session send recorded
+    /// owed on the lane `item` that no kept receipt settles, `cause` the
+    /// settle's word; printed when the cause is new or changed, as
+    /// `reconcile-refused` is.
+    DirectiveSendUnsettled { item: String, cause: String },
     /// `oversee-watch:1443`.
     LaneClosed { item: String },
     /// `oversee-watch:1459`.
@@ -245,7 +251,9 @@ pub enum Event {
     LaneAsking { lane: String, note: Option<String> },
     /// `oversee-watch:5067`.
     ModelCapacity { lane: String },
-    /// `oversee-watch:5092`, `note` as for `lane-asking`.
+    /// `oversee-watch:5092`, `note` as for `lane-asking`, or
+    /// `cause=<word>` where the lane's own Stop row named a stop reason
+    /// that is not the harness's ordinary end.
     IdleAfterReturn { lane: String, note: Option<String> },
     /// `oversee-watch:5221`: `fields` is the roster's own field text,
     /// `change` the comma-joined kinds.
@@ -388,6 +396,9 @@ impl Event {
             }
             Event::NoticeUnmarked { intent, cause } => {
                 format!("EVENT notice-unmarked intent={intent} cause={cause}")
+            }
+            Event::DirectiveSendUnsettled { item, cause } => {
+                format!("EVENT directive-send-unsettled item={item} cause={cause}")
             }
             Event::LaneClosed { item } => format!("EVENT lane-closed {item}"),
             Event::LaneCloseRefused { item } => format!("EVENT lane-close-refused {item}"),

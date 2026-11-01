@@ -27,7 +27,10 @@
 # map has it, else `graphql`. `gh repo view --json nameWithOwner -q
 # .nameWithOwner`, the admission's read of a checkout's repository, answers
 # from the map's `repo view` entry; with none it fails as gh does in a
-# checkout whose remotes name no GitHub host (exit 1).
+# checkout whose remotes name no GitHub host (exit 1). `gh pr view N --repo
+# R --json F`, the verify-pr rows' read of a pull request, answers from the
+# map's `pr view N` entry; with none it fails as gh does for a number the
+# repository lacks (exit 1, the GraphQL message on stderr).
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 if [ -z "${GH_FAKE_LOG:-}" ]; then
@@ -40,6 +43,12 @@ if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then
   reply=$(jq -c '."repo view" // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   if [ -z "$reply" ]; then
     echo "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use \`gh auth login\`" >&2
+    exit 1
+  fi
+elif [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
+  reply=$(jq -c --arg k "pr view ${3:-}" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  if [ -z "$reply" ]; then
+    echo "GraphQL: Could not resolve to a PullRequest with the number of ${3:-}. (repository.pullRequest)" >&2
     exit 1
   fi
 elif [ "${1:-}" != api ]; then

@@ -781,6 +781,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
             overseer: &overseer,
             window: Some(window),
         },
+        intent.watch.as_deref(),
     )
 }
 
@@ -791,7 +792,9 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
 /// follows, so a reconcile resumes here from the phase it finds. `runner` is
 /// the identity the caller already read, or `None` for a reconcile that
 /// reads it afresh; `retired` is what retired the predecessor and the record
-/// whose handles the publication settles.
+/// whose handles the publication settles; `watch` is the fleet watch's
+/// launch line a start carries, launched before the publication.
+#[allow(clippy::too_many_arguments)]
 fn complete_transfer(
     mut operation: Operation,
     successor: &Successor,
@@ -799,6 +802,7 @@ fn complete_transfer(
     runner: Option<&Identity>,
     phase: &Phase,
     retired: Retired,
+    watch: Option<&[String]>,
 ) -> Result<EffectOutcome> {
     let by = retired.by;
     // Reached only from `retired` on, or a `window-opened`/`identity-read`
@@ -824,6 +828,7 @@ fn complete_transfer(
                     &idle,
                     "successor-not-idle",
                     retired,
+                    watch,
                 );
             };
             // The runner must be at its composer, under the identity read
@@ -986,6 +991,7 @@ fn complete_transfer(
                     &up,
                     "successor-not-up",
                     retired,
+                    watch,
                 ),
                 ProcessRead::Gone | ProcessRead::Stale { .. } => successor_exited(
                     operation,
@@ -1023,6 +1029,7 @@ fn complete_transfer(
             &up,
             "successor-not-up",
             retired,
+            watch,
         ),
         TurnConfirm::PaneGone => successor_exited(
             operation,
@@ -1062,7 +1069,12 @@ fn complete_transfer(
 /// handle of the record the publication moves: a close the host did not
 /// answer for keeps the succession `unconfirmed` at this phase, the
 /// successor live and the brief delivered, and the reconcile closes it again
-/// before it publishes.
+/// before it publishes. A start's fleet watch (`watch`, step6-map A7) is
+/// launched here, after the runner's identity is read and before the
+/// publication, through the handle's job launch: a launch that refuses or
+/// never claims holds the start `unconfirmed` naming it, the runner live
+/// and the record naming no controller, and the reconcile runs the step
+/// again; the watch found or launched goes on the wire as `overseer.watch`.
 #[allow(clippy::too_many_arguments)]
 fn publish(
     mut operation: Operation,
@@ -1074,6 +1086,7 @@ fn publish(
     accept: &dyn Fn(&State) -> bool,
     not_accepted: &str,
     retired: Retired,
+    watch: Option<&[String]>,
 ) -> Result<EffectOutcome> {
     let by = retired.by;
     let identity = match operation.await_state(
@@ -1127,6 +1140,24 @@ fn publish(
         None => operation.close_overseer_window(retired.overseer)?,
     };
     let window_word = window.word();
+    let mut watch_job = None;
+    if let Some(words) = watch {
+        match operation.ensure_watch(words)?.held() {
+            Ok(job) => watch_job = Some(job),
+            Err((note, mut observation)) => {
+                observation["predecessor_window"] = json!(window_word);
+                return Ok(unconfirmed_after_retirement(
+                    operation,
+                    opened,
+                    Some(identity.identity()),
+                    session_id,
+                    note,
+                    by,
+                    observation,
+                ));
+            }
+        }
+    }
     let observation = json!({
         "retired": true,
         "retired_by": by,
@@ -1140,6 +1171,7 @@ fn publish(
             server_start: Some(opened.server_start),
             server_socket: Some(opened.socket.clone()),
             launch_line: successor.launch_line.clone(),
+            watch: watch_job,
             ..Wire::default()
         })),
         Err(operation) => Ok(unconfirmed_after_retirement(
@@ -1537,7 +1569,16 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
         | Phase::Delivered { .. }
         | Phase::IdentityRead { .. }) => resolved,
     };
-    let mut outcome = judge_resolved(operation, run, &overseer, mode, retirement, unproven, phase)?;
+    let mut outcome = judge_resolved(
+        operation,
+        run,
+        &overseer,
+        mode,
+        retirement,
+        unproven,
+        phase,
+        intent.watch.as_deref(),
+    )?;
     if let Some(registered) = receipted {
         outcome.annotate("registered", registered);
     }
@@ -1606,6 +1647,7 @@ fn judge_resolved(
     retirement: Option<&'static str>,
     unproven: Option<&'static str>,
     phase: &Phase,
+    watch: Option<&[String]>,
 ) -> Result<EffectOutcome> {
     let generation = overseer.generation.unwrap_or(0);
     let opened = phase
@@ -1809,6 +1851,7 @@ fn judge_resolved(
         runner.as_ref(),
         phase,
         retired,
+        watch,
     )
 }
 

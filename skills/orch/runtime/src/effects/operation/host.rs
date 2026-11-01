@@ -682,7 +682,7 @@ impl Operation<'_> {
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Receipt
                 | Obligation::Validation
-                | Obligation::JobSidecar
+                | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }
@@ -747,7 +747,7 @@ impl Operation<'_> {
                 | Obligation::Window { .. }
                 | Obligation::Receipt
                 | Obligation::Validation
-                | Obligation::JobSidecar
+                | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }

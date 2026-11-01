@@ -2,7 +2,8 @@
 # Tests for dev-artifact-check: deterministic on-disk acceptance of a dev
 # agent's completion JSON artifact in the orch dev-start / dev-fix /
 # review-pr-comments workflows. Identity is by per-delegation ROUND ID, not
-# mtime: the check resolves WT/tmp/dev-return-ISSUE-RID.json and requires the
+# mtime: the check resolves the receipt of the run the round's newest validate
+# stage names, WT/tmp/dev-return-ISSUE-RID-RUNID.json, and requires the
 # internal `.round_id` to match.
 #
 # One case per behaviour surface; shaped input is one table per case, one
@@ -41,6 +42,17 @@ ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
 
 round_write() { growth_round_write "$STATE" "$ROUND_WRITE_BIN" "$@"; }
 
+# fix_run_dir DIR WORKTREE ISSUE RID [MODE] — round_run_dir plus the validate
+# stage the runtime records for that run, closed pass in MODE (full by
+# default): round mode reads the round's receipt and a fix receipt's mode
+# through it. Prints DIR.
+fix_run_dir() {
+  local dir
+  dir="$(round_run_dir "$@")" || return 1
+  plant_validate_stage "$STATE" "$2" "$3" "$4" "$dir" "${5:-full}"
+  printf '%s\n' "$dir"
+}
+
 # new_repo NAME ISSUE ROUND — a committed git repo with growth state for ISSUE
 # at ROUND; prints its path. `git -C` everywhere, so a case never cds.
 new_repo() {
@@ -70,12 +82,22 @@ RUN_SEQ=0
 # SHIM_PATH, when set, is prepended to PATH for the run: the probe-failure case
 # shadows one helper at a time so a row fails the probe it names and no other.
 SHIM_PATH=""
+# Round mode reads the round's validate stages from the worktree's own state
+# directory, where every fixture repository keeps its state, unless the
+# caller named another one.
 run_check() {
+  local state_dir="$ORCH_STATE_DIR" arg previous=""
+  if [[ "$state_dir" == "$DEFAULT_STATE_DIR" ]]; then
+    for arg in "$@"; do
+      [[ "$previous" != --worktree ]] || state_dir="$arg/tmp"
+      previous="$arg"
+    done
+  fi
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN"
   ERR="$RUN/stderr"
   set +e
-  OUT=$(PATH="${SHIM_PATH:+$SHIM_PATH:}$PATH" "$CHECK" "$@" 2>"$ERR")
+  OUT=$(ORCH_STATE_DIR="$state_dir" PATH="${SHIM_PATH:+$SHIM_PATH:}$PATH" "$CHECK" "$@" 2>"$ERR")
   RC=$?
   set -e
 }
@@ -144,7 +166,8 @@ ISSUE="issue-770"
 R="1750000000-4242"
 ARTIFACT="$WT/tmp/dev-return-$ISSUE-$R.json"
 "$STATE" --state-dir "$WT/tmp" init "$ISSUE" --worktree "$WT" --branch test >/dev/null
-export ORCH_STATE_DIR="$WT/tmp"
+DEFAULT_STATE_DIR="$WT/tmp"
+export ORCH_STATE_DIR="$DEFAULT_STATE_DIR"
 VALID_IMPL='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","validate_mode":"full","validate_time":{"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:55:00Z","seconds":3300},"qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
 VALID_FIX='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","validate_mode":"range","validate_time":null,"summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
 ROUND_ARGS="--worktree $WT --issue $ISSUE --round-id $R"
@@ -265,22 +288,22 @@ ORCH_STATE_DIR="$RT/tmp" run_check --worktree "$RT" --issue issue-9 --round-id 5
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's implement output round-trips as valid" "$ERR"
 round_write --worktree "$RT" --issue issue-9 --round-id 7-8 \
   --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
-"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RT_HEAD" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-rt-7-8" "$RT" issue-9 7-8)" --item 1 Applied a --item 2 Skipped b >/dev/null
-run_check --file "$RT/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2
+"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RT_HEAD" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-rt-7-8" "$RT" issue-9 7-8)" --item 1 Applied a --item 2 Skipped b >/dev/null
+run_check --file "$RT/tmp/dev-return-issue-9-7-8-run-rt-7-8.json" --expect-items 1,2
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's fix output round-trips through file-mode --expect-items" "$ERR"
 
 RR="$(new_repo rr issue-9 seed 1000000)"
 RR_HEAD="$(git -C "$RR" rev-parse HEAD)"
 round_write --worktree "$RR" --issue issue-9 --round-id 7-8 \
   --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-rr-7-8" "$RR" issue-9 7-8)" --item 1 Applied a --item 2 Skipped b >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-rr-7-8" "$RR" issue-9 7-8)" --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --worktree "$RR" --issue issue-9 --round-id 7-8 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "an artifact covering the persisted round set is valid" "$ERR"
 run_check --worktree "$RR" --issue issue-9 --round-id 7-8 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "the record is not consumed: a repeat check stays valid" "$ERR"
 round_write --worktree "$RR" --issue issue-9 --round-id 8-9 \
   --item 1 "fix nil deref" "src/parse.rs on a config a shipped writer emits" --item 2 "cover expiry" "tests/auth.rs expiry case" >/dev/null
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-rr-8-9" "$RR" issue-9 8-9)" --item 1 Applied a >/dev/null
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-rr-8-9" "$RR" issue-9 8-9)" --item 1 Applied a >/dev/null
 run_check --worktree "$RR" --issue issue-9 --round-id 8-9 --expect-items-from-round
 assert_eq "$(observe "reason=incomplete")" "reason=incomplete" "an artifact missing a persisted delegated item is incomplete" "$ERR"
 run_check --worktree "$RR" --issue issue-9 --round-id 9-9 --expect-items-from-round
@@ -305,14 +328,14 @@ done
 # the record cannot be that misuse, so the from-round path never emits it even
 # when the shapes coincide (the inline form is the control).
 round_write --worktree "$RR" --issue issue-9 --round-id 16-16 --item 3 "only item three" "tools/guard on a staged render" >/dev/null
-"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-rr-16-16" "$RR" issue-9 16-16)" --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
-run_check --file "$RR/tmp/dev-return-issue-9-16-16.json" --expect-items 3
+"$WRITE" --worktree "$RR" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit "$RR_HEAD" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-rr-16-16" "$RR" issue-9 16-16)" --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
+run_check --file "$RR/tmp/dev-return-issue-9-16-16-run-rr-16-16.json" --expect-items 3
 assert_eq "$(observe "reason=incomplete hint_present=true")" "reason=incomplete hint_present=true" "control: file-mode --expect-items 3 against items 1..3 fires the count-vs-set hint" "$ERR"
 run_check --worktree "$RR" --issue issue-9 --round-id 16-16 --expect-items-from-round
 assert_eq "$(observe "reason=incomplete hint=null")" "reason=incomplete hint=null" "from-round never emits the hint and still reports incomplete" "$ERR"
 run_check --worktree "$RR" --issue issue-9 --round-id 7-8 --expect-items 1,2
 assert_eq "$(observe "rc=2")" "rc=2" "round mode refuses the weaker --expect-items list" "$ERR"
-run_check --file "$RR/tmp/dev-return-issue-9-7-8.json" --expect-items-from-round
+run_check --file "$RR/tmp/dev-return-issue-9-7-8-run-rr-7-8.json" --expect-items-from-round
 assert_eq "$(observe "rc=2")" "rc=2" "file mode has no record to read from" "$ERR"
 
 echo "=== a fix round cannot add unlisted machinery ==="
@@ -330,9 +353,9 @@ for f in .agents/skills/orch/scripts/installed-check crates/new-parser/lib.rs he
   git -C "$AD" add "$f"
 done
 git -C "$AD" commit -q -m additions
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-ad-1-1" "$AD" issue-826 1-1)" --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 1-1 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-ad-1-1" "$AD" issue-826 1-1)" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 1-1 --expect-items-from-round
-ADDS_EXPECT="rc=1 ok=false verdict=retry path=$AD/tmp/dev-return-issue-826-1-1.json reason=unapproved_additions files=[\".agents/skills/orch/scripts/installed-check\",\"crates/new-parser/lib.rs\",\"helpers/root-helper.ts\",\"pkg/test_helpers/nested.ts\",\"skills/orch/scripts/new-check\",\"src/test_utils.rs\",\"test/support/root-support.sh\",\"tools/new\\nline\",\"tools/new-tool\",\"ui/src/test/round-helper.ts\"]"
+ADDS_EXPECT="rc=1 ok=false verdict=retry path=$AD/tmp/dev-return-issue-826-1-1-run-ad-1-1.json reason=unapproved_additions files=[\".agents/skills/orch/scripts/installed-check\",\"crates/new-parser/lib.rs\",\"helpers/root-helper.ts\",\"pkg/test_helpers/nested.ts\",\"skills/orch/scripts/new-check\",\"src/test_utils.rs\",\"test/support/root-support.sh\",\"tools/new\\nline\",\"tools/new-tool\",\"ui/src/test/round-helper.ts\"]"
 assert_eq "$(observe "$ADDS_EXPECT")" "$ADDS_EXPECT" "unlisted protected additions refuse the round, route to retry and name every file" "$ERR"
 
 round_write --worktree "$AD" --issue issue-826 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" \
@@ -343,7 +366,7 @@ for f in crates/allowed/lib.rs skills/orch/scripts/allowed-check "tools/allowed;
   git -C "$AD" add "$f"
 done
 git -C "$AD" commit -q -m allowed-additions
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-ad-2-2" "$AD" issue-826 2-2)" --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 2-2 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-ad-2-2" "$AD" issue-826 2-2)" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 2-2 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "each addition the round named is accepted" "$ERR"
 
@@ -353,7 +376,7 @@ git -C "$AD" commit -q -m pre-move
 round_write --worktree "$AD" --issue issue-826 --round-id 3-3 --item 1 "move existing file" "tools/guard on a staged render" >/dev/null
 git -C "$AD" mv ordinary.txt tools/moved.txt
 git -C "$AD" commit -q -m move
-"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-ad-3-3" "$AD" issue-826 3-3)" --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$AD" --kind fix --issue issue-826 --round-id 3-3 --branch b --commit "$(git -C "$AD" rev-parse HEAD)" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-ad-3-3" "$AD" issue-826 3-3)" --item 1 Applied done >/dev/null
 run_check --worktree "$AD" --issue issue-826 --round-id 3-3 --expect-items-from-round
 assert_eq "$(observe "reason=valid")" "reason=valid" "a moved file is not an addition" "$ERR"
 
@@ -390,7 +413,7 @@ git -C "$RB" add crates/upstream/lib.rs
 git -C "$RB" commit -q -m upstream-advance
 git -C "$RB" checkout -q feature
 git -C "$RB" rebase -q main >/dev/null
-"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 1-1 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-rb-1-1" "$RB" issue-944 1-1)" --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 1-1 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-rb-1-1" "$RB" issue-944 1-1)" --item 1 Applied done >/dev/null
 run_check --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-round
 assert_eq "$(observe "ok=false verdict=retry reason=additions_unattributable files=[]")" "ok=false verdict=retry reason=additions_unattributable files=[]" "an orphaned base refuses the round and names no file" "$ERR"
 # The suite's one must-fail control: without the stop the round is billed the
@@ -398,7 +421,7 @@ assert_eq "$(observe "ok=false verdict=retry reason=additions_unattributable fil
 STOP_MUTANT="$(mutant_scripts stop-mutant dev-artifact-check)/dev-artifact-check" || exit 1
 mutate_file "$STOP_MUTANT" 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' 'if false; then'
 set +e
-OUT="$("$STOP_MUTANT" --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
+OUT="$(ORCH_STATE_DIR="$RB/tmp" "$STOP_MUTANT" --worktree "$RB" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>/dev/null)"; RC=$?
 set -e
 assert_eq "$(observe 'files=["crates/upstream/lib.rs"]')" 'files=["crates/upstream/lib.rs"]' "control: without the stop the round is billed main's addition"
 round_write --worktree "$RB" --issue issue-944 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
@@ -406,7 +429,7 @@ mkdir -p "$RB/tools"
 printf 'round machinery\n' > "$RB/tools/round-tool"
 git -C "$RB" add tools/round-tool
 git -C "$RB" commit -q -m round-addition
-"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 2-2 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-rb-2-2" "$RB" issue-944 2-2)" --item 1 Applied done >/dev/null
+"$WRITE" --worktree "$RB" --kind fix --issue issue-944 --round-id 2-2 --branch feature --commit "$(git -C "$RB" rev-parse HEAD)" --validate pass --validate-run-dir "$(fix_run_dir "$TMP_ROOT/run-rb-2-2" "$RB" issue-944 2-2)" --item 1 Applied done >/dev/null
 run_check --worktree "$RB" --issue issue-944 --round-id 2-2 --expect-items-from-round
 assert_eq "$(observe 'reason=unapproved_additions files=["tools/round-tool"]')" 'reason=unapproved_additions files=["tools/round-tool"]' "a round whose base survived the restack is gated on its own addition alone" "$ERR"
 
@@ -460,6 +483,7 @@ SM="$(git -C "$SR" rev-parse --git-path kendex-rebase-map)"
 SM_BEFORE="$(cat "$SM")"
 cp "$SM" "$TMP_ROOT/supported-original/map"
 for rid in denied allowed unchanged; do
+  plant_validate_stage "$STATE" "$SR" issue-945 "$rid" "$SN" full
   "$WRITE" --worktree "$SR" --kind fix --issue issue-945 --round-id "$rid" --branch issue-945 \
     --commit "$(git -C "$SR" rev-parse HEAD)" --validate pass --validate-run-dir "$SN" --item 1 Applied fixed >/dev/null
 done
@@ -504,104 +528,142 @@ assert_eq "$(observe 'rc=1 reason=additions_unattributable files=[]')" 'rc=1 rea
   'control: disabling projection restores the supported round refusal' "$ERR"
 CHECK="$CHECK_SHIPPED"
 
-echo "=== a fix receipt carries the mode its round runs ==="
-# A fix round runs range, or full where the project sets no range command;
-# a receipt recording the other mode names a run that is not the round's. A
-# ci run is the round's only where its record names an open pull request.
-# `label^project's range command^recorded mode^round record^expect`, over one
-# receipt the writer produced from the round's own range run and one record
-# the round writer produced with --source pr-review and --pr-open true.
+echo "=== a fix receipt carries the mode its run's stage records ==="
+# The runtime resolves a fix round's mode from the project's declaration and
+# records it on the run's stage (`orch-runtime validate start`); the checker
+# receives that mode and refuses a receipt recording another. A ci stage is
+# the runtime's admission, whatever the round record says of its pull
+# request. A run with no stage proof, the ad-hoc path until step 8, keeps
+# the legacy reading: the resolver's mode and the ci exception for an open
+# pull request or push-first. `label^stage mode^receipt filter^expect`, over
+# one receipt the writer produced from the round's own range run.
 MW="$(new_repo modes issue-50 seed 1000000)"
 round_write --worktree "$MW" --issue issue-50 --round-id 1-1 --source pr-review --pr-open true --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
 MODE_RECORD="$MW/tmp/dev-round-issue-50-1-1.json"
 MODE_RECORD_WRITTEN="$(cat "$MODE_RECORD")"
-assert_eq "$(jq -r '[.source, .pr_open] | tojson' <<<"$MODE_RECORD_WRITTEN")" '["pr-review",true]' "the round writer records the source and open PR independently"
+assert_eq "$(jq -r '[.source, .pr_open] | tojson' "$MODE_RECORD")" '["pr-review",true]' "the round writer records the source and open PR independently"
+MODE_RUN="$(fix_run_dir "$TMP_ROOT/run-mw-1-1" "$MW" issue-50 1-1 range)"
 "$WRITE" --worktree "$MW" --kind fix --issue issue-50 --round-id 1-1 --branch b --commit "$(git -C "$MW" rev-parse HEAD)" \
-  --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-mw-1-1" "$MW" issue-50 1-1 range)" --item 1 Applied done >/dev/null
-MODE_RECEIPT="$MW/tmp/dev-return-issue-50-1-1.json"
+  --validate pass --validate-run-dir "$MODE_RUN" --item 1 Applied done >/dev/null
+MODE_RECEIPT="$MW/tmp/dev-return-issue-50-1-1-run-mw-1-1.json"
 MODE_WRITTEN="$(cat "$MODE_RECEIPT")"
 MODE_HEAD="$(git -C "$MW" rev-parse HEAD)"
 MODE_FAKE_SHA="${MODE_HEAD:0:8}00000000000000000000000000000000"
-mode_row() { # RANGE_CMD MODE_FILTER [RECORD_FILTER] — the project's setting, the receipt's mode, the round's record
-  printf '[env]\nORCH_PR_ORDER = "review-first"\n' > "$MW/kendex.settings.toml"
-  [[ -z "$1" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" >> "$MW/kendex.settings.toml"
+mode_row() { # STAGE_MODE MODE_FILTER — the stage's proof mode (none: no proof), the receipt's shape
+  "$STATE" --state-dir "$MW/tmp" update issue-50 --arg dir "$MODE_RUN" --arg mode "$1" '
+    .stages |= map(if .run_dir == $dir then
+      (if $mode == "none" then del(.proof) else .proof = ((.proof // {}) + {mode: $mode}) end) else . end)' >/dev/null
   jq -c "$2" <<<"$MODE_WRITTEN" > "$MODE_RECEIPT"
-  jq "${3:-.}" <<<"$MODE_RECORD_WRITTEN" > "$MODE_RECORD"
 }
 MODE_ROWS=(
-  "a range run in a project with a range command is valid^tools/guard --range x^.^.^rc=0 verdict=accept reason=valid validate_mode=range"
-  "a full run in a project with a range command is refused, naming both modes^tools/guard --range x^.validate_mode=\"full\"^.^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=full+round-mode=range=true"
-  "a full run in a project with no range command is valid^^.validate_mode=\"full\"^.^rc=0 reason=valid validate_mode=full"
-  "a range run in a project with no range command is refused^^.^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
-  "a failing round that started no run is not judged on a mode^tools/guard --range x^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^.^rc=0 verdict=retry reason=valid validate_mode=null"
-  "a wrong mode outranks a fabricated commit^tools/guard --range x^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^.^rc=1 reason=mode_mismatch"
-  "a ci run, which the pull request CI validates, is valid where the round runs range^tools/guard --range x^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
-  "a ci run is valid where the round runs full^^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
-  "a ci run on an open PR is valid with another source^tools/guard --range x^.validate_mode=\"ci\"^.source=\"conversation\"^rc=0 verdict=accept reason=valid validate_mode=ci"
-  "a ci run on a round with no open PR is refused^tools/guard --range x^.validate_mode=\"ci\"^.pr_open=false^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=ci+round-mode=range=true"
-  "a ci run on a legacy round with no PR state is refused^^.validate_mode=\"ci\"^del(.pr_open)^rc=1 verdict=retry reason=mode_mismatch"
-  "the comments source alone permits no ci receipt^tools/guard --range x^.validate_mode=\"ci\"^.source=\"pr-comments\" | .pr_open=false^rc=1 verdict=retry reason=mode_mismatch"
-  "a range fallback on an open PR remains valid^tools/guard --range x^.^.^rc=0 verdict=accept reason=valid validate_mode=range"
-  "an invalid PR state fails record validation^tools/guard --range x^.validate_mode=\"ci\"^.pr_open=\"true\"^rc=2"
+  "a range run whose stage records range is valid^range^.^rc=0 verdict=accept reason=valid validate_mode=range"
+  "a receipt recording full beside a stage that ran range is refused, naming both modes^range^.validate_mode=\"full\"^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=full+round-mode=range=true"
+  "a full run whose stage records full is valid^full^.validate_mode=\"full\"^rc=0 reason=valid validate_mode=full"
+  "a receipt recording range beside a stage that ran full is refused^full^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
+  "a failing round that started no run is not judged on a mode^range^.validate=\"FAILING: DEV_VALIDATE_CMD\" | .validate_mode=null | .validate_time=null^rc=0 verdict=retry reason=valid validate_mode=null"
+  "a wrong mode outranks a fabricated commit^range^.validate_mode=\"full\" | .commit=\"$MODE_FAKE_SHA\"^rc=1 reason=mode_mismatch"
+  "a ci run whose stage records ci is valid: the runtime admitted it^ci^.validate_mode=\"ci\"^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a ci receipt beside a stage the runtime ran as range is refused^range^.validate_mode=\"ci\"^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=ci+round-mode=range=true"
+  "a receipt of a run whose stage records no proof is judged by the resolver: range beside no range command is refused^none^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
 )
 for row in "${MODE_ROWS[@]}"; do
-  IFS='^' read -r label range_cmd filter record_filter expect <<<"$row"
-  mode_row "$range_cmd" "$filter" "$record_filter"
+  IFS='^' read -r label stage_mode filter expect <<<"$row"
+  mode_row "$stage_mode" "$filter"
   run_check --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round
   assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
 done
-# Controls, one per rule of the ci exception: a gate that judges a ci run
-# against the round's own mode refuses the open-PR round, and one that
+# The control: a gate that admits every mode beside a stage accepts the
+# receipt that names another mode than its run's stage.
+mode_row range '.validate_mode="full"'
+MODE_CONTROL="$(mutant_scripts stage-mode-control dev-artifact-check)/dev-artifact-check" || exit 1
+mutate_file "$MODE_CONTROL" '[[ "$recorded_mode" != "$stage_mode" ]] || mode_ok=true' 'mode_ok=true'
+set +e
+OUT="$(ORCH_STATE_DIR="$MW/tmp" "$MODE_CONTROL" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/stage-mode-control.err")"; RC=$?
+set -e
+ERR="$TMP_ROOT/stage-mode-control.err"
+assert_eq "$(observe "rc=0 reason=valid validate_mode=full")" "rc=0 reason=valid validate_mode=full" \
+  "control: judging the receipt against its own mode admits the mismatched receipt" "$ERR"
+# A receipt naming no run keeps the bare name and the legacy reading: the
+# stage the runtime admitted carries no proof, since no run started. A fix
+# round runs range, or full where the project sets no range command; a ci
+# receipt is the round's only where its record names an open pull request.
+# `label^project's range command^receipt filter^round record^expect`. The
+# mode is read from the resolver's stdout alone: what the project env
+# prints on stderr does not unresolve it; a resolver that exits non-zero is
+# unresolved whatever it printed.
+mode_row none '.'
+rm -f -- "${MODE_RECEIPT:?}"
+BARE_RECEIPT="$MW/tmp/dev-return-issue-50-1-1.json"
+bare_row() { # RANGE_CMD MODE_FILTER [RECORD_FILTER] — the project's setting, the receipt's shape, the round's record
+  printf '[env]\nORCH_PR_ORDER = "review-first"\n' > "$MW/kendex.settings.toml"
+  [[ -z "$1" ]] || printf 'DEV_VALIDATE_RANGE_CMD = "%s"\n' "$1" >> "$MW/kendex.settings.toml"
+  jq -c "$2" <<<"$MODE_WRITTEN" > "$BARE_RECEIPT"
+  jq "${3:-.}" <<<"$MODE_RECORD_WRITTEN" > "$MODE_RECORD"
+}
+BARE_ROWS=(
+  "a run-less range receipt is valid where the project declares a range command^tools/guard --range x^.^.^rc=0 reason=valid validate_mode=range"
+  "a run-less full receipt is refused where the project declares a range command, naming both modes^tools/guard --range x^.validate_mode=\"full\"^.^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=full+round-mode=range=true"
+  "a run-less full receipt is valid where the project declares no range command^^.validate_mode=\"full\"^.^rc=0 reason=valid validate_mode=full"
+  "a run-less range receipt is refused where the project declares no range command^^.^.^rc=1 reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=range+round-mode=full=true"
+  "a run-less ci receipt, which the pull request CI validates, is valid where the round runs range^tools/guard --range x^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a run-less ci receipt is valid where the round runs full^^.validate_mode=\"ci\"^.^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a run-less ci receipt on an open PR is valid with another source^tools/guard --range x^.validate_mode=\"ci\"^.source=\"conversation\"^rc=0 verdict=accept reason=valid validate_mode=ci"
+  "a run-less ci receipt on a round with no open PR is refused^tools/guard --range x^.validate_mode=\"ci\"^.pr_open=false^rc=1 verdict=retry reason=mode_mismatch stderr_first~dev-artifact-check:+mode-mismatch+validate-mode=ci+round-mode=range=true"
+  "a run-less ci receipt on a legacy round with no PR state is refused^^.validate_mode=\"ci\"^del(.pr_open)^rc=1 verdict=retry reason=mode_mismatch"
+  "the comments source alone permits no run-less ci receipt^tools/guard --range x^.validate_mode=\"ci\"^.source=\"pr-comments\" | .pr_open=false^rc=1 verdict=retry reason=mode_mismatch"
+  "a run-less range fallback on an open PR remains valid^tools/guard --range x^.^.^rc=0 verdict=accept reason=valid validate_mode=range"
+  "an invalid PR state fails record validation^tools/guard --range x^.validate_mode=\"ci\"^.pr_open=\"true\"^rc=2"
+)
+for row in "${BARE_ROWS[@]}"; do
+  IFS='^' read -r label range_cmd filter record_filter expect <<<"$row"
+  bare_row "$range_cmd" "$filter" "$record_filter"
+  run_check --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round
+  assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
+done
+# Controls, one per rule of the legacy ci exception: a gate that judges a ci
+# run against the round's own mode refuses the open-PR round, and one that
 # reads no PR state accepts a round with no open PR.
 ci_mode_control() { # NAME LABEL ANCHOR REPLACEMENT RECORD_FILTER EXPECT
   local check
-  mode_row "tools/guard --range x" ".validate_mode=\"ci\"" "$5"
+  bare_row "tools/guard --range x" ".validate_mode=\"ci\"" "$5"
   check="$(mutant_scripts "$1" dev-artifact-check)/dev-artifact-check" || exit 1
   mutate_file "$check" "$3" "$4"
   set +e
-  OUT="$("$check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/$1.err")"; RC=$?
+  OUT="$(ORCH_STATE_DIR="$MW/tmp" "$check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/$1.err")"; RC=$?
   set -e
   ERR="$TMP_ROOT/$1.err"
   assert_eq "$(observe "$6")" "$6" "control: $2" "$ERR"
 }
 ci_mode_control ci-mode "without the ci exception an open PR's review ci run is a mode mismatch" \
-  '      ci)' '      no-ci)' "." "rc=1 reason=mode_mismatch"
+  '        ci)' '        no-ci)' "." "rc=1 reason=mode_mismatch"
 ci_mode_control ci-pr "with the PR state unread a ci run on a round with no open PR is valid" \
   "'.pr_open == true'" "'true'" '.pr_open=false' "rc=0 reason=valid validate_mode=ci"
 ci_mode_control ci-pr-type "with the PR state type unchecked a string reaches the mode gate" \
   'and ((has("pr_open") | not) or ((.pr_open | type) == "boolean"))' '' '.pr_open="true"' "rc=1 reason=mode_mismatch"
-# The mode is read from the resolver's stdout alone: what the project env
-# prints on stderr does not unresolve it.
-mode_row "tools/guard --range x" "."
+bare_row "tools/guard --range x" "."
 NOISE_SCRIPTS="$(mutant_scripts mode-noise dev-validate-run)" || exit 1
 printf '#!/usr/bin/env bash\nprintf "private env: warning\\n" >&2\nprintf "validate-mode=range\\n"\n' > "$NOISE_SCRIPTS/dev-validate-run"
 set +e
-OUT="$("$NOISE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-noise.err")"; RC=$?
+OUT="$(ORCH_STATE_DIR="$MW/tmp" "$NOISE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-noise.err")"; RC=$?
 set -e
 assert_eq "$(observe "rc=0 reason=valid validate_mode=range")" "rc=0 reason=valid validate_mode=range" \
   "a resolver that also writes to stderr resolves to the mode it printed" "$TMP_ROOT/mode-noise.err"
-# A resolution that cannot be read is no verdict: the check exits 2 on its
-# own first line rather than accepting the mode it could not judge.
-mode_row "tools/guard --range x" ".validate_mode=\"full\""
 MODE_SCRIPTS="$(mutant_scripts mode-unresolved dev-validate-run)" || exit 1
 printf '#!/usr/bin/env bash\nprintf "dev-validate-run: unreadable-setting setting=DEV_VALIDATE_RANGE_CMD\\n" >&2\nexit 2\n' > "$MODE_SCRIPTS/dev-validate-run"
 set +e
-OUT="$("$MODE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-unresolved.err")"; RC=$?
+OUT="$(ORCH_STATE_DIR="$MW/tmp" "$MODE_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-unresolved.err")"; RC=$?
 set -e
 ERR="$TMP_ROOT/mode-unresolved.err"
-UNRESOLVED_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW=true"
+UNRESOLVED_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW+file=$BARE_RECEIPT=true"
 assert_eq "$(observe "$UNRESOLVED_EXPECT")" "$UNRESOLVED_EXPECT" \
   "a mode dev-validate-run cannot resolve exits 2 on its own key" "$ERR"
-# A resolver that exits non-zero is unresolved even when what it printed reads
-# as a mode.
 EXIT_SCRIPTS="$(mutant_scripts mode-exit dev-validate-run)" || exit 1
 printf '#!/usr/bin/env bash\nprintf "validate-mode=full\\n"\nexit 2\n' > "$EXIT_SCRIPTS/dev-validate-run"
 set +e
-OUT="$("$EXIT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-exit.err")"; RC=$?
+OUT="$(ORCH_STATE_DIR="$MW/tmp" "$EXIT_SCRIPTS/dev-artifact-check" --worktree "$MW" --issue issue-50 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/mode-exit.err")"; RC=$?
 set -e
 ERR="$TMP_ROOT/mode-exit.err"
-EXIT_EXPECT="rc=2 stderr_first~dev-artifact-check:+mode-unresolved+worktree=$MW=true"
-assert_eq "$(observe "$EXIT_EXPECT")" "$EXIT_EXPECT" \
+assert_eq "$(observe "$UNRESOLVED_EXPECT")" "$UNRESOLVED_EXPECT" \
   "a resolver that exits non-zero is unresolved whatever mode it printed" "$ERR"
 
 echo "=== the recorded commit must name a real object in the worktree's repo ==="
@@ -714,12 +776,12 @@ for source in pr-review pr-comments; do
   printf '%s\n' "$source" > "$PF/edits.md"
   git -C "$PF" add edits.md
   git -C "$PF" commit -q -m "$source"
-  pending_run="$(round_run_dir "$TMP_ROOT/run-$rid" "$PF" issue-3231 "$rid" ci)"
+  pending_run="$(fix_run_dir "$TMP_ROOT/run-$rid" "$PF" issue-3231 "$rid" ci)"
   printf 'tree=%s\n' "$(git -C "$PF" rev-parse HEAD^{tree})" >> "$pending_run/start"
   "$WRITE" --worktree "$PF" --kind fix --issue issue-3231 --round-id "$rid" --branch b \
     --commit "$(git -C "$PF" rev-parse HEAD)" --validate pass \
     --validate-run-dir "$pending_run" --item 1 Applied done >/dev/null
-  receipt="$PF/tmp/dev-return-issue-3231-$rid.json"
+  receipt="$PF/tmp/dev-return-issue-3231-$rid-run-$rid.json"
   for reader in round submit; do
     if [[ "$reader" == round ]]; then
       run_check --worktree "$PF" --issue issue-3231 --round-id "$rid" --expect-items-from-round
@@ -750,24 +812,14 @@ done
 # publication now waits for local work. The live reuse reader leaves it idle.
 CHECK="$(mutant_scripts pending-ci-command dev-artifact-check)/dev-artifact-check" || exit 1
 # shellcheck disable=SC2016
-mutate_file "$CHECK" $'    if [[ "$historical" != true ]] && jq -e \'.validate_mode == "ci"\' "$file"' \
-  $'    if "$SCRIPT_DIR/dev-validate-run" --worktree "$repo" --poll 1 >/dev/null && [[ "$historical" != true ]] && jq -e \'.validate_mode == "ci"\' "$file"'
+mutate_file "$CHECK" $'    if jq -e \'.validate_mode == "ci"\' "$file"' \
+  $'    if "$SCRIPT_DIR/dev-validate-run" --worktree "$repo" --poll 1 >/dev/null && jq -e \'.validate_mode == "ci"\' "$file"'
 jq --arg head "$(git -C "$PF" rev-parse HEAD)" '.commit=$head' "$receipt" > "$receipt.next"
 mv "$receipt.next" "$receipt"
 run_check --file "$receipt"
 assert_eq "$RC $([[ -f "$PF/tmp/validation-ran" ]] && echo started || echo idle)" '0 started' \
   'control: starting the command breaks pending receipt reuse' "$ERR"
 rm -f -- "${PF:?}/tmp/validation-ran"
-CHECK="$CI_HEAD_CHECK"
-# The resolver is the permission owner. Removing its push-first admission
-# must refuse the no-PR fix whose ordinary mode is full.
-CHECK="$(mutant_scripts pending-ci-order dev-artifact-check)/dev-artifact-check" || exit 1
-mutate_file "$CHECK" '[[ "$order_line" == pr-order=push-first ]]' 'false'
-# Refresh only the receipt commit to isolate the mode rule from the head rule.
-jq --arg head "$(git -C "$PF" rev-parse HEAD)" '.commit=$head' "$receipt" > "$receipt.next"
-mv "$receipt.next" "$receipt"
-run_check --worktree "$PF" --issue issue-3231 --round-id "$rid" --expect-items-from-round
-assert_eq "$RC $(json .reason)" '1 mode_mismatch' 'control: dropping push-first permission rejects the local pending fix' "$ERR"
 CHECK="$CI_HEAD_CHECK"
 
 echo "=== the validation wall time reaches the orchestrator ==="

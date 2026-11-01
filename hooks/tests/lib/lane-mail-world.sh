@@ -313,6 +313,54 @@ plant_siblings() { # SCRIPTS_DIR [SKIP]
     [ "$name" != "${2:-}" ] || continue
     ln -s -f -n "$entry" "$1/$name"
   done
+  # The runtime the hook asks for the watch's claim: the shipped wrapper
+  # resolves a built binary no fixture has, so every install answers no
+  # claim until a case plants another answer.
+  [ "${2:-}" = orch-runtime ] || runtime_stub "$1" none
+}
+
+# The runtime the hook asks for the watch's claim, `orch-runtime watch
+# status --file STATE`, as a stub in the install SCRIPTS_DIR names answering
+# what MODE plants, with the event log beside the lane's fleet state:
+#   none              no claim stands
+#   live CWD [ORIGIN] a live claim from CWD, origin `hand` unless named,
+#                     this suite's pid as the watch's
+#   gone              a claim whose identity reads gone
+#   unreadable        a claim the runtime cannot read, cause cmdline-unreadable
+#   fails             the runtime refusing: its keyed line on stderr, exit 1
+#   unbuilt           the wrapper with no binary for its sources: its
+#                     `setup-required` line naming the install's scripts/setup
+#                     on stderr, exit 69, as skills/orch/scripts/orch-runtime
+#                     answers it
+# Every other verb is refused, so a case reads only this one answer.
+runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
+  local scripts="$1" mode="$2" state claim reply
+  state=$(cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee) || return 1
+  case "$mode" in
+    none) claim=null ;;
+    live) claim=$(jq -nc --arg cwd "${3:-}" --arg origin "${4:-hand}" --argjson pid "$$" \
+      '{pid:$pid,start:"ticks:1",pane:"none",origin:$origin,cwd:$cwd,standing:"live"}') || return 1 ;;
+    gone) claim=$(jq -nc --arg cwd "$LANE" \
+      '{pid:1,start:"ticks:1",pane:"none",origin:"hand",cwd:$cwd,standing:"gone"}') || return 1 ;;
+    unreadable) claim='{"pid":1,"start":"ticks:1","pane":"none","origin":"hand","cwd":"","standing":"unreadable","cause":"cmdline-unreadable"}' ;;
+    fails | unbuilt) claim="" ;;
+    *) echo "runtime-stub: mode=unknown value=$mode" >&2; return 1 ;;
+  esac
+  rm -f -- "$scripts/orch-runtime" "$scripts/orch-runtime.reply"
+  if [ "$mode" = fails ]; then
+    printf '#!/bin/sh\necho "orch-runtime: claim-unreadable path=%s cause=record=unreadable" >&2\nexit 1\n' \
+      "${state%/*}/oversee-watch.pid" > "$scripts/orch-runtime"
+  elif [ "$mode" = unbuilt ]; then
+    printf '#!/bin/sh\necho "orch-runtime: setup-required key=fixture run=%s" >&2\nexit 69\n' \
+      "$scripts/setup" > "$scripts/orch-runtime"
+  else
+    reply=$(jq -nc --argjson claim "$claim" --arg log "${state%/*}/oversee-watch.log" \
+      '{ok:true,result:{claim:$claim,due:{},events:0,log:$log}}') || return 1
+    printf '%s\n' "$reply" > "$scripts/orch-runtime.reply"
+    printf '#!/bin/sh\n[ "$1 $2" = "watch status" ] || { echo "orch-runtime: fixture-verb verb=$*" >&2; exit 2; }\ncat -- %s\n' \
+      "'$scripts/orch-runtime.reply'" > "$scripts/orch-runtime"
+  fi
+  chmod +x "$scripts/orch-runtime"
 }
 
 # The real orch skill beside the hook, with SKIP left out: the walk finds this
@@ -581,12 +629,15 @@ start_follow() { # [CWD]
   local cwd="${1:-$LANE}"
   wake_process "$cwd/tmp/waiter.fixture/follow.sh" "$cwd/tmp/waiter.fixture/watch.log" 1
 }
-start_wake_watch() { # repeat|single [CWD]
+# A repeat watch is the runtime's live claim, read through `watch status`;
+# a single-pass watch is a real process the wake check finds by its argv.
+start_wake_watch() { # repeat|single [CWD] [ORIGIN]
   WAKE_STATE=$(cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee) || return 1
+  if [ "$1" = repeat ]; then
+    runtime_stub "$LANE/.claude/skills/orch/scripts" live "${2:-$LANE}" "${3:-hand}"
+    return
+  fi
   wake_process "$TMP_ROOT/watch-$WAKE_SEQUENCE/oversee-watch" --state "$WAKE_STATE"
-  [ "$1" = repeat ] || return 0
-  printf 'pid=%s\nstate=%s\npane=none\norigin=hand\ncwd=%s\n' "$WAKE_PID" "$WAKE_STATE" "${2:-$LANE}" \
-    > "${WAKE_STATE%/*}/oversee-watch.pid"
 }
 
 # Matching a whole source line keeps a control from changing another rule.
@@ -731,22 +782,10 @@ NO_FILENAME
   chmod +x "$dir/workflow-state"
 }
 
-# A watch-library read that cannot answer. Keep the other installed
-# libraries so identity and the context read still exercise their real code.
+# A watch claim read the runtime cannot answer: the hook's one watch read
+# fails, every other script of the install stays real.
 watch_stub() { # [SCRIPTS_DIR]
-  local scripts="${1:-$LANE/.claude/skills/orch/scripts}" entry
-  # workflow-state sources watch-pid too. Its wrapper keeps identity on the
-  # real library, so this defect reaches only the hook's watch read.
-  state_stub delegate "$scripts"
-  if [ -L "$scripts/lib" ]; then
-    rm -- "$scripts/lib"
-    mkdir -p "$scripts/lib"
-    for entry in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
-      [ "${entry##*/}" = watch-pid.sh ] || ln -s -- "$entry" "$scripts/lib/${entry##*/}"
-    done
-  fi
-  rm -f -- "$scripts/lib/watch-pid.sh"
-  printf '%s\n' 'echo "watch-pid: record=unreadable" >&2' 'return 3' > "$scripts/lib/watch-pid.sh"
+  runtime_stub "${1:-$LANE/.claude/skills/orch/scripts}" fails
 }
 
 # The overseer's own native transcript: the claude file the payload's session

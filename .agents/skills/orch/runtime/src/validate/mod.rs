@@ -1,0 +1,1708 @@
+//! The validation run's start (U6a, step6-map § A1, § A4): one verb,
+//! `orch-runtime validate start`, that reads the project's declaration, the
+//! worktree's snapshot and class, the CI admission and the selector's
+//! preview, judges reuse over the proof rows already on the item's stages,
+//! writes the proof facts and the launcher's record path on the admitted
+//! stage, writes the run directory the kept executor reads, and launches
+//! `orch-runtime validate run` detached through the job launcher, writing
+//! the launcher's answer on the stage after it. The reads come first and
+//! the records follow (read-then-record); the executor, `dev-validate-run
+//! --child`, stays byte for byte (decision 182 Q1). `run` holds the job.
+//!
+//! The mode resolver (§ A4): a fix round, one that names a base, takes the
+//! narrowest mode the declaration admits for its kind: `ci` where the CI
+//! context is declared and the base's rules require it, else `range` where
+//! the range command is declared, else the whole battery; an implement
+//! round runs the whole battery. A `full` request on a project declaring a
+//! narrower mode needs a cause, and both are recorded.
+
+pub mod run;
+
+use std::collections::BTreeMap;
+use std::ffi::OsStr;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use agent_runtime::host::{self, Place};
+use serde::Serialize;
+use serde_json::Value;
+
+use crate::error::{Error, Result};
+use crate::ops::validate::{
+    Launch, RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
+};
+use crate::ops::{self, Env, Report, Request};
+use crate::settings::{Delivery, Settings};
+use crate::state::{
+    self, ItemState, Locking, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob,
+    ValidateMode,
+};
+
+/// The poll interval a start records when the caller names none, the
+/// legacy `POLL_DEFAULT`.
+pub const POLL_DEFAULT: u64 = 30;
+/// The seconds between the bound's SIGTERM and its SIGKILL, job-unit's
+/// grace, which the cap carries so the sentinel lands inside a wait.
+pub const KILL_GRACE: u64 = 10;
+/// How long a git read, a classifier read or a sibling script may take.
+const READ_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long the selector's preview may take.
+const SELECTION_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long the job launcher may take to answer.
+const LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
+/// The run directory's name prefix.
+const RUN_DIR_PREFIX: &str = "dev-validate-";
+/// The run inventory the lane facts and the report read.
+const RUN_INDEX: &str = "validation-runs";
+
+/// What the caller asks for.
+#[derive(Debug, Clone)]
+pub struct StartRequest {
+    /// The item and round the run is for; or `run_dir`, the admitted
+    /// directory the legacy forward names, which the item is found by.
+    pub item: Option<String>,
+    pub round: Option<String>,
+    pub run_dir: Option<String>,
+    /// The base commit of a fix round; none for an implement round.
+    pub base: Option<String>,
+    pub mode: Option<ValidateMode>,
+    pub cause: Option<String>,
+    pub caller: String,
+    pub poll: u64,
+    /// Run the command whatever earlier row would answer it.
+    pub fresh: bool,
+}
+
+/// The start's reply: the fields of the legacy `state=started` line, the
+/// mode that resolved, and the job the launcher answered for, or the
+/// outcome a run that ran nothing closed with.
+#[derive(Debug, Clone, Serialize)]
+pub struct StartReply {
+    pub item: String,
+    pub round_id: String,
+    pub run_id: String,
+    pub run_dir: String,
+    pub log: String,
+    pub sentinel: String,
+    pub timeout_secs: u64,
+    pub poll_secs: u64,
+    pub cap_secs: u64,
+    pub class: String,
+    pub docs_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_fallback: Option<String>,
+    pub mode: ValidateMode,
+    pub base: String,
+    /// The `state=started` line byte for byte as the legacy printed it.
+    pub started_line: String,
+    pub launched: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<ValidateJob>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<StageOutcome>,
+}
+
+/// The one store write of this module: every transition goes through the
+/// dispatcher, which the compiler boundary names.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the validation start's transitions: the proof and the job on the stage, the launcher's answer, the close of a run that ran nothing"
+)]
+fn apply(path: &Path, request: Validate, env: &Env, locking: Locking) -> Result<Validated> {
+    let applied = ops::apply(path, &Request::Validate(request), env, locking)?;
+    match applied.report {
+        Report::Validate(v) => Ok(*v),
+        other => unreachable!("a validate request reports its step, not {other:?}"),
+    }
+}
+
+/// The one read of a state file here, which the compiler boundary names.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the validation start's one read of the item record before its transitions, and the item lookup by run directory"
+)]
+pub(crate) fn load(path: &Path) -> Result<Option<state::Snapshot>> {
+    state::load(path)
+}
+
+/// The item whose admitted run stands under `run_dir`: the state files of
+/// the directory are read for a validate stage naming it. The legacy
+/// forwards, the start's and the stop's, name the directory alone.
+pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String, String)> {
+    let entries = fs::read_dir(state_dir).map_err(|e| Error::ValidateUnreadable {
+        read: "state-dir",
+        cause: e.to_string(),
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| Error::ValidateUnreadable {
+            read: "state-dir",
+            cause: e.to_string(),
+        })?;
+        let name = entry.file_name();
+        let Some(item) = name
+            .to_str()
+            .and_then(|n| n.strip_prefix("workflow-state-"))
+            .and_then(|n| n.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        let path = entry.path();
+        if state::Kind::of_path(&path) != state::Kind::Item {
+            continue;
+        }
+        let Some(snapshot) = load(&path)? else {
+            continue;
+        };
+        let stages = snapshot.view::<ItemState>(&path)?.stages;
+        if let Some(stage) = stages
+            .iter()
+            .find(|s| s.kind == StageKind::Validate && s.run_dir.as_deref() == Some(run_dir))
+        {
+            return Ok((item.to_owned(), stage.round_id.clone().unwrap_or_default()));
+        }
+    }
+    Err(Error::RunUnadmitted {
+        run_dir: run_dir.to_owned(),
+    })
+}
+
+// --- The reads: git, the classifier, the sibling scripts, gh ------------------------
+
+/// One program run in the worktree through the one runner: its stdout on
+/// success, `None` on a non-zero exit, its stderr appended to `log` either
+/// way, an error where it could not run at all.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the validation start's reads of the worktree: git, the classifier, the sibling scripts and gh, each a read before the record and never an effect on a lane or a controller"
+)]
+fn run_in(
+    program: &'static str,
+    executable: &Path,
+    operation: &'static str,
+    args: &[&str],
+    place: Place,
+    timeout: Duration,
+    log: &mut String,
+) -> Result<Option<String>> {
+    match host::run_tagged_in(
+        "validate", program, executable, operation, args, place, timeout,
+    ) {
+        Ok(out) => {
+            // The stderr travels on the log either way: the classifier's
+            // records ride on it, as the legacy `2>>` kept them.
+            let err = host::stderr_text(&out);
+            if !err.is_empty() {
+                log.push_str(&err);
+                log.push('\n');
+            }
+            Ok(out.status.success().then(|| host::stdout_text(&out)))
+        }
+        Err(e) => Err(Error::ValidateUnreadable {
+            read: operation,
+            cause: e.to_string(),
+        }),
+    }
+}
+
+/// Where a read runs: the worktree, with `env` added.
+fn at<'a>(worktree: &'a Path, env: &'a [(&'a str, &'a OsStr)]) -> Place<'a> {
+    Place {
+        cwd: Some(worktree),
+        env,
+    }
+}
+
+fn git(
+    worktree: &Path,
+    operation: &'static str,
+    args: &[&str],
+    log: &mut String,
+) -> Result<Option<String>> {
+    run_in(
+        "git",
+        Path::new("git"),
+        operation,
+        args,
+        at(worktree, &[]),
+        READ_TIMEOUT,
+        log,
+    )
+}
+
+/// What the snapshot and the two classifier reads of it found.
+#[derive(Debug, Clone, Default)]
+struct Classified {
+    class: String,
+    docs_only: bool,
+    paths: Vec<String>,
+    fallback: Option<String>,
+    tree: String,
+    measured: bool,
+    /// The classifier's `queue-only:` line, where it printed one.
+    queue_only: Option<bool>,
+}
+
+/// The scratch directory a classification writes its objects, index and
+/// paths into: removed with the start.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the classification's scratch store, a private object directory beside a copied index as the legacy `classify` makes it; removed when the start ends"
+    )]
+    fn new(env: &Env) -> Result<Scratch> {
+        let dir = std::env::temp_dir().join(format!(
+            "orch-validate-{}-{}",
+            std::process::id(),
+            env.nonce
+        ));
+        fs::create_dir(&dir).map_err(|e| Error::ValidateUnreadable {
+            read: "scratch",
+            cause: e.to_string(),
+        })?;
+        Ok(Scratch(dir))
+    }
+}
+
+impl Drop for Scratch {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the scratch store's removal when the start ends"
+    )]
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The sibling script `name` beside the configured executor.
+fn sibling(settings: &Settings, name: &str) -> PathBuf {
+    settings
+        .dev_validate_cli
+        .parent()
+        .map(|d| d.join(name))
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+/// The classifier the legacy `change_class_read` runs: harness-ci's
+/// wrapper where that sibling is installed, else change-scope's own.
+fn classifier(settings: &Settings) -> (PathBuf, Vec<&'static str>) {
+    let scripts = settings
+        .scope_paths_cli
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let wrapper = scripts.join("../../harness-ci/scripts/change-class");
+    if fs::metadata(&wrapper).is_ok_and(|m| m.is_file()) {
+        return (wrapper, vec!["--output", "/dev/null"]);
+    }
+    (scripts.join("change-scope"), Vec::new())
+}
+
+/// The base branch `resolve-base-branch` names for the worktree.
+fn base_branch(settings: &Settings, worktree: &Path, log: &mut String) -> Result<Option<String>> {
+    let script = sibling(settings, "resolve-base-branch");
+    let wt = worktree.display().to_string();
+    Ok(run_in(
+        "resolve-base-branch",
+        &script,
+        "base-branch",
+        &[&wt],
+        at(worktree, &[]),
+        READ_TIMEOUT,
+        log,
+    )?
+    .map(|s| s.trim().to_owned())
+    .filter(|s| !s.is_empty()))
+}
+
+/// The worktree as it stands, classified against `base` (a commit, or the
+/// origin base branch where none): the snapshot's tree, the class, the docs
+/// verdict and the changed paths, as `classify` reads them. A read that
+/// fails is standard, docs-only false, no paths, with the cause; a narrow
+/// class on no evidence would skip lanes the diff needs.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the classification copies the worktree's index into the scratch store, as the legacy `classify` does, so the snapshot leaves HEAD, the index and the tree as they were"
+)]
+fn classify(
+    settings: &Settings,
+    scratch: &Scratch,
+    worktree: &Path,
+    base: Option<&str>,
+    log: &mut String,
+) -> Result<Classified> {
+    let mut out = Classified {
+        class: "standard".to_owned(),
+        ..Classified::default()
+    };
+    let base = match base {
+        Some(base) => base.to_owned(),
+        None => match base_branch(settings, worktree, log)? {
+            Some(branch) => format!("origin/{branch}"),
+            None => {
+                out.fallback = Some("base-unresolved".to_owned());
+                return Ok(out);
+            }
+        },
+    };
+    let unrecorded = |mut out: Classified| {
+        out.fallback = Some("worktree-unrecorded".to_owned());
+        out
+    };
+    let (Some(index), Some(objects)) = (
+        git(
+            worktree,
+            "git-path-index",
+            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            log,
+        )?,
+        git(
+            worktree,
+            "git-path-objects",
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "objects",
+            ],
+            log,
+        )?,
+    ) else {
+        return Ok(unrecorded(out));
+    };
+    let scratch_objects = scratch.0.join("objects");
+    let scratch_index = scratch.0.join("index");
+    if fs::create_dir_all(&scratch_objects).is_err() {
+        return Ok(unrecorded(out));
+    }
+    match fs::copy(&index, &scratch_index) {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(_) => return Ok(unrecorded(out)),
+    }
+    let store: Vec<(&str, &OsStr)> = vec![
+        ("GIT_OBJECT_DIRECTORY", scratch_objects.as_os_str()),
+        ("GIT_ALTERNATE_OBJECT_DIRECTORIES", OsStr::new(&objects)),
+    ];
+    let mut with_index = store.clone();
+    with_index.push(("GIT_INDEX_FILE", scratch_index.as_os_str()));
+    let wt = worktree.display().to_string();
+    let added = run_in(
+        "git",
+        Path::new("git"),
+        "add",
+        &["add", "-A"],
+        at(worktree, &with_index),
+        READ_TIMEOUT,
+        log,
+    )?;
+    let tree = added.and_then(|_| {
+        run_in(
+            "git",
+            Path::new("git"),
+            "write-tree",
+            &["write-tree"],
+            at(worktree, &with_index),
+            READ_TIMEOUT,
+            log,
+        )
+        .ok()
+        .flatten()
+    });
+    let Some(tree) = tree else {
+        return Ok(unrecorded(out));
+    };
+    let mut author = store.clone();
+    for (name, value) in [
+        ("GIT_AUTHOR_NAME", "dev-validate-run"),
+        ("GIT_AUTHOR_EMAIL", "dev-validate-run@localhost"),
+        ("GIT_COMMITTER_NAME", "dev-validate-run"),
+        ("GIT_COMMITTER_EMAIL", "dev-validate-run@localhost"),
+    ] {
+        author.push((name, OsStr::new(value)));
+    }
+    let Some(head) = run_in(
+        "git",
+        Path::new("git"),
+        "commit-tree",
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            "HEAD",
+            "-m",
+            "dev-validate-run: worktree",
+        ],
+        at(worktree, &author),
+        READ_TIMEOUT,
+        log,
+    )?
+    else {
+        return Ok(unrecorded(out));
+    };
+    out.tree = tree;
+    // The classifier: one `change_class=<word>` line on stdout; its stderr
+    // carries `class: class=X measured=Y` and the queue-only record.
+    let (program, extra) = classifier(settings);
+    let mut args: Vec<&str> = extra;
+    args.extend([
+        "--event",
+        "pull_request",
+        "--base",
+        &base,
+        "--head",
+        &head,
+        "--repo",
+        &wt,
+    ]);
+    let mut class_log = String::new();
+    let answer = run_in(
+        "change-scope",
+        &program,
+        "class",
+        &args,
+        at(worktree, &store),
+        READ_TIMEOUT,
+        &mut class_log,
+    );
+    let answer = match answer {
+        Ok(a) => a,
+        Err(e) => {
+            out.fallback = Some(format!("classifier-absent:{e}"));
+            return Ok(out);
+        }
+    };
+    log.push_str(&class_log);
+    let Some(answer) = answer else {
+        out.fallback = Some("classifier-exit".to_owned());
+        return Ok(out);
+    };
+    let class = answer
+        .lines()
+        .find_map(|l| l.strip_prefix("change_class="))
+        .filter(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase()));
+    let Some(class) = class else {
+        out.fallback = Some("classifier-unreadable".to_owned());
+        return Ok(out);
+    };
+    // The docs verdict and the paths for the same range.
+    let paths_file = scratch.0.join("paths");
+    let paths_text = paths_file.display().to_string();
+    let docs = run_in(
+        "harness-only",
+        &settings.scope_paths_cli,
+        "docs",
+        &[
+            "--mode",
+            "docs",
+            "--event",
+            "pull_request",
+            "--base",
+            &base,
+            "--head",
+            &head,
+            "--repo",
+            &wt,
+            "--paths-output",
+            &paths_text,
+            "--output",
+            "/dev/null",
+        ],
+        at(worktree, &store),
+        READ_TIMEOUT,
+        log,
+    );
+    let docs_only = match docs {
+        Ok(Some(answer)) => match answer.trim() {
+            "docs_only=true" => true,
+            "docs_only=false" => false,
+            _ => {
+                out.fallback = Some("docs-reader-unreadable".to_owned());
+                return Ok(out);
+            }
+        },
+        Ok(None) => {
+            out.fallback = Some("docs-reader-exit".to_owned());
+            return Ok(out);
+        }
+        Err(e) => {
+            out.fallback = Some(format!("docs-reader-absent:{e}"));
+            return Ok(out);
+        }
+    };
+    out.class = class.to_owned();
+    out.docs_only = docs_only;
+    out.paths = fs::read_to_string(&paths_file)
+        .map(|t| t.lines().map(str::to_owned).collect())
+        .unwrap_or_default();
+    out.measured = class_log
+        .lines()
+        .filter_map(|l| l.strip_prefix("class: class="))
+        .filter_map(|l| l.split(' ').find_map(|w| w.strip_prefix("measured=")))
+        .next_back()
+        == Some("true");
+    out.queue_only = class_log
+        .lines()
+        .filter_map(|l| l.strip_prefix("queue-only: queue_only="))
+        .map(|w| w.split(' ').next().unwrap_or_default() == "true")
+        .next_back();
+    Ok(out)
+}
+
+/// The selector's preview: its `selection=` and `expected-secs=` lines.
+#[derive(Debug, Clone, Default)]
+struct Preview {
+    selection: Option<String>,
+    expected_secs: Option<u64>,
+}
+
+/// Run the selector once over the classification, as `preview_selection`
+/// does; a failed or ambiguous preview grants no permission to skip.
+fn preview_selection(
+    settings: &Settings,
+    worktree: &Path,
+    class: &Classified,
+    paths_file: &Path,
+    base: &str,
+    requested: ValidateMode,
+    log: &mut String,
+) -> Result<Preview> {
+    let Some(cmd) = &settings.validate.selection_cmd else {
+        return Ok(Preview::default());
+    };
+    let docs = if class.docs_only { "true" } else { "false" };
+    let env: Vec<(&str, &OsStr)> = vec![
+        ("DEV_VALIDATE_CLASS", OsStr::new(&class.class)),
+        ("DEV_VALIDATE_DOCS_ONLY", OsStr::new(docs)),
+        ("DEV_VALIDATE_PATHS", paths_file.as_os_str()),
+        ("DEV_VALIDATE_BASE", OsStr::new(base)),
+        ("DEV_VALIDATE_MODE", OsStr::new(requested.word())),
+        ("DEV_VALIDATE_SCOPED", OsStr::new("false")),
+    ];
+    let answer = run_in(
+        "bash",
+        Path::new("bash"),
+        "selection",
+        &["-c", cmd],
+        at(worktree, &env),
+        SELECTION_TIMEOUT,
+        log,
+    )?;
+    let Some(answer) = answer else {
+        return Ok(Preview::default());
+    };
+    Ok(Preview {
+        selection: answer
+            .lines()
+            .find(|l| l.starts_with("selection="))
+            .map(str::to_owned),
+        expected_secs: answer
+            .lines()
+            .find_map(|l| l.strip_prefix("expected-secs="))
+            .and_then(|n| n.parse().ok()),
+    })
+}
+
+/// Why a ci request ran locally, or that it may defer to CI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CiAdmission {
+    /// The base requires the context: the event CI proves the head on.
+    Admitted {
+        event: String,
+    },
+    Fallback(String),
+}
+
+/// The pull request's base and state as `pr-view-json` answers them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PrView {
+    Open { base: String },
+    NotOpen,
+    None,
+}
+
+fn pr_view(settings: &Settings, worktree: &Path, log: &mut String) -> Result<Option<PrView>> {
+    let script = sibling(settings, "pr-view-json");
+    let wt = worktree.display().to_string();
+    let Some(text) = run_in(
+        "pr-view-json",
+        &script,
+        "pr-view",
+        &[&wt, "--json", "baseRefName,state"],
+        at(worktree, &[]),
+        READ_TIMEOUT,
+        log,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Ok(json) = serde_json::from_str::<Value>(&text) else {
+        return Ok(None);
+    };
+    if json.get("status").and_then(Value::as_str) == Some("no_pr") {
+        return Ok(Some(PrView::None));
+    }
+    Ok(match json.get("state").and_then(Value::as_str) {
+        Some("OPEN") => json
+            .get("baseRefName")
+            .and_then(Value::as_str)
+            .filter(|b| !b.is_empty())
+            .map(|b| PrView::Open { base: b.to_owned() }),
+        Some("CLOSED" | "MERGED") => Some(PrView::NotOpen),
+        _ => None,
+    })
+}
+
+/// The publication order `pr-order` names; review-first on a failed read.
+fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Result<String> {
+    let script = sibling(settings, "pr-order");
+    let wt = worktree.display().to_string();
+    Ok(run_in(
+        "pr-order",
+        &script,
+        "pr-order",
+        &[&wt],
+        at(worktree, &[]),
+        READ_TIMEOUT,
+        log,
+    )
+    .ok()
+    .flatten()
+    .and_then(|line| line.trim().strip_prefix("pr-order=").map(str::to_owned))
+    .unwrap_or_else(|| "review-first".to_owned()))
+}
+
+/// The base as a URL path segment, as `jq @uri` encodes it.
+fn segment(base: &str) -> String {
+    let mut out = String::new();
+    for b in base.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The contexts the base branch requires and whether a merge queue rule
+/// stands, from its rule set and its classic protection through `gh api`
+/// in the worktree, as `ci_runs_validation` reads them; `None` where
+/// either read failed or the protection payload was withheld.
+fn required_contexts(
+    worktree: &Path,
+    base: &str,
+    log: &mut String,
+) -> Result<Option<(Vec<String>, bool)>> {
+    let seg = segment(base);
+    let rules_path = format!("repos/{{owner}}/{{repo}}/rules/branches/{seg}");
+    let Some(rules) = run_in(
+        "gh",
+        Path::new("gh"),
+        "rules",
+        &["api", &rules_path],
+        at(worktree, &[]),
+        READ_TIMEOUT,
+        log,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Ok(rules) = serde_json::from_str::<Value>(&rules) else {
+        return Ok(None);
+    };
+    let Some(rules) = rules.as_array() else {
+        return Ok(None);
+    };
+    let mut contexts = Vec::new();
+    let mut queue = false;
+    for rule in rules {
+        match rule.get("type").and_then(Value::as_str) {
+            Some("merge_queue") => queue = true,
+            Some("required_status_checks") => {
+                for check in rule
+                    .pointer("/parameters/required_status_checks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(context) = check.get("context").and_then(Value::as_str) {
+                        contexts.push(context.to_owned());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let branch_path = format!("repos/{{owner}}/{{repo}}/branches/{seg}");
+    let Some(branch) = run_in(
+        "gh",
+        Path::new("gh"),
+        "branch",
+        &["api", &branch_path],
+        at(worktree, &[]),
+        READ_TIMEOUT,
+        log,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Ok(branch) = serde_json::from_str::<Value>(&branch) else {
+        return Ok(None);
+    };
+    // GitHub omits the protection key from a caller without push access: a
+    // payload with none is an unread protection, never an empty one.
+    let Some(protection) = branch.get("protection") else {
+        return Ok(None);
+    };
+    if let Some(checks) = protection.get("required_status_checks") {
+        for context in checks
+            .get("contexts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(c) = context.as_str() {
+                contexts.push(c.to_owned());
+            }
+        }
+        for check in checks
+            .get("checks")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(c) = check.get("context").and_then(Value::as_str) {
+                contexts.push(c.to_owned());
+            }
+        }
+    }
+    Ok(Some((contexts, queue)))
+}
+
+/// Whether CI may stand the checks down for the class: standard, or a
+/// measured micro or small, never docs-only or a fallback, and queue-only
+/// work only where the merge queue is required (`ci_class_covered`).
+fn class_covered(class: &Classified, queue: bool) -> bool {
+    if class.queue_only == Some(true) && !queue {
+        return false;
+    }
+    if class.fallback.is_some() || class.docs_only {
+        return false;
+    }
+    match class.class.as_str() {
+        "standard" => true,
+        "micro" | "small" => class.measured,
+        _ => false,
+    }
+}
+
+/// Whether required CI validates the change (`ci_runs_validation`): the
+/// context is declared, delivery is not direct, an open pull request names
+/// the base (or push-first's resolved base before one exists), and that
+/// base requires the context. `branch_class` is the whole branch's.
+fn ci_admission(
+    settings: &Settings,
+    worktree: &Path,
+    branch_class: &Classified,
+    order: &str,
+    log: &mut String,
+) -> Result<CiAdmission> {
+    if settings.validate.delivery == Delivery::PushBase {
+        return Ok(CiAdmission::Fallback("push-base".to_owned()));
+    }
+    let Some(context) = &settings.validate.ci_context else {
+        return Ok(CiAdmission::Fallback("setting-empty".to_owned()));
+    };
+    let Some(view) = pr_view(settings, worktree, log)? else {
+        return Ok(CiAdmission::Fallback("base-unresolved".to_owned()));
+    };
+    let push_first = order == "push-first";
+    // An open pull request's base, or push-first's resolved base before
+    // one exists, is read for its rules; anything else needs the class
+    // covered to go on at all.
+    let base_readable = match &view {
+        PrView::Open { .. } => true,
+        PrView::None => push_first,
+        PrView::NotOpen => false,
+    };
+    if !base_readable && !class_covered(branch_class, false) {
+        return Ok(CiAdmission::Fallback("class-uncovered".to_owned()));
+    }
+    let base = match view {
+        PrView::None if push_first => match base_branch(settings, worktree, log)? {
+            Some(branch) => branch,
+            None => return Ok(CiAdmission::Fallback("base-unresolved".to_owned())),
+        },
+        PrView::None | PrView::NotOpen => {
+            return Ok(CiAdmission::Fallback("pr-not-open".to_owned()));
+        }
+        PrView::Open { base } => base,
+    };
+    let Some((contexts, queue)) = required_contexts(worktree, &base, log)? else {
+        return Ok(CiAdmission::Fallback("rules-unread".to_owned()));
+    };
+    if !contexts.iter().any(|c| c == context) {
+        return Ok(CiAdmission::Fallback(
+            if branch_class.queue_only == Some(true) {
+                "class-uncovered"
+            } else {
+                "context-unrequired"
+            }
+            .to_owned(),
+        ));
+    }
+    if !class_covered(branch_class, queue) {
+        return Ok(CiAdmission::Fallback("class-uncovered".to_owned()));
+    }
+    Ok(CiAdmission::Admitted {
+        event: if branch_class.queue_only == Some(true) {
+            "merge_group"
+        } else {
+            "pull_request"
+        }
+        .to_owned(),
+    })
+}
+
+// --- The resolved run ------------------------------------------------------------
+
+/// Everything the start read before it records: the proof facts, the files
+/// the run directory takes, and whether a command runs at all.
+struct Resolved {
+    proof: Proof,
+    class_log: String,
+    paths: Vec<String>,
+    /// The sentinel and log a run that runs nothing records at once.
+    ran_nothing: Option<RanNothing>,
+}
+
+/// A start that launches no command: required CI pending, or an earlier
+/// row that answers it.
+struct RanNothing {
+    log: String,
+    sentinel: String,
+}
+
+/// The narrowest mode the declaration admits for a fix round, before the
+/// CI admission is read: the word a `full` request's cause is owed to.
+fn narrowest_declared(settings: &Settings) -> Option<&'static str> {
+    if settings.validate.range_cmd.is_some() {
+        Some("range")
+    } else if settings.validate.ci_context.is_some() {
+        Some("ci")
+    } else {
+        None
+    }
+}
+
+/// Resolve the run from the declaration and the worktree (step6-map § A4
+/// and the legacy start, `dev-validate-run:1026-1231`), reading everything
+/// and recording nothing.
+fn resolve(
+    settings: &Settings,
+    scratch: &Scratch,
+    worktree: &Path,
+    stages: &[Stage],
+    req: &StartRequest,
+    env: &Env,
+) -> Result<Resolved> {
+    let mut log = String::new();
+    let fix_round = req.base.is_some();
+    let requested = match req.mode {
+        Some(mode) => mode,
+        None if fix_round => ValidateMode::Range,
+        None => ValidateMode::Full,
+    };
+    if matches!(requested, ValidateMode::Range | ValidateMode::Ci) && !fix_round {
+        return Err(Error::ModeBaseRequired {
+            mode: requested.word(),
+        });
+    }
+    // A `full` on a fix round of a project declaring a narrower mode needs
+    // its cause; on an implement round the whole battery is the narrowest.
+    if req.mode == Some(ValidateMode::Full)
+        && fix_round
+        && let Some(narrower) = narrowest_declared(settings)
+        && req.cause.is_none()
+    {
+        return Err(Error::ModeCauseMissing {
+            mode: "full",
+            narrower,
+        });
+    }
+    let cause = req
+        .cause
+        .clone()
+        .filter(|_| req.mode == Some(ValidateMode::Full));
+    let mut mode = requested;
+    // The base as one commit, fixed when the run starts; one a rebase left
+    // off the branch is recorded as orphaned, and a range then runs from
+    // the merge base of HEAD with the origin base branch.
+    let mut base_sha = String::new();
+    let mut orphaned = false;
+    // A full request validates the whole tree from no base, as the legacy
+    // start ignored a carried base; the round's base still names a fix
+    // round, so the cause rule above applies.
+    if let Some(base) = req
+        .base
+        .as_ref()
+        .filter(|_| requested != ValidateMode::Full)
+    {
+        let Some(sha) = git(
+            worktree,
+            "rev-parse-base",
+            &["rev-parse", "--verify", "-q", &format!("{base}^{{commit}}")],
+            &mut log,
+        )?
+        else {
+            return Err(Error::BaseInvalid { base: base.clone() });
+        };
+        base_sha = sha.trim().to_owned();
+        if git(
+            worktree,
+            "merge-base",
+            &["merge-base", "--is-ancestor", &base_sha, "HEAD"],
+            &mut log,
+        )?
+        .is_none()
+        {
+            orphaned = true;
+        }
+    }
+    let orphaned_sha = orphaned.then(|| base_sha.clone());
+    let round_class_base = if requested == ValidateMode::Full || orphaned {
+        String::new()
+    } else {
+        base_sha.clone()
+    };
+    let class_base_of = |m: ValidateMode| {
+        if m == ValidateMode::Range {
+            round_class_base.clone()
+        } else {
+            String::new()
+        }
+    };
+    let mut class_base = class_base_of(mode);
+    let read = |base: &str, log: &mut String| -> Result<Classified> {
+        classify(
+            settings,
+            scratch,
+            worktree,
+            (!base.is_empty()).then_some(base),
+            log,
+        )
+    };
+    let mut class = read(&class_base, &mut log)?;
+    let order = pr_order(settings, worktree, &mut log)?;
+    let mut ci_fallback: Option<String> = None;
+    let mut ci_event = String::new();
+    let mut ci_attempted = false;
+    let mut previewed = false;
+    let mut preview = Preview::default();
+    let paths_file = scratch.0.join("paths");
+    // A ci request, and under push-first any fix round, asks whether CI
+    // covers the change (`dev-validate-run:1087-1115`); so does a fix
+    // round the declaration lets defer (§ A4's narrowest mode).
+    let may_defer = fix_round && req.mode.is_none() && settings.validate.ci_context.is_some();
+    if mode == ValidateMode::Ci || order == "push-first" || may_defer {
+        ci_attempted = true;
+        let branch = read("", &mut log)?;
+        if requested != ValidateMode::Full {
+            mode = ValidateMode::Range;
+        }
+        match ci_admission(settings, worktree, &branch, &order, &mut log)? {
+            CiAdmission::Admitted { event } => {
+                ci_event = event;
+                if settings.validate.selection_cmd.is_none() {
+                    mode = ValidateMode::Ci;
+                } else {
+                    previewed = true;
+                    ci_fallback = Some("selection-unread".to_owned());
+                    if orphaned_sha.is_none() {
+                        class_base = round_class_base.clone();
+                        class = read(&class_base, &mut log)?;
+                        if class.fallback.is_none() {
+                            preview = preview_selection(
+                                settings,
+                                worktree,
+                                &class,
+                                &paths_file,
+                                &base_sha,
+                                requested,
+                                &mut log,
+                            )?;
+                            if matches!(
+                                preview.selection.as_deref(),
+                                Some("selection=all" | "selection=subset")
+                            ) {
+                                mode = ValidateMode::Ci;
+                                ci_fallback = None;
+                            }
+                        }
+                    }
+                }
+            }
+            CiAdmission::Fallback(cause) => ci_fallback = Some(cause),
+        }
+        if mode != ValidateMode::Ci {
+            class = read(&class_base, &mut log)?;
+        }
+    }
+    if mode != ValidateMode::Full && mode != ValidateMode::Ci {
+        // The range command where declared, else the whole battery.
+        mode = if settings.validate.range_cmd.is_some() {
+            ValidateMode::Range
+        } else {
+            ValidateMode::Full
+        };
+        if mode == ValidateMode::Full {
+            base_sha.clear();
+        } else if orphaned {
+            let Some(branch) = base_branch(settings, worktree, &mut log)? else {
+                return Err(Error::ValidateUnreadable {
+                    read: "orphaned-base",
+                    cause: "the base branch could not be resolved".to_owned(),
+                });
+            };
+            let Some(mb) = git(
+                worktree,
+                "merge-base-origin",
+                &[
+                    "merge-base",
+                    "HEAD",
+                    &format!("refs/remotes/origin/{branch}"),
+                ],
+                &mut log,
+            )?
+            else {
+                return Err(Error::ValidateUnreadable {
+                    read: "orphaned-base",
+                    cause: format!("no merge base with origin/{branch}"),
+                });
+            };
+            base_sha = mb.trim().to_owned();
+        }
+    }
+    let mut cmd = match mode {
+        ValidateMode::Full => settings
+            .validate
+            .cmd
+            .clone()
+            .ok_or(Error::ValidateCmdEmpty {
+                setting: "DEV_VALIDATE_CMD",
+            })?,
+        ValidateMode::Range => settings.validate.range_cmd.clone().unwrap_or_default(),
+        ValidateMode::Ci => String::new(),
+    };
+    let mut scoped = false;
+    // The selector's own preview for a local run, and the scoped start
+    // where CI cannot see the head yet (`dev-validate-run:1134-1154`).
+    if mode != ValidateMode::Ci && !previewed && settings.validate.selection_cmd.is_some() {
+        preview = preview_selection(
+            settings,
+            worktree,
+            &class,
+            &paths_file,
+            &base_sha,
+            requested,
+            &mut log,
+        )?;
+        let all = preview.selection.as_deref() == Some("selection=all");
+        let subset = preview.selection.as_deref() == Some("selection=subset");
+        if all || (requested == ValidateMode::Range && subset) {
+            if !ci_attempted {
+                // The one CI admission read (Copilot 5): its result decides
+                // the mode and the fallback cause, matched once. A Fallback's
+                // own cause (`class-uncovered` among them) is the fallback;
+                // Admitted clears it. The earlier double read could disagree
+                // between its two calls and leave a stale placeholder.
+                let branch = read("", &mut log)?;
+                match ci_admission(settings, worktree, &branch, &order, &mut log)? {
+                    CiAdmission::Admitted { event } => {
+                        ci_event = event;
+                        mode = ValidateMode::Ci;
+                        ci_fallback = None;
+                    }
+                    CiAdmission::Fallback(cause) => ci_fallback = Some(cause),
+                }
+                class = read(&class_base, &mut log)?;
+            }
+            let fallback = ci_fallback.as_deref().unwrap_or_default();
+            if (fallback == "pr-not-open"
+                || (order == "push-first" && fallback == "class-uncovered"))
+                && all
+            {
+                scoped = true;
+            }
+        }
+    }
+    if mode == ValidateMode::Ci && settings.validate.selection_cmd.is_some() {
+        scoped = true;
+    }
+    if scoped {
+        cmd = settings.validate.selection_cmd.clone().unwrap_or_default();
+        if class_base.is_empty() {
+            let Some(branch) = base_branch(settings, worktree, &mut log)? else {
+                return Err(Error::ValidateUnreadable {
+                    read: "scoped-base",
+                    cause: "the base branch could not be resolved".to_owned(),
+                });
+            };
+            let Some(mb) = git(
+                worktree,
+                "merge-base-scoped",
+                &["merge-base", "HEAD", &format!("origin/{branch}")],
+                &mut log,
+            )?
+            else {
+                return Err(Error::ValidateUnreadable {
+                    read: "scoped-base",
+                    cause: format!("no merge base with origin/{branch}"),
+                });
+            };
+            class_base = mb.trim().to_owned();
+        }
+        if mode == ValidateMode::Ci && orphaned {
+            base_sha = class_base.clone();
+        }
+    } else if mode == ValidateMode::Ci {
+        class_base.clear();
+    }
+    let timeout_secs = settings.validate.timeout.as_secs();
+    let finding_prefix = settings.validate.finding_prefix.clone().unwrap_or_default();
+    let head = git(
+        worktree,
+        "rev-parse-head",
+        &["rev-parse", "--verify", "-q", "HEAD^{commit}"],
+        &mut log,
+    )?
+    .map(|s| s.trim().to_owned())
+    .unwrap_or_default();
+    // An earlier row that answers this run (`dev-validate-run --help`,
+    // "A start reads the worktree's earlier runs"), judged over the item's
+    // own proof rows (step6-map § C).
+    let mut reused = None;
+    if mode != ValidateMode::Ci && !req.fresh && class.fallback.is_none() {
+        let want = Want {
+            cmd: cmd.clone(),
+            class: class.class.clone(),
+            docs_only: class.docs_only,
+            base: base_sha.clone(),
+            finding_prefix: finding_prefix.clone(),
+            tree: class.tree.clone(),
+            paths: class.paths.clone(),
+            timeout_secs,
+        };
+        let declaration = crate::ops::proof::Declaration::of(&settings.validate);
+        reused = match crate::ops::validate::reuse(stages, &want, &declaration) {
+            Reuse::Pass { run_dir } => Some((Reused::PassRun { run_dir }, 0)),
+            Reuse::Bound { run_dir, exit } => Some((Reused::BoundRun { run_dir }, exit)),
+            Reuse::None => None,
+        };
+    }
+    if reused.is_none()
+        && (mode != ValidateMode::Ci || scoped)
+        && let Some(expected) = preview.expected_secs
+        && expected > timeout_secs
+    {
+        return Err(Error::OverBound {
+            expected,
+            bound: timeout_secs,
+        });
+    }
+    let cap_secs = timeout_secs + KILL_GRACE + req.poll;
+    let at = env.iso();
+    let ran_nothing = match (&reused, mode, scoped) {
+        (None, ValidateMode::Ci, false) => Some(RanNothing {
+            log: format!(
+                "runner=none class={} ci-event={ci_event}: required CI validates this change\n",
+                class.class
+            ),
+            sentinel: format!("guard-exit=0 at={at}\n"),
+        }),
+        (Some((Reused::BoundRun { run_dir }, exit)), _, _) => Some(RanNothing {
+            log: format!(
+                "runner=none bound-run={run_dir}: that run reached the {timeout_secs}s bound over every path this run reads\n"
+            ),
+            sentinel: format!("guard-exit={exit} at={at} verdict=no-verdict\n"),
+        }),
+        (Some((Reused::PassRun { run_dir }, _)), _, _) => {
+            let last = fs::read_to_string(Path::new(run_dir).join("log"))
+                .ok()
+                .and_then(|log| {
+                    log.lines()
+                        .rfind(|l| l.starts_with("validate:"))
+                        .map(str::to_owned)
+                });
+            let mut text = format!(
+                "runner=none pass-run={run_dir}: that run passed this command over the same tree\n"
+            );
+            if let Some(last) = last {
+                text.push_str(&last);
+                text.push('\n');
+            }
+            Some(RanNothing {
+                log: text,
+                sentinel: format!("guard-exit=0 at={at}\n"),
+            })
+        }
+        (None, ValidateMode::Full | ValidateMode::Range, _) | (None, ValidateMode::Ci, true) => {
+            None
+        }
+    };
+    let selection = match preview.selection.as_deref() {
+        Some("selection=all") => "all",
+        Some("selection=subset") => "subset",
+        _ => "unreported",
+    }
+    .to_owned();
+    let proof = Proof {
+        tree: class.tree.clone(),
+        head,
+        base: base_sha,
+        mode,
+        cause,
+        caller: req.caller.clone(),
+        cmd,
+        class: class.class.clone(),
+        docs_only: class.docs_only,
+        paths_hash: crate::ops::validate::paths_hash(&class.paths),
+        scoped,
+        selection,
+        finding_prefix,
+        timeout_secs,
+        poll_secs: req.poll,
+        cap_secs,
+        class_base: (!class_base.is_empty()).then_some(class_base),
+        ci_fallback: ci_fallback.filter(|_| mode != ValidateMode::Ci),
+        ci_event: (mode == ValidateMode::Ci).then_some(ci_event),
+        class_fallback: class.fallback.clone(),
+        reused: reused.map(|(r, _)| r),
+    };
+    Ok(Resolved {
+        proof,
+        class_log: log,
+        paths: class.paths,
+        ran_nothing,
+    })
+}
+
+// --- The run directory ------------------------------------------------------------
+
+/// The run's `start` record, line for line as the legacy writes it
+/// (`dev-validate-run:1267-1289`), which the executor reads.
+fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
+    let mut text = String::new();
+    let mut line = |l: String| {
+        text.push_str(&l);
+        text.push('\n');
+    };
+    line(format!("worktree={}", worktree.display()));
+    line("timeout-bin=timeout".to_owned());
+    line(format!("start={start}"));
+    line(format!("timeout-secs={}", proof.timeout_secs));
+    line(format!("poll-secs={}", proof.poll_secs));
+    line(format!("cap-secs={}", proof.cap_secs));
+    line(format!("class={}", proof.class));
+    line(format!("docs-only={}", proof.docs_only));
+    line(format!("validate-mode={}", proof.mode.word()));
+    if matches!(proof.selection.as_str(), "all" | "subset") {
+        line(format!("selection={}", proof.selection));
+    }
+    if proof.scoped {
+        line("scoped=true".to_owned());
+    }
+    line(format!("validate-base={}", proof.base));
+    if let Some(cause) = &proof.ci_fallback {
+        line(format!("ci-fallback={cause}"));
+    }
+    if let Some(class_base) = &proof.class_base {
+        line(format!("class-base={class_base}"));
+    }
+    if let Some(event) = &proof.ci_event {
+        line(format!("ci-event={event}"));
+    }
+    match &proof.reused {
+        Some(Reused::BoundRun { run_dir }) => line(format!("bound-run={run_dir}")),
+        Some(Reused::PassRun { run_dir }) => line(format!("pass-run={run_dir}")),
+        None => {}
+    }
+    if !proof.finding_prefix.is_empty() {
+        line(format!("finding-prefix={}", proof.finding_prefix));
+    }
+    line(format!("head={}", proof.head));
+    if !proof.tree.is_empty() {
+        line(format!("tree={}", proof.tree));
+    }
+    text
+}
+
+/// Write the run directory the executor reads: refused where it stands
+/// already, since a poll would read its records as this run's.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the run directory's files are the executor's inputs, written whole as the legacy start writes them; the inventory is replaced by rename"
+)]
+fn write_run_dir(
+    worktree: &Path,
+    run_dir: &Path,
+    resolved: &Resolved,
+    start: u64,
+) -> std::result::Result<(), String> {
+    fs::create_dir_all(worktree.join("tmp")).map_err(|e| format!("tmp: {e}"))?;
+    match fs::create_dir(run_dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => return Err("run-exists".to_owned()),
+        Err(e) => return Err(format!("run-dir: {e}")),
+    }
+    let write = |name: &str, text: &str| {
+        fs::write(run_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
+    };
+    write("class.log", &resolved.class_log)?;
+    let mut paths = resolved.paths.join("\n");
+    if !resolved.paths.is_empty() {
+        paths.push('\n');
+    }
+    write("paths", &paths)?;
+    write("cmd", &resolved.proof.cmd)?;
+    write("start", &start_record(worktree, &resolved.proof, start))?;
+    // The inventory the lane facts and the report read: a header, then
+    // one run directory name per start record.
+    let mut names: Vec<String> = fs::read_dir(worktree.join("tmp"))
+        .map_err(|e| format!("tmp: {e}"))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with(RUN_DIR_PREFIX))
+                && fs::metadata(entry.path().join("start")).is_ok()
+        })
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .collect();
+    names.sort();
+    let mut index = String::from("dev-validate-runs-v1\n");
+    for name in names {
+        index.push_str(&name);
+        index.push('\n');
+    }
+    let scratch = worktree
+        .join("tmp")
+        .join(format!(".{RUN_INDEX}.{}", std::process::id()));
+    fs::write(&scratch, index).map_err(|e| format!("{RUN_INDEX}: {e}"))?;
+    fs::rename(&scratch, worktree.join("tmp").join(RUN_INDEX))
+        .map_err(|e| format!("{RUN_INDEX}: {e}"))?;
+    if let Some(ran_nothing) = &resolved.ran_nothing {
+        write("log", &ran_nothing.log)?;
+        let at = ran_nothing
+            .sentinel
+            .split(' ')
+            .find_map(|f| f.strip_prefix("at="))
+            .unwrap_or_default()
+            .trim_end()
+            .to_owned();
+        write(
+            "timing",
+            &format!("started-at={at}\nended-at={at}\nseconds=0\n"),
+        )?;
+        write("exit", &ran_nothing.sentinel)?;
+    }
+    Ok(())
+}
+
+/// The `state=started` line the legacy prints, with the CI fallback cause
+/// appended where the rules read fell back to a local run (decision 184 (9)),
+/// so the dev agent sees why CI did not take the change.
+fn started_line(run_dir: &Path, proof: &Proof) -> String {
+    let class_fallback = proof
+        .class_fallback
+        .as_ref()
+        .map(|c| format!(" class-fallback={c}"))
+        .unwrap_or_default();
+    let ci_fallback = proof
+        .ci_fallback
+        .as_ref()
+        .map(|c| format!(" ci-fallback={c}"))
+        .unwrap_or_default();
+    format!(
+        "state=started run-dir={rd} log={rd}/log sentinel={rd}/exit timeout-secs={} poll-secs={} cap-secs={} class={} docs-only={}{class_fallback}{ci_fallback}",
+        proof.timeout_secs,
+        proof.poll_secs,
+        proof.cap_secs,
+        proof.class,
+        proof.docs_only,
+        rd = run_dir.display(),
+    )
+}
+
+/// The launcher's record in job-unit's own form.
+fn read_launcher_record(record: &Path) -> BTreeMap<String, String> {
+    fs::read_to_string(record)
+        .map(|text| {
+            text.lines()
+                .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Ask the job launcher for the run's job: `validate run` under the
+/// worktree's name with the cap as the unit's bound, the record beside the
+/// run as the executor reads it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the validation start's one ask of the job launcher, the job's record on the stage from before the ask"
+)]
+fn ask_launcher(
+    settings: &Settings,
+    worktree: &Path,
+    run_dir: &Path,
+    item: &str,
+    round: &str,
+    cap_secs: u64,
+) -> Launch {
+    let job_unit = settings.job_unit.clone();
+    if !fs::metadata(&job_unit).is_ok_and(|m| m.is_file()) {
+        return Launch::Refused {
+            cause: format!("job-unit-missing {}", job_unit.display()),
+        };
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe.display().to_string(),
+        Err(e) => {
+            return Launch::Refused {
+                cause: format!("exe-unread {e}"),
+            };
+        }
+    };
+    let name = format!(
+        "validate-{}",
+        worktree
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+    );
+    let record = run_dir.join("runner");
+    let record_text = record.display().to_string();
+    let cap = cap_secs.to_string();
+    let state_dir = settings.state_dir.display().to_string();
+    let rd = run_dir.display().to_string();
+    let args = [
+        "launch",
+        &name,
+        &record_text,
+        "--cap",
+        &cap,
+        "--",
+        &exe,
+        "--state-dir",
+        &state_dir,
+        "validate",
+        "run",
+        "--item",
+        item,
+        "--round",
+        round,
+        "--run-dir",
+        &rd,
+    ];
+    let place = Place {
+        cwd: Some(worktree),
+        env: &[],
+    };
+    match host::run_tagged_in(
+        "validate",
+        "job-unit",
+        &job_unit,
+        "launch",
+        &args,
+        place,
+        LAUNCH_TIMEOUT,
+    ) {
+        Ok(out) if out.status.success() => {
+            let fields = read_launcher_record(&record);
+            Launch::Started {
+                runner: fields.get("runner").cloned().unwrap_or_default(),
+                unit: fields.get("unit").cloned(),
+                pid: fields.get("pid").and_then(|p| p.parse().ok()),
+                start: fields.get("start").cloned(),
+                line: host::stdout_text(&out),
+            }
+        }
+        Ok(out) => Launch::Refused {
+            cause: host::stderr_text(&out)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+        },
+        Err(e) => Launch::Refused {
+            cause: e.to_string(),
+        },
+    }
+}
+
+/// Start a validation run (step6-map § A1): read, record, launch.
+pub fn start(
+    settings: &Settings,
+    req: &StartRequest,
+    env: &Env,
+    locking: Locking,
+) -> Result<StartReply> {
+    let (item, round) = match (&req.item, &req.round, &req.run_dir) {
+        (Some(item), Some(round), _) => (item.clone(), round.clone()),
+        (_, _, Some(run_dir)) => item_of_run_dir(&settings.state_dir, run_dir)?,
+        (_, _, None) => {
+            return Err(Error::RunUnadmitted {
+                run_dir: String::new(),
+            });
+        }
+    };
+    let path = state::item_path(&settings.state_dir, &item);
+    let snapshot = load(&path)?.ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
+    let stages = snapshot.view::<ItemState>(&path)?.stages;
+    let worktree: Option<String> = state::field(&path, &snapshot.doc, "worktree")?;
+    let worktree = worktree
+        .filter(|w| !w.is_empty())
+        .ok_or_else(|| Error::WorktreeUnrecorded { path: path.clone() })?;
+    let worktree = fs::canonicalize(&worktree).map_err(|e| Error::ValidateUnreadable {
+        read: "worktree",
+        cause: format!("{worktree}: {e}"),
+    })?;
+    // One run at a time per round, judged before any read.
+    if let Some(open) = stages.iter().find(|s| {
+        s.kind == StageKind::Validate
+            && s.round_id.as_deref() == Some(&round)
+            && s.end.is_none()
+            && s.job.is_some()
+    }) {
+        return Err(Error::RunLive {
+            round_id: round,
+            run_dir: open.run_dir.clone().unwrap_or_default(),
+        });
+    }
+    let scratch = Scratch::new(env)?;
+    let resolved = resolve(settings, &scratch, &worktree, &stages, req, env)?;
+    let run_dir_given = req.run_dir.clone().or_else(|| {
+        stages
+            .iter()
+            .rev()
+            .find(|s| {
+                s.kind == StageKind::Validate
+                    && s.round_id.as_deref() == Some(&round)
+                    && s.end.is_none()
+            })
+            .and_then(|s| s.run_dir.clone())
+    });
+    // The record: the proof and the launcher's record path on the stage,
+    // before the run directory exists and before the launcher is asked.
+    let started = apply(
+        &path,
+        Validate::Start(Box::new(RecordStart {
+            round_id: round.clone(),
+            run_dir: run_dir_given,
+            proof: resolved.proof.clone(),
+        })),
+        env,
+        locking,
+    )?;
+    let Validated::Start(started) = started else {
+        unreachable!("a start reports its start")
+    };
+    let (run_id, run_dir, start_secs) = (started.run_id, started.run_dir, started.start);
+    let run_dir_path = PathBuf::from(&run_dir);
+    let launched = match write_run_dir(&worktree, &run_dir_path, &resolved, start_secs) {
+        Err(cause) => Launch::Refused { cause },
+        Ok(()) => match &resolved.ran_nothing {
+            Some(_) => Launch::Started {
+                runner: "none".to_owned(),
+                unit: None,
+                pid: None,
+                start: None,
+                line: "runner=none".to_owned(),
+            },
+            None => ask_launcher(
+                settings,
+                &worktree,
+                &run_dir_path,
+                &item,
+                &round,
+                resolved.proof.cap_secs,
+            ),
+        },
+    };
+    let recorded = apply(
+        &path,
+        Validate::Launch(RecordLaunch {
+            round_id: round.clone(),
+            run_dir: run_dir.clone(),
+            launch: launched.clone(),
+        }),
+        env,
+        locking,
+    )?;
+    let Validated::Launch(recorded) = recorded else {
+        unreachable!("a launch reports its launch")
+    };
+    if let Launch::Refused { cause } = launched {
+        return Err(Error::ValidateLaunchFailed { run_dir, cause });
+    }
+    let mut outcome = recorded.outcome;
+    if resolved.ran_nothing.is_some() {
+        // The run ran nothing and its sentinel stands: the stage closes now,
+        // and the caller holds the verdict, so no notice is owed.
+        let sentinel = fs::read_to_string(run_dir_path.join("exit")).unwrap_or_default();
+        let word = crate::ops::validate::sentinel_outcome(sentinel.trim_end())
+            .unwrap_or(StageOutcome::Lost);
+        let ended = apply(
+            &path,
+            Validate::End(RecordEnd {
+                round_id: round.clone(),
+                run_dir: run_dir.clone(),
+                outcome: word,
+                end: None,
+                seconds: None,
+                selection: None,
+                notice: None,
+            }),
+            env,
+            locking,
+        )?;
+        if let Validated::End(ended) = ended {
+            outcome = ended.outcome;
+        }
+    }
+    let job = load(&path)?
+        .and_then(|s| s.view::<ItemState>(&path).ok())
+        .and_then(|item| {
+            item.stages
+                .into_iter()
+                .find(|s| s.kind == StageKind::Validate && s.run_dir.as_deref() == Some(&run_dir))
+        })
+        .and_then(|s| s.job);
+    let proof = &resolved.proof;
+    Ok(StartReply {
+        item,
+        round_id: round,
+        run_id,
+        log: format!("{run_dir}/log"),
+        sentinel: format!("{run_dir}/exit"),
+        timeout_secs: proof.timeout_secs,
+        poll_secs: proof.poll_secs,
+        cap_secs: proof.cap_secs,
+        class: proof.class.clone(),
+        docs_only: proof.docs_only,
+        class_fallback: proof.class_fallback.clone(),
+        mode: proof.mode,
+        base: proof.base.clone(),
+        started_line: started_line(&run_dir_path, proof),
+        launched: resolved.ran_nothing.is_none(),
+        job,
+        outcome,
+        run_dir,
+    })
+}

@@ -19,10 +19,11 @@
 #[path = "support.rs"]
 mod support;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agent_runtime::clock;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, Pane, PaneFields};
 use agent_runtime::observe::{self, ProcessReading};
@@ -34,6 +35,7 @@ use orch_runtime::ops::wall::{self, AccountWall, RecordWallPauses};
 use orch_runtime::ops::{self, RequestTransfer};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings, Succession};
 use orch_runtime::state::{self, FleetState, Locking, Record, TransferCause};
+use orch_runtime::watch::context;
 use orch_runtime::watch::lanes::{self, Readers, Relaunch, WallRoute, WindowRow};
 use orch_runtime::watch::overseer::{self, Legacy, Marks, Pick, Slot, Source, Verdict};
 use orch_runtime::watch::{Baseline, Change, Event, Produced};
@@ -982,11 +984,13 @@ fn a_codex_capacity_refusal_is_model_capacity_once() {
 }
 
 /// Defect: a Pi lane judged off its pane, which its carrier's drawing
-/// cannot settle, or its rows read in a way the legacy did not. The rows
-/// judge: a Stop row is idle on the second pass with the pane's tail under
-/// it; a later Stop row is news again; an error Stop whose message is the
-/// account's limit is `usage-limit` with the harness's own message under
-/// it; no rows at all settles nothing.
+/// cannot settle, or its rows read in a way the legacy did not, or the
+/// harness's ordinary end (`stop_reason=stop`, what the writer copies
+/// from every finished Pi turn) rendered as a `cause=` on the line. The
+/// rows judge: a Stop row is idle on the second pass with the pane's tail
+/// under it, the line as today; a later Stop row is news again; an error
+/// Stop whose message is the account's limit is `usage-limit` with the
+/// harness's own message under it; no rows at all settles nothing.
 #[test]
 fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -1018,7 +1022,7 @@ fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
     );
     std::fs::write(
         &rows_file,
-        "{\"harness\":\"pi\",\"event\":\"Stop\",\"at\":1}\n",
+        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"stop\",\"working_agents\":0,\"at\":1}\n",
     )
     .unwrap();
     let first = driver.pass(&state);
@@ -1035,7 +1039,7 @@ fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
     assert!(lines(&third).is_empty(), "{:?}", lines(&third));
     std::fs::write(
         &rows_file,
-        "{\"harness\":\"pi\",\"event\":\"Stop\",\"at\":2}\n",
+        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"stop\",\"working_agents\":0,\"at\":2}\n",
     )
     .unwrap();
     driver.pass(&state);
@@ -1056,6 +1060,68 @@ fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
     );
     let quiet = driver.pass(&state);
     assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+}
+
+/// Decisions 174 (round 9, item 6), 184 (7). Defect: the idle line
+/// dropping the stop reason the lane's own Stop row carries, so a turn the
+/// output limit cut (`stop_reason=length`) reads as a finished round and
+/// the lane as free. A Stop row with a `stop_reason` that is not the
+/// harness's ordinary end and no limit banner is
+/// `idle-after-return <lane> cause=<word>` once, with the pane's tail under
+/// it; an error that is no limit carries `cause=error`. The row with the
+/// ordinary end `stop`, the line as today, is
+/// `a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it`.
+#[test]
+fn a_pi_lane_s_stop_reason_is_the_idle_line_s_cause() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pi = named_sleep(dir.path(), "pi");
+    let line = format!("printf 'cut mid-report\\n'; exec {} 600", pi.display());
+    let pane = server.open_window("gh-7", dir.path(), &format!("bash -c \"{line}\""));
+    let identity = await_named(&server, &pane, "pi");
+    await_drawn(&server, &pane, "cut mid-report");
+    fleet.set_lanes(vec![lane_record(
+        "KEN-7",
+        "gh-7",
+        "pi",
+        &server,
+        &pane,
+        Some(&identity),
+        dir.path(),
+    )]);
+    let state = fleet.read();
+    let rows_file = dir.path().join("tmp/lane-mail/KEN-7/session-rows.jsonl");
+    std::fs::create_dir_all(rows_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &rows_file,
+        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"length\",\"working_agents\":0,\"at\":1}\n",
+    )
+    .unwrap();
+    lane_driver!(server, fleet, readers, driver);
+    let first = driver.pass(&state);
+    assert!(lines(&first).is_empty(), "{:?}", lines(&first));
+    let second = driver.pass(&state);
+    assert_eq!(
+        lines(&second),
+        vec![
+            "EVENT idle-after-return gh-7 cause=length".to_owned(),
+            "cut mid-report".to_owned()
+        ]
+    );
+    let third = driver.pass(&state);
+    assert!(lines(&third).is_empty(), "{:?}", lines(&third));
+    std::fs::write(
+        &rows_file,
+        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"tool failed\",\"at\":2}\n",
+    )
+    .unwrap();
+    driver.pass(&state);
+    let again = driver.pass(&state);
+    assert_eq!(
+        event_lines(&again),
+        vec!["EVENT idle-after-return gh-7 cause=error"]
+    );
 }
 
 /// Decisions 96, 121 Q11. Defect: a window nothing records adopted, closed,
@@ -1123,6 +1189,10 @@ struct OverseerDriver<'a> {
     slot: Slot,
     now: u64,
     transfers: &'a RefCell<Vec<RequestTransfer>>,
+    /// The overseer's context record, where a row plants one.
+    context_record: Option<PathBuf>,
+    /// The owner's alert for a standing gap.
+    alert: &'a dyn Fn(&str) -> Result<(), String>,
 }
 
 impl OverseerDriver<'_> {
@@ -1142,6 +1212,8 @@ impl OverseerDriver<'_> {
                 preference: &self.settings.overseer_preference,
                 now: self.now,
                 transfer: &transfer,
+                context_record: self.context_record.as_deref(),
+                alert: self.alert,
             },
             &self.slot,
         );
@@ -1151,8 +1223,12 @@ impl OverseerDriver<'_> {
     }
 }
 
-fn below(_: &Path, _: Option<Harness>) -> Result<Marks, String> {
+fn below(_: &Path, _: Option<Harness>, _: Option<&str>) -> Result<Marks, String> {
     Marks::parse("oversee-succeed: account-below-mark kind=headroom").ok_or_default()
+}
+
+fn no_alert(_: &str) -> Result<(), String> {
+    panic!("no gap stood two passes")
 }
 
 trait OrDefault<T> {
@@ -1165,7 +1241,7 @@ impl<T> OrDefault<T> for Option<T> {
     }
 }
 
-fn reached(_: &Path, _: Option<Harness>) -> Result<Marks, String> {
+fn reached(_: &Path, _: Option<Harness>, _: Option<&str>) -> Result<Marks, String> {
     Marks::parse("oversee-succeed: mark-reached kind=headroom value=50 mark=5 succession=on account=/home/me/.eclaude").ok_or_default()
 }
 
@@ -1186,7 +1262,7 @@ fn no_relaunch(_: &Path, _: &Relaunch) -> Result<(), String> {
 }
 
 /// A standing mark with succession off (`oversee-watch:4062`).
-fn reached_off(_: &Path, _: Option<Harness>) -> Result<Marks, String> {
+fn reached_off(_: &Path, _: Option<Harness>, _: Option<&str>) -> Result<Marks, String> {
     Marks::parse("oversee-succeed: mark-reached kind=headroom value=50 mark=5 succession=off account=/home/me/.eclaude").ok_or_default()
 }
 
@@ -1222,6 +1298,8 @@ macro_rules! overseer_driver {
             slot: Slot::new(),
             now: 1_800_000_000,
             transfers: &$transfers,
+            context_record: None,
+            alert: &no_alert,
         };
     };
 }
@@ -1498,6 +1576,340 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         ]
     );
     assert!(transfers3.borrow().is_empty());
+}
+
+// U6h (step6-map § A10 row (6), § B "an overseer at its context limit";
+// decisions 126 (2), 176 (1) (d)): the overseer's context record, judged
+// beside a live session.
+
+/// A live overseer in a pane holding a process named `claude`, its record
+/// naming the rows file under `dir`: the pane, its window, the record's
+/// pane key and the rows file.
+fn live_overseer(dir: &Path, server: &Server, fleet: &Fleet) -> (String, String, String, PathBuf) {
+    let claude = named_sleep(dir, "claude");
+    let pane = server.open_window(
+        "overseer",
+        dir,
+        &format!(
+            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(server, &pane, "claude");
+    let window = window_of(server, &pane);
+    let rows = dir.join("overseer-rows.jsonl");
+    let mut record = overseer_at(server, &pane, &window, dir);
+    record["harness_pid"] = json!(identity.pid.to_string());
+    record["harness_start"] = json!(identity.start);
+    record["session_rows"] = json!(rows.display().to_string());
+    fleet.set_overseer(record);
+    let key = format!("{} {pane}", server.pid);
+    (pane, window, key, rows)
+}
+
+/// The record `lane_context_record` writes, as the hook wrote it at `at`:
+/// a reading of `tokens` of `window`, or a gap.
+fn context_record(
+    path: &Path,
+    key: &str,
+    tokens: Option<u64>,
+    window: Option<u64>,
+    gap: Option<&str>,
+    at: u64,
+) {
+    std::fs::write(
+        path,
+        json!({
+            "harness": "claude", "model": "opus", "tokens": tokens, "window": window,
+            "used_pct": null, "capacity_source": null, "session_id": "s1",
+            "pane_key": key, "gap": gap, "at": clock::iso_utc(at)
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// The session rows the hook writes, one object a line.
+fn session_rows(path: &Path, rows: &[Value]) {
+    let text: String = rows.iter().map(|r| format!("{r}\n")).collect();
+    std::fs::write(path, text).unwrap();
+}
+
+/// A SessionStart row for session `s1` at `at`, and a Stop row at `at`.
+fn started(at: u64) -> Value {
+    json!({"event": "SessionStart", "session_id": "s1", "harness": "claude", "at": at})
+}
+
+fn stopped(at: u64) -> Value {
+    json!({"event": "Stop", "harness": "claude", "at": at})
+}
+
+/// Decisions 176 (1) (d), 179 (5); `oversee-succeed --check-marks
+/// --context` (A10 row (6)). Defect: the watch judging the context mark
+/// with no reading while the hook judges it with one, so an overseer past
+/// its context mark between turn ends is never said; or the mark said on
+/// every pass. The session's own record is handed to the judge as
+/// `--context TOKENS:WINDOW`; its `mark-reached kind=context` is
+/// `overseer-mark ... kind=context` once with the handling under it, then
+/// once every `ORCH_OVERSEER_MARK_REPEAT` passes; a record another pane
+/// wrote hands the judge nothing.
+#[test]
+fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_per_repeat() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, _, key, rows) = live_overseer(dir.path(), &server, &fleet);
+    let state = fleet.read();
+    let record = dir.path().join("context.json");
+    let now = 1_800_000_000;
+    context_record(
+        &record,
+        &key,
+        Some(910_000),
+        Some(1_000_000),
+        None,
+        now - 60,
+    );
+    session_rows(&rows, &[started(now - 600), stopped(now - 30)]);
+    let handed: RefCell<Vec<Option<String>>> = RefCell::new(Vec::new());
+    let marks = |_: &Path, _: Option<Harness>, context: Option<&str>| {
+        handed.borrow_mut().push(context.map(str::to_owned));
+        Marks::parse("oversee-succeed: mark-reached kind=context value=910000 mark=90 succession=on headroom=unreadable window=1000000").ok_or_default()
+    };
+    overseer_driver!(server, fleet, marks, no_pick, readers, transfers, driver);
+    driver.context_record = Some(record.clone());
+    let first = driver.pass(&state);
+    assert_eq!(
+        lines(&first),
+        vec![
+            format!("EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession=on"),
+            "Run /nonexistent/oversee-succeed -- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high choosing the successor lane.".to_owned(),
+        ]
+    );
+    assert_eq!(
+        handed.borrow().as_slice(),
+        &[Some("910000:1000000".to_owned())],
+        "the judge is handed the session's own reading"
+    );
+    assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
+    for _ in 0..4 {
+        let quiet = driver.pass(&state);
+        assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    }
+    let again = driver.pass(&state);
+    assert_eq!(
+        lines(&again).first().map(String::as_str),
+        Some(
+            format!("EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession=on")
+                .as_str()
+        ),
+        "{:?}",
+        lines(&again)
+    );
+    assert!(transfers.borrow().is_empty());
+    // A record another pane wrote says nothing of this session: the judge
+    // is asked with no reading.
+    context_record(
+        &record,
+        "1 %99",
+        Some(910_000),
+        Some(1_000_000),
+        None,
+        now - 60,
+    );
+    let _ = driver.pass(&state);
+    assert_eq!(handed.borrow().last().cloned(), Some(None));
+}
+
+/// `744fd5727:oversee-watch:4215-4228` (`overseer_context_wedged`), § B
+/// "the same record with no Stop row after a full window" (A10 row (6)).
+/// Defect: an overseer whose context fills its window read as live
+/// because its process runs and its rows say nothing, so the fleet runs
+/// unattended until someone finds the pane; or relaunched on one reading.
+/// A reading that fills the window with no Stop row after it is the
+/// session gone with `source=context`, counted on the death's passes; the
+/// same reading with a later Stop row is a session that took a turn since,
+/// and live.
+#[test]
+fn a_full_window_with_no_later_stop_row_is_the_session_gone_by_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, window, key, rows) = live_overseer(dir.path(), &server, &fleet);
+    let state = fleet.read();
+    let record = dir.path().join("context.json");
+    let now = 1_800_000_000;
+    context_record(
+        &record,
+        &key,
+        Some(1_000_000),
+        Some(1_000_000),
+        None,
+        now - 60,
+    );
+    session_rows(&rows, &[started(now - 600), stopped(now - 120)]);
+    overseer_driver!(server, fleet, below, no_pick, readers, transfers, driver);
+    driver.context_record = Some(record.clone());
+    let first = driver.pass(&state);
+    assert!(lines(&first).is_empty(), "{:?}", lines(&first));
+    assert_eq!(
+        driver.slot.read().unwrap().verdict,
+        Verdict::Exited {
+            source: Source::Context
+        }
+    );
+    let second = driver.pass(&state);
+    assert_eq!(
+        lines(&second),
+        vec![format!(
+            "EVENT overseer-dead {pane} window={window} passes=2 succession=on source=context"
+        )]
+    );
+    assert!(
+        transfers.borrow().is_empty(),
+        "the request follows on the next run"
+    );
+    // A Stop row after the reading: a turn ended since, so the session is
+    // live and the reading alone settles nothing.
+    session_rows(
+        &rows,
+        &[started(now - 600), stopped(now - 120), stopped(now - 30)],
+    );
+    overseer_driver!(server, fleet, below, no_pick, readers2, transfers2, turned);
+    turned.context_record = Some(record.clone());
+    let live = turned.pass(&state);
+    assert!(lines(&live).is_empty(), "{:?}", lines(&live));
+    assert_eq!(turned.slot.read().unwrap().verdict, Verdict::Live);
+    assert!(transfers2.borrow().is_empty());
+}
+
+/// `744fd5727:oversee-watch:4146-4160` (`overseer_context_check`, the
+/// stale arm; A10 row (6)). Defect: a record that stopped advancing
+/// passing for a context mark that is watching. A record more than
+/// `OVERSEER_CONTEXT_STALE_SECS` old with a Stop row after it is
+/// `overseer-context-stale` with its age on every pass it stands; a fresh
+/// record, and an old one with no Stop row after it, say nothing.
+#[test]
+fn a_stale_context_record_with_a_later_stop_row_is_said_on_every_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, _, key, rows) = live_overseer(dir.path(), &server, &fleet);
+    let state = fleet.read();
+    let record = dir.path().join("context.json");
+    let now = 1_800_000_000;
+    context_record(&record, &key, Some(100), Some(1_000_000), None, now - 4000);
+    session_rows(&rows, &[started(now - 6000), stopped(now - 100)]);
+    overseer_driver!(server, fleet, below, no_pick, readers, transfers, driver);
+    driver.context_record = Some(record.clone());
+    let first = driver.pass(&state);
+    assert_eq!(
+        lines(&first),
+        vec![format!("EVENT overseer-context-stale {pane} age=4000")]
+    );
+    let second = driver.pass(&state);
+    assert_eq!(
+        lines(&second),
+        vec![format!("EVENT overseer-context-stale {pane} age=4240")]
+    );
+    assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
+    // Fresh: nothing. Old with the Stop row before it: nothing.
+    context_record(
+        &record,
+        &key,
+        Some(100),
+        Some(1_000_000),
+        None,
+        now + 480 - 100,
+    );
+    let fresh = driver.pass(&state);
+    assert!(lines(&fresh).is_empty(), "{:?}", lines(&fresh));
+    context_record(&record, &key, Some(100), Some(1_000_000), None, now - 4000);
+    session_rows(&rows, &[started(now - 6000), stopped(now - 5000)]);
+    let unturned = driver.pass(&state);
+    assert!(lines(&unturned).is_empty(), "{:?}", lines(&unturned));
+    assert!(transfers.borrow().is_empty());
+}
+
+/// `744fd5727:oversee-watch:4161-4200` (`overseer_context_gap`,
+/// `overseer_gap_alert`; A10 row (6)). Defect: a gap repeated to an
+/// overseer that is not acting on it, which left a fleet unwatched; the
+/// owner's alert marked sent when the mailbox refused it; or a gap said
+/// forever. A gap is `overseer-context-unmeasured` once; on the next pass
+/// the owner's alert goes out and is marked only once sent, so a refused
+/// send is tried again on the pass after; then nothing while that gap
+/// stands; a different gap starts the turn again, and a reading clears
+/// the row.
+#[test]
+fn a_gap_is_said_once_then_alerted_to_the_owner_once_sent_and_quiet_after() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, _, key, rows) = live_overseer(dir.path(), &server, &fleet);
+    let state = fleet.read();
+    let record = dir.path().join("context.json");
+    let now = 1_800_000_000;
+    context_record(&record, &key, None, None, Some("pane-unrecorded"), now - 60);
+    session_rows(&rows, &[started(now - 600)]);
+    let alerts: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    let refusing = Cell::new(false);
+    let alert = |text: &str| {
+        if refusing.get() {
+            return Err("mailbox-down".to_owned());
+        }
+        alerts.borrow_mut().push(text.to_owned());
+        Ok(())
+    };
+    overseer_driver!(server, fleet, below, no_pick, readers, transfers, driver);
+    driver.context_record = Some(record.clone());
+    driver.alert = &alert;
+    let first = driver.pass(&state);
+    assert_eq!(
+        lines(&first),
+        vec![format!(
+            "EVENT overseer-context-unmeasured {pane} gap=pane-unrecorded"
+        )]
+    );
+    assert_eq!(
+        driver.baseline.get(context::GAP_ROW, &key),
+        Some("pane-unrecorded|told")
+    );
+    refusing.set(true);
+    let refused = driver.pass(&state);
+    assert!(lines(&refused).is_empty(), "{:?}", lines(&refused));
+    assert!(alerts.borrow().is_empty());
+    assert_eq!(
+        driver.baseline.get(context::GAP_ROW, &key),
+        Some("pane-unrecorded|told"),
+        "an alert the owner did not get stays owed"
+    );
+    refusing.set(false);
+    let sent = driver.pass(&state);
+    assert!(lines(&sent).is_empty(), "{:?}", lines(&sent));
+    assert_eq!(
+        alerts.borrow().as_slice(),
+        &[context::alert_text(&pane, "pane-unrecorded")]
+    );
+    assert_eq!(
+        driver.baseline.get(context::GAP_ROW, &key),
+        Some("pane-unrecorded|alerted")
+    );
+    let quiet = driver.pass(&state);
+    assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    assert_eq!(alerts.borrow().len(), 1);
+    context_record(&record, &key, None, None, Some("usage-unread"), now - 60);
+    let other = driver.pass(&state);
+    assert_eq!(
+        lines(&other),
+        vec![format!(
+            "EVENT overseer-context-unmeasured {pane} gap=usage-unread"
+        )]
+    );
+    context_record(&record, &key, Some(100), Some(1_000_000), None, now + 2000);
+    let reading = driver.pass(&state);
+    assert!(lines(&reading).is_empty(), "{:?}", lines(&reading));
+    assert_eq!(driver.baseline.get(context::GAP_ROW, &key), None);
+    assert!(transfers.borrow().is_empty());
 }
 
 // U5d3 (decision 176 (1) (a), (c)): the standing handoff and the wall

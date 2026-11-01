@@ -15,13 +15,14 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use super::accounts::{self, PickAnswer, PickRequest};
 use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, Host, Identities, Occupancy, Read};
 use super::{
     Effect, Env, OutcomeRecorded, RecordOutcome, Standing, intents, lane_at, lane_doc_mut, lanes,
     new_intent, no_open_intent, open_intent, push_intent, same_open_intent, string_or_null,
 };
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::state::{
     self, CloseGround, Document, EffectOp, Intent, Lane, LaneKeys, LaneStatus, LaunchIdentity,
     ObligationRecord, Phase, Reservation, Selection, TerminalVerdict,
@@ -37,6 +38,10 @@ use crate::state::{
 /// `exclude_account` is the account a wall spent (step4-map A11): a launch
 /// whose `account` canonicalizes to it is refused. `over_cap` admits the
 /// launch past the cap and is recorded, as the legacy `--over-cap` is.
+/// `judge_account` asks the accounts judge for the named account's room
+/// before the admission (step6-map A5), the legacy launcher's gate on a
+/// lane the caller named rather than one a pick answered; left out, the
+/// account is taken as a pick's answer, judged already.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LaunchLane {
     pub item: String,
@@ -60,6 +65,8 @@ pub struct LaunchLane {
     pub over_cap: Option<String>,
     #[serde(default)]
     pub exclude_account: Option<String>,
+    #[serde(default)]
+    pub judge_account: bool,
     /// The opening instruction, read by the harness at its start. Not a
     /// record field: the effect carries it to the launch, and the
     /// admission reads the paths it names (decision 118 (4)).
@@ -362,6 +369,114 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
     Ok(())
 }
 
+/// The account's room (step6-map A5; decision 168 (3), round 8 item 3): a
+/// launch that asks (`judge_account`) and names an account `lanes`
+/// measures is judged on that account's projection through the accounts
+/// judge, with the charge of the lane this relaunch replaces, its own
+/// record, left out, since the relaunch takes that record's slot (its
+/// reservation goes with the relaunch patch): a replacement adds no lane.
+/// A launch with no record is judged fresh. A host built without the
+/// judge's settings judges no account. The answers are the legacy
+/// launcher's (`open-terminal`, `named_lane_judge`): room, or no row to
+/// judge, proceeds; walled, unmeasured and unjudged refuse with their
+/// cause, an unread window being no empty one (decision 99); an account
+/// the word refuses, reserved or retired, refuses by its word with no
+/// window's figure. The walled line's figures are the record's as that
+/// launcher read them: the projected window where one was projected, else
+/// the reading's wall and binding bucket.
+fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &Host) -> Result<()> {
+    let (true, Some(settings), Some(account)) = (r.judge_account, host.accounts, &r.account) else {
+        return Ok(());
+    };
+    let model = r.model.clone().unwrap_or_default();
+    let refused = |cause: &str| Error::AccountUnjudged {
+        item: r.item.clone(),
+        account: account.clone(),
+        cause: cause.to_owned(),
+    };
+    match accounts::pick_harness(&r.harness, &model) {
+        "claude" | "codex" | "copilot" | "pi" => {}
+        _ => {
+            return Err(Error::AccountUnmeasured {
+                item: r.item.clone(),
+                account: account.clone(),
+                model,
+                status: "provider-unmeasured".to_owned(),
+                detail: "none".to_owned(),
+            });
+        }
+    }
+    let request = PickRequest {
+        harness: r.harness.clone(),
+        model: r.model.clone(),
+        lane: Some(account.clone()),
+        projected: true,
+        replaces: replaces.map(str::to_owned),
+        ..PickRequest::default()
+    };
+    match accounts::pick_fleet(settings, path, host, &request, env.now_secs) {
+        PickAnswer::Lane(_) | PickAnswer::NoRecord => Ok(()),
+        PickAnswer::Walled(judged) => {
+            let record = judged.record();
+            let projected = record.get("projected_window").filter(|w| !w.is_null());
+            // A walled record with no wall is one that launcher refused
+            // as its judge failing (`invalid-wall`), never a verdict.
+            let Some(pct) = projected
+                .and_then(|w| w.get("pct"))
+                .or_else(|| record.get("wall"))
+                .and_then(Value::as_f64)
+            else {
+                return Err(refused("wall-unread"));
+            };
+            Err(Error::AccountWalled {
+                item: r.item.clone(),
+                account: account.clone(),
+                model,
+                window: Box::new(WalledWindow {
+                    pct,
+                    bucket: projected
+                        .and_then(|w| w.get("bucket"))
+                        .or_else(|| record.get("binding_bucket"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("none")
+                        .to_owned(),
+                    projected_headroom: record
+                        .get("projected_headroom_pct")
+                        .and_then(Value::as_f64),
+                }),
+            })
+        }
+        PickAnswer::Reserved(_) => Err(Error::AccountReserved {
+            item: r.item.clone(),
+            account: account.clone(),
+            model,
+        }),
+        PickAnswer::Retired { ends, source, .. } => Err(Error::AccountRetired {
+            item: r.item.clone(),
+            account: account.clone(),
+            model,
+            end: Box::new(RetiredEnd {
+                ends,
+                stated_by: source.stated_by().to_owned(),
+            }),
+        }),
+        PickAnswer::Unmeasured(judged) => Err(Error::AccountUnmeasured {
+            item: r.item.clone(),
+            account: account.clone(),
+            model,
+            status: judged.row.status.clone(),
+            detail: judged
+                .row
+                .detail
+                .clone()
+                .unwrap_or_else(|| "none".to_owned()),
+        }),
+        PickAnswer::Unjudged { cause } => Err(refused(&cause)),
+        // The chooser's answer to a named account: no judge gives one.
+        PickAnswer::None { .. } => Err(refused("answer-unnamed")),
+    }
+}
+
 pub(super) fn launch_lane(
     path: &Path,
     doc: &mut Document,
@@ -439,6 +554,10 @@ pub(super) fn launch_lane(
         // (decision 97): a relaunch over one would make a second.
         no_live_harness(previous, ids)?;
     }
+    // The account's room, judged before the admission and the cap as the
+    // legacy launcher judged its named lane first; a relaunch is judged
+    // with its own record's charge left out.
+    room(path, r, position.map(|_| r.item.as_str()), env, host)?;
     // The admission judgement (decisions 118 (3), (4), (6)), under the
     // same launch lock and before the cap, so one transition admits or
     // refuses with one cause: a first launch is judged on its item, its
@@ -1318,6 +1437,7 @@ mod tests {
             still_runs: &process::still_runs,
             pane_foreground: &no_pane,
             admission: Some(no_reads()),
+            accounts: None,
         }
     }
 
@@ -1543,6 +1663,7 @@ mod tests {
             admission: Some(no_reads()),
             still_runs: &unread,
             pane_foreground: &no_pane,
+            accounts: None,
         };
         let err = apply_on(&path, &launch("KEN-V"), &env(), LOCK, &host).unwrap_err();
         assert_eq!(err.key(), "cap-reached");

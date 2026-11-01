@@ -1,0 +1,5 @@
+#!/bin/bash
+# The pull request view the validate rows' worktree has: $PR_VIEW_FIXTURE as
+# JSON, or no pull request when unset.
+none='{"status": "no_pr"}'
+printf '%s\n' "${PR_VIEW_FIXTURE:-$none}"

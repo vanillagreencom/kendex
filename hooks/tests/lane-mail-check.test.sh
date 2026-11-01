@@ -3873,32 +3873,21 @@ assert_eq "$(overseer_unread 'Nobody named.')" "1" "and the note stays unread"
 # where a repeat watch records itself: beside the fleet state
 # `workflow-state path oversee` prints.
 FAKE_WATCH=""
+# A live watch on the lane's fleet state, as the runtime answers it, with
+# its follow running.
 start_watch() {
-  local state
-  state="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee)"
-  mkdir -p "${state%/*}"
-  source "$REPO_ROOT/skills/orch/tests/lib/named-process.sh"
-  fixture_named_process "$TMP_ROOT/oversee-watch"
-  env -i "PATH=$PATH" "$TMP_ROOT/oversee-watch" 600 &
-  FAKE_WATCH=$!
-  printf 'pid=%s\nstate=%s\npane=none\norigin=hand\ncwd=%s\n' "$FAKE_WATCH" "$state" "$LANE" > "${state%/*}/oversee-watch.pid"
+  runtime_stub "$LANE/.claude/skills/orch/scripts" live "$LANE"
   start_follow
 }
+# The watch's process exited: its claim's identity reads gone.
 stop_watch() {
-  kill "$FAKE_WATCH" 2>/dev/null || :
-  wait "$FAKE_WATCH" 2>/dev/null || :
+  runtime_stub "$LANE/.claude/skills/orch/scripts" gone
   stop_wake_processes
 }
-# Every orch library but the watch record's, linked one by one, since the
-# reader sources its own from the install's directory.
-hole_watch_library() {
-  local name
-  rm -f -- "${LANE:?}/.claude/skills/orch/scripts/lib"
-  mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
-  for name in "$REPO_ROOT/skills/orch/scripts/lib"/*; do
-    [ "${name##*/}" != watch-pid.sh ] || continue
-    ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
-  done
+# The install with no runtime beside its scripts: the hook's watch read has
+# nothing to ask.
+hole_runtime() {
+  rm -f -- "${LANE:?}/.claude/skills/orch/scripts/orch-runtime"
 }
 
 named_session peer_watched
@@ -3938,16 +3927,16 @@ stop "${SESSION_ENV[@]}"
 expect 0 - "a session with a peer note standing and no reader beside the hook is handed and refused nothing"
 
 # Whether a live watch holds the fleet state is the install's answer for the
-# named session: the state's path from its workflow-state, and liveness from
-# its watch record library. One it cannot give leaves the mailbox neither read
-# nor passed as read.
+# named session: the state's path from its workflow-state, and the claim from
+# its runtime's `watch status`. One it cannot give leaves the mailbox neither
+# read nor passed as read.
 named_session peer_state_broken
 peer_send 'Unjudged.'
 watch_stub
 stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
-  "a watch-library read that cannot answer refuses the named session, never reads or passes the mailbox"
-assert_eq "$(grep -c '^watch-pid: record=unreadable' "$ERR_FILE")" "1" "the script's own keyed line is replayed under the hook's"
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/orch-runtime" \
+  "a watch claim read the runtime cannot answer refuses the named session, never reads or passes the mailbox"
+assert_eq "$(grep -c '^orch-runtime: claim-unreadable' "$ERR_FILE")" "1" "the runtime's own keyed line is replayed under the hook's"
 assert_eq "$(overseer_unread 'Unjudged.')" "1" "and the note stays unread"
 # The same broken read would refuse any arm that reached it: the halt arm, a
 # subagent's turn end and a session the record does not name never do.
@@ -3969,11 +3958,24 @@ assert_eq "RC=$RC fleet-state=$(grep -c '^lane-mail-check: fleet-state=' "$ERR_F
 named_session peer_library_absent
 peer_send 'No library.'
 state_stub delegate
-hole_watch_library
+hole_runtime
 stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
-  "an install with the reader and no watch record library refuses the named session on the missing library"
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/orch-runtime" \
+  "an install with the reader and no runtime refuses the named session on the missing runtime"
 assert_eq "$(overseer_unread 'No library.')" "1" "and the note stays unread"
+
+# A runtime the install has not built for its sources (its wrapper's
+# `setup-required`, exit 69, after a refresh): no refusal, since nothing at
+# the turn end builds it; the setup is named, the turn end passes, and the
+# mailbox is left as a live watch would leave it.
+named_session peer_runtime_unbuilt
+peer_send 'Until the build.'
+runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt
+stop "${SESSION_ENV[@]}"
+expect 0 "lane-mail-check: setup-required=$LANE/.claude/skills/orch/scripts/setup" \
+  "an install whose runtime is not built for its sources passes the named session's turn end naming the setup"
+assert_eq "$(grep -c '^orch-runtime: setup-required' "$ERR_FILE")" "1" "the wrapper's own keyed line is replayed under the hook's"
+assert_eq "$(overseer_unread 'Until the build.')" "1" "and the note stays unread for the watch or the build"
 
 mutant no-overseer-arm -e 's@^    MAILBOX_ITEM=overseer$@    return 0@'
 named_session control_peer_named "$MUTANT_PATH"
@@ -4027,7 +4029,7 @@ CALL_ENV=("${SESSION_ENV[@]}")
 tool halt
 # shellcheck disable=SC2034 # run_payload in lib/lane-mail-world.sh reads it
 CALL_ENV=()
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/orch-runtime" \
   "control: without the halt exclusion the halt arm judges the overseer mailbox"
 
 mutant peer-subagent-reads -e '/^    \[ "\$CALLER" != subagent \] || return 0$/d'
@@ -4035,14 +4037,14 @@ named_session control_peer_subagent "$MUTANT_PATH"
 peer_send 'Subagent.'
 watch_stub
 run_payload '{"session_id":"s1","stop_hook_active":false,"agent_id":"dev-1"}' "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/orch-runtime" \
   "control: without the lead-only rule a subagent's turn end judges the overseer mailbox"
 
 mutant peer-no-file-test -e '/^    \[ -e "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || \[ -L "\$MAIL_ROOT\/overseer\/to-lane.jsonl" \] || return 0$/d'
 named_session control_peer_nofile "$MUTANT_PATH"
 watch_stub
 stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
+expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/orch-runtime" \
   "control: without the file test the named session with no overseer mailbox judges the fleet state"
 
 mutant peer-reader-refuses -e 's@^    resolve_reader || return 0$@    resolve_reader || refuse "$FAIL_KEY" "$FAIL_VALUE" "$FAIL_CAUSE"@'
@@ -4062,15 +4064,15 @@ stop "${SESSION_ENV[@]}"
 assert_eq "RC=$RC unread=$(overseer_unread 'Path unread.')" "RC=0 unread=1" \
   "control: without the path refusal a failed state read passes mail protection and leaves the note unread"
 
-mutant peer-library-passes -e 's@^    \*) refuse fleet-state "\$SCRIPTS/lib/watch-pid.sh" .*$@    *) return 1 ;;@'
+mutant peer-library-passes -e 's@^    \*) refuse fleet-state "\$SCRIPTS/orch-runtime" .*$@    *) return 1 ;;@'
 named_session control_peer_library "$MUTANT_PATH"
 peer_send 'Library unread.'
 state_stub delegate
-hole_watch_library
+hole_runtime
 stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: unread=1" "control: without the library refusal a library that answers nothing reads as no live watch"
+expect 2 "lane-mail-check: unread=1" "control: without the runtime refusal a runtime that answers nothing reads as no live watch"
 
-mutant peer-ignores-watch -e '/^watch_live() {/,/^}/ s@^    0) return 0 ;;$@    0) return 1 ;;@'
+mutant peer-ignores-watch -e '/^watch_live() {/,/^}/ s@^    live) return 0 ;;$@    live) return 1 ;;@'
 named_session control_peer_watched "$MUTANT_PATH"
 start_watch
 peer_send 'Taken from the watch.'
@@ -4078,7 +4080,7 @@ stop "${SESSION_ENV[@]}"
 stop_watch
 expect 2 "lane-mail-check: unread=1" "control: without the live-watch rule the named session takes the watch's mail"
 
-mutant peer-idle-stands-down -e '/^watch_live() {/,/^}/ s@^    1) return 1 ;;$@    1) return 0 ;;@'
+mutant peer-idle-stands-down -e '/^watch_live() {/,/^}/ s@^    none | gone) return 1 ;;$@    none | gone) return 0 ;;@'
 named_session control_peer_idle "$MUTANT_PATH"
 peer_send 'Nobody watching.'
 stop "${SESSION_ENV[@]}"

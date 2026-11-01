@@ -692,36 +692,41 @@ impl Mailbox {
         }
     }
 
-    /// `send --directive` to the lane `item` at `root`, the text in `file`,
-    /// under `delivery_id` where the caller names its delivery, so a retry
-    /// after a crash between the append and the receipt lands nothing
-    /// twice. A session lane's record is handed back whatever its result.
+    /// `send --directive` to the lane `item`, the text in `file`: at `root`
+    /// where the caller names the mailbox root, else at the checkout the
+    /// program runs in; under `delivery_id` where the caller names its
+    /// delivery, so a retry after a crash between the append and the receipt
+    /// lands nothing twice; against the fleet record under `state_dir` where
+    /// the caller names one, so the program routes by the lane's recorded
+    /// channel. A session lane's receipt is handed back whatever its result.
     pub fn send_directive(
         &self,
         item: &str,
-        root: &Path,
+        root: Option<&Path>,
         hosted: bool,
         file: &Path,
         delivery_id: Option<&str>,
+        state_dir: Option<&Path>,
     ) -> Result<Sent, Refusal> {
         const VERB: &str = "send";
-        let root = root.display().to_string();
+        let root = root.map(|r| r.display().to_string());
+        let state_dir = state_dir.map(|d| d.display().to_string());
         let file = file.display().to_string();
-        let mut args = vec![
-            "--item",
-            item,
-            "--root",
-            &root,
-            "--directive",
-            "--file",
-            &file,
-        ];
+        let mut args = vec!["--item", item, "--directive", "--file", &file];
+        if let Some(root) = &root {
+            args.push("--root");
+            args.push(root);
+        }
         if hosted {
             args.push("--host");
         }
         if let Some(key) = delivery_id {
             args.push("--delivery-id");
             args.push(key);
+        }
+        if let Some(dir) = &state_dir {
+            args.push("--state-dir");
+            args.push(dir);
         }
         let answer = self.call(VERB, &args)?;
         if let Some(line) = answer
@@ -778,7 +783,7 @@ pub fn decode_directive_send(line: &str) -> Option<DirectiveSend> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::mail::Credit;
+    use crate::ops::mail::{Credit, SendResult};
 
     /// The drain's wire form, decoded field by field, and the three short
     /// forms refused by name: a reply with no receipts section, a header
@@ -846,11 +851,11 @@ mod tests {
             "lane-mail: directive-send item=CC-1 record={\"result\":\"sent\",\"text\":\"\",\"credit\":{\"remaining_dollars\":12.5,\"locked_reason\":null}}",
         )
         .unwrap();
-        assert_eq!(read.result, "sent");
+        assert_eq!(read.result, SendResult::Sent);
         assert_eq!(
             read.credit,
             Credit::Read {
-                remaining_dollars: Some(12.5),
+                remaining_dollars: serde_json::Number::from_f64(12.5),
                 locked_reason: None
             }
         );
@@ -858,7 +863,7 @@ mod tests {
             "lane-mail: directive-send item=CC-1 record={\"result\":\"failed\",\"text\":\"Session not found\",\"credit\":\"unread\"}",
         )
         .unwrap();
-        assert_eq!(unread.result, "failed");
+        assert_eq!(unread.result, SendResult::Failed);
         assert_eq!(unread.text, "Session not found");
         assert_eq!(
             unread.credit,

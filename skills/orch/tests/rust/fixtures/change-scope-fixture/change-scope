@@ -1,0 +1,10 @@
+#!/bin/bash
+# The classifier as the validate rows see it: one `change_class=` line on
+# stdout from $CHANGE_SCOPE_CLASS (small when unset) and the `class:` and
+# `queue-only:` records on stderr. Every call is appended to
+# $CHANGE_SCOPE_LOG when set.
+[ -z "${CHANGE_SCOPE_LOG:-}" ] || printf 'change-scope %s\n' "$*" >> "$CHANGE_SCOPE_LOG"
+class="${CHANGE_SCOPE_CLASS:-small}"
+printf 'class: class=%s measured=%s\n' "$class" "${CHANGE_SCOPE_MEASURED:-true}" >&2
+printf 'queue-only: queue_only=%s\n' "${CHANGE_SCOPE_QUEUE_ONLY:-false}" >&2
+printf 'change_class=%s\n' "$class"

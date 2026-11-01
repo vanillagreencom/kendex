@@ -1173,6 +1173,7 @@ mod tests {
                 claim_store: None,
                 still_runs,
                 pane_foreground: &no_pane,
+                accounts: None,
                 admission: Some(AdmissionReads {
                     clis: no_clis(),
                     item: Box::new(|_: &Clis, tracker: &str, item: &str, _: Option<&str>| {

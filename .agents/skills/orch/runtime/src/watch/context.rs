@@ -1,0 +1,346 @@
+//! The overseer's context record and its three judgements (step6-map
+//! § A10, F11; decisions 126 (2), 176 (1) (d)), ported from the commit-11
+//! loop (`744fd5727:skills/orch/scripts/oversee-watch:4076-4228`):
+//! `context.json` in the overseer mailbox, as the session's own turn-end
+//! hook last wrote it (`lib/lane-context.sh` § `lane_context_record`), read
+//! three-valued (decision 99): own, another session's, absent, or
+//! unreadable with its cause. A record another session wrote, a
+//! predecessor's until this one's first reading, says nothing of this one:
+//! one naming another pane, a harness other than the fleet record's for
+//! the pane, or a session other than the pane's latest `SessionStart` row
+//! names.
+//!
+//! The judgements, each over a record the session owns: `--context
+//! TOKENS:WINDOW` handed to the account judge, so the watch judges the
+//! context mark between turn ends as the hook judges it at one; `stale`,
+//! a record more than [`STALE_SECS`] old with a Stop row after it (the
+//! hook ran and the record did not follow); `unmeasured`, a record carrying
+//! a gap instead of a reading, said to the overseer once and to the owner
+//! on the next pass; and `wedged`, a reading that fills the window with no
+//! Stop row after it, which the observation duty reads as the session gone
+//! (`source=context`). A reading the judge cannot take is noted on stderr
+//! and settles nothing.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use agent_runtime::clock;
+use agent_runtime::harness::Harness;
+use agent_runtime::reading::Reading;
+use serde_json::Value;
+
+/// A record older than this with a later Stop row is stale
+/// (`OVERSEER_CONTEXT_STALE_SECS`).
+pub const STALE_SECS: u64 = 3600;
+
+/// The baseline row kind one standing gap's turn is kept under, keyed by
+/// the pane key: `<gap>|told` then `<gap>|alerted`.
+pub const GAP_ROW: &str = "overseer-context-gap";
+
+/// The record's fields as `lane_context_record` writes them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextRecord {
+    pub harness: Option<String>,
+    /// The tokens the last response left in the context; `None` with a gap.
+    pub tokens: Option<u64>,
+    /// The window the adapter named, where it named one.
+    pub window: Option<u64>,
+    pub model: Option<String>,
+    pub session_id: Option<String>,
+    pub pane_key: Option<String>,
+    /// Why a turn end took no reading, where it took none.
+    pub gap: Option<String>,
+    pub at: Option<String>,
+}
+
+impl ContextRecord {
+    /// The record as `lane_context_record_fields` admits it: an object
+    /// whose `tokens` is a number with no gap, or whose `tokens` is null
+    /// with a non-empty `gap`. Anything else is a record this reader
+    /// cannot judge.
+    pub fn parse(text: &str) -> Result<ContextRecord, String> {
+        let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let Value::Object(fields) = &value else {
+            return Err("not an object".to_owned());
+        };
+        let tokens = match fields.get("tokens") {
+            Some(Value::Number(n)) => n.as_u64().map(Some).ok_or("tokens not a whole number")?,
+            None | Some(Value::Null) => None,
+            Some(_) => return Err("tokens not a number".to_owned()),
+        };
+        let gap = match fields.get("gap") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            None | Some(Value::Null) => None,
+            Some(_) => return Err("gap not a word".to_owned()),
+        };
+        if tokens.is_some() == gap.is_some() {
+            return Err("a reading carries tokens or a gap, never both or neither".to_owned());
+        }
+        let text = |key: &str| fields.get(key).and_then(Value::as_str).map(str::to_owned);
+        let window = match fields.get("window") {
+            Some(Value::Number(n)) => n.as_u64(),
+            None | Some(_) => None,
+        };
+        Ok(ContextRecord {
+            harness: text("harness"),
+            tokens,
+            window,
+            model: text("model"),
+            session_id: text("session_id"),
+            pane_key: text("pane_key"),
+            gap,
+            at: text("at"),
+        })
+    }
+
+    /// The `TOKENS:WINDOW` word `oversee-succeed --check-marks --context`
+    /// takes: the tokens with the window where one is named; `None` for a
+    /// gap.
+    pub fn context_arg(&self) -> Option<String> {
+        let tokens = self.tokens?;
+        Some(format!(
+            "{tokens}:{}",
+            self.window.map(|w| w.to_string()).unwrap_or_default()
+        ))
+    }
+
+    /// `lane_context_window_full`: whether a reading of a `harness` session
+    /// fills the window it names, so the session can take no turn again.
+    /// Only the window a claude, codex or pi reading names is the hard
+    /// limit a session stops at; a copilot reading's window is its
+    /// compaction point, never full. A reading with no window of its own
+    /// takes the harness's declared capacity for its model
+    /// (`Harness::context_capacity`), and one with neither is never full.
+    /// `None` for a harness no adapter reads.
+    pub fn window_full(&self, harness: Harness) -> Option<bool> {
+        match harness {
+            Harness::Copilot => return Some(false),
+            Harness::Claude | Harness::Codex | Harness::Pi => {}
+        }
+        let tokens = self.tokens?;
+        let window = self
+            .window
+            .filter(|w| *w > 0)
+            .or_else(|| harness.context_capacity(self.model.as_deref()?));
+        Some(window.is_some_and(|w| tokens >= w))
+    }
+}
+
+/// What a read of the overseer's record settled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Owned {
+    /// This session's own record.
+    Own(ContextRecord),
+    /// A record another session wrote: another pane, harness or session.
+    Other,
+    /// No record.
+    Absent,
+    /// The record, or the rows it is judged beside, could not be read.
+    Unreadable { path: PathBuf, cause: String },
+}
+
+/// The last row of `file` whose `event` is `event`, over the whole file
+/// as `session_rows_last FILE EVENT` found it: `Gone` where the file is
+/// absent or holds none, `Unreadable` where it could not be read. A line
+/// that is no object is a fragment a killed writer left and is passed
+/// over, as the library passed it.
+pub fn last_event(file: &Path, event: &str) -> Reading<Value> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "rows-file-unreadable",
+            };
+        }
+    };
+    text.lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|row| row.is_object() && row.get("event").and_then(Value::as_str) == Some(event))
+        .map_or(Reading::Gone, Reading::Live)
+}
+
+/// `overseer_context_own`: the record at `record` where it is the session
+/// in `pane_key`'s own, judged beside its rows file `rows` (the pane's
+/// session rows, where the fleet record names one). `harness` is the
+/// fleet record's for the pane, where recorded.
+pub fn own(record: &Path, rows: Option<&Path>, pane_key: &str, harness: Option<Harness>) -> Owned {
+    let text = match std::fs::read_to_string(record) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Owned::Absent,
+        Err(e) => {
+            return Owned::Unreadable {
+                path: record.to_path_buf(),
+                cause: e.to_string(),
+            };
+        }
+    };
+    let parsed = match ContextRecord::parse(&text) {
+        Ok(parsed) => parsed,
+        Err(cause) => {
+            return Owned::Unreadable {
+                path: record.to_path_buf(),
+                cause,
+            };
+        }
+    };
+    if parsed.pane_key.as_deref() != Some(pane_key) {
+        return Owned::Other;
+    }
+    if let Some(h) = harness
+        && parsed.harness.as_deref() != Some(h.name())
+    {
+        return Owned::Other;
+    }
+    let started = match rows.map(|r| last_event(r, "SessionStart")) {
+        None | Some(Reading::Gone) => String::new(),
+        Some(Reading::Live(row)) => row
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        Some(Reading::Unreadable { cause }) => {
+            return Owned::Unreadable {
+                path: rows.map(Path::to_path_buf).unwrap_or_default(),
+                cause: cause.to_owned(),
+            };
+        }
+    };
+    match &parsed.session_id {
+        Some(session) if !started.is_empty() && !session.is_empty() && *session != started => {
+            Owned::Other
+        }
+        Some(_) | None => Owned::Own(parsed),
+    }
+}
+
+/// The two instants the stale and the wedged judgements compare
+/// (`overseer_context_times`): the record's own `at` and the epoch of the
+/// last Stop row, 0 for none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Times {
+    Read { at: u64, stop: u64 },
+    Unread { path: PathBuf, cause: String },
+}
+
+pub fn times(record: &ContextRecord, record_path: &Path, rows: Option<&Path>) -> Times {
+    let Some(at) = record.at.as_deref().and_then(clock::epoch_secs) else {
+        return Times::Unread {
+            path: record_path.to_path_buf(),
+            cause: format!("at={}", record.at.as_deref().unwrap_or("none")),
+        };
+    };
+    let stop = match rows.map(|r| last_event(r, "Stop")) {
+        None | Some(Reading::Gone) => 0,
+        Some(Reading::Live(row)) => match row.get("at") {
+            Some(Value::Number(n)) => n.as_u64().unwrap_or(0),
+            Some(Value::String(s)) => s
+                .parse()
+                .or_else(|_| clock::epoch_secs(s).ok_or(()))
+                .unwrap_or(0),
+            None | Some(_) => 0,
+        },
+        Some(Reading::Unreadable { cause }) => {
+            return Times::Unread {
+                path: rows.map(Path::to_path_buf).unwrap_or_default(),
+                cause: cause.to_owned(),
+            };
+        }
+    };
+    Times::Read { at, stop }
+}
+
+/// A reading the judge cannot take, noted on stderr for the launcher's
+/// record of this run as the legacy `overseer_note` noted it; it settles
+/// nothing.
+pub fn note(key: &str, fields: &str) {
+    let _ = writeln!(std::io::stderr(), "{key} {fields}");
+}
+
+/// The owner's alert for a gap that stood two long passes
+/// (`overseer_gap_alert`), the legacy's words.
+pub fn alert_text(pane: &str, gap: &str) -> String {
+    format!(
+        "overseer-context-unmeasured: the overseer in pane {pane} has recorded no context reading on two consecutive watch passes, gap={gap}, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill's references/overseer-session-events.md.\n"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The record's two shapes, and what is neither (`lane_context_record
+    /// _fields`): a reading with tokens and no gap, a gap with no tokens.
+    #[test]
+    fn a_record_is_a_reading_or_a_gap_and_nothing_else() {
+        let reading = ContextRecord::parse(
+            r#"{"harness":"claude","model":"opus","tokens":910000,"window":1000000,"session_id":"s1","pane_key":"4242 %7","gap":null,"at":"2026-10-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(reading.tokens, Some(910_000));
+        assert_eq!(reading.context_arg().as_deref(), Some("910000:1000000"));
+        assert_eq!(reading.window_full(Harness::Claude), Some(false));
+        let gap = ContextRecord::parse(
+            r#"{"harness":"claude","tokens":null,"window":null,"pane_key":"4242 %7","gap":"pane-unrecorded","at":"2026-10-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(gap.gap.as_deref(), Some("pane-unrecorded"));
+        assert_eq!(gap.context_arg(), None);
+        for bad in [
+            r#"{"tokens":1,"gap":"x"}"#,
+            r#"{"tokens":null,"gap":null}"#,
+            r#"{"tokens":"1"}"#,
+            "[]",
+            "not json",
+        ] {
+            assert!(ContextRecord::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// `lane_context_window_full`'s table: the window a claude, codex or pi
+    /// reading names is the hard limit; a copilot reading is never full; a
+    /// reading naming no window takes the declared capacity for its model,
+    /// and one naming neither is never full.
+    #[test]
+    fn a_window_is_full_at_its_own_figure_or_the_declared_capacity() {
+        let record = |tokens: u64, window: Option<u64>, model: Option<&str>| ContextRecord {
+            harness: None,
+            tokens: Some(tokens),
+            window,
+            model: model.map(str::to_owned),
+            session_id: None,
+            pane_key: None,
+            gap: None,
+            at: None,
+        };
+        assert_eq!(
+            record(1_000_000, Some(1_000_000), None).window_full(Harness::Claude),
+            Some(true)
+        );
+        assert_eq!(
+            record(999_999, Some(1_000_000), None).window_full(Harness::Codex),
+            Some(false)
+        );
+        assert_eq!(
+            record(1_000_000, Some(1_000_000), None).window_full(Harness::Copilot),
+            Some(false)
+        );
+        assert_eq!(
+            record(200_000, None, Some("claude-sonnet-5-5")).window_full(Harness::Claude),
+            Some(true)
+        );
+        assert_eq!(
+            record(200_000, None, Some("claude-fable-5-1")).window_full(Harness::Claude),
+            Some(false)
+        );
+        assert_eq!(
+            record(200_000, None, None).window_full(Harness::Pi),
+            Some(false)
+        );
+        assert_eq!(
+            record(5, Some(0), None).window_full(Harness::Pi),
+            Some(false)
+        );
+    }
+}

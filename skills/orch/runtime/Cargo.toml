@@ -94,6 +94,18 @@ path = "../tests/rust/watch_report.rs"
 name = "watch_cost"
 path = "../tests/rust/watch_cost.rs"
 
+[[test]]
+name = "validate"
+path = "../tests/rust/validate.rs"
+
+[[test]]
+name = "send"
+path = "../tests/rust/send.rs"
+
+[[test]]
+name = "accounts"
+path = "../tests/rust/accounts.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

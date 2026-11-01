@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for dev-return-write: the deterministic writer for a dev agent's
-# round-scoped completion artifact ([WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json).
+# round-scoped completion artifact ([WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID]-[RUN_ID].json,
+# keyed by the run it reports; [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json with no run).
 # Running the writer instead of hand-authoring the JSON makes the receipt
 # well-formed and complete by construction: every artifact it emits round-trips
 # through dev-artifact-check as valid, and every bad invocation exits 2 on the
@@ -171,7 +172,7 @@ echo "=== a single implement record, complete by construction ==="
 # The record carries every field the schema names, including its measured baseline.
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --validate-run-dir "$VRUN" --qa-label needs-review
-assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
+assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID-validate-run.json" "the writer exits 0 and prints the artifact path, keyed by the round and its run" "$ERR"
 assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_mode\":\"full\",\"validate_time\":{\"started_at\":\"2026-01-01T00:00:00Z\",\"ended_at\":\"2026-01-01T00:55:00Z\",\"seconds\":3300},\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"near_ceiling\":null,\"near_ceiling_error\":\"byte-ceiling not probed: no --near-ceiling-base\",\"summary_posted\":true,\"summary\":null,\"recovered_from\":null,\"bundled\":false,\"items\":[],\"validate_selection\":\"unreported\",\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, the run's wall time, a numeric schema_version and no note" "$ERR"
 assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason')" "valid" \
@@ -210,15 +211,18 @@ table \
   "double-dash prose that is not an own flag is a summary|--worktree $WT --kind implement --issue issue-ddash --round-id 14-14 --branch b --commit %H --validate pass --validate-run-dir $VRUN --summary --foo+is+a+flag+of+the+consuming+tool --no-summary|rc=0 .summary=--foo+is+a+flag+of+the+consuming+tool" \
   "double-dash prose is accepted as --item REASONING|--worktree %FW --kind fix --issue issue-776 --round-id 14-15 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_14 --item 1 Skipped --force+would+be+needed|rc=0 .items[0].reasoning=--force+would+be+needed"
 assert_eq "$(find "$WT/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')" "0" "a successful write leaves no temp file behind"
-assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
+# The runtime's stages name each fix round's run; round mode reads the receipt and the mode through them.
+plant_validate_stage "$STATE" "$FW" issue-776 7-7 "$VRUN_FIX" full
+plant_validate_stage "$STATE" "$FW" issue-776 41-41 "$VRUN_FIX_CI" ci
+assert_eq "$(env ORCH_STATE_DIR="$FW/tmp" "$CHECK" --worktree "$FW" --issue issue-776 --round-id 7-7 --expect-items-from-round | jq -r '.reason')" "valid" "the fix record round-trips through the bound round's authorization"
 
-assert_eq "$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round | jq -r '.reason')" "valid" "the full-ID CI receipt passes round acceptance"
+assert_eq "$(env ORCH_STATE_DIR="$FW/tmp" "$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round | jq -r '.reason')" "valid" "the full-ID CI receipt passes round acceptance"
 WRITE_LIVE="$WRITE"
 WRITE="$(mutant_scripts short-commit-mutant dev-return-write)/dev-return-write" || exit 1
 mutate_file "$WRITE" 'rev-parse --verify "$commit^{commit}"' 'rev-parse --verify --short=7 "$commit^{commit}"'
 table "control: storing the short commit refuses the CI receipt|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit ${FIX_HEAD:0:7} --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=0 .commit=${FIX_HEAD:0:7}"
 CHECK_RC=0
-CHECK_OUT="$("$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round 2>/dev/null)" || CHECK_RC=$?
+CHECK_OUT="$(env ORCH_STATE_DIR="$FW/tmp" "$CHECK" --worktree "$FW" --issue issue-776 --round-id 41-41 --expect-items-from-round 2>/dev/null)" || CHECK_RC=$?
 assert_eq "$CHECK_RC $(jq -r '.reason' <<<"$CHECK_OUT")" "1 ci_head_mismatch" "the reader rejects the short-ID round"
 WRITE="$WRITE_LIVE"
 table "CI refuses a tree as a commit|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit $FIX_HEAD^{tree} --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=2 written=no stderr~dev-return-write:+ci-contents-mismatch=true"
@@ -678,7 +682,7 @@ BIND_ROWS=(
   "a round record whose delegation time is a string is refused|--worktree $BW $STRING_TIME_ARGS|rc=2 written=no stderr~dev-return-write:+round-record-unreadable+path=$BW/tmp/dev-round-issue-776-25-25.json=true"
 )
 table "${BIND_ROWS[@]}"
-rm -f "$BW/tmp/dev-return-issue-776-21-21.json"
+rm -f -- "$BW"/tmp/dev-return-issue-776-21-21*.json
 # The suite's one must-fail control: a writer that never binds the run
 # records the implement round's full pass for the fix commit.
 BIND_WRITE="$(mutant_scripts bind-mutant dev-return-write)/dev-return-write" || exit 1
@@ -720,7 +724,7 @@ for row in \
   "an incomplete hop cannot bind a run|empty-hop|$RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true" \
   "a matching map does not admit a run before delegation|matching|$RESTACK_EARLY_RUN|rc=2 written=no stderr~dev-return-write:+run-before-round=true"; do
   IFS='|' read -r label shape dir expect <<<"$row"
-  rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json" "$RESTACK_MAP"
+  rm -f -- "$BW"/tmp/dev-return-issue-776-21-21*.json "$RESTACK_MAP"
   case "$shape" in
     missing) ;;
     other-base) printf 'rebase-hop:\nrebase-map: %s %s\n' "$IMPL_BASE" "$REBASED" > "$RESTACK_MAP" ;;
@@ -761,7 +765,7 @@ for control in refuse mismatch; do
       expect="rc=0 .validate_mode=range"
       ;;
   esac
-  rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+  rm -f -- "$BW"/tmp/dev-return-issue-776-21-21*.json
   WRITE="$CONTROL_WRITE"
   table "control: restack $control changes the binding result|--worktree $BW $RESTACK_ARGS --validate-run-dir $RESTACK_RUN|$expect"
   WRITE="$WRITE_SHIPPED"
@@ -774,7 +778,7 @@ mutate_file "$SHARED_SCRIPTS/lib/rebase-map.sh" \
 printf 'rebase-hop:\nrebase-map: %s %s\nrebase-map: %s %s\n' \
   "$ROUND_BASE" "$REBASED" "$REBASED" "$REBASED_NEXT" > "$RESTACK_MAP"
 # jq visits keys in insertion order; the first mapping is the round base.
-rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+rm -f -- "$BW"/tmp/dev-return-issue-776-21-21*.json
 WRITE="$SHARED_SCRIPTS/dev-return-write"
 # shellcheck disable=SC2086
 table "control: chaining rows in the shared owner rejects the one-hop run|--worktree $BW $RESTACK_ARGS --validate-run-dir $RESTACK_RUN|rc=2 written=no stderr~dev-return-write:+run-off-round=true"
@@ -888,11 +892,11 @@ WRITE="$RECORD_RESTACK_WRITE"
 table "control: exact equality refuses the restacked fix record|--worktree $BW $RESTACK_ARGS --validate-record $FG_RESTACK|rc=2 written=no stderr~dev-return-write:+run-off-round=true"
 WRITE="$WRITE_SHIPPED"
 rm -f -- "$RESTACK_MAP"
-rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+rm -f -- "$BW"/tmp/dev-return-issue-776-21-21*.json
 WRITE="$BIND_WRITE"
 table "control: without the binding a record from before the round is recorded for the fix|--worktree $BW $BIND_ARGS --validate-record $FG_EARLY|rc=0 .validate_mode=full"
 WRITE="$WRITE_SHIPPED"
-rm -f -- "$BW/tmp/dev-return-issue-776-21-21.json"
+rm -f -- "$BW"/tmp/dev-return-issue-776-21-21*.json
 
 # One control per record rule: each mutant disables one, and its row's
 # refusal turns into a written receipt. In OLD and NEW, \| is a literal bar.
@@ -983,164 +987,78 @@ table \
   "an empty --commit|--worktree $WT --kind implement --issue i --round-id $RID --branch b --validate pass --validate-run-dir $VRUN --commit EMPTY|rc=2 stderr~dev-return-write:+required+option=--commit=true" \
   "a whitespace-only --validate-note|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --validate-note SPACES|rc=2 stderr~dev-return-write:+empty-text+option=--validate-note=true" \
   "--validate-note with no value|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --validate-note|rc=2 stderr~dev-return-write:+missing-value+option=--validate-note=true"
-assert_eq "$([[ -f "$WT/tmp/dev-return-issue-noitems-$RID.json" ]] && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
+assert_eq "$(compgen -G "$WT/tmp/dev-return-issue-noitems-$RID*.json" >/dev/null && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
 
-echo "=== immutable same-round recovery receipts ==="
-# The writer and checker consume native --record evidence, as the other receipt
-# cases do. Focused proof and duration admission remain workflow judgments.
-for recovery_case in implement-pass implement-failed implement-foreground implement-interrupted fix-pass fix-no-run fix-foreground fix-interrupted fix-unproved; do
-  recovery_kind=${recovery_case%%-*}
-  recovery_result=${recovery_case#*-}
-  RW="$(new_repo "recovery-$recovery_case")"
-  git -C "$RW" switch -q -c recovery
+echo "=== a receipt is keyed by its run: a later run of the round writes beside a failing first ==="
+# The recovery allowance is the runtime's (`record-validation-admission
+# {attempt: next}`, decision 125 (2)): a later run of the round has its own
+# stage and its own receipt. The writer refuses only to overwrite a failing
+# receipt; the checker reads the receipt of the run the round's newest
+# validate stage names, and the earlier one stays readable in file mode.
+for keyed_case in implement fix; do
+  RW="$(new_repo "keyed-$keyed_case")"
+  git -C "$RW" switch -q -c keyed
   printf '[env]\nDEV_VALIDATE_RANGE_CMD = "true"\nORCH_PR_ORDER = "review-first"\n' > "$RW/kendex.settings.toml"
   git -C "$RW" add kendex.settings.toml
   git -C "$RW" commit -q -m implementation
   RH="$(git -C "$RW" rev-parse HEAD)"
-  RT="$(git -C "$RW" rev-parse HEAD^{tree})"
-  init_growth_state "$STATE" "$RW" issue-4503 recovery 100
+  init_growth_state "$STATE" "$RW" issue-4503 keyed 100
   extra=(); check_extra=(); native_mode=full
-  if [[ "$recovery_kind" == fix ]]; then
+  if [[ "$keyed_case" == fix ]]; then
     mkdir -p "$RW/.cache/tracker-fixture"
     printf '[{"identifier":"issue-4503","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' > "$RW/.cache/tracker-fixture/issues.json"
-    growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$RW" --issue issue-4503 --round-id recovery \
+    growth_round_write "$STATE" "$ROUND_WRITE" --worktree "$RW" --issue issue-4503 --round-id keyed \
       --item 1 'repair validation' 'native receipts' >/dev/null
     extra=(--item 1 Applied repaired); check_extra=(--expect-items-from-round); native_mode=range
   fi
   started="$(date +%s)"
-  old_run="$(validate_run_dir "$RW/tmp/failed-run" "$native_mode" 1 "$RH" "$started")"
-  new_run="$(validate_run_dir "$RW/tmp/recovery-run" "$native_mode" 0 "$RH" "$((started + 2))")"
-  for native_run in "$old_run" "$new_run"; do
-    offset=0; [[ "$native_run" == "$old_run" ]] || offset=2
-    printf 'tree=%s\nclass-base=%s\n' "$RT" "$RH" >> "$native_run/start"
-    jq -nr --argjson start "$((started + offset))" \
-      '"started-at=\($start|todate)\nended-at=\($start+1|todate)\nseconds=1"' > "$native_run/timing"
-  done
-  base_args=(--worktree "$RW" --kind "$recovery_kind" --issue issue-4503 --round-id recovery --branch recovery --commit "$RH")
-  original_source=(--validate-run-dir "$old_run")
-  # Required pre-run checks can fail before the writer has native evidence.
-  if [[ "$recovery_result" == no-run ]]; then original_source=(); fi
-  if [[ "$recovery_result" == foreground ]]; then
-    sed '/^class-base=/d' "$old_run/start" > "$RW/tmp/foreground-start"
-    cp "$RW/tmp/foreground-start" "$old_run/start"
-  fi
-  run "${base_args[@]}" --validate 'FAILING: scoped' ${original_source[@]+"${original_source[@]}"} ${extra[@]+"${extra[@]}"}
-  assert_eq "$RC" 0 "$recovery_case failed original is written" "$ERR"
+  old_run="$(validate_run_dir "$RW/tmp/dev-validate-first" "$native_mode" 1 "$RH" "$started")"
+  new_run="$(validate_run_dir "$RW/tmp/dev-validate-second" "$native_mode" 0 "$RH" "$((started + 2))")"
+  base_args=(--worktree "$RW" --kind "$keyed_case" --issue issue-4503 --round-id keyed --branch keyed --commit "$RH")
+  run "${base_args[@]}" --validate 'FAILING: scoped' --validate-run-dir "$old_run" ${extra[@]+"${extra[@]}"}
+  assert_eq "$RC $OUT" "0 $RW/tmp/dev-return-issue-4503-keyed-first.json" "$keyed_case: the failing first run's receipt is keyed by its run" "$ERR"
   original="$OUT"; cp "$original" "$RW/tmp/original-bytes"
+  run "${base_args[@]}" --validate 'FAILING: again' --validate-run-dir "$old_run" ${extra[@]+"${extra[@]}"}
+  assert_eq "$RC $(grep -c 'dev-return-write: receipt-exists' "$ERR")" '2 1' "$keyed_case: the failing receipt is never overwritten" "$ERR"
   run "${base_args[@]}" --validate pass --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
-  assert_eq "$RC" 2 "$recovery_case refuses same-path overwrite" "$ERR"
-  verdict=pass; accepted=accept; expected_mode="$native_mode"; expected_base="$RH"
-  result_source=(--validate-run-dir "$new_run")
-  case "$recovery_result" in
-    failed) verdict='FAILING: scoped'; accepted=retry; printf 'guard-exit=1 at=2026-01-01T00:55:00Z\n' > "$new_run/exit" ;;
-    unproved) verdict=no-verdict; printf 'guard-exit=124 at=2026-01-01T00:55:00Z verdict=no-verdict\n' > "$new_run/exit" ;;
-    foreground)
-      fg_recovery="$(foreground_record recovery "validate-mode=$native_mode" "head=$RH" "started-at=$(utc_at "$((started + 2))")" "ended-at=$(utc_at "$((started + 3))")")"
-      result_source=(--validate-record "$fg_recovery"); expected_base="" ;;
-    interrupted)
-      verdict='FAILING: interrupted-foreground'; accepted=retry; result_source=(); expected_mode=""; expected_base=""
-      fg_recovery="$(foreground_record interrupted "validate-mode=$native_mode" "head=$RH" "started-at=$(utc_at "$((started + 2))")" -ended-at -exit -selection -lanes)"
-      cp "$fg_recovery" "$RW/tmp/unfinished-record-bytes"
-      run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery --validate-record "$fg_recovery" ${extra[@]+"${extra[@]}"}
-      assert_eq "$RC" 2 "$recovery_case refuses unfinished evidence as a completed record" "$ERR" ;;
-  esac
-  run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery ${result_source[@]+"${result_source[@]}"} ${extra[@]+"${extra[@]}"}
-  assert_eq "$RC $(rec '.round_id') $(rec '.commit') $(rec '.recovery_of')" \
-    "0 recovery $RH ${original##*/}" "$recovery_case keeps the real round and implementation commit" "$ERR"
+  assert_eq "$RC $OUT $(rec '.round_id') $(rec '.commit') $(rec 'has("recovery_of")')" \
+    "0 $RW/tmp/dev-return-issue-4503-keyed-second.json keyed $RH false" "$keyed_case: the later run's receipt is its own file, the same round and commit, with no recovery slot" "$ERR"
   companion="$OUT"
   cmp -s "$original" "$RW/tmp/original-bytes" && unchanged=true || unchanged=false
-  assert_eq "$unchanged" true "$recovery_case preserves the failed bytes"
-  selected="$(env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery ${check_extra[@]+"${check_extra[@]}"})"
-  assert_eq "$(jq -r '[.verdict,.path,.validate_mode,.validate_class_base] | join(" ")' <<<"$selected")" \
-    "$accepted $companion $expected_mode $expected_base" "$recovery_case acceptance selects the terminal result"
-  assert_eq "$("$CHECK" --file "$companion" | jq -r '.validate')" "$verdict" "$recovery_case submit reads the selected result"
-  assert_eq "$("$CHECK" --file "$original" | jq -r '.validate')" 'FAILING: scoped' "$recovery_case failed original stays readable"
+  assert_eq "$unchanged" true "$keyed_case: the failing bytes are preserved"
+  # No stage names a run: two receipts stand and nothing says which is the round's.
+  selected="$(env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id keyed ${check_extra[@]+"${check_extra[@]}"} 2>"$TMP_ROOT/keyed-ambiguous.err")" && rc=0 || rc=$?
+  assert_eq "$rc $(sed -n 1p "$TMP_ROOT/keyed-ambiguous.err")" \
+    "2 dev-artifact-check: receipt-ambiguous issue=issue-4503 round=keyed receipts=dev-return-issue-4503-keyed-first.json,dev-return-issue-4503-keyed-second.json," \
+    "$keyed_case: with no stage recorded, two receipts refuse by name"
+  # The runtime's stages: the first run closed fail, the second closed pass.
+  plant_validate_stage "$STATE" "$RW" issue-4503 keyed "$old_run" "$native_mode" fail "$started"
+  plant_validate_stage "$STATE" "$RW" issue-4503 keyed "$new_run" "$native_mode" pass "$((started + 2))"
+  selected="$(env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id keyed ${check_extra[@]+"${check_extra[@]}"})"
+  assert_eq "$(jq -r '[.verdict,.path,.validate_mode] | join(" ")' <<<"$selected")" \
+    "accept $companion $native_mode" "$keyed_case: round mode selects the newest stage's run receipt"
+  assert_eq "$("$CHECK" --file "$companion" | jq -r '.validate')" pass "$keyed_case: submit reads the selected receipt"
+  assert_eq "$("$CHECK" --file "$original" | jq -r '.validate')" 'FAILING: scoped' "$keyed_case: the failing receipt stays readable"
   state_file="$RW/tmp/workflow-state-issue-4503.json"
-  scoped_count=1
-  scoped_receipts="[\"${original##*/}\"]"
-  if [[ "$recovery_result" == failed ]]; then
-    scoped_count=2; scoped_receipts="[\"${original##*/}\",\"${companion##*/}\"]"
-  fi
-  assert_eq "$("$STATE" --state-dir "$RW/tmp" findings query issue-4503 | jq -c '.classes[] | select(.class.check == "scoped") | [.observed_count, (.sources | map(.receipt))]')" \
-    "[$scoped_count,$scoped_receipts]" "$recovery_case counts failed original and recovery by their distinct receipt sources"
-  expected_durations="[[\"recovery\",\"${original##*/}\",1],[\"recovery\",\"${companion##*/}\",1]]"
-  if [[ "$recovery_result" == no-run ]]; then
-    expected_durations="[[\"recovery\",\"${companion##*/}\",1]]"
-  fi
-  if [[ "$recovery_result" == interrupted ]]; then
-    assert_eq "$(jq -c '[.validate_mode,.validate_time,has("validate_class_base")]' "$companion")" \
-      '[null,null,false]' "$recovery_case preserves unavailable proof without inventing mode, base or timing"
-    cmp -s "$fg_recovery" "$RW/tmp/unfinished-record-bytes" && unchanged=true || unchanged=false
-    assert_eq "$unchanged" true "$recovery_case preserves its unfinished foreground record"
-    expected_durations="[[\"recovery\",\"${original##*/}\",1]]"
-  fi
-  assert_eq "$(jq -c '[.stages[] | select(.kind == "validate")]' "$state_file")" \
-    '[]' "$recovery_case writes no validate stage: the runtime admission owns it"
+  assert_eq "$(jq -c '[.stages[] | select(.kind == "validate") | [.run_dir, .outcome]]' "$state_file")" \
+    "[[\"$old_run\",\"fail\"],[\"$new_run\",\"pass\"]]" "$keyed_case: the checker writes no validate stage: the runtime's two stand"
   assert_eq "$(jq -c '[.validate_rounds[] | [.round_id,.receipt,.seconds]]' "$state_file")" \
-    "$expected_durations" "$recovery_case retains each receipt duration"
+    "[[\"keyed\",\"${companion##*/}\",3300]]" "$keyed_case: the selected receipt's duration is recorded under its own name"
   first_timing="$(jq -c '{stages,validate_rounds,finding_occurrences}' "$state_file")"
-  env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery ${check_extra[@]+"${check_extra[@]}"} >/dev/null
-  assert_eq "$(jq -c '{stages,validate_rounds,finding_occurrences}' "$state_file")" "$first_timing" "$recovery_case reread is idempotent"
-  run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery ${result_source[@]+"${result_source[@]}"} ${extra[@]+"${extra[@]}"}
-  assert_eq "$RC" 2 "$recovery_case refuses another terminal companion" "$ERR"
-  if [[ "$recovery_case" == implement-interrupted ]]; then
-    rm -f -- "${companion:?}"
-    run "${base_args[@]}" --recovery --validate "$verdict"
-    assert_eq "$RC" 2 'interrupted recovery requires a note explaining unavailable evidence' "$ERR"
-    WRITE="$(mutant_scripts recovery-interrupted-mutant dev-return-write)/dev-return-write" || exit 1
-    mutate_file "$WRITE" '[[ "$validate" == FAILING:* && -n "$validate_note" ]]' 'false'
-    run "${base_args[@]}" --recovery --validate "$verdict" --validate-note recovery
-    assert_eq "$RC" 2 'control: requiring completed evidence rejects the interrupted terminal result' "$ERR"
-    WRITE="$WRITE_SHIPPED"
-  fi
+  env ORCH_STATE_DIR="$RW/tmp" "$CHECK" --worktree "$RW" --issue issue-4503 --round-id keyed ${check_extra[@]+"${check_extra[@]}"} >/dev/null
+  assert_eq "$(jq -c '{stages,validate_rounds,finding_occurrences}' "$state_file")" "$first_timing" "$keyed_case: reread is idempotent"
 done
-
-# Invalid native bindings and parents reach the real writer before publication.
-# Keep one last fix fixture; remove only its companion for independent inputs.
-cp "$companion" "$RW/tmp/valid-companion"
-for defect in tree missing-tree mode base parent-pass parent-malformed; do
-  rm -f -- "${companion:?}"
-  cp "$RW/tmp/original-bytes" "$original"
-  cp "$new_run/start" "$RW/tmp/start-good"
-  case "$defect" in
-    tree) sed 's/^tree=.*/tree=0000000000000000000000000000000000000000/' "$RW/tmp/start-good" > "$new_run/start" ;;
-    missing-tree) sed '/^tree=/d' "$RW/tmp/start-good" > "$new_run/start" ;;
-    mode) sed 's/^validate-mode=.*/validate-mode=full/' "$RW/tmp/start-good" > "$new_run/start" ;;
-    base) sed 's/^class-base=.*/class-base=0000000000000000000000000000000000000000/' "$RW/tmp/start-good" > "$new_run/start" ;;
-    parent-pass) jq '.validate="pass"' "$RW/tmp/original-bytes" > "$original" ;;
-    parent-malformed) jq 'del(.validate_time)' "$RW/tmp/original-bytes" > "$original" ;;
-  esac
-  run "${base_args[@]}" --recovery --validate no-verdict --validate-note recovery --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
-  assert_eq "$RC $(test -e "$companion" && echo exists || echo absent)" '2 absent' "$defect refuses recovery publication" "$ERR"
-  cp "$RW/tmp/start-good" "$new_run/start"
-done
-cp "$RW/tmp/original-bytes" "$original"
-WRITE="$(mutant_scripts recovery-tree-mutant dev-return-write)/dev-return-write" || exit 1
-mutate_file "$WRITE" '[[ "$run_tree" =~ ^[0-9a-f]{40}$ && "$run_tree" == "$(git -C "$worktree" rev-parse "$commit^{tree}")" ]]' 'true'
-cp "$new_run/start" "$RW/tmp/start-good"
-sed 's/^tree=.*/tree=0000000000000000000000000000000000000000/' "$RW/tmp/start-good" > "$new_run/start"
-run "${base_args[@]}" --recovery --validate no-verdict --validate-note recovery --validate-run-dir "$new_run" ${extra[@]+"${extra[@]}"}
-assert_eq "$RC" 0 'control: omitting the native snapshot comparison admits changed contents' "$ERR"
-rm -f -- "${companion:?}"
-cp "$RW/tmp/start-good" "$new_run/start"
-WRITE="$WRITE_SHIPPED"
-for defect in json parent identity missing-marker; do
-  case "$defect" in
-    json) printf 'invalid' > "$companion" ;;
-    parent) jq '.recovery_of="other.json"' "$RW/tmp/valid-companion" > "$companion" ;;
-    identity) jq '.round_id="other"' "$RW/tmp/valid-companion" > "$companion" ;;
-    missing-marker) jq 'del(.recovery_of)' "$RW/tmp/valid-companion" > "$companion" ;;
-  esac
-  selected="$($CHECK --worktree "$RW" --issue issue-4503 --round-id recovery --expect-items-from-round)" && rc=0 || rc=$?
-  assert_eq "$rc $(jq -r '[.reason,.path] | join(" ")' <<<"$selected")" "1 invalid $companion" "$defect companion refuses without falling back"
-done
-# A control changes only the executable parent guard. The focused invalid-parent
-# row must change its result, proving the new checker instrument observes it.
-CONTROL_CHECK="$(mutant_scripts recovery-parent-mutant dev-artifact-check)/dev-artifact-check" || exit 1
-mutate_file "$CONTROL_CHECK" '.recovery_of == $parent and ($original[0] as $p' 'true and ($original[0] as $p'
-jq '.recovery_of="other.json"' "$RW/tmp/valid-companion" > "$companion"
-assert_eq "$("$CONTROL_CHECK" --worktree "$RW" --issue issue-4503 --round-id recovery --expect-items-from-round | jq -r '.reason')" valid \
-  'control: ignoring the parent identity admits the invalid companion'
+# The selection control: a checker that takes the round's oldest stage reads
+# the failing run's receipt as the round's result.
+OLDEST_CHECK="$(mutant_scripts oldest-stage dev-artifact-check)/dev-artifact-check" || exit 1
+mutate_file "$OLDEST_CHECK" '| sort_by(.start) | reverse' '| sort_by(.start)'
+assert_eq "$(env ORCH_STATE_DIR="$RW/tmp" "$OLDEST_CHECK" --worktree "$RW" --issue issue-4503 --round-id keyed --expect-items-from-round | jq -r '[.verdict,.path] | join(" ")')" \
+  "retry $original" 'control: reading the oldest stage selects the failing run'
+# A receipt naming no run keeps the bare name, immutable once failing.
+run "${base_args[@]}" --validate 'FAILING: DEV_VALIDATE_CMD' --validate-note 'no run started' ${extra[@]+"${extra[@]}"}
+assert_eq "$RC $OUT" "0 $RW/tmp/dev-return-issue-4503-keyed.json" 'a receipt naming no run is the round-scoped bare name' "$ERR"
+run "${base_args[@]}" --validate 'FAILING: again' --validate-note 'no run started' ${extra[@]+"${extra[@]}"}
+assert_eq "$RC" 2 'a failing bare receipt is immutable too' "$ERR"
 
 echo "=== the measurement beside the package is required, at the contract this writer needs ==="
 # Each tree is a mutant_scripts layout of its own, so removing or ageing its

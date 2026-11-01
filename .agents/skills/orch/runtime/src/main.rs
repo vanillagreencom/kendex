@@ -93,6 +93,182 @@ enum Verb {
         #[arg(long)]
         request: PathBuf,
     },
+    /// U6d: send a directive to a cloud session lane of the fleet: the send
+    /// recorded owed on the lane first, made once through `lane-mail`, and
+    /// its receipt stamped after (decision 31).
+    Send {
+        /// The lane's item.
+        #[arg(long)]
+        item: String,
+        /// The file holding the directive's text.
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// U6h: the accounts judge's reads (step6-map § A10): the pick a
+    /// launcher receives (decision 94 (b)) and the roster under the judge's
+    /// statement.
+    Accounts {
+        #[command(subcommand)]
+        op: AccountsOp,
+    },
+    /// U6a: a validation run, started for a round and run as its detached
+    /// job (step6-map § A1).
+    Validate {
+        #[command(subcommand)]
+        op: ValidateOp,
+    },
+    /// U6b: read an item's proof rows for a need (step6-map § A2): complete
+    /// with the rows that prove the tree, pending on a ci row, or missing
+    /// naming the tree and the narrowest declared mode it lacks. The read
+    /// records nothing.
+    ReadProof {
+        #[arg(long)]
+        item: String,
+        /// The tree the need asks about: the worktree's snapshot tree.
+        #[arg(long)]
+        tree: String,
+        /// The head the tree is committed at; a restack's recorded skip is
+        /// read by it.
+        #[arg(long)]
+        head: Option<String>,
+        /// The base the need judges from; a row over exactly it covers the
+        /// need.
+        #[arg(long)]
+        base: Option<String>,
+        /// The round whose own rows a recovery reads.
+        #[arg(long, required_if_eq("need", "recovery"))]
+        round: Option<String>,
+        /// round, submit, restack or recovery.
+        #[arg(long, value_parser = parse_need)]
+        need: orch_runtime::ops::proof::Need,
+    },
+}
+
+/// The need word a `--need` carries.
+fn parse_need(word: &str) -> std::result::Result<orch_runtime::ops::proof::Need, String> {
+    use orch_runtime::ops::proof::Need;
+    match word {
+        "round" => Ok(Need::Round),
+        "submit" => Ok(Need::Submit),
+        "restack" => Ok(Need::Restack),
+        "recovery" => Ok(Need::Recovery),
+        other => Err(format!("{other}: not round, submit, restack or recovery")),
+    }
+}
+
+/// U6a: the validation run's verbs.
+#[derive(Subcommand)]
+enum ValidateOp {
+    /// Resolve the mode from the project's declaration, classify the
+    /// worktree, judge reuse over the item's proof rows, record the proof
+    /// and the job on the round's admitted run, write the run directory
+    /// the executor reads, and launch the run's job detached.
+    Start {
+        /// The item and round, or the admitted run directory the legacy
+        /// start forwards.
+        #[arg(long, requires = "round", conflicts_with = "run_dir")]
+        item: Option<String>,
+        #[arg(long, requires = "item")]
+        round: Option<String>,
+        #[arg(long, required_unless_present = "item")]
+        run_dir: Option<String>,
+        /// The base commit of a fix round; none for an implement round.
+        #[arg(long)]
+        base: Option<String>,
+        /// A mode other than the narrowest the declaration admits.
+        #[arg(long, value_parser = parse_mode)]
+        mode: Option<orch_runtime::state::ValidateMode>,
+        /// Why a wider mode than the narrowest is run; recorded with it.
+        #[arg(long, requires = "mode")]
+        cause: Option<String>,
+        /// The caller's word: dev, submit or restack.
+        #[arg(long, default_value = "dev")]
+        caller: String,
+        /// The poll interval the run records; the legacy `--poll`.
+        #[arg(long, default_value_t = orch_runtime::validate::POLL_DEFAULT, value_parser = clap::value_parser!(u64).range(1..))]
+        poll: u64,
+        /// Run the command whatever earlier row would answer it.
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// The run's job: run the kept executor as the bounded child, close
+    /// the stage once with the lane's end notice owed, send it and mark it.
+    Run {
+        #[arg(long)]
+        item: String,
+        #[arg(long)]
+        round: String,
+        #[arg(long)]
+        run_dir: String,
+    },
+    /// U6l: stop a started run: the stop recorded on its open stage, the
+    /// job ended by its recorded identity through the launcher, the stage
+    /// closed `stopped` with the lane's end notice (decision 188 (c)).
+    Stop {
+        /// The item; without it the run directory names it, as the legacy
+        /// stop forwards.
+        #[arg(long)]
+        item: Option<String>,
+        #[arg(long)]
+        run_dir: String,
+    },
+}
+
+/// The mode word a `--mode` carries.
+fn parse_mode(word: &str) -> std::result::Result<orch_runtime::state::ValidateMode, String> {
+    use orch_runtime::state::ValidateMode;
+    match word {
+        "full" => Ok(ValidateMode::Full),
+        "range" => Ok(ValidateMode::Range),
+        "ci" => Ok(ValidateMode::Ci),
+        other => Err(format!("{other}: not full, range or ci")),
+    }
+}
+
+/// U6h: the accounts judge's verbs.
+#[derive(Subcommand)]
+enum AccountsOp {
+    /// Which account a launch spends: the listing judged with this fleet's
+    /// seats and live charges; the reply carries `lanes pick`'s exit by
+    /// number and the record or the counts it printed, so a caller reads
+    /// the verdict it read before.
+    Pick {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        harness: String,
+        /// The selector the harness runs; the legacy `--native-model`.
+        #[arg(long)]
+        native_model: Option<String>,
+        /// A config dir the pick omits before judging; the legacy
+        /// `--exclude-lane`.
+        #[arg(long = "exclude-lane")]
+        exclude: Vec<String>,
+        /// The item of the lane a relaunch replaces: its charge is left
+        /// out, so a replacement adds no lane.
+        #[arg(long)]
+        replaces: Option<String>,
+        /// Judge seats as ordinary accounts.
+        #[arg(long)]
+        for_overseer: bool,
+        /// Judge one named account instead of choosing.
+        #[arg(long)]
+        lane: Option<String>,
+        /// Judge the named account on the projection.
+        #[arg(long)]
+        projected: bool,
+        /// The bound in percent used; `ORCH_LANE_MAX_PCT` where unset.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
+        max_pct: Option<u32>,
+    },
+    /// The listing under the judge's statement: each row with its status
+    /// word, and the roster lines the heartbeat prints.
+    Roster {
+        /// The provider to read under; this machine's own read where
+        /// unset.
+        #[arg(long)]
+        host: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -324,12 +500,25 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             if let Request::VerifyHead(r) = &request {
                 return Ok(serde_json::to_value(verify_head(&path, r, &env, locking)?)?);
             }
+            // U6g: a pull request's verification reads its current head
+            // first, then judges and records it as verify-head does.
+            if let Request::VerifyPr(r) = &request {
+                return Ok(serde_json::to_value(ops::verify_pr::run(
+                    &path, r, &env, locking,
+                )?)?);
+            }
             // An adoption reads the pane first and makes its one transition
             // on what it read.
             if let Request::AdoptController(r) = &request {
                 return Ok(serde_json::to_value(effects::adopt_controller(
                     &path, r, &settings, locking,
                 )?)?);
+            }
+            // U6a: a round's reconcile first sends the end notices its
+            // closed runs still owe, the continuation a crash between a
+            // run's close and its send left (decision 124f (28)).
+            if let Request::ReconcileRound(_) = &request {
+                orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
             }
             // The notices earlier outcomes still owe are sent before the
             // request's own transition; a mark the store refused is in the
@@ -342,7 +531,26 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 locking,
                 &schedule::SystemClock,
             )?;
+            // U6c: an acceptance makes its close, posts the round's summary
+            // through the tracker CLI and records the comment's id
+            // (step6-map § A8); its reply is the close's report.
+            if let Request::AcceptResult(r) = &request {
+                return Ok(serde_json::to_value(ops::accept(
+                    &path,
+                    r,
+                    &settings.reads.tracker_cli,
+                    &env,
+                    locking,
+                )?)?);
+            }
             let applied = persist(&path, &request, &env, locking, &settings)?;
+            // U6a: the reconcile may have closed a runtime-started run and
+            // written its end notice owed in that same transition; the owed
+            // walk runs after it as well as before, so that notice is sent
+            // in this call (decision 184 (2)).
+            if let Request::ReconcileRound(_) = &request {
+                orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
+            }
             // Run the live effect the persisted intent names and record its
             // outcome; the committed outcome transition is the result.
             match effects::run(
@@ -392,6 +600,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &schedule::SystemClock,
             )?)?
         }
+        Verb::Accounts { op } => accounts_verb(op, &flags)?,
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
         Verb::Admit { target, request } => {
             let settings = resolve_settings(&flags)?;
@@ -399,6 +608,94 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let request: ops::AdmitPaths = read_request(&request)?;
             let env = system_env()?;
             serde_json::to_value(admit(&path, &request, &env, locking, &settings)?)?
+        }
+        // U6a
+        Verb::Validate {
+            op:
+                ValidateOp::Start {
+                    item,
+                    round,
+                    run_dir,
+                    base,
+                    mode,
+                    cause,
+                    caller,
+                    poll,
+                    fresh,
+                },
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let env = system_env()?;
+            let request = orch_runtime::validate::StartRequest {
+                item,
+                round,
+                run_dir,
+                base,
+                mode,
+                cause,
+                caller,
+                poll,
+                fresh,
+            };
+            serde_json::to_value(orch_runtime::validate::start(
+                &settings, &request, &env, locking,
+            )?)?
+        }
+        Verb::Validate {
+            op:
+                ValidateOp::Run {
+                    item,
+                    round,
+                    run_dir,
+                },
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let env = system_env()?;
+            serde_json::to_value(orch_runtime::validate::run::run(
+                &settings, &item, &round, &run_dir, &env, locking,
+            )?)?
+        }
+        // U6l
+        Verb::Validate {
+            op: ValidateOp::Stop { item, run_dir },
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let env = system_env()?;
+            serde_json::to_value(orch_runtime::validate::run::stop(
+                &settings,
+                item.as_deref(),
+                &run_dir,
+                &env,
+                locking,
+            )?)?
+        }
+        // U6b
+        Verb::ReadProof {
+            item,
+            tree,
+            head,
+            base,
+            round,
+            need,
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let request = orch_runtime::ops::proof::ReadProof {
+                need,
+                tree,
+                head,
+                base,
+                round,
+            };
+            serde_json::to_value(orch_runtime::proof::run(&settings, &item, &request)?)?
+        }
+        // U6d
+        Verb::Send { item, file } => {
+            let settings = resolve_settings(&flags)?;
+            let path = state::fleet_path(&settings.state_dir);
+            let env = system_env()?;
+            serde_json::to_value(orch_runtime::send::run(
+                &path, &item, &file, &settings, &env, locking, None,
+            )?)?
         }
     };
     Ok(value)
@@ -529,6 +826,66 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
     }
 }
 
+/// U6h: the accounts judge's verbs, each a read: the pick over the
+/// listing and this fleet's state, the roster over the listing.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one construction of the kernel host for the pick's occupancy read; the judge acts on nothing"
+)]
+fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
+    let settings = resolve_settings(flags)?;
+    let now = system_env()?.now_secs;
+    match op {
+        AccountsOp::Pick {
+            target,
+            harness,
+            native_model,
+            exclude,
+            replaces,
+            for_overseer,
+            lane,
+            projected,
+            max_pct,
+        } => {
+            let path = target_path(&target, &settings);
+            let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+            let request = ops::accounts::PickRequest {
+                harness,
+                model: native_model,
+                exclude,
+                replaces,
+                for_overseer,
+                lane,
+                projected,
+                max_pct,
+                host: None,
+            };
+            Ok(ops::accounts::pick_fleet(&settings, &path, &host, &request, now).reply())
+        }
+        AccountsOp::Roster { host } => {
+            let today = ops::accounts::today(now);
+            Ok(match ops::accounts::roster(&settings, host.as_deref()) {
+                Ok(roster) => serde_json::json!({
+                    "read": true,
+                    "accounts": roster.rows.len(),
+                    "lines": roster.lines(&today),
+                    "rows": roster.rows.iter().map(|r| serde_json::json!({
+                        "alias": r.alias,
+                        "config_dir": r.config_dir,
+                        "harness": r.harness,
+                        "measured_through": r.measured_through,
+                        "status": r.status,
+                        "word": r.word().text(),
+                        "ended": r.ended(&today),
+                        "record": r.raw,
+                    })).collect::<Vec<serde_json::Value>>(),
+                }),
+                Err(cause) => serde_json::json!({"read": false, "cause": cause}),
+            })
+        }
+    }
+}
+
 /// The baseline row kind holding each intent the reconcile last refused,
 /// by its refusal key.
 const RECONCILE_REFUSED: &str = "reconcile-refused";
@@ -536,10 +893,11 @@ const RECONCILE_REFUSED: &str = "reconcile-refused";
 /// What the reconcile duty publishes of its report: a line per open intent
 /// it could not complete or mark, printed when the refusal is new or its
 /// key changed and cleared when the intent is no longer refused, as the
-/// legacy printed a standing `main-workflow-absent`; and a line per owed
-/// notice sent whose mark the store refused. A deferral to a live or
-/// unreadable owner is a reconciled outcome, not a refusal, and prints
-/// nothing (decisions 128 (5), 130).
+/// legacy printed a standing `main-workflow-absent`; a line per owed session
+/// send no kept receipt settles, keyed the same way by item and cause; and a
+/// line per owed notice sent whose mark the store refused. A deferral to a
+/// live or unreadable owner is a reconciled outcome, not a refusal, and
+/// prints nothing (decisions 128 (5), 130).
 fn reconcile_lines(run: &effects::ReconcileRun, baseline: &watch::Baseline) -> watch::Produced {
     let mut produced = watch::Produced::default();
     for refused in &run.refused {
@@ -560,6 +918,32 @@ fn reconcile_lines(run: &effects::ReconcileRun, baseline: &watch::Baseline) -> w
             produced.changes.push(watch::Change::Clear {
                 kind: RECONCILE_REFUSED.to_owned(),
                 identity: intent,
+            });
+        }
+    }
+    // U6d2 (decision 184 (5)): the baseline row kind holding each lane
+    // whose session send stands owed with no receipt to settle it, by the
+    // settle's cause word; the line prints once per cause.
+    const DIRECTIVE_SEND_UNSETTLED: &str = "directive-send-unsettled";
+    let unsettled = &run.directive_sends.sends_unsettled;
+    for send in unsettled {
+        if baseline.get(DIRECTIVE_SEND_UNSETTLED, &send.item) != Some(send.cause.as_str()) {
+            produced.events.push(watch::Event::DirectiveSendUnsettled {
+                item: send.item.clone(),
+                cause: send.cause.clone(),
+            });
+            produced.changes.push(watch::Change::Set {
+                kind: DIRECTIVE_SEND_UNSETTLED.to_owned(),
+                identity: send.item.clone(),
+                value: send.cause.clone(),
+            });
+        }
+    }
+    for item in baseline.identities(DIRECTIVE_SEND_UNSETTLED) {
+        if !unsettled.iter().any(|s| s.item == item) {
+            produced.changes.push(watch::Change::Clear {
+                kind: DIRECTIVE_SEND_UNSETTLED.to_owned(),
+                identity: item,
             });
         }
     }
@@ -620,7 +1004,7 @@ fn verify_head(
     env: &Env,
     locking: Locking,
 ) -> Result<verify::Verified> {
-    verify::run(path, r, env, locking)
+    verify::run(path, r, env, locking, verify::Caller::VerifyHead)
 }
 
 /// The command's one store entry: the request's transition committed,
@@ -642,17 +1026,20 @@ fn persist(
 }
 
 /// The host a fleet transition judges against: the cap, the legacy claim
-/// store, the kernel's reads and the programs the admission reads through.
+/// store, the kernel's reads, the programs the admission reads through and
+/// the settings the accounts judge reads a launch's account under (U6i).
 #[allow(
     clippy::disallowed_methods,
     reason = "the command's one construction of the kernel host, handed to the store entries alone"
 )]
-fn kernel_host(settings: &Settings) -> ops::Host<'static> {
-    ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone())).admitting(ops::Clis {
-        tracker: settings.reads.tracker_cli.clone(),
-        gh: PathBuf::from("gh"),
-        scope_paths: settings.scope_paths_cli.clone(),
-    })
+fn kernel_host(settings: &Settings) -> ops::Host<'_> {
+    ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()))
+        .admitting(ops::Clis {
+            tracker: settings.reads.tracker_cli.clone(),
+            gh: PathBuf::from("gh"),
+            scope_paths: settings.scope_paths_cli.clone(),
+        })
+        .judging(settings)
 }
 
 /// The `admit` verb's one store entry: the judgement committed under the

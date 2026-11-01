@@ -1,0 +1,43 @@
+#!/bin/bash
+# The validation executor as the validate rows see it: `--child --run-dir D`
+# writes what the real child writes, from a planted verdict, and nothing else
+# runs. It records its pid, logs the `validate-base=` its start record
+# carries (the real child exports it as DEV_VALIDATE_BASE), prints the
+# command's `validate:` line with $DEV_VALIDATE_CHILD_SELECTION (all when
+# unset), waits on the fifo $DEV_VALIDATE_CHILD_HOLD names where set, then
+# writes `timing` and the sentinel `guard-exit=$DEV_VALIDATE_CHILD_EXIT at=NOW`
+# (exit 0 when unset) with $DEV_VALIDATE_CHILD_SUFFIX after it, whole by
+# rename as the real child does; NOW is the epoch second
+# $DEV_VALIDATE_CHILD_AT names where set, else the clock's. With
+# $DEV_VALIDATE_CHILD_NO_SENTINEL set it
+# exits without a sentinel: the child the host killed. Every call is appended
+# to $DEV_VALIDATE_LOG when set. The real executor's sibling scripts the
+# start reads stand beside this file.
+[ -z "${DEV_VALIDATE_LOG:-}" ] || printf '%s\n' "$*" >> "$DEV_VALIDATE_LOG"
+[ "${1:-}" = --child ] && [ "${2:-}" = --run-dir ] && [ -n "${3:-}" ] || { echo "dev-validate-child: verb=$*" >&2; exit 2; }
+run_dir="$3"
+printf '%s\n' "$$" > "$run_dir/pid.part"
+mv "$run_dir/pid.part" "$run_dir/pid"
+base=""
+while IFS='=' read -r key value; do
+  [ "$key" != validate-base ] || base="$value"
+done < "$run_dir/start"
+{
+  printf 'runner=fixture\n'
+  printf 'DEV_VALIDATE_BASE=%s\n' "$base"
+  printf 'validate: lanes=fixture selection=%s\n' "${DEV_VALIDATE_CHILD_SELECTION:-all}"
+} > "$run_dir/log"
+if [ -n "${DEV_VALIDATE_CHILD_HOLD:-}" ]; then
+  read -r _ < "$DEV_VALIDATE_CHILD_HOLD"
+fi
+[ -z "${DEV_VALIDATE_CHILD_NO_SENTINEL:-}" ] || exit 0
+if [ -n "${DEV_VALIDATE_CHILD_AT:-}" ]; then
+  now="$(date -u -d "@$DEV_VALIDATE_CHILD_AT" '+%Y-%m-%dT%H:%M:%SZ')"
+else
+  now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+fi
+printf 'started-at=%s\nended-at=%s\nseconds=1\n' "$now" "$now" > "$run_dir/timing.part"
+mv "$run_dir/timing.part" "$run_dir/timing"
+printf 'guard-exit=%s at=%s%s\n' "${DEV_VALIDATE_CHILD_EXIT:-0}" "$now" "${DEV_VALIDATE_CHILD_SUFFIX:-}" > "$run_dir/exit.part"
+mv "$run_dir/exit.part" "$run_dir/exit"
+exit 0

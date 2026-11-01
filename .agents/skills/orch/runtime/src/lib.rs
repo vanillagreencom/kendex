@@ -16,18 +16,25 @@
 //! `kendex.settings.toml` keys the runtime acts on; the keys and their
 //! defaults are its constants. `verify` reads GitHub for a published head
 //! through agent-runtime's one process runner and records the verdict.
-//! `watch` is the standing scheduler: the one long-lived runner per fleet
-//! state, its claim, its event log and its baseline, driving the duties on
+//! `send` records a directive send to a cloud session lane before the
+//! mailbox program makes it and stamps the receipt after. `watch` is the
+//! standing scheduler: the one long-lived runner per fleet state, its
+//! claim, its event log and its baseline, driving the duties on
 //! `schedule`'s due times.
 
 pub mod effects;
 pub mod error;
 pub mod mailbox;
 pub mod ops;
+/// U6b: the proof record's read verb over an item's validate stages.
+pub mod proof;
 pub mod protocol;
 pub mod schedule;
+pub mod send;
 pub mod settings;
 pub mod state;
+/// U6a: the validation run's start and its detached job.
+pub mod validate;
 pub mod verify;
 pub mod watch;
 

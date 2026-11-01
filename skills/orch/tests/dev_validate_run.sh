@@ -597,42 +597,11 @@ assert_eq "$(verdict_of "$OUT")" "state=done guard-exit=0 validate=pass" \
 assert_eq "$(output_of "$OUT")" "ran-under-bash" \
   "and the log names the shell that ran it, not a POSIX one that refused the line"
 
-# --- The mode picks the command, and the run records the mode that ran --------
-# A committed project whose full battery and range command each print which one
-# ran; the range command also prints the base it was handed.
+# --- The run records the mode that ran -----------------------------------------
+# The mode a start resolves is the runtime's (`validate start`; tests/rust/
+# validate.rs owns the declaration table); the rows here pin what this script
+# records and reads of it. The range command prints the base it was handed.
 RANGE_CMD='echo range $DEV_VALIDATE_BASE'
-# label|project's range command|arguments|log|validate-mode|validate-base is the head (yes/no)|record's class base|ignored-base notices
-MODE_ROWS=(
-  "a run given no mode runs the whole battery and records full|$RANGE_CMD||full|full|no||0"
-  "a default full run ignores a carried base with one notice|$RANGE_CMD|--base HEAD|full|full|no||1"
-  "an explicit full run ignores an unreadable base with one notice|$RANGE_CMD|--validate-mode full --base no-such-ref|full|full|no||1"
-  "a range run runs the range command against the commit its base names|$RANGE_CMD|--validate-mode range --base HEAD|range HEAD|range|yes| class-base=HEAD|0"
-  "a range run in a project with no range command runs the whole battery and records full, with the class base that run read||--validate-mode range --base HEAD|full|full|no| class-base=HEAD|0"
-)
-n=0
-for row in "${MODE_ROWS[@]}"; do
-  IFS='|' read -r label range_cmd args want_log want_mode want_base want_class_base want_notices <<<"$row"
-  n=$((n + 1))
-  proj="$(make_mode_proj "proj-mode-$n" "$range_cmd")"
-  head_sha="$(git -C "$proj" rev-parse HEAD)"
-  want_log="${want_log/HEAD/$head_sha}"
-  want_class_base="${want_class_base/HEAD/$head_sha}"
-  # shellcheck disable=SC2086 # the row's argument list, split on purpose
-  run_script "$RUN" --worktree "$proj" --poll 1 $args
-  mode_dir="$(run_dir_of "$OUT")"
-  got_base=no
-  [[ "$(start_line "$mode_dir" validate-base)" != "$head_sha" ]] || got_base=yes
-  assert_eq "$RC $(verdict_of "$OUT") $(output_of "$OUT")" "0 state=done guard-exit=0 validate=pass $want_log" "$label" "$ERR"
-  assert_eq "$(grep -c -x -F -- 'dev-validate-run: option-ignored option=--base validate-mode=full' "$ERR" || true)" \
-    "$want_notices" "$label: ignored option category and count" "$ERR"
-  assert_eq "$(start_line "$mode_dir" validate-mode) base=$got_base" "$want_mode base=$want_base" \
-    "$label — the start record names the mode and base that ran" "$ERR"
-  run_script "$RUN" --record --run-dir "$mode_dir"
-  recorded_tree="$(start_line "$mode_dir" tree)"
-  assert_eq "$(sed -E 's/ seconds=[0-9]+ started-at=[^ ]+ ended-at=[^ ]+$/ seconds=N started-at=T ended-at=T/' <<<"$OUT")" \
-    "validate-mode=$want_mode selection=unreported verdict=pass head=$head_sha start=$(start_of "$mode_dir")$want_class_base${recorded_tree:+ tree=$recorded_tree} seconds=N started-at=T ended-at=T" \
-    "$label — the run's record names that mode, the pass, the HEAD and second it started at, any class base and its wall time" "$ERR"
-done
 # dev-return-write consumes the stored snapshot through --record in every mode.
 record_tree=1234567890123456789012345678901234567890
 for native_mode in full range ci; do
@@ -644,12 +613,6 @@ done
 mutant mutant-record-tree 'record_tree="$(start_field "$run_dir/start" tree)"' 'record_tree=""'
 run_script "$MUTANT" --record --run-dir "$TMP_ROOT/record-tree-full"
 assert_eq "$RC $(record_field tree "$OUT")" '0 ' 'control: dropping the stored snapshot breaks native record proof' "$ERR"
-# A missing notice must turn the carried-base assertion while the run still passes.
-mutant mutant-full-base-notice 'if [[ "$base_given" == true ]]; then' 'if [[ "$base_given" == false ]]; then'
-proj="$(make_mode_proj proj-full-base-control "$RANGE_CMD")"
-run_script "$MUTANT" --worktree "$proj" --poll 1 --validate-mode full --base HEAD
-assert_eq "$RC $(grep -c -x -F -- 'dev-validate-run: option-ignored option=--base validate-mode=full' "$ERR" || true)" \
-  "0 0" "control: a full start without its ignored-base notice changes the expected count" "$ERR"
 # The last range run's started line keeps the shape every waiter reads; the
 # class fields that close it are the classifier rows' to pin.
 proj="$(make_mode_proj proj-mode-line "$RANGE_CMD")"
@@ -659,27 +622,6 @@ assert_eq "$(sed -n '1s/ class=[a-z]* docs-only=[a-z]*\( class-fallback=[a-z0-9-
   "state=started run-dir=$mode_dir log=$mode_dir/log sentinel=$mode_dir/exit timeout-secs=20 poll-secs=1 cap-secs=31" \
   "a range run prints the same started line as a full one" "$ERR"
 
-# --- --resolve-mode names the mode a range run records, and starts nothing ----
-# label|project's range command|mode printed
-RESOLVE_ROWS=(
-  "a project with a range command resolves a range request to range|$RANGE_CMD|range"
-  "a project with no range command resolves a range request to full||full"
-)
-n=0
-for row in "${RESOLVE_ROWS[@]}"; do
-  IFS='|' read -r label range_cmd want_mode <<<"$row"
-  n=$((n + 1))
-  proj="$(make_mode_proj "proj-resolve-$n" "$range_cmd")"
-  run_script "$RUN" --resolve-mode --worktree "$proj"
-  assert_eq "$OUT rc=$RC runs=$(find "$proj" -maxdepth 2 -name 'dev-validate-*' | wc -l | tr -d ' ')" \
-    "validate-mode=$want_mode rc=0 runs=0" "$label" "$ERR"
-done
-# Control: a resolution that never reads the range command names full for the
-# project that sets one.
-mutant mutant-resolve-full $'  else\n    validate_mode=range' $'  else\n    validate_mode=full'
-run_script "$MUTANT" --resolve-mode --worktree "$TMP_ROOT/proj-resolve-1"
-assert_eq "$OUT" "validate-mode=full" \
-  "control: with the range command unread the project that sets one resolves to full" "$ERR"
 # --- A range base a rebase left off the branch ---------------------------------
 # A branch that forked from main, committed b1 (the round's recorded base, the
 # pre-rebase head), and was then rebased over the three commits main gained and
@@ -1106,48 +1048,15 @@ assert_eq "$(output_of "$OUT" 2>/dev/null) $(sed -n 's/^state=started .* cap-sec
   "no classifier runs the whole battery, naming the absence" "$ERR"
 mv "$LAYOUT/harness-ci.off" "$LAYOUT/harness-ci"
 
-# --- --run-id: the directory the admission named ------------------------------
-# The runtime mints a run's identity at admission and records the open validate
-# stage naming its directory before any runner starts (tests/rust/item.rs owns
-# that minting); the start then creates that directory. The command is the
-# barrier, as the one-job consumer's tools/validate is: it reads the admitted
-# stage for its own directory and fails without it, so a pass proves the
-# admitted identity stood while the command ran and the printed directory
-# proves the start honoured the id. The state file stands in for the item's.
-ADMIT_ID=20300101T000000Z-admit
-proj_admit="$(make_proj proj-admit "bash $TMP_ROOT/proj-admit/barrier" 20)"
-mkdir -p "$proj_admit/tmp"
-cat > "$proj_admit/barrier" <<SH
-#!/usr/bin/env bash
-set -euo pipefail
-jq -e --arg d "$proj_admit/tmp/dev-validate-$ADMIT_ID" '[.stages[]? | select(.kind == "validate" and .run_dir == \$d and .end == null)] | length == 1' "$proj_admit/tmp/admitted.json" >/dev/null \\
-  || { echo 'validate: admission-missing'; exit 1; }
-echo 'validate: selection=all lanes=barrier'
-SH
-# Without the admission the barrier rejects the run: the instrument sees the
-# planted counterexample.
-run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id 20300101T000000Z-unadmitted
-assert_eq "$(verdict_of "$OUT") $(run_dir_of "$OUT")" "state=done guard-exit=1 validate=FAILING $proj_admit/tmp/dev-validate-20300101T000000Z-unadmitted" \
-  "a run started without its admission fails the barrier, under the directory --run-id named" "$ERR"
-# The admission as the runtime records it, then the start under its id.
-jq -n --arg d "$proj_admit/tmp/dev-validate-$ADMIT_ID" \
-  '{stages: [{kind: "dev", round_id: "r1", start: 1, end: null}, {kind: "validate", round_id: "r1", start: 2, end: null, run_dir: $d}]}' > "$proj_admit/tmp/admitted.json"
-run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id "$ADMIT_ID"
-assert_eq "$(verdict_of "$OUT") $(run_dir_of "$OUT")" "state=done guard-exit=0 validate=pass $proj_admit/tmp/dev-validate-$ADMIT_ID" \
-  "a run started under the admitted id runs in the admitted directory and finds its admission standing" "$ERR"
-assert_eq "$(grep -c -x -F -- "dev-validate-$ADMIT_ID" "$proj_admit/tmp/validation-runs")" 1 "the run index names the admitted directory"
-run_script "$RUN" --record --run-dir "$proj_admit/tmp/dev-validate-$ADMIT_ID"
-assert_eq "$RC $(record_field verdict "$OUT")" "0 pass" "the admitted directory's record reads as any run's" "$ERR"
-# The same id again names a directory that stands: refused, nothing recorded.
-index_before="$(cat "$proj_admit/tmp/validation-runs")"
-run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id "$ADMIT_ID"
-assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: run-exists run-dir=$proj_admit/tmp/dev-validate-$ADMIT_ID" \
-  "an id whose directory already stands is refused rather than reused" "$ERR"
-assert_eq "$(cat "$proj_admit/tmp/validation-runs")" "$index_before" "and the refused start records nothing"
+# --- --run-id: the parse refusals that stay with this script -------------------
+# The start under an admitted id is the runtime's (tests/rust/validate.rs owns
+# the forward, the admitted directory and the refusal of an id no admission
+# named); the id's grammar and its place stay this script's to refuse.
+proj_admit="$(make_proj proj-admit "echo full" 20)"
 run_script "$RUN" --worktree "$proj_admit" --poll 1 --run-id not-a-run-id
 assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: invalid-run-id option=--run-id value=not-a-run-id" \
   "an id outside the stamp-and-nonce grammar is refused" "$ERR"
-run_script "$RUN" --wait --run-dir "$proj_admit/tmp/dev-validate-$ADMIT_ID" --run-id "$ADMIT_ID"
+run_script "$RUN" --wait --run-dir "$proj_admit/tmp/dev-validate-20300101T000000Z-admit" --run-id 20300101T000000Z-admit
 assert_eq "$RC $(sed -n 1p <"$ERR")" "2 dev-validate-run: option-unused option=--run-id mode=wait" \
   "--run-id outside a start is refused, never dropped" "$ERR"
 fi

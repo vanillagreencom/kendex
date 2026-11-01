@@ -22,6 +22,10 @@
 //! report envelopes, the dispatch, the intent contract every effect
 //! operation shares and the `record-outcome` frame that closes an intent.
 
+/// U6c: the acceptance's post-transition step (step6-map § A8).
+pub mod accept;
+/// U6h: the accounts judge, the view over the legacy listing and the pick.
+pub mod accounts;
 /// The admission judgement a launch and a running lane's added path run
 /// (decisions 118 (3), (4), (6), 142 (4); U5i).
 mod admission;
@@ -31,6 +35,8 @@ mod lane;
 /// The mail duty's types (U5c).
 pub mod mail;
 mod occupancy;
+/// U6b: the proof record's one reader over the validate stages.
+pub mod proof;
 pub mod prune;
 #[cfg(test)]
 #[allow(
@@ -38,11 +44,16 @@ pub mod prune;
     reason = "the rows' shared store entry point"
 )]
 mod testing;
+/// U6a: the validation run's stage transitions and the reuse judge.
+pub mod validate;
+/// U6g: a pull request's current head verified where it stands.
+pub mod verify_pr;
 /// The wake duty's types (U5g).
 pub mod wake;
 // U5d2: the wall records (decision 160 (1)).
 pub mod wall;
 
+pub use accept::{SummaryPost, accept};
 pub use admission::{AdmitPaths, Clis, ItemRead, PathsAdmitted, ReadFailure, ScopeRange};
 pub(crate) use controller::apply_adoption;
 pub use controller::{
@@ -51,11 +62,14 @@ pub use controller::{
     StartController, StopController, StopRequested, TransferRequested, admit, overseer_target,
 };
 pub use item::{
-    AcceptResult, Attempt, BeginRound, EndSource, HandoffRecorded, HandoffResumed, ReconcileRound,
-    RecordHandoff, RecordValidationAdmission, RecordVerification, Relaunch, ResultAccepted,
-    ResumeHandoff, RoundBegun, RoundKind, RoundReconciled, RunCause, RunReconciled, RunState,
-    ValidationAdmitted, Verdict, VerificationRecorded, VerifyHead,
+    AcceptResult, Attempt, BeginRound, EndSource, HandoffRecorded, HandoffResumed, OpenRun,
+    ReconcileRound, RecordHandoff, RecordValidationAdmission, RecordVerification, Relaunch,
+    ResultAccepted, ResumeHandoff, RoundBegun, RoundKind, RoundReconciled, RunCause, RunReconciled,
+    RunState, ValidationAdmitted, Verdict, VerificationRecorded, VerifyHead,
 };
+// U6l: the stop's bounded wait reads the job by the item transitions' one
+// identity reader.
+pub(crate) use item::job_ended;
 pub use lane::{
     AdoptSession, CloseOwnedResources, CloseRequested, LaneAdopted, LaneLaunched, LaneParked,
     LaneReleased, LaneReserved, LaunchLane, NoLanding, ParkLane, PhaseRecorded, RecordPhase,
@@ -63,6 +77,7 @@ pub use lane::{
 };
 pub(crate) use occupancy::CLOUD_KIND;
 pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
+pub use verify_pr::{PrVerified, VerifyPr};
 
 use std::path::Path;
 
@@ -144,6 +159,11 @@ pub struct RecordOutcome {
     /// The line a confirmed successor ran, written over the pending one.
     #[serde(default)]
     pub launch_line: Option<String>,
+    /// The fleet watch a confirmed start launched or found claimed, written
+    /// as the record's `overseer.watch` (step6-map A7); a succession
+    /// carries none and keeps the field as it stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<crate::state::WatchJob>,
     /// What the effect observed, kept on the intent for a reconciliation.
     #[serde(default)]
     pub observation: Option<Value>,
@@ -199,6 +219,10 @@ pub enum Request {
     /// Read GitHub for a pinned head, then record; the `verify` module runs
     /// it, since the reads come before the one transition it makes.
     VerifyHead(VerifyHead),
+    /// U6g: read a pull request's current head, then verify it as
+    /// `verify-head` does; `ops::verify_pr` runs it, since the reads come
+    /// before the one transition it makes.
+    VerifyPr(VerifyPr),
     ReconcileRound(ReconcileRound),
     RecordHandoff(Box<RecordHandoff>),
     ResumeHandoff(ResumeHandoff),
@@ -221,6 +245,8 @@ pub enum Request {
     AdmitPaths(Box<AdmitPaths>),
     /// The retention duty's judged records leaving the fleet state.
     PruneRecords(prune::PruneRecords),
+    /// U6a: the validation run's steps, tagged by `step`.
+    Validate(validate::Validate),
 }
 
 impl Request {
@@ -242,6 +268,7 @@ impl Request {
             Request::AcceptResult(_) => "accept-result",
             Request::RecordVerification(_) => "record-verification",
             Request::VerifyHead(_) => "verify-head",
+            Request::VerifyPr(_) => "verify-pr",
             Request::ReconcileRound(_) => "reconcile-round",
             Request::RecordHandoff(_) => "record-handoff",
             Request::ResumeHandoff(_) => "resume-handoff",
@@ -253,6 +280,7 @@ impl Request {
             Request::RecordWallPauses(_) => "record-wall-pauses",
             Request::AdmitPaths(_) => "admit-paths",
             Request::PruneRecords(_) => "prune-records",
+            Request::Validate(_) => "validate",
         }
     }
 
@@ -264,9 +292,11 @@ impl Request {
             | Request::AcceptResult(_)
             | Request::RecordVerification(_)
             | Request::VerifyHead(_)
+            | Request::VerifyPr(_)
             | Request::ReconcileRound(_)
             | Request::RecordHandoff(_)
-            | Request::ResumeHandoff(_) => Kind::Item,
+            | Request::ResumeHandoff(_)
+            | Request::Validate(_) => Kind::Item,
             Request::LaunchLane(_)
             | Request::AdoptSession(_)
             | Request::RequestTransfer(_)
@@ -351,6 +381,8 @@ pub enum Report {
     RecordWallPauses(wall::WallPausesRecorded),
     AdmitPaths(Box<PathsAdmitted>),
     PruneRecords(prune::RecordsPruned),
+    /// U6a: the validation run's step reports, tagged by `step`.
+    Validate(Box<validate::Validated>),
 }
 
 /// What `apply` returns: the report of the transition the write committed.
@@ -416,6 +448,7 @@ fn owner_conditional(request: &Request) -> bool {
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -427,7 +460,8 @@ fn owner_conditional(request: &Request) -> bool {
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
-        | Request::PruneRecords(_) => false,
+        | Request::PruneRecords(_)
+        | Request::Validate(_) => false,
     }
 }
 
@@ -557,7 +591,12 @@ pub fn item_transition(
         Request::ReconcileRound(r) => Ok(Report::ReconcileRound(item::reconcile_round(
             path, doc, r, env,
         )?)),
-        Request::VerifyHead(_) => Err(Error::OpNotTransition { op: request.name() }),
+        Request::Validate(r) => Ok(Report::Validate(Box::new(validate::apply(
+            path, doc, r, env,
+        )?))),
+        Request::VerifyHead(_) | Request::VerifyPr(_) => {
+            Err(Error::OpNotTransition { op: request.name() })
+        }
         Request::LaunchLane(_)
         | Request::AdoptSession(_)
         | Request::RequestTransfer(_)
@@ -660,9 +699,11 @@ pub fn fleet_transition(
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
-        | Request::ResumeHandoff(_) => Err(kind_error(request, path, Kind::Fleet)),
+        | Request::ResumeHandoff(_)
+        | Request::Validate(_) => Err(kind_error(request, path, Kind::Fleet)),
     }
 }
 
@@ -804,6 +845,7 @@ fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
         cause: None,
         handed_from: None,
         exclude_account: None,
+        watch: None,
         close: None,
         phase: None,
         obligations: None,
@@ -1001,12 +1043,13 @@ fn record_outcome(
     // fleet-log row the legacy `die_status` appended, under the same kind
     // and item, and the notice `owed` on the intent, so the send that
     // follows has a record to continue from and a repeated outcome owes
-    // nothing again. A start's intent and a lane's take no row.
+    // nothing again. A start held on its watch takes the same (decision 184
+    // (6)); a lane's intent takes no row.
     if let Some(notice) = &r.notice
         && intent.notice.is_none()
         && matches!(
             intent.op,
-            EffectOp::RequestTransfer | EffectOp::StopController
+            EffectOp::RequestTransfer | EffectOp::StopController | EffectOp::StartController
         )
     {
         state::array_mut(path, doc, "fleet_log")?.push(serde_json::json!({
@@ -1018,6 +1061,7 @@ fn record_outcome(
         intent.notice = Some(Notice {
             key: notice.key.clone(),
             text: notice.text.clone(),
+            to: notice.to.clone(),
             owner: state::NOTICE_OWED.to_owned(),
         });
     }
@@ -1080,6 +1124,7 @@ mod tests {
             (
                 Request::BeginRound(BeginRound {
                     kind: RoundKind::Dev,
+                    body_revision: None,
                 }),
                 &fleet_path,
                 Kind::Item,
@@ -1103,6 +1148,7 @@ mod tests {
             &path,
             &Request::BeginRound(BeginRound {
                 kind: RoundKind::Dev,
+                body_revision: None,
             }),
         )
         .unwrap_err();
@@ -1657,6 +1703,7 @@ mod tests {
             &mut a,
             &Request::BeginRound(BeginRound {
                 kind: RoundKind::Dev,
+                body_revision: None,
             }),
             &env(),
         )
@@ -1669,6 +1716,7 @@ mod tests {
             &mut b,
             &Request::BeginRound(BeginRound {
                 kind: RoundKind::Dev,
+                body_revision: None,
             }),
             &other,
         )
@@ -1691,6 +1739,7 @@ mod tests {
             (
                 Request::BeginRound(BeginRound {
                     kind: RoundKind::Review,
+                    body_revision: None,
                 }),
                 "begin-round",
             ),
@@ -1716,6 +1765,7 @@ mod tests {
                     window: None,
                     tmux_session: None,
                     launch_line: None,
+                    watch: None,
                     observation: None,
                     while_owner: None,
                     lane_keys: None,

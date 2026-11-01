@@ -34,6 +34,14 @@ pub const SPAN: usize = 64;
 /// the row's `message` and `error_details`.
 const PROMPT_TOO_LONG: [&str; 1] = ["prompt is too long"];
 
+/// A Pi lane's ordinary turn end, which an idle verdict carries no cause
+/// for: Pi's own `stop`, which both providers write for a finished turn
+/// (`pi-claude-bridge/src/assistant-stream.ts` `mapStopReason`,
+/// `pi-codex-minimal-tools/src/providers/openai-responses-shared.ts`
+/// `mapStopReason`), and Anthropic's raw `end_turn` the bridge maps to it.
+/// Every other word is carried as the harness wrote it.
+const ORDINARY_END: [&str; 2] = ["stop", "end_turn"];
+
 /// One session row as this reader takes it: the fields the two verdicts
 /// read, each absent where the row carries none.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -100,8 +108,12 @@ pub enum SessionVerdict {
 pub enum LaneVerdict {
     /// A PreToolUse row, or a Stop whose carrier counts working agents.
     Working,
-    /// A Stop row that ended no error, or an error that is no limit.
-    Idle,
+    /// A Stop row that ended no error, or an error that is no limit;
+    /// `cause` is the row's `stop_reason` word where the harness wrote
+    /// one that is not its ordinary end ([`ORDINARY_END`]; Pi's `length`
+    /// is a turn its output limit cut), so the stop's cause reaches the
+    /// line the overseer reads and a finished round carries none.
+    Idle { cause: Option<String> },
     /// A Stop row whose error message is the account's limit.
     Walled,
 }
@@ -232,15 +244,24 @@ pub fn judge_lane(row: &Row) -> Reading<LaneVerdict> {
             return Reading::Live(LaneVerdict::Working);
         }
     }
+    let idle = || {
+        Reading::Live(LaneVerdict::Idle {
+            cause: row
+                .stop_reason
+                .as_deref()
+                .filter(|word| !ORDINARY_END.contains(word))
+                .map(str::to_owned),
+        })
+    };
     match (event, row.stop_reason.as_deref()) {
         ("PreToolUse", _) => Reading::Live(LaneVerdict::Working),
         ("Stop", Some("error")) => {
             match observe::limit_banner(row.message.as_deref().unwrap_or("")) {
                 Some(_) => Reading::Live(LaneVerdict::Walled),
-                None => Reading::Live(LaneVerdict::Idle),
+                None => idle(),
             }
         }
-        ("Stop", Some(_) | None) => Reading::Live(LaneVerdict::Idle),
+        ("Stop", Some(_) | None) => idle(),
         (_, _) => Reading::Unreadable {
             cause: "lane-row-unjudged",
         },
@@ -320,10 +341,19 @@ mod tests {
     }
 
     /// The Pi lane verdict table. Defect: a carrier's null count read as
-    /// an idle lane, or a row the table cannot judge read as one.
+    /// an idle lane, or a row the table cannot judge read as one; an idle
+    /// verdict that drops the row's `stop_reason`, so a turn the output
+    /// limit cut (`length`) reads as a finished one, or that carries the
+    /// harness's ordinary end (`stop`, `end_turn`), so every finished
+    /// round reads as a cause.
     #[test]
     fn the_lane_verdict_reads_working_idle_and_walled_and_refuses_what_it_cannot_judge() {
-        let rows: [(&str, Reading<LaneVerdict>); 7] = [
+        let idle = |cause: Option<&str>| {
+            Reading::Live(LaneVerdict::Idle {
+                cause: cause.map(str::to_owned),
+            })
+        };
+        let rows: [(&str, Reading<LaneVerdict>); 11] = [
             (
                 r#"{"harness":"pi","event":"PreToolUse"}"#,
                 Reading::Live(LaneVerdict::Working),
@@ -334,7 +364,23 @@ mod tests {
             ),
             (
                 r#"{"harness":"pi","event":"Stop","working_agents":0}"#,
-                Reading::Live(LaneVerdict::Idle),
+                idle(None),
+            ),
+            (
+                r#"{"harness":"pi","event":"Stop","stop_reason":"stop","working_agents":0}"#,
+                idle(None),
+            ),
+            (
+                r#"{"harness":"pi","event":"Stop","stop_reason":"end_turn"}"#,
+                idle(None),
+            ),
+            (
+                r#"{"harness":"pi","event":"Stop","stop_reason":"length","working_agents":0}"#,
+                idle(Some("length")),
+            ),
+            (
+                r#"{"harness":"pi","event":"Stop","stop_reason":"toolUse","working_agents":0}"#,
+                idle(Some("toolUse")),
             ),
             (
                 r#"{"harness":"pi","event":"Stop","working_agents":null}"#,
@@ -348,7 +394,7 @@ mod tests {
             ),
             (
                 r#"{"harness":"pi","event":"Stop","stop_reason":"error","message":"tool failed"}"#,
-                Reading::Live(LaneVerdict::Idle),
+                idle(Some("error")),
             ),
             (
                 r#"{"harness":"pi","event":"SessionStart"}"#,

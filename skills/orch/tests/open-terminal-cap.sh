@@ -135,13 +135,30 @@ OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
 # The orch runtime every launch here asks, named by ORCH_RUNTIME_CLI for the
 # shipped script and each mutant copy: the admission is answered admitted,
-# this suite being the cap's, and `state inspect --fleet` from the reply a
-# row plants in $OT_RUNTIME_REPLY; with no reply planted the stub is a
+# this suite being the cap's; a fleet relaunch's room (`accounts pick`) is
+# this suite's `lanes` stub asked the same question, its answer wrapped as
+# the verb's reply with the exit by number, `--replaces` dropped as the
+# legacy judge has no such word; and `state inspect --fleet` from the reply
+# a row plants in $OT_RUNTIME_REPLY; with no reply planted the stub is a
 # runtime not set up, exit 69.
 cat > "$TMP_ROOT/orch-runtime" <<'EOF'
 #!/usr/bin/env bash
 case " $* " in
   *' admit '*) echo '{"ok":true,"result":{"touched":[],"in_scope":[],"rebase":[],"recorded":false}}'; exit 0 ;;
+  *' accounts pick '*)
+    args=() skip=false
+    for arg in "$@"; do
+      if [[ "$skip" == true ]]; then skip=false; continue; fi
+      case "$arg" in
+        --state-dir | --replaces) skip=true ;;
+        accounts | pick | --fleet) ;;
+        *) args+=("$arg") ;;
+      esac
+    done
+    rc=0
+    out="$("$LANES_CLI" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
+    jq -cn --argjson rc "$rc" --arg out "$out" '{ok: true, result: {exit: $rc, record: (try ($out | fromjson) catch null)}}'
+    exit 0 ;;
 esac
 [[ -n "${OT_RUNTIME_REPLY:-}" ]] || { printf 'orch-runtime: setup-required key=none\n' >&2; exit 69; }
 cat -- "$OT_RUNTIME_REPLY"

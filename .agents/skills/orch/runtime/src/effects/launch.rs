@@ -756,6 +756,7 @@ mod tests {
             surface: None,
             over_cap: None,
             exclude_account: None,
+            judge_account: false,
             brief_file: None,
             repo_dir: None,
             scope_range: None,

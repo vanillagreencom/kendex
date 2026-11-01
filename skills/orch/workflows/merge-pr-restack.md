@@ -101,7 +101,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
 
    This command publishes nothing. Its timing write is advisory (`worktree-push --help`). A pass or a skip takes the proof read below with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
-   **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head. Read the current head's recorded skip. `dev-validate-run --help` owns the proof rule and its local base resolution. A reused tree alone supplies no passing validation. This read starts no validation:
+   **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head. Read the current head's recorded skip. Where one stands, ask the runtime whether the item's proof rows prove the pushed head: a pass at its tree over the new base, or the run the skip is equivalent to, read by the head (`restack-skip` owns the equivalence; the reader takes the skip's validated run as the tree's). A range pass counts where the project declares a range command and no CI context; a full pass covers the tree whole. A reused tree alone supplies no passing validation. This read starts no validation:
 
    ```bash
    if ! RESTACK_SKIPS="$(.agents/skills/orch/scripts/workflow-state get [STATE_KEY] '.restack_skips // []')"; then
@@ -111,11 +111,14 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
      exit 1
    fi
    if [[ -n "$RESTACK_PROOF_HEAD" ]]; then
-     .agents/skills/orch/scripts/dev-validate-run --resolve-mode --require-proof "$RESTACK_PROOF_HEAD" --expected-head [PREPARED_HEAD] --worktree [WORKTREE_PATH] || exit $?
+     PREPARED_TREE="$(git -C [WORKTREE_PATH] rev-parse "[PREPARED_HEAD]^{tree}")"
+     PREPARED_BASE="$(git -C [WORKTREE_PATH] merge-base [PREPARED_HEAD] origin/[BASE_BRANCH])"
+     RESTACK_PROOF="$(.agents/skills/orch/scripts/orch-runtime read-proof --item [STATE_KEY] --need restack --tree "$PREPARED_TREE" --head [PREPARED_HEAD] --base "$PREPARED_BASE")" || exit $?
+     jq -e '.result.proof != "missing"' <<<"$RESTACK_PROOF" >/dev/null || exit 1
    fi
    ```
 
-   A nonzero exit hands back with the proof result and keeps the PR unarmed. This includes submission's steps 1-3 route, before creation or update can arm the queue. Keep the owner's `validation-proof=` line with the merge decision. A CI answer stays pending until the existing exact-head CI wait or queue proves it.
+   A nonzero exit hands back with the proof result and keeps the PR unarmed. This includes submission's steps 1-3 route, before creation or update can arm the queue. Keep the reader's answer, its `proof` word and the rows it names, with the merge decision. A `pending` answer stays pending until the existing exact-head CI wait or queue proves it.
 
 4. The head changed. Re-confirm the gate mode, then return to `merge-pr.md` § 5 step 1 to read the new exact head, repeat its proof read, wait for CI and take the merge route again.
 

@@ -1753,7 +1753,7 @@ fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
         "completed_at": "2026-01-29T15:21:00Z", "outcome": "failed",
         "observation": {"retired": false, "note": "job-launch-failed", "cause": "job-unit: launch-failed status=7"},
         "notice": {"key": "job-launch-failed", "text": text, "owner": "owed"},
-        "obligations": {"standing": [], "discharged": [{"obligation": {"kind": "job-sidecar"}, "by": "launch-failed:7", "role": "job"}], "revision": 2}
+        "obligations": {"standing": [], "discharged": [{"obligation": {"kind": "job-sidecar", "record": job_record(&runner, id)}, "by": "launch-failed:7", "role": "job"}], "revision": 2}
     }]);
     runner.write_fleet(&fleet);
     let first = reply(&runner.run(&["reconcile", "--fleet"]));
@@ -1788,6 +1788,17 @@ fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
         1,
         "a sent notice is never sent again: {calls}"
     );
+}
+
+/// The job-unit record of the intent `id`'s detached job, the address its
+/// sidecar obligation records (decision 184 (6)).
+fn job_record(runner: &Runner, id: &str) -> String {
+    runner
+        .state_dir()
+        .join("intents")
+        .join(format!("{id}.job"))
+        .display()
+        .to_string()
 }
 
 fn owner_notices(mail_log: &Path) -> usize {
@@ -1825,7 +1836,7 @@ fn a_live_request_with_an_owed_notice_proceeds() {
         "completed_at": "2026-01-29T15:21:00Z", "outcome": "failed",
         "observation": {"retired": false, "note": "job-launch-failed", "cause": "job-unit: launch-failed status=7"},
         "notice": {"key": "job-launch-failed", "text": text, "owner": "owed"},
-        "obligations": {"standing": [], "discharged": [{"obligation": {"kind": "job-sidecar"}, "by": "launch-failed:7", "role": "job"}], "revision": 2}
+        "obligations": {"standing": [], "discharged": [{"obligation": {"kind": "job-sidecar", "record": job_record(&runner, id)}, "by": "launch-failed:7", "role": "job"}], "revision": 2}
     }]);
     runner.write_fleet(&fleet);
     let request = transfer_request(&server, runner.state_dir());
@@ -2987,7 +2998,7 @@ fn a_launcher_record_with_a_status_word_settles_the_job() {
     let mut fleet = runner.fleet();
     fleet["intents"] = json!([{
         "id": id, "op": "stop-controller", "target": "overseer:3", "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started",
-        "obligations": {"standing": [{"kind": "job-sidecar", "role": "job"}], "discharged": [], "signalled": false},
+        "obligations": {"standing": [{"kind": "job-sidecar", "record": job_record(&runner, id), "role": "job"}], "discharged": [], "signalled": false},
     }]);
     runner.write_fleet(&fleet);
     let record = runner.state_dir().join("intents").join(format!("{id}.job"));
@@ -3096,4 +3107,398 @@ fn fixtures_held_launcher() -> String {
         "",
     ]
     .join("\n")
+}
+
+/// The world a start's fleet watch launches into, in the runner's state
+/// directory `dir`: `bin`, for the op's `PATH`, holds the cutover fakes as
+/// the user manager (`systemd-run` runs a unit's argv under setsid and
+/// records its pid under `bin/units/<unit>`) and the `gh` fixture that
+/// answers the entry's credential ladder; beside it the runtime wrapper the
+/// entry execs (the test binary under the entry's name, as the shipped
+/// wrapper names it) and the report judge fixture. The op's environment
+/// reaches the job through `job-unit.sh launch`, which passes its caller's.
+/// Returns `bin` and the environment the op carries for the watch.
+fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for fake in ["systemd-run", "systemctl", "loginctl"] {
+        let to = bin.join(fake);
+        std::fs::copy(fixtures().join("cutover-fakes").join(fake), &to).unwrap();
+        std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::os::unix::fs::symlink(fixtures().join("gh-auth-fixture/gh"), bin.join("gh")).unwrap();
+    let report = dir.join("oversee-report");
+    std::os::unix::fs::symlink(
+        fixtures().join("oversee-report-fixture/oversee-report"),
+        &report,
+    )
+    .unwrap();
+    let wrapper = dir.join("orch-runtime");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/bash\nname=\"${{ORCH_RUNTIME_NAME:-$0}}\"\nunset ORCH_RUNTIME_NAME\nexec -a \"$name\" \"{}\" --no-private-env \"$@\"\n",
+            binary().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let env = vec![
+        (
+            "OVERSEE_WATCH_RUNTIME".to_owned(),
+            wrapper.display().to_string(),
+        ),
+        ("ORCH_SECURITY_ALERTS".to_owned(), "off".to_owned()),
+        (
+            "OVERSEE_WATCH_REPORT".to_owned(),
+            report.display().to_string(),
+        ),
+        ("ORCH_STATE_DIR".to_owned(), dir.display().to_string()),
+    ];
+    (bin, env)
+}
+
+/// The workflow block's entry line for the fleet state `state`, the words a
+/// `start-controller` request's `watch` carries: the shipped entry beside
+/// these tests, then its arguments as `workflows/oversee.md` § 4 spells them.
+fn watch_words(state: &Path) -> Value {
+    let entry = job_unit()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("oversee-watch");
+    json!([
+        entry.display().to_string(),
+        "--repeat",
+        "60",
+        "--state",
+        state.display().to_string(),
+        "--interval",
+        "240",
+        "--since",
+        "2026-01-01T00:00:00Z",
+    ])
+}
+
+/// Step6-map A7 row (1), decision 133 (staying alive): the fleet's watch
+/// exists whenever its controller does, started by the record's owner.
+/// Defect: a start that publishes a controller with no watch, or one that
+/// reads a refused launch as a watch started. The request carries the
+/// block's words; the effect launches them through the real `job-unit.sh
+/// launch` with the cutover fakes as the user manager once the runner is
+/// read at its composer, and the row reads the claim the runtime wrote,
+/// the record's `overseer.watch` naming the unit the manager started, and
+/// the job discharged by that claim. A launcher that refuses leaves the
+/// start `unconfirmed` naming the launch, the record naming no controller
+/// and the runner standing for the reconcile.
+#[test]
+fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin.clone());
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+            "watch": watch_words(&state),
+        }),
+        &env,
+    ));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["generation"], 1, "{overseer}");
+    assert_eq!(overseer["watch"]["runner"], "systemd", "{overseer}");
+    let unit = overseer["watch"]["unit"].as_str().unwrap().to_owned();
+    assert!(unit.starts_with("orch-watch-"), "{unit}");
+    assert!(
+        bin.join("units").join(&unit).is_file(),
+        "the manager started the unit the record names"
+    );
+    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+    let claim = orch_runtime::watch::claim::read(&paths)
+        .unwrap()
+        .expect("the runtime claimed the fleet state");
+    assert!(
+        claim.start.is_some() && live(claim.pid),
+        "a live runtime claim: {claim:?}"
+    );
+    let intent = runner.fleet()["intents"][0].clone();
+    assert_eq!(
+        discharged_by(&intent, "watch-claimed").len(),
+        1,
+        "the job is the fleet's once its claim stands: {intent}"
+    );
+    let out = runner.run(&["watch", "stop", "--file", &state.display().to_string()]);
+    assert!(out.status.success(), "watch stop: {}", stderr(&out));
+    wait_until("the stopped watch ended", Duration::from_secs(20), || {
+        !live(claim.pid)
+    });
+
+    // The launcher refuses: nothing started, the start held with the cause.
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let job_unit = fixtures().join("job-unit-fail/job-unit");
+    let job_unit = job_unit.display().to_string();
+    let mail_log = runner.state_dir().join("lane-mail.log");
+    let snapshot = runner.state_dir().join("at-notice.json");
+    let mailbox = snapshot_mailbox(&runner, &snapshot, &mail_log);
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+            "watch": watch_words(&state),
+        }),
+        &[
+            ("ORCH_JOB_UNIT", &job_unit),
+            ("JOB_UNIT_FAIL_LINE", "job-unit: launch-failed status=1"),
+            ("LANE_MAIL_CLI", mailbox.to_str().unwrap()),
+        ],
+    ));
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "watch-launch-failed",
+        "{report}"
+    );
+    let overseer = runner.fleet()["overseer"].clone();
+    assert!(
+        overseer.get("generation").is_none(),
+        "no controller is published without its watch: {overseer}"
+    );
+    assert!(overseer.get("watch").is_none(), "{overseer}");
+    assert!(
+        overseer["pending"]["runner"]["pane"].is_string(),
+        "the runner stands for the reconcile: {overseer}"
+    );
+    assert!(
+        orch_runtime::watch::claim::read(&orch_runtime::watch::claim::Paths::of(&state).unwrap())
+            .unwrap()
+            .is_none(),
+        "nothing claimed the fleet state"
+    );
+    // Decision 184 (6): the hold owes the owner one notice, recorded `owed`
+    // with the outcome before the send runs, sent once and marked.
+    let intent = runner.fleet()["intents"][0].clone();
+    let text = format!(
+        "orch-runtime: watch-launch-failed op=start-controller intent={} outcome=unconfirmed cause={}",
+        intent["id"].as_str().unwrap(),
+        intent["observation"]["cause"].as_str().unwrap()
+    );
+    assert_eq!(intent["notice"]["key"], "watch-launch-failed", "{intent}");
+    assert_eq!(intent["notice"]["text"], text, "{intent}");
+    assert_eq!(intent["notice"]["owner"], "sent", "{intent}");
+    let at_send: Value =
+        serde_json::from_str(&std::fs::read_to_string(&snapshot).unwrap()).unwrap();
+    assert_eq!(
+        at_send["intents"][0]["outcome"], "unconfirmed",
+        "the hold was recorded before the send: {at_send}"
+    );
+    assert_eq!(
+        at_send["intents"][0]["notice"]["owner"], "owed",
+        "{at_send}"
+    );
+    assert_eq!(owner_notices(&mail_log), 1, "sent once");
+    let calls = std::fs::read_to_string(&mail_log).unwrap();
+    assert!(
+        calls.lines().any(|l| l == format!("notice-text {text}")),
+        "{calls}"
+    );
+    let log = runner.fleet()["fleet_log"].clone();
+    assert_eq!(
+        log.as_array().unwrap().last().unwrap()["text"],
+        text,
+        "{log}"
+    );
+}
+
+/// The mailbox CLI of the owner-notice assertions: a `notice` copies the
+/// runner's fleet file to `snapshot` as it stands at the call and logs the
+/// call's argv and the notice's first line to `log`, so a row reads what
+/// the record said when the send ran. Written beside the fleet state,
+/// executable; the path.
+fn snapshot_mailbox(runner: &Runner, snapshot: &Path, log: &Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let fleet = runner.state_dir().join("workflow-state-oversee.json");
+    let script = [
+        "#!/bin/bash".to_owned(),
+        "set -u".to_owned(),
+        format!("printf '%s\\n' \"$*\" >> '{}'", log.display()),
+        "[ \"${1:-}\" = notice ] || exit 0".to_owned(),
+        format!("cp -- '{}' '{}'", fleet.display(), snapshot.display()),
+        "file=\"\"".to_owned(),
+        "while [ $# -gt 0 ]; do case \"$1\" in --file) file=${2:-}; shift ;; esac; shift; done"
+            .to_owned(),
+        format!(
+            "{{ printf 'notice-text '; sed -n 1p -- \"$file\"; }} >> '{}'",
+            log.display()
+        ),
+        String::new(),
+    ]
+    .join("\n");
+    let path = runner.state_dir().join("lane-mail");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// Decision 184 (6), R-U6-1 Copilot 3: the start's process dies between the
+/// watch's launch and the read of the launcher's record, leaving the sidecar
+/// obligation standing with the record's address and the record naming the
+/// live job. Defect: the reconcile reading the sidecar at the intent's own
+/// job address, finding nothing there, and launching a second watch over the
+/// first. The launcher is a fixture that writes the record naming a process
+/// the row owns, kills its caller and answers. The reconcile then reads the
+/// sidecar at its recorded address three ways: unreadable (the record made a
+/// directory) holds the start, nothing launched; live (the record restored)
+/// holds it with the job's identity standing in the sidecar's place, nothing
+/// launched; the job ended reads gone, after which the launcher is asked
+/// again, once. The first hold owes the owner's notice; the later ones owe
+/// nothing again.
+#[test]
+fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch() {
+    use std::os::unix::process::ExitStatusExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let watch = Owned::sleep();
+    let watch_pid = watch.pid().to_string();
+    let watch_start = watch.start();
+    let log = runner.state_dir().join("job-unit.log");
+    let crash = fixtures().join("job-unit-crash/job-unit");
+    let mut op = runner.spawn_op_fleet(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+            "watch": watch_words(&state),
+        }),
+        &[
+            ("ORCH_JOB_UNIT", crash.to_str().unwrap()),
+            ("JOB_UNIT_CRASH_PID", &watch_pid),
+            ("JOB_UNIT_CRASH_START", &watch_start),
+            ("JOB_UNIT_LOG", log.to_str().unwrap()),
+        ],
+        runner.state_dir(),
+    );
+    let status = op.wait().unwrap();
+    assert_eq!(
+        status.signal(),
+        Some(9),
+        "the launcher ended the start: {status:?}"
+    );
+    let record = runner.state_dir().join("oversee-watch.runner");
+    let record_s = record.display().to_string();
+    let intent = runner.fleet()["intents"][0].clone();
+    assert_eq!(intent["outcome"], "not-started", "{intent}");
+    let standing = |intent: &Value| {
+        intent["obligations"]["standing"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert!(
+        standing(&intent)
+            .iter()
+            .any(|o| o["kind"] == "job-sidecar" && o["record"] == record_s),
+        "the sidecar stands with its address: {intent}"
+    );
+    let launched = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with("launch "))
+            .count()
+    };
+    assert_eq!(launched(), 1, "the crashed start's own launch");
+    runner.env = vec![
+        (
+            "ORCH_JOB_UNIT".to_owned(),
+            fixtures()
+                .join("job-unit-fail/job-unit")
+                .display()
+                .to_string(),
+        ),
+        (
+            "JOB_UNIT_FAIL_LINE".to_owned(),
+            "job-unit: launch-failed status=1".to_owned(),
+        ),
+        ("JOB_UNIT_LOG".to_owned(), log.display().to_string()),
+    ];
+    // Unreadable: a directory where the record stands.
+    std::fs::remove_file(&record).unwrap();
+    std::fs::create_dir(&record).unwrap();
+    let report = runner.reconcile_one();
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "watch-unclaimed",
+        "{report}"
+    );
+    assert_eq!(
+        report["intent"]["observation"]["job"], "unread",
+        "an unreadable record holds the job unread: {report}"
+    );
+    assert_eq!(launched(), 1, "an unreadable record is no reason to launch");
+    let intent = runner.fleet()["intents"][0].clone();
+    assert_eq!(
+        intent["notice"]["key"], "watch-unclaimed",
+        "the hold owes the owner its notice: {intent}"
+    );
+    assert_eq!(intent["notice"]["owner"], "sent", "{intent}");
+    // Live: the record restored names the job the row holds.
+    std::fs::remove_dir(&record).unwrap();
+    std::fs::write(
+        &record,
+        format!("runner=setsid\npid={watch_pid}\nstart={watch_start}\n"),
+    )
+    .unwrap();
+    let report = runner.reconcile_one();
+    assert_eq!(
+        report["intent"]["observation"]["note"], "watch-unclaimed",
+        "{report}"
+    );
+    assert_eq!(report["intent"]["observation"]["job"], "setsid", "{report}");
+    assert_eq!(
+        launched(),
+        1,
+        "a live job is the watch's start; nothing launches over it"
+    );
+    let intent = runner.fleet()["intents"][0].clone();
+    assert_eq!(discharged_by(&intent, "sidecar-read").len(), 1, "{intent}");
+    assert!(
+        standing(&intent)
+            .iter()
+            .any(|o| o["kind"] == "job-group" && o["pid"] == watch.pid()),
+        "the job's identity stands in the sidecar's place: {intent}"
+    );
+    // Gone: the job ended, read so by its identity, and the launcher is
+    // asked once more.
+    drop(watch);
+    let report = runner.reconcile_one();
+    assert_eq!(
+        report["intent"]["observation"]["note"], "watch-launch-failed",
+        "{report}"
+    );
+    assert_eq!(launched(), 2, "one more launch, for the job read gone");
+    let intent = runner.fleet()["intents"][0].clone();
+    assert_eq!(discharged_by(&intent, "job-exited").len(), 1, "{intent}");
+    assert_eq!(
+        intent["notice"]["key"], "watch-unclaimed",
+        "one notice per intent: {intent}"
+    );
 }

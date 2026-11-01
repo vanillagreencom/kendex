@@ -226,6 +226,11 @@ observe() {
       # listing order, so a row pins which reading each figure came from and
       # not merely that two rows exist.
       through) value="$(json '[.[] | .alias + ":" + (.measured_through // "absent")] | join(",")')" ;;
+      # Every listed row as `<alias>:<credential>=<the provider's account words
+      # it carries, `+`-joined, or none>`, so a row pins that a word reaches
+      # the host record and no other, and that an absent word stays absent
+      # rather than reading as a default.
+      words) value="$(json '[.[] | .alias + ":" + (.measured_through // "absent") + "=" + ([keys[] | select(IN("plan_ends", "reserved", "seat"))] | join("+") | if . == "" then "none" else . end)] | join(",")')" ;;
       # The first keyed line on stderr as `key,field=value,...`, so a row pins
       # the refusal it is about rather than the English under it. `expect`
       # splits on whitespace, hence the commas.
@@ -404,7 +409,16 @@ table \
   "pick returns the lane with the most headroom as a launch env prefix||pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "pick --json returns the whole lane record and the qualifying set size||pick --harness claude --json|alias=claude qualifying_count=2" \
   "excluding the caller leaves the one other qualifying account|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude:$H/.neutralclaude|pick --harness claude --exclude-lane $H/.claude --json|alias=eclaude qualifying_count=1" \
+  "two --exclude-lane dirs are both omitted and the third account is judged alone|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude:$H/.neutralclaude|pick --harness claude --max-pct 96 --exclude-lane $H/.claude --exclude-lane $H/.eclaude --json|alias=neutralclaude qualifying_count=1" \
   "pick exits 3 when no lane is under the threshold||pick --harness claude --max-pct 15|rc=3"
+# Control: the option keeping its last value, as it did before it
+# accumulated, drops the first exclusion, which is then the pick.
+lanes_mutant mutant-exclude-last-wins lanes 'EXCLUDE_LANE="\${EXCLUDE_LANE:+.*}\$1"' 'EXCLUDE_LANE="$1"'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-exclude-last-wins/scripts/lanes"
+table \
+  "control: an --exclude-lane that keeps its last value drops the first exclusion and picks it|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude:$H/.neutralclaude|pick --harness claude --max-pct 96 --exclude-lane $H/.claude --exclude-lane $H/.eclaude --json|alias=claude qualifying_count=2"
+LANES="$LANES_PATCHED"
 
 echo "=== a weekly wall the harness banner stated reads walled until its reset ==="
 # A usage reading can show room on an account its harness has walled: the
@@ -2948,6 +2962,24 @@ lanes_mutant mutant-host-detail-leaks lanes 'status="ok"; detail=""; ' 'status="
 LANES="$TMP_ROOT/mutant-host-detail-leaks/scripts/lanes"
 table \
   "control: without the per-row reset the measured account carries the refused one's 403|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-refused-then-ok.tsv|host-accounts --harness claude --json|rc=0 eclaude.status=ok eclaude.detail=http-403-permission_error"
+LANES="$LANES_PATCHED"
+
+echo "=== list: the provider's account words reach the host record as written, judged by nobody here ==="
+# The runtime's accounts judge reads `plan_ends`, `reserved` and `seat` off
+# the listing row (ops/accounts.rs); a decoder that dropped them would leave
+# the judge reading a provider reservation or a stated plan end from nowhere,
+# and a listing that defaulted them would hand it this parser's word for the
+# provider's. The local reading never carries them: they are the provider's.
+printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tplan-ends=2027-01-31\treserved=1\tseat=1\n' \
+  "$H/.claude" > "$TMP_ROOT/accounts-words.tsv"
+table \
+  "a provider row's plan-ends, reserved and seat are carried on the host record as written|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-words.tsv|list --harness claude --json|words=claude:local=none,claude:host=plan_ends+reserved+seat last.plan_ends=2027-01-31 last.reserved=1 last.seat=1" \
+  "a provider row naming none of the words leaves the host record without them|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|words=claude:local=none,claude:host=none"
+# Control: without the pass-through the words stop at the decoder.
+lanes_mutant mutant-provider-words lanes '+ provider_words(\$v\[29\]; \$v\[30\]; \$v\[4\])' '+ {}'
+LANES="$TMP_ROOT/mutant-provider-words/scripts/lanes"
+table \
+  "control: without the pass-through the provider's words leave the listing|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-words.tsv|list --harness claude --json|words=claude:local=none,claude:host=none"
 LANES="$LANES_PATCHED"
 
 # Live credentials keep login renewal out of the optional-verb comparison.

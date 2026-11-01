@@ -32,7 +32,8 @@ use super::{Operation, Reading, Word};
 use crate::effects::{POLL, Run, read_intent, transfer};
 use crate::error::{Error, Result};
 use crate::ops::{self, Applied, ClaimIntent, RecordProgress, Request};
-use crate::state::{self, EffectOp, Intent, Notice, Obligation, Owner, Role};
+use crate::state::{self, EffectOp, Intent, Notice, Obligation, Owner, Role, WatchJob};
+use crate::watch::claim;
 
 /// What the caller of a transfer or a stop gets back at once: the effect
 /// runs in a detached job that took the intent's owner lease, so retiring
@@ -62,6 +63,52 @@ const NOTICE_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the user manager is given to answer for a unit's state.
 const UNIT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The launcher's record of the fleet watch's start, beside the fleet state
+/// (`lib/watch-pid.sh`'s `oversee-watch.runner`): written whole before the
+/// start, read here as the job's sidecar.
+const WATCH_RUNNER_FILE: &str = "oversee-watch.runner";
+/// The watch's stderr file beside the fleet state, appended on every start
+/// (`workflows/oversee.md` § 4).
+const WATCH_ERR_FILE: &str = "oversee-watch.err";
+
+/// What the start's watch step found (step6-map A7): the watch claimed, by
+/// this run's launch or by an earlier start; the launcher refused before it
+/// started anything; a job started that has not claimed within the bound,
+/// standing in the set for the reconcile; or a claim the runtime could not
+/// read, never acted on.
+pub(in crate::effects) enum WatchStart {
+    Claimed(WatchJob),
+    Refused { cause: String },
+    Unclaimed { job: String },
+    Unreadable { cause: String },
+}
+
+/// The notes a start held on its watch carries, each the key of the owner
+/// notice the hold owes (decision 184 (6)).
+const WATCH_LAUNCH_FAILED: &str = "watch-launch-failed";
+const WATCH_UNCLAIMED: &str = "watch-unclaimed";
+const WATCH_CLAIM_UNREADABLE: &str = "watch-claim-unreadable";
+
+impl WatchStart {
+    /// The watch the start publishes, or what holds it: the note the hold
+    /// is recorded under and the observation it carries.
+    pub(in crate::effects) fn held(self) -> std::result::Result<WatchJob, (&'static str, Value)> {
+        match self {
+            WatchStart::Claimed(job) => Ok(job),
+            WatchStart::Refused { cause } => Err((WATCH_LAUNCH_FAILED, json!({"cause": cause}))),
+            WatchStart::Unclaimed { job } => Err((WATCH_UNCLAIMED, json!({"job": job}))),
+            WatchStart::Unreadable { cause } => {
+                Err((WATCH_CLAIM_UNREADABLE, json!({"cause": cause})))
+            }
+        }
+    }
+
+    /// Whether `note` is one a start held on its watch carries.
+    fn is_hold_note(note: &str) -> bool {
+        [WATCH_LAUNCH_FAILED, WATCH_UNCLAIMED, WATCH_CLAIM_UNREADABLE].contains(&note)
+    }
+}
+
 /// Which controller operation a job runs, and the words its start replies
 /// and its job-unit name carry.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,6 +133,7 @@ impl Op {
             | Request::AcceptResult(_)
             | Request::RecordVerification(_)
             | Request::VerifyHead(_)
+            | Request::VerifyPr(_)
             | Request::ReconcileRound(_)
             | Request::RecordHandoff(_)
             | Request::ResumeHandoff(_)
@@ -98,7 +146,8 @@ impl Op {
             | Request::RecordDirectiveSend(_)
             | Request::RecordWallPauses(_)
             | Request::AdmitPaths(_)
-            | Request::PruneRecords(_) => None,
+            | Request::PruneRecords(_)
+            | Request::Validate(_) => None,
         }
     }
 
@@ -275,7 +324,7 @@ fn launch_job(
         "--intent",
         id,
     ];
-    let line = match operation.ask_job(&args)? {
+    let line = match operation.ask_job(&record_path, &args)? {
         Asked::Started(line) => line,
         Asked::Refused(reply) => {
             operation.read_sidecar(&record_path, &reply)?;
@@ -393,13 +442,14 @@ fn fail(
 }
 
 impl Operation<'_> {
-    /// Ask the job launcher for the operation's job: the launcher's unread
-    /// record is an obligation from this moment (decisions 111 (5), 115
-    /// (B)), written before the launcher is asked, so a contender that reads
-    /// a dead owner finds the job the record names. A repeated ask extends
-    /// the recorded set (decision 120 (5)).
-    fn ask_job(&mut self, args: &[&str]) -> Result<Asked> {
-        self.obligations.ask_job();
+    /// Ask the job launcher for the operation's job, its record at `record`:
+    /// the launcher's unread record is an obligation from this moment
+    /// (decisions 111 (5), 115 (B)), written with its address before the
+    /// launcher is asked, so a contender that reads a dead owner finds the
+    /// job the record names, at the address the ask named (decision 184
+    /// (6)). A repeated ask extends the recorded set (decision 120 (5)).
+    fn ask_job(&mut self, record: &Path, args: &[&str]) -> Result<Asked> {
+        self.obligations.ask_job(record);
         self.write()?;
         let job_unit = self.run.settings.job_unit.clone();
         Ok(
@@ -429,33 +479,34 @@ impl Operation<'_> {
     /// group the launcher could not read empty, which holds the job as
     /// possibly started. Every other reply reads the record.
     fn read_sidecar(&mut self, record: &Path, reply: &str) -> Result<()> {
+        let address = record.display().to_string();
         let line = reply.lines().next().unwrap_or_default();
         if let Some(read) = reply_status(line) {
-            self.obligations.discharge(Discharge::Sidecar(read));
+            self.obligations.discharge(Discharge::Sidecar {
+                record: address,
+                read,
+            });
             return self.write();
         }
         match read_handle(record) {
             SidecarRead::Present(handle) => {
                 self.obligations.replace(
-                    &Obligation::JobSidecar,
+                    &Obligation::JobSidecar { record: address },
                     "sidecar-read",
                     handle.obligation(),
                     Role::Job,
                     None,
                 );
             }
-            SidecarRead::Absent => {
-                self.obligations
-                    .discharge(Discharge::Sidecar(SidecarRead::Absent));
-            }
-            // The record's own `status=` line: the launch ended, nothing
-            // started, so the sidecar settles.
-            read @ SidecarRead::Failed { .. } => {
-                self.obligations.discharge(Discharge::Sidecar(read));
-            }
-            SidecarRead::Unreadable { cause } => {
-                self.obligations
-                    .discharge(Discharge::Sidecar(SidecarRead::Unreadable { cause }));
+            // Absent, or the record's own `status=` line: the launch ended,
+            // nothing started, so the sidecar settles. Unreadable holds it.
+            read @ (SidecarRead::Absent
+            | SidecarRead::Failed { .. }
+            | SidecarRead::Unreadable { .. }) => {
+                self.obligations.discharge(Discharge::Sidecar {
+                    record: address,
+                    read,
+                });
             }
         }
         self.write()
@@ -464,6 +515,133 @@ impl Operation<'_> {
     /// Whether nothing stands in the recorded set.
     pub(super) fn nothing_stands(&self) -> bool {
         self.obligations.record().standing.is_empty()
+    }
+
+    /// The fleet watch a start owes (step6-map A7, decision 133): the claim
+    /// beside the fleet state read first, and a live one, this run's or an
+    /// earlier start's, is the watch; else a job of this intent still
+    /// standing is read again and holds while it runs; else `words`, the
+    /// entry and its arguments as the workflow's launch block names them,
+    /// are launched detached through the job launcher, the launcher's
+    /// unread record an obligation before it is asked (decision 111 (5)),
+    /// its stderr appended beside the fleet state, and the claim is waited
+    /// for within the job claim bound. A job that claimed is discharged by
+    /// that read; one that has not stands for the reconcile, which runs
+    /// this step again. An unreadable claim is never a reason to launch
+    /// (decision 99).
+    pub(in crate::effects) fn ensure_watch(&mut self, words: &[String]) -> Result<WatchStart> {
+        let paths = claim::Paths::of(self.run.path)?;
+        match self.watch_claimed(&paths)? {
+            Reading::Live(job) => return Ok(WatchStart::Claimed(job)),
+            Reading::Unreadable { cause } => {
+                return Ok(WatchStart::Unreadable {
+                    cause: cause.to_owned(),
+                });
+            }
+            Reading::Gone => {}
+        }
+        if !self.obligations.jobs().is_empty() {
+            self.read_standing_jobs()?;
+            if let Some(job) = self.obligations.jobs().first() {
+                return Ok(WatchStart::Unclaimed {
+                    job: watch_job_of(job).runner,
+                });
+            }
+        }
+        let record = paths.dir.join(WATCH_RUNNER_FILE);
+        let record_s = record.display().to_string();
+        let err = paths.dir.join(WATCH_ERR_FILE).display().to_string();
+        let name = format!("watch-{}", self.run.env.iso().replace(['-', ':'], ""));
+        let mut args = vec![
+            "launch",
+            &name,
+            &record_s,
+            "--",
+            "sh",
+            "-c",
+            "err=$1; shift; exec \"$@\" 2>>\"$err\"",
+            "sh",
+            &err,
+        ];
+        args.extend(words.iter().map(String::as_str));
+        let line = match self.ask_job(&record, &args)? {
+            Asked::Started(line) => line,
+            Asked::Refused(reply) => {
+                self.read_sidecar(&record, &reply)?;
+                return Ok(WatchStart::Refused { cause: reply });
+            }
+            Asked::Unrun(cause) => {
+                self.read_sidecar(&record, "")?;
+                return Ok(WatchStart::Refused { cause });
+            }
+        };
+        self.read_sidecar(&record, &line)?;
+        let deadline = self.now() + self.run.settings.claim;
+        loop {
+            match self.watch_claimed(&paths)? {
+                Reading::Live(job) => return Ok(WatchStart::Claimed(job)),
+                Reading::Unreadable { cause } => {
+                    return Ok(WatchStart::Unreadable {
+                        cause: cause.to_owned(),
+                    });
+                }
+                Reading::Gone => {}
+            }
+            if self.now() >= deadline {
+                return Ok(WatchStart::Unclaimed { job: line });
+            }
+            self.sleep(POLL);
+        }
+    }
+
+    /// The watch's claim beside the fleet state, read by the runtime's own
+    /// reader: `Live` with the record `overseer.watch` takes where it names
+    /// a live identity, every job obligation of this intent discharged
+    /// `watch-claimed` by that read and the first of them naming the job;
+    /// `Gone` where no record stands or its identity reads gone; the
+    /// reader's own unreadable otherwise. A record whose file the runtime
+    /// cannot read is unreadable too.
+    fn watch_claimed(&mut self, paths: &claim::Paths) -> Result<Reading<WatchJob>> {
+        let claimed = match claim::read(paths) {
+            Ok(Some(claimed)) => claimed,
+            Ok(None) => return Ok(Reading::Gone),
+            Err(e) => return Ok(Reading::Unreadable { cause: e.key() }),
+        };
+        let identity = match claim::read_live(paths, &claimed) {
+            Reading::Live(identity) => identity,
+            Reading::Gone => return Ok(Reading::Gone),
+            Reading::Unreadable { cause } => return Ok(Reading::Unreadable { cause }),
+        };
+        let jobs = self.obligations.jobs();
+        let job = jobs.first().map(watch_job_of).unwrap_or(WatchJob {
+            runner: "claimed".to_owned(),
+            unit: None,
+            pid: Some(identity.pid),
+            start: Some(identity.start.clone()),
+        });
+        for standing in jobs {
+            let handle = match standing {
+                Obligation::JobUnit { unit } => JobHandle::Unit { unit },
+                Obligation::JobGroup(identity) => JobHandle::Group(identity),
+                Obligation::JobPgid { pgid } => JobHandle::Pgid(pgid),
+                // The launcher's record unread: nothing of the job is
+                // named yet, so nothing of it is settled by the claim.
+                Obligation::JobSidecar { .. }
+                | Obligation::Process(_)
+                | Obligation::Pid { .. }
+                | Obligation::Pane { .. }
+                | Obligation::PaneUnaddressed { .. }
+                | Obligation::Window { .. }
+                | Obligation::Receipt
+                | Obligation::Validation
+                | Obligation::Worktree { .. } => continue,
+            };
+            self.discharge(Discharge::Job {
+                job: handle,
+                end: JobEnd::Claimed,
+            })?;
+        }
+        Ok(Reading::Live(job))
     }
 
     /// The outstanding-job predicate both the transfer and the stop
@@ -484,13 +662,13 @@ impl Operation<'_> {
     }
 
     /// Read every standing job obligation by its own key (decision 124a (2)):
-    /// the unread sidecar by its record, a unit through the manager, a group
-    /// through the one identity reader, each discharged where it reads ended.
+    /// the unread sidecar at the address its ask recorded (decision 184
+    /// (6)), a unit through the manager, a group through the one identity
+    /// reader, each discharged where it reads ended.
     pub(super) fn read_standing_jobs(&mut self) -> Result<()> {
-        let record = state::job_record_path(&self.run.settings.state_dir, &self.intent_id);
         for job in self.obligations.jobs() {
             match job {
-                Obligation::JobSidecar => self.read_sidecar(&record, "")?,
+                Obligation::JobSidecar { record } => self.read_sidecar(Path::new(&record), "")?,
                 Obligation::JobUnit { unit } => {
                     if let Some(end) = unit_end(&unit) {
                         self.discharge(Discharge::Job {
@@ -539,6 +717,46 @@ impl Operation<'_> {
                 .discharged
                 .iter()
                 .any(|d| d.by == "job-exited" || d.by.starts_with("unit-"))
+    }
+}
+
+/// The record `overseer.watch` takes of a standing job obligation: the
+/// launcher's runner and unit, or the group's leader identity; a record
+/// unread names nothing yet.
+fn watch_job_of(job: &Obligation) -> WatchJob {
+    match job {
+        Obligation::JobUnit { unit } => WatchJob {
+            runner: "systemd".to_owned(),
+            unit: Some(unit.clone()),
+            pid: None,
+            start: None,
+        },
+        Obligation::JobGroup(identity) => WatchJob {
+            runner: "setsid".to_owned(),
+            unit: None,
+            pid: Some(identity.pid),
+            start: Some(identity.start.clone()),
+        },
+        Obligation::JobPgid { pgid } => WatchJob {
+            runner: "setsid".to_owned(),
+            unit: None,
+            pid: Some(*pgid),
+            start: None,
+        },
+        Obligation::JobSidecar { .. }
+        | Obligation::Process(_)
+        | Obligation::Pid { .. }
+        | Obligation::Pane { .. }
+        | Obligation::PaneUnaddressed { .. }
+        | Obligation::Window { .. }
+        | Obligation::Receipt
+        | Obligation::Validation
+        | Obligation::Worktree { .. } => WatchJob {
+            runner: "unread".to_owned(),
+            unit: None,
+            pid: None,
+            start: None,
+        },
     }
 }
 
@@ -796,24 +1014,36 @@ pub(in crate::effects) fn run_job(run: &Run, intent_id: &str) -> Result<Applied>
 /// owes (decision 109 (7)), as the outcome's own write records it `owed`
 /// (decision 124f (28)): the key is the observation's `note`, else its
 /// `cause`, else the outcome word; the text is the legacy `die_status`
-/// line. A confirmed outcome, or an intent of another operation, owes none.
+/// line. A start held on its watch owes the same (decision 184 (6)): its
+/// runner stands at the composer and the fleet runs unwatched until a
+/// reconcile claims the watch, which only the caller's reply said. A
+/// confirmed outcome, a start held on anything else, and an intent of
+/// another operation owe none.
 pub(super) fn owed_notice(
     op: EffectOp,
     intent_id: &str,
     outcome: Outcome,
     observation: &Value,
 ) -> Option<Notice> {
-    Op::of_intent(op)?;
-    match outcome {
-        Outcome::Failed | Outcome::Unconfirmed => {}
-        Outcome::Confirmed | Outcome::NotStarted => return None,
-    }
     let word = |key: &str| {
         observation
             .get(key)
             .and_then(Value::as_str)
             .map(str::to_owned)
     };
+    match op {
+        EffectOp::RequestTransfer | EffectOp::StopController => {}
+        EffectOp::StartController => {
+            if !word("note").is_some_and(|note| WatchStart::is_hold_note(&note)) {
+                return None;
+            }
+        }
+        EffectOp::LaunchLane | EffectOp::CloseOwnedResources => return None,
+    }
+    match outcome {
+        Outcome::Failed | Outcome::Unconfirmed => {}
+        Outcome::Confirmed | Outcome::NotStarted => return None,
+    }
     let key = word("note").or_else(|| word("cause")).unwrap_or_else(|| {
         match outcome {
             Outcome::Failed => "failed",
@@ -832,9 +1062,11 @@ pub(super) fn owed_notice(
     if let Some(cause) = word("cause").filter(|c| *c != key) {
         text.push_str(&format!(" cause={cause}"));
     }
+    // No `to`: an intent's notice goes to the owner (U6a, step6-map F7).
     Some(Notice {
         key,
         text,
+        to: None,
         owner: state::NOTICE_OWED.to_owned(),
     })
 }
@@ -872,6 +1104,7 @@ fn mark_notice(
             notice: Some(Notice {
                 key: owed.key.clone(),
                 text: owed.text.clone(),
+                to: owed.to.clone(),
                 owner: mark,
             }),
         })),
@@ -1185,7 +1418,7 @@ mod tests {
         let intent: Intent = serde_json::from_value(json!({
             "id": id, "op": "stop-controller", "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
-            "obligations": {"standing": [{"kind": "job-sidecar", "role": "job"}],
+            "obligations": {"standing": [{"kind": "job-sidecar", "record": record.display().to_string(), "role": "job"}],
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
@@ -1310,7 +1543,7 @@ mod tests {
         let intent: Intent = serde_json::from_value(json!({
             "id": id, "op": "stop-controller", "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
-            "obligations": {"standing": [{"kind": "job-sidecar", "role": "job"}],
+            "obligations": {"standing": [{"kind": "job-sidecar", "record": record.display().to_string(), "role": "job"}],
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
@@ -1548,7 +1781,7 @@ mod tests {
             "id": "stop-controller:overseer:3:1-1", "op": "stop-controller",
             "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started", "owner": owner,
-            "obligations": {"standing": [{"kind": "job-sidecar", "role": "job"}],
+            "obligations": {"standing": [{"kind": "job-sidecar", "record": state::job_record_path(dir.path(), "stop-controller:overseer:3:1-1").display().to_string(), "role": "job"}],
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
@@ -1668,7 +1901,7 @@ mod tests {
             "id": "request-transfer:overseer:3:1-1", "op": "request-transfer",
             "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started", "owner": owner,
-            "obligations": {"standing": [{"kind": "job-sidecar", "role": "job"}],
+            "obligations": {"standing": [{"kind": "job-sidecar", "record": state::job_record_path(dir.path(), "request-transfer:overseer:3:1-1").display().to_string(), "role": "job"}],
                 "discharged": [], "signalled": false}
         }))
         .unwrap();

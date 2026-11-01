@@ -1,0 +1,13 @@
+#!/bin/bash
+# A `systemctl --user show -p LoadState,ActiveState --value -- UNIT.service`
+# answering $SYSTEMCTL_LOAD and $SYSTEMCTL_ACTIVE (not-found and inactive
+# when unset), so a reconcile row reads a unit ended or still running
+# without a user manager. With $SYSTEMCTL_RC a nonzero exit it is a manager
+# that could not answer, which the reconcile reads unreadable and holds the
+# stage open. Every call is appended to $SYSTEMCTL_LOG when set.
+[ -z "${SYSTEMCTL_LOG:-}" ] || printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "${SYSTEMCTL_RC:-0}" != 0 ]; then
+  echo "systemctl: Failed to connect to user bus" >&2
+  exit "$SYSTEMCTL_RC"
+fi
+printf '%s\n%s\n' "${SYSTEMCTL_LOAD:-not-found}" "${SYSTEMCTL_ACTIVE:-inactive}"

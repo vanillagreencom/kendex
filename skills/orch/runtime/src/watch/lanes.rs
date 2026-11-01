@@ -310,8 +310,12 @@ pub enum LaneState {
     Asking,
     RateLimitSwitch,
     Working,
+    /// `cause` is the stop's own word from the harness's row where the
+    /// lane was judged by its rows and the word is not its ordinary end;
+    /// a pane-judged idle carries none.
     Idle {
         capacity: bool,
+        cause: Option<String>,
     },
     Unjudged {
         cause: String,
@@ -373,7 +377,12 @@ pub fn classify(inputs: &Inputs) -> LaneState {
                 };
             }
             Reading::Live(LaneVerdict::Working) => return LaneState::Working,
-            Reading::Live(LaneVerdict::Idle) => return LaneState::Idle { capacity: false },
+            Reading::Live(LaneVerdict::Idle { cause }) => {
+                return LaneState::Idle {
+                    capacity: false,
+                    cause: cause.clone(),
+                };
+            }
             Reading::Gone => {
                 return LaneState::Unjudged {
                     cause: "rows-none".to_owned(),
@@ -395,6 +404,7 @@ pub fn classify(inputs: &Inputs) -> LaneState {
         State::Idle => LaneState::Idle {
             capacity: harness == Harness::Codex
                 && observe::codex_capacity_refused(&observe::below_last_turn(screen)),
+            cause: None,
         },
         State::Working => LaneState::Working,
         State::Asking => LaneState::Asking,
@@ -949,9 +959,11 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
     }
     // Idle: the capacity refusal once per turn, else the finished turn once
     // per screen, on the first pass for a local Codex lane below a prior
-    // turn and on two consecutive passes otherwise.
+    // turn and on two consecutive passes otherwise; the line carries the
+    // stop's cause where the verdict kept one, so a turn its output limit
+    // cut is told apart from a finished one, whose line is as before.
     match &state {
-        LaneState::Idle { capacity: true } => {
+        LaneState::Idle { capacity: true, .. } => {
             let key = hash_of(&slice).to_string();
             out.changes.push(clear("lane-idle", lane));
             if get("model-capacity").as_deref() != Some(key.as_str()) {
@@ -959,7 +971,10 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
                 out.events.push(Event::ModelCapacity { lane: lane.clone() });
             }
         }
-        LaneState::Idle { capacity: false } => {
+        LaneState::Idle {
+            capacity: false,
+            cause,
+        } => {
             out.changes.push(clear("model-capacity", lane));
             let turn = obs.rows_key.as_deref().unwrap_or(&slice);
             let key = format!("{pane_key}|{}", hash_of(turn));
@@ -974,7 +989,7 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
                     .push(set("lane-idle", lane, format!("{key}|reported")));
                 out.events.push(Event::IdleAfterReturn {
                     lane: lane.clone(),
-                    note: None,
+                    note: cause.as_ref().map(|word| format!("cause={word}")),
                 });
                 out.events.extend(payload(bounded_tail(&slice, cap)));
             } else {

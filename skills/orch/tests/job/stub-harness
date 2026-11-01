@@ -26,13 +26,16 @@
 # wrote: one key=value line per fact the lane needs (item, tier, tracker,
 # repo, number, worktree, main, scenario, after). `scenario` names the
 # interruption the row drives: `plain` runs the job through; `handoff`
-# records a context handoff after the dev receipt and ends the session,
-# and the relaunched session finds the record standing and resumes it;
-# `killed` holds the admitted validation run for the suite to kill the
-# lane under, and `retry` is the relaunched session that reconciles the
-# round and runs the admitted retry. `after` says what the lane does once
-# its job is done: `idle` on stdin until the window closes, as a harness
-# waits at its composer, or `exit`, a session that ended.
+# records a context handoff with its validation run going and ends the
+# session, and the relaunched session finds the record standing and
+# resumes it: that run holds on the suite's barrier, so it ends after the
+# session did and the continuation reads a run that ended while the lane
+# was away (decision 133); `killed` holds the admitted validation run for
+# the suite to kill the lane under, and `retry` is the relaunched session
+# that reconciles the round and runs the admitted retry. `after` says what
+# the lane does once its job is done: `idle` on stdin until the window
+# closes, as a harness waits at its composer, or `exit`, a session that
+# ended.
 #
 # Progress goes to <worktree>/tmp/lane-status, one `step=<name>` line per
 # step and a final `lane-done`, `lane-handoff` or `lane-failed step=<name>`;
@@ -91,6 +94,20 @@ op_reply() { # TARGET REQUEST_JSON — the whole reply, ok or not
   reply="$("$ORCH/orch-runtime" op "$1" "$ITEM" --request "$request")" || return 1
   jq -e '.ok == true' <<<"$reply" >/dev/null || return 1
   printf '%s\n' "$reply"
+}
+# The detached validation job writes the sentinel the wait loop reads, then
+# closes its stage and sends the end notice; await that close so the round
+# the accept reconciles is settled.
+await_validate_close() { # RUN_DIR
+  local tries=0 end
+  while :; do
+    end="$("$ORCH/workflow-state" get "$ITEM" \
+      "([.stages[] | select(.kind == \"validate\" and .run_dir == \"$1\")] | .[0].end) // empty")" || return 1
+    [ -z "$end" ] || return 0
+    tries=$((tries + 1))
+    [ "$tries" -lt 1200 ] || return 1
+    sleep 0.05
+  done
 }
 
 printf 'lane-env: PATH=%s gh=%s\n' "$PATH" "$(command -v gh || echo none)"
@@ -164,10 +181,12 @@ else
     resumed="$(op --item '{"op": "resume-handoff"}')" || fail resume-handoff
     printf '%s\n' "$resumed" > tmp/resume-report.json
     RID="$(jq -er '.round_id' <<<"$resumed")" || fail resume-round
-    RUN_DIR="$(jq -er '.open_runs[0]' <<<"$resumed")" || fail resume-run
-    SHA="$(git rev-parse HEAD)" || fail head
-    receipt="tmp/dev-return-$ITEM-$RID.json"
-    [ -f "$receipt" ] || fail receipt-path
+    # The run the predecessor's job closed while the lane was away, the
+    # newest first: the continuation reuses its recorded outcome rather
+    # than starting a new one, then commits and writes the receipt the
+    # earlier session did not reach.
+    RUN_DIR="$(jq -er '.open_runs[0].run_dir' <<<"$resumed")" || fail resume-run
+    [ "$(jq -r '.open_runs[0].outcome' <<<"$resumed")" = pass ] || fail resume-verdict
   elif [ "$SCENARIO" = retry ]; then
     # --- skills/orch/workflows/dev-start.md § 3: a stalled round's admitted runs are reconciled first ---
     # The earlier session died with its run admitted and held; the runtime
@@ -283,6 +302,25 @@ while [ ! -e tmp/validate-release ]; do sleep 0.1; done
 SH
       export DEV_VALIDATE_CMD="bash tmp/hold-validate"
       validate_out=tmp/validate.out
+    elif [ "$SCENARIO" = handoff ]; then
+      # The row's validation command waits, bounded under the project's
+      # cap, on the barrier the suite releases once this session has
+      # exited, then runs the project's own command: the run ends while
+      # the lane is away, and the continuation reads a run that ended
+      # after the handoff was recorded (decision 133). The command is this
+      # lane's own setting, as the killed row's is.
+      cat > tmp/await-barrier <<'SH'
+#!/usr/bin/env bash
+n=0
+while [ ! -e tmp/one-job-barrier ]; do
+  n=$((n + 1))
+  [ "$n" -lt 900 ] || { echo 'await-barrier: never released' >&2; exit 1; }
+  sleep 0.1
+done
+exec bash tools/validate
+SH
+      export DEV_VALIDATE_CMD="bash tmp/await-barrier"
+      validate_out=tmp/validate.out
     elif [ "$SCENARIO" = retry ]; then
       validate_out=tmp/validate-retry.out
     else
@@ -290,7 +328,7 @@ SH
     fi
     "$ORCH/dev-validate-run" --worktree "$WT" --poll 1 --run-id "$RUN_ID" > "$validate_out" 2> tmp/validate.err &
     validate_pid=$!
-    [ "$SCENARIO" != killed ] || unset DEV_VALIDATE_CMD
+    case "$SCENARIO" in killed|handoff) unset DEV_VALIDATE_CMD ;; esac
     tries=0
     started_dir=""
     while [ -z "$started_dir" ]; do
@@ -310,33 +348,39 @@ SH
       done
       step validate-held
     fi
-    wait "$validate_pid" || fail validate-run
-    done_line="$(sed -n 's/^state=done .*validate=\([^ ]*\).*/\1/p' "$validate_out")" || fail validate-read
-    [ "$done_line" = pass ] || fail validate-verdict
-    step commit
-    git commit -qm "feat($ITEM): add farewell and salute" || fail commit
-    SHA="$(git rev-parse HEAD)" || fail head
-    step receipt
-    printf '## Completion Summary\n\nAdded farewell, salute and visitors with their test.\n' > "tmp/completion-summary-$ITEM.md"
-    receipt="$("$ORCH/dev-return-write" --worktree "$WT" --kind implement --issue "$ITEM" --round-id "$RID" \
-      --branch "$BRANCH" --commit "$SHA" --validate pass --validate-run-dir "$RUN_DIR" --no-labels \
-      --near-ceiling-base origin/main --summary-file "tmp/completion-summary-$ITEM.md" --no-summary)" || fail receipt
-    [ -f "$receipt" ] || fail receipt-path
     if [ "$SCENARIO" = handoff ]; then
-      # --- the context handoff: the session ends with the round open and its receipt written ---
+      # --- the context handoff: the session ends with the round open and its run going ---
       # The record names what the continuation takes up; `relaunch: resume`
       # is the route the record asks for. The session then ends, as one
-      # out of context does, and the relaunch reads the record standing.
+      # out of context does, its detached run still held on the suite's
+      # barrier, and the relaunch reads the record standing.
       step handoff
       recorded="$(op --item "$(jq -cn --arg r "$RID" --arg b "$BRANCH" --arg wt "$WT" \
-        '{op: "record-handoff", round_id: $r, merged: [], remaining: ["accept the dev round", "review", "publish"],
+        '{op: "record-handoff", round_id: $r, merged: [], remaining: ["read the validation verdict, commit and write the receipt", "accept the dev round", "review and publish"],
           branch: $b, worktree: $wt, open_pr: null, traps: [], context: {"cause": "context-ceiling"}, relaunch: "resume"}')")" \
         || fail record-handoff
       printf '%s\n' "$recorded" > tmp/handoff-report.json
       printf 'lane-handoff\n' >> "$STATUS"
       exit 0
     fi
+    wait "$validate_pid" || fail validate-run
+    done_line="$(sed -n 's/^state=done .*validate=\([^ ]*\).*/\1/p' "$validate_out")" || fail validate-read
+    [ "$done_line" = pass ] || fail validate-verdict
+    await_validate_close "$RUN_DIR" || fail validate-close
   fi
+
+  # skills/dev/workflows/dev-implement.md § 7 and its section 10: the
+  # commit and the receipt, keyed by the run the verdict was read from; a
+  # continuation makes them for the session that handed off before them.
+  step commit
+  git commit -qm "feat($ITEM): add farewell and salute" || fail commit
+  SHA="$(git rev-parse HEAD)" || fail head
+  step receipt
+  printf '## Completion Summary\n\nAdded farewell, salute and visitors with their test.\n' > "tmp/completion-summary-$ITEM.md"
+  receipt="$("$ORCH/dev-return-write" --worktree "$WT" --kind implement --issue "$ITEM" --round-id "$RID" \
+    --branch "$BRANCH" --commit "$SHA" --validate pass --validate-run-dir "$RUN_DIR" --no-labels \
+    --near-ceiling-base origin/main --summary-file "tmp/completion-summary-$ITEM.md" --no-summary)" || fail receipt
+  [ -f "$receipt" ] || fail receipt-path
 
   # --- skills/orch/workflows/dev-start.md § 3: accept the round ---
   step accept

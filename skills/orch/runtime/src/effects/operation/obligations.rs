@@ -15,6 +15,8 @@
 //! standing. [`EffectOutcome`] is what every effect returns; `apply_outcome`
 //! is the one place it becomes the wire record.
 
+use std::path::Path;
+
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{Close, Pane};
 use agent_runtime::process::{Identity, Stop};
@@ -24,7 +26,7 @@ use serde_json::{Value, json};
 use crate::error::{Error, Result};
 use crate::state::{
     self, EffectOp, Intent, LaneKeys, LaunchIdentity, Obligation, ObligationRecord, OpenedPane,
-    Overseer, Owner, Phase, Role,
+    Overseer, Owner, Phase, Role, WatchJob,
 };
 
 use super::super::{overseer_identity, pid_value};
@@ -133,6 +135,9 @@ pub(super) enum JobEnd {
     UnitEnded { state: String },
     /// The group's identity read gone through the one identity reader.
     Exited,
+    /// The fleet watch's claim names a live runtime identity: the job is
+    /// the fleet's from here (step6-map A7), not this intent's.
+    Claimed,
 }
 
 /// What ended the worktree's validation obligation: the runner's answer
@@ -269,9 +274,12 @@ pub(super) enum Discharge {
         job: JobHandle,
         end: JobEnd,
     },
-    /// The launcher's record was read: a handle it names becomes the job's
-    /// obligation through the caller's `add`.
-    Sidecar(SidecarRead),
+    /// The launcher's record at `record` was read: a handle it names becomes
+    /// the job's obligation through the caller's `add`.
+    Sidecar {
+        record: String,
+        read: SidecarRead,
+    },
     Worktree {
         path: String,
         end: WorktreeEnd,
@@ -296,7 +304,9 @@ impl Discharge {
             Discharge::Receipt(_) => Obligation::Receipt,
             Discharge::Validation(_) => Obligation::Validation,
             Discharge::Job { job, .. } => job.obligation(),
-            Discharge::Sidecar(_) => Obligation::JobSidecar,
+            Discharge::Sidecar { record, .. } => Obligation::JobSidecar {
+                record: record.clone(),
+            },
         }
     }
 }
@@ -557,13 +567,18 @@ impl Obligations {
         self.add(adopted, role, harness);
     }
 
-    /// A detached job asked for again: the launcher's unread record is a
-    /// fresh acquisition each time the launcher is asked, so it joins the
-    /// standing set even where an earlier ask's record was read.
-    pub(super) fn ask_job(&mut self) {
-        if !self.record.stands(&Obligation::JobSidecar) {
+    /// A detached job asked for again: the launcher's unread record at
+    /// `record` is a fresh acquisition each time the launcher is asked, so
+    /// it joins the standing set even where an earlier ask's record was
+    /// read. The path is recorded with the obligation (decision 184 (6)):
+    /// the reader of an unread sidecar reads that address and no other.
+    pub(super) fn ask_job(&mut self, record: &Path) {
+        let sidecar = Obligation::JobSidecar {
+            record: record.display().to_string(),
+        };
+        if !self.record.stands(&sidecar) {
             self.record.standing.push(state::Held {
-                obligation: Obligation::JobSidecar,
+                obligation: sidecar,
                 role: Some(Role::Job),
                 harness: None,
             });
@@ -602,7 +617,7 @@ impl Obligations {
             | Obligation::Window { .. }
             | Obligation::Receipt
             | Obligation::Validation
-            | Obligation::JobSidecar
+            | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
             | Obligation::JobPgid { .. }
@@ -643,7 +658,7 @@ impl Obligations {
                 | Obligation::Window { .. }
                 | Obligation::Receipt
                 | Obligation::Validation
-                | Obligation::JobSidecar
+                | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }
@@ -663,7 +678,7 @@ impl Obligations {
             | Obligation::Window { .. }
             | Obligation::Receipt
             | Obligation::Validation
-            | Obligation::JobSidecar
+            | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
             | Obligation::JobPgid { .. }
@@ -710,7 +725,7 @@ impl Obligations {
                 | Obligation::Window { .. }
                 | Obligation::Receipt
                 | Obligation::Validation
-                | Obligation::JobSidecar
+                | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }
@@ -731,7 +746,7 @@ impl Obligations {
             | Obligation::Window { .. }
             | Obligation::Receipt
             | Obligation::Validation
-            | Obligation::JobSidecar
+            | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
             | Obligation::JobPgid { .. }
@@ -765,7 +780,7 @@ impl Obligations {
             | Obligation::Window { .. }
             | Obligation::Receipt
             | Obligation::Validation
-            | Obligation::JobSidecar
+            | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
             | Obligation::JobPgid { .. }
@@ -788,7 +803,7 @@ impl Obligations {
             | Obligation::Window { .. }
             | Obligation::Receipt
             | Obligation::Validation
-            | Obligation::JobSidecar
+            | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
             | Obligation::JobPgid { .. } => None,
@@ -826,7 +841,7 @@ impl Obligations {
                 | Obligation::Window { .. }
                 | Obligation::Receipt
                 | Obligation::Validation
-                | Obligation::JobSidecar
+                | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }
@@ -884,8 +899,9 @@ impl Obligations {
                 JobEnd::UnitGone => Ok("unit-gone".to_owned()),
                 JobEnd::UnitEnded { state } => Ok(format!("unit-{state}")),
                 JobEnd::Exited => Ok("job-exited".to_owned()),
+                JobEnd::Claimed => Ok("watch-claimed".to_owned()),
             },
-            Discharge::Sidecar(read) => match read {
+            Discharge::Sidecar { read, .. } => match read {
                 SidecarRead::Absent => Ok("sidecar-absent".to_owned()),
                 SidecarRead::Present(_) => Ok("sidecar-read".to_owned()),
                 SidecarRead::Failed { status } => Ok(format!("launch-failed:{status}")),
@@ -1007,7 +1023,7 @@ fn observation_value(obligation: &Obligation) -> Value {
         } => json!({"kind": "window", "server": server, "server_start": server_start}),
         Obligation::Receipt => json!({"kind": "receipt"}),
         Obligation::Validation => json!({"kind": "validation"}),
-        Obligation::JobSidecar => json!({"kind": "job", "job": "possibly-started"}),
+        Obligation::JobSidecar { .. } => json!({"kind": "job", "job": "possibly-started"}),
         Obligation::JobUnit { unit } => json!({"kind": "job", "unit": unit}),
         Obligation::JobGroup(id) => json!({"kind": "job", "pid": id.pid, "start": id.start}),
         Obligation::JobPgid { pgid } => json!({"kind": "job", "pgid": pgid}),
@@ -1092,6 +1108,8 @@ pub(in crate::effects) struct Wire {
     pub window: Option<String>,
     pub tmux_session: Option<String>,
     pub launch_line: Option<String>,
+    /// The fleet watch a confirmed start launched or found claimed.
+    pub watch: Option<WatchJob>,
 }
 
 /// An effect's result: the one type `apply_outcome` records. `record` is the
@@ -1726,21 +1744,38 @@ mod tests {
 
     /// Decision 115 (B): the launcher's record is an obligation from the ask
     /// until read; the handle it names stands until its unit or group is
-    /// read ended; an unreadable record stands as the job unread.
+    /// read ended; an unreadable record stands as the job unread. Decision
+    /// 184 (6): the obligation carries the record's address, and a read of
+    /// another address settles nothing of it.
     #[test]
     fn a_job_asked_of_its_launcher_stands_until_its_record_and_handle_are_read() {
         let unit = JobHandle::Unit {
             unit: "orch-transfer-1".to_owned(),
         };
+        let record = Path::new("/fleet/intents/transfer.job");
+        let sidecar = Obligation::JobSidecar {
+            record: record.display().to_string(),
+        };
+        let at = |read: SidecarRead| Discharge::Sidecar {
+            record: record.display().to_string(),
+            read,
+        };
         let mut asked = Obligations::none();
-        asked.ask_job();
-        assert_eq!(standing(&asked), vec![Obligation::JobSidecar]);
-        asked.discharge(Discharge::Sidecar(SidecarRead::Unreadable {
+        asked.ask_job(record);
+        assert_eq!(standing(&asked), vec![sidecar.clone()]);
+        let mut other = asked.clone();
+        other.discharge(Discharge::Sidecar {
+            record: "/fleet/oversee-watch.runner".to_owned(),
+            read: SidecarRead::Absent,
+        });
+        assert_eq!(other.cause(), Some("evidence-without-obligation"));
+        assert_eq!(standing(&other), vec![sidecar.clone()]);
+        asked.discharge(at(SidecarRead::Unreadable {
             cause: "eacces".to_owned(),
         }));
         assert_eq!(asked.cause(), Some("job-unread:eacces"));
         assert!(asked.clone().settled().is_err());
-        asked.discharge(Discharge::Sidecar(SidecarRead::Present(unit.clone())));
+        asked.discharge(at(SidecarRead::Present(unit.clone())));
         asked.add(
             Obligation::JobUnit {
                 unit: "orch-transfer-1".to_owned(),
@@ -1761,9 +1796,9 @@ mod tests {
         assert!(asked.settled().is_ok());
 
         let mut group = Obligations::none();
-        group.ask_job();
+        group.ask_job(record);
         group.replace(
-            &Obligation::JobSidecar,
+            &sidecar,
             "sidecar-read",
             Obligation::JobGroup(identity(31)),
             Role::Job,
@@ -1782,13 +1817,13 @@ mod tests {
         assert!(group.settled().is_ok());
 
         let mut none = Obligations::none();
-        none.ask_job();
-        none.discharge(Discharge::Sidecar(SidecarRead::Absent));
+        none.ask_job(record);
+        none.discharge(at(SidecarRead::Absent));
         assert!(none.clone().settled().is_ok());
         // A job asked for again extends the recorded set (decision 120 (5)):
         // the sidecar an earlier ask discharged is no bar to the next ask.
-        none.ask_job();
-        assert_eq!(standing(&none), vec![Obligation::JobSidecar]);
+        none.ask_job(record);
+        assert_eq!(standing(&none), vec![sidecar]);
         assert_eq!(discharged_by(&none), vec!["sidecar-absent"]);
     }
 
@@ -1898,6 +1933,7 @@ mod tests {
             cause: None,
             handed_from: None,
             exclude_account: None,
+            watch: None,
             close: None,
             notice: None,
             phase: None,

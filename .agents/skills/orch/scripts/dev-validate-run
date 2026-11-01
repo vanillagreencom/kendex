@@ -52,10 +52,17 @@
 #       admitted before it starts (orch-runtime record-validation-admission,
 #       which mints the id) runs under the directory its admission named. ID
 #       is the stamp-and-nonce form <YYYYMMDD>T<HHMMSS>Z-<alphanumerics>,
-#       refused otherwise as invalid-run-id; a directory already standing
-#       under that name is refused as run-exists, after classification and
-#       before anything is recorded. Without it the start mints the id
-#       itself from the clock and its pid.
+#       refused otherwise as invalid-run-id. The start itself is then the
+#       runtime's: this script hands it to `orch-runtime validate start
+#       --run-dir`, with --validate-mode as --mode, --base and --fresh as
+#       they are, which resolves the mode from the project's declaration,
+#       records the run's proof and job on the admitted stage and launches
+#       the run's job; a refusal is printed under this script's name with
+#       the runtime's key and fields, exit 2, run-unadmitted where no item
+#       records the id. The started line and the wait below are the same.
+#       --attached, --reproduce and --restack keep the start in this script.
+#       Without --run-id the start mints the id itself from the clock and
+#       its pid, and runs here.
 #       --reproduce marks the request as the local reproduction of a required
 #       run that failed, such as a red merge-group run, whose CI cannot prove
 #       the fix: it skips CI admission and the selector, runs the command its
@@ -106,7 +113,13 @@
 #   dev-validate-run --stop --worktree PATH
 #       End every run that worktree's run directories record with no verdict:
 #       a unit by the exact name its runner record names, a setsid run by its
-#       process group. lane-close calls it for a local lane. Prints one line naming how
+#       process group. lane-close calls it for a local lane. A run the
+#       runtime started (an item's stage names its job) is handed to
+#       `orch-runtime validate stop --run-dir`, which records the stop on
+#       the stage before it ends the job, so the stage closes stopped, never
+#       lost, with the lane's end notice; a run no stage names, or a runtime
+#       not built or not reachable on this host, takes this script's own
+#       stop. Prints one line naming how
 #       many of each were still running:
 #         state=stopped units=N groups=N
 #   dev-validate-run --record --run-dir PATH
@@ -1006,6 +1019,36 @@ if [[ "$mode" == resolve && "$base_given" == false && -z "$proof_head" ]]; then
   exit 0
 fi
 
+# --- Start under an admitted id: the runtime's, handed one call ---------------
+# The runtime resolves the mode, records the proof and the job on the admitted
+# stage and launches the job that runs --child; this script prints the started
+# line it minted and waits as it always has. A refusal keeps the runtime's key
+# and fields under this script's name.
+if [[ "$mode" == start && "$run_id_given" == true && "$attached" == false && "$reproduce" == false && "$restack" == false ]]; then
+  worktree="$(cd "$worktree" && pwd)"
+  cd "$worktree"
+  forward=(validate start --run-dir "$worktree/tmp/dev-validate-$run_id" --poll "$poll")
+  [[ "$validate_mode_given" == false ]] || forward+=(--mode "$validate_mode")
+  [[ "$base_given" == false ]] || forward+=(--base "$base")
+  [[ "$fresh" == false ]] || forward+=(--fresh)
+  forward_err="$(mktemp)" || die scratch-unavailable
+  trap 'rm -f -- "$forward_err"' EXIT
+  forward_rc=0
+  reply="$("$SCRIPT_DIR/orch-runtime" "${forward[@]}" 2>"$forward_err")" || forward_rc=$?
+  if (( forward_rc != 0 )); then
+    line="$(sed -n 1p "$forward_err")"
+    case "$line" in
+      "orch-runtime: "*) printf 'dev-validate-run: %s\n' "${line#orch-runtime: }" >&2 ;;
+      *) printf '%s\n' "$line" >&2 ;;
+    esac
+    exit 2
+  fi
+  run_dir="$(jq -er '.result.run_dir' <<<"$reply")" || die runtime-reply-unreadable "field=run_dir"
+  budget="$(jq -er '.result.cap_secs' <<<"$reply")" || die runtime-reply-unreadable "field=cap_secs"
+  jq -er '.result.started_line' <<<"$reply" || die runtime-reply-unreadable "field=started_line"
+  mode=wait
+fi
+
 # --- Start: resolve the bound, record it, launch the run detached ------------
 if [[ "$mode" == start || "$mode" == resolve ]]; then
   [[ "$mode" != resolve ]] || validate_mode=range
@@ -1343,7 +1386,9 @@ if [[ "$mode" == start || "$mode" == resolve ]]; then
 fi
 
 # --- Stop: end what a worktree's runs left running ---------------------------
-# Every run the worktree's run directories record with no verdict. A unit is
+# Every run the worktree's run directories record with no verdict. A run the
+# runtime started is handed to its verb (stop_forwarded below), the one call
+# handed on; the rest is this script's own. A unit is
 # stopped by the exact name its runner record carries, never by a pattern (two
 # repositories' lanes for one item share every prefix); a unit the manager no
 # longer has ended on its own, and is not counted. A manager that cannot answer
@@ -1351,6 +1396,51 @@ fi
 # process group, the child having led one since setsid -f started it, and only
 # while its pid is still the child of that run directory: a pid the system has
 # since reused for anything else is left alone.
+
+# stop_forwarded RUN_DIR — hand the stop of RUN_DIR to `orch-runtime validate
+# stop --run-dir`, which records the stop on the run's stage before it ends
+# the job, so the stage closes stopped with the lane's end notice (never
+# lost). Returns 0 with STOP_RUNNER and STOP_ENDED set from the reply (the
+# launcher's runner word; signalled or already-gone) where the verb took the
+# run, or with STOP_ENDED=closed where the verb answered run-closed (a stage
+# already closed over a directory with no verdict file: a stopped or lost
+# run, nothing to end); 1 where the run is this script's own to end: the
+# verb answered run-unadmitted (no item's stage names the directory: an
+# ad-hoc start) or run-unstarted (the stage names no runtime job), or the
+# verb was never reached: the runtime is not built (setup-required, exit
+# 69) or its wrapper refused before any verb ran (exit 1 with no reply on
+# stdout, such as digest-tool-missing on a host that cannot key the build);
+# a run the runtime started cannot stand without its binary having been
+# built, so this is a build removed or unreachable under a running job,
+# ended as before the verb existed. Any other refusal is a failed stop.
+STOP_RUNNER=""
+STOP_ENDED=""
+stop_forwarded() { # RUN_DIR
+  local reply err rc=0 line
+  STOP_RUNNER=""
+  STOP_ENDED=""
+  err="$(mktemp)" || die scratch-unavailable
+  reply="$(cd "$worktree" && "$SCRIPT_DIR/orch-runtime" validate stop --run-dir "$1" 2>"$err")" || rc=$?
+  line="$(sed -n 1p "$err")"
+  rm -f -- "$err"
+  case "$rc" in
+    0)
+      STOP_RUNNER="$(jq -er '.result.runner' <<<"$reply")" || die runtime-reply-unreadable "field=runner"
+      STOP_ENDED="$(jq -er '.result.ended' <<<"$reply")" || die runtime-reply-unreadable "field=ended"
+      return 0 ;;
+    69) return 1 ;;
+    1)
+      # The binary answers every refusal with a reply on stdout; a bare
+      # stderr line is the wrapper's own, before any verb ran.
+      [[ -n "$reply" ]] || return 1
+      case "$line" in
+        "orch-runtime: run-unadmitted "*|"orch-runtime: run-unstarted "*) return 1 ;;
+        "orch-runtime: run-closed "*) STOP_ENDED=closed; return 0 ;;
+      esac ;;
+  esac
+  stop_failed "run-dir=$1" "${line#orch-runtime: }"
+}
+
 if [[ "$mode" == stop ]]; then
   worktree="$(cd "$worktree" && pwd)"
   units=0
@@ -1359,6 +1449,11 @@ if [[ "$mode" == stop ]]; then
     [[ -f "$runner_file" ]] || continue
     dir="${runner_file%/runner}"
     [[ ! -s "$dir/exit" ]] || continue
+    if stop_forwarded "$dir"; then
+      [[ "$STOP_ENDED" == signalled ]] || continue
+      if [[ "$STOP_RUNNER" == systemd ]]; then units=$(( units + 1 )); else groups=$(( groups + 1 )); fi
+      continue
+    fi
     pid="$(cat "$dir/pid" 2>/dev/null || true)"
     stop_rc=0
     job_unit_stop_job "$runner_file" "$pid" "$(child_glob "$dir")" || stop_rc=$?

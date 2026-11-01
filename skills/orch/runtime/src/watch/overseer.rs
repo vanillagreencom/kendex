@@ -12,8 +12,17 @@
 //! said on the log before anything moves, then the one existing request,
 //! `request-transfer` with its cause and the spent account, asks for the
 //! succession; decision 77's terminal proof runs inside that transfer. The
-//! marks and the account walk stay the legacy's, called through the one
-//! runner and counted (decision 75).
+//! marks stay the legacy judge's, called through the one runner and
+//! counted (decision 75), handed the overseer's own context reading as
+//! `--context TOKENS:WINDOW` (U6h; step6-map § A10); the account walk and
+//! the wall route's pick are the runtime's judge (`ops::accounts`).
+//!
+//! The overseer's context record (`watch::context`, U6h) is judged beside
+//! a live session: a reading that fills the window with no Stop row after
+//! it is the session gone with `source=context`, on the death's count of
+//! passes; a working overseer's stale record and its gap are said as the
+//! commit-11 loop said them, the gap's owner alert sent once it stood two
+//! passes and marked only once sent.
 //!
 //! The wall relaunch the lanes pass starts runs detached and lands its
 //! exit status beside its marker; every pass reads each outcome
@@ -37,9 +46,11 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::baseline::{Baseline, Change};
+use super::context::{self, Owned, Times};
 use super::events::{Event, OverseerCase};
 use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, watch_state_dir};
 use super::{Body, Produced, Runner, Tick};
+use crate::ops::accounts::{self, PickAnswer, PickRequest};
 use crate::ops::{OverseerExpected, RequestTransfer};
 use crate::settings::{Settings, Succession, WatchSettings};
 use crate::state::{FleetState, Pending, TransferCause};
@@ -218,26 +229,30 @@ pub enum Pick {
     Unjudged { cause: String },
 }
 
-/// The legacy calls the duty makes through the one runner (decision 121
-/// Q9), injected so a row plants the answers; production takes
-/// [`Legacy::scripts`].
+/// The calls the duty makes beyond its own reads (decision 121 Q9),
+/// injected so a row plants the answers; production assembles them in
+/// [`register`]'s body from [`marks_through_runner`], the accounts judge
+/// and [`relaunch_through_launcher`].
 pub struct Legacy<'a> {
     /// The directory the scripts run from.
     pub scripts: PathBuf,
-    /// `oversee-succeed --check-marks [--harness H]`'s first line.
+    /// `oversee-succeed --check-marks [--harness H] [--context T:W]`'s
+    /// first line.
     pub marks: MarksRead<'a>,
-    /// `lanes pick --harness H --exclude-lane SPENT --for-overseer --json`.
+    /// The account walk's pick for a harness with the spent account
+    /// excluded, as `--for-overseer` judged it.
     pub pick: PickRead<'a>,
-    /// The wall route's pick for a lane's model (`oversee-watch:4710`):
-    /// `lanes pick --harness H --native-model M --exclude-lane SPENT --json`.
+    /// The wall route's pick for a lane's model (`oversee-watch:4710`), the
+    /// spent account excluded.
     pub wall_pick: WallPickRead<'a>,
     /// The wall relaunch, the record's own `open-terminal --relaunch` line
     /// started detached through the job-unit launcher at the path given.
     pub relaunch: RelaunchStart<'a>,
 }
 
-/// The judge's answer, read from the scripts directory for the harness.
-pub type MarksRead<'a> = &'a dyn Fn(&Path, Option<Harness>) -> Result<Marks, String>;
+/// The judge's answer, read from the scripts directory for the harness,
+/// handed the overseer's own context reading where the record holds one.
+pub type MarksRead<'a> = &'a dyn Fn(&Path, Option<Harness>, Option<&str>) -> Result<Marks, String>;
 /// The walk's pick for a harness, the spent account excluded.
 pub type PickRead<'a> = &'a dyn Fn(&Path, Harness, &str) -> Pick;
 /// The walk's pick for a harness and model, the spent account excluded.
@@ -264,151 +279,112 @@ pub fn relaunch_exit_path(marker: &Path) -> PathBuf {
 /// output appended to the log, its exit status written beside the marker.
 const RELAUNCH_WRAPPER: &str = "log=\"$1\"; exit_file=\"$2\"; launch_cwd=\"$3\"; export ORCH_TMUX_SESSION=\"$4\"; shift 4; exec >>\"$log\" 2>&1; rc=0; (cd -- \"$launch_cwd\" && \"$@\") || rc=$?; printf \"%s\\n\" \"$rc\" > \"$exit_file\"";
 
-impl Legacy<'static> {
-    /// The scripts under the project's orch install, run through the
-    /// runner and counted under the duty's tag.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the overseer duty's two legacy reads through the one runner: the account judgement and the account walk stay legacy in step 5 (decision 75, 121 Q9)"
-    )]
-    pub fn scripts(project: &Path) -> Legacy<'static> {
-        fn marks(dir: &Path, harness: Option<Harness>) -> Result<Marks, String> {
-            let mut args = vec!["--check-marks"];
-            if let Some(h) = harness {
-                args.push("--harness");
-                args.push(h.name());
-            }
-            let out = host::run_tagged(
-                "overseer-marks",
-                "oversee-succeed",
-                &dir.join("oversee-succeed"),
-                "check-marks",
-                &args,
-                LEGACY_BOUND,
-            )
-            .map_err(|e| e.to_string())?;
-            if !out.status.success() {
-                return Err(format!(
-                    "oversee-succeed --check-marks: {}",
-                    host::stderr_text(&out)
-                ));
-            }
-            let text = host::stdout_text(&out);
-            let first = text.lines().next().unwrap_or("");
-            Marks::parse(first).ok_or_else(|| format!("mark line unnamed: {first}"))
-        }
-        fn pick(dir: &Path, harness: Harness, spent: &str) -> Pick {
-            let out = host::run_tagged(
-                "overseer-pick",
-                "lanes",
-                &dir.join("lanes"),
-                "pick",
-                &[
-                    "pick",
-                    "--harness",
-                    harness.name(),
-                    "--exclude-lane",
-                    spent,
-                    "--for-overseer",
-                    "--json",
-                ],
-                LEGACY_BOUND,
-            );
-            picked(out)
-        }
-        fn wall_pick(dir: &Path, harness: Harness, model: &str, spent: &str) -> Pick {
-            let out = host::run_tagged(
-                "wall-pick",
-                "lanes",
-                &dir.join("lanes"),
-                "pick",
-                &[
-                    "pick",
-                    "--harness",
-                    harness.name(),
-                    "--native-model",
-                    model,
-                    "--exclude-lane",
-                    spent,
-                    "--json",
-                ],
-                LEGACY_BOUND,
-            );
-            picked(out)
-        }
-        fn relaunch(job_unit: &Path, r: &Relaunch) -> Result<(), String> {
-            let (name, record) = relaunch_record(r);
-            let record = record.display().to_string();
-            let log = r.log.display().to_string();
-            let exit = relaunch_exit_path(&r.marker).display().to_string();
-            let cwd = r.cwd.display().to_string();
-            let mut args = vec![
-                "launch",
-                &name,
-                &record,
-                "--",
-                "bash",
-                "-c",
-                RELAUNCH_WRAPPER,
-                "wall-relaunch",
-                &log,
-                &exit,
-                &cwd,
-                &r.session,
-            ];
-            args.extend(r.args.iter().map(String::as_str));
-            let out = host::run_tagged(
-                "wall-relaunch",
-                "job-unit",
-                job_unit,
-                "launch",
-                &args,
-                LEGACY_BOUND,
-            )
-            .map_err(|e| e.to_string())?;
-            if out.status.success() {
-                Ok(())
-            } else {
-                Err(host::stderr_text(&out))
-            }
-        }
-        Legacy {
-            scripts: project.join(".agents/skills/orch/scripts"),
-            marks: &marks,
-            pick: &pick,
-            wall_pick: &wall_pick,
-            relaunch: &relaunch,
-        }
+/// The scripts directory under the project's orch install.
+pub fn scripts_dir(project: &Path) -> PathBuf {
+    project.join(".agents/skills/orch/scripts")
+}
+
+/// The legacy judge through the one runner, counted under the duty's tag:
+/// `oversee-succeed --check-marks [--harness H] [--context T:W]`, its
+/// first line parsed. The account judgement stays legacy (decision 75,
+/// 121 Q9); the context reading is a value the runtime hands it (decision
+/// 94 (b)).
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the overseer duty's legacy account judgement through the one runner (decision 75, 121 Q9)"
+)]
+pub fn marks_through_runner(
+    dir: &Path,
+    harness: Option<Harness>,
+    context: Option<&str>,
+) -> Result<Marks, String> {
+    let mut args = vec!["--check-marks"];
+    if let Some(h) = harness {
+        args.push("--harness");
+        args.push(h.name());
+    }
+    if let Some(c) = context {
+        args.push("--context");
+        args.push(c);
+    }
+    let out = host::run_tagged(
+        "overseer-marks",
+        "oversee-succeed",
+        &dir.join("oversee-succeed"),
+        "check-marks",
+        &args,
+        LEGACY_BOUND,
+    )
+    .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "oversee-succeed --check-marks: {}",
+            host::stderr_text(&out)
+        ));
+    }
+    let text = host::stdout_text(&out);
+    let first = text.lines().next().unwrap_or("");
+    Marks::parse(first).ok_or_else(|| format!("mark line unnamed: {first}"))
+}
+
+/// The wall relaunch through the job-unit launcher at `job_unit`: the
+/// record's own line, detached, its exit status landing beside the marker.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the wall relaunch started detached through the one runner and the job-unit launcher (decision 121 Q10)"
+)]
+pub fn relaunch_through_launcher(job_unit: &Path, r: &Relaunch) -> Result<(), String> {
+    let (name, record) = relaunch_record(r);
+    let record = record.display().to_string();
+    let log = r.log.display().to_string();
+    let exit = relaunch_exit_path(&r.marker).display().to_string();
+    let cwd = r.cwd.display().to_string();
+    let mut args = vec![
+        "launch",
+        &name,
+        &record,
+        "--",
+        "bash",
+        "-c",
+        RELAUNCH_WRAPPER,
+        "wall-relaunch",
+        &log,
+        &exit,
+        &cwd,
+        &r.session,
+    ];
+    args.extend(r.args.iter().map(String::as_str));
+    let out = host::run_tagged(
+        "wall-relaunch",
+        "job-unit",
+        job_unit,
+        "launch",
+        &args,
+        LEGACY_BOUND,
+    )
+    .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(host::stderr_text(&out))
     }
 }
 
-/// The walk's answer as the legacy read it: the `config_dir` of a lane at
-/// exit 0, none at exit 3, else unjudged with the cause.
-fn picked(out: agent_runtime::Result<std::process::Output>) -> Pick {
-    let out = match out {
-        Ok(out) => out,
-        Err(e) => {
-            return Pick::Unjudged {
-                cause: e.to_string(),
-            };
-        }
-    };
-    match out.status.code() {
-        Some(0) => serde_json::from_str::<Value>(&host::stdout_text(&out))
-            .ok()
-            .and_then(|v| v.get("config_dir")?.as_str().map(str::to_owned))
-            .map_or(
-                Pick::Unjudged {
-                    cause: "pick-unparsed".to_owned(),
-                },
-                Pick::Lane,
-            ),
-        Some(3) => Pick::None,
-        Some(code) => Pick::Unjudged {
-            cause: format!("exit={code}"),
-        },
-        None => Pick::Unjudged {
-            cause: "signalled".to_owned(),
+/// The judge's answer as the walk reads it: the `config_dir` of the
+/// account picked, none where no account qualifies, else unjudged with the
+/// cause. A named-lane answer never reaches a walk; it is unjudged by
+/// name so nothing is relaunched on it.
+pub fn picked_by_judge(answer: PickAnswer) -> Pick {
+    match answer {
+        PickAnswer::Lane(judged) => Pick::Lane(judged.row.config_dir),
+        PickAnswer::None { .. } => Pick::None,
+        PickAnswer::Unjudged { cause } => Pick::Unjudged { cause },
+        PickAnswer::Walled(_)
+        | PickAnswer::Reserved(_)
+        | PickAnswer::Retired { .. }
+        | PickAnswer::Unmeasured(_)
+        | PickAnswer::NoRecord => Pick::Unjudged {
+            cause: "named-lane-answer".to_owned(),
         },
     }
 }
@@ -549,6 +525,14 @@ pub struct Pass<'a> {
     /// The one request the duty makes: `request-transfer`, as the `op`
     /// command runs it; `Err` is the refusal's text.
     pub transfer: &'a dyn Fn(RequestTransfer) -> Result<(), String>,
+    /// The overseer's context record, `context.json` in the overseer
+    /// mailbox; `None` where the fleet has no mailbox root to read it in.
+    pub context_record: Option<&'a Path>,
+    /// The owner's alert for a standing gap, one notice through the
+    /// overseer mailbox (`lane-mail notice --item overseer --to owner`);
+    /// `Ok` once the owner holds the words, `Err` with the cause where it
+    /// was not sent.
+    pub alert: &'a dyn Fn(&str) -> Result<(), String>,
 }
 
 /// The verdict of the record's session from the reads, in the legacy
@@ -693,7 +677,12 @@ fn clear(kind: &str, identity: &str) -> Change {
 }
 
 /// The rows this duty keeps, keyed by the pane key.
-const ROWS: [&str; 3] = ["overseer-dead", "overseer-walled", "overseer-mark"];
+const ROWS: [&str; 4] = [
+    "overseer-dead",
+    "overseer-walled",
+    "overseer-mark",
+    context::GAP_ROW,
+];
 
 /// The duty's pass: the one verdict, stored in `slot`, then the count, the
 /// line and the request.
@@ -768,12 +757,25 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             );
         }
     };
+    // The overseer's own context record, read once per pass where the
+    // fleet has a mailbox root: the reading the judge is handed, the
+    // wedge and the stale and gap judgements all read this one record.
+    let context = pass
+        .context_record
+        .map(|p| context::own(p, record.session_rows.as_deref(), &key, record.harness));
+    let context_arg = match &context {
+        Some(Owned::Own(r)) => r.context_arg(),
+        Some(Owned::Other | Owned::Absent | Owned::Unreadable { .. }) | None => None,
+    };
     // The account judgement, read at most once per pass and only where a
     // reading asks for it.
     let mut marks_read: Option<Option<Marks>> = None;
     let mut marks = || -> Option<Marks> {
         if marks_read.is_none() {
-            marks_read = Some((pass.legacy.marks)(&pass.legacy.scripts, record.harness).ok());
+            marks_read = Some(
+                (pass.legacy.marks)(&pass.legacy.scripts, record.harness, context_arg.as_deref())
+                    .ok(),
+            );
         }
         marks_read.clone().flatten()
     };
@@ -807,6 +809,20 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             };
         }
     }
+    // A harness whose recorded context fills its window takes no turn
+    // again, and nothing but a relaunch ends that: read as dead,
+    // `source=context`, on the same count of passes a death takes, so one
+    // reading caught between a turn's reading and its failure never
+    // relaunches a session (`overseer_context_wedged`).
+    if verdict == Verdict::Live
+        && let Some(Owned::Own(r)) = &context
+        && r.gap.is_none()
+        && wedged(r, &record, pass)
+    {
+        verdict = Verdict::Exited {
+            source: Source::Context,
+        };
+    }
     let marks_now = marks_read.clone().flatten();
     let (case, source, passes_needed) = match &verdict {
         Verdict::Exited { source } => {
@@ -839,6 +855,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
                 out.changes.push(clear("overseer-walled", &key));
             }
             mark_check(&record, &key, marks_now.as_ref(), pass, out);
+            context_check(&record, &key, context.as_ref(), pass, out);
         }
         return judged(verdict, Some(key));
     };
@@ -848,6 +865,12 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     };
     out.changes.push(clear(other, &key));
     out.changes.push(clear("overseer-mark", &key));
+    // A working overseer on its reserve is the only cased one with a
+    // context to judge: neither a dead nor a walled one runs a turn
+    // (`oversee-watch:4489`).
+    if case == OverseerCase::Reserve {
+        context_check(&record, &key, context.as_ref(), pass, out);
+    }
     let prefix = if case == OverseerCase::Reserve {
         "reserve:"
     } else {
@@ -932,6 +955,130 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     ));
     out.next_due = plan_relaunch.then_some(pass_next_due());
     judged(verdict, Some(key))
+}
+
+/// `overseer_context_wedged` over the session's own reading: the window
+/// full by the record's own figure or the harness's declared capacity, and
+/// no Stop row after the reading. A reading the judge cannot take is
+/// noted and settles nothing.
+fn wedged(r: &context::ContextRecord, record: &Record, pass: &Pass) -> bool {
+    let Some(path) = pass.context_record else {
+        return false;
+    };
+    let harness = r.harness.as_deref().and_then(Harness::parse);
+    match harness.and_then(|h| r.window_full(h)) {
+        Some(true) => {}
+        Some(false) => return false,
+        None => {
+            context::note(
+                "overseer-context-unread",
+                &format!(
+                    "path={} harness={}",
+                    path.display(),
+                    r.harness.as_deref().unwrap_or("none")
+                ),
+            );
+            return false;
+        }
+    }
+    match context::times(r, path, record.session_rows.as_deref()) {
+        Times::Read { at, stop } => stop <= at,
+        Times::Unread { path, cause } => {
+            context::note(
+                "overseer-context-unread",
+                &format!("path={} {cause}", path.display()),
+            );
+            false
+        }
+    }
+}
+
+/// `overseer_context_check` (`744fd5727:oversee-watch:4146-4160`) over a
+/// working overseer: a gap is one standing gap's turn (`gap_turn`); a
+/// reading clears the gap row and is `overseer-context-stale` where the
+/// record's `at` is more than [`context::STALE_SECS`] old and a Stop row
+/// came after it, on every pass it stands. A record that is not this
+/// session's, or none, settles nothing and moves no row; one that could
+/// not be read is noted.
+fn context_check(
+    record: &Record,
+    key: &str,
+    context: Option<&Owned>,
+    pass: &Pass,
+    out: &mut Produced,
+) {
+    let (Some(path), Some(owned)) = (pass.context_record, context) else {
+        return;
+    };
+    let r = match owned {
+        Owned::Own(r) => r,
+        Owned::Other | Owned::Absent => return,
+        Owned::Unreadable { path, cause } => {
+            context::note(
+                "overseer-context-unread",
+                &format!("path={} cause={cause}", path.display()),
+            );
+            return;
+        }
+    };
+    if let Some(gap) = &r.gap {
+        gap_turn(record, key, gap, pass, out);
+        return;
+    }
+    out.changes.push(clear(context::GAP_ROW, key));
+    let (at, stop) = match context::times(r, path, record.session_rows.as_deref()) {
+        Times::Read { at, stop } => (at, stop),
+        Times::Unread { path, cause } => {
+            context::note(
+                "overseer-context-unread",
+                &format!("path={} {cause}", path.display()),
+            );
+            return;
+        }
+    };
+    let age = pass.now.saturating_sub(at);
+    if age > context::STALE_SECS && stop > at {
+        out.events.push(Event::OverseerContextStale {
+            pane: record.pane.clone(),
+            age,
+        });
+    }
+}
+
+/// One standing gap's turn (`overseer_context_gap`): the event on its
+/// first pass, the owner's alert on its second, nothing after. The row is
+/// the owed mark: `<gap>|told` is written before the alert is owed, and
+/// advanced to `<gap>|alerted` only once the owner holds the words, so an
+/// alert the owner did not get is sent again on the next pass. A
+/// different gap starts the turn again.
+fn gap_turn(record: &Record, key: &str, gap: &str, pass: &Pass, out: &mut Produced) {
+    let prior = pass.baseline.get(context::GAP_ROW, key).unwrap_or("");
+    if prior == format!("{gap}|alerted") {
+        return;
+    }
+    if prior == format!("{gap}|told") {
+        match (pass.alert)(&context::alert_text(&record.pane, gap)) {
+            Ok(()) => {
+                context::note(
+                    "overseer-context-alerted",
+                    &format!("pane={} gap={gap}", record.pane),
+                );
+                out.changes
+                    .push(set(context::GAP_ROW, key, format!("{gap}|alerted")));
+            }
+            Err(cause) => context::note(
+                "overseer-notice-failed",
+                &format!("channel=owner cause={cause}"),
+            ),
+        }
+        return;
+    }
+    out.events.push(Event::OverseerContextUnmeasured {
+        pane: record.pane.clone(),
+        gap: gap.to_owned(),
+    });
+    out.changes
+        .push(set(context::GAP_ROW, key, format!("{gap}|told")));
 }
 
 /// The instant the announced request is made at: the duty's next slice.
@@ -1342,7 +1489,46 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         let fleet =
             <crate::state::FleetState as crate::state::Record>::view(&ctx.path, &snapshot.doc)?;
         let readers = LaneReaders::kernel();
-        let legacy = Legacy::scripts(&ctx.settings.roots.project);
+        // The accounts judge over the fleet's own state and the kernel's
+        // identity reader: the walk's pick and the wall route's pick
+        // (step6-map § A10), each a verdict this duty receives.
+        let occupancy_host = crate::ops::Host::kernel(
+            ctx.settings.lane_cap,
+            Some(ctx.settings.claim_store.clone()),
+        );
+        let judge = |harness: Harness, model: Option<&str>, spent: &str, for_overseer: bool| {
+            picked_by_judge(accounts::pick_fleet(
+                &ctx.settings,
+                &ctx.path,
+                &occupancy_host,
+                &PickRequest {
+                    harness: harness.name().to_owned(),
+                    model: model.map(str::to_owned),
+                    exclude: vec![spent.to_owned()],
+                    for_overseer,
+                    ..PickRequest::default()
+                },
+                tick.wall,
+            ))
+        };
+        let pick = |_: &Path, harness: Harness, spent: &str| judge(harness, None, spent, true);
+        let wall_pick = |_: &Path, harness: Harness, model: &str, spent: &str| {
+            judge(harness, Some(model), spent, false)
+        };
+        let legacy = Legacy {
+            scripts: scripts_dir(&ctx.settings.roots.project),
+            marks: &marks_through_runner,
+            pick: &pick,
+            wall_pick: &wall_pick,
+            relaunch: &relaunch_through_launcher,
+        };
+        let context_record = ctx
+            .settings
+            .roots
+            .common
+            .join("tmp/lane-mail/overseer")
+            .join("context.json");
+        let alert = |text: &str| owner_alert(&ctx.settings, text);
         let env = crate::ops::Env {
             now_secs: tick.wall,
             now_nanos: u128::from(tick.wall) * 1_000_000_000,
@@ -1371,6 +1557,8 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 preference: &ctx.settings.overseer_preference,
                 now: tick.wall,
                 transfer: &transfer,
+                context_record: Some(&context_record),
+                alert: &alert,
             },
             &ctx.slot,
         );
@@ -1424,6 +1612,47 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         }
         Ok(produced)
     })
+}
+
+/// The owner's alert through the overseer mailbox (`overseer_owner_notice`):
+/// the words written to the watch's own file under the state directory and
+/// sent as `lane-mail notice --item overseer --to owner --file` through the
+/// one runner. `lane-mail` refusing the text as `owner-notice-repeated` is
+/// the owner already holding those words, which counts as sent.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the gap alert's notice file, the watch's own under its state directory, and the one send through the mailbox program via the one runner (decision 94 (b))"
+)]
+fn owner_alert(settings: &Settings, text: &str) -> Result<(), String> {
+    let notice = settings.state_dir.join("overseer-context-gap.txt");
+    if let Some(dir) = notice.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("channel=file {e}"))?;
+    }
+    std::fs::write(&notice, text).map_err(|e| format!("channel=file {e}"))?;
+    let path = notice.display().to_string();
+    let out = host::run_tagged(
+        "overseer-alert",
+        "lane-mail",
+        &settings.lane_mail_cli,
+        "notice",
+        &[
+            "notice", "--item", "overseer", "--to", "owner", "--file", &path,
+        ],
+        LEGACY_BOUND,
+    )
+    .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let refusal = host::stderr_text(&out);
+    if refusal
+        .lines()
+        .next()
+        .is_some_and(|l| l.starts_with("lane-mail: owner-notice-repeated="))
+    {
+        return Ok(());
+    }
+    Err(format!("channel=owner {}", refusal.trim()))
 }
 
 /// Fold a later reading's lines, rows and failure into the pass's; the

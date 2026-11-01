@@ -46,7 +46,6 @@ use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
 use crate::mailbox::{BoxEvents, Cursor, Drain, Drained, Envelope, Mailbox, Refusal, Resolved};
-use crate::ops::CLOUD_KIND;
 use crate::ops::mail::MailCursor;
 use crate::schedule::Duty;
 use crate::settings::Settings;
@@ -339,7 +338,7 @@ fn readable(lane: &Lane) -> Result<Option<(bool, Drain)>> {
     if lane.status != LaneStatus::Running {
         return Ok(None);
     }
-    if lane.kind.as_deref() == Some(CLOUD_KIND) || lane.host.as_deref() == Some(CLOUD_KIND) {
+    if lane.session_channel() {
         return Ok(None);
     }
     let Some(root) = lane.mail_root.as_deref() else {

@@ -181,7 +181,7 @@ for harness in claude-send claude-text pi codex codex-item; do
   new_round "impl-$harness" "KEN-$harness" 1-1 0
   transcript "$TMP_ROOT/$harness.jsonl" "$harness" 1-1 "$(implement_report "$HEAD_SHA" pass needs-review)"
   run --worktree "$WT" --issue "KEN-$harness" --round-id 1-1 --transcript "$TMP_ROOT/$harness.jsonl"
-  ARTIFACT="$WT/tmp/dev-return-KEN-$harness-1-1.json"
+  ARTIFACT="$WT/tmp/dev-return-KEN-$harness-1-1-1.json"
   assert_eq "rc=$RC $OUT" "rc=0 round-recover: recovered artifact=$ARTIFACT" "$harness: the report is written as the round's artifact" "$TMP_ROOT/stderr"
   assert_eq "$(artifact_has "$ARTIFACT" '"\(.recovered_from) \(.commit) \(.validate) \(.validate_mode) \(.qa_labels | join(","))"')" \
     "transcript $HEAD_SHA pass full needs-review" "$harness: the artifact carries the report's fields, the run's mode and recovered_from"
@@ -195,7 +195,7 @@ done
 new_round cut KEN-3 1-1 no-verdict
 transcript "$TMP_ROOT/cut.jsonl" claude-send 1-1 "$(implement_report "$HEAD_SHA" "no-verdict: timeout" none)"
 run --worktree "$WT" --issue KEN-3 --round-id 1-1 --transcript "$TMP_ROOT/cut.jsonl"
-assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-1-1.json" '"\(.validate)|\(.validate_note)"') $("$CHECK" --worktree "$WT" --issue KEN-3 --round-id 1-1 | jq -r .verdict)" \
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-1-1-1.json" '"\(.validate)|\(.validate_note)"') $("$CHECK" --worktree "$WT" --issue KEN-3 --round-id 1-1 | jq -r .verdict)" \
   "rc=0 no-verdict|timeout accept" "a no-verdict report beside a run the timeout ended is recovered with its cause as the note and accepted" "$TMP_ROOT/stderr"
 
 echo "=== only this round's turns hold its report ==="
@@ -209,7 +209,7 @@ new_round prior KEN-2 2-2 0
   tool_turn
 } > "$TMP_ROOT/prior.jsonl"
 run --worktree "$WT" --issue KEN-2 --round-id 2-2 --transcript "$TMP_ROOT/prior.jsonl"
-assert_eq "rc=$RC ${OUT##* } $([[ -e "$WT/tmp/dev-return-KEN-2-2-2.json" ]] && echo written || echo none)" \
+assert_eq "rc=$RC ${OUT##* } $(compgen -G "$WT/tmp/dev-return-KEN-2-2-2*.json" >/dev/null && echo written || echo none)" \
   "rc=3 reason=no-report none" "an earlier round's report does not close this round"
 # Two reports in this round and a user turn after them: the last report wins,
 # a round id that only begins with this one is another round, and the agent
@@ -224,7 +224,7 @@ new_round latest KEN-3 3-3 0
   user_turn claude "<system-reminder>idle</system-reminder>"
 } > "$TMP_ROOT/latest.jsonl"
 run --worktree "$WT" --issue KEN-3 --round-id 3-3 --transcript "$TMP_ROOT/latest.jsonl"
-assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-3-3.json" '.qa_labels | join(",")')" "rc=0 needs-review" \
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-KEN-3-3-3-1.json" '.qa_labels | join(",")')" "rc=0 needs-review" \
   "the round's last report is the one recovered" "$TMP_ROOT/stderr"
 # The round's delegation repeated after a report: the window opens at the last
 # delegation, and no report follows it.
@@ -258,14 +258,14 @@ for case in \
   commit="${commit//%H/$HEAD_SHA}"; want="${want//%H/$HEAD_SHA}"
   transcript "$TMP_ROOT/rec-$row.jsonl" claude-send 4-4 "$(implement_report "$commit" pass "$qa" b "$proposed" "$summary")"
   run --worktree "$WT" --issue "$key" --round-id 4-4 --transcript "$TMP_ROOT/rec-$row.jsonl"
-  assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-$key-4-4.json" "$filter")" "rc=0 $want" "$label" "$TMP_ROOT/stderr"
+  assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-$key-4-4-1.json" "$filter")" "rc=0 $want" "$label" "$TMP_ROOT/stderr"
 done
 
 echo "=== a fix round's report closes against its item record ==="
 new_fix_round fix 778 5-5 1
 transcript "$TMP_ROOT/fix.jsonl" claude-send 5-5 "$(fix_report "\`${HEAD_SHA:0:9}\`" "FAILING: lint")"
 run --worktree "$WT" --issue issue-778 --round-id 5-5 --transcript "$TMP_ROOT/fix.jsonl"
-ARTIFACT="$WT/tmp/dev-return-issue-778-5-5.json"
+ARTIFACT="$WT/tmp/dev-return-issue-778-5-5-1.json"
 assert_eq "rc=$RC $OUT" "rc=0 round-recover: recovered artifact=$ARTIFACT" "a fix report is recovered" "$TMP_ROOT/stderr"
 assert_eq "$(artifact_has "$ARTIFACT" '"\(.recovered_from) \(.kind) \(.validate) \(.items | map("\(.n):\(.decision)") | join(","))"')" \
   "transcript fix FAILING: lint 1:Applied,2:Skipped" "the fix artifact carries the table's items, the FAILING verdict and recovered_from"
@@ -274,7 +274,7 @@ assert_eq "$("$CHECK" --worktree "$WT" --issue issue-778 --round-id 5-5 --expect
 new_fix_round fix-none 779 5-6 0 no
 transcript "$TMP_ROOT/fix-none.jsonl" claude-send 5-6 "$(fix_report none pass)"
 run --worktree "$WT" --issue issue-779 --round-id 5-6 --transcript "$TMP_ROOT/fix-none.jsonl"
-assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6.json" .commit)" "rc=0 $HEAD_SHA" \
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-779-5-6-1.json" .commit)" "rc=0 $HEAD_SHA" \
   "Commits: none records the unchanged HEAD" "$TMP_ROOT/stderr"
 # A ci run records pending validation. A pass beside it accepts the local edits
 # and recovers the round while the published head still awaits required CI.
@@ -282,14 +282,14 @@ new_fix_round fix-ci 782 5-9 none yes pr-review true
 add_run "$WT" 1 10 0 "$DEAD_PID" ci
 transcript "$TMP_ROOT/fix-ci.jsonl" claude-send 5-9 "$(fix_report "$HEAD_SHA" pass)"
 run --worktree "$WT" --issue issue-782 --round-id 5-9 --transcript "$TMP_ROOT/fix-ci.jsonl"
-assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-782-5-9.json" '"\(.validate) \(.validate_mode)"') $("$CHECK" --worktree "$WT" --issue issue-782 --round-id 5-9 --expect-items-from-round 2>/dev/null | jq -r .verdict)" \
+assert_eq "rc=$RC $(artifact_has "$WT/tmp/dev-return-issue-782-5-9-1.json" '"\(.validate) \(.validate_mode)"') $("$CHECK" --worktree "$WT" --issue issue-782 --round-id 5-9 --expect-items-from-round 2>/dev/null | jq -r .verdict)" \
   "rc=0 pass ci accept" "a fix round whose run was a ci-mode pass is recovered and accepted" "$TMP_ROOT/stderr"
 # A report missing a delegated item fails dev-artifact-check's exact-set gate:
 # the written artifact is removed and the round re-delegates.
 new_fix_round fix-short 780 5-7 0
 transcript "$TMP_ROOT/fix-short.jsonl" claude-send 5-7 "$(fix_report "$HEAD_SHA" pass one)"
 run --worktree "$WT" --issue issue-780 --round-id 5-7 --transcript "$TMP_ROOT/fix-short.jsonl"
-assert_eq "rc=$RC ${OUT##* } $([[ -e "$WT/tmp/dev-return-issue-780-5-7.json" ]] && echo written || echo none)" \
+assert_eq "rc=$RC ${OUT##* } $(compgen -G "$WT/tmp/dev-return-issue-780-5-7*.json" >/dev/null && echo written || echo none)" \
   "rc=3 reason=unparsed none" "a fix report short of the delegated set re-delegates and leaves no artifact" "$TMP_ROOT/stderr"
 
 echo "=== no report is one re-delegation under a fresh round id, then exhausted ==="
@@ -301,7 +301,7 @@ assert_eq "rc=$RC $OUT" "rc=3 round-recover: redelegate round-id=$NEW from=6-6 r
   "an empty transcript re-delegates under the round id it minted" "$TMP_ROOT/stderr"
 assert_eq "$([[ -n "$NEW" && "$NEW" != 6-6 ]] && echo fresh || echo "stale:$NEW") $(state_get KEN-20 recovery_round_id)" \
   "fresh $NEW" "the minted id is fresh and recorded as the recovery round"
-assert_eq "$([[ -e "$WT/tmp/dev-return-KEN-20-6-6.json" ]] && echo written || echo none)" "none" \
+assert_eq "$(compgen -G "$WT/tmp/dev-return-KEN-20-6-6*.json" >/dev/null && echo written || echo none)" "none" \
   "no artifact is written for a round with no report"
 transcript "$TMP_ROOT/empty2.jsonl" claude-send "$NEW" ""
 run --worktree "$WT" --issue KEN-20 --round-id "$NEW" --transcript "$TMP_ROOT/empty2.jsonl"
@@ -523,14 +523,14 @@ for case in \
   closed="${OUT#round-recover: }"
   assert_eq "${closed%% *} $(state_get "KEN-7$row" dev_round_id)" "$otherwise 10-10" \
     "control: without the directive, $label closes as $otherwise" "$TMP_ROOT/stderr"
-  rm -f -- "${WT:?}/tmp/dev-return-KEN-7$row-10-10.json"
+  rm -f -- "${WT:?}"/tmp/dev-return-KEN-7"$row"-10-10*.json
   run --worktree "$WT" --issue "KEN-7$row" --round-id 10-10 --directive-unconfirmed
   NEW="$(state_get "KEN-7$row" dev_round_id)"
   assert_eq "rc=$RC $OUT" "rc=3 round-recover: redelegate round-id=$NEW from=10-10 reason=directive-unconfirmed" \
     "directive: $label re-delegates under the id it minted" "$TMP_ROOT/stderr"
   want_recovery=""
   [[ "$shape" != recovery ]] || want_recovery=10-10
-  assert_eq "$([[ -n "$NEW" && "$NEW" != 10-10 ]] && echo fresh || echo "stale:$NEW") recovery=$(state_get "KEN-7$row" recovery_round_id) $([[ -e "$WT/tmp/dev-return-KEN-7$row-10-10.json" ]] && echo written || echo none)" \
+  assert_eq "$([[ -n "$NEW" && "$NEW" != 10-10 ]] && echo fresh || echo "stale:$NEW") recovery=$(state_get "KEN-7$row" recovery_round_id) $(compgen -G "$WT/tmp/dev-return-KEN-7$row-10-10*.json" >/dev/null && echo written || echo none)" \
     "fresh recovery=$want_recovery none" "directive: $label spends no stall recovery and writes no artifact"
   if [[ "$shape" == live ]]; then
     assert_eq "$(proc_state "$LIVE_PID")" "gone" "directive: the live validation run is stopped before the new round" "$TMP_ROOT/stderr"

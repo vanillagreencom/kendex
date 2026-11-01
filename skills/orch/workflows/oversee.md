@@ -341,6 +341,8 @@ They never become `owed` development work.
 
 `oversee-watch --help` states the entry's refusals and `orch-runtime watch --help` the runtime's: a live claim refuses `watch-running`, and the entry stops a live watch of the retired repeat loop, under a `watch-taken-over` note, before it starts the runtime. After a self-succession the successor starts no watch: the scheduler outlives the controller, and the successor follows the log from the handoff's next line.
 
+The block's entry line, `.agents/skills/orch/scripts/oversee-watch` and the words after it, is the `start-controller` request's `watch` field: a start the runtime runs launches that line through `job-unit.sh launch` once the controller's lane is confirmed and before it publishes the record, records the job as the record's `overseer.watch`, and a launch that refuses or never claims leaves the start `unconfirmed` naming it. `oversee launch` runs no `start-controller`, so a session it opened starts the watch with the block above.
+
 **The watch rule.** A turn never ends while the watch is stopped: it alone closes an owner ask at its deadline where its form allows (lane-mail ask help), reported as `owner-ask-closed`. Read `orch-runtime watch --help` for the cadences. The long pass, holding pr-watch, the merged check, triage, the outside-contribution and security-alert checks and the pane reads, runs every `--interval` seconds; one that overruns holds up no mail pass. The mail pass never reads a lane's pane, so it runs on every surface and outside tmux.
 
 ### Watch delivery

@@ -27,10 +27,15 @@
 //! baseline holds under the legacy's `account` row, an `account` event
 //! ahead of the heartbeat line when one changed, the row advanced after
 //! the line is durable. The legacy compared on every long pass; this body
-//! runs on the heartbeat's cadence, the one duty that reads the roster. A
-//! roster that could not be read is the pass's partial failure (decision
-//! 156 (1)) and moves no row: the next readable pass compares against the
-//! last reading, never against nothing.
+//! runs on the heartbeat's cadence, the one duty that reads the roster
+//! (decision 182 Q12). A roster that could not be read is the pass's
+//! partial failure (decision 156 (1)) and moves no row: the next readable
+//! pass compares against the last reading, never against nothing.
+//!
+//! The roster is the accounts judge's read (`ops::accounts`, U6h): the
+//! listing under the machine's own retirement statement, so a retired
+//! account keeps its figures in the roster and a stated end its credential
+//! contradicts is a line under it.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -43,6 +48,7 @@ use agent_runtime::host::{self, Place};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::ops::accounts::{self, Roster, pick_harness, pick_pool, text_or_dash};
 use crate::settings::Settings;
 use crate::watch::github::Gh;
 use crate::watch::tracker::{OwedItem, Shared};
@@ -170,58 +176,8 @@ fn open_lines(ctx: &Context, repo: &str, bot_fix: &BTreeMap<String, String>) -> 
 
 // --- the roster -------------------------------------------------------------------------
 
-/// One `lanes list --json` listing: the records as the CLI printed them.
-struct Listing(Vec<Value>);
-
-/// A field's text as jq's string interpolation printed it: a string as
-/// is, any other value as its JSON, an absent one as `null`.
-fn text(record: &Value, key: &str) -> String {
-    match record.get(key) {
-        None | Some(Value::Null) => "null".to_owned(),
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => other.to_string(),
-    }
-}
-
-/// A field with jq's `// "-"` default.
-fn text_or_dash(record: &Value, key: &str) -> String {
-    match record.get(key) {
-        None | Some(Value::Null) => "-".to_owned(),
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => other.to_string(),
-    }
-}
-
-/// The field text both the roster line and the `account` event print
-/// (`account_roster_read`'s third column, `:5157`).
-fn fields(record: &Value) -> String {
-    format!(
-        "{} config_dir={} harness={} through={} status={} verdict={} headroom_pct={} binding_bucket={} binding_resets_at={}",
-        text(record, "alias"),
-        text(record, "config_dir"),
-        text(record, "harness"),
-        text(record, "measured_through"),
-        text(record, "status"),
-        text(record, "verdict"),
-        text_or_dash(record, "headroom_pct"),
-        text_or_dash(record, "binding_bucket"),
-        text_or_dash(record, "binding_resets_at")
-    )
-}
-
 /// The baseline row kind the legacy kept each account's reading under.
 const ACCOUNT_ROW: &str = "account";
-
-/// The row's identity, the legacy's first column (`:5155`): two accounts
-/// sharing an alias are told apart by `config_dir`.
-fn account_key(record: &Value) -> String {
-    format!(
-        "{}|{}|{}",
-        text(record, "harness"),
-        text(record, "measured_through"),
-        text(record, "config_dir")
-    )
-}
 
 /// `check_accounts` (`oversee-watch:5190-5225`) over one listing: per
 /// record the `status|verdict|resets` reading beside the row's
@@ -237,11 +193,11 @@ fn account_key(record: &Value) -> String {
 /// moved while still ahead is a different binding, not a reset; one no
 /// date can read settles no reset and is noted. An account the listing
 /// stops naming keeps its row.
-fn check_accounts(listing: &Listing, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
+fn check_accounts(listing: &Roster, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
     let mut events = Vec::new();
     let mut changes = Vec::new();
-    for record in &listing.0 {
-        let key = account_key(record);
+    for record in &listing.rows {
+        let key = record.key();
         let prior = tick
             .baseline
             .get(ACCOUNT_ROW, &key)
@@ -252,9 +208,9 @@ fn check_accounts(listing: &Listing, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
         let was_verdict = was.next().unwrap_or_default();
         let was_resets = was.next().unwrap_or_default();
         let was_unmeasured = was.next().unwrap_or_default();
-        let status = text(record, "status");
-        let verdict = text(record, "verdict");
-        let resets = text_or_dash(record, "binding_resets_at");
+        let status = record.status.clone();
+        let verdict = record.verdict.clone();
+        let resets = text_or_dash(&record.raw, "binding_resets_at");
         let mut unmeasured = if was_unmeasured.is_empty() {
             "-"
         } else {
@@ -304,7 +260,7 @@ fn check_accounts(listing: &Listing, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
             continue;
         }
         events.push(Event::Account {
-            fields: fields(record),
+            fields: record.fields(),
             change: change.join(","),
             was_status: was_status.to_owned(),
             was_verdict: was_verdict.to_owned(),
@@ -313,48 +269,13 @@ fn check_accounts(listing: &Listing, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
     (events, changes)
 }
 
-impl Listing {
-    /// The listing read as one JSON array of records each carrying `status`
-    /// and `verdict` (`account_roster_read`'s jq), or none: an answer of
-    /// another shape is a listing that failed to render, never a fleet with
-    /// no accounts.
-    fn parse(stdout: &str) -> Option<Listing> {
-        let rows: Vec<Value> = serde_json::from_str(stdout).ok()?;
-        for row in &rows {
-            if row.get("status").is_none_or(Value::is_null)
-                || row.get("verdict").is_none_or(Value::is_null)
-            {
-                return None;
-            }
-        }
-        Some(Listing(rows))
-    }
-
-    /// The `account <fields>` line of each record (`:5155-5157`).
-    fn lines(&self) -> Vec<String> {
-        self.0
-            .iter()
-            .map(|r| format!("account {}", fields(r)))
-            .collect()
-    }
-
-    /// Whether an account bills the harness and pool a pick would judge
-    /// (`owed_wall`'s roster check).
-    fn bills(&self, billed: &str, pool: &str) -> bool {
-        self.0.iter().any(|r| {
-            r.get("harness").and_then(Value::as_str) == Some(billed)
-                && ((r.get("pool").and_then(Value::as_str) == Some("api-credit"))
-                    == (pool == "api-credit"))
-        })
-    }
-}
-
-/// `lanes` through the one runner, under `ORCH_LANE_HOST=<host>` where a
-/// host is named, as the legacy `bounded_account_read` ran it: the answer,
-/// or the call's own failure.
+/// `lanes pick` through the one runner, under `ORCH_LANE_HOST=<host>` where
+/// a host is named, as the legacy `bounded_account_read` ran it: the
+/// answer, or the call's own failure. The one legacy pick left in this
+/// crate: the owed verdict's rows plant its answers (`watch_report`).
 #[allow(
     clippy::disallowed_methods,
-    reason = "the heartbeat's legacy account reads, `lanes list --json` and `lanes pick` (decision 121 Q9), through the one runner under its tag with the lane host named"
+    reason = "the heartbeat's legacy owed verdict, `lanes pick` (decision 121 Q9), through the one runner under its tag with the lane host named"
 )]
 fn lanes(
     settings: &Settings,
@@ -368,7 +289,7 @@ fn lanes(
         TAG,
         "lanes",
         &settings.lanes_cli,
-        "list",
+        "pick",
         args,
         Place {
             cwd: None,
@@ -379,67 +300,19 @@ fn lanes(
     .map_err(|e| e.to_string())
 }
 
-/// `lanes list --json`, for `host` where one is named: the listing, or
-/// the cause where the call failed or its answer did not read, for the
-/// caller to say in its place (`account-unread`'s fields, `:5165`).
-fn listing(settings: &Settings, host: Option<&str>) -> std::result::Result<Listing, String> {
-    let host_word = host.unwrap_or(LOCAL);
-    let out = lanes(settings, host, &["list", "--json"])
-        .map_err(|cause| format!("host={host_word} {cause}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "host={host_word} exit={} {}",
-            out.status.code().unwrap_or(-1),
-            host::stderr_text(&out).trim()
-        ));
-    }
-    Listing::parse(&host::stdout_text(&out)).ok_or_else(|| format!("host={host_word} parse=failed"))
-}
-
 // --- the owed verdict ------------------------------------------------------------------------
-
-/// `lane_pick_harness` (`lib/lane-launch.sh:128`): the harness an
-/// account is billed under for a launch of `harness` on `model`.
-fn pick_harness(harness: &str, model: &str) -> &'static str {
-    match harness {
-        "claude" => "claude",
-        "codex" => "codex",
-        "copilot" => "copilot",
-        "pi" => {
-            if model.starts_with("pi-claude/") {
-                "claude"
-            } else if model.starts_with("github-copilot/") || model.starts_with("anthropic/") {
-                "pi"
-            } else {
-                "unmeasured"
-            }
-        }
-        _ => "unmeasured",
-    }
-}
-
-/// `lane_pick_pool` (`lib/lane-launch.sh:143`) with the plan pool: the
-/// spending pool a launch of `harness` on `model` names.
-fn pick_pool(harness: &str, model: &str) -> &'static str {
-    match harness {
-        "pi" if model.starts_with("anthropic/") => "api-credit",
-        "copilot" => "copilot",
-        "pi" if model.starts_with("github-copilot/") => "copilot",
-        _ => "plan",
-    }
-}
 
 /// `owed_wall` (`oversee-watch:5641`): the verdict of one host, harness and
 /// model, judged on that host's listing and `lanes pick`.
 fn wall_verdict(
     settings: &Settings,
-    listings: &mut BTreeMap<String, Option<Listing>>,
+    listings: &mut BTreeMap<String, Option<Roster>>,
     owed: &OwedItem,
 ) -> String {
     let unjudged = format!("verdict=unjudged harness={}", owed.harness);
     let host = (owed.host != LOCAL).then_some(owed.host.as_str());
     let listing = listings.entry(owed.host.clone()).or_insert_with(|| {
-        listing(settings, host)
+        accounts::roster(settings, host)
             .map_err(|cause| note("accounts", &cause))
             .ok()
     });
@@ -493,7 +366,7 @@ fn wall_verdict(
 /// a merged delivery or a queue verdict needing no account read.
 fn owed_line(
     settings: &Settings,
-    listings: &mut BTreeMap<String, Option<Listing>>,
+    listings: &mut BTreeMap<String, Option<Roster>>,
     owed: &OwedItem,
 ) -> String {
     let verdict = match &owed.delivery {
@@ -522,12 +395,13 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             latest.github.clone(),
         )
     };
-    // The roster, the local host's listing, read once: the account events
-    // ahead of the heartbeat line, as the legacy's pass printed them, then
-    // the roster lines under it; the owed verdicts of local records reuse
-    // it. A roster that could not be read is the pass's partial failure
-    // with the legacy's `account-unread` fields, said by the runner.
-    let roster = listing(&ctx.settings, None);
+    // The roster, the local host's listing, read once through the accounts
+    // judge: the account events ahead of the heartbeat line, as the
+    // legacy's pass printed them, then the roster lines under it; the owed
+    // verdicts of local records reuse it. A roster that could not be read
+    // is the pass's partial failure with the legacy's `account-unread`
+    // fields, said by the runner.
+    let roster = accounts::roster(&ctx.settings, None);
     let (mut events, changes, failed) = match &roster {
         Ok(listing) => {
             let (events, changes) = check_accounts(listing, tick);
@@ -560,13 +434,13 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     match &roster {
         Err(_) => body("account-roster unread".to_owned()),
         Ok(listing) => {
-            body(format!("account-roster accounts={}", listing.0.len()));
-            for line in listing.lines() {
+            body(format!("account-roster accounts={}", listing.rows.len()));
+            for line in listing.lines(&accounts::today(tick.wall)) {
                 body(line);
             }
         }
     }
-    let mut listings: BTreeMap<String, Option<Listing>> = BTreeMap::new();
+    let mut listings: BTreeMap<String, Option<Roster>> = BTreeMap::new();
     listings.insert(LOCAL.to_owned(), roster.ok());
     for line in ctx
         .verifying
@@ -619,52 +493,5 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
         changes,
         failed,
         ..Produced::default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `lane_pick_harness` and `lane_pick_pool` on the launcher's own
-    /// cases (`lib/lane-launch.sh:128-150`).
-    #[test]
-    fn the_billed_harness_and_pool_follow_the_launchers_tables() {
-        let rows = [
-            ("claude", "claude-sonnet-5", "claude", "plan"),
-            ("codex", "-", "codex", "plan"),
-            ("copilot", "-", "copilot", "copilot"),
-            ("pi", "pi-claude/opus", "claude", "plan"),
-            ("pi", "github-copilot/gpt", "pi", "copilot"),
-            ("pi", "anthropic/claude", "pi", "api-credit"),
-            ("pi", "other/model", "unmeasured", "plan"),
-        ];
-        for (harness, model, billed, pool) in rows {
-            assert_eq!(pick_harness(harness, model), billed, "{harness} {model}");
-            assert_eq!(pick_pool(harness, model), pool, "{harness} {model}");
-        }
-    }
-
-    /// A listing is one array of records each carrying `status` and
-    /// `verdict`; anything else is unread, never an empty roster.
-    #[test]
-    fn a_listing_reads_whole_or_not_at_all() {
-        assert!(Listing::parse("[]").is_some_and(|l| l.0.is_empty()));
-        assert!(Listing::parse("").is_none());
-        assert!(Listing::parse("{}").is_none());
-        assert!(Listing::parse(r#"[{"alias":"a","status":"ok"}]"#).is_none());
-        let listing = Listing::parse(
-            r#"[{"alias":"a","harness":"claude","config_dir":"/h/.a","measured_through":"local","status":"ok","verdict":"room","headroom_pct":0,"binding_bucket":"weekly","binding_resets_at":"2026-10-01T00:00:00Z"}]"#,
-        )
-        .unwrap();
-        assert_eq!(
-            listing.lines(),
-            vec![
-                "account a config_dir=/h/.a harness=claude through=local status=ok verdict=room headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z"
-            ]
-        );
-        assert!(listing.bills("claude", "plan"));
-        assert!(!listing.bills("codex", "plan"));
-        assert!(!listing.bills("claude", "api-credit"));
     }
 }

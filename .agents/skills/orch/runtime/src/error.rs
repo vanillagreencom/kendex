@@ -30,6 +30,25 @@ impl ShapeReason {
     }
 }
 
+/// The window a walled account was judged on (step6-map A5): the
+/// projected window where one was projected, else the reading's wall.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WalledWindow {
+    pub pct: f64,
+    pub bucket: String,
+    /// The projected room, `None` where the judge read the wall alone.
+    pub projected_headroom: Option<f64>,
+}
+
+/// The end a retired account's refusal names (decision 188 (b)): the
+/// day and who stated it, boxed as `WalledWindow` is to keep `Error`
+/// small.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetiredEnd {
+    pub ends: String,
+    pub stated_by: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A record, lock, process or protocol failure agent-runtime reported.
@@ -61,11 +80,16 @@ pub enum Error {
     /// `apply` cannot run it as a transition; `verify::run` does.
     #[error("{op} reads before it writes and is not applied as a transition")]
     OpNotTransition { op: &'static str },
-    /// A `verify-head` field is not the form its reads pin: `repo` is
-    /// `owner/name`, `base` a branch name, `head` a full lowercase 40-hex
-    /// commit id. The value stays in this text: it may hold whitespace.
-    #[error("verify-head {field} {value:?} is not the pinned form")]
+    /// A `verify-head` or `verify-pr` field is not the form its reads pin:
+    /// `repo` is `owner/name`, `base` a branch name, `head` a full lowercase
+    /// 40-hex commit id, `pr` a positive number. The value stays in this
+    /// text: it may hold whitespace.
+    #[error("{field} {value:?} is not the form the verification's reads pin")]
     VerifyRequestInvalid { field: &'static str, value: String },
+    /// U6g: a `verify-pr` request names a pull request that is closed or
+    /// merged; nothing on it is awaited, so no verdict is read or recorded.
+    #[error("pull request #{pr} is {state}, not open")]
+    PullRequestNotOpen { pr: u64, state: &'static str },
     #[error("no lane record names {item}")]
     LaneMissing { item: String },
     /// The lane is in flight, so a launch or an adoption would make a second
@@ -157,6 +181,26 @@ pub enum Error {
     /// tell such an intent's live effect from a dead one, so none is written.
     #[error("{op}: no readable process identity to own the intent")]
     OwnerUnreadable { op: &'static str },
+    // U6d: the session send's refusals (step6-map § A6).
+    /// A directive send on a lane whose channel is a mailbox, not a cloud
+    /// session: the mailbox send is the mailbox's own.
+    #[error("the lane for {item} runs in no cloud session; send through lane-mail")]
+    LaneChannel { item: String },
+    /// A send stands owed on the lane: its receipt settles it first, since a
+    /// second send would queue the directive twice.
+    #[error(
+        "a directive send to {item} stands owed; the reconcile settles it from its kept receipt"
+    )]
+    DirectiveSendOwed { item: String },
+    /// A receipt offered to a lane whose record owes no send: the record
+    /// was replaced under the send, and takes no stale receipt.
+    #[error("no directive send to {item} is owed, so the receipt is not recorded")]
+    DirectiveSendUnowed { item: String },
+    /// The mailbox program gave no receipt and no refusal of its own: whether
+    /// the directive reached the session is unknown, and the record stands
+    /// owed so no repeat queues it twice.
+    #[error("the directive send to {item} earned no receipt and stands owed: {cause}")]
+    DirectiveSendUnsettled { item: String, cause: String },
     /// An `accept-result` end outside `[start, now]` of the stage it closes.
     #[error("round {round_id}: end {end} is outside the stage's [{start}, {now}]")]
     EndOutOfRange {
@@ -268,6 +312,54 @@ pub enum Error {
     /// A wall relaunch names the account the wall spent (step4-map A11).
     #[error("the lane for {item} would run on the spent account {account}")]
     AccountSpent { item: String, account: String },
+    /// The launch's account is walled on its projection (step6-map A5): the
+    /// accounts judge found no room for one more lane on it, the lane this
+    /// relaunch replaces left out. The figures are the record's as the
+    /// legacy launcher read them, in its line's words.
+    #[error("the lane for {item} would run on {account}, walled at {} on its {} window", window.pct, window.bucket)]
+    AccountWalled {
+        item: String,
+        account: String,
+        model: String,
+        window: Box<WalledWindow>,
+    },
+    /// The launch's account is one the provider reserved (round 8 item
+    /// 7): never picked, whatever its room. The refusal names the word,
+    /// never the wall's figures.
+    #[error("the lane for {item} would run on {account}, which is reserved")]
+    AccountReserved {
+        item: String,
+        account: String,
+        model: String,
+    },
+    /// The launch's account's stated end has come: not picked from that
+    /// day. The refusal names the day and who stated it, never the wall's
+    /// figures.
+    #[error("the lane for {item} would run on {account}, retired since {}", end.ends)]
+    AccountRetired {
+        item: String,
+        account: String,
+        model: String,
+        end: Box<RetiredEnd>,
+    },
+    /// Nothing measured the launch's account: an unread window is not an
+    /// empty one (decision 99).
+    #[error("the lane for {item} would run on {account}, whose window nothing measured ({status})")]
+    AccountUnmeasured {
+        item: String,
+        account: String,
+        model: String,
+        status: String,
+        detail: String,
+    },
+    /// The accounts judge could not judge the launch's account: the
+    /// listing or the fleet unread. Never a verdict, never an admission.
+    #[error("the lane for {item} would run on {account}, which could not be judged: {cause}")]
+    AccountUnjudged {
+        item: String,
+        account: String,
+        cause: String,
+    },
     /// The lane's recorded harness still runs under its recorded start,
     /// whatever its status word reads: a relaunch would make a second one.
     #[error("the lane for {item} still runs its harness (pid {pid})")]
@@ -349,6 +441,74 @@ pub enum Error {
         repo: String,
         read: &'static str,
         cause: String,
+    },
+    // U6a: the validation run's refusals (`validate start|run`).
+    /// A wider mode than the declaration's narrowest was asked for with no
+    /// cause (step6-map § A4).
+    #[error("validate mode {mode} on a project declaring {narrower} needs a cause")]
+    ModeCauseMissing {
+        mode: &'static str,
+        narrower: &'static str,
+    },
+    /// A range or ci request names no base commit.
+    #[error("validate mode {mode} needs a base")]
+    ModeBaseRequired { mode: &'static str },
+    /// The project declares no whole battery.
+    #[error(
+        "{setting} is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command"
+    )]
+    ValidateCmdEmpty { setting: &'static str },
+    /// The base does not name a commit in the worktree.
+    #[error("the base {base} names no commit in the worktree")]
+    BaseInvalid { base: String },
+    /// A run of the round stands open with its job recorded: one run at a
+    /// time per round, as the legacy `run-live`.
+    #[error("round {round_id}: the run {run_dir} is still open")]
+    RunLive { round_id: String, run_dir: String },
+    /// No item records an admitted run under the directory.
+    #[error("no admitted validation run names {run_dir}")]
+    RunUnadmitted { run_dir: String },
+    /// The stage names a run the runtime never started: no job on it.
+    #[error("the run {run_dir} was never started by the runtime")]
+    RunUnstarted { run_dir: String },
+    // U6l: the stop's refusals (`validate stop`).
+    /// The run's stage is closed: a stop records nothing on it.
+    #[error("the run {run_dir} is closed")]
+    RunClosed { run_dir: String },
+    /// The launcher could not end the run's job; the stop stands recorded
+    /// and the job is as the launcher left it.
+    #[error("the run {run_dir} could not be stopped: {cause}")]
+    ValidateStopFailed { run_dir: String, cause: String },
+    /// The launcher refused the job, or the run's files could not be
+    /// written; the stage is closed `stopped` with the cause.
+    #[error("the run {run_dir} could not be started: {cause}")]
+    ValidateLaunchFailed { run_dir: String, cause: String },
+    /// A read the start needs before it records anything failed: the
+    /// worktree's HEAD, its snapshot, a scratch directory.
+    #[error("the validation start could not read its {read}: {cause}")]
+    ValidateUnreadable { read: &'static str, cause: String },
+    /// The selector's estimate exceeds the bound; nothing is recorded.
+    #[error("the selector expects {expected}s, over the {bound}s bound")]
+    OverBound { expected: u64, bound: u64 },
+    // U6c: the acceptance's authorization and its summary record
+    // (step6-map § A3, § A8).
+    /// An acceptance for a directed item names no owner directive, or
+    /// another's; the item's key carries the id it needs.
+    #[error("the acceptance names no owner directive {directive}")]
+    AuthorizationMissing { directive: String },
+    /// The stage closed under another authorization than the request
+    /// names, or under none: the authorization is part of the acceptance's
+    /// identity, and a close is never re-authorized.
+    #[error("round {round_id} was accepted under another authorization")]
+    AuthorizationDiffers { round_id: String },
+    /// The item records another Completion Summary comment than the
+    /// request names; the recorded id stands, so one comment is updated in
+    /// place and none is orphaned.
+    #[error("{path}: the summary comment {recorded} is recorded, not {given}")]
+    SummaryCommentDiffers {
+        path: PathBuf,
+        recorded: String,
+        given: String,
     },
     /// The standing scheduler's refusals: its claim, its records and its
     /// duties (`watch run|status|stop|log`).
@@ -477,6 +637,7 @@ impl Error {
             Error::Request { .. } => "request-invalid",
             Error::OpNotTransition { .. } => "op-not-transition",
             Error::VerifyRequestInvalid { .. } => "verify-request-invalid",
+            Error::PullRequestNotOpen { .. } => "pr-not-open",
             Error::LaneMissing { .. } => "lane-missing",
             Error::LaneLive { .. } => "lane-live",
             Error::LaneDone { .. } => "lane-done",
@@ -498,6 +659,11 @@ impl Error {
             Error::OutcomeInvalid { .. } => "outcome-invalid",
             Error::VerdictInvalid { .. } => "verdict-invalid",
             Error::OwnerUnreadable { .. } => "owner-unreadable",
+            // U6d
+            Error::LaneChannel { .. } => "lane-channel",
+            Error::DirectiveSendOwed { .. } => "directive-send-owed",
+            Error::DirectiveSendUnowed { .. } => "directive-send-unowed",
+            Error::DirectiveSendUnsettled { .. } => "directive-send-unsettled",
             Error::EndOutOfRange { .. } => "end-out-of-range",
             Error::WorktreeUnrecorded { .. } => "worktree-unrecorded",
             Error::EndArtifactUnreadable { .. } => "end-artifact-unreadable",
@@ -521,6 +687,11 @@ impl Error {
             Error::CapReached { .. } => "cap-reached",
             Error::CapUnreadable { .. } => "cap-unreadable",
             Error::AccountSpent { .. } => "account-spent",
+            Error::AccountWalled { .. } => "account-walled",
+            Error::AccountReserved { .. } => "account-reserved",
+            Error::AccountRetired { .. } => "account-retired",
+            Error::AccountUnmeasured { .. } => "account-unmeasured",
+            Error::AccountUnjudged { .. } => "account-unjudged",
             Error::HarnessLive { .. } => "harness-live",
             Error::HarnessUnreadable { .. } => "harness-unreadable",
             Error::IdentityGone { .. } => "identity-gone",
@@ -533,6 +704,24 @@ impl Error {
             Error::ItemIneligible { .. } => "item-ineligible",
             Error::TouchedUnreadable { .. } => "touched-unreadable",
             Error::HoldersUnreadable { .. } => "holders-unreadable",
+            // U6a
+            Error::ModeCauseMissing { .. } => "mode-cause-missing",
+            Error::ModeBaseRequired { .. } => "mode-base-required",
+            Error::ValidateCmdEmpty { .. } => "empty-validate-cmd",
+            Error::BaseInvalid { .. } => "invalid-base",
+            Error::RunLive { .. } => "run-live",
+            Error::RunUnadmitted { .. } => "run-unadmitted",
+            Error::RunUnstarted { .. } => "run-unstarted",
+            // U6l
+            Error::RunClosed { .. } => "run-closed",
+            Error::ValidateStopFailed { .. } => "stop-failed",
+            Error::ValidateLaunchFailed { .. } => "launch-failed",
+            Error::ValidateUnreadable { .. } => "validate-unreadable",
+            Error::OverBound { .. } => "over-bound",
+            // U6c
+            Error::AuthorizationMissing { .. } => "authorization-missing",
+            Error::AuthorizationDiffers { .. } => "authorization-differs",
+            Error::SummaryCommentDiffers { .. } => "summary-comment-differs",
             Error::Watch(e) => e.key(),
         }
     }
@@ -626,6 +815,12 @@ impl Error {
                 vec![pair("op", (*op).to_owned())]
             }
             Error::VerifyRequestInvalid { field, .. } => vec![pair("field", (*field).to_owned())],
+            Error::PullRequestNotOpen { pr, state } => {
+                vec![
+                    pair("pr", pr.to_string()),
+                    pair("state", (*state).to_owned()),
+                ]
+            }
             Error::EndOutOfRange {
                 round_id,
                 end,
@@ -642,6 +837,11 @@ impl Error {
             | Error::EndArtifactUnreadable { path, .. } => {
                 vec![pair("path", path.display().to_string())]
             }
+            // U6d
+            Error::LaneChannel { item }
+            | Error::DirectiveSendOwed { item }
+            | Error::DirectiveSendUnowed { item }
+            | Error::DirectiveSendUnsettled { item, .. } => vec![pair("item", item.clone())],
             Error::HandoffDiffers { path, fields } => vec![
                 pair("path", path.display().to_string()),
                 pair("fields", fields.join(",")),
@@ -705,6 +905,79 @@ impl Error {
             Error::AccountSpent { item, account } => {
                 vec![pair("item", item.clone()), pair("account", account.clone())]
             }
+            Error::AccountWalled {
+                item,
+                account,
+                model,
+                window,
+            } => {
+                // The figures as `jq` printed them in the legacy judge's line: an
+                // integral value with no fraction, `none` where none was projected.
+                let number = |n: f64| {
+                    if n.fract() == 0.0 {
+                        format!("{n:.0}")
+                    } else {
+                        n.to_string()
+                    }
+                };
+                vec![
+                    pair("item", item.clone()),
+                    pair("account", account.clone()),
+                    pair("model", model.clone()),
+                    pair("pct", number(window.pct)),
+                    pair("bucket", window.bucket.clone()),
+                    pair(
+                        "projected-headroom",
+                        window
+                            .projected_headroom
+                            .map_or_else(|| "none".to_owned(), number),
+                    ),
+                ]
+            }
+            Error::AccountReserved {
+                item,
+                account,
+                model,
+            } => vec![
+                pair("item", item.clone()),
+                pair("account", account.clone()),
+                pair("model", model.clone()),
+                pair("word", "reserve".to_owned()),
+            ],
+            Error::AccountRetired {
+                item,
+                account,
+                model,
+                end,
+            } => vec![
+                pair("item", item.clone()),
+                pair("account", account.clone()),
+                pair("model", model.clone()),
+                pair("ends", end.ends.clone()),
+                pair("source", end.stated_by.clone()),
+            ],
+            Error::AccountUnmeasured {
+                item,
+                account,
+                model,
+                status,
+                detail,
+            } => vec![
+                pair("item", item.clone()),
+                pair("account", account.clone()),
+                pair("model", model.clone()),
+                pair("status", status.clone()),
+                pair("detail", detail.clone()),
+            ],
+            Error::AccountUnjudged {
+                item,
+                account,
+                cause,
+            } => vec![
+                pair("item", item.clone()),
+                pair("account", account.clone()),
+                pair("cause", cause.clone()),
+            ],
             Error::HarnessLive { item, pid } | Error::IdentityGone { item, pid } => {
                 vec![pair("item", item.clone()), pair("pid", pid.to_string())]
             }
@@ -759,6 +1032,44 @@ impl Error {
                 pair("item", item.clone()),
                 pair("repo", repo.clone()),
                 pair("read", (*read).to_owned()),
+            ],
+            // U6a
+            Error::ModeCauseMissing { mode, narrower } => vec![
+                pair("mode", (*mode).to_owned()),
+                pair("narrower", (*narrower).to_owned()),
+            ],
+            Error::ModeBaseRequired { mode } => vec![pair("mode", (*mode).to_owned())],
+            Error::ValidateCmdEmpty { setting } => vec![pair("setting", (*setting).to_owned())],
+            Error::BaseInvalid { base } => vec![pair("base", base.clone())],
+            Error::RunLive { round_id, run_dir } => vec![
+                pair("round_id", round_id.clone()),
+                pair("run_dir", run_dir.clone()),
+            ],
+            Error::RunUnadmitted { run_dir }
+            | Error::RunUnstarted { run_dir }
+            | Error::ValidateLaunchFailed { run_dir, .. } => vec![pair("run_dir", run_dir.clone())],
+            // U6l
+            Error::RunClosed { run_dir } | Error::ValidateStopFailed { run_dir, .. } => {
+                vec![pair("run_dir", run_dir.clone())]
+            }
+            Error::ValidateUnreadable { read, .. } => vec![pair("read", (*read).to_owned())],
+            Error::OverBound { expected, bound } => vec![
+                pair("expected_secs", expected.to_string()),
+                pair("bound", bound.to_string()),
+            ],
+            // U6c
+            Error::AuthorizationMissing { directive } => {
+                vec![pair("directive", directive.clone())]
+            }
+            Error::AuthorizationDiffers { round_id } => vec![pair("round_id", round_id.clone())],
+            Error::SummaryCommentDiffers {
+                path,
+                recorded,
+                given,
+            } => vec![
+                pair("path", path.display().to_string()),
+                pair("recorded", recorded.clone()),
+                pair("given", given.clone()),
             ],
             Error::Watch(e) => e.fields(),
         }

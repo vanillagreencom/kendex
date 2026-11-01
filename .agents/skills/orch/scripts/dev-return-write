@@ -10,11 +10,18 @@
 # shell redirection in the agent's own command; the write to disk is internal to
 # this script and atomic — temp file + mv).
 #
-# The artifact is bound to its delegation by a per-round token: the file is named
-# [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json AND carries "round_id":
-# ROUND_ID inside. dev-artifact-check resolves that exact path and rejects any
-# receipt whose internal round_id differs. The token proves WHICH delegation
-# wrote the bytes; mtime proves only WHEN they were written.
+# The artifact is bound to its delegation by a per-round token and to the run
+# it reports by that run's id: the file is named
+# [WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID]-[RUN_ID].json, RUN_ID the
+# id of --validate-run-dir's directory (dev-validate-RUN_ID), AND carries
+# "round_id": ROUND_ID inside; a receipt naming no run directory (a foreground
+# record, or a failing round with no run) is dev-return-[ISSUE_ID]-[ROUND_ID].json.
+# dev-artifact-check resolves the receipt of the run the round's validate
+# stage names and rejects any receipt whose internal round_id differs. The
+# token proves WHICH delegation wrote the bytes; mtime proves only WHEN they
+# were written. A later run of the same round (the runtime's next attempt)
+# writes its own receipt beside the first; no receipt is rewritten or
+# replaced.
 #
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
@@ -55,9 +62,9 @@
 # the host cause or timeout. A FAILING result is accepted beside
 # any run: --validate judges every gate of the round, and a passing run
 # with another gate failing is still a failed round. Submit reuses a
-# foreground record's full pass as it stands and asks the runner's
-# --require-proof local-pass filter about any other pass, so a range
-# pass recorded as full, a full pass whose class --record reads from a
+# foreground record's full pass as it stands and asks the runtime's proof
+# reader (orch-runtime read-proof --need submit) about any other pass, so a
+# range pass recorded as full, a full pass whose class --record reads from a
 # round base recorded without it, or a failed run recorded as a pass, would
 # stand in for the whole battery.
 # validate_class_base is that base, present only where --record reports one.
@@ -106,7 +113,7 @@
 # round needs neither: it is never accepted. Elsewhere the receipt is what it
 # would be without the gate.
 #
-# Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
+# Writes PATH/tmp/dev-return-ID-RID[-RUNID].json and prints its absolute path (one line).
 #
 # Artifact schema — canonical source of truth: skills/orch/schemas/dev-return.md
 #   {
@@ -226,8 +233,7 @@ die() {
       not-directory) printf 'The worktree path is not a directory.\n' ;;
       invalid-kind) printf 'The kind must be implement or fix.\n' ;;
       invalid-validate) printf 'The validation result must be pass, no-verdict, or start with FAILING:.\n' ;;
-      recovery-invalid) printf 'Recovery requires a valid failed parent, current HEAD and recorded proof or a noted failing result.\n' ;;
-      receipt-exists) printf 'The receipt is immutable; Validate owns any recovery allowance.\n' ;;
+      receipt-exists) printf 'A failing receipt is immutable; a later run of the round writes its own receipt under its run id.\n' ;;
       run-record-unreadable) printf 'dev-validate-run --record could not read the run; its refusal follows.\n' ;;
       validate-source-conflict) printf 'Name the run by one source: a run directory or a foreground validation record.\n' ;;
       validate-record-unreadable) printf 'The foreground validation record is not a readable file.\n' ;;
@@ -267,17 +273,18 @@ Usage:
     [--validate-run-dir RUN_DIR | --validate-record FILE] [--qa-label LABEL]... \
     [--near-ceiling-base REF] [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
-    [--item N DECISION REASONING]... [--recovery]
+    [--item N DECISION REASONING]...
 
-Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
---recovery writes one immutable dev-return-ID-RID-recovery.json with recovery_of
-naming the valid failed original receipt. It requires current HEAD and refuses
-replacement. Recorded results keep the original mode/base. Native results prove
-the snapshot tree; foreground records prove their exact starting HEAD. The original
-failed receipt cannot be overwritten. Validate owns execution admission.
-An interrupted foreground attempt without a completed record uses FAILING,
-omits both evidence flags, and names the interruption in --validate-note.
-Its mode and time stay null; acceptance rejects this terminal result.
+Writes PATH/tmp/dev-return-ID-RID-RUNID.json (atomically), RUNID the id of the
+run directory --validate-run-dir names, and prints its absolute path; a
+receipt naming no run directory is PATH/tmp/dev-return-ID-RID.json. A failing
+receipt is never overwritten: a later run of the same round, which the
+runtime admits as the round's next attempt, writes its own receipt under its
+own run id, and dev-artifact-check reads the one the round's validate stage
+names. An interrupted foreground attempt without a completed record uses
+FAILING, omits both evidence flags, and names the interruption in
+--validate-note. Its mode and time stay null; acceptance rejects this
+terminal result.
 An implement receipt carries additions plus deletions against the base branch,
 with a floor of 1. The orchestrator verifies and persists the first accepted one.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
@@ -300,8 +307,10 @@ or --validate-record below; a FAILING round without completed evidence omits bot
 records validate_mode null. validate_class_base is the base --record reports:
 the round base, or the branch merge base for scoped full execution and for a
 scoped ci run of a full request or an orphaned base.
-Submit reuses only a local full pass without one or with selection
-battery. A current-head ci receipt defers required validation to PR CI. validate_time is
+Submit reads the runtime's proof rows: a local full pass covers the branch
+without one or with selection battery, and a range pass covers it where the
+project declares a range command and no CI context. A current-head ci
+receipt defers required validation to PR CI. validate_time is
 the run's wall time --record reports, a no-verdict run's included, and null
 with no run or an unfinished one. With --kind fix the run must start at a HEAD
 that contains the base_sha of PATH/tmp/dev-round-ID-RID.json, or record that
@@ -373,7 +382,7 @@ is_own_flag() {
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
     --validate-note|--validate-run-dir|--validate-record|--summary|--summary-file|--recovered-text|--qa-label|\
     --near-ceiling-base|--label|--no-labels|--bundled|\
-    --no-summary|--item|--recovery|-h|--help) return 0 ;;
+    --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -409,8 +418,6 @@ worktree=""
 kind=""
 issue=""
 round_id=""
-recovery=false
-recovery_of=""
 branch=""
 commit=""
 validate=""
@@ -480,7 +487,6 @@ while (( $# > 0 )); do
     --label)        need "$1" $# "${2:-}"; labels+=("$2"); shift 2 ;;
     --no-labels)    no_dup "$1" "$no_labels"; no_labels=true; shift ;;
     --near-ceiling-base) need "$1" $# "${2:-}"; no_dup "$1" "$near_ceiling_base_given"; near_ceiling_base_given=true; near_ceiling_base="$2"; shift 2 ;;
-    --recovery)     no_dup "$1" "$recovery"; recovery=true; shift ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
     --item)
@@ -970,41 +976,21 @@ else
   items_json='[]'
 fi
 
-# --- Compute the absolute, round-scoped out path ---
+# --- Compute the absolute, round-scoped out path, keyed by the run it reports ---
 mkdir -p "$worktree/tmp"
 out_dir="$(cd "$worktree/tmp" && pwd)"
 out="$out_dir/dev-return-$issue-$round_id.json"
-if [[ "$recovery" == true ]]; then
-  recovery_of="${out##*/}"
-  parent="$out"
-  out="${out%.json}-recovery.json"
-  [[ "$commit" == "$(git -C "$worktree" rev-parse HEAD)" ]] \
-    || die recovery-invalid "path=$parent"
-  if [[ -z "$run_ref" ]]; then
-    # Validate's interrupted foreground producer has no completed record.
-    [[ "$validate" == FAILING:* && -n "$validate_note" ]] \
-      || die recovery-invalid "path=$parent"
-  else
-    [[ "$run_head" =~ ^[0-9a-f]{40}$ && "$run_start" =~ ^[0-9]+$ ]] \
-      || die recovery-invalid "path=$parent"
-    git -C "$worktree" merge-base --is-ancestor "$run_head" "$commit" \
-      || die recovery-invalid "path=$parent"
-    if [[ "$validate_run_dir_given" == true ]]; then
-      [[ "$run_tree" =~ ^[0-9a-f]{40}$ && "$run_tree" == "$(git -C "$worktree" rev-parse "$commit^{tree}")" ]] \
-        || die recovery-invalid "path=$parent"
-    else
-      [[ "$run_head" == "$commit" ]] || die recovery-invalid "path=$parent"
-    fi
-    jq -e --arg mode "$validate_mode" --arg base "$validate_class_base" --argjson start "$run_start" '
-      if .validate_mode == null then true else
-        .validate_mode == $mode
-        and ((.validate_class_base // "") == $base)
-        and (.validate_time == null or (.validate_time.ended_at | fromdateiso8601) <= $start)
-      end
-    ' "$parent" >/dev/null 2>&1 || die recovery-invalid "path=$parent"
-  fi
+if [[ "$validate_run_dir_given" == true ]]; then
+  # The run id is the directory's name after the runner's prefix, as the
+  # runtime minted it; the receipt is the one that run's stage names.
+  run_key="${validate_run_dir%/}"
+  run_key="${run_key##*/}"
+  run_key="${run_key#dev-validate-}"
+  [[ "$run_key" =~ $ID_GRAMMAR && "$run_key" != *..* ]] \
+    || die invalid-id "option=--validate-run-dir" "value=$run_key"
+  out="$out_dir/dev-return-$issue-$round_id-$run_key.json"
 fi
-if [[ -L "$out" || ( -e "$out" && "$recovery" == true ) ]] \
+if [[ -L "$out" ]] \
   || { [[ -f "$out" ]] && jq -e '.validate | startswith("FAILING:")' "$out" >/dev/null 2>&1; }; then
   die receipt-exists "path=$out"
 fi
@@ -1034,7 +1020,6 @@ fi
 jq -n \
   --argjson schema_version 1 \
   --arg round_id "$round_id" \
-  --arg recovery_of "$recovery_of" \
   --arg kind "$kind" \
   --arg issue "$issue" \
   --arg branch "$branch" \
@@ -1077,21 +1062,12 @@ jq -n \
      recovered_from: $recovered_from,
      bundled: $bundled,
      items: $items
-   } + (if $recovery_of == "" then {} else {recovery_of: $recovery_of} end)
-     + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
+   } + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
      + (if $validate_lanes == "" then {} else {validate_lanes: $validate_lanes} end)
      + (if $validate_class_base == "" then {} else {validate_class_base: $validate_class_base} end)
      + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 
-if [[ "$recovery" == true ]]; then
-  # The checker owns parent validity; the link publishes without replacement.
-  "$SCRIPT_DIR/dev-artifact-check" --file "$tmp" --round-id "$round_id" >/dev/null \
-    || die recovery-invalid "path=$parent"
-  ln "$tmp" "$out" 2>/dev/null || die receipt-exists "path=$out"
-  rm -f -- "${tmp:?}"
-else
-  mv "$tmp" "$out"
-fi
+mv "$tmp" "$out"
 trap - EXIT
 
 printf '%s\n' "$out"

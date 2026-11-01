@@ -115,6 +115,31 @@ fn plant_claim(paths: &Paths, pid: u32, start: &str) {
     .unwrap();
 }
 
+/// Step6-map A7 row (2)'s contract on the runtime: `watch status` carries
+/// what the overseer's turn-end hook reads (`hooks/lane-mail-check.sh`,
+/// `watch_status`): the claim's standing, its cwd and origin, and the event
+/// log's path. Defect: a status that drops one, so the hook arms a follow
+/// on no log, or reads a live watch's cwd as none and refuses the turn end.
+#[test]
+fn watch_status_carries_the_claims_cwd_origin_and_the_log_for_the_hook() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths_in(dir.path());
+    let state = paths.state.display().to_string();
+    let holder = Owned::sleep();
+    plant_claim(&paths, holder.pid(), &holder.start());
+    let out = watch_cmd(dir.path(), &["watch", "status", "--file", &state]);
+    let status = reply(&out)["result"].clone();
+    assert_eq!(status["claim"]["standing"], "live", "{status}");
+    assert_eq!(status["claim"]["cwd"], "/x", "{status}");
+    assert_eq!(status["claim"]["origin"], "hand", "{status}");
+    assert_eq!(status["log"], paths.log.display().to_string(), "{status}");
+    std::fs::remove_file(&paths.pid).unwrap();
+    let out = watch_cmd(dir.path(), &["watch", "status", "--file", &state]);
+    let status = reply(&out)["result"].clone();
+    assert!(status["claim"].is_null(), "no claim: {status}");
+    assert_eq!(status["log"], paths.log.display().to_string(), "{status}");
+}
+
 /// Plant the record a legacy `oversee-watch` writes (`watch_pid_write`):
 /// the six legacy fields and no `start=`.
 fn plant_legacy_claim(paths: &Paths, pid: u32) {
@@ -1077,6 +1102,13 @@ fn every_event_renders_to_the_legacy_bytes() {
                 cause: s("set-replaced"),
             },
             "EVENT notice-unmarked intent=request-transfer:overseer:3:1-1 cause=set-replaced",
+        ),
+        (
+            Event::DirectiveSendUnsettled {
+                item: s("CC-1"),
+                cause: s("receipt-missing"),
+            },
+            "EVENT directive-send-unsettled item=CC-1 cause=receipt-missing",
         ),
         (
             Event::LaneClosed {
@@ -2196,6 +2228,79 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     assert_eq!(
         baseline.get("reconcile-refused", "close-owned-resources:KEN-GONE:1-1"),
         Some("lane-missing"),
+        "the row that quiets the next pass"
+    );
+}
+
+/// Decision 184 (5), R-U6-1 M2. Defect: an owed session send no receipt
+/// settles reported in the reconcile's reply alone, so the log carries
+/// nothing and the operator learns of it from the next send's refusal; or
+/// reported on every pass. Through `watch run` on a one-second long
+/// cadence over a lane whose `directive_send` stands owed with no kept
+/// receipt, the reconcile duty prints one `directive-send-unsettled` line
+/// across two passes, keys it in the baseline by item and cause as
+/// `reconcile-refused` is keyed, and leaves the record as it stood.
+#[test]
+fn an_owed_send_no_receipt_settles_reaches_the_log_once_per_cause_through_watch_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let state = state_dir.join(FLEET_FILE_NAME);
+    let lane = json!({
+        "item": "CC-1", "harness": "claude", "host": "claude-cloud",
+        "kind": "claude-cloud", "account": state_dir.join(".eclaude"),
+        "session_id": "session_01CLOUD", "mail_root": state_dir.join("wt"),
+        "window": null, "status": "running",
+        "directive_send": {"result": "owed", "text": "Rebase.", "receipt": "1-1"}
+    });
+    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    fleet["lanes"] = json!([lane]);
+    std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
+    let mut child = spawn_watch_run(&state_dir, &["--interval", "1"]);
+    let paths = Paths::of(&state).unwrap();
+    await_claim(&mut child, &paths);
+    // Two reconcile passes: the duty's pass stamp moved past its first.
+    let deadline = Instant::now() + secs(15);
+    let mut first = None;
+    loop {
+        if let Ok(baseline) = watch::Baseline::load(&paths.baseline)
+            && let Some(&at) = baseline.passes.get(&Duty::Reconcile)
+        {
+            match first {
+                None => first = Some(at),
+                Some(f) if at > f => break,
+                Some(_) => {}
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the reconcile never passed twice"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
+    assert!(
+        reply(&stop)["ok"].as_bool().unwrap_or(false),
+        "{}",
+        stderr(&stop)
+    );
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let lines: Vec<String> = log_lines(&paths)
+        .into_iter()
+        .filter(|l| l.starts_with("EVENT directive-send-unsettled "))
+        .collect();
+    assert_eq!(
+        lines,
+        vec!["EVENT directive-send-unsettled item=CC-1 cause=receipt-missing"]
+    );
+    let after: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    assert_eq!(after["lanes"][0], lane, "the owed record stands as it was");
+    let baseline = watch::Baseline::load(&paths.baseline).unwrap();
+    assert_eq!(
+        baseline.get("directive-send-unsettled", "CC-1"),
+        Some("receipt-missing"),
         "the row that quiets the next pass"
     );
 }

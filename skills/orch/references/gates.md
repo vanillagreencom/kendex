@@ -34,7 +34,7 @@ A wait receives `--base-checkout [REVIEW_BASE_CHECKOUT]` for the error-review re
 | Waiting on | Tool |
 |------------|------|
 | Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`changes_requested`/`comments`/`timeout`/`proceeded`/`unreviewable`/`copilot-error`/`error` |
-| CI on one PR | `ci-wait` — verdicts `pass`/`fail`/`pending`/`none` |
+| CI on one PR | `verify-pr` (`orch-runtime op`) — `status` `complete` with verdict `pass`/`fail`/`none`; `pending` or `unreadable` repeated through [Waiter launch](waiter-launch.md) |
 | Merge-queue / auto-merge outcome | `queue-wait` — the growing verdict set documented in its § Verdicts table |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |
 

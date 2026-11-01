@@ -5,7 +5,8 @@
 # leaves the watch running. The runtime (`orch-runtime watch run`, started
 # through the `oversee-watch` entry) writes the record and refuses a second
 # watch on one fleet state; the entry reads it to stop a legacy watch it
-# replaces; the hook reads it to tell a live watch from none.
+# replaces; the overseer's turn-end hook reads the watch through
+# `orch-runtime watch status`, not this record.
 #
 # Files, in the directory holding the fleet state:
 #   oversee-watch.pid   `key=value` lines the runtime writes: pid (its own,

@@ -20,9 +20,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use orch_runtime::error::Error;
 use orch_runtime::ops::{
-    AcceptResult, Applied, Attempt, BeginRound, EndSource, Env, ReconcileRound, RecordHandoff,
-    RecordValidationAdmission, RecordVerification, Relaunch, Report, Request, ResumeHandoff,
-    RoundKind, RunCause, RunState, apply,
+    AcceptResult, Applied, Attempt, BeginRound, EndSource, Env, OpenRun, ReconcileRound,
+    RecordHandoff, RecordValidationAdmission, RecordVerification, Relaunch, Report, Request,
+    ResumeHandoff, RoundKind, RunCause, RunState, apply,
 };
 use orch_runtime::state::{Document, ItemState, Locking, Record, Stage, StageKind, StageOutcome};
 use serde_json::{Value, json};
@@ -92,7 +92,10 @@ fn keys(doc: &Document) -> Vec<String> {
 }
 
 fn begin(kind: RoundKind) -> Request {
-    Request::BeginRound(BeginRound { kind })
+    Request::BeginRound(BeginRound {
+        kind,
+        body_revision: None,
+    })
 }
 
 fn admit(round: &str, run_dir: Option<&str>) -> Request {
@@ -131,6 +134,9 @@ fn accept(
         end: end.map(|from_artifact| EndSource {
             from_artifact: from_artifact.to_path_buf(),
         }),
+        authorization: None,
+        summary_file: None,
+        summary_comment: None,
     })
 }
 
@@ -1149,7 +1155,13 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     assert_eq!(r.round_id.as_deref(), Some(ROUND));
     assert_eq!(r.relaunch, Some(Relaunch::Fresh));
     assert_eq!(r.remaining, vec!["merge-pr § 5 step 3".to_owned()]);
-    assert_eq!(r.open_runs, vec![a.run_dir.clone()]);
+    assert_eq!(
+        r.open_runs,
+        vec![OpenRun {
+            run_dir: a.run_dir.clone(),
+            outcome: None,
+        }]
+    );
     let record = object(&path)["handoff"].as_object().unwrap().clone();
     assert_eq!(record["resumed_at"], NOW_SECS + 600);
     assert_eq!(record["written_at"], past);
@@ -1217,7 +1229,9 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
         keys(&record)[9..],
         ["written_at".to_owned(), "resumed_at".to_owned()]
     );
-    // Once the run closed, a resume names no open run.
+    // Once the run closed, a resume still names it, now by its recorded
+    // outcome: the continuation reuses the run its job ended rather than
+    // starting a new one (decision 184 (3)).
     run(
         &path,
         &accept(ROUND, Some(&a.run_dir), StageOutcome::Lost, None),
@@ -1227,7 +1241,35 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     let Report::ResumeHandoff(r3) = after_close.report else {
         panic!("{:?}", after_close.report)
     };
-    assert_eq!(r3.open_runs, Vec::<String>::new());
+    assert_eq!(
+        r3.open_runs,
+        vec![OpenRun {
+            run_dir: a.run_dir.clone(),
+            outcome: Some(StageOutcome::Lost),
+        }]
+    );
+    // The round's next attempt admitted beside the lost one (a recovery
+    // round's shape): the runs are listed newest first, so the
+    // continuation's first is the attempt still to read (decision 188 (f)).
+    let next = admitted(run_at(&path, &admit_next(ROUND), NOW_SECS + 1000).unwrap());
+    let later = run_at(&path, &resume(), NOW_SECS + 1100).unwrap();
+    let Report::ResumeHandoff(r4) = later.report else {
+        panic!("{:?}", later.report)
+    };
+    assert_eq!(
+        r4.open_runs,
+        vec![
+            OpenRun {
+                run_dir: next.run_dir.clone(),
+                outcome: None,
+            },
+            OpenRun {
+                run_dir: a.run_dir.clone(),
+                outcome: Some(StageOutcome::Lost),
+            },
+        ],
+        "newest first"
+    );
 
     // A record the legacy `set handoff` wrote names no round and no route
     // and carries `resumed_at: null`; the resume still stamps it, and a
@@ -1261,7 +1303,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     assert_eq!(l.round_id, None);
     assert_eq!(l.relaunch, None);
     assert_eq!(l.remaining, vec!["submit-pr § 2".to_owned()]);
-    assert_eq!(l.open_runs, Vec::<String>::new());
+    assert_eq!(l.open_runs, Vec::<OpenRun>::new());
     assert_eq!(object(&legacy)["handoff"]["resumed_at"], NOW_SECS);
 }
 
@@ -1483,7 +1525,16 @@ fn op_admits_closes_reconciles_and_hands_off_a_round_through_the_wire_names() {
     assert_eq!(report["round_id"], ROUND);
     assert_eq!(report["relaunch"], "fresh");
     assert_eq!(report["resumed_now"], true);
-    assert_eq!(report["open_runs"], json!([]));
+    // The round's runs the continuation has not consumed, each with its
+    // outcome, newest first: the stopped next attempt, then the no-verdict
+    // close (decisions 184 (3), 188 (f)).
+    assert_eq!(
+        report["open_runs"],
+        json!([
+            {"run_dir": next_dir, "outcome": "stopped"},
+            {"run_dir": run_dir, "outcome": "no-verdict"},
+        ])
+    );
     assert_eq!(report["remaining"], json!(["dev-start § 4"]));
     let state: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert!(state["handoff"]["resumed_at"].as_u64().is_some());
@@ -1531,4 +1582,712 @@ fn an_unreadable_admitted_run_holds_the_stage_open() {
         validate_stages(&path).iter().all(|s| s.end.is_some()),
         "a run directory read absent closes the stage"
     );
+}
+
+// ---------------------------------------------------------------------------
+// U6c: the acceptance's authorization and the round record's two fields
+// (step6-map § A3, § A8, § B's directed micro change).
+// ---------------------------------------------------------------------------
+
+use orch_runtime::state::{Authorization, AuthorizedBy};
+
+fn authorized(by: AuthorizedBy, id: &str) -> Option<Authorization> {
+    Some(Authorization { by, id: id.into() })
+}
+
+/// The round's own close as `pass`, under `authorization`.
+fn accept_as(round: &str, authorization: Option<Authorization>) -> Request {
+    Request::AcceptResult(AcceptResult {
+        round_id: round.into(),
+        run_dir: None,
+        outcome: StageOutcome::Pass,
+        end: None,
+        authorization,
+        summary_file: None,
+        summary_comment: None,
+    })
+}
+
+fn accepted(applied: Applied) -> orch_runtime::ops::ResultAccepted {
+    let Report::AcceptResult(a) = applied.report else {
+        panic!("{:?}", applied.report)
+    };
+    a
+}
+
+fn begun(applied: Applied) -> orch_runtime::ops::RoundBegun {
+    let Report::BeginRound(b) = applied.report else {
+        panic!("{:?}", applied.report)
+    };
+    b
+}
+
+fn lines(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .map(|t| t.lines().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+fn record_of(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Decisions 142 (5), 100: an acceptance records who accepted the step,
+/// and the authorization is part of the acceptance's identity: a repeat
+/// under the same one is the no-op a repeat is, one under another refuses
+/// and leaves the record, and a close never gains an authorization after
+/// the fact. The defect: a step re-authorized after its close, or two
+/// authorities recorded for one close.
+#[test]
+fn an_acceptance_records_its_authorization_and_a_repeat_under_another_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = item_file(dir.path());
+    let overseer = authorized(AuthorizedBy::Overseer, "sess-1");
+    let a = accepted(run(&path, &accept_as(ROUND, overseer.clone())).unwrap());
+    assert!(a.closed_now);
+    assert_eq!(a.authorization, overseer);
+    assert_eq!(a.summary_comment, None);
+    assert_eq!(a.summary, None);
+    let doc = object(&path);
+    assert_eq!(
+        keys(doc["stages"][0].as_object().unwrap()),
+        [
+            "kind",
+            "round_id",
+            "start",
+            "end",
+            "outcome",
+            "authorization"
+        ]
+    );
+    assert_eq!(
+        doc["stages"][0]["authorization"],
+        json!({"by": "overseer", "id": "sess-1"})
+    );
+    // The same authorization again is the repeat: nothing moves, the
+    // record is reported; a repeat naming none reports the recorded one.
+    let b = accepted(run_at(&path, &accept_as(ROUND, overseer.clone()), NOW_SECS + 60).unwrap());
+    assert!(!b.closed_now);
+    assert_eq!(b.authorization, overseer);
+    let c = accepted(run(&path, &accept_as(ROUND, None)).unwrap());
+    assert!(!c.closed_now);
+    assert_eq!(c.authorization, overseer);
+    // Another id, or another authority, refuses and leaves the record.
+    for other in [
+        authorized(AuthorizedBy::Overseer, "sess-2"),
+        authorized(AuthorizedBy::OwnerDirective, "sess-1"),
+    ] {
+        let err = run(&path, &accept_as(ROUND, other.clone())).unwrap_err();
+        assert_eq!(err.key(), "authorization-differs", "{other:?}");
+        assert_eq!(
+            object(&path)["stages"][0]["authorization"],
+            json!({"by": "overseer", "id": "sess-1"}),
+            "{other:?}"
+        );
+    }
+    // A stage closed under no authorization is never re-authorized.
+    let path = item_file(dir.path());
+    run(&path, &accept_as(ROUND, None)).unwrap();
+    let err = run(&path, &accept_as(ROUND, overseer)).unwrap_err();
+    assert_eq!(err.key(), "authorization-differs");
+    assert_eq!(object(&path)["stages"][0].get("authorization"), None);
+}
+
+/// Decisions 168 (4), 183 Q5, 182 Q4: an owner-directed micro change runs
+/// under the item key `directive-<id>` (the hook's and the mailbox's item
+/// alphabet admit no colon), its declared validation runs once as a
+/// `validate` row closed on its verdict, and the round's own close names
+/// the owner's directive by that id or refuses `authorization-missing`.
+/// The defect: a directed change accepted on no one's authority, or under
+/// another directive's.
+#[test]
+fn a_directed_items_acceptance_names_its_directive_or_refuses_authorization_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    fs::create_dir_all(&state).unwrap();
+    let path = state.join("workflow-state-directive-m-7.json");
+    fs::write(&path, ITEM).unwrap();
+    // The directed round and its one run of the declared command: the run's
+    // close is the runner's verdict and names no authorization.
+    let round = begun(run(&path, &begin(RoundKind::Dev)).unwrap()).round_id;
+    let a = admitted(run(&path, &admit(&round, None)).unwrap());
+    let closed = accepted(
+        run(
+            &path,
+            &accept(&round, Some(&a.run_dir), StageOutcome::Pass, None),
+        )
+        .unwrap(),
+    );
+    assert!(closed.closed_now);
+    assert_eq!(closed.authorization, None);
+    for (name, authorization) in [
+        ("none", None),
+        ("the overseer", authorized(AuthorizedBy::Overseer, "m-7")),
+        (
+            "another directive",
+            authorized(AuthorizedBy::OwnerDirective, "m-8"),
+        ),
+    ] {
+        let err = run(&path, &accept_as(&round, authorization)).unwrap_err();
+        assert_eq!(err.key(), "authorization-missing", "{name}");
+        assert_eq!(object(&path)["stages"][1]["end"], Value::Null, "{name}");
+    }
+    // On the wire the key names the file and the refusal names the
+    // directive the item needs.
+    let request = write(
+        dir.path(),
+        "accept.json",
+        &format!(r#"{{"op": "accept-result", "round_id": "{round}", "outcome": "pass"}}"#),
+    );
+    let out = support::isolated()
+        .arg("--state-dir")
+        .arg(&state)
+        .args(["op", "--item", "directive-m-7", "--request"])
+        .arg(&request)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", first_stderr_line(&out));
+    assert_eq!(
+        first_stderr_line(&out),
+        "orch-runtime: authorization-missing directive=m-7"
+    );
+    assert_eq!(reply(&out)["refusal"]["key"], "authorization-missing");
+    let directed = authorized(AuthorizedBy::OwnerDirective, "m-7");
+    let accepted_now = accepted(run(&path, &accept_as(&round, directed.clone())).unwrap());
+    assert!(accepted_now.closed_now);
+    assert_eq!(accepted_now.authorization, directed);
+    let doc = object(&path);
+    assert_eq!(
+        doc["stages"][1]["authorization"],
+        json!({"by": "owner-directive", "id": "m-7"})
+    );
+    assert_eq!(doc["stages"][2]["outcome"], "pass");
+    assert_eq!(doc["stages"][2].get("authorization"), None);
+}
+
+/// An acceptance of `round` naming the summary file, through the
+/// `linear-comments` fixture as the tracker CLI with `fixture_env` planted
+/// (`LINEAR_COMMENTS`, `LINEAR_LIST_STATUS`, `LINEAR_STATUS`,
+/// `LINEAR_SNAPSHOT`), its calls appended to `log`.
+fn accept_posting(
+    dir: &Path,
+    path: &Path,
+    log: &Path,
+    summary: &Path,
+    round: &str,
+    name: &str,
+    fixture_env: &[(&str, &str)],
+) -> Output {
+    let request = write(
+        dir,
+        name,
+        &format!(
+            r#"{{"op": "accept-result", "round_id": "{round}", "outcome": "pass", "authorization": {{"by": "overseer", "id": "sess-1"}}, "summary_file": "{}"}}"#,
+            summary.display()
+        ),
+    );
+    let mut cmd = support::isolated();
+    cmd.args(["op", "--file"])
+        .arg(path)
+        .arg("--request")
+        .arg(&request)
+        .env(
+            "OVERSEE_WATCH_TRACKER",
+            support::fixtures().join("linear-comments/linear.sh"),
+        )
+        .env("LINEAR_LOG", log)
+        .env("LINEAR_STATE", path);
+    for (key, value) in fixture_env {
+        cmd.env(key, value);
+    }
+    cmd.output().unwrap()
+}
+
+/// The report of an acceptance that succeeded.
+fn accepted_report(out: &Output) -> Value {
+    assert!(out.status.success(), "{}", first_stderr_line(out));
+    reply(out)["result"]["report"].clone()
+}
+
+/// A new dev round on the item, its id.
+fn next_round(dir: &Path, path: &Path) -> String {
+    let begin = write(dir, "begin.json", r#"{"op": "begin-round", "kind": "dev"}"#);
+    let out = op(path, &begin);
+    assert!(out.status.success(), "{}", first_stderr_line(&out));
+    reply(&out)["result"]["report"]["round_id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A comment as the CLI's `comments list` answers it, created at `at`.
+fn listed(id: &str, body: &str, at: &str) -> Value {
+    json!({"id": id, "body": body, "user": "", "user_email": "", "created_at": at, "updated_at": at})
+}
+
+/// Decisions 174 (3), 182 Q6, 188 (e), 190: one Completion Summary per
+/// item, posted by the acceptance after its close committed, created on
+/// the item's first acceptance where the item's comment list names none,
+/// recorded `created`, and updated in place by the recorded id on every
+/// later one, with no list once an id is recorded; a refused post is in
+/// the reply and the acceptance stands. The defect: a comment per
+/// acceptance (round 9 item 3), a post before the close, a create with no
+/// list before it, a created comment not updated in place, or a refused
+/// post failing the acceptance.
+#[test]
+fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_the_recorded_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
+    let log = dir.path().join("linear.log");
+    let snapshot = dir.path().join("at-first-post.json");
+    let summary = write(
+        dir.path(),
+        "completion-summary-KEN-4687.md",
+        "## Completion Summary\n\nround one\n",
+    );
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        ROUND,
+        "first.json",
+        &[("LINEAR_SNAPSHOT", snapshot.to_str().unwrap())],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(
+        report["authorization"],
+        json!({"by": "overseer", "id": "sess-1"})
+    );
+    assert_eq!(report["summary"]["posted"], "created");
+    assert_eq!(report["summary"]["id"], "cmt-1");
+    assert_eq!(report["summary_comment"]["id"], "cmt-1");
+    let state = record_of(&path);
+    assert_eq!(state["summary_comment"]["id"], "cmt-1");
+    assert_eq!(state["summary_comment"]["origin"], "created");
+    assert!(
+        state["summary_comment"]["at"]
+            .as_str()
+            .unwrap()
+            .ends_with('Z')
+    );
+    assert_eq!(state["stages"][0]["outcome"], "pass");
+    // The close was committed before the comment went out, with no id yet.
+    let at_post = record_of(&snapshot);
+    assert_eq!(at_post["stages"][0]["outcome"], "pass");
+    assert_eq!(at_post.get("summary_comment"), None);
+    assert_eq!(
+        lines(&log),
+        [
+            "comments list KEN-4687".to_owned(),
+            format!("comments create KEN-4687 --body-file {}", summary.display()),
+            "body ## Completion Summary".to_owned(),
+        ]
+    );
+    // The next round's acceptance updates the one comment by its id, with
+    // no list.
+    let second = next_round(dir.path(), &path);
+    fs::write(&summary, "## Completion Summary\n\nround two\n").unwrap();
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        &second,
+        "second.json",
+        &[],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(report["summary"]["posted"], "updated");
+    assert_eq!(report["summary"]["id"], "cmt-1");
+    let posts = lines(&log);
+    assert_eq!(posts.len(), 5, "{posts:?}");
+    assert_eq!(
+        posts[3],
+        format!("comments update cmt-1 --body-file {}", summary.display())
+    );
+    let state = record_of(&path);
+    assert_eq!(state["summary_comment"]["id"], "cmt-1");
+    assert_eq!(state["stages"][1]["outcome"], "pass");
+    // A refused post: the acceptance stands, the reply says why, and the
+    // record keeps its comment.
+    let third = next_round(dir.path(), &path);
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        &third,
+        "third.json",
+        &[("LINEAR_STATUS", "3")],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(report["summary"]["posted"], "failed");
+    let cause = report["summary"]["cause"].as_str().unwrap();
+    assert!(cause.starts_with("summary-update: exit 3"), "{cause}");
+    let state = record_of(&path);
+    assert_eq!(state["stages"][2]["outcome"], "pass");
+    assert_eq!(state["summary_comment"]["id"], "cmt-1");
+    assert_eq!(lines(&log).len(), 7);
+}
+
+/// Decisions 186 (4), 188 (e), 190: the item's one summary is the comment
+/// headed `## Completion Summary`, whoever created it. With no
+/// `summary_comment` recorded, the acceptance lists the item's comments,
+/// records the newest so headed as `found`, the dev agent's own § 9 post
+/// until step 7 retires it, and sends nothing: on Linear that comment's
+/// attachments are the `![name](assetUrl)` links in its body, which an
+/// update from the summary file would replace. A newer comment headed
+/// otherwise, or one that only quotes the heading, is not the summary. The
+/// defect: the first acceptance doubling the summary beside the dev
+/// agent's (R-U6-2 M1), rewriting the dev agent's comment with a body
+/// that names no screenshot (R-U6-3 M1), or recording a comment that is
+/// not the item's summary.
+#[test]
+fn a_first_acceptance_records_the_dev_agents_summary_comment_as_found_and_never_rewrites_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
+    let log = dir.path().join("linear.log");
+    let written = "## Completion Summary\n\n### Screenshots\n- `tmp/ui-shots/a.png` - Settings, after, dark\n";
+    let summary = write(dir.path(), "completion-summary-KEN-4687.md", written);
+    // The agent's post, as the CLI stored it: the file plus the asset link
+    // `--attach` appended.
+    let posted = format!("{written}\n\n![a.png](https://uploads.linear.app/org/asset-a)");
+    let comments = json!([
+        listed(
+            "cmt-old",
+            "## Completion Summary\n\nan earlier round's",
+            "2026-11-01T09:00:00.000Z"
+        ),
+        listed(
+            "cmt-blocked",
+            "Blocked on KEN-1: see the Completion Summary of KEN-1",
+            "2026-11-01T11:00:00.000Z"
+        ),
+        listed("cmt-dev", &posted, "2026-11-01T10:00:00.000Z"),
+        listed(
+            "cmt-quote",
+            "> ## Completion Summary\n\nquoted",
+            "2026-11-01T12:00:00.000Z"
+        ),
+    ]);
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        ROUND,
+        "first.json",
+        &[("LINEAR_COMMENTS", &comments.to_string())],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(lines(&log), ["comments list KEN-4687"]);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(report["summary"]["posted"], "found");
+    assert_eq!(report["summary"]["id"], "cmt-dev");
+    assert_eq!(report["summary_comment"]["id"], "cmt-dev");
+    assert_eq!(report["summary_comment"]["origin"], "found");
+    let state = record_of(&path);
+    assert_eq!(state["summary_comment"]["id"], "cmt-dev");
+    assert_eq!(state["summary_comment"]["origin"], "found");
+    assert_eq!(state["summary_comment"]["at"], report["summary"]["at"]);
+    assert_eq!(state["stages"][0]["outcome"], "pass");
+}
+
+/// Decision 190: an acceptance whose recorded comment is `found` sends
+/// nothing to the tracker, since the comment is not the acceptance's to
+/// rewrite, and reports `kept` with the cause; the record stands as it was.
+/// The dev agent's own § 9 post carries each round's summary. The defect:
+/// a later round's acceptance rewriting the found comment by its recorded
+/// id (R-U6-3 M1, the case left for the fix to decide).
+#[test]
+fn a_later_acceptance_keeps_a_found_summary_comment_and_sends_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
+    let log = dir.path().join("linear.log");
+    let summary = write(
+        dir.path(),
+        "completion-summary-KEN-4687.md",
+        "## Completion Summary\n\nround two\n",
+    );
+    let found = json!({"id": "cmt-dev", "at": "2026-11-01T10:05:00Z", "origin": "found"});
+    let mut state = record_of(&path);
+    state["summary_comment"] = found.clone();
+    fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        ROUND,
+        "first.json",
+        &[("LINEAR_COMMENTS", "not a list")],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(
+        report["summary"],
+        json!({"posted": "kept", "id": "cmt-dev", "cause": "found-comment"})
+    );
+    assert_eq!(report["summary_comment"], found);
+    assert!(!log.exists(), "{:?}", lines(&log));
+    let state = record_of(&path);
+    assert_eq!(state["summary_comment"], found);
+    assert_eq!(state["stages"][0]["outcome"], "pass");
+    // The next round's acceptance: the same, with no list and no post.
+    let second = next_round(dir.path(), &path);
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        &second,
+        "second.json",
+        &[],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["summary"]["posted"], "kept");
+    assert!(!log.exists(), "{:?}", lines(&log));
+    assert_eq!(record_of(&path)["summary_comment"], found);
+}
+
+/// Decision 190: a record written before `origin` existed names the
+/// comment the acceptance was then updating, so it reads `created` and the
+/// acceptance keeps updating that comment in place, recording the word.
+/// The defect: an item accepted at the index losing its in-place update,
+/// or refusing its own record.
+#[test]
+fn a_summary_comment_recorded_without_origin_reads_created_and_is_updated_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
+    let log = dir.path().join("linear.log");
+    let summary = write(
+        dir.path(),
+        "completion-summary-KEN-4687.md",
+        "## Completion Summary\n\nround two\n",
+    );
+    let mut state = record_of(&path);
+    state["summary_comment"] = json!({"id": "cmt-1", "at": "2026-11-01T10:05:00Z"});
+    fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    let out = accept_posting(dir.path(), &path, &log, &summary, ROUND, "first.json", &[]);
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(report["summary"]["posted"], "updated");
+    assert_eq!(report["summary"]["id"], "cmt-1");
+    assert_eq!(
+        lines(&log),
+        [
+            format!("comments update cmt-1 --body-file {}", summary.display()),
+            "body ## Completion Summary".to_owned(),
+        ]
+    );
+    let state = record_of(&path);
+    assert_eq!(state["summary_comment"]["id"], "cmt-1");
+    assert_eq!(state["summary_comment"]["origin"], "created");
+    assert_eq!(state["summary_comment"]["at"], report["summary"]["at"]);
+}
+
+/// Decisions 187 (3), 188 (e), 190: a process that ended after the CLI
+/// created the comment and before the id's record leaves the comment with
+/// no `summary_comment`; the next acceptance's list names it, records it
+/// `found` and creates no second one. With its id lost the acceptance
+/// cannot tell its own comment from another writer's, so it is not
+/// rewritten either. The defect: the crash replay creating a second
+/// summary (R-U6-2 § B, Copilot § Constructed crash limits), or rewriting
+/// a comment the record does not name as the acceptance's.
+#[test]
+fn an_acceptance_after_a_crash_between_the_create_and_the_ids_record_finds_the_created_comment() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
+    let log = dir.path().join("linear.log");
+    let summary = write(
+        dir.path(),
+        "completion-summary-KEN-4687.md",
+        "## Completion Summary\n\nround one\n",
+    );
+    let out = accept_posting(dir.path(), &path, &log, &summary, ROUND, "first.json", &[]);
+    let report = accepted_report(&out);
+    assert_eq!(report["summary"]["posted"], "created");
+    // The crash's leavings: the comment exists, the record holds no id.
+    let mut state = record_of(&path);
+    assert_eq!(state["summary_comment"]["id"], "cmt-1");
+    state.as_object_mut().unwrap().remove("summary_comment");
+    fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    let second = next_round(dir.path(), &path);
+    let comments = json!([listed(
+        "cmt-1",
+        "## Completion Summary\n\nround one",
+        "2026-11-01T10:00:00.000Z"
+    )]);
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        &second,
+        "second.json",
+        &[("LINEAR_COMMENTS", &comments.to_string())],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(report["summary"]["posted"], "found");
+    assert_eq!(report["summary"]["id"], "cmt-1");
+    let state = record_of(&path);
+    assert_eq!(state["summary_comment"]["id"], "cmt-1");
+    assert_eq!(state["summary_comment"]["origin"], "found");
+    let posts = lines(&log);
+    assert_eq!(
+        posts
+            .iter()
+            .filter(|l| l.starts_with("comments create"))
+            .count(),
+        1,
+        "{posts:?}"
+    );
+    assert_eq!(posts[3], "comments list KEN-4687");
+    assert_eq!(posts.len(), 4, "{posts:?}");
+}
+
+/// Decision 188 (e): a list that fails (the CLI refused, could not run, or
+/// answered no list) creates nothing, since whether a comment exists is not
+/// known; the acceptance stands with `failed` and the cause, and the next
+/// acceptance asks again. The defect: an unreadable list read as an empty
+/// one, creating a comment beside one that may exist.
+#[test]
+fn a_failed_comment_list_creates_no_summary_and_the_acceptance_stands() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
+    let log = dir.path().join("linear.log");
+    let summary = write(
+        dir.path(),
+        "completion-summary-KEN-4687.md",
+        "## Completion Summary\n\nround one\n",
+    );
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        ROUND,
+        "first.json",
+        &[("LINEAR_LIST_STATUS", "5")],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], true);
+    assert_eq!(report["summary"]["posted"], "failed");
+    let cause = report["summary"]["cause"].as_str().unwrap();
+    assert!(cause.starts_with("summary-list: exit 5"), "{cause}");
+    let state = record_of(&path);
+    assert_eq!(state["stages"][0]["outcome"], "pass");
+    assert_eq!(state.get("summary_comment"), None);
+    assert_eq!(lines(&log), ["comments list KEN-4687"]);
+    // A list that is not a list: the same, with its cause.
+    let out = accept_posting(
+        dir.path(),
+        &path,
+        &log,
+        &summary,
+        ROUND,
+        "repeat.json",
+        &[("LINEAR_COMMENTS", "not a list")],
+    );
+    let report = accepted_report(&out);
+    assert_eq!(report["closed_now"], false);
+    assert_eq!(report["summary"]["posted"], "failed");
+    let cause = report["summary"]["cause"].as_str().unwrap();
+    assert!(cause.starts_with("summary-list: answer:"), "{cause}");
+    assert_eq!(lines(&log).len(), 2);
+    // The next acceptance's list answers: none, so the comment is created.
+    let out = accept_posting(dir.path(), &path, &log, &summary, ROUND, "again.json", &[]);
+    let report = accepted_report(&out);
+    assert_eq!(report["summary"]["posted"], "created");
+    assert_eq!(record_of(&path)["summary_comment"]["id"], "cmt-1");
+    let posts = lines(&log);
+    assert_eq!(posts.len(), 5, "{posts:?}");
+    assert_eq!(
+        posts[3],
+        format!("comments create KEN-4687 --body-file {}", summary.display())
+    );
+}
+
+/// Round 9 item 5, decisions 174 (5), 182 Q7: a round records the item body
+/// revision its caller read and says when it is later than the kind's
+/// previous round's; a first round, an equal or older revision and a round
+/// handed none report no move. The defect: a round that reads a moved body
+/// and says nothing.
+#[test]
+fn begin_round_records_the_body_revision_and_reports_body_moved_past_the_previous_rounds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = item_file(dir.path());
+    let rows = [
+        (
+            RoundKind::Dev,
+            Some("2026-01-29T15:20:00.000Z"),
+            false,
+            "the first recorded revision",
+        ),
+        (
+            RoundKind::Dev,
+            Some("2026-01-29T15:20:00.000Z"),
+            false,
+            "an equal revision",
+        ),
+        (
+            RoundKind::Dev,
+            Some("2026-01-29T16:00:00.000Z"),
+            true,
+            "a later revision",
+        ),
+        (RoundKind::Dev, None, false, "none handed"),
+        (
+            RoundKind::Review,
+            Some("2026-01-29T16:30:00.000Z"),
+            false,
+            "another kind's first",
+        ),
+        (
+            RoundKind::Dev,
+            Some("2026-01-29T15:30:00.000Z"),
+            false,
+            "an older one, recorded and not judged",
+        ),
+        (
+            RoundKind::Dev,
+            Some("2026-01-29T17:00:00.000Z"),
+            true,
+            "later than the last recorded",
+        ),
+    ];
+    for (kind, revision, moved, note) in rows {
+        let request = Request::BeginRound(BeginRound {
+            kind,
+            body_revision: revision.map(str::to_owned),
+        });
+        let b = begun(run(&path, &request).unwrap());
+        assert_eq!(b.body_moved, moved, "{note}");
+        let doc = object(&path);
+        let last = doc["stages"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["round_id"], b.round_id, "{note}");
+        assert_eq!(
+            last.get("body_revision").and_then(Value::as_str),
+            revision,
+            "{note}"
+        );
+    }
+    // The wire names.
+    let request = write(
+        dir.path(),
+        "begin.json",
+        r#"{"op": "begin-round", "kind": "dev", "body_revision": "2026-01-29T18:00:00.000Z"}"#,
+    );
+    let out = op(&path, &request);
+    assert!(out.status.success(), "{}", first_stderr_line(&out));
+    let report = reply(&out)["result"]["report"].clone();
+    assert_eq!(report["body_moved"], true);
+    let state = record_of(&path);
+    let last = state["stages"].as_array().unwrap().last().unwrap();
+    assert_eq!(last["body_revision"], "2026-01-29T18:00:00.000Z");
 }

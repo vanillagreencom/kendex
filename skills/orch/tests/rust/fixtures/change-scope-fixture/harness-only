@@ -1,0 +1,16 @@
+#!/bin/bash
+# The docs reader as the validate rows see it: `docs_only=` from
+# $CHANGE_SCOPE_DOCS (false when unset), and the changed paths
+# $CHANGE_SCOPE_PATHS names (comma-separated, `src/a.rs` when unset) written
+# to the `--paths-output` file one per line. Every call is appended to
+# $CHANGE_SCOPE_LOG when set.
+[ -z "${CHANGE_SCOPE_LOG:-}" ] || printf 'harness-only %s\n' "$*" >> "$CHANGE_SCOPE_LOG"
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in --paths-output) out="${2:-}"; shift ;; esac
+  shift
+done
+if [ -n "$out" ]; then
+  printf '%s\n' "${CHANGE_SCOPE_PATHS:-src/a.rs}" | tr ',' '\n' > "$out"
+fi
+printf 'docs_only=%s\n' "${CHANGE_SCOPE_DOCS:-false}"

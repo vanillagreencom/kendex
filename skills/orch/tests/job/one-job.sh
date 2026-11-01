@@ -16,11 +16,13 @@
 # item-tier --body --path, the internal panel route, gh issue close), a
 # tracker-less local key at the small tier (new-local-key, no tracker read,
 # a lane that exits when done), a GitHub issue at the micro tier (no dev
-# round, no review), the local handoff row (the lane records a handoff after
-# its dev receipt and ends; the relaunch resumes the same round) and the
-# GitHub killed row (the lane dies with its admitted run held; the close
-# stops the run, the relaunch reconciles the round and retries). An argument
-# runs the rows whose name contains it.
+# round, no review), the local handoff row (the lane records a handoff with
+# its validation run going and ends; the run ends while the lane is away,
+# on the suite's barrier; the relaunch resumes the same round and reuses
+# that run) and the GitHub killed row (the lane dies with its admitted run
+# held; the close stops the run, which closes stopped, the relaunch
+# reconciles the round and retries). An argument runs the rows whose name
+# contains it.
 #
 # The job runs inside a mktemp -d root: a consumer repository, its bare
 # origin, a private tmux server on the suite's own socket, and the lane's
@@ -246,7 +248,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
 
   case "$scenario" in
     handoff)
-      # --- the lane ends out of context with its round open; the relaunch resumes it ---
+      # --- the lane ends out of context with its round open and its run going; the relaunch resumes it ---
       if ! await "$lane_status" '^lane-handoff$' 2400; then
         fail "$name: the lane records its handoff within the bound" "$(cat "$lane_status" 2>/dev/null)"
         return 0
@@ -258,8 +260,20 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       assert_eq "$(jq -c '[(.handoff.round_id == .dev_round_id), .handoff.relaunch, .handoff.resumed_at, (.handoff.remaining | length)]' "$state")" \
         '[true,"resume",null,3]' "$name: the record names the open round, asks for a resume and is not yet consumed"
       assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: false, outcome: null}]')" \
-        "$name: the admitted run's stage is still open when the session ends"
+        "$name: the admitted run's stage is open at the handoff, its run held on the suite's barrier"
       assert_eq "$(await_gone "$PID" 100 && echo gone || echo alive)" gone "$name: the session's harness has exited"
+      # The run ends while the lane is away: the barrier released once the
+      # session is gone, the detached job reads the verdict and closes its
+      # own stage with nobody's session over it (decision 133).
+      : > "$wt/tmp/one-job-barrier"
+      tries=0
+      until jq -e --arg r "$dev_rid" '[.stages[]? | select(.kind == "validate" and .round_id == $r and .end != null)] | length > 0' "$state" >/dev/null 2>&1; do
+        tries=$((tries + 1))
+        [[ "$tries" -lt 1200 ]] || { fail "$name: the job closes the run's stage within the bound once the barrier is released" "$(cat "$state" 2>/dev/null)"; return 0; }
+        sleep 0.1
+      done
+      assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: true, outcome: "pass"}]')" \
+        "$name: the admitted run's stage, open at the handoff, was closed pass by its job while the lane was away"
       close_lane "$name" "$root" '{}' || return 0
       assert_eq "$(state_get "$state" '.handoff.resumed_at')" null "$name: closing the exited lane leaves the handoff standing"
       launch_lane "$name" "$root" "$request" || return 0
@@ -269,8 +283,8 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
         fail "$name: the relaunched lane ends its job within the bound" "$(cat "$lane_status" 2>/dev/null)"
         return 0
       fi
-      assert_eq "$(jq -c --arg r "$dev_rid" --arg run "$first_run" '[.resumed_now, (.round_id == $r), (.open_runs == [$run]), .relaunch]' "$wt/tmp/resume-report.json")" \
-        '[true,true,true,"resume"]' "$name: the continuation resumes the recorded round and finds its admitted run open"
+      assert_eq "$(jq -c --arg r "$dev_rid" --arg run "$first_run" '[.resumed_now, (.round_id == $r), ((.open_runs | map(.run_dir)) == [$run]), .open_runs[0].outcome, .relaunch]' "$wt/tmp/resume-report.json")" \
+        '[true,true,true,"pass","resume"]' "$name: the continuation resumes the recorded round and reuses the run its job ended while the lane was away, starting none"
       assert_eq "$(jq -c --slurpfile r "$wt/tmp/resume-report.json" '[(.handoff.resumed_at == $r[0].resumed_at), (.handoff.resumed_at | type)]' "$state")" \
         '[true,"number"]' "$name: the record is stamped resumed once, with the stamp the continuation read"
       assert_eq "$(state_get "$state" '.dev_round_id')" "$dev_rid" "$name: the relaunch continues the same dev round"
@@ -296,8 +310,16 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       close_lane "$name" "$root" '{}' || return 0
       assert_eq "$(await_gone "$held_pid" 100 && echo gone || echo alive)" gone "$name: the close stopped the admitted run's child"
       assert_eq "$([[ -e "$first_run/exit" ]] && echo present || echo absent)" absent "$name: the stopped run left no verdict"
-      assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: false, outcome: null}]')" \
-        "$name: the close itself closes no stage"
+      # The close's `dev-validate-run --stop` hands the run to `validate
+      # stop`, which records the stop on the stage before it ends the child
+      # and waits for the run's job: the job (validate run) outlives its
+      # child's group, reads the child gone with no sentinel under the
+      # recorded stop and closes its own stage `stopped` with the end notice
+      # owed (decision 188 (c)); nothing is left for the next reconcile.
+      assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: true, outcome: "stopped"}]')" \
+        "$name: the job closed the run's stage stopped, under the stop the close recorded, when the close ended its child"
+      assert_eq "$(jq -r --arg run "$first_run" '[.stages[] | select(.kind == "validate" and .run_dir == $run)] | .[0] | (.stop.at | type) + " " + ((.stop.at <= .end) | tostring)' "$state")" \
+        "number true" "$name: the stop was recorded on the stage before its close"
       write_brief "$wt/tmp/brief-$key-retry.md" retry
       jq -c --arg brief "$wt/tmp/brief-$key-retry.md" '.brief_file = $brief' "$request" > "$root/relaunch.json"
       launch_lane "$name" "$root" "$root/relaunch.json" || return 0
@@ -305,15 +327,14 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
         fail "$name: the relaunched lane ends its job within the bound" "$(cat "$lane_status" 2>/dev/null)"
         return 0
       fi
-      assert_eq "$(jq -c '.runs | map({run_dir, state, outcome, cause, seconds: (.seconds // null)})' "$wt/tmp/reconcile-retry.json")" \
-        "$(jq -cn --arg run "$first_run" '[{run_dir: $run, state: "closed", outcome: "lost", cause: "process-gone", seconds: null}]')" \
-        "$name: the next session's reconcile closes the stopped run lost, by its gone child, with no wall time to report"
+      assert_eq "$(jq -c '.runs | length' "$wt/tmp/reconcile-retry.json")" 0 \
+        "$name: the next session's reconcile finds the run its job already closed, with nothing left to close"
       retry_run="$(jq -r '.run_dir' "$wt/tmp/admission-retry.json")"
       assert_eq "$(jq -c --arg id "$first_id" --arg run "$first_run" '[.minted, .admitted_now, (.run_id != $id), (.run_dir != $run)]' "$wt/tmp/admission-retry.json")" \
         '[true,true,true,true]' "$name: the retry's admission mints the next attempt under a new directory"
       assert_eq "$(validate_stages "$state" "$dev_rid")" \
-        "$(jq -cn --arg a "$first_run" --arg b "$retry_run" '[{run_dir: $a, closed: true, outcome: "lost"}, {run_dir: $b, closed: true, outcome: "pass"}]')" \
-        "$name: the lost attempt stays as a closed stage with its directory beside the passing retry"
+        "$(jq -cn --arg a "$first_run" --arg b "$retry_run" '[{run_dir: $a, closed: true, outcome: "stopped"}, {run_dir: $b, closed: true, outcome: "pass"}]')" \
+        "$name: the stopped attempt stays as a closed stage with its directory beside the passing retry"
       assert_eq "$(state_get "$state" '.dev_round_id')" "$dev_rid" "$name: the retry runs under the same dev round"
       ;;
     *)
@@ -349,9 +370,9 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       assert_eq "$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' "$wt/tmp/validate-retry.out")" "$run_dir" \
         "$name: the retry wrote into the directory its admission named"
     fi
-    assert_eq "$(jq -c --arg r "$dev_rid" --arg run "$run_dir" '[(.round_id == $r), (.runs | map({run_dir, state, outcome, cause, timed: (.seconds | type)}))]' "$wt/tmp/reconcile-report.json")" \
-      "$(jq -cn --arg run "$run_dir" '[true, [{run_dir: $run, state: "closed", outcome: "pass", cause: "sentinel", timed: "number"}]]')" \
-      "$name: the accept's reconcile closes the admitted run with its sentinel's word and wall time"
+    assert_eq "$(jq -c --arg r "$dev_rid" '[(.round_id == $r), (.runs | length)]' "$wt/tmp/reconcile-report.json")" \
+      '[true,0]' \
+      "$name: the accept's reconcile finds the run its job already closed, with nothing left to close"
     assert_eq "$(jq -c '[.kind, .outcome, .closed_now]' "$wt/tmp/accept-dev.json")" '["implement","pass",true]' \
       "$name: the runtime closes the dev stage with the acceptance word"
     assert_eq "$(jq -c --arg d "$dev_rid" --arg r "$review_rid" \
@@ -360,7 +381,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       "$name: the round stages are the dev round (its kind set to the receipt's by dev-artifact-check) and the review round, each closed once with its word"
     [[ "$scenario" == killed ]] || assert_eq "$(validate_stages "$state" "$dev_rid")" \
       "$(jq -cn --arg run "$run_dir" '[{run_dir: $run, closed: true, outcome: "pass"}]')" \
-      "$name: exactly one validate stage, opened by admission and closed by the reconcile"
+      "$name: exactly one validate stage, opened by admission and closed by its job"
     assert_eq "$(state_get "$state" '.validate_rounds | length')" 1 "$name: dev-artifact-check recorded one validate round"
     assert_eq "$(state_get "$state" '.child_sessions | to_entries | map(.value.status) | unique | join(",")')" closed \
       "$name: every child session is retired"
@@ -378,9 +399,10 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
     # --- the dev result's artifacts ---------------------------------------
     assert_eq "$(sed -n 's/^\(guard-exit=0\) at=.*/\1/p' "$run_dir/exit")" guard-exit=0 "$name: the validation run's sentinel records a passing guard exit"
     assert_eq "$(grep -c -- "${run_dir##*/}" "$wt/tmp/validation-runs")" 1 "$name: the run is in the worktree's run index"
-    assert_eq "$(jq -r '.round_id + " " + .validate + " " + .kind' "$wt/tmp/dev-return-$key-$dev_rid.json")" "$dev_rid pass implement" \
-      "$name: the dev receipt binds the round and a passing validation"
-    assert_eq "$(jq -r '.verdict + " " + .head' "$artifact")" "pass $(jq -r '.commit' "$wt/tmp/dev-return-$key-$dev_rid.json")" \
+    dev_receipt="$wt/tmp/dev-return-$key-$dev_rid-${run_dir##*/dev-validate-}.json"
+    assert_eq "$(jq -r '.round_id + " " + .validate + " " + .kind' "$dev_receipt")" "$dev_rid pass implement" \
+      "$name: the dev receipt binds the round and a passing validation, keyed by its run"
+    assert_eq "$(jq -r '.verdict + " " + .head' "$artifact")" "pass $(jq -r '.commit' "$dev_receipt")" \
       "$name: the review artifact passes the reviewed head"
     assert_eq "$(cat "$wt/tmp/hook-count")" $'hook\nhook' "$name: the dev commit and the preparation fold each ran the commit hook"
   else

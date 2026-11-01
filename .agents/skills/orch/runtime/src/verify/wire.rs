@@ -937,6 +937,44 @@ pub(super) struct Branch {
     pub(super) protection: Protection,
 }
 
+// --- gh pr view: the pull request ---------------------------------------------------
+
+/// A pull request as `gh pr view N --repo O/R --json headRefOid,baseRefName,state`
+/// exports it (U6g): gh's own JSON export, not a REST object. The three
+/// are among the fields gh v2.103.3 lists for `pr view --json` (its usage
+/// text with an empty `--json`), each printed for every asked field, so
+/// each is required here. `headRefOid` is the head commit's id,
+/// `baseRefName` the base branch, `state` GitHub's `PullRequestState`
+/// (docs.github.com/en/graphql/reference/enums#pullrequeststate: `OPEN`,
+/// `CLOSED`, `MERGED`); a word outside that set refuses the reply.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PullRequestView {
+    #[serde(rename = "headRefOid")]
+    pub head: String,
+    #[serde(rename = "baseRefName")]
+    pub base: String,
+    pub state: PullRequestState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum PullRequestState {
+    Open,
+    Closed,
+    Merged,
+}
+
+impl PullRequestState {
+    /// The word GitHub names the state by.
+    pub fn word(self) -> &'static str {
+        match self {
+            PullRequestState::Open => "OPEN",
+            PullRequestState::Closed => "CLOSED",
+            PullRequestState::Merged => "MERGED",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};

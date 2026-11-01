@@ -195,6 +195,16 @@ pub struct StartController {
     pub controller: Pending,
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
+    /// The fleet watch's launch line (step6-map A7): the `oversee-watch`
+    /// entry and its arguments, the words the workflow's launch block hands
+    /// the job launcher after its own (`workflows/oversee.md` § 4). The
+    /// effect launches them detached through that launcher once the
+    /// controller's lane is confirmed, before the publication, and records
+    /// the job on the controller record as `overseer.watch`; a launch that
+    /// refuses or never claims leaves the start `unconfirmed` naming it. Left
+    /// out, the caller holds the watch's start and the effect launches none.
+    #[serde(default)]
+    pub watch: Option<Vec<String>>,
 }
 
 /// A start recorded, its controller pending until the launch confirms.
@@ -543,6 +553,7 @@ pub(super) fn start_controller(
     state::set(record, "pending", serde_json::to_value(&r.controller)?);
     let mut intent = new_intent(EffectOp::StartController, &target, env)?;
     intent.original_pending = Some(standing).filter(|v| !v.is_null());
+    intent.watch = r.watch.clone();
     push_intent(path, doc, &intent)?;
     Ok(ControllerStarted {
         generation,
@@ -934,6 +945,11 @@ fn record_transfer_outcome(
             }
             if let Some(line) = &r.launch_line {
                 state::set(record, "launch_line", line.as_str());
+            }
+            // The watch a start launched or found claimed; a succession
+            // carries none and the field stands as it was.
+            if let Some(watch) = &r.watch {
+                state::set(record, "watch", serde_json::to_value(watch)?);
             }
             match pending.get("class").filter(|v| !v.is_null()) {
                 Some(class) => state::set(record, "class", class.clone()),
@@ -1343,6 +1359,11 @@ mod tests {
         Request::StartController(Box::new(StartController {
             controller: successor(),
             brief_file: None,
+            watch: Some(vec![
+                "oversee-watch".to_owned(),
+                "--state".to_owned(),
+                "f".to_owned(),
+            ]),
         }))
     }
 
@@ -1568,7 +1589,9 @@ mod tests {
         let id = intend(&path, &transfer(expected()));
         let set = |revision: u64| ObligationRecord {
             standing: vec![crate::state::Held {
-                obligation: crate::state::Obligation::JobSidecar,
+                obligation: crate::state::Obligation::JobSidecar {
+                    record: "/fleet/intents/transfer.job".to_owned(),
+                },
                 role: Some(crate::state::Role::Job),
                 harness: None,
             }],
@@ -1646,7 +1669,9 @@ mod tests {
         // The launcher, still naming the intent's original owner, writes a
         // different set and then a failed outcome: both are no-ops.
         let sidecar = || crate::state::Held {
-            obligation: crate::state::Obligation::JobSidecar,
+            obligation: crate::state::Obligation::JobSidecar {
+                record: "/fleet/intents/transfer.job".to_owned(),
+            },
             role: Some(crate::state::Role::Job),
             harness: None,
         };
@@ -1674,6 +1699,7 @@ mod tests {
             window: None,
             tmux_session: None,
             launch_line: None,
+            watch: None,
             observation: Some(json!({"note": "job-unclaimed"})),
             while_owner: Some(owner()),
             lane_keys: None,
@@ -1774,7 +1800,9 @@ mod tests {
             phase: None,
             obligations: Some(ObligationRecord {
                 standing: vec![crate::state::Held {
-                    obligation: crate::state::Obligation::JobSidecar,
+                    obligation: crate::state::Obligation::JobSidecar {
+                        record: "/fleet/intents/transfer.job".to_owned(),
+                    },
                     role: Some(crate::state::Role::Job),
                     harness: None,
                 }],
@@ -1815,7 +1843,7 @@ mod tests {
         assert!(
             stored.obligations.as_ref().is_none_or(|o| !o
                 .standing_obligations()
-                .any(|o| *o == crate::state::Obligation::JobSidecar)),
+                .any(|o| matches!(o, crate::state::Obligation::JobSidecar { .. }))),
             "the launcher's set never landed over the claim: {stored:?}"
         );
         assert!(once.get(), "the claim landed in the gap");
@@ -2281,7 +2309,8 @@ mod tests {
     /// item in that write; the follow-up progress write marks the notice
     /// with how the send went and appends nothing; the same mark written
     /// again, or a mark on a notice already sent, changes nothing. A start's
-    /// intent takes no row and no notice.
+    /// outcome carrying a notice records it the same way (decision 184 (6));
+    /// which of its outcomes carries one is the effect's to say.
     #[test]
     fn a_job_failure_is_announced_in_the_fleet_log_once_per_intent() {
         let dir = tempfile::tempdir().unwrap();
@@ -2294,6 +2323,7 @@ mod tests {
         let owed = Notice {
             key: "successor-not-ready".to_owned(),
             text: text.clone(),
+            to: None,
             owner: state::NOTICE_OWED.to_owned(),
         };
         let sent = Notice {
@@ -2356,7 +2386,7 @@ mod tests {
         assert_eq!(r.progress, Progress::Unchanged);
         assert_eq!(fleet(&path).intents[0].notice, Some(sent.clone()));
         assert_eq!(fleet(&path).fleet_log.len(), rows_before + 1);
-        // A start's failure carries no row and records no notice.
+        // A start's outcome carrying a notice records the row and the notice.
         fs::write(&path, fixtures::FLEET).unwrap();
         let rows_before = fleet(&path).fleet_log.len();
         let id = intend(&path, &start());
@@ -2365,8 +2395,9 @@ mod tests {
         };
         failed.notice = Some(owed.clone());
         run(&path, &Request::RecordOutcome(failed)).unwrap();
-        assert_eq!(fleet(&path).fleet_log.len(), rows_before);
-        assert_eq!(fleet(&path).intents[0].notice, None);
+        assert_eq!(fleet(&path).fleet_log.len(), rows_before + 1);
+        assert_eq!(fleet(&path).fleet_log.last().unwrap()["text"], text);
+        assert_eq!(fleet(&path).intents[0].notice, Some(owed));
     }
 
     /// Decision 109 (4): an outcome that changes nothing of the record

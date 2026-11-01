@@ -20,10 +20,12 @@
 #[path = "support.rs"]
 mod support;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
+use agent_runtime::clock;
 use serde_json::{Value, json};
 use support::*;
 use tempfile::TempDir;
@@ -137,6 +139,310 @@ impl Fleet {
             .cloned()
             .unwrap_or(Value::Null)
     }
+
+    /// The accounts judge's listing: the `lanes-listing` fixture symlinked
+    /// into the state directory as `lanes` (it prints `lanes.json` beside
+    /// the path it is invoked as) and named as the reader, with `rows`
+    /// planted.
+    fn plant_listing(&mut self, rows: &[Value]) {
+        let lanes = self.state_dir().join("lanes");
+        if std::fs::symlink_metadata(&lanes).is_err() {
+            std::os::unix::fs::symlink(fixtures().join("lanes-listing/lanes"), &lanes).unwrap();
+        }
+        std::fs::write(
+            self.state_dir().join("lanes.json"),
+            serde_json::to_string(&Value::Array(rows.to_vec())).unwrap(),
+        )
+        .unwrap();
+        self.env.retain(|(name, _)| name != "OVERSEE_WATCH_LANES");
+        self.env.push((
+            "OVERSEE_WATCH_LANES".to_owned(),
+            lanes.display().to_string(),
+        ));
+    }
+}
+
+/// The one measured account of the room rows.
+const ACCOUNT: &str = "/home/me/.aclaude";
+
+fn epoch_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// [`ACCOUNT`]'s row of `lanes list --json`: a measured Claude account with
+/// its weekly window (the binding) at 20 percent and its session window at
+/// `session` percent, read this instant with three hours to its reset, so
+/// the window opened two hours ago and the judge charges each live lane on
+/// it half the window's use for each of the three hours left (the session
+/// projection, `ops/accounts.rs` `projection`): at 60 percent no lane
+/// leaves 40 points of room and one lane projects 50 past it.
+fn listing_row(session: u64, now: u64) -> Value {
+    let weekly = clock::iso_utc(now + 3 * 86_400);
+    json!({
+        "alias": "aclaude",
+        "harness": "claude",
+        "config_dir": ACCOUNT,
+        "measured_through": "local",
+        "status": "ok",
+        "verdict": "room",
+        "headroom_pct": 80,
+        "binding_bucket": "weekly",
+        "binding_resets_at": weekly,
+        "wall": 20,
+        "session_5h_pct": session,
+        "weekly_pct": 20,
+        "monthly_pct": null,
+        "model_buckets": [],
+        "resets": {"session": clock::iso_utc(now + 3 * 3600), "weekly": weekly, "model": null, "monthly": null},
+        "usage_rate_state": "one-sample",
+        "usage_age_s": 0,
+        "claims": 0,
+        "pool": "plan"
+    })
+}
+
+/// A lane record on [`ACCOUNT`], its harness `process`, holding its slot
+/// through a reservation to `until` where one is named.
+fn lane_on(
+    item: &str,
+    status: &str,
+    process: Option<&Owned>,
+    until: Option<&str>,
+    mail_root: &Path,
+) -> Value {
+    let mut lane = record(item, status, process, mail_root);
+    lane["account"] = json!(ACCOUNT);
+    if let Some(until) = until {
+        lane["reservation"] = json!({"reason": "resume", "until": until});
+    }
+    lane
+}
+
+/// A launch of `item` on [`ACCOUNT`] for `opus` that asks for the
+/// account's room to be judged, the request the room judge reads.
+fn launch_on(item: &str, mail_root: &Path) -> Value {
+    let mut request = launch(item, mail_root);
+    request["account"] = json!(ACCOUNT);
+    request["model"] = json!("opus");
+    request["judge_account"] = json!(true);
+    request
+}
+
+/// A refusal's fields by name.
+fn refusal_fields(answer: &Value) -> HashMap<String, String> {
+    answer["refusal"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|pair| {
+            (
+                pair[0].as_str().unwrap().to_owned(),
+                pair[1].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// Step6-map A5 row (1) (decision 168 (3), round 8 item 3). Defect: a
+/// relaunch refused for room on its own lane's charge, the symptom that
+/// held a context relaunch 1 h 37 min at its handoff; or a relaunch
+/// admitted onto an account another lane has filled. The account's
+/// session window leaves room for no second lane. KEN-1's record stands
+/// stopped with a reservation (a charge, decision 97) and KEN-2 runs live
+/// on the account: KEN-1's relaunch is refused `account-walled` on KEN-2's
+/// charge alone (one lane's projection, not two) and moves nothing; with
+/// KEN-2 ended it is admitted, its own reservation left out of the
+/// judgement as the relaunch drops it, and its record carries none after.
+#[test]
+fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
+    let mut fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let now = epoch_now();
+    fleet.plant_listing(&[listing_row(60, now)]);
+    let mut other = Owned::sleep();
+    let until = clock::iso_utc(now + 3600);
+    fleet.write_lanes(vec![
+        lane_on("KEN-1", "stopped", None, Some(&until), fleet.state_dir()),
+        lane_on("KEN-2", "running", Some(&other), None, fleet.state_dir()),
+    ]);
+    let before = fleet.lane("KEN-1");
+
+    let out = fleet.op(&launch_on("KEN-1", fleet.state_dir()));
+    let answer = reply(&out);
+    assert_eq!(
+        answer["refusal"]["key"],
+        "account-walled",
+        "{}",
+        stderr(&out)
+    );
+    let fields = refusal_fields(&answer);
+    assert_eq!(fields["account"], ACCOUNT);
+    assert_eq!(fields["model"], "opus");
+    assert_eq!(fields["bucket"], "session");
+    assert_eq!(fields["pct"], "60");
+    let headroom: f64 = fields["projected-headroom"].parse().unwrap();
+    assert!(
+        (-51.0..-49.0).contains(&headroom),
+        "one lane's charge, KEN-2's, not KEN-1's own: {headroom}"
+    );
+    assert!(
+        stderr(&out).starts_with(&format!(
+            "orch-runtime: account-walled item=KEN-1 account={ACCOUNT} model=opus pct=60 bucket=session projected-headroom="
+        )),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(
+        fleet.lane("KEN-1"),
+        before,
+        "a refused relaunch moves nothing"
+    );
+    assert!(live(other.pid()), "a refused relaunch signals nothing");
+
+    end(&mut other);
+    let out = fleet.op(&launch_on("KEN-1", fleet.state_dir()));
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert_eq!(
+        answer["result"]["persisted"]["report"]["admission"]["cap"],
+        4
+    );
+    assert!(
+        fleet.lane("KEN-1").get("reservation").is_none(),
+        "the relaunch takes its own reservation's slot: {}",
+        fleet.lane("KEN-1")
+    );
+}
+
+/// Step6-map A5 row (2). Defect: a launch with no record judged as if it
+/// replaced a lane, a standing charge dropped for a stranger; a launch
+/// admitted on a listing nobody could read (decision 99); a launch onto an
+/// account the listing has no row for refused where the legacy launcher
+/// proceeded as given. KEN-1's reservation on the account counts against a
+/// fresh launch of KEN-3, refused `account-walled` on that one charge with
+/// no record written; the listing made unreadable refuses it
+/// `account-unjudged`; an account with no row is admitted unjudged.
+#[test]
+fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing() {
+    let mut fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let now = epoch_now();
+    fleet.plant_listing(&[listing_row(60, now)]);
+    let until = clock::iso_utc(now + 3600);
+    fleet.write_lanes(vec![lane_on(
+        "KEN-1",
+        "stopped",
+        None,
+        Some(&until),
+        fleet.state_dir(),
+    )]);
+
+    let out = fleet.op(&launch_on("KEN-3", fleet.state_dir()));
+    let answer = reply(&out);
+    assert_eq!(
+        answer["refusal"]["key"],
+        "account-walled",
+        "{}",
+        stderr(&out)
+    );
+    let headroom: f64 = refusal_fields(&answer)["projected-headroom"]
+        .parse()
+        .unwrap();
+    assert!(
+        (-51.0..-49.0).contains(&headroom),
+        "KEN-1's reservation charges a launch that replaces nothing: {headroom}"
+    );
+    assert_eq!(
+        fleet.fleet()["lanes"].as_array().unwrap().len(),
+        1,
+        "a refused launch writes no record"
+    );
+
+    std::fs::write(fleet.state_dir().join("lanes.rc"), "1").unwrap();
+    let out = fleet.op(&launch_on("KEN-3", fleet.state_dir()));
+    let answer = reply(&out);
+    assert_eq!(
+        answer["refusal"]["key"],
+        "account-unjudged",
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(fleet.fleet()["lanes"].as_array().unwrap().len(), 1);
+    std::fs::remove_file(fleet.state_dir().join("lanes.rc")).unwrap();
+
+    let mut unlisted = launch_on("KEN-3", fleet.state_dir());
+    unlisted["account"] = json!("/home/me/.other");
+    let out = fleet.op(&unlisted);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert_eq!(fleet.lane("KEN-3")["account"], "/home/me/.other");
+}
+
+/// Decision 188 (b) (R-U6-2 L4). Defect: a launch onto an account the
+/// word refuses, reserved or retired from its day, refused `account-walled`
+/// with the wall's figures for an account that has room, sending the
+/// operator to a usage wall that is not there. The refusal is the word's
+/// own key, its line naming the word, or the day and who stated it, with
+/// no window's figure; nothing is written.
+#[test]
+fn a_named_reserved_or_retired_account_is_refused_by_its_word_and_writes_nothing() {
+    let mut fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let now = epoch_now();
+    let mut reserved = listing_row(0, now);
+    reserved["reserved"] = json!(1);
+    fleet.plant_listing(&[reserved]);
+    let out = fleet.op(&launch_on("KEN-1", fleet.state_dir()));
+    let answer = reply(&out);
+    assert_eq!(
+        answer["refusal"]["key"],
+        "account-reserved",
+        "{}",
+        stderr(&out)
+    );
+    let fields = refusal_fields(&answer);
+    assert_eq!(fields["account"], ACCOUNT);
+    assert_eq!(fields["model"], "opus");
+    assert_eq!(fields["word"], "reserve");
+    assert!(
+        !fields.contains_key("pct") && !fields.contains_key("bucket"),
+        "no window's figure in a word's refusal: {fields:?}"
+    );
+    assert!(
+        stderr(&out).starts_with(&format!(
+            "orch-runtime: account-reserved item=KEN-1 account={ACCOUNT} model=opus word=reserve"
+        )),
+        "{}",
+        stderr(&out)
+    );
+    let mut ended = listing_row(0, now);
+    ended["plan_ends"] = json!("2000-01-01");
+    fleet.plant_listing(&[ended]);
+    let out = fleet.op(&launch_on("KEN-1", fleet.state_dir()));
+    let answer = reply(&out);
+    assert_eq!(
+        answer["refusal"]["key"],
+        "account-retired",
+        "{}",
+        stderr(&out)
+    );
+    let fields = refusal_fields(&answer);
+    assert_eq!(fields["ends"], "2000-01-01");
+    assert_eq!(fields["source"], "provider");
+    assert!(
+        !fields.contains_key("pct") && !fields.contains_key("bucket"),
+        "{fields:?}"
+    );
+    assert!(
+        fleet.fleet()["lanes"]
+            .as_array()
+            .is_none_or(|lanes| lanes.is_empty()),
+        "a refused launch writes no record: {}",
+        fleet.fleet()
+    );
 }
 
 /// A lane record as a confirmed launch leaves it, its harness `process`,

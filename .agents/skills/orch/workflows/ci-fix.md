@@ -174,11 +174,16 @@ For a merge-group failure, first run the failing job's command locally on the fi
 
 The pull-request wait below proves nothing about the fix under the harness-ci queue-only default, where the pull-request run reports `CI` with no lane. The caller re-arms only under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle's re-queue rule.
 
+The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](../references/waiter-launch.md) and repeated while `result.status` is `pending` or `unreadable`, as [submit-pr.md § 5](submit-pr.md#5-verify-ci) runs it; `[OWNER/REPO]` is the repository as `gh repo view --json nameWithOwner --jq .nameWithOwner` answers it from the checkout. A `pr-not-open` refusal says the pull request is closed or merged: report its `state` and stop.
+
 ```bash
-.agents/skills/orch/scripts/ci-wait [PR_NUMBER] --required-only --item [STATE_KEY]
+jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
+  '{op: "verify-pr", repo: $repo, pr: $pr, required_only: true}' \
+  > "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"
+.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"
 ```
 
-A passing or unconfigured CI result clears the head-bound standalone budget:
+A passing or unconfigured CI result, `status=complete` with `verdict=pass` or `verdict=none`, clears the head-bound standalone budget:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_budgets.ci_fix = null'

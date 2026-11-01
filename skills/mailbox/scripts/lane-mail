@@ -133,16 +133,15 @@ Overseer side:
               other as session-send-failed with the CLI's words, and --re
               and --halt refuse as channel-session, since such a lane never
               asks and no hook enforces a halt there. Every session send
-              writes the record's directive_send, {at, result, text,
-              credit}: its epoch, sent, archived or failed, the CLI's words
-              (at most 300 characters), and the account's cloud credit
-              {remaining_dollars, locked_reason} from `lanes list`, "unread"
-              where that read failed; a write that fails is noted as
-              send-unrecorded. The same record, less its epoch, is printed
-              on stderr as a keyed line whatever the result, after a
-              refusal's own keyed line where it refuses, `lane-mail:
-              directive-send item=ITEM record=<JSON>`, the object {result,
-              text, credit}, for orch's record-directive-send operation
+              prints its receipt on stderr as a keyed line whatever the
+              result, after a refusal's own keyed line where it refuses,
+              `lane-mail: directive-send item=ITEM record=<JSON>`, the
+              object {result, text, credit}: sent, archived or failed, the
+              CLI's words (at most 300 characters), and the account's cloud
+              credit {remaining_dollars, locked_reason} from `lanes list`,
+              "unread" where that read failed. The send writes no fleet
+              record: orch's `orch-runtime send` records the receipt on the
+              lane.
   drain --item ITEM --after N [--receipts]
               print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers.
@@ -527,7 +526,7 @@ lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, lane-host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
 state-unreadable, lane-unrecorded, host-capabilities-unread, host-root-required, host-root-mismatch, channel-session,
-session-unrecorded, session-archived, session-send-failed, send-unrecorded. `duplicate` is the one key whose
+session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
 value follows ` id=` rather than `=`, so it names the earlier envelope through
 the same field the receipt above prints; `resolved-already`,
 `delivery-repeated` and `owner-notice-repeated` close their own value with
@@ -649,7 +648,6 @@ fix=run `oversee register` from the orch skill in the session that should read t
     session-unrecorded) text='The lane'"'"'s record names no account or no session id, so no cloud session can be reached. Nothing was sent.' ;;
     session-archived) text='The Claude CLI answered that the cloud session is archived, so it takes no more messages. Nothing was delivered. oversee-events.md lane-stalled names what follows.' ;;
     session-send-failed) text='The Claude CLI did not answer ok true for the cloud session, so nothing says the directive was queued. Its exit status and its own words follow; send again once they are fixed.' ;;
-    send-unrecorded) text='The cloud session send ran, but its result and the account credit reading could not be written to the lane record as directive_send, so a later close of the lane names no cause. workflow-state'"'"'s own words follow; the send'"'"'s own outcome is the line after them.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
@@ -1008,30 +1006,20 @@ fi
 lm_cleanup() { orch_release_lock; [ -z "$WORK_DIR" ] || rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
 
-# The cause readings a stalled cloud lane's close carries into the fleet log,
-# kept on its record as directive_send: when this send ran, its result
-# (sent, archived or failed) and the CLI's words, and the account's cloud
-# credit as `lanes` reads it now. A send is the one per-session call kendex
-# makes, and no read of a session's own state exists (Claude Code 2.1.295
-# documents none), so these are the only causes it can name. A credit read
-# that fails, or a reading with no credit body, records "unread", never an
-# empty credit. The send already ran, so a record write that fails is noted
-# and the send's outcome stands. The write stays here while the session send
-# runs from a shell (the overseer's own `send --directive` and the cloud
-# launcher's): the legacy watch's cloud stall close reads the record's `at`.
-# The same record is also printed on stderr as a keyed receipt line, after
-# the write, for the orch runtime's reader, whose record-directive-send
-# operation takes the write over once a runtime verb owns the session send.
+# The cause readings a stalled cloud lane's close carries into the fleet log:
+# this send's result (sent, archived or failed) and the CLI's words, and the
+# account's cloud credit as `lanes` reads it now. A send is the one
+# per-session call kendex makes, and no read of a session's own state exists
+# (Claude Code 2.1.295 documents none), so these are the only causes it can
+# name. A credit read that fails, or a reading with no credit body, records
+# "unread", never an empty credit. The readings are printed on stderr as a
+# keyed receipt line for the orch runtime, whose `send` verb records them on
+# the lane; the mailbox writes no fleet record.
 lm_send_record() { # RESULT CAUSE
   local credit
   credit="$(ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/lanes" list --harness claude --local --json 2>/dev/null |
     jq -c --arg dir "$account" '[.[] | select(.config_dir == $dir) | .credits | objects | {remaining_dollars, locked_reason}] | first // "unread"')" ||
     credit='"unread"'
-  "$ORCH_SCRIPTS/workflow-state" ${state_args[@]+"${state_args[@]}"} update oversee \
-    --arg item "$ITEM" --arg result "$1" --arg text "$2" --argjson credit "$credit" \
-    '(.lanes[] | select(.item == $item)).directive_send = {at: (now | floor), result: $result, text: ($text | .[0:300]), credit: $credit}' \
-    >/dev/null 2>"$WORK_DIR/state.err" ||
-    { lm_message send-unrecorded "$ITEM" >&2; cat -- "$WORK_DIR/state.err" >&2; }
   jq -rn --arg item "$ITEM" --arg result "$1" --arg text "$2" --argjson credit "$credit" \
     '"lane-mail: directive-send item=\($item) record=" + ({result: $result, text: ($text | .[0:300]), credit: $credit} | tojson)' >&2 ||
     refuse write-failed /dev/stderr

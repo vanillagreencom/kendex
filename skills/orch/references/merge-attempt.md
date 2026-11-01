@@ -4,15 +4,18 @@ Load from [merge-pr.md § 5 step 1](../workflows/merge-pr.md#5-execute-the-merge
 
 ## Direct attempt
 
-**The direct attempt** follows a CI wait on the PR, on every entry to it, since the immediate merge refuses a pending check. Wait through [Waiter launch](waiter-launch.md):
+**The direct attempt** follows a CI wait on the PR, on every entry to it, since the immediate merge refuses a pending check. The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](waiter-launch.md) and repeated no more often than every 180 seconds while `result.status` is `pending` or `unreadable`, within the lane's CI budget `CI_WAIT_MAX_SECS`; `[OWNER/REPO]` is the repository as merge-pr.md § 5 step 1's `gh repo view --json nameWithOwner` answers it:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 --required-only --json --item [STATE_KEY]
+jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
+  '{op: "verify-pr", repo: $repo, pr: $pr, required_only: true}' \
+  > "[MAIN_REPO_ROOT]/tmp/verify-pr-request-[STATE_KEY].json"
+[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[MAIN_REPO_ROOT]/tmp/verify-pr-request-[STATE_KEY].json"
 ```
 
-The lane owns this approved-head wait. Read its completion file. `status=complete verdict=pass` takes the direct attempt without overseer direction, on the first green poll after pending CI (`ci-wait --help`).
+The lane owns this approved-head wait. Read its completion file. `status=complete` with `verdict=pass` takes the direct attempt without overseer direction. A `pr-not-open` refusal says the pull request is closed or merged: stop and report its `state`.
 
-Start `[CI_PENDING_COUNT]=0` and `[MERGE_RETRY_COUNT]=0` for `[PREPARED_HEAD]`; a re-entry on that same head keeps both counts. On `status=timeout verdict=pending`, re-read the head with merge-pr.md § 5 step 1's endpoint command. A moved head returns to § 3 for fresh readiness and approval. Otherwise increase `[CI_PENDING_COUNT]` and relaunch through Waiter launch while below `[CI_PENDING_LIMIT]=3`. At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, pending checks and wait logs. Unarm by § 1 before handing back. Never attempt the merge on that pending timeout. Exit `5` follows the mail route without consuming this count.
+Start `[CI_PENDING_COUNT]=0` and `[MERGE_RETRY_COUNT]=0` for `[PREPARED_HEAD]`; a re-entry on that same head keeps both counts. On `status=pending` or `status=unreadable` at the budget, re-read the head with merge-pr.md § 5 step 1's endpoint command. A moved head returns to § 3 for fresh readiness and approval. Otherwise increase `[CI_PENDING_COUNT]` and relaunch through Waiter launch while below `[CI_PENDING_LIMIT]=3`. At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, pending checks and wait logs. Unarm by § 1 before handing back. Never attempt the merge on that pending budget.
 
 Other results take the attempt. `--expected-head` refuses a moved head.
 

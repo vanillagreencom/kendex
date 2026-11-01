@@ -136,12 +136,12 @@ for row in \
   done
 done
 
-echo "=== every session send records its result and the account's credit, and prints the record ==="
+echo "=== every session send prints its result and the account's credit, and writes no fleet record ==="
 # A scripts tree whose lane-mail is a copy, OLD replaced by NEW where given,
 # and whose lanes is a stub: it logs ORCH_LANE_DIRS and its argv, prints
-# STUB_LANES_OUT and exits STUB_LANES_RC. Its workflow-state exits
-# STUB_STATE_UPDATE_RC on an update where that is set. Its path lands in
-# LANE_MAIL_BIN.
+# STUB_LANES_OUT and exits STUB_LANES_RC. Its workflow-state logs every call
+# it takes to STUB_STATE_LOG before the real one answers it. Its path lands
+# in LANE_MAIL_BIN.
 credit_scripts() { # NAME [OLD NEW]
   local dir orch
   dir="$(mutant_scripts "$1" lane-mail)" || exit 1
@@ -156,7 +156,7 @@ exit "${STUB_LANES_RC:-0}"
 EOF
   cat > "$orch/workflow-state" <<EOF
 #!/usr/bin/env bash
-[[ -z "\${STUB_STATE_UPDATE_RC:-}" || " \$* " != *" update "* ]] || exit "\$STUB_STATE_UPDATE_RC"
+[[ -z "\${STUB_STATE_LOG:-}" ]] || printf '%s\n' "\$*" >> "\$STUB_STATE_LOG"
 exec "$REPO_ROOT/skills/orch/scripts/workflow-state" "\$@"
 EOF
   chmod +x "$orch/lanes" "$orch/workflow-state"
@@ -167,61 +167,53 @@ listing() { # CREDITS-JSON — one lanes list --json record for the account
   jq -cn --arg dir "$ACCOUNT" --argjson c "$1" '[{config_dir: "/other", credits: {remaining_dollars: 99, locked_reason: null}}, {config_dir: $dir, credits: $c}]'
 }
 # The send's receipt, the keyed line it prints on stderr whatever its
-# outcome for orch's record-directive-send reader: its result, its credit,
-# and whether its text carries the CLI's words; `none` where no line was
-# printed.
+# outcome for orch's `send` verb: its result, its credit, and whether its
+# text carries the CLI's words; `none` where no line was printed.
 receipt() { # CLI-WORDS
   local record
   record="$(sed -n 's/^lane-mail: directive-send item=CC-1 record=//p' "$TMP_ROOT/err")"
   [[ -n "$record" ]] || { printf 'none'; return 0; }
   jq -c --arg cli "$1" '[.result, .credit, (.text | contains($cli))]' <<<"$record"
 }
-# The send's record on the lane, the write the legacy watch's cloud stall
-# close reads: the type of its at, its result, its credit, and whether its
-# text carries the CLI's words.
-recorded() { # CLI-WORDS
-  jq -c --arg cli "$1" '.lanes[] | select(.item == "CC-1") | .directive_send
-    | if . == null then null else [(.at | type), .result, .credit, (.text | contains($cli))] end' "$STATE/workflow-state-oversee.json"
-}
-clear_send() {
-  jq '.lanes |= map(del(.directive_send))' "$STATE/workflow-state-oversee.json" > "$STATE/next.json"
-  mv -- "$STATE/next.json" "$STATE/workflow-state-oversee.json"
+# The fleet record's bytes against the copy taken before the send, and the
+# workflow-state verbs the send asked (`--state-dir DIR VERB ...`), sorted
+# and unique: the mailbox reads the lane's channel and writes nothing.
+state_after() {
+  local verbs
+  verbs="$(cut -d' ' -f3 "$TMP_ROOT/state.log" 2>/dev/null | sort -u | paste -sd,)"
+  if cmp -s -- "$TMP_ROOT/state.before" "$STATE/workflow-state-oversee.json"; then
+    printf 'state=same verbs=%s' "$verbs"
+  else
+    printf 'state=changed verbs=%s' "$verbs"
+  fi
 }
 credit_scripts credit
 OPEN_CREDIT='{"remaining_dollars":12.5,"locked_reason":null}'
 LOCKED_CREDIT='{"remaining_dollars":0,"locked_reason":"spend_limit"}'
-# LABEL|claude answer|lanes listing|lanes exit|send exit|CLI words|recorded result|recorded credit
+# LABEL|claude answer|lanes listing|lanes exit|send exit|CLI words|result|credit
 for row in \
   "a delivered send|{\"ok\":true}|$(listing "$OPEN_CREDIT")|0|0||sent|$OPEN_CREDIT" \
   "an archived session|$ARCHIVED|$(listing "$LOCKED_CREDIT")|0|2|is archived|archived|$LOCKED_CREDIT" \
   "a failed send and a failed credit read|$MISSING|[]|1|2|Session not found|failed|\"unread\"" \
   "a listing with no credit body|{\"ok\":true}|$(listing null)|0|0||sent|\"unread\""; do
   IFS='|' read -r label answer lanes lanes_rc want_rc cli result credit <<<"$row"
-  clear_send
-  rm -f -- "${TMP_ROOT:?}/lanes.log"
-  lm STUB_CLAUDE_OUT="$answer" STUB_LANES_OUT="$lanes" STUB_LANES_RC="$lanes_rc" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
-  assert_eq "rc=$RC state=$(recorded "$cli") receipt=$(receipt "$cli")" \
-    "rc=$want_rc state=[\"number\",\"$result\",$credit,true] receipt=[\"$result\",$credit,true]" \
-    "$label: the lane record and the receipt hold the send's result, its words and the credit reading"
+  rm -f -- "${TMP_ROOT:?}/lanes.log" "${TMP_ROOT:?}/state.log"
+  cp -- "$STATE/workflow-state-oversee.json" "$TMP_ROOT/state.before"
+  lm STUB_CLAUDE_OUT="$answer" STUB_LANES_OUT="$lanes" STUB_LANES_RC="$lanes_rc" STUB_LANES_LOG="$TMP_ROOT/lanes.log" STUB_STATE_LOG="$TMP_ROOT/state.log" -- "${DIRECTIVE[@]}"
+  assert_eq "rc=$RC receipt=$(receipt "$cli") $(state_after)" \
+    "rc=$want_rc receipt=[\"$result\",$credit,true] state=same verbs=exists,get" \
+    "$label: the receipt holds the send's result, its words and the credit reading, and the fleet record is read, never written"
   assert_eq "$(cat "$TMP_ROOT/lanes.log")" "dirs=$ACCOUNT argv=list --harness claude --local --json" \
     "$label: the credit is read for the record's account alone"
 done
 # The receipt is a stderr line; stdout keeps the `sent` receipt alone.
 assert_eq "stdout=$(grep -c '^lane-mail: directive-send' <<<"$OUT") err=$(sed -n '$p' "$TMP_ROOT/err" | cut -d' ' -f1-3)" 'stdout=0 err=lane-mail: directive-send item=CC-1' 'the record is on stderr, after the refusal where there is one, never on stdout'
-# A record write that fails leaves the send's own outcome standing, and the
-# receipt still prints.
-clear_send
-lm STUB_STATE_UPDATE_RC=1 STUB_LANES_OUT="$(listing "$OPEN_CREDIT")" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
-assert_eq "rc=$RC out=$OUT err=$ERR state=$(recorded "") receipt=$(receipt "")" \
-  "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD err=lane-mail: send-unrecorded=CC-1 state=null receipt=[\"sent\",$OPEN_CREDIT,true]" \
-  "a record that cannot be written is noted, the receipt prints and the delivery stands"
-clear_send
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
 credit_scripts credit-unrecorded '  lm_send_record "$answer" "$cause"
 ' ''
 lm STUB_CLAUDE_OUT="$ARCHIVED" STUB_LANES_OUT="$(listing "$LOCKED_CREDIT")" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
-assert_eq "state=$(recorded "is archived") receipt=$(receipt "is archived")" "state=null receipt=none" \
-  "control: a send that records and prints nothing fails the record rows"
+assert_eq "receipt=$(receipt "is archived")" "receipt=none" \
+  "control: a send that prints no receipt fails the receipt rows"
 unset LANE_MAIL_BIN
 
 echo "=== a lane on a mailbox kind keeps its mailbox ==="

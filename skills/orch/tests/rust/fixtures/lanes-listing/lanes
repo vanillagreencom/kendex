@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# The fake `lanes` for the accounts rows (U6h): `list --json` prints
+# `lanes.json` beside the path this was invoked as (the rows symlink the
+# fixture into their world as `lanes`); `pick ... --json` answers from
+# `pick.json` there, `{exit?, body?}`, the delegated read's planted answer,
+# and refuses with a keyed line where none is planted. Every call appends
+# `ORCH_LANE_HOST=<value|unset> ORCH_LANE_RETIRE=<emptied|unset|set> <argv>`
+# to `lanes.log` there, so a row proves what the judge handed the reader:
+# the retirement statement emptied, the host named. The statement's value
+# is never printed: a child of the test process inherits that process's
+# environment, which can carry the operator's own statement, and a row
+# asserts only whether the judge emptied it. `lanes.rc` beside, when
+# present, is the listing's exit status, `lanes.text` its raw answer in
+# place of the JSON file.
+set -u
+here="$(dirname "${BASH_SOURCE[0]}")"
+if [ -z "${ORCH_LANE_RETIRE+x}" ]; then retire=unset; elif [ -z "$ORCH_LANE_RETIRE" ]; then retire=emptied; else retire=set; fi
+printf 'ORCH_LANE_HOST=%s ORCH_LANE_RETIRE=%s %s\n' "${ORCH_LANE_HOST-unset}" "$retire" "$*" >> "$here/lanes.log"
+if [ "${1:-}" = pick ]; then
+  if [ ! -f "$here/pick.json" ]; then
+    printf 'lanes: no-pick-planted\n' >&2
+    exit 1
+  fi
+  jq -c '.body // {}' -- "$here/pick.json"
+  exit "$(jq -r '.exit // 0' -- "$here/pick.json")"
+fi
+rc=0
+[ ! -f "$here/lanes.rc" ] || rc="$(cat "$here/lanes.rc")"
+if [ "$rc" -ne 0 ]; then
+  printf 'lanes: stub-refused rc=%s\n' "$rc" >&2
+  exit "$rc"
+fi
+if [ -f "$here/lanes.text" ]; then
+  cat "$here/lanes.text"
+elif [ -f "$here/lanes.json" ]; then
+  cat "$here/lanes.json"
+else
+  printf '[]\n'
+fi

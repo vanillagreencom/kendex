@@ -694,6 +694,7 @@ fn record(outcome: EffectOutcome) -> RecordOutcome {
         window: wire.window,
         tmux_session: wire.tmux_session,
         launch_line: wire.launch_line,
+        watch: wire.watch,
         observation: Some(observation),
         while_owner,
         lane_keys,

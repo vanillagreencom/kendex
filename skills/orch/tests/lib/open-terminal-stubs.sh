@@ -18,12 +18,19 @@
 
 # ot_stub_runtime DIR — writes the orch-runtime stub into DIR and names it
 # as ORCH_RUNTIME_CLI for every open-terminal the suite runs. It answers the
-# two questions the launcher asks: `admit` with an admitted judgement, the
+# three questions the launcher asks: `admit` with an admitted judgement, the
 # request's in_scope echoed and an empty touched set, or with the reply at
 # $OT_RUNTIME_ADMIT where a row plants one; `state inspect` with the reply
-# at $OT_RUNTIME_REPLY, else no open intent. Every request file's content
-# is appended to $OT_RUNTIME_LOG where set, so a row can read what the
-# launcher asked. Anything else is a runtime not set up, exit 69.
+# at $OT_RUNTIME_REPLY, else no open intent; `accounts pick`, a fleet
+# relaunch's room judge, with the reply at $OT_RUNTIME_PICK where a row
+# plants one, else the suite's own `lanes` ($LANES_CLI, or the shipped
+# script) asked the same question and its answer wrapped as the verb's
+# reply, `exit` by number and the record: `--replaces` is dropped, the
+# legacy judge having no such word, so that answer charges the replaced
+# lane as it always did, and a row about the replacement rule plants its
+# reply. Every request file's content, and every `accounts pick` argv, is
+# appended to $OT_RUNTIME_LOG where set, so a row can read what the launcher
+# asked. Anything else is a runtime not set up, exit 69.
 ot_stub_runtime() {
 mkdir -p "$1"
 cat > "$1/orch-runtime" <<'STUBEOF'
@@ -39,11 +46,30 @@ case " $* " in
     jq -c '{protocol: "orch-runtime-v1", ok: true, result: {touched: [], in_scope: (.in_scope // []), rebase: [], recorded: false}}' -- "$request" ;;
   *' state inspect '*)
     if [[ -n "${OT_RUNTIME_REPLY:-}" ]]; then cat -- "$OT_RUNTIME_REPLY"; else echo '{"ok":true,"result":{"open_intents":[]}}'; fi ;;
+  *' accounts pick '*)
+    [[ -z "${OT_RUNTIME_LOG:-}" ]] || printf '%s\n' "$*" >> "$OT_RUNTIME_LOG"
+    if [[ -n "${OT_RUNTIME_PICK:-}" ]]; then cat -- "$OT_RUNTIME_PICK"; exit 0; fi
+    args=() skip=false
+    for arg in "$@"; do
+      if [[ "$skip" == true ]]; then skip=false; continue; fi
+      case "$arg" in
+        --state-dir | --replaces) skip=true ;;
+        accounts | pick | --fleet) ;;
+        *) args+=("$arg") ;;
+      esac
+    done
+    rc=0
+    out="$("${LANES_CLI:-$OT_STUB_LANES}" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
+    jq -cn --argjson rc "$rc" --arg out "$out" '{protocol: "orch-runtime-v1", ok: true, result: {
+      answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured"}[$rc | tostring] // "unjudged"),
+      exit: $rc, record: (try ($out | fromjson) catch null)}}' ;;
   *) printf 'orch-runtime: setup-required key=none\n' >&2; exit 69 ;;
 esac
 STUBEOF
 chmod +x "$1/orch-runtime"
 export ORCH_RUNTIME_CLI="$1/orch-runtime"
+OT_STUB_LANES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/lanes"
+export OT_STUB_LANES
 }
 
 # ot_stub_bin DIR — writes those stubs into DIR, which it creates, the

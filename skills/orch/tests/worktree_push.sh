@@ -490,7 +490,7 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r ".rebase
 # it, exactly as the real script does.
 live_mutant="$(mutant_scripts live-refusal-mutant worktree-push)/worktree-push" || exit 1
 mutate_file "$live_mutant" 'refuse_live_round "$active_round"' ': "no refusal"'
-rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
+rm -f -- "${live_wt:?}"/tmp/dev-return-KEN-LIVE-1-1*.json
 : > "$live_args"
 mutant_rc=0
 (cd "$live_state" && STUB_ARGS_LOG="$live_args" STUB_PUSH_STDOUT="" \
@@ -517,7 +517,7 @@ assert_eq "$RUN_RC" "0" "with no live round the check permits the rebase"
 assert_eq "$([[ -s "$check_args" ]] && echo ran || echo no)" "no" \
   "the check pushes nothing, whatever its answer"
 (cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 1-1)
-rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
+rm -f -- "${live_wt:?}"/tmp/dev-return-KEN-LIVE-1-1*.json
 STUB_ARGS_LOG="$check_args" run_push "$live_state" --check-live-round \
   --worktree "$live_wt" --issue KEN-LIVE
 assert_eq "$RUN_RC" "3" "a live round answers 3, distinct from every other refusal"

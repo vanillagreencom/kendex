@@ -15,7 +15,7 @@
 # Usage:
 #   lanes list [--harness claude|codex|copilot|pi|all] [--local] [--cache-only] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex|copilot|pi] [--max-pct N | --min-headroom-pct N]
-#              [--model NAME] [--binding-floor] [--exclude-lane DIR]
+#              [--model NAME] [--binding-floor] [--exclude-lane DIR]...
 #              [--for-overseer] [--no-cache] [--json]
 #   lanes pick --lane <config-dir> [--harness claude|codex|copilot|pi]
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
@@ -542,7 +542,8 @@
 #                    binding bucket is the judged wall, so the flag asks for
 #                    what is judged anyway.
 #   --exclude-lane DIR  pick: omit this config dir before the chooser judges
-#                    the remaining accounts. Used when the caller needs a
+#                    the remaining accounts; repeatable, each occurrence
+#                    omitting one more. Used when the caller needs a
 #                    different account rather than capacity on its own.
 #   --for-overseer   pick, with or without --lane: judge seats as ordinary
 #                    accounts, with no reserve or last rank, for an overseer's
@@ -3034,7 +3035,11 @@ host_lane_rows() { # HARNESS [READINGS [MODEL]]
 # `http-403-permission_error`) reaches a reader of the record whatever status
 # word the provider chose. An api-credit- detail identifies an unread API
 # grant; the status decides its measurement. Only seat=1 marks a seat;
-# any other seat value keeps the row unmarked.
+# any other seat value keeps the row unmarked. The provider's account words,
+# `plan-ends`, `reserved` and `seat`, are handed on in the listing record as
+# `plan_ends`, `reserved` and `seat`, each as written and only where the row
+# carries it non-empty: the runtime's accounts judge reads them off the record
+# (ops/accounts.rs), and this script judges none of the three.
 # A usage field this script cannot read drops the whole row with a notice: a
 # percentage nobody can parse must not be judged as room.
 #
@@ -3074,11 +3079,11 @@ host_account_records() { # HOST HARNESS [READINGS] — one lane record per accou
 host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVERY] [SAMPLE_AT]
 	local rows="$1" want="$2" mode="${3:-}" sample_at="${4:-null}" line field key value bad retire said rest alias
 	local batch_args=() selected id claims wall wall_file kind payload normalized_result=""
-	local account harness status detail seat s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
+	local account harness status detail seat plan_ends reserved s_pct w_pct m_pct mo_pct m_label s_reset w_reset m_reset mo_reset
 	local buckets credit_limit credit_spent credit_remaining credit_expires credit_fields monthly_field retired
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
-		account=""; harness=""; status="ok"; detail=""; seat=""; bad=""; said=""
+		account=""; harness=""; status="ok"; detail=""; seat=""; plan_ends=""; reserved=""; bad=""; said=""
 		s_pct=null; w_pct=null; m_pct=null; mo_pct=null
 		m_label=""; s_reset=""; w_reset=""; m_reset=""; mo_reset=""
 		credit_limit=""; credit_spent=""; credit_remaining=""; credit_expires=""; credit_fields=""; monthly_field=""
@@ -3094,6 +3099,8 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 				status) status="$value"; said="${value:+status}" ;;
 				detail) detail="$value" ;;
 				seat) seat="$value" ;;
+				plan-ends) plan_ends="$value" ;;
+				reserved) reserved="$value" ;;
 				model-label) m_label="$value" ;;
 				session-resets) s_reset="$value" ;;
 				weekly-resets) w_reset="$value" ;;
@@ -3173,14 +3180,17 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		fi
 		batch_args+=("$account" "$harness" "$status" "$detail" "$seat" "$said" "$s_pct" "$w_pct" "$m_pct" "$mo_pct"
 			"$m_label" "$s_reset" "$w_reset" "$m_reset" "$mo_reset" "$credit_fields" "$credit_limit" "$credit_spent"
-			"$credit_remaining" "$credit_expires" "$alias" "$id" "$retire" "$claims" "$wall" "$wall_file" "$line" "$selected" "$retired")
+			"$credit_remaining" "$credit_expires" "$alias" "$id" "$retire" "$claims" "$wall" "$wall_file" "$line" "$selected" "$retired"
+			"$plan_ends" "$reserved")
 	done <<<"$rows"
 	local decoded
 	decoded="$(jq -nr --arg mode "$mode" --argjson sample_at "$sample_at" --args "$LANE_MODEL_JQ$LANE_EMIT_JQ$ACCOUNT_WALL_JQ"'
 		def nz: if . == "" then null else . end;
+		def provider_words($ends; $reserved; $seat):
+		  {plan_ends: ($ends | nz), reserved: ($reserved | nz), seat: ($seat | nz)} | with_entries(select(.value != null));
 		$ARGS.positional as $a
-		| [range(0; ($a | length); 29) as $i
-		   | $a[$i:$i+29] as $v
+		| [range(0; ($a | length); 31) as $i
+		   | $a[$i:$i+31] as $v
 		   | ($v[28] != "" and (api_grant_row($v[15] != ""; $v[3]) | not)) as $retired
 		   | (if $retired then "retired" else $v[2] end) as $status
 		   | (if $retired then "retired on \($v[22]) (ORCH_LANE_RETIRE)" else $v[3] end) as $detail
@@ -3216,7 +3226,8 @@ host_account_rows() { # ROWS HARNESS [READINGS|CACHE|BUCKETS|CANON|SEATS|DISCOVE
 		                (if $w == "unreadable" then "error" else $status end);
 		                (if $w == "unreadable" then "wall record unreadable" else $detail end);
 		                ""; $v[22]; (if $v[1] == "pi" and $b.credits.unit == "usd" then 0 else $v[23] | fromjson end);
-		                null; false; "host"; $b; {}; null; 1; $sample_at) | tojson)}
+		                null; false; "host"; $b; {}; null; 1; $sample_at)
+		                + provider_words($v[29]; $v[30]; $v[4]) | tojson)}
 		         end
 		     end] as $rows
 		| if $mode == "normalized" then
@@ -4001,6 +4012,11 @@ cmd_pick() {
 
 need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die missing-value "$@"; }
 
+# exclude_lane DIR — one more `--exclude-lane`: the option accumulates into
+# the list cmd_pick reads, one config dir a line, so a caller handing several
+# exclusions loses none of them.
+exclude_lane() { EXCLUDE_LANE="${EXCLUDE_LANE:+$EXCLUDE_LANE$'\n'}$1"; }
+
 # pct_valid VALUE — the one shape-and-range test every percentage in this
 # script is held to: a whole number, 0-100. A threshold above 100 passes every
 # real percentage, so a fully spent wall at 100 would read as room and the
@@ -4078,8 +4094,8 @@ parse_argv() {
 			--cache-only) [[ "$SUB" == list ]] || die unknown-option "$@"; CACHE_ONLY=true; LOCAL_ONLY=true; shift ;;
 			--lane) need_val "$@"; LANE_ARG="$2"; shift 2 ;;
 			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
-			--exclude-lane) need_val "$@"; EXCLUDE_LANE="$2"; shift 2 ;;
-			--exclude-lane=*) EXCLUDE_LANE="${1#--exclude-lane=}"; need_val --exclude-lane "$EXCLUDE_LANE"; shift ;;
+			--exclude-lane) need_val "$@"; exclude_lane "$2"; shift 2 ;;
+			--exclude-lane=*) need_val --exclude-lane "${1#--exclude-lane=}"; exclude_lane "${1#--exclude-lane=}"; shift ;;
 			--state-dir) [[ "$SUB" == facts ]] || die unknown-option "$@"; need_val "$@"; FACTS_STATE_DIR="$2"; shift 2 ;;
 			--state-dir=*) [[ "$SUB" == facts ]] || die unknown-option "$@"; FACTS_STATE_DIR="${1#--state-dir=}"; need_val --state-dir "$FACTS_STATE_DIR"; shift ;;
 			--json) AS_JSON=true; shift ;;

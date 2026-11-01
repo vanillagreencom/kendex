@@ -1,0 +1,19 @@
+#!/bin/bash
+# job-unit as a launcher whose caller dies between the launch and the read of
+# the launcher's record (decision 184 (6)): `launch NAME RECORD -- ARGV...`
+# writes RECORD in job-unit's own form, naming the `setsid` group
+# $JOB_UNIT_CRASH_PID leads at start $JOB_UNIT_CRASH_START (a process the row
+# owns and keeps), kills its caller, and answers the runner line the caller
+# never reads. ARGV is never run. A row reads what the next reconcile makes of
+# a sidecar obligation standing with its address and a record naming a live
+# job. Every call is appended to $JOB_UNIT_LOG when set.
+[ -z "${JOB_UNIT_LOG:-}" ] || printf '%s\n' "$*" >> "$JOB_UNIT_LOG"
+case "${1:-}" in
+  launch)
+    printf 'runner=setsid\npid=%s\nstart=%s\nline=runner=setsid reason=fixture\n' \
+      "$JOB_UNIT_CRASH_PID" "$JOB_UNIT_CRASH_START" > "$3"
+    kill -KILL "$PPID"
+    printf 'runner=setsid pid=%s start=%s\n' "$JOB_UNIT_CRASH_PID" "$JOB_UNIT_CRASH_START"
+    exit 0 ;;
+  *) echo "job-unit-crash: verb=$1" >&2; exit 2 ;;
+esac

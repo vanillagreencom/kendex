@@ -8,6 +8,12 @@
 //! never was. The differential against the legacy's own functions over a
 //! corpus (decision 107 (3)) is the crate's `verify::differential` test,
 //! which builds its evidence through the same reads over a fake transport.
+//!
+//! The `verify-pr` operation (U6g) is the same verification over the head
+//! one `gh pr view` answers for a pull request; its rows at the end pin the
+//! read of the pull request, the refusal of one that is not open, and the
+//! head re-read on every call. The legacy `ci-wait`'s verdict stays the
+//! correctness floor through the crate's differential (decision 135 (4)).
 #![allow(
     clippy::disallowed_methods,
     reason = "the process tests run the built binary against a fake gh on PATH"
@@ -21,7 +27,7 @@ mod support;
 use std::process::Output;
 
 use orch_runtime::error::Error;
-use orch_runtime::ops::{Env, Request, VerifyHead, apply};
+use orch_runtime::ops::{Env, Request, VerifyHead, VerifyPr, apply};
 use orch_runtime::state::Locking;
 use serde_json::{Map, Value, json};
 use tempfile::TempDir;
@@ -529,6 +535,15 @@ impl Github {
             .collect()
     }
 
+    /// The pull request `pr view` answers for `pr`: its head, base and
+    /// state in gh's export, as the fake's `pr view N` entry.
+    fn pull(&mut self, pr: u64, head: &str, base: &str, state: &str) -> &mut Self {
+        self.answer(
+            &format!("pr view {pr}"),
+            json!({"headRefOid": head, "baseRefName": base, "state": state}),
+        )
+    }
+
     /// Run `verify-head` for `head` on the base as one call of the binary
     /// with the fake ahead of the inherited PATH.
     fn verify_head(&self, head: &str, required_only: bool) -> Output {
@@ -536,14 +551,31 @@ impl Github {
     }
 
     fn verify_target(&self, target: &[&str], head: &str, required_only: bool) -> Output {
+        self.op(
+            target,
+            json!({"op": "verify-head", "repo": REPO, "base": BASE, "head": head, "required_only": required_only}),
+        )
+    }
+
+    /// Run `verify-pr` for `pr` as one call of the binary.
+    fn verify_pr(&self, pr: u64, required_only: bool) -> Output {
+        self.verify_pr_target(&["--item", "KEN-4687"], pr, required_only)
+    }
+
+    fn verify_pr_target(&self, target: &[&str], pr: u64, required_only: bool) -> Output {
+        self.op(
+            target,
+            json!({"op": "verify-pr", "repo": REPO, "pr": pr, "required_only": required_only}),
+        )
+    }
+
+    /// One call of the binary over `request`, the fake ahead of the
+    /// inherited PATH, answering from this row's replies.
+    fn op(&self, target: &[&str], request_body: Value) -> Output {
         let replies = self.dir.path().join("replies.json");
         fs::write(&replies, serde_json::to_vec(&self.replies).unwrap()).unwrap();
         let request = self.dir.path().join("request.json");
-        fs::write(
-            &request,
-            json!({"op": "verify-head", "repo": REPO, "base": BASE, "head": head, "required_only": required_only}).to_string(),
-        )
-        .unwrap();
+        fs::write(&request, request_body.to_string()).unwrap();
         support::isolated()
             .args(["--state-dir", &self.dir.path().display().to_string()])
             .arg("op")
@@ -616,6 +648,18 @@ fn key(result: &Value) -> &str {
         .split(' ')
         .next()
         .unwrap()
+}
+
+/// The one `pr view` line a `verify-pr` call writes to the log.
+fn pr_view(pr: u64) -> String {
+    format!("pr view {pr} --repo {REPO} --json headRefOid,baseRefName,state")
+}
+
+/// A `verify-pr` call's reads: the pull request by its number first, then
+/// every read pinned to `head`, the head that answer named.
+fn assert_pull_then_pinned(log: &[String], pr: u64, head: &str) {
+    assert_eq!(log.first(), Some(&pr_view(pr)), "{log:?}");
+    assert_pinned(&log[1..], head);
 }
 
 /// Every read named the pinned head or the base, a suite node or a
@@ -3031,26 +3075,241 @@ fn an_invalid_request_refuses_before_any_read() {
     assert!(gh.state().get("verification").is_none());
 }
 
-/// `apply` is the transition path; the verification's reads come before
-/// its transition, so the library refuses the request there.
+/// `apply` is the transition path; the verifications' reads come before
+/// their transition, so the library refuses both requests there.
 #[test]
-fn apply_refuses_verify_head_as_a_transition() {
+fn apply_refuses_the_verifications_as_transitions() {
     let gh = Github::empty();
-    let request = Request::VerifyHead(VerifyHead {
-        repo: REPO.into(),
-        base: BASE.into(),
-        head: HEAD.into(),
-        required_only: true,
-    });
     let env = Env {
         now_secs: 1_769_700_000,
         now_nanos: 1_769_700_000_123_456_789,
         nonce: 4242,
         owner: None,
     };
-    match apply(&gh.item(), &request, &env, Locking::FLOCK) {
-        Err(Error::OpNotTransition { op }) => assert_eq!(op, "verify-head"),
-        other => panic!("{other:?}"),
+    let requests = [
+        (
+            "verify-head",
+            Request::VerifyHead(VerifyHead {
+                repo: REPO.into(),
+                base: BASE.into(),
+                head: HEAD.into(),
+                required_only: true,
+            }),
+        ),
+        (
+            "verify-pr",
+            Request::VerifyPr(VerifyPr {
+                repo: REPO.into(),
+                pr: PR,
+                required_only: true,
+            }),
+        ),
+    ];
+    for (name, request) in requests {
+        match apply(&gh.item(), &request, &env, Locking::FLOCK) {
+            Err(Error::OpNotTransition { op }) => assert_eq!(op, name),
+            other => panic!("{name}: {other:?}"),
+        }
     }
     assert!(Path::new(&gh.item()).exists());
+}
+
+// --- verify-pr (U6g) ------------------------------------------------------------
+
+/// The pull request every `verify-pr` row names.
+const PR: u64 = 7;
+
+/// Where the pull request's head moves to between two `verify-pr` calls:
+/// read by the second, unlike `MOVED`, which no row reads.
+const NEXT: &str = "d049a699ebe08c6b639fdc19855a7152ae768084";
+
+/// `value` with `HEAD` replaced by `head` in every string it holds.
+fn rehead(value: Value, head: &str) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.replace(HEAD, head)),
+        Value::Array(a) => Value::Array(a.into_iter().map(|v| rehead(v, head)).collect()),
+        Value::Object(o) => {
+            Value::Object(o.into_iter().map(|(k, v)| (k, rehead(v, head))).collect())
+        }
+        other => other,
+    }
+}
+
+/// The green world's evidence for `head`: the documented replies with the
+/// head rewritten, what a verify-pr call reads once the pull request's
+/// head is `head`.
+fn green_evidence(gh: &mut Github, head: &str) {
+    gh.answer(
+        &check_runs(head, 1),
+        rehead(fixture("check-runs.json"), head),
+    )
+    .answer(
+        &check_suites(head, 1),
+        rehead(fixture("check-suites.json"), head),
+    )
+    .answer(&statuses(head, 1), rehead(fixture("status.json"), head))
+    .answer(&runs(head, 1), rehead(fixture("actions-runs.json"), head));
+}
+
+/// Step6-map § A11 row (1): the head is read from the pull request on
+/// every call, so a head that moved between two calls is judged on the
+/// newer one and the older verdict is replaced (`item.rs`
+/// `record_verification`'s `replaced`). The defect: a verification that
+/// keeps judging the head its first call read, or a record that keeps the
+/// older head's verdict beside a newer head.
+#[test]
+fn a_pull_requests_moved_head_is_judged_on_the_newer_head_and_the_older_verdict_replaced() {
+    let mut gh = Github::green();
+    gh.pull(PR, HEAD, BASE, "OPEN");
+    let first = ok_result(&gh.verify_pr(PR, false));
+    assert_eq!(first["status"], "complete", "{first}");
+    assert_eq!(first["verdict"], "pass");
+    assert_eq!(first["pr"], PR);
+    assert_eq!(first["head"], HEAD);
+    assert_eq!(first["base"], BASE);
+    assert_eq!(first["recorded"]["report"]["replaced"], false);
+    let record = gh.state()["verification"].clone();
+    assert_eq!(record["head"], HEAD);
+    assert_eq!(record["verdict"], "pass");
+    assert_eq!(record["source"], "verify-pr");
+    let first_log = gh.log();
+    assert_pull_then_pinned(&first_log, PR, HEAD);
+
+    // The branch moved: the pull request now answers NEXT, whose evidence
+    // is green too, so only the reads tell which head was judged.
+    gh.pull(PR, NEXT, BASE, "OPEN");
+    green_evidence(&mut gh, NEXT);
+    let second = ok_result(&gh.verify_pr(PR, false));
+    assert_eq!(second["status"], "complete", "{second}");
+    assert_eq!(second["head"], NEXT);
+    assert_eq!(second["recorded"]["report"]["replaced"], true);
+    let record = gh.state()["verification"].clone();
+    assert_eq!(record["head"], NEXT, "{record}");
+    assert_eq!(record["source"], "verify-pr");
+    let second_log: Vec<String> = gh.log()[first_log.len()..].to_vec();
+    assert_pull_then_pinned(&second_log, PR, NEXT);
+    assert!(
+        second_log.iter().any(|l| l.contains(NEXT)),
+        "{second_log:?}"
+    );
+    assert!(
+        !second_log.iter().any(|l| l.contains(HEAD)),
+        "{second_log:?}"
+    );
+}
+
+/// Step6-map § A11 row (2): a closed or merged pull request refuses
+/// `pr-not-open` after the one `pr view` and before any verdict read, and
+/// records nothing. The defect: a merged pull request's old head verified
+/// and recorded as if the wait were still open.
+#[test]
+fn a_closed_or_merged_pull_request_refuses_before_any_verdict_read() {
+    for state in ["CLOSED", "MERGED"] {
+        let mut gh = Github::green();
+        gh.pull(PR, HEAD, BASE, state);
+        let out = gh.verify_pr(PR, true);
+        assert_eq!(out.status.code(), Some(1), "{state}");
+        let line = String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        assert_eq!(
+            line,
+            format!("orch-runtime: pr-not-open pr={PR} state={state}")
+        );
+        assert_eq!(reply(&out)["refusal"]["key"], "pr-not-open", "{state}");
+        assert_eq!(gh.log(), vec![pr_view(PR)], "{state}");
+        assert!(gh.state().get("verification").is_none(), "{state}");
+    }
+}
+
+/// The pull request read is three-valued: a failed `pr view`, an answer
+/// outside gh's shape and a head or base outside the pinned forms are each
+/// `unreadable` with the read's cause, after that one read and before any
+/// other; nothing is recorded and the call is not a refusal, so the caller
+/// repeats it as it repeats `pending`. A request outside the pinned forms,
+/// or aimed at the fleet, refuses before any read at all.
+#[test]
+fn an_unreadable_pull_request_is_a_result_with_its_cause_and_an_invalid_request_refuses_first() {
+    let unreadable = [
+        ("absent", None, "pull-request-read-failed"),
+        (
+            "no state",
+            Some(json!({"headRefOid": HEAD, "baseRefName": BASE})),
+            "pull-request-response-invalid",
+        ),
+        (
+            "undocumented state",
+            Some(json!({"headRefOid": HEAD, "baseRefName": BASE, "state": "DRAFT"})),
+            "pull-request-response-invalid",
+        ),
+        (
+            "short head",
+            Some(json!({"headRefOid": "737bce7", "baseRefName": BASE, "state": "OPEN"})),
+            "pull-request-response-invalid",
+        ),
+        (
+            "blank base",
+            Some(json!({"headRefOid": HEAD, "baseRefName": "", "state": "OPEN"})),
+            "pull-request-response-invalid",
+        ),
+    ];
+    for (name, body, cause) in unreadable {
+        let mut gh = Github::green();
+        if let Some(body) = body {
+            gh.answer(&format!("pr view {PR}"), body);
+        }
+        let result = ok_result(&gh.verify_pr(PR, true));
+        assert_eq!(result["status"], "unreadable", "{name}: {result}");
+        assert_eq!(result["reason"], cause, "{name}: {result}");
+        assert!(result.get("head").is_none(), "{name}: {result}");
+        assert!(result.get("verdict").is_none(), "{name}: {result}");
+        assert_eq!(
+            result["detail"].is_string(),
+            cause == "pull-request-read-failed",
+            "{name}: {result}"
+        );
+        assert_eq!(gh.log(), vec![pr_view(PR)], "{name}");
+        assert!(gh.state().get("verification").is_none(), "{name}");
+    }
+
+    let gh = Github::green();
+    let refused = [
+        (
+            "pr",
+            gh.op(
+                &["--item", "KEN-4687"],
+                json!({"op": "verify-pr", "repo": REPO, "pr": 0, "required_only": true}),
+            ),
+        ),
+        (
+            "repo",
+            gh.op(
+                &["--item", "KEN-4687"],
+                json!({"op": "verify-pr", "repo": "owner", "pr": PR, "required_only": true}),
+            ),
+        ),
+    ];
+    for (field, out) in refused {
+        assert_eq!(out.status.code(), Some(1), "{field}");
+        assert_eq!(
+            reply(&out)["refusal"]["key"],
+            "verify-request-invalid",
+            "{field}"
+        );
+        let line = String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        assert_eq!(
+            line,
+            format!("orch-runtime: verify-request-invalid field={field}")
+        );
+    }
+    let out = gh.verify_pr_target(&["--fleet"], PR, true);
+    assert_eq!(reply(&out)["refusal"]["key"], "op-kind");
+    assert!(gh.log().is_empty(), "{:?}", gh.log());
+    assert!(gh.state().get("verification").is_none());
 }

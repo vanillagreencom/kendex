@@ -30,6 +30,11 @@
 //! No polling loop runs here. One call is one read set; the caller repeats
 //! on `pending` under its own budget, so the budget and the retry stay with
 //! the workflow that owns them and a hung read never holds the record lock.
+//!
+//! The `verify-pr` operation (`ops::verify_pr`, U6g) is the one caller
+//! that names a pull request: [`pull_request`] reads its current head, base
+//! and state through `gh pr view`, by number, and [`run`] then judges that
+//! head exactly as above, recording under its own `source`.
 
 #[cfg(test)]
 #[allow(
@@ -54,11 +59,29 @@ use crate::state::{self, Locking};
 
 use judge::Judgement;
 
-/// The `source` the record names.
-const SOURCE: &str = "verify-head";
+/// Which operation asked for the verdict: the `source` the record names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caller {
+    /// `verify-head`, over the head its request pinned.
+    VerifyHead,
+    /// `verify-pr`, over the head its pull request's `pr view` answered.
+    VerifyPr,
+}
 
-/// The bound on one `gh api` call.
+impl Caller {
+    fn source(self) -> &'static str {
+        match self {
+            Caller::VerifyHead => "verify-head",
+            Caller::VerifyPr => "verify-pr",
+        }
+    }
+}
+
+/// The bound on one `gh` call.
 const GH_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The fields `pr view` is asked for, in gh's own names (`wire::PullRequestView`).
+const PULL_REQUEST_FIELDS: &str = "headRefOid,baseRefName,state";
 
 /// GitHub's largest page, requested explicitly so each page's total can be
 /// checked against what arrived; `gh api --paginate` hides the pages.
@@ -155,13 +178,20 @@ pub struct Verified {
 }
 
 /// Read GitHub for the request's pinned head and, on a final verdict, record
-/// it on the item at `path`. `pending` and `unreadable` are results, not
-/// refusals: the reply carries them and the record is untouched.
+/// it on the item at `path` under `caller`'s source. `pending` and
+/// `unreadable` are results, not refusals: the reply carries them and the
+/// record is untouched.
 #[allow(
     clippy::disallowed_methods,
     reason = "the verification's one store call: the verdict recorded through record-verification"
 )]
-pub fn run(path: &Path, r: &VerifyHead, env: &Env, locking: Locking) -> Result<Verified> {
+pub fn run(
+    path: &Path,
+    r: &VerifyHead,
+    env: &Env,
+    locking: Locking,
+    caller: Caller,
+) -> Result<Verified> {
     validate(r)?;
     // The record is read before GitHub so a missing file refuses before any
     // network read, as `apply` would have refused after them.
@@ -189,7 +219,7 @@ pub fn run(path: &Path, r: &VerifyHead, env: &Env, locking: Locking) -> Result<V
                 head: r.head.clone(),
                 verdict: verdict.word().to_owned(),
                 reason: reason.clone(),
-                source: SOURCE.to_owned(),
+                source: caller.source().to_owned(),
             });
             let recorded = ops::apply(path, &request, env, locking)?;
             Ok(reply(
@@ -220,34 +250,98 @@ pub fn run(path: &Path, r: &VerifyHead, env: &Env, locking: Locking) -> Result<V
 /// name more than one commit. A base is one branch name; a repo is
 /// `owner/name`. Each refuses before any read.
 fn validate(r: &VerifyHead) -> Result<()> {
-    let invalid = |field: &'static str, value: &str| Error::VerifyRequestInvalid {
-        field,
-        value: value.to_owned(),
+    validate_repo(&r.repo)?;
+    if !base_form(&r.base) {
+        return Err(Error::VerifyRequestInvalid {
+            field: "base",
+            value: r.base.clone(),
+        });
+    }
+    if !head_form(&r.head) {
+        return Err(Error::VerifyRequestInvalid {
+            field: "head",
+            value: r.head.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// `repo` is `owner/name`, each word non-empty and of the characters a
+/// GitHub name takes; else the refusal names the field.
+pub(crate) fn validate_repo(repo: &str) -> Result<()> {
+    let invalid = || Error::VerifyRequestInvalid {
+        field: "repo",
+        value: repo.to_owned(),
     };
-    let (owner, name) = r
-        .repo
-        .split_once('/')
-        .ok_or_else(|| invalid("repo", &r.repo))?;
+    let (owner, name) = repo.split_once('/').ok_or_else(invalid)?;
     let repo_word = |s: &str| {
         !s.is_empty()
             && s.chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
     };
     if !repo_word(owner) || !repo_word(name) {
-        return Err(invalid("repo", &r.repo));
-    }
-    if r.base.is_empty() || r.base.starts_with('-') || r.base.chars().any(char::is_whitespace) {
-        return Err(invalid("base", &r.base));
-    }
-    if r.head.len() != 40
-        || !r
-            .head
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(invalid("head", &r.head));
+        return Err(invalid());
     }
     Ok(())
+}
+
+/// One branch name: non-empty, no whitespace, not a flag.
+fn base_form(base: &str) -> bool {
+    !base.is_empty() && !base.starts_with('-') && !base.chars().any(char::is_whitespace)
+}
+
+/// The full lowercase 40-hex commit id.
+fn head_form(head: &str) -> bool {
+    head.len() == 40
+        && head
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Why a read answered nothing usable: the reply's `reason` key and, for a
+/// failed call, what the program said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unreadable {
+    pub reason: String,
+    pub detail: Option<String>,
+}
+
+/// Read pull request `pr` of `repo` through one `gh pr view`: its current
+/// head, base and state, as gh exports them (`wire::PullRequestView`). The
+/// read names the pull request by its number and nothing else; the head it
+/// answers is what the caller then pins every other read to. A failed call,
+/// an answer outside gh's documented shape, a head that is not a full
+/// lowercase 40-hex id or a base that is no branch name is `Unreadable`
+/// with its cause, never a pull request.
+pub fn pull_request(repo: &str, pr: u64) -> std::result::Result<wire::PullRequestView, Unreadable> {
+    let endpoint = Endpoint::PullRequest;
+    let number = pr.to_string();
+    let read = || -> Read<wire::PullRequestView> {
+        let bytes = Gh
+            .call(
+                endpoint,
+                &[
+                    "pr",
+                    "view",
+                    &number,
+                    "--repo",
+                    repo,
+                    "--json",
+                    PULL_REQUEST_FIELDS,
+                ],
+            )?
+            .printed(endpoint)?;
+        let pull: wire::PullRequestView =
+            serde_json::from_slice(&bytes).map_err(|_| Cause::ResponseInvalid(endpoint))?;
+        if !head_form(&pull.head) || !base_form(&pull.base) {
+            return Err(Cause::ResponseInvalid(endpoint));
+        }
+        Ok(pull)
+    };
+    read().map_err(|cause| Unreadable {
+        reason: cause.key(),
+        detail: cause.detail(),
+    })
 }
 
 /// The base as a URL path segment: every byte outside the unreserved set is
@@ -301,6 +395,9 @@ enum Endpoint {
     WorkflowFiles,
     /// `repos/{owner}/{name}`: a source proof's repository, for its id.
     SourceRepository,
+    /// `gh pr view {number}`: the one read that names a pull request, for
+    /// the head `verify-pr` then pins every other read to (U6g).
+    PullRequest,
 }
 
 impl Endpoint {
@@ -318,6 +415,7 @@ impl Endpoint {
             Endpoint::SuiteCheckRuns => "suite-check-runs",
             Endpoint::WorkflowFiles => "workflow-files",
             Endpoint::SourceRepository => "source-repository",
+            Endpoint::PullRequest => "pull-request",
         }
     }
 }
@@ -388,9 +486,10 @@ impl Answer {
     }
 }
 
-/// One `gh` call: the arguments after the program, as `gh api PATH` or the
-/// GraphQL form `gh api graphql -f query=… -f ids[]=…`, answered with what
-/// it printed and whether it exited zero (`Answer`). Production is `Gh`;
+/// One `gh` call: the arguments after the program, as `gh api PATH`, the
+/// GraphQL form `gh api graphql -f query=… -f ids[]=…` or `gh pr view N`
+/// ([`pull_request`]), answered with what it printed and whether it exited
+/// zero (`Answer`). Production is `Gh`;
 /// the differential test answers from a rendered case
 /// (`differential::FakeGh`), so `evidence::read` is the one constructor of
 /// an `Evidence` in both.
@@ -398,19 +497,35 @@ trait Transport {
     fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer>;
 }
 
-/// `gh api` through agent-runtime's one process runner, `gh` resolved on
-/// this process's PATH with its environment, so the caller's GitHub
-/// authentication is the one used.
+/// `gh` through agent-runtime's one process runner, `gh` resolved on this
+/// process's PATH with its environment, so the caller's GitHub
+/// authentication is the one used. The runner's operation word is the
+/// call's first argument, `api` or `pr`.
 struct Gh;
 
 impl Transport for Gh {
     #[allow(
         clippy::disallowed_methods,
-        reason = "the verification reads GitHub through gh for one pinned head, no effect on a lane or a controller"
+        reason = "the verification reads GitHub through gh for one pinned head or one pull request's head, no effect on a lane or a controller"
     )]
     fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
         let failed = |detail: String| Cause::ReadFailed { endpoint, detail };
-        let output = host::run_tagged("verify", "gh", Path::new("gh"), "api", args, GH_TIMEOUT)
+        let operation = match endpoint {
+            Endpoint::PullRequest => "pr",
+            Endpoint::CheckRuns
+            | Endpoint::CheckSuites
+            | Endpoint::Statuses
+            | Endpoint::ActionsRuns
+            | Endpoint::Rules
+            | Endpoint::Protection
+            | Endpoint::Workflows
+            | Endpoint::Workflow
+            | Endpoint::CheckRunSuites
+            | Endpoint::SuiteCheckRuns
+            | Endpoint::WorkflowFiles
+            | Endpoint::SourceRepository => "api",
+        };
+        let output = host::run_tagged("verify", "gh", Path::new("gh"), operation, args, GH_TIMEOUT)
             .map_err(|e| failed(e.to_string()))?;
         if !output.status.success() {
             // gh writes an HTTP error's message to stderr and its body to

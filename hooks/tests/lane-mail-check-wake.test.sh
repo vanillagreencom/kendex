@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# The registered session's wake, over real processes with the follow and
-# single-pass argv watch-delivery produces. The harness rows drive the hook's
-# existing lead identity and refusal formats, not a second wake implementation.
-# HOOK_UNDER_TEST selects the planted copy for each must-fail control.
+# The registered session's wake: the watch's claim as `orch-runtime watch
+# status` answers it (a stub planting each standing), real processes with
+# the follow and single-pass argv watch-delivery produces. The harness rows
+# drive the hook's existing lead identity and refusal formats, not a second
+# wake implementation. HOOK_UNDER_TEST selects the planted copy for each
+# must-fail control.
 set -euo pipefail
 export MSYS=winsymlinks:nativestrict
 
@@ -30,11 +32,9 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   case "$scenario" in
     armed) start_wake_watch repeat; start_follow ;;
     succession-stale | succession-armed)
-      # watch-handover writes the live stdout log beside the fleet state.
-      # An idle linked reader cannot arm a follow running on an old log.
-      start_wake_watch repeat
-      printf 'pid=%s\nstate=%s\npane=none\norigin=succession\ncwd=%s\n' "$WAKE_PID" "$WAKE_STATE" "$LANE" \
-        > "${WAKE_STATE%/*}/oversee-watch.pid"
+      # A succession's claim names the live log beside the fleet state. An
+      # idle linked reader cannot arm a follow running on an old log.
+      start_wake_watch repeat "$LANE" succession
       live_log="${WAKE_STATE%/*}/oversee-watch.log"
       : > "$live_log"
       : > "$LANE/tmp/old-watch.log"
@@ -47,7 +47,7 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
         wake_process "$LANE/tmp/waiter.linked/follow.sh" "$LANE/tmp/waiter.linked/watch.log" 1
       fi
       ;;
-    no-follow | continuation | continuation-mark | agent-id | agent-type | subagent-stop | other-session | no-pgrep | probe-error | probe-error-mark | watch-probe-error | record-cwd | record-armed | missing-cwd | unreadable-record)
+    no-follow | continuation | continuation-mark | agent-id | agent-type | subagent-stop | other-session | no-pgrep | probe-error | probe-error-mark | watch-probe-error | record-cwd | record-armed | missing-cwd | unreadable-record | gone-claim | unbuilt-runtime)
       start_wake_watch repeat
       ;;
     single) start_wake_watch single ;;
@@ -86,13 +86,9 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
       chmod +x "$TMUX_BIN/pgrep"
       ;;
     watch-probe-error)
-      executable=$(command -v ps) || exit 1
-      {
-        printf '#!/bin/sh\n'
-        printf 'if [ "$2" = stat= ]; then echo "watch-query-failed" >&2; exit 1; fi\n'
-        printf 'exec %q "$@"\n' "$executable"
-      } > "$TMUX_BIN/ps"
-      chmod +x "$TMUX_BIN/ps"
+      # The claim's identity the runtime cannot read: never a live watch,
+      # never none.
+      runtime_stub "$LANE/.claude/skills/orch/scripts" unreadable
       ;;
     record-cwd | record-armed)
       # A follow on the session root does not arm a watch whose claim names
@@ -101,14 +97,15 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
       start_wake_watch repeat "$TMP_ROOT/watch [cwd].root"
       if [ "$scenario" = record-armed ]; then start_follow "$TMP_ROOT/watch [cwd].root"; else start_follow; fi
       ;;
-    missing-cwd)
-      sed '/^cwd=/d' "${WAKE_STATE%/*}/oversee-watch.pid" > "$TMP_ROOT/claim"
-      mv -- "$TMP_ROOT/claim" "${WAKE_STATE%/*}/oversee-watch.pid"
-      ;;
-    unreadable-record)
-      rm -- "${WAKE_STATE%/*}/oversee-watch.pid"
-      mkdir -- "${WAKE_STATE%/*}/oversee-watch.pid"
-      ;;
+    missing-cwd) runtime_stub "$LANE/.claude/skills/orch/scripts" live "" ;;
+    # The runtime answers nothing for the claim: its own refusal.
+    unreadable-record) watch_stub ;;
+    # A claim whose identity reads gone is no live watch.
+    gone-claim) runtime_stub "$LANE/.claude/skills/orch/scripts" gone ;;
+    # No binary stands for the install's sources (a refresh before its
+    # setup): the wake check is void, says so naming the setup, and holds
+    # nothing.
+    unbuilt-runtime) runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt ;;
     empty-keys) CALL_ENV+=(ORCH_WAKE_PROCESS= ORCH_WAKE_START=) ;;
     incomplete-jarvis) CALL_ENV+=(ORCH_WAKE_START=); command="" ;;
   esac
@@ -122,9 +119,11 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
     mkdir -p "$LANE/tmp/lane-mail/overseer"
   fi
   record_key="wake-record=${WAKE_STATE%/*}/oversee-watch.pid"
+  runtime_key="wake-state=$LANE/.claude/skills/orch/scripts/orch-runtime"
+  setup_key="setup-required=$LANE/.claude/skills/orch/scripts/setup"
   process_key="wake-process=follow[.]sh ${LANE//./\\.}/tmp/waiter[.][^/]*/watch[.]log"
-  case "$context" in record) context=$record_key ;; process) context=$process_key ;; esac
-  case "$first" in record) first=$record_key ;; process) first=$process_key ;; esac
+  case "$context" in record) context=$record_key ;; runtime) context=$runtime_key ;; process) context=$process_key ;; esac
+  case "$first" in record) first=$record_key ;; runtime) first=$runtime_key ;; setup) first=$setup_key ;; process) first=$process_key ;; esac
   [ "$first" = - ] || first="lane-mail-check: $first"
   [ "$context" = - ] || context="lane-mail-check: $context"
   run_payload "$payload"
@@ -215,7 +214,9 @@ watch-probe-error|claude|0|record|-|-|0
 record-cwd|claude|2|wake=unarmed|-|-|1
 record-armed|claude|0|-|-|-|0
 missing-cwd|claude|0|record|-|-|0
-unreadable-record|claude|0|record|-|-|0
+unreadable-record|claude|0|runtime|-|-|0
+gone-claim|claude|0|-|-|-|0
+unbuilt-runtime|claude|0|setup|-|-|0
 incomplete-jarvis|claude|0|wake-setting=ORCH_WAKE_START|-|-|0
 ROWS
 
@@ -351,8 +352,18 @@ if [ -z "$SELECTED" ]; then
   assert_eq "${JARVIS_GOT#*unread-after-failure=- }" "full=1 copies=2 in-wake=1 unread=0" \
     "control: a wake printing the box's rows hands the envelope twice"
   wake_control watch-unknown-skips watch-probe-error:claude \
-    '        *) exit "$rc" ;;' \
-    '        *) printf "single\t" ;;'
+    '    unreadable) wake_report wake-record "$record" "$WATCH_CAUSE"; return 0 ;;' \
+    '    unreadable) mode=single ;;'
+  # A claim whose identity reads gone read as a live repeat watch: the turn
+  # end refuses on a follow nothing could arm.
+  wake_control gone-read-as-repeat gone-claim:claude \
+    '    none | gone) mode=single ;;' \
+    '    none | gone) mode=repeat ;;'
+  # An unbuilt runtime read as the runtime answering nothing: the turn end
+  # still passes, but under the wrong key, naming no setup to run.
+  wake_control unbuilt-unnamed unbuilt-runtime:claude \
+    '    unbuilt) wake_report setup-required "$SCRIPTS/setup" "$WATCH_CAUSE"; return 0 ;;' \
+    '    unbuilt) wake_report wake-state "$SCRIPTS/orch-runtime" "$WATCH_CAUSE"; return 0 ;;'
 fi
 
 printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"

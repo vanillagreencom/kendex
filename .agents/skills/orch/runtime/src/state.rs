@@ -52,6 +52,24 @@ pub fn item_path(dir: &Path, item: &str) -> PathBuf {
     dir.join(format!("workflow-state-{item}.json"))
 }
 
+/// The item an item state file's path names, the inverse of [`item_path`];
+/// `None` for a path outside that naming.
+pub fn item_of(path: &Path) -> Option<&str> {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("workflow-state-"))
+        .and_then(|n| n.strip_suffix(".json"))
+}
+
+/// U6c: the directive id of an owner-directed micro change's item, keyed
+/// `directive-<id>` (decisions 168 (4), 182 Q4): the hook's item alphabet
+/// (`hooks/lane-mail-check.sh` `item_alphabet`) and the mailbox's
+/// (`lane-mail` `item-invalid`) admit `A-Za-z0-9._-` alone, so the word and
+/// the id join with a hyphen, never a colon. `None` for every other item.
+pub fn directive_of(path: &Path) -> Option<&str> {
+    item_of(path).and_then(|item| item.strip_prefix("directive-"))
+}
+
 /// The fleet state file under `dir`.
 pub fn fleet_path(dir: &Path) -> PathBuf {
     dir.join(FLEET_FILE_NAME)
@@ -308,7 +326,9 @@ impl StageOutcome {
 /// One `stages[]` entry as read: `{kind, round_id, start, end}` in epoch
 /// seconds, `superseded: true` once a later round of the kind opened over
 /// it, `run_dir` on a validation run's entry, `outcome` once `accept-result`
-/// closed it.
+/// closed it. A validation run `validate start` owns carries its `proof`
+/// and its `job` from before its launch, and its `notice` from its close
+/// (U6a, step6-map § C).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Stage {
     pub kind: StageKind,
@@ -323,6 +343,187 @@ pub struct Stage {
     pub run_dir: Option<String>,
     #[serde(default)]
     pub outcome: Option<StageOutcome>,
+    #[serde(default)]
+    pub proof: Option<Proof>,
+    #[serde(default)]
+    pub job: Option<ValidateJob>,
+    #[serde(default)]
+    pub notice: Option<Notice>,
+    // U6c: who accepted the step, and the item body revision the round
+    // read (step6-map § A3, § A8).
+    #[serde(default)]
+    pub authorization: Option<Authorization>,
+    #[serde(default)]
+    pub body_revision: Option<String>,
+    // U6l: the intentional stop a `validate stop` recorded on the open
+    // stage before it ended the run's job (decision 188 (c)).
+    #[serde(default)]
+    pub stop: Option<Stop>,
+}
+
+/// U6l: an intentional stop of a validation run, recorded on its open stage
+/// before the job is ended, a record before the effect (decision 120). A
+/// job then read gone with no sentinel closes `stopped`; one with no such
+/// record closes `lost`, since no one recorded an intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stop {
+    pub at: u64,
+}
+
+/// U6c: who accepted a round's step, recorded on its stage at the close
+/// (decisions 142 (5), 168 (4)): the overseer's acceptance, or the owner's
+/// directive a micro change was made under, each by its id. The field is
+/// part of the acceptance's identity: a closed stage keeps the one it was
+/// closed under, and a request naming another refuses (decision 100).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Authorization {
+    pub by: AuthorizedBy,
+    pub id: String,
+}
+
+/// The two authorities an acceptance records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuthorizedBy {
+    Overseer,
+    OwnerDirective,
+}
+
+/// U6c, U6j2: the item's Completion Summary comment on the tracker, the
+/// item's `summary_comment` (step6-map § A8, decision 190): the comment's
+/// id, the stamp of the acceptance's last post or, for a found comment, of
+/// its record, and whose comment it is. The acceptance rewrites in place
+/// only a comment it created: a found one keeps the body its writer gave
+/// it, on Linear the body links that are its attachments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryComment {
+    pub id: String,
+    pub at: String,
+    #[serde(default)]
+    pub origin: SummaryOrigin,
+}
+
+/// Who wrote the item's summary comment: the acceptance (`created`, updated
+/// in place on every later acceptance) or another writer, the dev agent's
+/// own post, that the acceptance's list found (`found`, never rewritten).
+/// A record written before the word existed names the comment the
+/// acceptance was then updating, so an absent field reads `created`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SummaryOrigin {
+    #[default]
+    Created,
+    Found,
+}
+
+/// The validation mode a run records: the project's whole battery, its
+/// range command over the changes since a base, or a round deferred to
+/// required CI after publication (`dev-validate-run --help` § Validation
+/// modes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValidateMode {
+    Full,
+    Range,
+    Ci,
+}
+
+impl ValidateMode {
+    /// The word as the file and the run's `start` record hold it.
+    pub fn word(self) -> &'static str {
+        match self {
+            ValidateMode::Full => "full",
+            ValidateMode::Range => "range",
+            ValidateMode::Ci => "ci",
+        }
+    }
+}
+
+/// The proof facts of one validation run, written on its stage before the
+/// launch (step6-map § C): the tree the run validated, the check selection
+/// it ran, and the mode the declaration resolved with the cause a wider
+/// mode was asked for. A stage closed `pass` with these is a proof row; a
+/// `ci` row records CI pending and proves nothing locally.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proof {
+    /// The worktree's snapshot tree as the classifier read it, committed
+    /// or not; empty where the snapshot could not be written.
+    pub tree: String,
+    /// The worktree's HEAD when the run started; empty with no commit.
+    pub head: String,
+    /// The base commit a range or ci run judges from; empty for a full run.
+    pub base: String,
+    pub mode: ValidateMode,
+    /// Why a wider mode than the declaration's narrowest was run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    /// The caller's word: `dev`, `submit` or `restack`.
+    pub caller: String,
+    /// The command text the run executes, as the run's `cmd` file holds it.
+    pub cmd: String,
+    pub class: String,
+    pub docs_only: bool,
+    /// A stable digest of the changed paths the class read, one per line.
+    pub paths_hash: String,
+    pub scoped: bool,
+    /// `all`, `subset`, `battery` or `unreported`, as the selector's preview
+    /// or the command's own `validate:` line reports it.
+    pub selection: String,
+    pub finding_prefix: String,
+    pub timeout_secs: u64,
+    pub poll_secs: u64,
+    pub cap_secs: u64,
+    /// The class base a range or scoped run read its class from; absent
+    /// for the whole branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_base: Option<String>,
+    /// Why a ci request ran locally instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci_fallback: Option<String>,
+    /// `pull_request` or `merge_group` on a ci row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci_event: Option<String>,
+    /// The class read fell back to standard: the cause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_fallback: Option<String>,
+    /// An earlier row answered this run and it ran nothing: the run
+    /// directory of the pass it carries, or of the bound-ended run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reused: Option<Reused>,
+}
+
+/// The earlier run a start reused in place of running its command
+/// (`dev-validate-run --help`: the `pass-run=` and `bound-run=` lines).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Reused {
+    PassRun { run_dir: String },
+    BoundRun { run_dir: String },
+}
+
+/// The detached job a validation run runs in, as job-unit records it
+/// (decision 115 (B)): the record's path from before the launcher is asked,
+/// then the identity the launcher's record names. `reconcile-round` reads
+/// the identity three-valued, never the child's bare pid (ML:87).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidateJob {
+    /// The launcher's record, `<run_dir>/runner`.
+    pub record: String,
+    /// `systemd`, `setsid`, or `none` where the start ran nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    /// The launcher's runner line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
+    /// Why the launch was refused, on a stage closed `stopped` by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
 }
 
 /// An item's workflow state: the fields the round operations read. Every
@@ -488,6 +689,16 @@ pub struct Lane {
     pub extra: Map<String, Value>,
 }
 
+// U6d: the one reading of a lane's channel the runtime makes.
+impl Lane {
+    /// Whether the lane runs in a Claude cloud session, reached through a
+    /// directive send and no mailbox: its kind or host is the cloud kind.
+    pub fn session_channel(&self) -> bool {
+        let cloud = Some(crate::ops::CLOUD_KIND);
+        self.kind.as_deref() == cloud || self.host.as_deref() == cloud
+    }
+}
+
 /// The successor a succession is about to open, `overseer.pending`: the
 /// identity fields the legacy `ol_identity` names, the launch line it
 /// judged, and the typed launch fields the runtime builds the command from
@@ -587,6 +798,24 @@ pub struct Overseer {
     pub pending: Option<Pending>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// The fleet watch the controller record carries as `overseer.watch`
+/// (step6-map A7): the job identity the launcher recorded for the watch a
+/// start launched (`runner=systemd` with its unit, or `runner=setsid` with
+/// the leader's pid and start), or `runner=claimed` with the claim's own
+/// identity where a start found the watch already claimed. The claim beside
+/// the fleet state stays the watch's liveness record; this field names what
+/// started it. An additive field: a succession keeps it as it stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchJob {
+    pub runner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
 }
 
 /// The operations that start an external effect.
@@ -963,6 +1192,14 @@ pub struct Intent {
     /// the launch intent that refused it (step4-map A11). Absent elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude_account: Option<String>,
+    /// The fleet watch's launch line a start carries (step6-map A7): the
+    /// `oversee-watch` entry and its arguments, which the start's effect
+    /// launches through the job launcher once the controller's lane is
+    /// confirmed, and a reconcile launches again where no watch claims.
+    /// Absent on the other operations and on a start whose caller holds
+    /// the watch's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<Vec<String>>,
     /// What authorized a close (decisions 83, 98); its confirmed outcome
     /// moves the lane as that ground allows. Absent on the other operations
     /// and on closes recorded before the ground existed, which end the lane
@@ -1037,8 +1274,11 @@ pub enum Obligation {
     /// (decision 108 (7)).
     Validation,
     /// The job launcher was asked and its record not yet read (decision 115
-    /// (B)): a job possibly started.
-    JobSidecar,
+    /// (B)): a job possibly started. `record` is the launcher record's path
+    /// the ask named, the one address the record is read at (decision 184
+    /// (6)): the intent's own job record for a transfer or a stop, the
+    /// watch's runner record beside the fleet state for a start's watch.
+    JobSidecar { record: String },
     /// The detached job runs as this transient user unit.
     JobUnit { unit: String },
     /// The detached job leads this process group, by the identity its child
@@ -1270,7 +1510,7 @@ impl ObligationRecord {
                 Obligation::Window { .. }
                 | Obligation::Receipt
                 | Obligation::Validation
-                | Obligation::JobSidecar
+                | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }
@@ -1313,7 +1553,7 @@ impl ObligationRecord {
             | Obligation::Window { .. }
             | Obligation::Receipt
             | Obligation::Validation
-            | Obligation::JobSidecar
+            | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
             | Obligation::JobPgid { .. } => None,
@@ -1324,7 +1564,7 @@ impl ObligationRecord {
     pub fn is_job(obligation: &Obligation) -> bool {
         matches!(
             obligation,
-            Obligation::JobSidecar
+            Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }
@@ -1339,11 +1579,15 @@ impl ObligationRecord {
 /// (decision 124f (28)); the send follows, and a later write marks it
 /// `sent`, or `unsent:<cause>` where the mailbox CLI refused or could not
 /// be run. A notice still `owed` on a closed intent is a continuation every
-/// reconcile and request runs once, under the owner.
+/// reconcile and request runs once, under the owner. `to` names the item
+/// whose lane the notice goes to; absent, it goes to the owner through the
+/// overseer's box, the shape every intent notice has (U6a, step6-map F7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notice {
     pub key: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
     pub owner: String,
 }
 

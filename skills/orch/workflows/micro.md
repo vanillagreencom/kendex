@@ -128,7 +128,7 @@ Record this tier after either state route. Direct publication uses it to retain 
 
    A successful commit with escape condition 3 recorded escapes now. Any other successful commit continues to step 6. A repository-rule refusal escapes as condition 4 with the staged edit still present; § Escape transfers that exact state.
 
-6. **Post the completion summary**. **Skip if** `TRACKER` is GitHub. This tier runs no dev round, so this comment is the item's only Completion Summary, and `container-close` refuses a container whose child has none. Write `[WT_PATH]/tmp/completion-summary-[ISSUE_ID].md` under a `## Completion Summary` heading: the commit `git -C [WT_PATH] log -1 --oneline` prints, one line per committed path saying what changed, and the commit chain as what checked it. Post it at once, as the standard tier's dev-implement.md § 9 does, so it is on the item before any lane lands the change:
+6. **Post the completion summary**. **Skip if** `TRACKER` is GitHub, or the item is keyed `directive-[ID]`: an owner-directed change has no tracker item, and its acceptance records the directive. This tier runs no dev round, so this comment is the item's only Completion Summary, and `container-close` refuses a container whose child has none. Write `[WT_PATH]/tmp/completion-summary-[ISSUE_ID].md` under a `## Completion Summary` heading: the commit `git -C [WT_PATH] log -1 --oneline` prints, one line per committed path saying what changed, and the commit chain as what checked it. Post it at once, as the standard tier's dev-implement.md § 9 does, so it is on the item before any lane lands the change:
 
    ```bash
    .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file [WT_PATH]/tmp/completion-summary-[ISSUE_ID].md
