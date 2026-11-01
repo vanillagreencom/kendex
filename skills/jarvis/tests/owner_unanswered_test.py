@@ -119,26 +119,43 @@ class OwnerUnanswered(MailWorld):
         self.owner("caption", "--directive", "--delivery-id", "C2:1000.0")
         self.owner("late caption", "--directive", "--delivery-id", "C3:1000.0")
         self.threaded("thread text", "C4:1.0", "C4:1002.0")
-        covered_caption = self.owner("caption a record handled", "--directive", "--delivery-id", "C6:1000.0")
         self.owner("text before a captioned file", "--directive", "--delivery-id", "C7:1000.0")
         at(-249)
         self.owner("file F2 not fetched: no download url", "--directive", "--delivery-id", "C3:1031.0")
-        self.owner(str(self.home / "tmp/slack/files/F5-covered.png"), "--directive", "--delivery-id", "C6:1010.0")
         captioned_file = "and here is the log\n" + str(self.home / "tmp/slack/files/F6-log.txt")
         self.owner(captioned_file, "--directive", "--delivery-id", "C7:1010.0")
-        # A relay catch-up delivers a file after its text was answered: the
-        # reply or record that names the text alone does not cover the file.
+        # Pair cover: one cover at -244 names one member, by either producer,
+        # a notice --ref or a no-reply record. It covers the member it names,
+        # and the other member only when that one arrived before it; a relay
+        # catch-up or retry delivers it later.
         at(-245)
+        covered_caption = self.owner("caption a record handled", "--directive", "--delivery-id", "C6:1000.0")
+        self.owner(str(self.home / "tmp/slack/files/F5-covered.png"), "--directive", "--delivery-id", "C6:1010.0")
+        replied_text = self.owner("text a reply names", "--directive", "--delivery-id", "C12:1000.0")
+        self.owner(str(self.home / "tmp/slack/files/F9-replied.png"), "--directive", "--delivery-id", "C12:1010.0")
+        self.owner("text whose file a reply names", "--directive", "--delivery-id", "C11:1000.0")
+        replied_file = self.owner(str(self.home / "tmp/slack/files/F10-replied.png"),
+                                  "--directive", "--delivery-id", "C11:1010.0")
+        self.owner("text whose file a record handled", "--directive", "--delivery-id", "C13:1000.0")
+        recorded_file = self.owner(str(self.home / "tmp/slack/files/F11-recorded.png"),
+                                   "--directive", "--delivery-id", "C13:1010.0")
         answered_text = self.owner("text answered before its file", "--directive", "--delivery-id", "C9:1000.0")
         recorded_text = self.owner("text a record handled before its file", "--directive",
                                    "--delivery-id", "C10:1000.0")
+        early_file = self.owner(str(self.home / "tmp/slack/files/F12-early.png"),
+                                "--directive", "--delivery-id", "C14:1010.0")
+        early_recorded_file = self.owner(str(self.home / "tmp/slack/files/F13-early.png"),
+                                         "--directive", "--delivery-id", "C15:1010.0")
         at(-244)
-        self.mail(self.home, "notice", "on it", "--to", "owner", "--ref", answered_text)
+        for target in (replied_text, replied_file, answered_text, early_file):
+            self.mail(self.home, "notice", "on " + target, "--to", "owner", "--ref", target)
         at(-243)
         late_file = str(self.home / "tmp/slack/files/F7-late.png")
         self.owner(late_file, "--directive", "--delivery-id", "C9:1015.0")
         late_recorded_file = str(self.home / "tmp/slack/files/F8-late.png")
         self.owner(late_recorded_file, "--directive", "--delivery-id", "C10:1015.0")
+        self.owner("text after a reply named its file", "--directive", "--delivery-id", "C14:1000.0")
+        self.owner("text after a record named its file", "--directive", "--delivery-id", "C15:1000.0")
         at(-240)
         other_thread = str(self.home / "tmp/slack/files/F3-other.png")
         self.threaded(other_thread, "C4:9.0", "C4:1003.0")
@@ -164,8 +181,10 @@ class OwnerUnanswered(MailWorld):
         (state / "handoff.md").write_text("## Progress log\n\n" + record("1", "Read " + logged, "apply it") +
                                           record("2", "Handled " + request, "done") +
                                           record("3", "Handled " + quiet, "done, No reply needed") +
-                                          record("7", "Handled " + covered_caption, "no reply", stamp(-248)) +
-                                          record("8", "Handled " + recorded_text, "no reply", stamp(-244)) +
+                                          "".join(record(n, "Handled " + target, "no reply", stamp(-244))
+                                                  for n, target in (("7", covered_caption), ("8", recorded_text),
+                                                                    ("9", recorded_file),
+                                                                    ("0", early_recorded_file))) +
                                           "- 23:00Z Handled %s, no reply\n" % current)
         (state / "archive/2026/handoff.md").write_text(record("4", "Ruling " + archived, "kept"))
         (state / "archive/2026/legacy.md").write_text("## Progress log\n\n- 22:59Z Started\n- 23:00Z Handled\n"
@@ -191,15 +210,25 @@ class OwnerUnanswered(MailWorld):
                  ("caption", True, True),
                  ("late caption", True, True),
                  ("thread text", True, True),
-                 ("caption a record handled", False, True),
                  ("text before a captioned file", True, True),
                  ("file F2 not fetched: no download url", True, True),
-                 (str(self.home / "tmp/slack/files/F5-covered.png"), False, False),
                  (captioned_file, True, True),
+                 ("caption a record handled", False, True),
+                 (str(self.home / "tmp/slack/files/F5-covered.png"), False, False),
+                 ("text a reply names", False, False),
+                 (str(self.home / "tmp/slack/files/F9-replied.png"), False, False),
+                 ("text whose file a reply names", False, False),
+                 (str(self.home / "tmp/slack/files/F10-replied.png"), False, False),
+                 ("text whose file a record handled", False, True),
+                 (str(self.home / "tmp/slack/files/F11-recorded.png"), False, False),
                  ("text answered before its file", False, False),
                  ("text a record handled before its file", False, True),
+                 (str(self.home / "tmp/slack/files/F12-early.png"), False, False),
+                 (str(self.home / "tmp/slack/files/F13-early.png"), False, False),
                  (late_file, True, True),
                  (late_recorded_file, True, False),
+                 ("text after a reply named its file", True, True),
+                 ("text after a record named its file", True, True),
                  (other_thread, True, True),
                  ("legacy archived", False, True),
                  ("legacy in the handoff", True, True),
@@ -323,12 +352,14 @@ class OwnerUnanswered(MailWorld):
         # a reader of the box files themselves, in place of lane-mail events,
         # including its compacted rows; and a thread reply that covers its
         # thread's rows whatever their time, which covers the correction
-        # after the reply.
+        # after the reply; and a reply that covers only the member it names,
+        # which lists the text whose file a reply names.
         reader = ("        return watch.mailbox_events(bash, home, name)[1]\n",
                   "        box = home / 'tmp/lane-mail/overseer' / (name + '.jsonl')\n"
                   "        return [json.loads(row) for row in box.read_text().splitlines()]\n")
         order = ("key == reply_key and after(at))", "key == reply_key)")
-        for old, new in (reader, order):
+        pair_reply = ("reaches(ref, at)", 'ref == row["id"]')
+        for old, new in (reader, order, pair_reply):
             with self.subTest(planted=new), tempfile.TemporaryDirectory() as folder:
                 copy = Path(folder) / "jarvis/scripts"
                 shutil.copytree(SCRIPTS, copy)
