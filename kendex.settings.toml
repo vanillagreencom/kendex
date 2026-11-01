@@ -10,6 +10,9 @@
 
 [env]
 
+# The owner's order for this organization's repositories: Claude CLI, GPT through the Copilot seat, Codex CLI as fallback (Slack1793558900.347579,2026-11-01).
+SECOND_OPINION_MODELS = "claude pi-copilot-gpt codex"
+
 # A lane publishes a draft and runs internal review while CI is pending.
 # Every change is queue-only and merges only after its merge-group run
 # passes (docs/decisions/D027-merge-queue-proves-every-change.md).
