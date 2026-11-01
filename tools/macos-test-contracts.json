@@ -2,8 +2,7 @@
   "linux_only_shards": [
     "node",
     "pi-claude-bridge",
-    "linear-controls-a",
-    "linear-controls-b",
+    "linear-controls",
     "worktree-restack",
     "guards-scans",
     "guards-tools-tail",

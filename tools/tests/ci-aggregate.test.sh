@@ -504,7 +504,7 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
 # A merge group touching a shared orch script still selects its surviving consumers.
 open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
 open_terminal_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$open_terminal")")"
-linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls-a","linear-controls-b"]' '[]')"
+linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls"]' '[]')"
 check "the portability row selects rest" true \
   "$(jq -c 'index("rest") != null' <<<"$open_terminal_queue")"
 only_mailbox="$(measured linux false true false '["mailbox"]' '["mailbox"]')"

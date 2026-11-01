@@ -170,7 +170,7 @@ LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate refresh guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest jarvis slack mailbox node pi-claude-bridge"
+SHARDS="review-gate refresh guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls worktree worktree-restack rest jarvis slack mailbox node pi-claude-bridge"
 # The shards whose Linux legs build kendex-cli from the checkout, for the
 # consumer rows that run the real binary: the build rule and --suite-kendex
 # read this one list, and tools/tests/orch-shard-partition.test.sh holds the
@@ -395,7 +395,7 @@ want_package() { # PACKAGE
       if [ -n "$suite_path" ]; then want_shard "${1#skills/}"
       else want_shard review-gate refresh; fi ;;
     skills/commit-guards) want_shard guards-commit guards-commit-tail guards-hooks guards-hooks-tail ;;
-    skills/linear) want_shard linear linear-controls-a linear-controls-b ;;
+    skills/linear) want_shard linear linear-controls ;;
     skills/bot-instructions | skills/preflight) want_shard linear ;;
     skills/worktree) want_shard worktree worktree-restack ;;
     # macOS runs no `jarvis` leg: `rest` keeps the family there.
