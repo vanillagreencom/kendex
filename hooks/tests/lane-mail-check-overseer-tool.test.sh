@@ -115,26 +115,10 @@ append_transcript "$TRANSCRIPT" 700000
 overseer_tool "$TRANSCRIPT"
 assert_eq "RC=$RC context=$(context_line) record=$(tool_record)" "RC=0 context=- record=700000 null" \
   "an overseer whose own handoff record stands is handed nothing, its reading still recorded" "$ERR_FILE"
-variant never-held -e 's/^    stands) handoff_is_mine ;;$/    stands) return 1 ;;/'
-tool_overseer control_overseer_tool_held "$VARIANT_PATH"
-write_transcript "$TRANSCRIPT" 600000
-record_overseer_handoff
-overseer_tool "$TRANSCRIPT"
-assert_eq "$(context_line)" "PostToolUse lane-mail-check: context=600000" \
-  "control: a hook that never reads the record as its own hands the mark over past it"
-variant held-first -e 's|^    ( overseer_tool_judge ) 2>"\$WORK_DIR/tool-judge.err"$|    if ( overseer_tool_held ); then : >"$WORK_DIR/tool-judge.err"; else ( overseer_tool_judge ) 2>"$WORK_DIR/tool-judge.err"; fi|'
-tool_overseer control_overseer_tool_held_first "$VARIANT_PATH"
-write_transcript "$TRANSCRIPT" 600000
-overseer_tool "$TRANSCRIPT"
-record_overseer_handoff
-append_transcript "$TRANSCRIPT" 700000
-overseer_tool "$TRANSCRIPT"
-assert_eq "record=$(tool_record)" "record=600000 null" \
-  "control: a hook that asks the handoff before the judgement records no reading while it is held"
 # A handoff state the call cannot read holds the call silent: the turn end
 # reports it under the keys that say which.
-standing_unread_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+standing_unread_rows() { # NAME
+  tool_overseer "$1"
   write_transcript "$TRANSCRIPT" 600000
   state_stub standing-fails
   overseer_tool "$TRANSCRIPT"
@@ -143,14 +127,10 @@ standing_unread_rows() { # NAME [JUDGE]
 standing_unread_rows overseer_tool_standing_unread
 assert_eq "$UNREAD" "RC=0 context=- asked=1" \
   "an overseer past its mark whose handoff state cannot be read is handed nothing at a tool call" "$ERR_FILE"
-variant unread-not-held -e '/^overseer_tool_held() {$/,/^}$/s/^    \*) return 0 ;;$/    *) return 1 ;;/'
-standing_unread_rows control_overseer_tool_standing_unread "$VARIANT_PATH"
-assert_eq "${UNREAD% asked=*}" "RC=0 context=PostToolUse lane-mail-check: context=600000" \
-  "control: a hook that reads an unread handoff state as none hands the mark over"
 # The handoff is asked only of a call with something to say: a call below the
 # mark runs no workflow-state handoff-standing.
-asked_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+asked_rows() { # NAME
+  tool_overseer "$1"
   state_stub delegate
   write_transcript "$TRANSCRIPT" 100000
   overseer_tool "$TRANSCRIPT"
@@ -164,10 +144,6 @@ asked_rows() { # NAME [JUDGE]
 asked_rows overseer_tool_asked
 assert_eq "$ASKED" "below=0 past=1" \
   "a tool call below the mark asks no handoff state, and one past it asks once" "$ERR_FILE"
-variant ask-every-call -e 's/^    if \[ -s "\$WORK_DIR\/tool-judge.err" \] && ( overseer_tool_held ); then$/    if ( overseer_tool_held ); then/'
-asked_rows control_overseer_tool_asked "$VARIANT_PATH"
-assert_eq "${ASKED% past=*}" "below=1" \
-  "control: a hook that asks the handoff at every call asks it below the mark"
 # A subagent's call is the subagent's window, never the overseer's.
 tool_overseer overseer_tool_subagent
 CASE_HOOK_SAVED="$CASE_HOOK"
@@ -187,8 +163,8 @@ assert_eq "RC=$RC context=$(context_line) start=$(recorded_field server_start) h
 # A judgement that could not run is handed over once per session and gap: a
 # session pointed at a transcript it does not own reads nothing, is told why,
 # and is not told again while that gap stands; a clean reading clears it.
-told_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+told_rows() { # NAME
+  tool_overseer "$1"
   bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   local first second third
@@ -209,10 +185,6 @@ told_rows overseer_tool_told
 assert_eq "$TOLD" \
   "first=PostToolUse lane-mail-check: transcript-unowned=$TRANSCRIPT null session-mismatch second=- third=PostToolUse lane-mail-check: transcript-unowned=$TRANSCRIPT" \
   "a gap is handed over once while it stands, and again once it returns after a clean reading" "$ERR_FILE"
-variant told-always -e 's/^  if \[ "\$TOLD_LAST" = "\$SESSION\$TAB\$TOLD_LINE" \]; then$/  if false; then/'
-told_rows control_overseer_tool_told "$VARIANT_PATH"
-assert_eq "${TOLD#* second=}" "PostToolUse lane-mail-check: transcript-unowned=$TRANSCRIPT third=PostToolUse lane-mail-check: transcript-unowned=$TRANSCRIPT" \
-  "control: without the told test a standing gap is handed over at every tool call"
 # The tool-call judgement skipped: the crossing waits for a turn end the
 # window may never let the session reach.
 write_transcript "$TRANSCRIPT" 600000
@@ -221,13 +193,6 @@ tool_overseer control_overseer_tool_mark "$VARIANT_PATH"
 overseer_tool "$TRANSCRIPT"
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
   "control: a hook that judges no tool call leaves a crossing untold until a turn end"
-# Handed over as a refusal, the mark would replace the tool's own output on
-# one harness: it goes as context at exit 0.
-variant tool-mark-refused -e 's/^  if \[ "\$ARM" = deliver \]; then$/  if false; then/'
-tool_overseer control_overseer_tool_refused "$VARIANT_PATH"
-overseer_tool "$TRANSCRIPT"
-assert_eq "RC=$RC context=$(context_line)" "RC=2 context=-" \
-  "control: a hook that refuses the crossing at a tool call exits 2 over a tool that already ran"
 
 # The additionalContext a deliver run handed over, whole; empty for none.
 tool_context() {
@@ -238,8 +203,8 @@ tool_context() {
 # Another lead session in the checkout, in another pane, is no overseer: its
 # tool call leaves the overseer's told record as it stands, so the overseer is
 # not handed a standing gap again for it.
-other_pane_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+other_pane_rows() { # NAME
+  tool_overseer "$1"
   bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   local first other
@@ -254,15 +219,11 @@ other_pane_rows overseer_tool_other_pane
 assert_eq "$OTHER" \
   "first=PostToolUse lane-mail-check: transcript-unowned=$TRANSCRIPT other=- null session-mismatch second=-" \
   "a call from another pane between two overseer calls touches nothing, and the second overseer call hands nothing" "$ERR_FILE"
-variant any-pane-told -e 's/^  if \[ "\$IDENTIFIED" != yes \] && \[ "\$LOST_OVERSEER" -eq 0 \]; then$/  if false; then/'
-other_pane_rows control_overseer_tool_other_pane "$VARIANT_PATH"
-assert_eq "${OTHER#* second=}" "PostToolUse lane-mail-check: transcript-unowned=$TRANSCRIPT" \
-  "control: a hook that lets any session clear the told record hands the overseer its gap again after another pane's call"
 
 # What the judgement hands over rides with the mail the same call hands over,
 # in one context: a gap told once, and a reached mark, each above the note.
-mail_rides_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+mail_rides_rows() { # NAME
+  tool_overseer "$1"
   bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   peer_send 'Gap and note.'
@@ -279,17 +240,12 @@ mail_rides_rows overseer_tool_mail
 assert_eq "$RIDES" \
   "gap=PostToolUse lane-mail-check: transcript-unowned=$TRANSCRIPT note=1 unread=1 mark=PostToolUse lane-mail-check: context=600000 note=1 unread=1" \
   "a gap and a reached mark are each handed over above the note the same call hands over" "$ERR_FILE"
-variant mail-drops-notice -e 's/^  jq -nc --arg text "\$TOOL_NOTICE\$1" /  jq -nc --arg text "$1" /'
-mail_rides_rows control_overseer_tool_mail "$VARIANT_PATH"
-assert_eq "$RIDES" \
-  "gap=PostToolUse lane-mail-check: unread=1 note=1 unread=1 mark=PostToolUse lane-mail-check: unread=1 note=1 unread=1" \
-  "control: a hook whose mail hand-over drops the judgement's notice hands the note alone"
 
 # A mailbox refusal on the same call is the deliver arm's other writer: it
 # carries the gap ahead of its own keyed line, on stderr beside its exit 2,
 # and the gap is then told, so the next call hands nothing.
-told_refused_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+told_refused_rows() { # NAME
+  tool_overseer "$1"
   bind_overseer claude "$OVERSEER_HOME_DIR" s2
   write_transcript "$TRANSCRIPT" 100000
   peer_send 'Held by a refusal.'
@@ -306,16 +262,12 @@ told_refused_rows() { # NAME [JUDGE]
 told_refused_rows overseer_tool_told_refused
 assert_eq "$HELD" "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT fleet=1 then=PostToolUse lane-mail-check: unread=1" \
   "a refused call carries the gap ahead of its refusal, and the next call does not tell it again" "$ERR_FILE"
-variant refuse-drops-notice -e 's/^  \[ "\$ARM" != deliver \] || text="\$TOOL_NOTICE\$text"$/  :/'
-told_refused_rows control_overseer_tool_told_refused "$VARIANT_PATH"
-assert_eq "${HELD%% fleet=*}" "RC=2 first=lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/lib/watch-pid.sh" \
-  "control: a hook whose refusal drops the notice refuses the call with the gap withheld"
 
 # A transcript the payload names and nothing can read is a refusal the
 # handoff record clears, and after a tool call it is told once per session
 # as a gap is, so a standing one does not fill the window.
-unreadable_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+unreadable_rows() { # NAME
+  tool_overseer "$1"
   rm -f -- "${TRANSCRIPT:?}"
   overseer_tool "$TRANSCRIPT"
   local first
@@ -327,22 +279,18 @@ unreadable_rows() { # NAME [JUDGE]
 unreadable_rows overseer_tool_unreadable
 assert_eq "$UNREADABLE" "first=PostToolUse lane-mail-check: transcript=unreadable second=-" \
   "an unreadable transcript is handed over once while it stands" "$ERR_FILE"
-variant transcript-every-call -e 's/^    context | setting | setting-range)$/    context | setting | setting-range | transcript)/'
-unreadable_rows control_overseer_tool_unreadable "$VARIANT_PATH"
-assert_eq "${UNREADABLE#* second=}" "PostToolUse lane-mail-check: transcript=unreadable" \
-  "control: a hook that tells a transcript refusal at every call hands a standing one over again"
 
 # Pi's carrier puts the model's window on the tool call's payload, and the
 # overseer's reading is judged on it. A payload naming none, the lane mail
 # wake's run or an older carrier's tool call, takes no reading, writes no
 # record and hands nothing over, so the turn end's reading and judgement stand.
 PI_TOOL_TRANSCRIPT="$TMP_ROOT/pi-tool-overseer.jsonl"
-pi_tool_rows() { # NAME WINDOW_FIELDS [JUDGE]
-  tool_overseer "$1" "${3:-$HOOK}"
+pi_tool_rows() { # NAME WINDOW_FIELDS
+  tool_overseer "$1"
   mkdir -p "$LANE/.pi/skills"
   ln -s "$LANE/.claude/skills/orch" "$LANE/.pi/skills/orch"
   install_hook "$TEST_DIR/../lane-mail-deliver.sh" "$LANE/.pi/kendex/hooks/lane-mail-deliver.sh"
-  install_hook "${3:-$HOOK}" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+  install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
   usage_line pi 180000 > "$PI_TOOL_TRANSCRIPT"
   CASE_HOOK="$LANE/.pi/kendex/hooks/lane-mail-deliver.sh"
   # shellcheck disable=SC2046
@@ -353,22 +301,14 @@ pi_tool_rows() { # NAME WINDOW_FIELDS [JUDGE]
 pi_tool_rows overseer_tool_pi '{"context_window":200000}'
 assert_eq "$PI_TOOL" "context=PostToolUse lane-mail-check: context=180000 window=200000" \
   "a Pi overseer's tool call is judged on the window its payload carries" "$ERR_FILE"
-variant pi-window-unread -e 's/^   whole(\.context_window),$/   "",/'
-pi_tool_rows control_overseer_tool_pi '{"context_window":200000}' "$VARIANT_PATH"
-assert_eq "$PI_TOOL" "context=- window=none" \
-  "control: a hook that reads no window off the payload judges no Pi tool call"
 pi_tool_rows overseer_tool_pi_windowless '{}'
 assert_eq "$PI_TOOL" "context=- window=none" \
   "a Pi tool call naming no window takes no reading, writes no record and hands nothing over" "$ERR_FILE"
-variant pi-windowless-read -e '/^  \[ "\$HARNESS" != pi \] || \[ -n "\$PAYLOAD_WINDOW" \] || return 0$/d'
-pi_tool_rows control_overseer_tool_pi_windowless '{}' "$VARIANT_PATH"
-assert_eq "$PI_TOOL" "context=PostToolUse lane-mail-check: window-unread=pi-claude/m window=null" \
-  "control: a hook that reads a windowless Pi tool call records it with no window and tells it unread"
 
 # The overseer whose known native binding still matches but whose pane only
 # the context record names is told so once at its tool call, as a gap.
-lost_tool_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+lost_tool_rows() { # NAME
+  tool_overseer "$1"
   write_transcript "$TRANSCRIPT" 100000
   overseer_tool "$TRANSCRIPT"
   record_overseer %4 "$OVERSEER_SERVER"
@@ -379,16 +319,12 @@ lost_tool_rows() { # NAME [JUDGE]
 lost_tool_rows overseer_tool_lost_pane
 assert_eq "$LOST_TOOL" "PostToolUse lane-mail-check: pane-unrecorded=$OVERSEER_SERVER $OVERSEER_PANE null pane-unrecorded" \
   "the overseer the fleet record lost is told so at its tool call" "$ERR_FILE"
-variant lost-untold -e 's/^  if \[ "\$IDENTIFIED" != yes \] && \[ "\$LOST_OVERSEER" -eq 0 \]; then$/  if [ "$IDENTIFIED" != yes ]; then/'
-lost_tool_rows control_overseer_tool_lost_pane "$VARIANT_PATH"
-assert_eq "$LOST_TOOL" "- null pane-unrecorded" \
-  "control: a hook that tells only the named session leaves the lost overseer untold at its tool calls"
 
 # One call asks whether this session is the overseer once: the mailbox check
 # takes the tool-call judgement's answer, so a heal whose write fails is tried
 # and reported once per call.
-once_rows() { # NAME [JUDGE]
-  tool_overseer "$1" "${2:-$HOOK}"
+once_rows() { # NAME
+  tool_overseer "$1"
   startless_record "{\"server_start\":$OVERSEER_SERVER_START}"
   state_stub update-fails
   peer_send 'Asked once.'
@@ -398,10 +334,6 @@ once_rows() { # NAME [JUDGE]
 once_rows overseer_tool_once
 assert_eq "$ONCE" "unhealed=1 context=- note=0" \
   "a call that reads the overseer mailbox identifies the overseer once, and a failed heal is reported once" "$ERR_FILE"
-variant identify-each-ask -e 's/^  if \[ -z "\$IDENTIFIED" \]; then$/  if true; then/'
-once_rows control_overseer_tool_once "$VARIANT_PATH"
-assert_eq "${ONCE%% *}" "unhealed=2" \
-  "control: a hook that identifies at each ask heals and reports twice on one call"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

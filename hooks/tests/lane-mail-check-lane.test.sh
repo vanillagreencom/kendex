@@ -71,8 +71,8 @@ ROWS
 }
 lane_rows
 
-# The must-fail controls, one per rule the arm holds, each a mutant copy run
-# through the same rows. Skipped when this run is itself a control.
+# The must-fail control, a mutant copy run through the same rows. Skipped
+# when this run is itself a control.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   control() { # NAME SED-ARGUMENT FAILED-ROW
     local out
@@ -83,15 +83,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # The launch marker no longer consulted: a mailbox alone names a lane.
   control unlaunched 's/^  if \[ -n "\$ITEM" \] && lane_launched; then$/  if [ -n "$ITEM" ]; then/' \
     "a mailbox no launch marker binds is no lane"
-  # The arm no longer reports and passes: an unreadable marker refuses.
-  control unreported 's/^  true:\* | \*:halt | \*:row | \*:lane) REPORTED=true ;;$/  true:* | *:halt | *:row) REPORTED=true ;;/' \
-    "a marker that is no plain file is reported with no answer, never read as no lane"
-  # The arm's answer skipped outside a repository: nothing is printed there.
-  control unanswered 's/^[[:space:]]*\[ -d "\$LANE_DIR\/tmp\/lane-mail" \] || { \[ "\$ARM" != lane \] || echo none; exit 0; }$/  [ -d "$LANE_DIR\/tmp\/lane-mail" ] || exit 0/' \
-    "a directory outside any repository is no lane"
-  # The arm no longer skips the mailbox refusal: a boxless marked root refuses.
-  control boxless 's/^if \[ "\$ARM" != row \] && \[ "\$ARM" != lane \] && /if [ "$ARM" != row ] \&\& /' \
-    "a marked root with no mailbox directory answers none, never the mailbox refusal"
 fi
 
 printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"

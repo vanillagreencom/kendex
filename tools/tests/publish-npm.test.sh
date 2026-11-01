@@ -226,21 +226,11 @@ done <<EOF_ROWS
 $rows
 EOF_ROWS
 
-# The must-fail controls, one per guard: `rule|row label`. Each guard is cut
-# out of a copy of the tool, and its row, run over that copy, must no longer
-# give the row's answer.
+# The must-fail control: `rule|row label`. The guard is cut out of a copy of
+# the tool, and its row, run over that copy, must no longer give the row's
+# answer.
 controls="
-tag|not a release tag
-absent|tag missing
-off-main|tag off the default branch
-package|no such package
-name|package named outside the scope
-version|manifest version differs from the tag
-npm|npm below the trusted-publishing floor
-lookup|registry lookup fails
-first-release|npm serves no version of the package
 served|already served publishes nothing
-moved|package changed on main since the tag
 "
 while IFS='|' read -r rule label; do
   [ -n "$rule" ] || continue

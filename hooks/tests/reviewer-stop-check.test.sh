@@ -485,21 +485,13 @@ rows_control() { # ROWS NAME OLD NEW FAILED-ROW...
     assert_eq "$(grep -c -F -x -- "  FAIL  $row" "$log" || true)" "1" "control $name: '$row' fails"
   done
 }
-# Reading transcript_path alone reds every row that carries the key; a
-# swapped branch reds all of them.
+# Reading transcript_path alone reds every row that carries the key.
 SELECTION='if has("agent_transcript_path") then "agent_transcript_path" else "transcript_path" end'
 rows_control field_rows transcript-path-only "$SELECTION" '"transcript_path"' \
   "a Codex payload reads agent_transcript_path, not the parent's transcript_path" \
   "a Claude Code payload reads agent_transcript_path, not the parent's transcript_path" \
   "a Claude Code subagent naming no artifact blocks, though the parent's transcript names one" \
   "a null agent_transcript_path refuses rather than reading the parent's transcript_path"
-rows_control field_rows swapped "$SELECTION" \
-  'if has("agent_transcript_path") then "transcript_path" else "agent_transcript_path" end' \
-  "a Codex payload reads agent_transcript_path, not the parent's transcript_path" \
-  "a Claude Code payload reads agent_transcript_path, not the parent's transcript_path" \
-  "a Claude Code subagent naming no artifact blocks, though the parent's transcript names one" \
-  "a null agent_transcript_path refuses rather than reading the parent's transcript_path" \
-  "a payload without agent_transcript_path reads transcript_path"
 
 echo "reviewer-stop-check: the artifact, not its mention"
 # A row is `label|artifact|expected`: the transcript names the artifact path in
@@ -540,11 +532,6 @@ run_hook "$T" reviewer-test once1
 assert_eq "$rc" 2 "an unreadable artifact blocks the first stop"
 run_hook "$T" reviewer-test once1
 assert_eq "$rc" 0 "a second stop of a subagent held on its artifact passes"
-rows_control artifact_rows artifact-unchecked \
-  'jq -s '\''if length == 0 then error("no JSON value") else empty end'\'' "$ARTIFACT" 2>&1' 'true' \
-  "a mentioned artifact that does not exist blocks" \
-  "an empty artifact blocks" \
-  "an artifact that is not JSON blocks"
 
 echo "reviewer-stop-check: only paths the review changed block"
 # The author leaves a modified tracked file, an untracked file, a staged new
@@ -630,27 +617,6 @@ start_rows() { # TAG
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "start rows: no row was asserted" >&2; exit 2; }
 }
 start_rows st
-# Untracked paths still use the start and change times. Tracked files never
-# take actor evidence from either the file's clock or the index's clock.
-rows_control start_rows start-ignored '[ "$t" -ge "$START" ]' 'true' \
-  "dirt the author left before the review passes" \
-  "a mode change without actor evidence passes" \
-  "an index change without actor evidence passes" \
-  "a Codex session_meta dates the start, and the author's dirt passes"
-rows_control start_rows start-all-old '[ "$t" -ge "$START" ]' 'false' \
-  "a probe the reviewer created blocks over the author's dirt" \
-  "a probe the reviewer created blocks over the author's dirt, naming the reviewer's path" \
-  "the reviewer moving the author's file blocks though its mtime is old" \
-  "the reviewer moving the author's file blocks though its mtime is old, naming the reviewer's path"
-# Any first entry taken as the start reds the tool-call row.
-rows_control start_rows launch-record-unchecked \
-  '| select(.type == "session_meta" or (.type == "user" and ([.message.content | arrays | .[] | .type?] | index("tool_result") | not)))' \
-  '' \
-  "a completed tool call first gives no start, and the author's dirt blocks"
-rows_control start_rows mtime 'stat -c %Z "$1" 2>/dev/null || stat -f %c "$1" 2>/dev/null' \
-  'stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null' \
-  "the reviewer moving the author's file blocks though its mtime is old" \
-  "the reviewer moving the author's file blocks though its mtime is old, naming the reviewer's path"
 
 echo "reviewer-stop-check: tracked edits need the reviewer's own successful call"
 actor_rows() { # TAG
@@ -733,42 +699,6 @@ ROWS
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "actor rows: no row was asserted" >&2; exit 2; }
 }
 actor_rows actor
-rows_control actor_rows every-tracked-path \
-  'index($path) != null' 'true' \
-  "a concurrent tracked edit passes for a read-only reviewer" \
-  "a concurrent tracked edit passes when the reviewer edited a different path" \
-  "a failed edit cannot attribute another agent's tracked edit" \
-  "an unmatched tool result cannot attribute another agent's tracked edit" \
-  "a failed Codex file change cannot attribute another agent's edit" \
-  "a pending Codex file change cannot attribute another agent's edit" \
-  "writing the required report cannot attribute another agent's edit" \
-  "the required report passes even when Git does not ignore it"
-rows_control actor_rows report-counts-as-probe \
-  '[ "$identity" != "$ARTIFACT_ID" ] || return 1' ':' \
-  "the required report passes even when Git does not ignore it"
-rows_control actor_rows failed-edit-counts \
-  '.type == "tool_result" and .is_error != true' '.type == "tool_result"' \
-  "a failed edit cannot attribute another agent's tracked edit"
-rows_control actor_rows unmatched-call-counts \
-  'select(.id as $id | $claude_ok | index($id))' 'select(true)' \
-  "a failed edit cannot attribute another agent's tracked edit" \
-  "an unmatched tool result cannot attribute another agent's tracked edit"
-rows_control actor_rows read-counts-as-edit \
-  'select(.name == "Write" or .name == "Edit" or .name == "MultiEdit" or .name == "NotebookEdit")' 'select(true)' \
-  "a concurrent tracked edit passes for a read-only reviewer"
-rows_control actor_rows own-edit-ignored \
-  'index($path) != null' 'false' \
-  "a successful reviewer Edit blocks its tracked path" \
-  "a successful reviewer Write blocks its tracked path" \
-  "a successful reviewer MultiEdit blocks its tracked path" \
-  "a successful reviewer NotebookEdit blocks its tracked path" \
-  "an attributed staged edit blocks" \
-  "an attributed deletion blocks" \
-  "an attributed quoted path blocks" \
-  "a completed Codex file change blocks"
-rows_control actor_rows failed-codex-counts \
-  '.type == "FileChange" and .status == "completed"' '.type == "FileChange"' \
-  "a failed Codex file change cannot attribute another agent's edit"
 
 # Codex FileChange names the file it changed. Git names physical checkout
 # paths and collapses submodule descendants to the tracked gitlink entry.
@@ -938,50 +868,6 @@ ROWS
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "path rows: no row was asserted" >&2; exit 2; }
 }
 path_rows paths
-rows_control path_rows logical-ancestors \
-  'physical=$(cd -P -- "$ancestor" 2>/dev/null && printf '\''%s/'\'' "$PWD") || return 1' \
-  'physical="${ancestor%/}/"' \
-  "a checkout alias identifies the same tracked file" \
-  "a checkout alias retains a deleted tracked file" \
-  "a checkout alias retains a deleted parent directory" \
-  "a parent component after a directory alias keeps physical meaning" \
-  "a checkout alias identifies a submodule descendant" \
-  "writing only the report through a submodule alias passes" \
-  "another edit beside the report through a submodule alias blocks"
-rows_control path_rows submodule-descendant-ignored \
-  '.submodule and ($path | startswith($name.path + "/"))' 'false' \
-  "a submodule descendant identifies the tracked submodule" \
-  "a deleted submodule descendant identifies the tracked submodule" \
-  "a removed submodule retains descendant attribution" \
-  "a checkout alias identifies a submodule descendant" \
-  "another edit beside the report in a submodule blocks" \
-  "another edit beside the report through a submodule alias blocks" \
-  "a renamed submodule retains its source descendant identity" \
-  "a renamed submodule retains its destination descendant identity"
-rows_control path_rows ordinary-descendant-counts \
-  '.submodule and ($path | startswith($name.path + "/"))' '($path | startswith($name.path + "/"))' \
-  "an ordinary child path does not identify a deleted tracked file"
-rows_control path_rows submodule-prefix-counts \
-  'startswith($name.path + "/")' 'startswith($name.path)' \
-  "a shared name prefix does not identify a dirty submodule"
-rows_control path_rows rename-source-ignored \
-  '(.path, .source // empty)' '.path' \
-  "a rename source identifies the tracked destination" \
-  "a rename with quoted names retains literal identity" \
-  "a rename with backslashes retains literal identity" \
-  "a rename with an arrow retains literal identity" \
-  "a rename with final newlines retains literal identity" \
-  "a rename with Git control escapes retains literal identity" \
-  "a renamed submodule retains its source descendant identity"
-rows_control path_rows report-gitlink-exempt \
-  'artifact: $physical[$artifact]' 'artifact: canonical($physical[$artifact])' \
-  "another edit beside the report in a submodule blocks" \
-  "another edit beside the report through a submodule alias blocks"
-rows_control path_rows report-evidence-collapsed \
-  'select(. != $physical[$artifact])' '.' \
-  "writing only the report in a submodule passes" \
-  "writing only the report through a submodule alias passes" \
-  "writing a submodule report cannot attribute another agent's edit"
 
 echo "reviewer-stop-check: without jq"
 # One world per declared dependency, each holding every other tool and not

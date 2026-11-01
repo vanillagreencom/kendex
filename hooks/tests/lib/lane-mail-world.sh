@@ -50,9 +50,6 @@ CASE_SENSITIVE=1
 # their permission fixtures the same way.
 CAN_DENY_READS=1
 [ "$(id -u)" -ne 0 ] || CAN_DENY_READS=0
-# Which bash runs the hook: its shebang takes the first one on PATH, and the
-# two versions differ on what a source it cannot parse does to the shell.
-HOOK_BASH_MAJOR="$(bash -c 'printf %s "${BASH_VERSINFO[0]}"')"
 PASS=0
 FAIL=0
 

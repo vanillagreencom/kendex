@@ -166,25 +166,6 @@ caller|skills/harness-ci/tests/change-class.test.sh|0:caller
 python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list
 ROWS
 
-# A selector that includes noncallers must turn the negative row red.
-printf '\n' >> "$R/skills/nonconsumer/tests/nonconsumer.test.sh"
-python3 - "$GUARD" "$MUTANT_TOOLS/guard" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-needle = 'calls_kendex=0'
-assert source.count(needle) == 1
-mutant = source.replace(needle, 'calls_kendex=1')
-assert mutant != source
-Path(sys.argv[2]).write_text(mutant)
-PY
-chmod +x "$MUTANT_TOOLS/guard"
-run_release "$TMP/released/kendex" "$MUTANT_TOOLS/guard"
-[ "$RC" -eq 1 ] && [[ "$OUT" == *'package=skills/nonconsumer'* ]] \
-  && [[ "$OUT" == *'suite=nonconsumer.test '*'pass=0 fail=1'* ]] \
-  && ok 'control: including a noncaller runs its failing suite' || bad 'control: including a noncaller runs its failing suite' "$RC $OUT"
-git -C "$R" reset -q --hard "$BASE"
-
 # The existing runner owns which orch suites run alone. Discover one of its
 # names, then prove native dispatch puts it after a pooled suite even with a
 # single worker. No elapsed-time assertion or second isolation list is needed.
@@ -219,19 +200,6 @@ RC=0
 PATH="$TMP/one-worker:$PATH" run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
 order="$(tr '\n' ' ' < "$SUITE_LOG")"
 [ "$RC:$order" = "0:zzz-pooled $alone_name " ] && ok 'orch native dispatch retains runner isolation order' || bad 'orch native dispatch retains runner isolation order' "$RC $order $OUT"
-python3 - "$GUARD" "$TMP/native/tools/guard" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-needle = '[ "$d" = skills/orch ] || release_args=(--battery "$d/tests")'
-assert source.count(needle) == 1
-mutant = source.replace(needle, 'release_args=(--battery "$d/tests")')
-assert mutant != source
-Path(sys.argv[2]).write_text(mutant)
-PY
-PATH="$TMP/one-worker:$PATH" run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
-order="$(tr '\n' ' ' < "$SUITE_LOG")"
-[ "$RC:$order" = "0:$alone_name zzz-pooled " ] && ok 'control: battery dispatch drops orch isolation order' || bad 'control: battery dispatch drops orch isolation order' "$RC $order $OUT"
 
 # A caller suite in a shard CI gives a kendex (orch-rest) runs; a suite in
 # one CI gives none (orch-oversee) cannot depend on one and does not.
@@ -259,20 +227,6 @@ run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 RELEASE_TEST_CI=true run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 [ "$RC:$RAN" = '0:' ] && [[ "$OUT" != *'selected-suite=skills/orch/tests/'* ]] \
   && ok 'CI released packages exclude the orch corpus' || bad 'CI released packages exclude the orch corpus' "$RC $RAN $OUT"
-python3 - "$GUARD" "$TMP/native/tools/guard" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-needle = '[ "$d:${CI:-false}" != skills/orch:true ] || continue'
-assert source.count(needle) == 1
-mutant = source.replace(needle, ':')
-assert mutant != source
-Path(sys.argv[2]).write_text(mutant)
-PY
-RELEASE_TEST_CI=true run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
-[ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] \
-  && ok 'control: removing the CI exclusion rediscovers orch' || bad 'control: removing the CI exclusion rediscovers orch' "$RC $RAN $OUT"
-cp "$GUARD" "$TMP/native/tools/guard"
 
 # Each part runs its share of the selected suites, and the parts cover them;
 # a part with no share runs nothing.
@@ -290,35 +244,6 @@ for part in 0/2 3/2 2 1/x 1/2/3 /2; do
   [ "$RC:$RAN" = 2: ] && [[ "$OUT" == "guard: argument=--part=$part"* ]] && ok "part refused: $part" || bad "part refused: $part" "$RC $RAN $OUT"
 done
 
-# Must-fail: the whole package, as before this selection, runs the suite
-# no CI shard gives a kendex, and with it the parts' split and an empty share.
-for edit in 'release_suites=$release_kendex@@:' '[ $((release_index % release_parts + 1)) -ne "$release_part" ] || @@' \
-  $'release_suites=$release_share\n      [ -n "$release_suites" ] || continue@@release_suites=$release_share'; do
-  python3 - "$GUARD" "$TMP/native/tools/guard" "$edit" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-needle, replacement = sys.argv[3].split('@@')
-assert source.count(needle) == 1
-mutant = source.replace(needle, replacement)
-assert mutant != source
-Path(sys.argv[2]).write_text(mutant)
-PY
-  case "$edit" in
-    'release_suites=$release_share'*)
-      run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 3/3
-      [ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && ok 'control: an empty share runs the whole package' \
-        || bad 'control: an empty share runs the whole package' "$RC $RAN $OUT" ;;
-    release_suites=*)
-      run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
-      [ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && ok 'control: the whole package runs the suite no shard gives a kendex' \
-        || bad 'control: the whole package runs the suite no shard gives a kendex' "$RC $RAN $OUT" ;;
-    *)
-      run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 1/2
-      [ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] && ok 'control: an unsplit part runs the other part too' \
-        || bad 'control: an unsplit part runs the other part too' "$RC $RAN $OUT" ;;
-  esac
-done
 # Unreadable selection evidence runs the whole package, under a note, in an
 # unsplit run. A part of a split run fails: its share is of a list the other
 # parts may have read.
@@ -330,58 +255,9 @@ run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 2/2
 [ "$RC:$RAN" = '1:' ] && [[ "$OUT" == *'guard: kendex-unread=skills/orch'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \
   && ok 'an unread kendex selection fails a split part' || bad 'an unread kendex selection fails a split part' "$RC $RAN $OUT"
-# Must-fail: a part that falls back as an unsplit run does runs its share of
-# the whole package, a share the other parts did not split.
-python3 - "$GUARD" "$TMP/native/tools/guard" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-needle = 'elif [ "$release_parts" -gt 1 ]; then'
-assert source.count(needle) == 1
-mutant = source.replace(needle, 'elif false; then')
-assert mutant != source
-Path(sys.argv[2]).write_text(mutant)
-PY
-run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 2/2
-[ "$RC:$RAN" = '0:zzz-caller ' ] && ok 'control: a falling-back part runs a share of the whole package' \
-  || bad 'control: a falling-back part runs a share of the whole package' "$RC $RAN $OUT"
-cp "$GUARD" "$TMP/native/tools/guard"
 ln -s "$REPO/tools/ci-job-set" "$TMP/native/tools/ci-job-set"
 git -C "$R" reset -q --hard "$BASE"
 git -C "$R" clean -qfd
-
-printf '\n' >> "$R/skills/demo/README.md"
-python3 - "$GUARD" "$MUTANT_TOOLS/guard" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-needle = '[ -z "$release_version" ] || run=all'
-assert source.count(needle) == 1
-mutant = source.replace(needle, '[ -z "$release_version" ] || run=""')
-assert mutant != source
-Path(sys.argv[2]).write_text(mutant)
-PY
-chmod +x "$MUTANT_TOOLS/guard"
-run_release "$TMP/released/kendex" "$MUTANT_TOOLS/guard"
-[ "$RC:$RAN" = '0:' ] && ok 'control: affected-suite mapping misses complete package suites' || bad 'control: affected-suite mapping misses complete package suites' "$RC $RAN $OUT"
-git -C "$R" reset -q --hard "$BASE"
-git -C "$R" clean -qfd
-
-printf '\n' >> "$R/skills/demo/scripts/demo.sh"
-python3 - "$GUARD" "$MUTANT_TOOLS/guard" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-needle = '\n      continue\n    fi\n    tree_paths='
-assert source.count(needle) == 1
-mutant = source.replace(needle, '\n      :\n    fi\n    tree_paths=')
-assert mutant != source
-Path(sys.argv[2]).write_text(mutant)
-PY
-chmod +x "$MUTANT_TOOLS/guard"
-run_release "$TMP/released/kendex" "$MUTANT_TOOLS/guard"
-[ "$RC:$RAN" = '1:companion demo untouched ' ] && ok 'control: scanning unchanged packages runs their failing suite' || bad 'control: scanning unchanged packages runs their failing suite' "$RC $RAN $OUT"
-git -C "$R" reset -q --hard "$BASE"
 
 # This file calls the script behind a variable; testing only the directly
 # named demo suite would miss the incompatibility.

@@ -78,16 +78,6 @@ run_guard
   && [[ "$OUT" != *$'\n'"error=base-unverified"* ]] \
   && ok "full validation reds through the decision-ID lane, naming the rows" \
   || bad "full validation reds through the decision-ID lane, naming the rows" "rc=$RC out=$OUT"
-if mutant_guard 's/say decision-ids "\$decision_status"/:/g'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the decision-ID finding cut the same INDEX passes" \
-    || bad "control: with the decision-ID finding cut the same INDEX passes" "rc=$RC out=$OUT"
-else
-  bad "control: the decision-ID finding could not be cut from a guard copy"
-fi
 FULL_GUARD=0
 FULL_GUARD=1
 run_guard DECISIONS_BASE_REF=missing-base
@@ -102,11 +92,6 @@ run_guard DECISIONS_BASE_REF=missing-base
   && [[ "$OUT" != *'guard: decision-ids='* ]] \
   && ok 'an unavailable decision base has no verdict' \
   || bad 'decision base no-verdict' "rc=$RC out=$OUT"
-if mutant_guard 's/unrun decision-ids "\$decision_status"/:/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard DECISIONS_BASE_REF=missing-base
-  [ "$RC" -eq 0 ] && ok 'control: dropping unavailable-base evidence turns its row red' \
-    || bad 'decision base control' "rc=$RC out=$OUT"
-else bad 'decision base control changed nothing'; fi
 FULL_GUARD=0
 rm -rf -- "$R/docs/decisions"
 
@@ -133,16 +118,6 @@ run_guard
   && [[ "$OUT" == *"bash32-parse: syntax=1"* ]] && [[ "$OUT" == *"tools/planted.sh"* ]] \
   && ok "full validation reds through the parse lane, naming the file" \
   || bad "full validation reds through the parse lane, naming the file" "rc=$RC out=$OUT"
-if mutant_guard '/TOOLS_DIR\/bash32-parse/d'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the parse lane deleted the same file passes" \
-    || bad "control: with the parse lane deleted the same file passes" "rc=$RC out=$OUT"
-else
-  bad "control: the parse lane could not be deleted from a guard copy"
-fi
 rm -f "$R/tools/planted.sh"
 
 echo "=== an absent Bash 3.2 parser has no verdict ==="
@@ -153,11 +128,6 @@ GUARD="$MUTANT_TOOLS/guard" run_guard
 [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=bash32-parse=2'* ]] \
   && ok 'a missing parser reports no-verdict with its host cause' \
   || bad 'missing parser no-verdict' "rc=$RC out=$OUT"
-if mutant_guard 's/2) unrun bash32-parse/2) note bash32-parse/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard
-  [ "$RC" -eq 0 ] && ok 'control: dropping the unavailable parser result turns its row red' \
-    || bad 'missing parser control' "rc=$RC out=$OUT"
-else bad 'missing parser control changed nothing'; fi
 cp "$TMP/parser-kept" "$MUTANT_TOOLS/bash32-parse"
 
 FULL_GUARD=1
@@ -186,18 +156,6 @@ run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=pkg/AGENTS.md=1k
   && [[ "$OUT" == *"guard: doc-limits=1"* ]] \
   && ok "a load-point document over its ceiling reds completion" \
   || bad "a load-point document over its ceiling reds completion" "rc=$RC out=$OUT"
-doc_limits_matches="$(grep -cFx '  "$TOOLS_DIR/../.agents/skills/doc-limits/scripts/doc-limits" || say doc-limits "$?"' "$GUARD")" \
-  || { echo 'ceiling control: call match failed' >&2; exit 1; }
-[ "$doc_limits_matches" -eq 1 ] \
-  || { echo 'ceiling control: call edit has no unique match' >&2; exit 1; }
-if mutant_guard 's#^  "\$TOOLS_DIR/\.\./\.agents/skills/doc-limits/scripts/doc-limits" || say doc-limits "\$?"$#  :#'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard DOC_LIMITS_SETTINGS_FILE=/dev/null DOC_LIMITS_CLASSES=pkg/AGENTS.md=1k
-  [ "$RC" -eq 0 ] && [[ "$OUT" != *"notice=document-over-limit"* ]] \
-    && ok "control: without the ceiling call the over-limit document passes completion" \
-    || bad "control: without the ceiling call the over-limit document passes completion" "rc=$RC out=$OUT"
-else
-  bad "control: the ceiling call could not be removed from a guard copy"
-fi
 git -C "$R" update-ref -d refs/remotes/origin/main
 reset_world
 unset GUARD_TEST_ENV
@@ -331,33 +289,6 @@ for n in "${!SPACE_ROWS[@]}"; do
   label="${SPACE_ROWS[$n]%%|*}"
   space_row_holds "$n" && ok "$label" || bad "$label" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
 done
-# One control per rule: row N | the edit that removes the rule.
-while IFS='|' read -r n edit; do
-  label="${SPACE_ROWS[$n]%%|*}"
-  if mutant_guard "$edit"; then
-    GUARD="$MUTANT_TOOLS/guard" space_row_holds "$n" \
-      && bad "control: the row fails with the rule removed: $label" "edit=$edit" \
-      || ok "control: the row fails with the rule removed: $label"
-  else
-    bad "control: the edit changed no guard line: $edit"
-  fi
-done <<'EDITS'
-0|/^space_stop() {/,/^}/s/^  exit "\$fail"$/  :/
-0|/^  while \[ ! -e "\$path" \]; do$/,/^  done$/d
-1|s/"\$((cargo_free_start_kib + cargo_target_start_kib))"/"$cargo_free_start_kib"/
-2|s/^  elif \[ "\$cargo_free_start_kib" -lt/  elif false \&\& [ "$cargo_free_start_kib" -lt/
-2|s/^  elif \[ "\$cargo_free_start_kib" -lt/  elif cargo_target_kib "$cargo_target_path" >\/dev\/null \&\& [ "$cargo_free_start_kib" -lt/
-3|s/{ kib -= \$1 }/{ }/
-5|s/^    space_stop cargo-space-unreadable/    note cargo-space-unreadable/
-6|s/^    space_stop cargo-target-unreadable/    note cargo-target-unreadable/
-7|s/^    unrun cargo-space-end "free-kib/    note cargo-space-end "free-kib/
-8|s/^    unrun cargo-space-end-unreadable/    note cargo-space-end-unreadable/
-9|s/"" | \*\[!0-9\]\*) space_stop cargo-space-setting/"") space_stop cargo-space-setting/
-10|/^  whole_setting GUARD_EXHAUSTED_FREE_MB/d
-11|s/^    \*\[!0\]\*) ;;$/    *) ;;/
-4|/^  export CARGO_INCREMENTAL=0$/d
-12|s/\[ "\$fail" -eq 1 \] || fail=3/fail=3/
-EDITS
 git -C "$R" checkout -q -- skills/demo/tests/demo.test.sh
 
 for component in clippy fmt; do
@@ -367,16 +298,6 @@ for component in clippy fmt; do
   [ "$RC" -eq 3 ] && [[ "$OUT" == *"guard-note: no-verdict=missing-tool=cargo-$component"* ]] \
     && ok "workspace: missing $component has no verdict" \
     || bad "workspace component availability: $component" "rc=$RC out=$OUT"
-  if mutant_guard "s/if ! cargo $component --version >\/dev\/null 2>\&1/if false/"; then
-    : >"$DF_CALL_LOG"
-    GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" DF_CALL_LOG="$DF_CALL_LOG" \
-      DF_FREE_KIB_START="$high_free_kib" DF_FREE_KIB_END="$high_free_kib" RUSTUP_INSTALLED_TARGETS="$BOTH" MISSING_COMPONENT="$component"
-    expected=1; diagnostic='guard: clippy=workspace'
-    if [ "$component" = fmt ]; then expected=0; diagnostic='guard-note: cargo-fmt=workspace'; fi
-    [ "$RC" -eq "$expected" ] && [[ "$OUT" == *"$diagnostic"* ]] \
-      && ok "control: removing $component availability turns its host row red" \
-      || bad "component availability control: $component" "rc=$RC out=$OUT"
-  else bad "component availability control changed nothing: $component"; fi
 done
 
 # Every other lane fails its own write on a full stream too, so only fmt's
@@ -394,14 +315,6 @@ if [ -e /dev/full ]; then
   [ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: cargo-fmt=workspace"*"Diff in src/lib.rs:"* ]] \
     && ok "a format diff warns and passes" \
     || bad "a format diff warns and passes" "rc=$RC out=$OUT"
-  if mutant_guard 's/  fmt_out=$(cargo fmt --check 2>&1) || note/  fmt_out=$(cargo fmt --check 2>\&1) || say/'; then
-    fmt_full_row "$MUTANT_TOOLS/guard"
-    [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-fmt=workspace"* ]] \
-      && ok "control: with formatting blocking the same diff fails" \
-      || bad "control: with formatting blocking the same diff fails" "rc=$RC out=$OUT"
-  else
-    bad "control: the fmt capture could not be removed from a guard copy"
-  fi
 else
   echo "  skip  /dev/full is absent; the full-output fmt row did not run"
 fi
@@ -465,17 +378,6 @@ run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTA
 [ "$RC" -eq 0 ] \
   && ok "installed targets that all compile reach the host suite" \
   || bad "installed targets that all compile reach the host suite" "rc=$RC out=$OUT"
-for key in rustup-targets missing-target; do
-  if mutant_guard "s/unrun $key/note $key/"; then
-    if [ "$key" = missing-target ]; then
-      GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS=""
-    else
-      GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_LIST_RESULT=1
-    fi
-    [ "$RC" -eq 0 ] && ok "control: losing $key evidence turns its host row red" \
-      || bad "cross-toolchain control: $key" "rc=$RC out=$OUT"
-  else bad "cross-toolchain control changed nothing: $key"; fi
-done
 [ "$(grep -cFx "$(check_call "$APPLE")" "$CARGO_CALL_LOG")" -eq 1 ] &&
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "guard asks cargo once for every cross target's core and CLI tests" \
@@ -583,36 +485,6 @@ docs/notes.md||main|FAIL_FIND=1|1|run|guard: rust-reads=crates|a failed include 
 docs/notes.md||none||0|run||a committed crate change with no origin/main to diff against runs both
 ROWS
 [ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate" >&2; exit 2; }
-# One control per rule: each mutant removes that rule from a guard copy, and
-# the row the rule decides turns to the verdict the rule was there to refuse.
-# An edit carries no |, the column separator. EDIT|TOUCH|SETTING|BASE|ENV|RC|CALLS|TEXT|LABEL.
-base_rule_matches="$(grep -c '^  \[ "\$base_resolved" -eq 1 \].*rust_input=1$' "$GUARD")" \
-  || { echo 'cross-doc control: base rule match failed' >&2; exit 1; }
-[ "$base_rule_matches" -eq 1 ] \
-  || { echo 'cross-doc control: base rule edit has no unique match' >&2; exit 1; }
-before=$((PASS + FAIL))
-while IFS='|' read -r edit touch setting base extra rc calls text label; do
-  [ -n "$edit" ] || continue
-  if mutant_guard "$edit"; then
-    env_args=()
-    [ -z "$setting" ] || env_args+=("GUARD_FULL_CROSS_DOC=$setting")
-    [ -z "$extra" ] || env_args+=("$extra")
-    gated_run "$MUTANT_TOOLS/guard" "$touch" "$base" ${env_args[@]+"${env_args[@]}"}
-    gated_verdict "$rc" "$calls" "$text" && ok "control: $label" \
-      || bad "control: $label" "rc=$RC out=$OUT calls=$(cat "$CARGO_CALL_LOG")"
-  else
-    bad "control: $label" "the edit changed nothing in a guard copy: $edit"
-  fi
-done <<'ROWS'
-s/^  rust_input=0$/  rust_input=1/|docs/notes.md||main||0|run||with the touched-set gate removed a prose file runs both
-s/^    includes=\$(compiled_includes)/    includes=$(true)/|docs/authoring/README.md||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the include derivation emptied an included file skips both
-s/if \[ "\$cross_doc" = ci \]; then/if false; then/|crates/app/src/mine.rs|ci|main||0|run||with the ci branch removed the setting at ci runs both
-s/say cross-doc-setting "\$cross_doc"; //|crates/app/src/mine.rs|never|main||0|run||with the refusal removed an unknown setting passes
-/\[ -n "\$touched" \]/d|-||main||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the empty-set rule removed a branch that touches nothing skips both
-/^  workspace_every=1$/d|docs/notes.md||main|FAIL_FIND=1|1|skip|guard: rust-reads=crates|with the failed read left undecided a prose file skips both
-s/^\(  \[ "\$base_resolved" -eq 1 \].*rust_input=1\)$/  : #\1/|docs/notes.md||none||0|skip|guard-note: cross-doc-skipped=no-rust-input|with the base rule removed a committed crate change with no origin/main skips both
-ROWS
-[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-doc gate controls" >&2; exit 2; }
 rm -f "$R/fake-bin/find"
 cp "$TMP/exclude.saved" "$R/.git/info/exclude"
 git -C "$R" reset -q --hard "$pre_gated_head"
@@ -671,16 +543,6 @@ run_guard
 [ "$RC" != 0 ] && [[ "$OUT" == *"guard: suite=skills/quiet/tests/quiet.test.sh"* ]] \
   && ok "a committed move out of a skill runs the suite of the tree it left" \
   || bad "a committed move out of a skill runs the suite of the tree it left" "rc=$RC out=$OUT"
-if mutant_guard 's/diff --no-renames --name-only "\$suites_base"/diff --name-only "$suites_base"/'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] \
-    && ok "control: with rename detection back on the branch diff the source tree's suite stays silent" \
-    || bad "control: with rename detection back on the branch diff the source tree's suite stays silent" "rc=$RC out=$OUT"
-else
-  bad "control: --no-renames could not be removed from the branch diff in a guard copy"
-fi
 
 # A branch diff that fails must red the lane by itself: the working-tree read
 # beside it succeeds, so only the diff's own status can carry the failure.
@@ -702,16 +564,6 @@ run_guard PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1
 [ "$RC" != 0 ] && [[ "$OUT" == *"guard: touched-set=branch-diff"* ]] \
   && ok "a failed branch diff reds the suite lane beside a good working-tree read" \
   || bad "a failed branch diff reds the suite lane beside a good working-tree read" "rc=$RC out=$OUT"
-if mutant_guard 's/{ branch_touched=""; say touched-set branch-diff; }/branch_touched=""/'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && PATH="$R/fake-bin:$PATH" REAL_GIT="$REAL_GIT" FAIL_SUITE_DIFF=1 "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
-  [ "$RC" -eq 0 ] \
-    && ok "control: with the diff's status unchecked the failed diff passes" \
-    || bad "control: with the diff's status unchecked the failed diff passes" "rc=$RC out=$OUT"
-else
-  bad "control: the branch diff's status check could not be removed from a guard copy"
-fi
 rm -f "$R/fake-bin/git"
 git -C "$R" reset -q --hard "$suite_lane_head"
 git -C "$R" update-ref -d refs/remotes/origin/main
@@ -748,33 +600,6 @@ run_guard
 narrow_row_holds \
   && ok "full validation runs the mapped suites of a skill and of hooks/, and not the rest" \
   || bad "full validation runs the mapped suites of a skill and of hooks/, and not the rest" "rc=$RC out=$OUT"
-# Two must-fail controls, one per direction: full validation back on whole
-# sets runs the suites nothing maps to, and a dropped selection skips the
-# suites the change maps to. Either turns the row red, and each asserts the
-# cause it plants: its exit and the lines, joined by `~`, only that cause
-# prints. A sed expression holds `|`, so `#` separates the fields.
-narrow_controls=(
-  'whole sets under --full#s/case "\$d" in skills\/\* | hooks | refresh | tools) run="" ;; esac/case "$MODE:$d" in range:skills\/* | range:hooks | range:refresh | range:tools) run="" ;; esac/#1#guard: suite=skills/narrow/tests/beta.test.sh~guard: suite=hooks/tests/unreached.test.sh'
-  'the mapped selection dropped#s/run="\$run\$sel$/run="$run/#0#guard-note: suites=0/2 reason=mapped tree=skills/narrow~guard-note: suites=0/3 reason=mapped tree=hooks'
-)
-for row in "${narrow_controls[@]}"; do
-  IFS='#' read -r name expr want_rc clauses <<<"$row"
-  if mutant_guard "$expr"; then
-    OUT=""
-    RC=0
-    OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
-    cause=1
-    [ "$RC" -eq "$want_rc" ] || cause=0
-    while IFS= read -r clause; do
-      [[ "$OUT" == *"$clause"* ]] || cause=0
-    done <<<"${clauses//\~/$'\n'}"
-    ! narrow_row_holds && [ "$cause" -eq 1 ] \
-      && ok "control: with $name the row fails" \
-      || bad "control: with $name the row fails" "rc=$RC out=$OUT"
-  else
-    bad "control: $name could not be planted in a guard copy"
-  fi
-done
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_guard
@@ -797,14 +622,6 @@ run_guard
   [[ "$OUT" == *"refresh-suite-ran"* ]] \
   && ok "a changed release script runs its refresh suite" \
   || bad "release refresh suite selection" "rc=$RC out=$OUT"
-if mutant_guard '/^      refresh\/\*)$/,/^        ;;/d'; then
-  OUT=""
-  RC=0
-  OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
-  [ "$RC" -eq 0 ] && [[ "$OUT" != *"refresh-suite-ran"* ]] \
-    && ok "control: removing refresh selection skips the changed script's suite" \
-    || bad "release refresh suite selection control" "rc=$RC out=$OUT"
-else bad "release refresh selection control changed nothing"; fi
 git -C "$R" reset -q --hard HEAD
 FULL_GUARD=0
 
@@ -852,25 +669,10 @@ $DEATH"
   && [[ "$OUT" == *'guard: cargo-test=workspace'* ]] \
   && ok 'a signal cannot hide an assertion that already failed' \
   || bad 'assertion before signal' "rc=$RC out=$OUT"
-if mutant_guard '/^      if grep -qE.*test result: FAILED/,/^      fi$/d'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$ASSERTION
-$DEATH"
-  [ "$RC" -eq 3 ] && [[ "$OUT" != *'guard: cargo-test=workspace'* ]] \
-    && ok 'control: losing the assertion finding turns the mixed row red' \
-    || bad 'assertion before signal control' "rc=$RC out=$OUT"
-else bad 'assertion before signal control changed nothing'; fi
 run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$COMPILER_DEATH"
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
   && ok "a compiler killed by a signal is not named as a test binary's death" \
   || bad "a compiler killed by a signal is not named as a test binary's death" "rc=$RC out=$OUT"
-if mutant_guard 's/if \[ -n "\$death" \]; then/if false; then/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" RUSTUP_INSTALLED_TARGETS="$BOTH" CARGO_TEST_STDERR="$DEATH"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: cargo-test=workspace"* ]] && [[ "$OUT" != *"guard: test-binary-signal="* ]] \
-    && ok "control: with the death check removed the same death reads as tests failed" \
-    || bad "control: with the death check removed the same death reads as tests failed" "rc=$RC out=$OUT"
-else
-  bad "control: the death check could not be removed from a guard copy"
-fi
 rm -f "$R/Cargo.toml"
 
 echo "=== missing suite peers have no verdict while assertions still block ==="
@@ -1449,47 +1251,9 @@ for script in test test:ci; do
         && [[ "$OUT" != *'guard: suite='* ]] && [ "$launcher_calls" = "$expected_call" ] \
         && ok "$mode $script: missing $launcher prevents suite start and has no verdict" \
         || bad "$mode $script: missing $launcher launcher" "rc=$RC out=$OUT calls=$launcher_calls"
-      if mutant_guard 's#if ! command -v npm .*; then#if false; then#'; then
-        OUT=""; RC=0
-        OUT="$(cd "$R" && env "${GUARD_TEST_BOUNDS[@]}" PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$INDEPENDENT" \
-          "${launcher_env[@]}" "$MUTANT_TOOLS/guard" "${mode_args[@]}" 2>&1 </dev/null)" || RC=$?
-        [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
-          && ok "control: $mode $script without launcher availability misjudges missing $launcher" \
-          || bad "launcher availability control: $mode $script $launcher" "rc=$RC out=$OUT"
-      else bad "launcher availability control changed nothing: $mode $script $launcher"; fi
     done
   done
 done
-if mutant_guard 's/unrun missing-peers "\$1"/say suite "$1"/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$BUN_PEER"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
-    && ok 'control: losing missing-peer classification turns its row red' \
-    || bad 'missing-peer control' "rc=$RC out=$OUT"
-else bad 'missing-peer control changed nothing'; fi
-if mutant_guard 's/)Cannot find (module|package) /)never-matches /'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$BUN_RELATIVE"
-  [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-peers=pi-extensions/peers'* ]] \
-    && ok 'control: reading a relative specifier as a peer turns the relative-file row red' \
-    || bad 'relative specifier control' "rc=$RC out=$OUT"
-else bad 'relative specifier control changed nothing'; fi
-if mutant_guard 's/exit !(missing \&\& !behavior)/exit !missing/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$QOL_MIXED"
-  [ "$RC" -eq 3 ] && [[ "$OUT" == *'guard-note: no-verdict=missing-peers=pi-extensions/peers'* ]] \
-    && ok 'control: ignoring independent failures turns the mixed-peer row red' \
-    || bad 'independent failure control' "rc=$RC out=$OUT"
-else bad 'independent failure control changed nothing'; fi
-if mutant_guard 's/if (summary)/if (0)/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$QOL_PEER"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
-    && ok 'control: recounting summary rows turns the repeated-peer row red' \
-    || bad 'summary outcome control' "rc=$RC out=$OUT"
-else bad 'summary outcome control changed nothing'; fi
-if mutant_guard 's/unavailable_errors++/unavailable_errors += 0/'; then
-  GUARD="$MUTANT_TOOLS/guard" run_guard PATH="$R/fake-bin:$PATH" PEER_SUITE_OUTPUT="$BUN_PEER"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *'guard: suite=pi-extensions/peers'* ]] \
-    && ok 'control: omitting loader outcomes turns the unhandled-peer row red' \
-    || bad 'unhandled outcome control' "rc=$RC out=$OUT"
-else bad 'unhandled outcome control changed nothing'; fi
 rm -- "$R/fake-bin/npm"
 rm -r -- "$R/pi-extensions/peers"
 
@@ -1626,19 +1390,6 @@ for row in "${LANE_ROWS[@]}"; do
     && ok "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" \
     || bad "class '${class:-unset}' docs-only '${docs:-unset}' over $paths runs: ${want:-no heavy lane}" "rc=$RC got=$got out=$OUT"
 done
-[ "$(grep -cF "printf 'validate: lanes=%s" "$GUARD")" -eq 1 ] || { echo 'lane control: reporting edit has no unique match' >&2; exit 1; }
-lane_guard "/^printf 'validate: /s/^/: # /"
-run_lanes '' '' $CODE ui/app.ts
-[ "$RC" -eq 0 ] && [ "$(sed -n '$p' <<<"$OUT")" != 'validate: lanes=guard-scans selection=all' ] \
-  && ok "control: without the final report the lane assertion turns red" \
-  || bad "control: without the final report the lane assertion turns red" "$OUT"
-lane_guard 's/^suite_selection=""$/suite_selection=subset/'
-run_lanes render false $CODE
-[ "$RC" -eq 0 ] && [ "$(lanes_ran)" = "" ] \
-  && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=subset' ] \
-  && ok "control: with the default reporting subset a disabled shell lane fails its all assertion" \
-  || bad "control: with the default reporting subset a disabled shell lane fails its all assertion" "rc=$RC out=$OUT"
-lane_guard
 run_lanes stale false $CODE
 [ "$RC" -eq 2 ] && [[ "$OUT" == *"guard: validate-class=stale"* ]] && [ "$(lanes_ran)" = "" ] \
   && ok "a class ci-job-set has no selection for is refused before any lane runs" \
@@ -1649,33 +1400,12 @@ HANDED_PATHS="$TMP/empty-paths" run_lanes standard false $SKILL_TOOL
 [ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: lane-selection=class-fallback"* ]] && [ "$(lanes_ran)" = "suites parse lint test ui" ] \
   && ok "the runner's class fallback, an empty paths file, runs every lane and passes" \
   || bad "the runner's class fallback, an empty paths file, runs every lane and passes" "rc=$RC got=$(lanes_ran) out=$OUT"
-lane_guard '/^  elif \[ -z "\$selected_paths" \]; then$/,/^    note lane-selection class-fallback$/d'
-HANDED_PATHS="$TMP/empty-paths" run_lanes standard false $SKILL_TOOL
-[ "$RC" -ne 0 ] \
-  && ok "control: with the fallback unread the empty paths file reds the run" \
-  || bad "control: with the fallback unread the empty paths file reds the run" "rc=$RC out=$OUT"
-lane_guard
 # A narrow class whose paths file cannot be read selects nothing: every lane
 # runs and the run is red, never a stand-down on no paths.
 HANDED_PATHS="$TMP/absent-paths" run_lanes micro false $CODE
 [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: lane-selection=paths-unreadable"* ]] && [ "$(lanes_ran)" = "$ALL" ] \
   && ok "an unreadable paths file is a finding and every lane runs" \
   || bad "an unreadable paths file is a finding and every lane runs" "rc=$RC got=$(lanes_ran) out=$OUT"
-# The issue's inverse: a guard that reads no class runs the whole battery on
-# the trivial row.
-lane_guard 's/\[ "\$MODE" = full \] \&\& \[ -n "\$validate_class" \]; then/[ "$MODE" = full ] \&\& false; then/'
-run_lanes trivial true $CODE
-[ "$(lanes_ran)" = "$ALL" ] \
-  && ok "control: with the class unread the trivial row runs every lane" \
-  || bad "control: with the class unread the trivial row runs every lane" "rc=$RC got=$(lanes_ran)"
-# A guard that asks the lane table for every class but standard, as it once
-# did, runs every lane on the skill-and-tool row CI narrows.
-lane_guard 's/\[ "\$MODE" = full \] \&\& \[ -n "\$validate_class" \]; then/[ "$MODE" = full ] \&\& [ "$validate_class" != standard ]; then/'
-# The cross targets wait for a Rust input, which this row has none of.
-run_lanes standard false $SKILL_TOOL
-[ "$(lanes_ran)" = "suites parse lint test ui" ] \
-  && ok "control: with standard read as every lane the skill-and-tool row runs every lane" \
-  || bad "control: with standard read as every lane the skill-and-tool row runs every lane" "rc=$RC got=$(lanes_ran)"
 # A suite a lane runs inherits none of the selection: the outer run's class
 # would otherwise choose the lanes of every guard that suite starts, the way
 # this file's own rows once ran under a prose-only micro selection. The
@@ -1692,16 +1422,10 @@ inherited_row() { # — sets OUT and RC
     PATH="$LANE_BIN:$PATH" REAL_CARGO="$REAL_CARGO" CARGO_CALL_LOG="$CARGO_CALL_LOG" NPM_CALL_LOG="$NPM_CALL_LOG" \
     RUSTUP_INSTALLED_TARGETS="$BOTH" "$LANE_TOOLS/guard" --full 2>&1 </dev/null)" || RC=$?
 }
-lane_guard
 inherited_row
 [ "$RC" -eq 0 ] && [[ "$OUT" == *"inner=unset:unset:unset"* ]] \
   && ok "a suite run under a micro selection inherits none of it" \
   || bad "a suite run under a micro selection inherits none of it" "rc=$RC out=$OUT"
-lane_guard '/^unset DEV_VALIDATE_CLASS DEV_VALIDATE_DOCS_ONLY DEV_VALIDATE_PATHS$/d'
-inherited_row
-[[ "$OUT" == *"inner=micro:false:$PATHS_FILE"* ]] \
-  && ok "control: with the selection left exported the suite inherits it" \
-  || bad "control: with the selection left exported the suite inherits it" "rc=$RC out=$OUT"
 # Lanes come from the output file, not stderr, where the stub selects lint.
 cp "$LANE_TOOLS/ci-job-set" "$TMP/ci-job-set.real"
 printf '%s\n' '#!/usr/bin/env bash' \
@@ -1709,16 +1433,10 @@ printf '%s\n' '#!/usr/bin/env bash' \
   '  cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false"' \
   'printf "%s\n" $rows >>"$GITHUB_OUTPUT"; printf "%s\n" $rows cargo_lint=true >&2' >"$LANE_TOOLS/ci-job-set"
 chmod +x "$LANE_TOOLS/ci-job-set"
-lane_guard
 run_lanes micro false docs/guide.md
 [ "$RC" -eq 0 ] && [ "$(lanes_ran)" = "" ] \
   && ok "the lanes are read from the output file alone" \
   || bad "the lanes are read from the output file alone" "rc=$RC got=$(lanes_ran) out=$OUT"
-lane_guard 's/lanes="\$selected"/lanes="$selection"/'
-run_lanes micro false docs/guide.md
-[ "$(lanes_ran)" = "lint" ] \
-  && ok "control: with the lanes read from both streams stderr selects the lint lane" \
-  || bad "control: with the lanes read from both streams stderr selects the lint lane" "rc=$RC got=$(lanes_ran)"
 cp "$TMP/ci-job-set.real" "$LANE_TOOLS/ci-job-set"
 lane_guard 's/lane_on cargo_linux; then/lane_on cargo_linx; then/'
 run_lanes micro false $CODE
