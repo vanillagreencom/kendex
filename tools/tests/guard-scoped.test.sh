@@ -223,6 +223,81 @@ for path in skills/pyreach/tests/mod_test.py skills/pyreach/scripts/pytool; do
     || bad "normal range: $path runs the whole set" "rc=$RC selected=$SELECTED out=$OUT"
 done
 
+# kendex.settings.toml in a scoped run: each changed [env] key seeds the
+# suites naming it. skills/settings declares FIXTURE_READ_KEY and holds its
+# reader and a suite writing a settings file of its own; skills/area
+# declares FIXTURE_AREA_KEY, commented out, and no test of it names the key;
+# no example declares FIXTURE_LOOSE_KEY. tools/ holds a copier noting the file
+# alone and one noting it first in a comma list.
+printf '\nFIXTURE_READ_KEY = "a"\nFIXTURE_AREA_KEY = "b"\nFIXTURE_LOOSE_KEY = "c"\n' >> "$R/kendex.settings.toml"
+mkdir -p "$R/skills/settings/tests" "$R/skills/area/tests"
+printf '[env]\nFIXTURE_READ_KEY = "a"\n' > "$R/skills/settings/kendex.settings.toml.example"
+printf '[env]\n# FIXTURE_AREA_KEY = "b"\n' > "$R/skills/area/kendex.settings.toml.example"
+printf 'grep -q FIXTURE_READ_KEY "$PWD/kendex.settings.toml"\nprintf "reader\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/reader.sh"
+printf 'own=$(mktemp -d)\nprintf "[env]\\nOWN = \\"1\\"\\n" > "$own/kendex.settings.toml"\nrm -rf "$own"\nprintf "writer\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/writer.sh"
+printf '# Inputs: skills/settings/kendex.settings.toml.example\nprintf "example-noted\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/example-noted.sh"
+for name in one two; do
+  printf 'printf "%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/area/tests/$name.sh"
+done
+printf '# Inputs: kendex.settings.toml\ncat "$PWD/kendex.settings.toml" >/dev/null\nprintf "copy\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-copy.sh"
+printf '# Inputs: kendex.settings.toml, skills/demo/scripts/demo.sh\nprintf "listed\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-listed.sh"
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm settings
+BASE="$(git -C "$R" rev-parse HEAD)"
+settings_change() { # CHANGE: one edit of the settings world, then a clean SUITE_LOG
+  case "$1" in
+    read-key) sed -i.bak 's/^FIXTURE_READ_KEY = "a"$/FIXTURE_READ_KEY = "z"/' "$R/kendex.settings.toml" ;;
+    area-key) sed -i.bak 's/^FIXTURE_AREA_KEY = "b"$/FIXTURE_AREA_KEY = "z"/' "$R/kendex.settings.toml" ;;
+    loose-key) sed -i.bak 's/^FIXTURE_LOOSE_KEY = "c"$/FIXTURE_LOOSE_KEY = "z"/' "$R/kendex.settings.toml" ;;
+    foreign-table) printf '[other]\nFIXTURE_READ_KEY = "z"\n' >> "$R/kendex.settings.toml" ;;
+    comment) printf '# changed\n\n' >> "$R/kendex.settings.toml" ;;
+    noted-example) printf '# changed\n' >> "$R/skills/settings/kendex.settings.toml.example" ;;
+    unnoted-example) printf '# changed\n' >> "$R/skills/area/kendex.settings.toml.example" ;;
+  esac
+  rm -f "$R/kendex.settings.toml.bak"
+  [ -n "$(git -C "$R" status --porcelain)" ] || { bad "settings fixture change $1 changed nothing"; }
+  : > "$SUITE_LOG"
+}
+KEY_READERS='skills/settings/tests/reader.sh tools/tests/settings-copy.sh tools/tests/settings-listed.sh '
+PATH_READERS='skills/settings/tests/reader.sh skills/settings/tests/writer.sh tools/tests/settings-copy.sh tools/tests/settings-listed.sh '
+NOTED='tools/tests/settings-copy.sh tools/tests/settings-listed.sh '
+for row in \
+  "a changed key selects its reader and the noted copiers, not a suite writing its own file|read-key|$KEY_READERS" \
+  "a declared key no test of its tree names selects that tree's whole set|area-key|skills/area/tests/one.sh skills/area/tests/two.sh $NOTED" \
+  "a changed key no example declares maps the file by path|loose-key|$PATH_READERS" \
+  "a foreign table maps the file by path|foreign-table|$PATH_READERS" \
+  "comments and blank lines select only the noted copiers|comment|$NOTED" \
+  "a path of no role selects the suite noting it|noted-example|skills/settings/tests/example-noted.sh " \
+  "a path of no role no note names selects its tree's whole set|unnoted-example|skills/area/tests/one.sh skills/area/tests/two.sh "; do
+  IFS='|' read -r name change expected <<<"$row"
+  settings_change "$change"
+  doc_selection "$GUARD"
+  [ "$RC" -eq 0 ] && [ "$PLAN" = "$expected" ] \
+    && ok "scoped settings: $name" \
+    || bad "scoped settings: $name" "rc=$RC plan=$PLAN expected=$expected out=$OUT"
+  git -C "$R" checkout -q -- .
+done
+# Unscoped, the same key change maps the file by path as before.
+settings_change read-key
+RC=0
+OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && [ "$(sort "$SUITE_LOG" | tr '\n' ' ')" = 'copy listed reader writer ' ] \
+  && ok 'normal range maps a settings key change by path' \
+  || bad 'normal range maps a settings key change by path' "rc=$RC out=$OUT"
+git -C "$R" checkout -q -- .
+# Control: reading the settings file by path again selects the writer.
+if mutant_guard '/^  if \[ -n "\${2-}" \]; then$/,/^  fi$/d'; then
+  settings_change read-key
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ "$PLAN" = "$PATH_READERS" ] \
+    && ok 'control: the path seed selects the writer and breaks the key row' \
+    || bad 'control: the path seed selects the writer and breaks the key row' "rc=$RC plan=$PLAN out=$OUT"
+  git -C "$R" checkout -q -- .
+else
+  bad 'control changes the settings seed'
+fi
+
 # A real cancellation must also name suites in batteries not yet entered.
 # Each phase holds on its FIFO; the parent sends TERM only once its
 # non-blocking writer open proves a holder is there, then releases the hold.
@@ -254,6 +329,9 @@ import time
 repo, guard, base, scratch = sys.argv[1:]
 runner = Path(repo) / "skills/orch/tests/run-all.sh"
 runner_text = runner.read_text()
+# The phase holds below rewrite the runner. They are harness, not a change
+# under test: a changed run-all.sh selects its tree's whole set.
+subprocess.run(["git", "update-index", "--skip-worktree", "skills/orch/tests/run-all.sh"], cwd=repo, check=True)
 grace_text = (Path(guard).parent.parent / "skills/orch/scripts/lib/job-unit.sh").read_text()
 grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
                  if line.startswith("JOB_UNIT_KILL_GRACE=")))

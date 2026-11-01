@@ -20,6 +20,7 @@
 #                            tools/exec-bits names in DIR, R by default
 #   ok / bad                 the tally in PASS and FAIL
 # The fixture build below is unchecked line by line and stands on errexit.
+# Inputs: kendex.settings.toml
 set -euo pipefail
 
 GUARD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
