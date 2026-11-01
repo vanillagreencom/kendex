@@ -262,23 +262,30 @@ def owner_unread(bash, root, cursor, count, now, reported, events):
     return [row["id"] for row in owned]
 
 
-def mail_pass(bash, home, side, cursor):
+def mail_pass(bash, home, side, cursor, delivered=None):
+    """One pass over every root. A local home read adds each owner row it reads to delivered."""
     state = json.loads(json.dumps(cursor))
     events = []
     now = epoch()
-    for root in project_roots():
+    roots = project_roots()
+    # A home the project list omits (unregistered, removed, or a noted
+    # worktree row) still receives owner mail. Its to-lane alone is read for
+    # those rows: no mail event, no to-overseer mark-read, no receipts.
+    alone = side == "local" and home not in roots
+    for root in (roots + [home]) if alone else roots:
+        boxes = ("to-lane",) if alone and root == home else ("to-lane", "to-overseer")
         key = str(root)
         prior = state.get(key, {})
         next_root = json.loads(json.dumps(prior))
         cause = None
-        root_events = []
+        root_events, root_delivered = [], []
         try:
             if not root.is_dir():
                 raise Failure("root-read", "missing", "root", "root-missing")
             if not lane_mail().is_file():
                 raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
             common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
-            for box in ("to-lane", "to-overseer"):
+            for box in boxes:
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
                 size_read = run(["wc", "-c", str(filename)])
@@ -290,7 +297,11 @@ def mail_pass(bash, home, side, cursor):
                 next_root[box] = {"count": count, "size": size}
                 for envelope in envelopes:
                     if box == "to-lane":
-                        if (side == "local" and root == home) or envelope.get("kind") != "answer":
+                        if side == "local" and root == home:
+                            if owner_row(envelope):
+                                root_delivered.append({"id": envelope["id"], "at": envelope["at"]})
+                            continue
+                        if envelope.get("kind") != "answer":
                             continue
                         metadata = "%s %s re %s" % tuple(line_value(value, True) for value in
                             (envelope["id"], envelope["kind"], envelope.get("re", "")))
@@ -302,34 +313,35 @@ def mail_pass(bash, home, side, cursor):
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
                     text = line_value(envelope.get("text", ""), limit=4000)
                     root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
-            receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
-            index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
-            if index is None:
-                raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
-            receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
-            if not receipt:
-                raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
-            unread = []
-            for row in receipts[index + 1:]:
-                parts = row.split()
-                if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
-                    unread.append(parts)
-            if side == "local" and root == home:
-                # Only the home inbox's receipts say whether owner mail was read.
-                owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
-                                     prior.get("owner_unread", []), root_events)
-                if owned:
-                    next_root["owner_unread"] = owned
+            if len(boxes) > 1:
+                receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
+                index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
+                if index is None:
+                    raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
+                receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
+                if not receipt:
+                    raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
+                unread = []
+                for row in receipts[index + 1:]:
+                    parts = row.split()
+                    if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
+                        unread.append(parts)
+                if side == "local" and root == home:
+                    # Only the home inbox's receipts say whether owner mail was read.
+                    owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
+                                         prior.get("owner_unread", []), root_events)
+                    if owned:
+                        next_root["owner_unread"] = owned
+                    else:
+                        next_root.pop("owner_unread", None)
+                if unread and now - int(unread[0][2]) >= 900:
+                    oldest = unread[0][1]
+                    if prior.get("unread") != oldest:
+                        root_events.append(event("overseer-unread", repo=root.name, unread=len(unread),
+                                                 oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min"))
+                    next_root["unread"] = oldest
                 else:
-                    next_root.pop("owner_unread", None)
-            if unread and now - int(unread[0][2]) >= 900:
-                oldest = unread[0][1]
-                if prior.get("unread") != oldest:
-                    root_events.append(event("overseer-unread", repo=root.name, unread=len(unread),
-                                             oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min"))
-                next_root["unread"] = oldest
-            else:
-                next_root.pop("unread", None)
+                    next_root.pop("unread", None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             cause = failure("root-read", error).record
         if cause:
@@ -342,6 +354,8 @@ def mail_pass(bash, home, side, cursor):
         else:
             next_root.pop("cause", None)
             events.extend((root, block) for block in root_events)
+            if delivered is not None:
+                delivered.extend(root_delivered)
         state[key] = next_root
     return pass_output(side, state, events)
 
@@ -612,18 +626,22 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                 process.wait()
 
     def acquire(self, now):
+        """Each side's pass as (side, output, failure record, owner rows the pass delivered)."""
         outputs = []
         try:
-            outputs.append(("local", mail_pass(self.bash, self.home, "local", self.cursors.get("local", {})), None))
+            delivered = []
+            output = mail_pass(self.bash, self.home, "local", self.cursors.get("local", {}), delivered)
+            outputs.append(("local", output, None, delivered))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            outputs.append(("local", None, failure("local-pass", error).record))
+            outputs.append(("local", None, failure("local-pass", error).record, []))
         host = self.settings["JARVIS_CONTROL_HOST"]
         if host:
             try:
                 result = self.remote(host)
-                outputs.append(("host", result.stdout, child_failure("host-pass", result).record if result.returncode else None))
+                outputs.append(("host", result.stdout,
+                                child_failure("host-pass", result).record if result.returncode else None, []))
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-                outputs.append(("host", None, failure("host-pass", error).record))
+                outputs.append(("host", None, failure("host-pass", error).record, []))
         return outputs
 
     def report(self):
@@ -649,10 +667,19 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                 self.append(pass_output("report", {"event": report_key(result)}, [(None, result)]))
 
     def accept(self, outputs):
-        for side, output, failure in outputs:
+        for side, output, failure, delivered in outputs:
             if failure is not None:
                 self.failed_pass(side, failure)
             else:
+                if delivered:
+                    # A delivered owner row waits for coverage. It is saved
+                    # before the pass cursor moves past it, so a restart
+                    # rereads it rather than losing it; ids merge once.
+                    waiting = self.state.setdefault("unanswered", {"reported": [], "failed": False}) \
+                        .setdefault("pending", [])
+                    known = {row["id"] for row in waiting}
+                    waiting.extend(row for row in delivered if row["id"] not in known)
+                    self.save()
                 self.append(output)
                 self.state.pop(side + "_failure", None)
                 self.save()
@@ -661,29 +688,45 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         self.accept(outputs)
         self.batch(now)
 
-    def unanswered(self):
-        """One owner-unanswered check as (rows, None) or (None, failure record)."""
-        try:
-            output = checked([self.bash, LIB.parent / "owner-unanswered", "--root", self.home,
-                              "--older", str(OWNER_WAIT_SECS // 60)], self.home, operation="owner-unanswered")
-            return [json.loads(line) for line in output.split("\n") if line], None
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            return None, failure("owner-unanswered", error).record
+    def unanswered(self, waiting):
+        """One owner-unanswered check of the waiting rows.
 
-    def accept_unanswered(self, rows, cause):
+        Returns (waiting, rows, now, None), or (waiting, None, None, failure record).
+        """
+        try:
+            # The window starts at the oldest waiting row, so a waiting row the
+            # helper does not list is covered, never outside its window.
+            output = checked([self.bash, LIB.parent / "owner-unanswered", "--root", self.home,
+                              "--since", min(row["at"] for row in waiting), "--older", "0"],
+                             self.home, operation="owner-unanswered")
+            return waiting, [json.loads(line) for line in output.split("\n") if line], epoch(), None
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return waiting, None, None, failure("owner-unanswered", error).record
+
+    def accept_unanswered(self, waiting, rows, now, cause):
         # A reminder for the session, never a page: owner-unread alone says mail is unread.
         memory = self.state.setdefault("unanswered", {"reported": [], "failed": False})
         blocks = []
         if cause is not None:
+            # Unread coverage covers nothing: every waiting row stays.
             if not memory["failed"]:
                 blocks.append(event("owner-unanswered-failed", cause=cause["detail"]))
             memory["failed"] = True
         else:
+            checked_ids = {row["id"] for row in waiting}
+            listed = {row["id"] for row in rows}
+            due = [row for row in rows if row["id"] in checked_ids
+                   and now - instant(row["at"]).timestamp() >= OWNER_WAIT_SECS]
             blocks.extend(event("owner-unanswered", id=row["id"], at=row["at"], kind=row["kind"]) +
                           line_value(row.get("text", ""), limit=4000) + "\n"
-                          for row in rows if row["id"] not in memory["reported"])
-            # Listed ids alone stay remembered; an answered row is forgotten.
-            self.state["unanswered"] = {"reported": [row["id"] for row in rows], "failed": False}
+                          for row in due if row["id"] not in memory.get("reported", []))
+            # A checked row the helper no longer lists is covered; a row
+            # delivered during the check waits for the next one. Only rows
+            # old enough to remind are remembered as reported.
+            self.state["unanswered"] = {
+                "pending": [row for row in memory.get("pending", [])
+                            if row["id"] not in checked_ids or row["id"] in listed],
+                "reported": [row["id"] for row in due], "failed": False}
         if blocks:
             self.append(pass_output("local", self.cursors.get("local", {}),
                                     [(str(self.home), block) for block in blocks]))
@@ -694,9 +737,11 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         if work is not None and work.done():
             self.accept_unanswered(*work.result())
             self.unanswered_pending = None
-        if self.unanswered_pending is None and now >= self.next_unanswered:
+        # Only a delivered owner row that no check has found covered starts a check.
+        waiting = self.state.get("unanswered", {}).get("pending", [])
+        if self.unanswered_pending is None and waiting and now >= self.next_unanswered:
             self.next_unanswered = now + UNANSWERED_EVERY_SECS
-            self.unanswered_pending = passes.submit(self.unanswered)
+            self.unanswered_pending = passes.submit(self.unanswered, list(waiting))
         report = self.report_pending
         if report is not None and report.done():
             self.accept_report(report.result())

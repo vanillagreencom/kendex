@@ -38,7 +38,7 @@ The current handoff defaults to `state/handoff.md` in the [home layout](home-lay
 - Before succession transfers control, reconcile the checkpoint and later log records against live tracker items, the mailbox and relevant memory notes under [Homes](#homes). Record each correction as a state change and advance the checkpoint's covered log range.
 - Rebuild state from the checkpoint and replay later state-change records in their recorded order. Compare the checkpoint time with the clock and the user's staleness bound. If the state is stale, its covered range is incomplete, or a source disagrees, widen the reads to the relevant source history and earlier log records. Do not refuse recovery solely because the state is stale. Keep an unread source as an unresolved next action.
 
-- At each wake, run `.agents/skills/jarvis/scripts/owner-unanswered --since [LAST_CHECK]` from the home. It lists the user's messages that no reply, closed question or progress record covers. Answer each one older than a short wait, or record what was done about it in the progress log.
+- On each `EVENT owner-unanswered` the watch loop adds, answer the message it names, or record what was done about it in the progress log. The [README](../README.md#control-host-events) states when the loop adds it.
 - Keep a line only if its absence would cause the successor to act wrongly or repeat work.
 - Remove a tracker id from State when its item closes. Keep the completion evidence on the item.
 - Keep standing rules in one home. Link that home rather than repeating its text in the handoff.
