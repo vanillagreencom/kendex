@@ -644,7 +644,7 @@ for args in '' --shell-only --cargo-only; do
 done
 
 wf_no_shell_partition="$TMP/wf-shell-partition-dropped.yml"
-sed "s%$PARTITION_SUITE; do%; do%" "$WORKFLOW" > "$wf_no_shell_partition"
+sed "s%$PARTITION_SUITE)\"%)\"%" "$WORKFLOW" > "$wf_no_shell_partition"
 claims_file "$wf_no_shell_partition" "$TMP/no-shell-partition-claims"
 check "must-fail: a Cargo-only call cannot cover an omitted shell suite" \
   "$PARTITION_SUITE" "$(comm -23 "$UNIV" <(sort -u "$TMP/no-shell-partition-claims"))"
@@ -726,9 +726,9 @@ check "deleting the hooks tail returns all its suites to guards-hooks" "$hook_ta
 while IFS= read -r glob; do
   wf_hook_prose="$TMP/wf-hook-glob-comment.yml"
   awk -v glob="$glob" '
-    index($0, "for t in hooks/tests/lane-mail-") { print "          # " glob }
+    index($0, "--suite-list hooks/tests/lane-mail-") { print "          # " glob }
     (i = index($0, glob " \\")) { $0 = substr($0, 1, i - 1) substr($0, i + length(glob) + 1); hits++ }
-    (i = index($0, glob "; do")) { $0 = substr($0, 1, i - 1) substr($0, i + length(glob)); hits++ }
+    (i = index($0, glob ")\"")) { $0 = substr($0, 1, i - 1) substr($0, i + length(glob)); hits++ }
     { print }
     END { exit hits != 1 }
   ' "$WORKFLOW" > "$wf_hook_prose"
@@ -821,8 +821,8 @@ fi
 # skips the suite, and the suite runs in no shard. Each row is one arm: the
 # first check says the fallback fires, the second says this section is what
 # catches it when it does not. A row is `path|loop`, the moved path and the
-# first line of the loop that spells it, above which the comment goes so the
-# loop's continuation lines stay whole.
+# first line of the step's candidate list that spells it, above which the
+# comment goes so the list's continuation lines stay whole.
 prose_rows=0
 while IFS='|' read -r moved loop; do
   prose_rows=$((prose_rows + 1))
@@ -830,7 +830,7 @@ while IFS='|' read -r moved loop; do
   awk -v moved="$moved" -v loop="$loop" '
     index($0, loop) { print "          # " moved; hits++ }
     (i = index($0, moved " \\")) { $0 = substr($0, 1, i - 1) substr($0, i + length(moved) + 1); cut++ }
-    (i = index($0, moved "; do")) { $0 = substr($0, 1, i - 1) substr($0, i + length(moved)); cut++ }
+    (i = index($0, moved ")\"")) { $0 = substr($0, 1, i - 1) substr($0, i + length(moved)); cut++ }
     { print }
     END { exit !(hits == 1 && cut == 1) }
   ' "$WORKFLOW" > "$wf_prose" ||
@@ -852,10 +852,10 @@ while IFS='|' read -r moved loop; do
     bad "must-fail: a fallback matching comment text left $moved claimed, so the filter is unproven"
   fi
 done <<'ROWS'
-skills/commit-guards/tests/install-git-hooks.test.sh|for t in hooks/tests/*.sh
-tools/tests/harness-smoke.test.sh|for t in tools/tests/harness-smoke.test.sh
-skills/commit-guards/tests/md-refs.test.sh|for t in skills/commit-guards/tests/pre-push.test.sh
-skills/commit-guards/tests/pre-push.test.sh|for t in skills/commit-guards/tests/pre-push.test.sh
+skills/commit-guards/tests/install-git-hooks.test.sh|--suite-list hooks/tests/*.sh
+tools/tests/harness-smoke.test.sh|--suite-list tools/tests/harness-smoke.test.sh
+skills/commit-guards/tests/md-refs.test.sh|--suite-list skills/commit-guards/tests/pre-push.test.sh
+skills/commit-guards/tests/pre-push.test.sh|--suite-list skills/commit-guards/tests/pre-push.test.sh
 ROWS
 [[ "$prose_rows" -ge 3 ]] || bad "the prose arm table missed a required path"
 

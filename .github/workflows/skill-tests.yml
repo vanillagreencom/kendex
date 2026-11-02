@@ -23,8 +23,9 @@ name: Skill Tests
 # select and each other lane as `tools/ci-job-set` selects it; the invariant
 # comment there is the one statement of what each lane runs. A diff of skill
 # Markdown alone narrows further: the changes job publishes the suites that
-# read it as `suites`, each shard step and the catalog job's package-suite
-# step run only those among their own, and a narrowed shard leg says so in
+# read it as `suites`, each shell suite step and the catalog job's
+# package-suite step run only those among their own, the node and
+# pi-claude-bridge shards run whole, and a narrowed shard leg says so in
 # its name, so the main push runs that shard whole. The selected
 # macOS cargo and shell legs run in the group. The two diff checks,
 # preflight and Markdown, run on every group against its base.
@@ -558,10 +559,10 @@ jobs:
       # This workflow owns the temporary roster; evidence tables are never inputs.
       TEMPORARY_SUITE: ${{ matrix.suite || '' }}
       MAIN_ONLY_FILTERS: ${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push') && '!=critical-path-deny.test !=orch-shard-partition.test !=adopt-refresh.test' || '' }}
-      # The suites a narrowed leg runs, which each suite step hands
-      # `tools/ci-job-set --suite-list` as SUITE_SELECTION, keeping the
-      # candidates it names; `all` on every other leg, the nightly and
-      # main-only legs among them.
+      # The suites a narrowed leg runs, which each shell suite step hands
+      # `tools/ci-job-set --suite-list` as SUITE_SELECTION with its
+      # candidates, running the ones it prints; `all` on every other leg,
+      # the nightly and main-only legs among them.
       SHARD_SUITES: ${{ matrix.scope == 'narrowed' && needs.changes.outputs.suites || 'all' }}
     steps: &skill-suite-steps
       # run-all.sh stops every suite still running at this Unix time and names
@@ -763,12 +764,11 @@ jobs:
       - name: review-gate suites
         if: matrix.shard == 'review-gate'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           fail=0
           review=()
-          for t in skills/review-gate/tests/*.test.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/review-gate/tests/*.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             review+=("=${base%.sh}")
           done
@@ -781,12 +781,11 @@ jobs:
       - name: refresh suites
         if: matrix.shard == 'refresh'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           fail=0
           refresh=()
-          for t in refresh/tests/*.test.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list refresh/tests/*.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             refresh+=("=${base%.sh}")
           done
@@ -905,16 +904,15 @@ jobs:
       - name: commit-guards suites
         if: matrix.shard == 'guards-commit'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           set --
-          for t in skills/commit-guards/tests/*.sh; do
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/commit-guards/tests/*.sh)"
+          for t in $kept; do
             if printf '%s\n' "$claims" | grep -qF "$t"; then
               continue
             fi
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
@@ -927,7 +925,6 @@ jobs:
       - name: tools suites
         if: matrix.shard == 'guards-tools'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           # Complete the checkout's toolchain install before concurrent readers.
           tools/rust-reads --cli-smoke . >/dev/null || exit $?
@@ -943,8 +940,8 @@ jobs:
           # The rejectors keep the claimed suites out; these selectors name
           # the suites this leg's list keeps.
           selected=0
-          for t in tools/tests/*.test.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list tools/tests/*.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
             printf '%s\n' "$claims" | grep -qF "$t" || selected=1
@@ -955,14 +952,13 @@ jobs:
       - name: the two slowest tools suites
         if: matrix.shard == 'guards-tools-tail'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           tools/rust-reads --cli-smoke . >/dev/null || exit $?
           fail=0
           failed=""
-          for t in tools/tests/harness-smoke.test.sh \
-            tools/tests/orch-shard-partition.test.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list tools/tests/harness-smoke.test.sh \
+            tools/tests/orch-shard-partition.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             [[ -z "${TEMPORARY_SUITE:-}" || "$base" == "$TEMPORARY_SUITE.sh" ]] || continue
             case " ${MAIN_ONLY_FILTERS:-} " in *" !=${base%.sh} "*) continue ;; esac
@@ -995,17 +991,16 @@ jobs:
       - name: hook and moved commit-guards suites
         if: matrix.shard == 'guards-hooks'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           md_refs=skills/commit-guards/tests/md-refs
           hooks=()
           guards=()
-          for t in hooks/tests/*.sh \
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list hooks/tests/*.sh \
             skills/commit-guards/tests/install-git-hooks.test.sh \
-            "$md_refs.test.sh"; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+            "$md_refs.test.sh")"
+          for t in $kept; do
             claim=""
             case "${t##*/}" in
               lane-mail-*.test.sh) claim="${t%/*}/lane-mail-"'*.test.sh' ;;
@@ -1039,12 +1034,11 @@ jobs:
       - name: lane-mail and reviewer suites
         if: matrix.shard == 'guards-hooks-tail'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           hooks=()
-          for t in hooks/tests/lane-mail-*.test.sh \
-            hooks/tests/reviewer-*.test.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list hooks/tests/lane-mail-*.test.sh \
+            hooks/tests/reviewer-*.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             hooks+=("=${base%.sh}")
           done
@@ -1061,12 +1055,11 @@ jobs:
       - name: pre-push and md-refs suites
         if: matrix.shard == 'guards-commit-tail'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           set --
-          for t in skills/commit-guards/tests/pre-push.test.sh \
-            skills/commit-guards/tests/md-refs.test.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/commit-guards/tests/pre-push.test.sh \
+            skills/commit-guards/tests/md-refs.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
@@ -1081,15 +1074,14 @@ jobs:
       - name: linear, bot-instructions and preflight suites
         if: matrix.shard == 'linear'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           set -- skills/linear/tests/*.sh
           linear=()
           bot=()
           preflight=()
-          for t in "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh; do
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh)"
+          for t in $kept; do
             case "$t" in skills/linear/tests/must-fail-controls.sh) continue ;; esac
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
             base="${t##*/}"
             case "$t" in
               skills/linear/*) linear+=("=${base%.sh}") ;;
@@ -1111,9 +1103,8 @@ jobs:
       - name: linear must-fail controls
         if: matrix.shard == 'linear-controls'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
-          for t in skills/linear/tests/must-fail-controls.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/linear/tests/must-fail-controls.sh)"
+          for t in $kept; do
             echo "=== $t"
             bash "$t"
           done
@@ -1130,11 +1121,10 @@ jobs:
       - name: worktree suites
         if: matrix.shard == 'worktree'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           set --
-          for t in skills/worktree/tests/*.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/worktree/tests/*.sh)"
+          for t in $kept; do
             base="${t##*/}"
             case "$base" in *restack*) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || continue ;; esac
             set -- "$@" "=${base%.sh}"
@@ -1150,10 +1140,9 @@ jobs:
       - name: worktree restack suites
         if: matrix.shard == 'worktree-restack'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set --
-          for t in skills/worktree/tests/*restack*.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/worktree/tests/*restack*.sh)"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
@@ -1164,10 +1153,9 @@ jobs:
       - name: Mailbox suites
         if: matrix.shard == 'mailbox'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set --
-          for t in skills/mailbox/tests/*.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/mailbox/tests/*.sh)"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
@@ -1177,10 +1165,9 @@ jobs:
       - name: Slack suites
         if: matrix.shard == 'slack'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set --
-          for t in skills/slack/tests/*.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/slack/tests/*.sh)"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
@@ -1195,10 +1182,9 @@ jobs:
       - name: Jarvis suites
         if: matrix.shard == 'jarvis'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set --
-          for t in skills/jarvis/tests/*.sh; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/jarvis/tests/*.sh)"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
@@ -1277,7 +1263,6 @@ jobs:
       - name: all other skill suites
         if: matrix.shard == 'rest'
         run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
           set -u
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
@@ -1318,10 +1303,11 @@ jobs:
             batteries+=(--battery "$dir" "$@")
             candidates+=("${suites[@]}")
           done
-          # The selectors apply across the pool, by base name.
+          # The selectors apply across the pool by base name, so a kept suite
+          # can bring a same-named one of another battery, never drop one.
           set --
-          for t in ${candidates[@]+"${candidates[@]}"}; do
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list ${candidates[@]+"${candidates[@]}"})"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
@@ -1332,22 +1318,6 @@ jobs:
 
       # ---- shard: node — every node and bun suite here but pi-claude-bridge's,
       # which the shard below runs -----------------------------------------
-      # The node and pi-claude-bridge steps each run one suite or package;
-      # this records, space-bounded, the ones `tools/ci-job-set
-      # --suite-list` keeps for this leg, which each step's `if:` reads.
-      - name: the node suites this leg runs
-        if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
-        run: |
-          keep="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list)"
-          kept=""
-          for t in skills/deep-research/tests/deep-research.test.mjs \
-            pi-extensions/package-policy.test.mjs pi-extensions/*/package.json; do
-            t="${t%/package.json}"
-            case "$keep" in all | *" $t "*) ;; *) continue ;; esac
-            kept="$kept $t"
-          done
-          printf 'NODE_SUITES=%s \n' "$kept" >>"$GITHUB_ENV"
-
       # setup-node also serves the `pi-claude-bridge` shard's two steps below.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
@@ -1355,11 +1325,11 @@ jobs:
           node-version: 22.19.0
 
       - name: deep-research node suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' skills/deep-research/tests/deep-research.test.mjs ')
+        if: matrix.shard == 'node' && !matrix.suite
         run: node --test skills/deep-research/tests/deep-research.test.mjs
 
       - name: pi-extension package policy suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/package-policy.test.mjs ')
+        if: matrix.shard == 'node' && !matrix.suite
         run: node --test pi-extensions/package-policy.test.mjs
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -1371,7 +1341,7 @@ jobs:
       # reads PI_QOL_PEER_VERSION, and tests/runtime-copy-peers.test.ts refuses
       # a peer installed at any other version.
       - name: pi-qol regression suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-qol ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-qol
         env:
           PI_QOL_PEER_VERSION: 0.86.0
@@ -1380,21 +1350,21 @@ jobs:
           npm test
 
       - name: pi-output-policy suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-output-policy ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-output-policy
         run: npm test
 
       # The pi-hooks lane wake suite runs a whole Pi session in process, and
       # the package's own test script installs the Pi its devDependencies pin.
       - name: pi-hooks suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-hooks ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-hooks
         run: npm test
 
       # pi-nested-agents-md imports only types from pi-coding-agent, which
       # bun erases, so its suite runs with no install.
       - name: pi-nested-agents-md suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-nested-agents-md ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-nested-agents-md
         run: npm test
 
@@ -1404,7 +1374,7 @@ jobs:
       # GitHub image does not carry it. The whole directory is globbed, so
       # all test files run here without editing this step.
       - name: pi-agents-tmux suite
-        if: (matrix.shard == 'node' && (matrix.suite == 'pi-agents-tmux' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) && contains(env.NODE_SUITES, ' pi-extensions/pi-agents-tmux ')
+        if: matrix.shard == 'node' && (matrix.suite == 'pi-agents-tmux' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         working-directory: pi-extensions/pi-agents-tmux
         run: |
           git fetch --no-tags --depth=1 origin "$(sed -n 's/^export const BENCHMARK_BASELINE = "\([0-9a-f]*\)";.*/\1/p' tests/browser-fixture.ts)"
@@ -1415,7 +1385,7 @@ jobs:
       # transport test would validate a different major than consumers
       # actually install.
       - name: pi-codex-minimal-tools suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-codex-minimal-tools ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1 typebox 'undici@^7.29.1'
@@ -1426,7 +1396,7 @@ jobs:
       # and rpc-fallback import nothing outside the package), so unlike the
       # suites above no npm install is needed.
       - name: pi-questions suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-questions ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-questions
         run: npm test
 
@@ -1435,7 +1405,7 @@ jobs:
       # pi-coding-agent pulls them transitively and an unpinned resolution
       # mismatches its exports.
       - name: pi-tool-renderer suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-tool-renderer ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-tool-renderer
         run: |
           npm install --no-save --include=dev --include=peer --include=optional --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@1.0.1 @earendil-works/pi-ai@1.0.1 @earendil-works/pi-coding-agent@1.0.1 @earendil-works/pi-tui@1.0.1 @earendil-works/pi-codemode@1.0.1 @earendil-works/pi-mcp@1.0.1 @earendil-works/pi-telemetry@1.0.1
@@ -1444,14 +1414,14 @@ jobs:
       # Prompt stash mocks its Pi TUI value imports, so its suite needs no
       # package install.
       - name: pi-prompt-stash suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-prompt-stash ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-prompt-stash
         run: npm test
 
       # pi-session-bridge imports nothing from Pi outside type positions, the
       # same case as pi-nested-agents-md above, so its suite runs with no install.
       - name: pi-session-bridge suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-session-bridge ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-session-bridge
         run: npm test
 
@@ -1459,7 +1429,7 @@ jobs:
       # imports only the package's leaf modules, so the Pi value imports
       # elsewhere in the package are never loaded and no install is needed.
       - name: pi-session-manager suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-session-manager ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-session-manager
         run: npm test
 
@@ -1469,7 +1439,7 @@ jobs:
       # alongside it because the package value-imports them too and an
       # unpinned resolution mismatches pi-coding-agent's exports.
       - name: pi-skills-manager suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-skills-manager ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-skills-manager
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
@@ -1482,7 +1452,7 @@ jobs:
       # because their suites need Pi packages declared as peer dependencies,
       # which a lockfile of theirs never resolves.
       - name: pi-caveman suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-caveman ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-caveman
         run: |
           npm ci --no-audit --no-fund
@@ -1495,7 +1465,7 @@ jobs:
       # on the paths the suite exercises, and tsx is what the test script runs
       # the suite under.
       - name: pi-web-tools suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-web-tools ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-web-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox tsx 'youtube-transcript-plus@^2.0.1'
@@ -1504,7 +1474,7 @@ jobs:
       # The suite mocks every Pi module and typebox it imports with bun's
       # mock.module, so like pi-session-manager it needs no install.
       - name: pi-background-tasks suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-background-tasks ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-background-tasks
         run: npm test
 
@@ -1512,7 +1482,7 @@ jobs:
       # loads the isolated host stubs in its fixtures, so like
       # pi-session-manager it needs no install.
       - name: pi-extension-manager suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-extension-manager ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-extension-manager
         run: npm test
 
@@ -1520,7 +1490,7 @@ jobs:
       # Two of its three files are node:test and one is bun:test; bun's runner
       # executes both, which is why one `npm test` covers the directory.
       - name: pi-task-panel suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-task-panel ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-task-panel
         run: npm test
 
@@ -1531,7 +1501,7 @@ jobs:
       # lockfile pins through a mock model provider on 127.0.0.1.
       # `npm ci` keeps the bundle check below tied to the lockfile.
       - name: pi-codex-bridge suite
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-codex-bridge ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-bridge
         run: |
           npm ci --no-audit --no-fund
@@ -1540,7 +1510,7 @@ jobs:
       # bundle/index.js is the artifact Pi loads and npm publishes. A clean
       # lockfile build must reproduce the committed bytes exactly.
       - name: pi-codex-bridge bundle matches a clean lockfile build
-        if: (matrix.shard == 'node' && !matrix.suite) && contains(env.NODE_SUITES, ' pi-extensions/pi-codex-bridge ')
+        if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-bridge
         run: git diff --exit-code -- bundle/
 
@@ -1559,7 +1529,7 @@ jobs:
       # the bundle assertion below only proves the artifact came from the
       # committed lockfile if the install itself was lockfile-strict.
       - name: pi-claude-bridge unit suite
-        if: (matrix.shard == 'pi-claude-bridge') && contains(env.NODE_SUITES, ' pi-extensions/pi-claude-bridge ')
+        if: matrix.shard == 'pi-claude-bridge'
         working-directory: pi-extensions/pi-claude-bridge
         run: |
           npm ci --no-audit --no-fund
@@ -1568,7 +1538,7 @@ jobs:
       # bundle/index.js is the artifact Pi loads and npm publishes. A clean
       # lockfile build must reproduce the committed bytes exactly.
       - name: pi-claude-bridge bundle matches a clean lockfile build
-        if: (matrix.shard == 'pi-claude-bridge') && contains(env.NODE_SUITES, ' pi-extensions/pi-claude-bridge ')
+        if: matrix.shard == 'pi-claude-bridge'
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 

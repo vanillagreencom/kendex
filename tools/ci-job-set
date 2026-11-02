@@ -16,7 +16,7 @@
 # that main run still owes; see THE PUSH ROUTE below.
 #
 # Usage: tools/ci-job-set [--event-parity]
-#        tools/ci-job-set --suite-list
+#        tools/ci-job-set --suite-list CANDIDATE...
 #
 #   --event-parity  also derive the selection at every other event and refuse
 #                   `event-parity` where one differs. The `changes` job of
@@ -97,7 +97,9 @@
 #     the rule, plus every Pi package where consumers() finds a Pi file
 #     naming a changed skill or path, since PACKAGE_AWK cannot tell those
 #     packages apart; the shards are those whose steps run one of their
-#     packages, and every step keeps the candidates --suite-list names.
+#     packages. Each shell suite step runs only the candidates --suite-list
+#     keeps, and the node and pi-claude-bridge shards, once selected, run
+#     whole.
 #     The other lanes stand as on any measured row. A reach that could not
 #     be read, or a diff of more documents than NARROW_DOCUMENTS, takes the
 #     row the paths select, with `suites=all`, and a suite
@@ -170,8 +172,9 @@
 #   catalog             the released engine's strict check and catalog render.
 #   smoke               the rendered sample trees read by real harness CLIs.
 #   suites              `all`, or the narrowed row's JSON list of suites;
-#                       each shard step and the catalog job's package-suite
-#                       step run only the listed suites among their own.
+#                       each shell suite step and the catalog job's
+#                       package-suite step run only the listed suites among
+#                       their own.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
 #                       shell bit is false. Merge groups run these on macOS,
@@ -192,31 +195,40 @@
 # not derive is another.
 set -euo pipefail
 
-# --suite-list prints the suites a job's SUITE_SELECTION runs on one line:
-# `all` where it is empty or `all`, and otherwise each path of its JSON list
-# with a space on either side, a blank line for an empty list. Each shard step
-# of skill-tests.yml and tools/guard's --released-packages read it once and
-# keep a candidate where the line is `all` or holds ` <path> ` whole, so a
-# same-named suite of another tree is never a stand-in, and a step that keeps
-# no candidate runs no suite. A selection of any other shape is refused.
+# --suite-list CANDIDATE... prints, one per line in argument order, the
+# candidate suite paths a job's SUITE_SELECTION runs: every candidate where
+# the selection is empty or `all`, and otherwise each one its JSON list names
+# whole, so a same-named suite of another tree is never a stand-in. It is the
+# one keep-or-skip test: each shard step of skill-tests.yml and
+# tools/guard's --released-packages hand it their candidates and run what it
+# prints, and a step it leaves with none runs no suite. A pooled step turns
+# the kept paths into base-name selectors, which can run a same-named suite
+# of another battery beside a kept one but never drop one. A selection of
+# any other shape is refused.
 if [ "${1-}" = --suite-list ]; then
-  [ "$#" -eq 1 ] || exit 2
+  shift
   selection="${SUITE_SELECTION-}"
   case "$selection" in
-    "" | all) printf 'all\n' ;;
-    '[]') printf ' \n' ;;
+    "" | all)
+      [ "$#" -eq 0 ] || printf '%s\n' "$@"
+      exit 0
+      ;;
+    '[]') exit 0 ;;
     '["'*'"]')
       grep -Eqx '\[("[^",[:space:]]+")(,"[^",[:space:]]+")*\]' <<<"$selection" || {
         printf 'ci-job-set: cause=suite-selection-unreadable\n' >&2
         exit 2
       }
-      printf ' %s \n' "$(printf '%s' "$selection" | sed 's/[][]//g; s/"//g; s/,/ /g')"
       ;;
     *)
       printf 'ci-job-set: cause=suite-selection-unreadable\n' >&2
       exit 2
       ;;
   esac
+  listed=" $(printf '%s' "$selection" | sed 's/[][]//g; s/"//g; s/,/ /g') "
+  for candidate in "$@"; do
+    case "$listed" in *" $candidate "*) printf '%s\n' "$candidate" ;; esac
+  done
   exit 0
 fi
 
@@ -775,6 +787,9 @@ pi-extensions/pi-claude-bridge"
 narrow_shards() { # SUITES
   local entry package list="" shard
   for entry in $(printf '%s' "$1" | sed 's/[][]//g; s/"//g; s/,/ /g'); do
+    # A Pi package is listed as its directory, which PACKAGE_AWK reads by
+    # the paths below it.
+    [ ! -d "$entry" ] || entry="$entry/"
     package="$(printf '%s\n' "$entry" | awk -v mode=package "$PACKAGE_AWK")" ||
       die suite-package-unread "a selected suite could not be mapped to its package"
     [ -z "$package" ] || want_package "${package% *}"

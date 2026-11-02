@@ -197,7 +197,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
         *" reason=selection-unread "*) echo "tools/ci-job-set --suite-list could not read the catalog job's SUITE_SELECTION, so this unsplit run ran the package's suites unfiltered; its cause is above." ;;
         *" reason=kendex-unread "*) echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex, so this unsplit run ran every shell suite of the package; its cause is above." ;;
-        *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
+        *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran. The merge group runs the rest, save on a diff of skill Markdown alone, which it narrows by the CI reach in mapped_suites' header." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
       ;;
@@ -1771,17 +1771,45 @@ scan_load() { # DIR
     # The packages one run-time read can reach, or "": the packages it
     # names, `own` for its own package'"'"'s root, `*` for the checkout root.
     # mapped_suites'"'"' header lists the shapes.
-    function walks(text, low, rest, name, scope, var) {
+    # Whether TEXT reads a literal Markdown path below a variable no rule
+    # names (`"$DW/SKILL.md"`): a root, own, temporary or fixture variable
+    # there leaves the path to the name scan or to no package.
+    function joined(text, rest, var) {
+      rest = text
+      while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*\}?\/[^[:space:]"'"'"'$]*\.(md|markdown)([^[:alnum:]_]|$)/)) {
+        var = substr(rest, RSTART, RLENGTH)
+        rest = substr(rest, RSTART + RLENGTH)
+        sub(/\/.*/, "", var)
+        var = toupper(var)
+        if (var !~ /TMP|TEMP|SANDBOX|SCRATCH|HOME|FAKE|FIXTURE|WORLD|STATE|OUT|ROOT|REPO|CHECKOUT|SKILL|PACKAGE|PKG|SELF|HERE|TEST_DIR|TESTS_DIR|SCRIPT_DIR|SCRIPTS_DIR/)
+          return 1
+      }
+      return 0
+    }
+    function walks(text, low, rest, name, scope, var, bounded, unbounded) {
       # Each shape below spells one of these, so a line holding none is
       # passed over before any expression is matched.
       if (!index(text, ".md") && !index(text, ".markdown") && !index(text, "kendex") && !index(text, "cp ") &&
-          !index(text, "copytree") && !index(text, "rglob") && !index(text, "grep ") && !index(text, "find "))
+          !index(text, "copytree") && !index(text, "rglob") && !index(text, "grep ") && !index(text, "find ") &&
+          !index(text, "resolve_sibling"))
         return ""
       low = tolower(text)
       if (text !~ /\$\{?[[:alnum:]_]+\}?["'"'"']?\.(md|markdown)([^[:alnum:]_]|$)|\}\.(md|markdown)([^[:alnum:]_]|$)|\+[[:space:]]*["'"'"']\.(md|markdown)["'"'"']|\*\.(md|markdown)/ &&
+          !joined(text) &&
           !(low ~ /(^|[^[:alnum:]_.\/-])kendex["'"'"']?([[:space:],)]|$)/ && low ~ /skill/) &&
           text !~ /(^|[^[:alnum:]_-])cp[[:space:]]+(-[[:alnum:]]*[rRa]|--recursive|--archive)|copytree|rglob\(|(^|[^[:alnum:]_-])grep[[:space:]]+(-[[:alnum:]]*[rR]|--recursive)|(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?["'"'"']?\$/)
-        return ""
+        if (text !~ /(^|[^[:alnum:]_])gg_resolve_sibling[[:space:]]/)
+          return ""
+      # The sibling resolver reaches the package it names, or any package
+      # where a variable names it.
+      if (match(text, /(^|[^[:alnum:]_])gg_resolve_sibling[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:])]+/)) {
+        name = substr(text, RSTART, RLENGTH)
+        sub(/.*[[:space:]]/, "", name)
+        gsub(/["'"'"']/, "", name)
+        if (name !~ /^[[:alnum:]][[:alnum:]_-]*$/) return "*"
+        return name
+      }
+      if (text ~ /\.\.\/["'"'"']?\$/) return "*"
       rest = text
       while (match(rest, /(skills\/|\.\.\/)[[:alnum:]][[:alnum:]_-]*/)) {
         name = substr(rest, RSTART, RLENGTH)
@@ -1790,18 +1818,24 @@ scan_load() { # DIR
         rest = substr(rest, RSTART + RLENGTH)
       }
       if (scope != "") return substr(scope, 2)
+      if (joined(text)) return "*"
       rest = text
       while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*/)) {
         var = toupper(substr(rest, RSTART, RLENGTH))
         rest = substr(rest, RSTART + RLENGTH)
-        if (var ~ /TMP|TEMP|SANDBOX|SCRATCH|HOME|FAKE|FIXTURE|WORLD|STATE|OUT/) continue
+        if (var ~ /TMP|TEMP|SANDBOX|SCRATCH|HOME|FAKE|FIXTURE|WORLD|STATE|OUT/) { bounded = 1; continue }
         if (var ~ /ROOT|REPO|CHECKOUT/) return "*"
         if (var ~ /SKILL|PACKAGE|PKG|SELF|HERE|TEST_DIR|TESTS_DIR|SCRIPT_DIR|SCRIPTS_DIR/) scope = "own"
+        else unbounded = 1
       }
       if (scope != "") return scope
       if (low ~ /(^|[^[:alnum:]_])(repo|root|checkout)([^[:alnum:]_]|$)|__file__|parents\[/ || text ~ /(^|[^[:alnum:]_.-])skills\/?([^[:alnum:]_\/-]|$)/) return "*"
       if (text ~ /(^|[^[:alnum:]_.])\.\.\//) return "own"
-      return ""
+      # A read whose root no rule above bounds can reach any package; a line
+      # whose every variable names a temporary, fixture or state directory
+      # reaches none.
+      if (bounded && !unbounded) return ""
+      return "*"
     }
     function scan_names(reader, text, kind, rest, name) {
       rest = text
@@ -2068,9 +2102,13 @@ doc_readers() { # REL [KEY] [TREE]
       check="$check|\\\$\\{?[A-Z_]*(ROOT|DIR|SKILL|HERE|PACKAGE|PKG)[A-Z_]*\\}?[\"']?/$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel")([^[:alnum:]_/-]|\$)" || return 2
     fi
     if [ "$external" -eq 1 ] && [ -n "$named" ] && [ "$walk_root" != "$catalog_root" ]; then
-      # A script of another package: every line that names it calls it.
+      # A script of another package: every line that names it calls it,
+      # and so does a sibling resolution of its package, or of a package a
+      # variable names, since the call through it spells no path.
       reader_kind=call
-      reader_patterns=("$named" - - - -)
+      token=${rel#skills/}
+      token=${token%%/*}
+      reader_patterns=("$named" "(^|[^[:alnum:]_])gg_resolve_sibling[[:space:]]+[^[:space:]]+[[:space:]]+[\"']?(${token}[\"']?([[:space:])]|\$)|\\\$)" - - -)
       return 0
     fi
   fi
@@ -2211,28 +2249,38 @@ inputs_cover() { # I PATH
 # outside a skill package.
 # The reach is what the scan can see, not every caller: a script run through
 # a variable path is missed, and so is a suite that runs a changed script
-# only through another script that runs it. CI's full run owns completeness.
+# only through another script that runs it. A scoped run leaves completeness
+# to the merge group's run, which narrows only under the CI reach below.
 # THE CI REACH, --doc-reach, the merge group's narrowed row, asks each skill
 # document of every tree and fails closed where the text cannot say:
 #   - Test programs, and code files below tests/<dir>/, are scanned too.
 #   - A run-time read is a reader of the documents it can reach, whatever
 #     its role: a directory copy or walk (`cp -R`, `cp -r`, `cp -a`,
-#     `shutil.copytree`, `rglob(`, `grep -r`, `find "$d"`) on a line built on
-#     the checkout, a Markdown path assembled at run time (`"${x}.md"`,
-#     `$x.md`, `{x}.md`, `x + ".md"`, `*.md`) on such a line, and kendex
-#     given a skill directory (a kendex command on a line naming a skill).
-#     A line names the packages it reaches as `skills/<name>` or
-#     `../<name>`; with neither, an upper-case variable holding SKILL,
-#     PACKAGE, SELF, HERE or a tests or scripts directory reaches its own
-#     package, and one holding ROOT, REPO or CHECKOUT, or a lower-case repo,
-#     root or checkout, `__file__`, `parents[` or a bare `skills/`, reaches
-#     every package. A variable naming a temporary, fixture or state
-#     directory reaches none.
+#     `shutil.copytree`, `rglob(`, `grep -r`, `find "$d"`), a Markdown path
+#     assembled at run time (`"${x}.md"`, `$x.md`, `{x}.md`, `x + ".md"`,
+#     `*.md`), a literal Markdown path below a variable no rule here names
+#     (`"$DW/SKILL.md"`), a sibling package resolved by
+#     `gg_resolve_sibling`, and kendex given a skill directory (a kendex
+#     command on a line naming a skill).
+#     A line names the packages it reaches as `skills/<name>`, `../<name>`
+#     or the package gg_resolve_sibling names; `../$x`, a variable sibling
+#     or a literal path below an unnamed variable reaches every package.
+#     With none of these, an upper-case variable holding SKILL, PACKAGE,
+#     SELF, HERE or a tests or scripts directory reaches its own package,
+#     and one holding ROOT, REPO or CHECKOUT, or a lower-case repo, root or
+#     checkout, `__file__`, `parents[` or a bare `skills/`, reaches every
+#     package. A line whose every variable names a temporary, fixture or
+#     state directory reaches none, and any other read whose root these
+#     rules do not bound reaches every package.
 #   - A document is named by its package-relative path after a slash, so
 #     `../<name>/<file>` and the .agents/ render read it as the source does.
 #   - A script or library of a package in the reach is then asked of every
-#     tree outside its package; any line naming `/<name>/<path>` calls it.
+#     tree outside its package; any line naming `/<name>/<path>` calls it,
+#     and so does a gg_resolve_sibling line naming its package or a
+#     variable.
 #   - Readers that reach no suite of a tree run its whole set.
+#   - A script run through any other variable path is still missed: the
+#     main push's whole shard run, not the merge group, then meets it.
 #   - A suite whose input note the CI reach can take, every item a
 #     repository path whose fixed part exists and no brace list, reads a
 #     document only where an item covers it: as a case pattern, or as a
@@ -2849,13 +2897,12 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       case "$release_selection" in
         "" | all) ;;
         *)
-          if release_keep=$(SUITE_SELECTION=$release_selection "$TOOLS_DIR/ci-job-set" --suite-list); then
-            release_filtered=""
-            while IFS= read -r t; do
-              [ -n "$t" ] || continue
-              case "$release_keep" in all | *" $t "*) release_filtered+="$t"$'\n' ;; esac
-            done <<<"$release_suites"
-            release_suites=$release_filtered
+          release_candidates=()
+          while IFS= read -r t; do
+            [ -z "$t" ] || release_candidates+=("$t")
+          done <<<"$release_suites"
+          if release_keep=$(SUITE_SELECTION=$release_selection "$TOOLS_DIR/ci-job-set" --suite-list ${release_candidates[@]+"${release_candidates[@]}"}); then
+            release_suites=$release_keep
           elif [ "$release_parts" -gt 1 ]; then
             say suite-selection "$d"
             continue
