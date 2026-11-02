@@ -49,6 +49,10 @@ def clean(value):
     return isinstance(value, str) and all(c.isprintable() for c in value)
 
 
+def start_brief(private):
+    return START_BRIEF + " " + private if private else START_BRIEF
+
+
 def same_choice(record, requested):
     # A Start that states no model keeps whatever model the session runs.
     if requested is None:
@@ -125,7 +129,7 @@ class Session:
                 raise ValueError("record")
             if record.get("reason") not in STATE_REASONS.get(record.get("state"), set()):
                 raise ValueError("state")
-            for field in ("home", "harness", "account"):
+            for field in ("home", "harness", "account", "private_brief"):
                 if record.get(field) is not None and not clean(record[field]):
                     raise ValueError(field)
             detail = record.get("detail", "")
@@ -326,14 +330,15 @@ class Session:
         return retained
 
     @staticmethod
-    def start_brief(args):
-        brief = START_BRIEF
-        if args.brief_file:
-            private = Path(args.brief_file).read_text().strip()
-            if not private or not clean(private):
-                raise Refusal("record-unreadable")
-            brief += " " + private
-        return brief
+    def private_brief(args):
+        # The record keeps the checked text, not the path: a consumer may
+        # remove the file before a later hand-over.
+        if not args.brief_file:
+            return None
+        private = Path(args.brief_file).read_text().strip()
+        if not private or not clean(private):
+            raise Refusal("record-unreadable")
+        return private
 
     def _adopt(self, args, record, choice, stated):
         # The unmanaged session takes the predecessor's place in succession's
@@ -353,12 +358,12 @@ class Session:
         # The state fields serve the answer and Stop's reads of a live entry.
         predecessor = dict(json.loads(read.stdout), adopted=True, home=self.home, account=None, origin=None,
                            state="running", reason="existing")
-        brief = self.start_brief(args)
+        private = self.private_brief(args)
         if stated and stated["warning"]:
             print(stated["warning"], file=sys.stderr)
         base = {"generation": record["generation"] if record else 0, "report_started_at": int(time.time()),
-                "origin": args.origin, "boot": record.get("boot") if record else None}
-        return self._hand_over(base, choice, predecessor, None, brief)
+                "origin": args.origin, "boot": record.get("boot") if record else None, "private_brief": private}
+        return self._hand_over(base, choice, predecessor, None)
 
     def start(self, args):
         boot = None
@@ -448,7 +453,7 @@ class Session:
                                 boot=boot or record.get("boot"))
                 self.write(restored)
                 return self.answer(restored, state="running", reason="existing"), 0
-            brief = self.start_brief(args)
+            private = self.private_brief(args)
             history_record = self.confirmed_history(predecessor or record)
             history_matches = (history_record and history_record.get("harness") == args.harness
                                and history_record.get("account") == account and same_choice(history_record, requested))
@@ -473,8 +478,8 @@ class Session:
                            "origin": args.origin, "boot": boot or (record.get("boot") if record else None),
                            "generation": generation, "state": "starting", "reason": "launching", "detail": "",
                            "app_off": False, "intent": "start", "terminal": None,
-                           "launch": {"id": native_id, "file": file, "reason": reason, "brief": brief},
-                           "predecessor": predecessor, "history": history_record}
+                           "launch": {"id": native_id, "file": file, "reason": reason, "brief": start_brief(private)},
+                           "private_brief": private, "predecessor": predecessor, "history": history_record}
             # A resumed session keeps the choice it ran on unless Start states one.
             choice = requested or (history_record.get("choice") if reason == "resumed" else None)
             if choice:
@@ -505,24 +510,22 @@ class Session:
                 if not self.terminal(predecessor):
                     self.end_task_session()
                 saved_handoff = record["transfer"]["handoff"]
-                # An adoption's retry keeps the brief its Start named.
-                brief = (record.get("launch") or {}).get("brief", START_BRIEF)
             else:
                 if record["state"] != "running" or not self.terminal(record):
                     raise Refusal("record-unreadable")
                 predecessor = record
                 saved_handoff = None
-                brief = START_BRIEF
             choice = record.get("choice") or {}
             choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
                                              choice.get("model", ""), choice.get("effort", "")).stdout)
             if not shutil.which(choice["harness"]):
                 raise Refusal("app-missing")
-            return self._hand_over(record, choice, predecessor, saved_handoff, brief)
+            return self._hand_over(record, choice, predecessor, saved_handoff)
 
-    def _hand_over(self, record, choice, predecessor, saved_handoff, brief):
+    def _hand_over(self, record, choice, predecessor, saved_handoff):
         # Save the handoff, record the transition and detach its worker: the
         # one route succession and adoption take. The caller holds the lock.
+        # Every successor, a retry's included, takes Start's private brief.
         generation = record["generation"] + 1
         handoff = Path(self.home) / "state/handoff.md"
         contents = handoff.read_bytes()
@@ -543,7 +546,9 @@ class Session:
                        "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
                        "generation": generation, "intent": "succeed", "state": "handing-over", "reason": "succession", "detail": "",
                        "terminal": None, "predecessor": predecessor, "transfer": transfer,
-                       "launch": {"id": str(uuid.uuid4()), "file": "", "reason": "new-requested", "brief": brief}}
+                       "private_brief": record.get("private_brief"),
+                       "launch": {"id": str(uuid.uuid4()), "file": "", "reason": "new-requested",
+                                  "brief": start_brief(record.get("private_brief"))}}
         next_record["worker"] = json.loads(self.backend("process", os.getpid()).stdout)
         self.write(next_record)
         self.detach("succeed", next_record)
