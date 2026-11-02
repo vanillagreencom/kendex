@@ -72,8 +72,8 @@ pub(crate) mod targets;
 pub(crate) use targets::disabled_name;
 mod tree_plan;
 mod unmanaged;
-pub use unmanaged::unmanaged_here;
 pub(crate) use unmanaged::{InPlaceSkillFinding, in_place_skill_findings};
+pub use unmanaged::{Version10PiCopy, unmanaged_here, version_10_pi_copy};
 mod written;
 
 pub(crate) use desired::IN_PLACE_DISABLED;

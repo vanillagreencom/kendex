@@ -644,26 +644,14 @@ fn the_check_names_a_refresh_for_a_version_10_record() {
     assert_eq!(refused_version_10_lines(&removed), 1);
 }
 
-/// A recovering refresh writes twice in one scope: the recovery, then the
-/// Pi settlement the recovered record lets it read, which records the
-/// package the recovery could not. The run's one commit offer comes after
-/// the last of them, so a commit chosen up front carries everything the
-/// run changed and leaves the tree clean.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_version_10_recovery_commits_once_after_its_pi_settlement() {
+/// A committed project holding the skill `deploy` and the declared Pi
+/// package `pi-widgets` at version 1, both installed and recorded.
+fn pi_widgets_installed() -> World {
     let world = World::new(&["claude"]);
     super::git(&world.project, &["config", "user.email", "t@t"]);
     super::git(&world.project, &["config", "user.name", "t"]);
     world.declare_catalog();
-    super::write(
-        &world.catalog.join("pi-extensions/pi-widgets/package.json"),
-        "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n",
-    );
-    super::write(
-        &world.catalog.join("pi-extensions/pi-widgets/index.js"),
-        "export const version = 1;\n",
-    );
+    write_pi_widgets(&world, "1.0.0");
     std::fs::create_dir_all(world.at(".pi")).ok();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
     super::write(
@@ -675,6 +663,33 @@ fn a_version_10_recovery_commits_once_after_its_pi_settlement() {
     );
     world.run(&["refresh", "--yes", "--leave"]);
     world.commit_all("version 10 install");
+    world
+}
+
+/// The catalog's `pi-widgets` package at `version`.
+fn write_pi_widgets(world: &World, version: &str) {
+    let package = world.catalog.join("pi-extensions/pi-widgets");
+    super::write(
+        &package.join("package.json"),
+        &format!(
+            "{{\n  \"name\": \"pi-widgets\",\n  \"version\": \"{version}\",\n  \"pi\": {{ \"extensions\": [\"index.js\"] }}\n}}\n"
+        ),
+    );
+    super::write(
+        &package.join("index.js"),
+        &format!("export const version = \"{version}\";\n"),
+    );
+}
+
+/// A recovering refresh writes twice in one scope: the recovery, then the
+/// Pi settlement the recovered record lets it read, which records the
+/// package the recovery could not. The run's one commit offer comes after
+/// the last of them, so a commit chosen up front carries everything the
+/// run changed and leaves the tree clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_recovery_commits_once_after_its_pi_settlement() {
+    let world = pi_widgets_installed();
     super::write(
         &world.catalog.join("skills/deploy/SKILL.md"),
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
@@ -701,4 +716,52 @@ fn a_version_10_recovery_commits_once_after_its_pi_settlement() {
         .unwrap_or_default();
     let before: u32 = commits.parse().unwrap_or_default();
     assert_eq!(after, before + 1, "{said}");
+}
+
+/// A version 10 build installed `pi-widgets`, and its source moved on
+/// since. The recovered record has no entry for the package, so the old
+/// record's byte proof decides: a copy that is still exactly what that
+/// record says kendex installed is settled by the same refresh, under its
+/// consent, and check is clean after it; a copy edited by hand is not
+/// proved, so the refresh leaves its bytes as they are and fails on it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_recovery_settles_a_proved_pi_copy_whose_source_moved() {
+    let edited = "export const version = \"mine\";\n";
+    for (case, edit, settles) in [
+        ("unedited", None, true),
+        ("hand-edited", Some(edited), false),
+    ] {
+        let world = pi_widgets_installed();
+        let installed = world.at(".pi/packages/pi-widgets/index.js");
+        if let Some(edit) = edit {
+            super::write(&installed, edit);
+        }
+        write_pi_widgets(&world, "2.0.0");
+        plant_version_10_state(&world);
+        world.commit_all("the record a version 10 build left");
+
+        let refreshed = world.try_run(&["refresh", "--yes"]);
+        let said = super::said(&refreshed);
+        assert_eq!(refreshed.status.success(), settles, "{case}: {said}");
+        let recovered = kendex_core::lock::load(&world.at(".kendex-lock.json"))
+            .unwrap_or_else(|error| panic!("{case}: the record recovers either way: {error}"));
+        assert_eq!(
+            recovered.entries.contains_key("pi-extension:pi-widgets:pi"),
+            settles,
+            "{case}: {said}"
+        );
+        let expected = match edit {
+            Some(edit) => edit.to_owned(),
+            None => read(&world.catalog.join("pi-extensions/pi-widgets/index.js")),
+        };
+        assert_eq!(read(&installed), expected, "{case}: {said}");
+        let checked = world.try_run(&["check"]);
+        assert_eq!(
+            checked.status.code(),
+            Some(if settles { 0 } else { 1 }),
+            "{case}: {}",
+            super::said(&checked)
+        );
+    }
 }

@@ -228,7 +228,9 @@ pub fn settle_scope(
 /// carries, and its installed copy is absent or byte-equal to that source
 /// (`Missing`), or the record holds it from the same origin, its installed
 /// copy is still the bytes that record completed, and the source moved
-/// away from them (`Stale`). `pi_ext::install` runs `npm ci` with a package
+/// away from them (`Stale`), or the record does not hold it and the version
+/// 10 record a recovery moved aside proves the installed copy as it sits
+/// (`engine::version_10_pi_copy`), which is `Stale` the same way. `pi_ext::install` runs `npm ci` with a package
 /// lock, or `npm install` without one, for a
 /// package declaring dependencies, and with it that package's own
 /// lifecycle scripts; a refresh settles on the strength of a fetch it just
@@ -295,21 +297,31 @@ fn settleable(
         };
         let installed = pi_ext::declared_state(root, name, &package, existing, basis);
         let source_dir = package.source_dir.clone();
-        let status = match (existing, installed) {
+        // The source a `Stale` copy was installed from, as its record names it.
+        let (status, installed_from) = match (existing, installed) {
             (None, Ok(pi_ext::PackageState::Missing | pi_ext::PackageState::Current { .. })) => {
-                Status::Missing { source_dir }
+                (Status::Missing { source_dir }, None)
             }
             (None, Ok(pi_ext::PackageState::Different)) => {
-                let Ok(Some(source_hash)) = pi_ext::package_hash(&package.source_dir) else {
-                    continue;
-                };
-                if !matches!(
-                    pi_ext::installed_state(root, name, Some(&source_hash)),
-                    Ok(pi_ext::PackageState::Current { .. })
-                ) {
+                let unedited_source = matches!(
+                    pi_ext::package_hash(&package.source_dir),
+                    Ok(Some(source_hash)) if matches!(
+                        pi_ext::installed_state(root, name, Some(&source_hash)),
+                        Ok(pi_ext::PackageState::Current { .. })
+                    )
+                );
+                if unedited_source {
+                    (Status::Missing { source_dir }, None)
+                } else if let Ok(Some(copy)) =
+                    kendex_core::engine::version_10_pi_copy(env, scope, &lock, name)
+                {
+                    // An unedited copy a version 10 build installed, whose
+                    // source moved on: the recovery's record has no entry
+                    // for it, and that record's byte proof stands in.
+                    (Status::Stale { source_dir }, Some(copy.installed_from))
+                } else {
                     continue;
                 }
-                Status::Missing { source_dir }
             }
             (Some(entry), Ok(pi_ext::PackageState::Different))
                 if pi_ext::check_origin(name, &package, Some(entry)).is_ok()
@@ -318,22 +330,19 @@ fn settleable(
                         Ok(pi_ext::PackageState::Current { .. })
                     ) =>
             {
-                Status::Stale { source_dir }
+                let from = entry.source_commit.as_ref().unwrap_or(&entry.source_hash);
+                (Status::Stale { source_dir }, Some(from.clone()))
             }
             (Some(_), _) | (_, Err(_)) => continue,
         };
         let settlement = match pi_ext::declares_runtime_deps(&package.source_dir) {
             Ok(false) => {
-                let change = match existing {
+                let change = match installed_from {
                     None => PendingChange::Missing,
-                    Some(entry) => PendingChange::Stale {
+                    Some(from) => PendingChange::Stale {
                         from_version: installed_version(root, name),
                         to_version: pi_ext::read(&package.source_dir)?.version,
-                        from: entry
-                            .source_commit
-                            .as_ref()
-                            .unwrap_or(&entry.source_hash)
-                            .clone(),
+                        from,
                         to: match package.source_commit {
                             Some(commit) => commit,
                             None => pi_ext::package_hash(&package.source_dir)?
