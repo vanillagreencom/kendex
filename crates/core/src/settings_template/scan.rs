@@ -224,6 +224,11 @@ impl Walk {
             return;
         };
         let key = spelled.name.as_str();
+        // Before anything below can find fault with the line: a defect in
+        // how a credential is declared does not make it public.
+        if at == Table::Secrets {
+            self.read.secret_keys.insert(key.to_owned());
+        }
         // Being assigned twice is one defect; whatever else is wrong with
         // this same assignment is another. Stopping here would tell the
         // author about the duplicate, take their fix, and only then admit

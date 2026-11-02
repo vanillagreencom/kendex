@@ -167,11 +167,13 @@ fn a_secret_key_never_appears_whatever_its_private_values() {
     const VAULT: &str = "[env]\n# Mode.\nMODE = \"a\"\n\n[secrets]\n# The token.\nTOKEN = \"\"\n";
     const BROKEN_VAULT: &str =
         "[env]\n# Mode.\nMODE = \"a\"\nLOOSE = \"1\"\n\n[secrets]\n# The token.\nTOKEN = \"\"\n";
+    const PLACEHOLDER_VAULT: &str =
+        "[env]\n# Mode.\nMODE = \"a\"\n\n[secrets]\n# The token.\nTOKEN = \"paste-token-here\"\n";
     const OPEN: &str =
         "[env]\n# The token, public here.\nTOKEN = \"x\"\n\n# A level.\nLEVEL = \"1\"\n";
     const BROKEN: &str = "[env]\nNO_COMMENT = \"1\"\n";
     type Plant = fn(&Path, &Path);
-    let rows: [(&str, &str, Plant, bool); 4] = [
+    let rows: [(&str, &str, Plant, bool); 5] = [
         ("the declaring project reads", VAULT, |_, _| {}, false),
         (
             "an unrelated skill there is switched off",
@@ -188,6 +190,12 @@ fn a_secret_key_never_appears_whatever_its_private_values() {
         (
             "the declaring template itself breaks the grammar",
             BROKEN_VAULT,
+            |_, _| {},
+            true,
+        ),
+        (
+            "the declaring row itself breaks the grammar",
+            PLACEHOLDER_VAULT,
             |_, _| {},
             true,
         ),

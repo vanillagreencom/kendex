@@ -18,8 +18,9 @@
 //! contest, leaves the report before any layer is read for it, so no secret
 //! value is ever held here to print. A project whose templates cannot all
 //! be read is unread, never compared: nothing could say which of its keys
-//! are secret. What its readable templates do declare secret still leaves
-//! the report for every other project.
+//! are secret. Every key a template there whose text can be read assigns
+//! under `[secrets]`, on a line that breaks the grammar or not, still
+//! leaves the report for every other project.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -224,9 +225,9 @@ fn declarations(env: &Env, project: &Path) -> Declarations {
     let mut first_unread = None;
     let mut public: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     // `declared` and `contested` pass over a template that breaks the
-    // grammar. Its decoded `[secrets]` rows still say what its author
-    // holds as a credential, and this report prints values, so they leave
-    // it too.
+    // grammar. Every key its author assigns under `[secrets]`, on a
+    // defective line or not, still says what they hold as a credential,
+    // and this report prints values, so those keys leave it too.
     let mut broken_secrets = BTreeSet::new();
     for (skill, source) in &templates {
         let text = match source {
@@ -249,7 +250,7 @@ fn declarations(env: &Env, project: &Path) -> Declarations {
                     read.findings.len()
                 ),
             });
-            broken_secrets.extend(read.secrets.into_iter().map(|entry| entry.key));
+            broken_secrets.extend(read.secret_keys);
             continue;
         }
         for entry in read.entries {
