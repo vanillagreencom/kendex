@@ -194,10 +194,6 @@ pub fn adopt_command(env: &Env, item: &[&DriftRow]) -> Option<String> {
     ))
 }
 
-/// The flag that points a command at the scope the row was read in. A
-/// project needs none — it is what every command defaults to — but a
-/// remedy printed while looking at the global scope runs against the
-/// current project without it.
 /// A plan's one completion as keyed data a program reads: the verb and
 /// its parameters, never a command line (engine.md rule 18). The
 /// repository-effect permission rides as a parameter because the
@@ -213,18 +209,22 @@ pub fn finish_with(finish: Finish, scope: &Scope) -> String {
     line
 }
 
-/// The scope an action names: the personal scope by its one flag, a
-/// project by its root where the run named it, and nothing for the
-/// project the command was typed in.
+/// The scope an apply-shaped action names: the personal scope by its one
+/// flag, a project by its root where the run named it, and nothing for
+/// the project the command was typed in, which is `apply`'s default.
 fn push_place(line: &mut String, scope: &Scope, reached: Reached) {
     match (scope, reached) {
         (Scope::Global, _) => line.push_str(" global"),
-        (Scope::Project { root }, Reached::Named) => {
-            line.push_str(" project=");
-            line.push_str(&kendex_core::names::shown(&root.display().to_string()));
-        }
+        (Scope::Project { root }, Reached::Named) => push_project(line, root),
         (Scope::Project { .. }, Reached::Here) => {}
     }
+}
+
+/// The project a run named, as the last field: escaped, and read to the
+/// end of the data, since a path may hold a space.
+fn push_project(line: &mut String, root: &std::path::Path) {
+    line.push_str(" project=");
+    line.push_str(&kendex_core::names::shown(&root.display().to_string()));
 }
 
 /// The declared Pi packages a plan leaves for `update-pi`, read off the
@@ -249,12 +249,26 @@ pub struct UpdatePiLeft {
 /// The action that settles every row `left_for_update_pi` returns in one
 /// scope, keyed under `key` as `finish_with` keys the take-over:
 /// `settle-with` beside the rows, `finish-with` where nothing else is left.
+/// The scope is always a parameter, as `Remedy::UpdatePi` always says
+/// `--scope`: `update-pi` with none writes every scope, the personal Pi
+/// root included, which the plan never reported on.
 pub fn update_pi_with(key: &str, scope: &Scope, reached: Reached) -> String {
-    let mut line = format!("{key}=update-pi");
-    push_place(&mut line, scope, reached);
-    line
+    match (scope, reached) {
+        (Scope::Global, _) => format!("{key}=update-pi scope=global"),
+        (Scope::Project { root }, reached) => {
+            let mut line = format!("{key}=update-pi scope=project");
+            if reached == Reached::Named {
+                push_project(&mut line, root);
+            }
+            line
+        }
+    }
 }
 
+/// The flag that points a command at the scope the row was read in. A
+/// project needs none — it is what every command defaults to — but a
+/// remedy printed while looking at the global scope runs against the
+/// current project without it.
 pub fn scope_flag(scope: &Scope) -> &'static str {
     match scope {
         Scope::Global => " --global",

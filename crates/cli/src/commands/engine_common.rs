@@ -420,8 +420,11 @@ pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
 /// package, which refresh keeps and reports and `apply` or `remove` takes,
 /// a row whose cause says the plan simply writes it, which this run's plan
 /// settles, and a kept retired package gone or edited, which no refresh
-/// writes and verify fails, as it does a retired hook or skill.
-pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
+/// writes and verify fails, as it does a retired hook or skill. A package
+/// named in `deferred` is left for `update-pi` only because its install
+/// runs a process a refresh never starts: its row stays in the report for
+/// the attention and the completion to name, and is no failure here.
+pub fn refresh_failures(report: &EngineReport, deferred: &[String]) -> Vec<String> {
     report
         .notes
         .iter()
@@ -441,6 +444,8 @@ pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
                         && row.state != DriftState::Orphaned
                         && row.cause.is_none_or(DriftCause::holds_the_write)
                         && row.cause != Some(DriftCause::Retired)
+                        && !(row.remedy == Some(kendex_core::engine::RowRemedy::UpdatePi)
+                            && deferred.contains(&row.name))
                 })
                 .map(|row| format!("{}: {}", row.name, row.detail)),
         )

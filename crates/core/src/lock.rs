@@ -55,7 +55,10 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// same transaction, and the record proves ownership only where its
 /// `renderedHash` matches the destination. Every other destination remains
 /// a conflict. The old managed ignore rule keeps the moved record out of
-/// git, where it stays the proof for later partial recoveries.
+/// git, where it stays the proof for later partial recoveries. Where that
+/// file is already this record, byte for byte, the record is not moved
+/// again; a link, or a different record there, refuses the recovery
+/// (`engine::planning_lock`).
 ///
 /// Version 11 gained [`Lock::shims`] without a bump, at two costs to a
 /// build that predates the field. That build drops the field when it

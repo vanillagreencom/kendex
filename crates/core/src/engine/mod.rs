@@ -903,8 +903,8 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         options.manifest_base.get_or_insert(base.clone());
         let mut report = match planning_lock(env, scope, &options)? {
             PlanningLock::Read(lock) => plan_scope(env, scope, manifest, &lock, &options)?,
-            PlanningLock::Version10 { hash } => {
-                recovery::plan_version_10(env, scope, manifest, hash, &options)?
+            PlanningLock::Version10(recoverable) => {
+                recovery::plan_version_10(env, scope, manifest, recoverable, &options)?
             }
         };
         if !manifest.migration_notes.is_empty() && !persists_manifest(&report.plan.ops) {
@@ -931,19 +931,26 @@ enum PlanningLock {
     /// path: a fresh scope plans through the normal path.
     Read(Lock),
     /// A version 10 project record this plan recovers: the scope plans
-    /// fresh, and the record moves aside bound to the hash of these bytes.
-    Version10 { hash: String },
+    /// fresh over no record.
+    Version10(Version10Recoverable),
+}
+
+/// A version 10 project record a recovery may take, as it was read.
+pub(crate) struct Version10Recoverable {
+    /// The hash of the record's bytes, which the recovery's first write is
+    /// bound to.
+    pub(crate) hash: String,
+    /// An earlier recovery already left these same bytes aside, so the
+    /// record is not moved again: the new one is written over it.
+    pub(crate) moved: bool,
 }
 
 /// Which record a scope plans against, decided once for the plan and for
 /// the compatibility check that precedes it, so the two cannot disagree
 /// about whether a version 10 record stops the run. Without
 /// [`PlanOptions::recover_version_10`] such a record refuses as every
-/// other reader refuses it. With it, the record is recoverable only as
-/// kendex's own file, at the lock path itself rather than through a
-/// link, and only where no earlier recovery left its record aside: that
-/// file is the proof partial recoveries keep reading, and a second record
-/// moved onto it would replace the first.
+/// other reader refuses it. With it, the record is recovered or refused
+/// as [`version_10_recovery`] reads it.
 fn planning_lock(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<PlanningLock> {
     let path = lock_path(env, scope);
     let refused = match crate::lock::load_file(&path) {
@@ -962,22 +969,63 @@ fn planning_lock(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Plan
     if !options.recover_version_10 {
         return Err(refused);
     }
+    match recoverable(&path, aside)? {
+        Ok(recoverable) => Ok(PlanningLock::Version10(recoverable)),
+        Err(why) => Err(crate::error::CoreError::Version10RecoveryRefused { path, why }),
+    }
+}
+
+/// Whether the version 10 project record at `path` can be recovered where
+/// it sits, the one answer the recovery and `kendex check` read: `None`
+/// where a refresh or an apply recovers it, else why it would refuse.
+/// `aside` is where the recovery moves it
+/// ([`crate::error::CoreError::LegacyProjectLock`]).
+pub(crate) fn version_10_recovery(
+    path: &std::path::Path,
+    aside: &std::path::Path,
+) -> Result<Option<crate::error::Version10Stop>> {
+    Ok(recoverable(path, aside)?.err())
+}
+
+/// The record is recoverable only as kendex's own file, at the lock path
+/// itself rather than through a link, and only where the file aside is
+/// not a different record: that file is the proof partial recoveries keep
+/// reading, and moving a second record onto it would replace the first.
+/// An aside holding these exact bytes is this record already moved, the
+/// state a checkout back to a commit from before an earlier recovery
+/// leaves, since the record is committed and the file aside is ignored;
+/// it reads as the same proof, so the recovery goes on without a move.
+fn recoverable(
+    path: &std::path::Path,
+    aside: &std::path::Path,
+) -> Result<std::result::Result<Version10Recoverable, crate::error::Version10Stop>> {
+    use crate::error::{CoreError, Version10Stop};
     if path.is_symlink() {
-        return Err(crate::error::CoreError::Version10RecoveryRefused {
-            path,
-            why: crate::error::Version10Stop::LinkedRecord,
-        });
+        return Ok(Err(Version10Stop::LinkedRecord));
     }
-    if aside.exists() || aside.is_symlink() {
-        return Err(crate::error::CoreError::Version10RecoveryRefused {
-            path,
-            why: crate::error::Version10Stop::AsideTaken {
-                aside: aside.clone(),
-            },
-        });
-    }
-    let hash = crate::hash::hash_tree(&path)?;
-    Ok(PlanningLock::Version10 { hash })
+    let moved = match std::fs::symlink_metadata(aside) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(CoreError::io(aside, error)),
+        Ok(meta) if !meta.file_type().is_file() => {
+            return Ok(Err(Version10Stop::AsideTaken {
+                aside: aside.to_path_buf(),
+            }));
+        }
+        Ok(_) => {
+            let held = std::fs::read(aside).map_err(|error| CoreError::io(aside, error))?;
+            let record = std::fs::read(path).map_err(|error| CoreError::io(path, error))?;
+            if held != record {
+                return Ok(Err(Version10Stop::AsideTaken {
+                    aside: aside.to_path_buf(),
+                }));
+            }
+            true
+        }
+    };
+    Ok(Ok(Version10Recoverable {
+        hash: crate::hash::hash_tree(path)?,
+        moved,
+    }))
 }
 
 /// Check this scope's selected readings before planning. The held-manifest
@@ -1002,7 +1050,7 @@ pub fn check_catalog_compatibility_for(
         PlanningLock::Read(lock) => lock,
         // A recovery holds nothing at a recorded commit: it plans over no
         // record, as `plan_apply` does.
-        PlanningLock::Version10 { .. } => Lock {
+        PlanningLock::Version10(_) => Lock {
             version: crate::lock::LOCK_VERSION,
             ..Lock::default()
         },

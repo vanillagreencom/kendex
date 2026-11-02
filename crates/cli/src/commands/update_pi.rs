@@ -112,14 +112,7 @@ pub fn run(
     let _guards = (!check)
         .then(|| kendex_core::apply::lock_scopes_for_write(env, &scopes))
         .transpose()?;
-    let mut plans = Vec::new();
-    for scope in scopes {
-        let (root, other_roots) = pi_ext::paired_roots(env, &settings, &scope);
-        if root.is_dir() || scope_declares_extensions(env, &scope) {
-            let (_, loaded_with) = pi_ext::session_roots(env, &settings, &scope);
-            plans.push(plan_scope(env, &scope, root, &other_roots, &loaded_with)?);
-        }
-    }
+    let mut plans = plan_scopes(env, &settings, &scopes)?;
 
     if plans.is_empty() {
         say("no place checked installs for Pi");
@@ -147,6 +140,38 @@ pub fn run(
         super::project::register_target(env, &registering, &plan.scope)?;
     }
     Ok(())
+}
+
+/// The plan of every scope the run reached that has a Pi root or declares
+/// a package. The install guard of the personal scope checks each project
+/// this run writes as well as the ones `pi_ext::paired_roots` reads: a
+/// project named with `--project-path` is registered only after the
+/// write, and a personal copy of a package it already holds would load
+/// twice there, which stops Pi from starting.
+fn plan_scopes(
+    env: &Env,
+    settings: &settings::AppSettings,
+    scopes: &[Scope],
+) -> Result<Vec<ScopePlan>, Box<dyn std::error::Error>> {
+    let mut plans = Vec::new();
+    for scope in scopes {
+        let (root, mut other_roots) = pi_ext::paired_roots(env, settings, scope);
+        if matches!(scope, Scope::Global) {
+            for reached in scopes {
+                if let Scope::Project { root } = reached {
+                    let pi = root.join(".pi");
+                    if !other_roots.contains(&pi) {
+                        other_roots.push(pi);
+                    }
+                }
+            }
+        }
+        if root.is_dir() || scope_declares_extensions(env, scope) {
+            let (_, loaded_with) = pi_ext::session_roots(env, settings, scope);
+            plans.push(plan_scope(env, scope, root, &other_roots, &loaded_with)?);
+        }
+    }
+    Ok(plans)
 }
 
 fn updatable(row: &&Row) -> bool {
@@ -832,6 +857,55 @@ mod tests {
             Err(kendex_core::error::CoreError::CatalogNeedsEngine { .. })
         ));
         assert!(notes.is_empty());
+    }
+
+    /// A project `--project-path` names is on no projects list and is not
+    /// the working directory until the write registers it, and it already
+    /// holds a package the personal scope also declares. The personal plan
+    /// blocks its copy rather than install it, since Pi would load the
+    /// package twice and not start.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_named_project_holding_a_package_blocks_its_personal_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&temp);
+        let env = Env::host_rooted(&home);
+        let catalog = home.join("catalog");
+        let source = catalog.join("pi-extensions/pi-twice");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{"name":"pi-twice","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(source.join("index.js"), "export const value = 1;\n").unwrap();
+        let declared = format!(
+            "schema = 7\n[sources.cat]\n{}\n[pi-extensions.pi-twice]\nsource = 'cat'\n",
+            crate::test_util::source_path(&catalog)
+        );
+        let named = Scope::Project {
+            root: home.join("named"),
+        };
+        for scope in [&named, &Scope::Global] {
+            let path = manifest::manifest_path(&env, scope);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, &declared).unwrap();
+        }
+        settle_scope(&env, &named, &["pi-twice".into()], &PlanOptions::current()).unwrap();
+        let settings = settings::load(&env).unwrap();
+        assert!(settings.projects.is_empty(), "the project is on no list");
+
+        let plans = plan_scopes(&env, &settings, &[named, Scope::Global]).unwrap();
+        let personal = plans
+            .iter()
+            .find(|plan| matches!(plan.scope, Scope::Global))
+            .unwrap();
+        let row = personal
+            .rows
+            .iter()
+            .find(|row| row.name == "pi-twice")
+            .unwrap();
+        assert!(matches!(row.status, Status::Blocked { .. }));
     }
 
     /// Catalog declarations produce missing, recorded stale, and current copies.

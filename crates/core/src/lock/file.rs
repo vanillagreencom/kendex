@@ -19,7 +19,7 @@ use super::{LOCK_FILE, LOCK_VERSION, Lock, MACHINE_FILE, MachineRecord, VERSION_
 /// record from an older generation is damaged as far as this build is
 /// concerned, and [`CoreError::LockCorrupt`] names the way out; a version 10
 /// project record is [`CoreError::LegacyProjectLock`], which a refresh or an
-/// apply recovers.
+/// apply recovers where `engine::planning_lock` does not refuse it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LockFile {
     Absent,

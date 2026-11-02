@@ -132,7 +132,7 @@ fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {
     assert!(
         second
             .lines()
-            .any(|line| line.trim() == "finish-with=update-pi"),
+            .any(|line| line.trim() == "finish-with=update-pi scope=project"),
         "{second}"
     );
     assert!(!second.contains("Update the install record"), "{second}");

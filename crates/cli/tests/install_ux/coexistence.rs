@@ -557,6 +557,18 @@ fn version_10_recovery_names_one_completion_with_its_repository_effect() {
 
     let json = world.try_run(&["check", "--json"]);
     assert_eq!(replace_remedies(&json), [true], "{}", super::said(&json));
+
+    // Beside a hand edit to a recorded install the take-over settles
+    // nothing whole, so check names the plan for the copy, as apply and
+    // refresh name no finish; undone, the take-over is named again.
+    let deploy = world.at(".agents/skills/deploy/SKILL.md");
+    let recovered = read(&deploy);
+    super::write(&deploy, &format!("{recovered}\nmy own line\n"));
+    let edited = world.try_run(&["check", "--json"]);
+    let empty: [bool; 0] = [];
+    assert_eq!(replace_remedies(&edited), empty, "{}", super::said(&edited));
+    super::write(&deploy, &recovered);
+
     let person = super::said(&world.try_run(&["check"]));
     assert!(
         person.contains("kendex apply --replace-unmanaged --allow-repo-effects"),
@@ -616,32 +628,62 @@ fn a_version_10_recovery_runs_no_installer_for_a_carried_package() {
 
 /// The check names a version 10 record's fix, the refresh, as drift with a
 /// remedy rather than a scope it could not check, and still hands fleet its
-/// keyed refusal. Every other verb that reads the record keeps refusing.
+/// keyed refusal. That holds with this same record already aside, which
+/// the refresh recovers in place; a different record aside is one the
+/// refresh refuses, so the check names no refresh and reads the scope as
+/// one it could not check. Every other verb that reads the record keeps
+/// refusing.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_check_names_a_refresh_for_a_version_10_record() {
-    let world = World::new(&["claude"]);
-    world.declare_catalog();
-    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
-    plant_version_10_state(&world);
+    for (case, aside, recovers) in [
+        ("nothing aside", None, true),
+        ("this record aside", Some(None), true),
+        (
+            "another record aside",
+            Some(Some("an earlier recovery\n")),
+            false,
+        ),
+    ] {
+        let world = World::new(&["claude"]);
+        world.declare_catalog();
+        world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+        plant_version_10_state(&world);
+        let older = read(&world.at(".kendex-lock.json"));
+        if let Some(other) = aside {
+            super::write(&world.at(".kendex-lock.v10.json"), other.unwrap_or(&older));
+        }
 
-    let checked = world.try_run(&["check"]);
-    assert_eq!(checked.status.code(), Some(1), "{}", super::said(&checked));
-    assert_eq!(refused_version_10_lines(&checked), 1);
-    let json = world.try_run(&["check", "--json"]);
-    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    let verbs: Vec<&serde_json::Value> = report["sections"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|section| section["lines"].as_array().into_iter().flatten())
-        .map(|line| &line["remedy"]["verb"])
-        .collect();
-    assert!(verbs.iter().any(|verb| *verb == "refresh"), "{verbs:?}");
-
-    let removed = world.try_run(&["remove", "deploy"]);
-    assert!(!removed.status.success());
-    assert_eq!(refused_version_10_lines(&removed), 1);
+        let checked = world.try_run(&["check"]);
+        let said = super::said(&checked);
+        let code = if recovers { 1 } else { 2 };
+        assert_eq!(checked.status.code(), Some(code), "{case}: {said}");
+        assert_eq!(refused_version_10_lines(&checked), 1, "{case}: {said}");
+        let json = world.try_run(&["check", "--json"]);
+        let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        let verbs: Vec<&serde_json::Value> = report["sections"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|section| section["lines"].as_array().into_iter().flatten())
+            .map(|line| &line["remedy"]["verb"])
+            .collect();
+        assert_eq!(
+            verbs.iter().any(|verb| *verb == "refresh"),
+            recovers,
+            "{case}: {verbs:?}"
+        );
+        if aside.is_none() {
+            let removed = world.try_run(&["remove", "deploy"]);
+            assert!(!removed.status.success());
+            assert_eq!(refused_version_10_lines(&removed), 1);
+        }
+        if recovers {
+            world.run(&["refresh", "--yes"]);
+            kendex_core::lock::load(&world.at(".kendex-lock.json"))
+                .unwrap_or_else(|error| panic!("{case}: the named refresh recovers: {error}"));
+        }
+    }
 }
 
 /// A committed project holding the skill `deploy` and the declared Pi
@@ -685,37 +727,112 @@ fn write_pi_widgets(world: &World, version: &str) {
 /// Pi settlement the recovered record lets it read, which records the
 /// package the recovery could not. The run's one commit offer comes after
 /// the last of them, so a commit chosen up front carries everything the
-/// run changed and leaves the tree clean.
+/// run changed and leaves the tree clean. The recovery is written whatever
+/// stops the settlement after it: declined or cancelled at its prompt, or
+/// failing to install, the scope still closes on its ledger line rather
+/// than as unchanged and its snapshot is taken, and short of a cancel,
+/// which ends the run, the offer commits what the recovery wrote.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_version_10_recovery_commits_once_after_its_pi_settlement() {
-    let world = pi_widgets_installed();
-    super::write(
-        &world.catalog.join("skills/deploy/SKILL.md"),
-        "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
-    );
-    plant_version_10_state(&world);
-    world.commit_all("the record a version 10 build left");
-    let commits = super::git(&world.project, &["rev-list", "--count", "HEAD"]);
-
-    let refreshed = world.try_run(&["refresh", "--yes", "--commit"]);
-    let said = super::said(&refreshed);
-    assert!(refreshed.status.success(), "{said}");
-    let recovered = kendex_core::lock::load(&world.at(".kendex-lock.json")).unwrap();
-    assert!(
-        recovered.entries.contains_key("pi-extension:pi-widgets:pi"),
-        "the settlement ran after the recovery: {said}"
-    );
-    assert_eq!(
-        super::git(&world.project, &["status", "--porcelain"]),
-        "",
-        "{said}"
-    );
-    let after: u32 = super::git(&world.project, &["rev-list", "--count", "HEAD"])
-        .parse()
-        .unwrap_or_default();
-    let before: u32 = commits.parse().unwrap_or_default();
-    assert_eq!(after, before + 1, "{said}");
+    for case in [
+        "settled",
+        "settlement declined",
+        "settlement cancelled",
+        "settlement failed",
+    ] {
+        let world = pi_widgets_installed();
+        super::write(
+            &world.catalog.join("skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+        );
+        plant_version_10_state(&world);
+        world.commit_all("the record a version 10 build left");
+        let commits = super::git(&world.project, &["rev-list", "--count", "HEAD"]);
+        let packages = world.at(".pi/packages");
+        let refreshed = match case {
+            "settlement declined" | "settlement cancelled" => {
+                let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_kendex"));
+                command
+                    .args(["refresh", "--commit"])
+                    .current_dir(&world.project)
+                    .env_clear()
+                    .envs(crate::test_util::fixture_env(&world.home))
+                    .env("KENDEX_BACKGROUND_REFRESH", "off")
+                    .env("KENDEX_UI", "plain")
+                    .env("PATH", std::env::var("PATH").unwrap_or_default());
+                let answer = if case == "settlement declined" {
+                    "n"
+                } else {
+                    "\x03"
+                };
+                crate::pty::conversation(
+                    command,
+                    &[("[y]", "y"), ("[y]", answer)],
+                    crate::pty::Stderr::Terminal,
+                )
+            }
+            "settlement failed" => {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&packages, std::fs::Permissions::from_mode(0o555))
+                    .unwrap();
+                let refreshed = world.try_run(&["refresh", "--yes", "--commit"]);
+                std::fs::set_permissions(&packages, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+                refreshed
+            }
+            _ => world.try_run(&["refresh", "--yes", "--commit"]),
+        };
+        let said = super::said(&refreshed);
+        let code = match case {
+            "settlement failed" => 1,
+            "settlement cancelled" => 130,
+            _ => 0,
+        };
+        assert_eq!(refreshed.status.code(), Some(code), "{case}: {said}");
+        let recovered = kendex_core::lock::load(&world.at(".kendex-lock.json"))
+            .unwrap_or_else(|error| panic!("{case}: the recovery is written: {error}"));
+        assert_eq!(
+            recovered.entries.contains_key("pi-extension:pi-widgets:pi"),
+            case == "settled",
+            "{case}: the settlement ran after the recovery: {said}"
+        );
+        if case == "settled" {
+            assert_eq!(
+                super::git(&world.project, &["status", "--porcelain"]),
+                "",
+                "{said}"
+            );
+        }
+        let after: u32 = super::git(&world.project, &["rev-list", "--count", "HEAD"])
+            .parse()
+            .unwrap_or_default();
+        let before: u32 = commits.parse().unwrap_or_default();
+        let offered = u32::from(case != "settlement cancelled");
+        assert_eq!(after, before + offered, "{case}: the offer commits: {said}");
+        // The closing ledger is the run's result line.
+        let label = world.project.display().to_string();
+        assert!(
+            said.lines()
+                .any(|line| line.contains(&label) && line.contains(": refreshed ")),
+            "{case}: {said}"
+        );
+        assert!(
+            !said.contains("unchanged; update declined"),
+            "{case}: {said}"
+        );
+        let env = kendex_core::env::Env::host_rooted(&world.home);
+        let scope = kendex_core::model::Scope::Project {
+            root: world.project.clone(),
+        };
+        assert!(
+            matches!(
+                kendex_core::drift::snapshot::load(&env, &scope),
+                kendex_core::drift::snapshot::SnapshotFile::Current(_)
+            ),
+            "{case}: {said}"
+        );
+    }
 }
 
 /// A version 10 build installed `pi-widgets`, and its source moved on
@@ -782,7 +899,9 @@ fn settle_with(output: &std::process::Output) -> Vec<String> {
 /// for the scope, with the project where the run named it; running it
 /// leaves the check clean. Beside a conflict the take-over would replace,
 /// the take-over is no finish: it leaves the Pi package, so no
-/// `finish-with` is named and each keeps its own way out.
+/// `finish-with` is named, each keeps its own way out, and check names
+/// the plan for the copy; once `update-pi` settles the package, the next
+/// check names the take-over.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_version_10_recovery_names_update_pi_for_an_edited_pi_copy() {
@@ -804,26 +923,27 @@ fn a_version_10_recovery_names_update_pi_for_an_edited_pi_copy() {
             named.extend(["--throwaway", "--project-path", &project]);
             super::kendex(&world.home, &world.home, &named)
         };
-        let finish = |named: bool| match (beside_a_conflict, named) {
+        let here = "update-pi scope=project".to_owned();
+        let named = format!("update-pi scope=project project={project}");
+        let finish = |named_it: bool| match (beside_a_conflict, named_it) {
             (true, _) => Vec::new(),
-            (false, false) => vec!["update-pi".to_owned()],
-            (false, true) => vec![format!("update-pi project={project}")],
+            (false, false) => vec![here.clone()],
+            (false, true) => vec![named.clone()],
         };
 
         let refreshed = world.try_run(&["refresh", "--yes"]);
         let said = super::said(&refreshed);
         assert!(!refreshed.status.success(), "{case}: {said}");
-        assert_eq!(settle_with(&refreshed), ["update-pi"], "{case}: {said}");
+        assert_eq!(settle_with(&refreshed), [here.as_str()], "{case}: {said}");
         assert_eq!(finish_with(&refreshed), finish(false), "{case}: {said}");
 
         let planned = world.try_run(&["apply", "--plan"]);
         let said = super::said(&planned);
-        assert_eq!(settle_with(&planned), ["update-pi"], "{case}: {said}");
+        assert_eq!(settle_with(&planned), [here.as_str()], "{case}: {said}");
 
         let applied = elsewhere(&["apply", "--yes"]);
         let said = super::said(&applied);
-        let want = format!("update-pi project={project}");
-        assert_eq!(settle_with(&applied), [want.as_str()], "{case}: {said}");
+        assert_eq!(settle_with(&applied), [named.as_str()], "{case}: {said}");
         assert_eq!(finish_with(&applied), finish(true), "{case}: {said}");
         assert_eq!(read(&installed), edited, "{case}: {said}");
 
@@ -834,16 +954,27 @@ fn a_version_10_recovery_names_update_pi_for_an_edited_pi_copy() {
             said.contains("kendex update-pi --scope project"),
             "{case}: {said}"
         );
-        if beside_a_conflict {
-            continue;
-        }
+        let json = world.try_run(&["check", "--json"]);
+        let empty: [bool; 0] = [];
+        assert_eq!(
+            replace_remedies(&json),
+            empty,
+            "{case}: {}",
+            super::said(&json)
+        );
 
-        let updated = elsewhere(&["update-pi"]);
+        // The named action, as its parameters spell it.
+        let updated = elsewhere(&["update-pi", "--scope", "project"]);
         assert!(updated.status.success(), "{}", super::said(&updated));
         assert_eq!(
             read(&installed),
             read(&world.catalog.join("pi-extensions/pi-widgets/index.js"))
         );
+        if beside_a_conflict {
+            let json = world.try_run(&["check", "--json"]);
+            assert_eq!(replace_remedies(&json), [false], "{}", super::said(&json));
+            continue;
+        }
         let clean = world.try_run(&["check"]);
         assert_eq!(clean.status.code(), Some(0), "{}", super::said(&clean));
     }

@@ -580,18 +580,47 @@ impl ScopeCheck<'_> {
                     );
                 }
             }
-            // A record refresh recovers is not a scope the check could not
-            // read: it is one whose fix is known, the refresh that moves the
-            // record aside and installs from the declarations. The refusal
-            // itself still reaches the caller's error channel, keyed.
-            Err(crate::error::CoreError::LegacyProjectLock { .. }) => {
-                sections.record_cleanup.push(drift(
-                    format!("{prefix}lock: a version 10 record, which a refresh recovers"),
-                    Some(Remedy::Refresh {
-                        global: self.global,
-                    }),
-                ))
+            Err(crate::error::CoreError::LegacyProjectLock { path, aside }) => {
+                self.version_10_line(path, aside, sections);
             }
+            Err(error) => sections.unknown.push(unknown(format!(
+                "{prefix}lock: {}",
+                shown(&error.to_string())
+            ))),
+        }
+    }
+
+    /// A version 10 record a refresh recovers is not a scope the check
+    /// could not read: it is one whose fix is known, the refresh that
+    /// moves the record aside and installs from the declarations. The
+    /// refusal itself still reaches the caller's error channel, keyed. One
+    /// the recovery would refuse is unread, with the recovery's own reason
+    /// (`engine::version_10_recovery`), since no command of kendex's
+    /// settles it.
+    fn version_10_line(
+        &self,
+        path: &std::path::Path,
+        aside: &std::path::Path,
+        sections: &mut Sections,
+    ) {
+        let prefix = self.prefix;
+        match crate::engine::version_10_recovery(path, aside) {
+            Ok(None) => sections.record_cleanup.push(drift(
+                format!("{prefix}lock: a version 10 record, which a refresh recovers"),
+                Some(Remedy::Refresh {
+                    global: self.global,
+                }),
+            )),
+            Ok(Some(why)) => sections.unknown.push(unknown(format!(
+                "{prefix}lock: {}",
+                shown(
+                    &crate::error::CoreError::Version10RecoveryRefused {
+                        path: path.to_path_buf(),
+                        why,
+                    }
+                    .to_string()
+                )
+            ))),
             Err(error) => sections.unknown.push(unknown(format!(
                 "{prefix}lock: {}",
                 shown(&error.to_string())
@@ -936,12 +965,13 @@ impl ScopeCheck<'_> {
         let Some(settled) = self.settle_copies(manifest, lock, occupied, sections) else {
             return;
         };
-        let (verdicts, record_failed, unrecorded) = match settled {
+        let (verdicts, record_failed, unrecorded, completion) = match settled {
             crate::drift::copies::Settled::Judged {
                 verdicts,
                 record_failed,
                 unrecorded,
-            } => (verdicts, record_failed, unrecorded),
+                completion,
+            } => (verdicts, record_failed, unrecorded, completion),
             // The plan is the judgement; without it every blocked line
             // stands as the stat found it, and the reason the judgement
             // is missing is a line of its own.
@@ -992,17 +1022,7 @@ impl ScopeCheck<'_> {
                 Some(crate::drift::copies::Verdict::Differs {
                     files,
                     rendered_from,
-                    take_over_settles,
-                    allow_repo_effects,
-                }) => self.stale_line(
-                    install,
-                    *files,
-                    rendered_from,
-                    take_over_settles.then_some(crate::engine::Completion {
-                        allow_repo_effects: *allow_repo_effects,
-                    }),
-                    sections,
-                ),
+                }) => self.stale_line(install, *files, rendered_from, completion, sections),
                 Some(crate::drift::copies::Verdict::Uncompared { reason }) => {
                     sections.unknown.push(unknown(format!(
                         "{}{} '{}' for {}: {}",
@@ -1025,8 +1045,8 @@ impl ScopeCheck<'_> {
 
     /// The line for a copy the plan measured as not the render: the count,
     /// what it was measured against, and the take-over as its fix where
-    /// the pass answered for the whole scope (`take_over`), the plan
-    /// otherwise.
+    /// it is the scope's one completion (`engine::completion`, read off the
+    /// plan that measured the copy), the plan otherwise.
     fn stale_line(
         &self,
         install: &crate::engine::Occupied,

@@ -121,21 +121,9 @@ pub enum Measured {
     Proven,
     /// Not the render: how many files on disk are not the render's, a
     /// file only one side has included, and what the render was built
-    /// from. `take_over_settles` says whether the scope-wide take-over
-    /// answers for the scope this copy sits in: it is withheld where the
-    /// sweep would refuse, where a position it would take was left
-    /// unmeasured, and where a row's take-over moves a second position
-    /// the line never named — one answer for every row, since the sweep
-    /// is one command over all of them.
-    Differs {
-        files: u32,
-        rendered_from: String,
-        take_over_settles: bool,
-        /// The take-over installs a package whose repository effect then
-        /// needs its own yes (`EngineReport::repo_effects_held`).
-        #[serde(default)]
-        allow_repo_effects: bool,
-    },
+    /// from. Whether the take-over is its fix is the scope's answer, not
+    /// this copy's: [`UnmanagedCopies::completion`].
+    Differs { files: u32, rendered_from: String },
     /// What sits at the position would not read, so nothing was judged:
     /// the plan's own reason, naming the position and the read's error.
     Uncompared { reason: String },
@@ -168,6 +156,11 @@ pub struct UnmanagedCopies {
     /// place again: a registration taken out of its settings file since
     /// the plan is not recorded as installed.
     pub registrations: Registrations,
+    /// The plan's one completion ([`completion`]): the take-over every
+    /// differing copy names as its fix where it settles the whole scope.
+    /// One answer for the scope, since the take-over is one command over
+    /// every conflict in it.
+    pub completion: Option<Completion>,
 }
 
 /// Plan the scope once and judge every occupied installation by what the
@@ -227,8 +220,6 @@ pub fn compare_unmanaged_copies(
         }
     }
     proven.entries = kept;
-    let take_over_settles = take_over_settles(&report.drift);
-    let allow_repo_effects = !report.repo_effects_held.is_empty();
     let mut measured = BTreeMap::new();
     for (key, install) in occupied {
         let refused = report.drift.iter().find(|row| {
@@ -251,8 +242,6 @@ pub fn compare_unmanaged_copies(
                         Some(files) if files > 0 => Measured::Differs {
                             files,
                             rendered_from: rendered_from(manifest, &report, install),
-                            take_over_settles,
-                            allow_repo_effects,
                         },
                         // A shape the plan could not read as content has
                         // no count, and nothing prescribes an exit for
@@ -274,6 +263,7 @@ pub fn compare_unmanaged_copies(
         measured,
         proven,
         registrations,
+        completion: completion(&report),
     })
 }
 
@@ -287,22 +277,28 @@ pub fn compare_unmanaged_copies(
 /// makes of a stranger's file, a conflict.
 ///
 /// The move and the record write land in one transaction: the move is
-/// bound to the hash of the bytes the caller read (`hash`), and the record
-/// write to the path standing empty once the move has run. A refusal at
-/// any op rolls back to the version 10 record where it was.
+/// bound to the hash of the bytes the caller read, and the record write to
+/// the path standing empty once the move has run. A refusal at any op
+/// rolls back to the version 10 record where it was. Where an earlier
+/// recovery already left these bytes aside (`moved`) there is no move:
+/// the record write replaces the version 10 record, bound to its hash.
 ///
 /// What the old record carried is not news to the person: its packages
-/// are no addition the consent claims, and their repository effects are
-/// not offered again, since the scope carried them before the record lost
-/// its readable form.
+/// are no addition the consent claims, and this plan's own write offers
+/// none of their repository effects again, since the scope carried them
+/// before the record lost its readable form. A carried package this plan
+/// leaves on a replaceable conflict is installed later by the take-over,
+/// which offers its effect as every install into a checkout does
+/// (`EngineReport::repo_effects_held`).
 pub(super) fn plan_version_10(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
-    hash: String,
+    recoverable: super::Version10Recoverable,
     options: &PlanOptions,
 ) -> Result<EngineReport> {
     use crate::apply::{Description, PlannedOp, Pre};
+    let super::Version10Recoverable { hash, moved } = recoverable;
     let path = lock_path(env, scope);
     let aside = path.with_file_name(crate::lock::VERSION_10_LOCK_FILE);
     let carried = super::unmanaged::version_10_keys(&path)?;
@@ -313,27 +309,32 @@ pub(super) fn plan_version_10(
     let mut report = super::plan_scope(env, scope, manifest, &fresh, options)?;
     for planned in &mut report.plan.ops {
         if let Op::WriteLock { pre, .. } = &mut planned.op {
-            *pre = Pre::Absent;
+            *pre = match moved {
+                true => Pre::HashIs { hash: hash.clone() },
+                false => Pre::Absent,
+            };
         }
     }
-    report.plan.insert(
-        0,
-        PlannedOp {
-            description: Description::around(
-                "Move the version 10 install record ",
-                format!(
-                    " to {}, where it keeps proving which renders kendex wrote",
-                    crate::lock::VERSION_10_LOCK_FILE
+    if !moved {
+        report.plan.insert(
+            0,
+            PlannedOp {
+                description: Description::around(
+                    "Move the version 10 install record ",
+                    format!(
+                        " to {}, where it keeps proving which renders kendex wrote",
+                        crate::lock::VERSION_10_LOCK_FILE
+                    ),
                 ),
-            ),
-            op: Op::Rename {
-                from: path,
-                to: aside.clone(),
-                from_pre: Pre::HashIs { hash },
-                to_pre: Pre::Absent,
+                op: Op::Rename {
+                    from: path,
+                    to: aside.clone(),
+                    from_pre: Pre::HashIs { hash },
+                    to_pre: Pre::Absent,
+                },
             },
-        },
-    )?;
+        )?;
+    }
     report.set_changes.retain(|change| {
         change.direction != super::SetDirection::Add
             || !carried.contains(&crate::lock::entry_key(
@@ -368,8 +369,10 @@ pub struct Completion {
 /// The completion for a plan's conflicts, or `None` where no single
 /// action settles all of them: a conflict the take-over cannot replace
 /// (an edit, a link, a revision clash), or a take-over that does not
-/// answer for the whole scope (`take_over_settles`). `apply`, `refresh`
-/// and `check` name what this returns and nothing of their own.
+/// answer for the whole scope (`take_over_settles`). `apply` and
+/// `refresh` name what this returns, and `check` reads it off the plan
+/// that judged its unmanaged copies ([`UnmanagedCopies::completion`]);
+/// none of them has a reading of its own.
 pub fn completion(report: &EngineReport) -> Option<Completion> {
     let mut conflicts = report
         .drift

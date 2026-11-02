@@ -267,6 +267,46 @@ fn a_current_scope_with_findings_still_reads_up_to_date() {
     );
 }
 
+/// A declared Pi package whose install runs a process is left for
+/// `update-pi`: refresh starts no process and exits clean, and the scope's
+/// closing line names `update-pi` as its finish, the action a program
+/// reads, rather than closing as if nothing were left.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_left_for_its_install_process_is_named_as_the_finish() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("dev/app");
+    let catalog = home.join("catalog");
+    skill(&catalog, "tidy", "Nothing alarming here.\n");
+    let package = catalog.join("pi-extensions/pi-deps");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(
+        package.join("package.json"),
+        "{\"name\":\"pi-deps\",\"version\":\"1.0.0\",\"dependencies\":{\"dep\":\"1.0.0\"},\"pi\":{\"extensions\":[\"index.js\"]}}\n",
+    )
+    .unwrap();
+    fs::write(package.join("index.js"), "export const version = 1;\n").unwrap();
+    manifest(
+        &project,
+        &catalog,
+        "[\"claude\"]",
+        "copy",
+        "[skills.tidy]\nsource = \"cat\"\n\n[pi-extensions.pi-deps]\nsource = \"cat\"\n",
+    );
+    fs::create_dir_all(project.join(".pi")).unwrap();
+
+    let refreshed = kendex(home, &project, &["refresh", "-y", "--scope", "project"]);
+    let printed = said(&refreshed);
+    assert!(refreshed.status.success(), "{printed}");
+    assert!(!project.join(".pi/packages/pi-deps").exists(), "{printed}");
+    assert_eq!(
+        finish_with(&printed),
+        ["update-pi scope=project"],
+        "{printed}"
+    );
+}
+
 /// Nothing to write is not a write of nothing. A completion line under
 /// "nothing to do" reads as a run that finished something.
 #[test]

@@ -295,16 +295,29 @@ struct Closing {
     scored: Vec<kendex_core::engine::ItemSafety>,
 }
 
-/// Final plan and known writes, including a stop after Pi settlement.
+/// Final plan and known writes, and where the write stopped short of its
+/// last one.
 struct Written {
     report: kendex_core::engine::EngineReport,
     /// `None` is a scope with nothing to write, up to date.
     count: Option<usize>,
-    stop: Option<Box<dyn std::error::Error>>,
+    /// The reading an earlier write of this run took, which an offer this
+    /// write still owes covers from ([`Start::before`]).
+    before: Option<Before>,
+    stop: Option<Stop>,
+}
+
+/// Why a write that had already written stopped short of its last write.
+enum Stop {
+    /// The person declined what was left.
+    Declined,
+    /// A cancel, or a failure.
+    Failed(Box<dyn std::error::Error>),
 }
 
 enum ScopeWrite {
     Written(Box<Written>),
+    /// Nothing written, and the person said no.
     Declined,
 }
 
@@ -332,6 +345,15 @@ impl PreparedScope {
     }
 }
 
+/// What a scope's write reads of its own preparation and of the run.
+struct Context<'a> {
+    synced: &'a kendex_core::remote::Synced,
+    options: &'a PlanOptions,
+    reach: Reached,
+    verbose: bool,
+    yes: bool,
+}
+
 fn sync_scope(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::remote::Synced {
     match kendex_core::engine::ops::manifest_for_reading(env, scope) {
         Ok(manifest) => {
@@ -346,7 +368,9 @@ fn prepare_scope(
     env: &Env,
     scope: kendex_core::model::Scope,
     synced: kendex_core::remote::Synced,
-    (catalog, takes, reach): (Catalog, Takes, Reached),
+    catalog: Catalog,
+    takes: Takes,
+    reach: Reached,
 ) -> Result<PreparedScope, Box<dyn std::error::Error>> {
     let options = PlanOptions {
         sweep_unneeded: true,
@@ -428,13 +452,11 @@ fn prepare_scopes(
             return Err(error.into());
         }
     }
+    let reach = Reached::of(target.path());
     let prepared: Vec<_> = scopes
         .into_iter()
         .zip(synced)
-        .map(|(scope, synced)| {
-            let reach = Reached::of(target.path());
-            prepare_scope(env, scope, synced, (catalog, takes, reach))
-        })
+        .map(|(scope, synced)| prepare_scope(env, scope, synced, catalog, takes, reach))
         .collect::<Result<_, Box<dyn std::error::Error>>>()?;
     if prepared.iter().any(PreparedScope::needs_consent)
         && let Err(error) = require_yes_in_non_interactive(yes)
@@ -457,7 +479,7 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
             Ok((report, pending)) => {
                 if pending.is_empty() {
                     print_attention(env, report, listing(verbose), scope.reach);
-                    failures.extend(refresh_failures(report));
+                    failures.extend(refresh_failures(report, &[]));
                 }
             }
             Err(error) => failures.push(error.clone()),
@@ -475,29 +497,31 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
     }
 }
 
-/// Remove only dependency-only Pi drift from this verb's failure report.
-/// Settlement owns eligibility; the install plan and durable record stay intact.
+/// The declared Pi packages this scope leaves for `update-pi` only because
+/// their install runs a process, which a refresh never starts: a notice
+/// each, and their names for the run's failures to pass over. Their rows
+/// stay in the plan, carrying the engine's `RowRemedy::UpdatePi`, so the
+/// attention, the closing ledger and the completion name `update-pi` for
+/// them as for every other package it settles. Settlement owns
+/// eligibility; the install plan and durable record stay intact.
 fn defer_process_installs(
     env: &Env,
     scope: &kendex_core::model::Scope,
     options: &PlanOptions,
-    report: &mut EngineReport,
-) -> CliResult {
+    report: &EngineReport,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let deferred = super::update_pi::deferred_settle(env, scope, options)?;
-    report.drift.retain(|row| {
-        let defer = row.kind == kendex_core::model::ItemKind::PiExtension
-            && row.harness == kendex_core::model::HarnessId::Pi
-            && row.state == kendex_core::engine::DriftState::Stale
-            && deferred.contains(&row.name);
-        if defer {
+    for row in &report.drift {
+        if row.remedy == Some(kendex_core::engine::RowRemedy::UpdatePi)
+            && deferred.contains(&row.name)
+        {
             ui::report::notice(&format!(
                 "{}: install needs a process; use kendex update-pi to settle it",
                 row.name
             ));
         }
-        !defer
-    });
-    Ok(())
+    }
+    Ok(deferred)
 }
 
 /// One scope's write: the yes it needs, the settle that yes covers, and
@@ -507,68 +531,66 @@ fn defer_process_installs(
 /// installs still ends on the same ledger, since the outcomes it has to
 /// report are the same either way. An empty plan closes on `None` — up to
 /// date — and still reaches the commit offer, on whatever an earlier run
-/// left uncommitted.
-#[allow(clippy::too_many_arguments)]
+/// left uncommitted. Every exit short of the last write goes through
+/// [`Start::stopped_short`], which owns what a scope that already wrote
+/// is owed.
 fn write_scope(
     env: &Env,
     scope: &kendex_core::model::Scope,
     report: kendex_core::engine::EngineReport,
     pending: &[Pending],
-    options: &PlanOptions,
-    yes: bool,
-    recovered: Option<&Recovered>,
+    start: &Start,
+    context: &Context,
     report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport) -> CliResult,
 ) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
-    let before = recovered.map(|recovered| &recovered.before);
+    let (options, yes) = (context.options, context.yes);
     if pending.is_empty() {
-        let needs_consent = !report.set_changes.is_empty()
-            && !recovered.is_some_and(|recovered| recovered.covers(&report.set_changes));
+        let needs_consent = !report.set_changes.is_empty() && !start.covers(&report.set_changes);
         if needs_consent && !report.plan.is_empty() {
             print_changes_needing_consent(scope, &report, pending);
         }
-        let count = match confirm_plan_and_apply(env, &report, yes || !needs_consent, before)? {
-            PlanApplication::Applied(applied) => (!report.plan.is_empty()).then_some(applied),
-            // The recovery is written whatever the answer to what came
-            // after it, and is owed its offer and its closing line.
-            PlanApplication::Declined => match recovered {
-                Some(recovered) => {
-                    after_writing(env, scope, &report.generated, &recovered.before)?;
-                    Some(0)
-                }
-                None => return Ok(ScopeWrite::Declined),
-            },
+        return match confirm_plan_and_apply(env, &report, yes || !needs_consent, start.before()) {
+            Ok(PlanApplication::Applied(applied)) => {
+                let count = start.count((!report.plan.is_empty()).then_some(applied));
+                Ok(start.written(report, count, None))
+            }
+            Ok(PlanApplication::Declined) => start.stopped_short(report, None, Stop::Declined),
+            Err(error) => start.stopped_short(report, None, Stop::Failed(error)),
         };
-        let count = match recovered {
-            Some(recovered) => Some(recovered.count + count.unwrap_or(0)),
-            None => count,
-        };
-        return Ok(ScopeWrite::Written(Box::new(Written {
-            report,
-            count,
-            stop: None,
-        })));
     }
     print_changes_needing_consent(scope, &report, pending);
     let changes = report.plan.ops.len() + pending.len();
-    if confirm_before_writing(
+    match confirm_before_writing(
         &format!(
             "write {changes} change{}?",
             if changes == 1 { "" } else { "s" }
         ),
         yes,
-    )? == Confirmation::Declined
-    {
-        return Ok(ScopeWrite::Declined);
+    ) {
+        Ok(Confirmation::Accepted) => {}
+        Ok(Confirmation::Declined) => return start.stopped_short(report, None, Stop::Declined),
+        Err(error) => return start.stopped_short(report, None, Stop::Failed(error)),
     }
     let names: Vec<_> = pending.iter().map(|pending| pending.name.clone()).collect();
-    let settled = super::update_pi::settle_scope(env, scope, &names, options)?;
-    let mut after = {
+    let settled = match super::update_pi::settle_scope(env, scope, &names, options) {
+        Ok(settled) => settled,
+        Err(error) => return start.stopped_short(report, None, Stop::Failed(error)),
+    };
+    let planned = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
-        plan_apply(env, scope, options)?
+        plan_apply(env, scope, options)
+    };
+    let mut after = match planned {
+        Ok(after) => after,
+        Err(error) => {
+            return start.stopped_short(report, Some(settled), Stop::Failed(error.into()));
+        }
     };
     // The carrier can make hooks enforceable. Show their diagnostics
     // before confirming the final writes, using this plan for the ledger.
-    report_after_settle(&mut after)?;
+    if let Err(error) = report_after_settle(&mut after) {
+        return start.stopped_short(after, Some(settled), Stop::Failed(error));
+    }
     let approved: std::collections::BTreeSet<String> =
         report.plan.ops.iter().map(|op| op.line()).collect();
     let added_changes: Vec<_> = after
@@ -601,30 +623,22 @@ fn write_scope(
     }
     // The recovery's yes answers a follow-up that installs nothing it did
     // not list; the Pi settlement above kept its own.
-    let covered = recovered.is_some_and(|recovered| recovered.covers(&after.set_changes));
-    let applied = match confirm_plan_and_apply(env, &after, yes || covered, before) {
-        Ok(PlanApplication::Applied(applied)) => Ok(applied),
-        Ok(PlanApplication::Declined) => {
-            ui::report::notice(&format!(
-                "{}: remaining changes declined",
-                consent_scope(scope)
-            ));
-            after_writing(
-                env,
-                scope,
-                &after.generated,
-                before.unwrap_or(&Before::Untaken),
-            )
-            .map(|()| 0)
-        }
-        Err(error) => Err(error),
+    let covered = start.covers(&after.set_changes);
+    let (applied, stop) = match confirm_plan_and_apply(env, &after, yes || covered, start.before())
+    {
+        Ok(PlanApplication::Applied(applied)) => (applied, None),
+        Ok(PlanApplication::Declined) => (0, Some(Stop::Declined)),
+        Err(error) => (0, Some(Stop::Failed(error))),
     };
-    let recovered = recovered.map_or(0, |recovered| recovered.count);
-    Ok(ScopeWrite::Written(Box::new(Written {
-        report: after,
-        count: Some(recovered + settled + applied.as_ref().map_or(0, |count| *count)),
-        stop: applied.err(),
-    })))
+    let count = start.count(Some(settled + applied));
+    Ok(start.written(after, count, stop))
+}
+
+/// What a scope's write starts from: a version 10 record this run
+/// recovered before it, or nothing written.
+enum Start {
+    Fresh,
+    Recovered(Recovered),
 }
 
 /// A version 10 record this run recovered, before the scope's own write.
@@ -638,14 +652,75 @@ struct Recovered {
     set_changes: Vec<kendex_core::engine::SetChange>,
 }
 
-impl Recovered {
+impl Start {
+    /// Whether this run already wrote into the scope.
+    fn wrote(&self) -> bool {
+        matches!(self, Start::Recovered(_))
+    }
+
+    /// The reading the scope's one offer covers from, where the recovery
+    /// took it; `None` where the scope's own write reads it.
+    fn before(&self) -> Option<&Before> {
+        match self {
+            Start::Fresh => None,
+            Start::Recovered(recovered) => Some(&recovered.before),
+        }
+    }
+
     /// Whether the recovery's consent already answered these changes: a
     /// later plan of the same run that installs or removes nothing it did
-    /// not list adds no effect the person was not asked about.
+    /// not list adds no effect the person was not asked about. A scope
+    /// with no recovery was asked nothing yet.
     fn covers(&self, changes: &[kendex_core::engine::SetChange]) -> bool {
-        changes
-            .iter()
-            .all(|change| self.set_changes.contains(change))
+        match self {
+            Start::Fresh => false,
+            Start::Recovered(recovered) => changes
+                .iter()
+                .all(|change| recovered.set_changes.contains(change)),
+        }
+    }
+
+    /// What the scope's write wrote, `here` being what the write itself
+    /// wrote, `None` for nothing to write: the recovery's writes count
+    /// whatever came after them.
+    fn count(&self, here: Option<usize>) -> Option<usize> {
+        match self {
+            Start::Fresh => here,
+            Start::Recovered(recovered) => Some(recovered.count + here.unwrap_or(0)),
+        }
+    }
+
+    fn written(
+        &self,
+        report: EngineReport,
+        count: Option<usize>,
+        stop: Option<Stop>,
+    ) -> ScopeWrite {
+        ScopeWrite::Written(Box::new(Written {
+            report,
+            count,
+            before: self.before().cloned(),
+            stop,
+        }))
+    }
+
+    /// The one rule for a write that stops before its last write, `wrote`
+    /// being what it already wrote itself: a scope this run has written
+    /// into — the recovery, or a settle — is owed its offer, its closing
+    /// line and its snapshot whatever stopped it, so it ends written,
+    /// carrying the stop for [`stopped`]. A scope with nothing written
+    /// ends declined, or on the error itself.
+    fn stopped_short(
+        &self,
+        report: EngineReport,
+        wrote: Option<usize>,
+        stop: Stop,
+    ) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
+        match (self.count(wrote), stop) {
+            (None, Stop::Declined) => Ok(ScopeWrite::Declined),
+            (None, Stop::Failed(error)) => Err(error),
+            (count, stop) => Ok(self.written(report, count, Some(stop))),
+        }
     }
 }
 
@@ -724,106 +799,61 @@ pub fn run(
         prepare_scopes(env, filter, target, verbose, yes, catalog, takes)?;
 
     for prepared in prepared {
-        let scope = prepared.scope;
+        let PreparedScope {
+            scope,
+            synced,
+            options,
+            planned,
+            reach,
+        } = prepared;
         reached.push(scope.clone());
-        let context = (
-            &prepared.synced,
-            &prepared.options,
-            prepared.reach,
+        let context = Context {
+            synced: &synced,
+            options: &options,
+            reach,
             verbose,
             yes,
-        );
-        let ready = ready_to_write(env, &scope, prepared.planned, context, &mut failures)?;
-        let (mut report, pending, recovered) = match ready {
-            Ready::Write(planned) => *planned,
+        };
+        let mut attention = Attention::default();
+        let outcome = match ready_to_write(env, &scope, planned, &context, &mut failures)? {
             Ready::Skip => continue,
-            Ready::Stopped(stop) => {
-                reached.pop();
-                refreshed_anything = true;
-                match stop {
-                    Some(error) => cancelled = Some(error),
+            Ready::Ended(outcome) => outcome,
+            Ready::Write(writing) => {
+                match write_ready(
+                    env,
+                    &scope,
+                    *writing,
+                    &context,
+                    &registering,
+                    &mut attention,
+                    &mut failures,
+                )? {
+                    Some(outcome) => outcome,
                     None => continue,
                 }
-                break;
             }
         };
-        // A declared Pi package installs outside the plan, through the
-        // install `update-pi` owns, and its record is machine-local: a
-        // clone carries the package and no record, and this plan reports
-        // every such package as drift. What the settle would install is
-        // read here, to be shown before the yes that lets it write. The
-        // diagnostics come from the plan derived after settlement, so a
-        // package this run settles never prints a stale update-pi remedy.
-        // Only process-only deferrals become notices; every other Pi drift fails.
-        // The record refusing to read is what stops the scope here.
-        let mut attention = Attention::default();
-        let lock = load_lock(&lock_path(env, &scope))?;
-        // A scope settling nothing is reported off this plan, and a run
-        // that refused every install is not "nothing installed": a scope
-        // carrying a refusal is never passed over. A scope that settles is
-        // reported off the plan derived after its settle.
-        if pending.is_empty() {
-            defer_process_installs(env, &scope, &prepared.options, &mut report)?;
-            attention = print_attention(env, &report, listing(verbose), prepared.reach);
-            let reported = refresh_failures(&report);
-            let failed = !prepared.synced.failures.is_empty() || !reported.is_empty();
-            failures.extend(reported);
-            // A recovery wrote a record this run, whatever the plan after it.
-            let unrecorded = recovered.is_none() && lock.entries.is_empty();
-            if unrecorded && report.plan.is_empty() && attention.blocked.is_empty() {
-                // Nothing left to write is not a reason to leave the
-                // named project off the projects list: the run got
-                // through this scope, which is what registration follows.
-                //
-                // A scope that reported a failure is the exception. It
-                // wrote nothing and the run exits nonzero, so listing the
-                // folder would be the one lasting effect of a run that
-                // failed.
-                if !failed {
-                    register_written(env, &registering, &scope, &mut failures);
-                }
-                continue;
-            }
-        }
         refreshed_anything = true;
-        match write_scope(
-            env,
-            &scope,
-            report,
-            &pending,
-            &prepared.options,
-            yes,
-            recovered.as_ref(),
-            |after| {
-                prepared.synced.suppress_busy_pending(&mut after.notes);
-                defer_process_installs(env, &scope, &prepared.options, after)?;
-                attention = print_attention(env, after, listing(verbose), prepared.reach);
-                Ok(())
-            },
-        ) {
+        match outcome {
             Ok(ScopeWrite::Declined) => {
                 reached.pop();
                 declined_scope(&scope);
             }
             Ok(ScopeWrite::Written(written)) => {
-                if !pending.is_empty() {
-                    failures.extend(refresh_failures(&written.report));
-                }
-                // What the scope's armed packages say now that it is
-                // written. Said, never acted on: a refresh arms nothing,
-                // and `commands::repo_effects` says why the record of an
-                // earlier yes does not change that.
-                super::repo_effects::say_lapsed(env, &scope, &[]);
-                register_written(env, &registering, &scope, &mut failures);
-                closing.push(Closing {
+                let close = Closing {
                     scope: scope.clone(),
                     count: written.count,
                     attention,
                     scored: written.report.safety.clone(),
-                });
-                if let Some(error) =
-                    stopped(env, &scope, *written, recovered.as_ref(), &mut failures)
-                {
+                };
+                if let Some(error) = close_written(
+                    env,
+                    &registering,
+                    *written,
+                    close,
+                    &mut closing,
+                    &mut failures,
+                ) {
                     cancelled = Some(error);
                     break;
                 }
@@ -834,10 +864,10 @@ pub fn run(
             // and the exit code a script keys a cancel on is 130.
             //
             // It stops the scopes after this one, never the finishing of
-            // the ones before it: the confirm asks before it writes, so
-            // this scope wrote nothing and drops off the reached list,
-            // while what earlier scopes wrote is on disk and owed both a
-            // snapshot and a closing line.
+            // the ones before it. An error reaches here only from a scope
+            // that wrote nothing (`Start::stopped_short`), so this scope
+            // drops off the reached list, while what earlier scopes wrote
+            // is on disk and owed both a snapshot and a closing line.
             Err(error) if ui::cancelled(error.as_ref()) => {
                 reached.pop();
                 cancelled = Some(error);
@@ -854,62 +884,165 @@ pub fn run(
     refresh_result(refreshed_anything, &failures, cancelled)
 }
 
-/// What a write that stopped part way owes: a cancel ends the run, and
-/// any other stop is a failure whose writes still reach the offer, from
+/// A ready scope's diagnostics and its write; `None` for a scope passed
+/// over with nothing to write. A declared Pi package installs outside the
+/// plan, through the install `update-pi` owns, and its record is
+/// machine-local: a clone carries the package and no record, and this
+/// plan reports every such package as drift. What the settle would
+/// install is read before the yes that lets it write, and the
+/// diagnostics come from the plan derived after settlement, so a package
+/// this run settles never prints a stale update-pi remedy; a package left
+/// for `update-pi` because its install runs a process is no failure of
+/// this run. A scope settling nothing is reported off this plan, and a
+/// run that refused every install is not "nothing installed": a scope
+/// carrying a refusal is never passed over.
+fn write_ready(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+    writing: Writing,
+    context: &Context,
+    registering: &super::project::Registering,
+    attention: &mut Attention,
+    failures: &mut Vec<String>,
+) -> Result<Option<Outcome>, Box<dyn std::error::Error>> {
+    let Writing {
+        report,
+        pending,
+        start,
+    } = writing;
+    let listed = listing(context.verbose);
+    if pending.is_empty() {
+        let deferred = match defer_process_installs(env, scope, context.options, &report) {
+            Ok(deferred) => deferred,
+            Err(error) => return Ok(Some(start.stopped_short(report, None, Stop::Failed(error)))),
+        };
+        *attention = print_attention(env, &report, listed, context.reach);
+        let reported = refresh_failures(&report, &deferred);
+        let failed = !context.synced.failures.is_empty() || !reported.is_empty();
+        failures.extend(reported);
+        // A recovery wrote a record this run, whatever the plan after it.
+        // The record refusing to read is what stops a scope with none.
+        if !start.wrote()
+            && load_lock(&lock_path(env, scope))?.entries.is_empty()
+            && report.plan.is_empty()
+            && attention.blocked.is_empty()
+            && attention.update_pi.is_none()
+        {
+            // Nothing left to write is not a reason to leave the named
+            // project off the projects list: the run got through this
+            // scope, which is what registration follows.
+            //
+            // A scope that reported a failure is the exception. It wrote
+            // nothing and the run exits nonzero, so listing the folder
+            // would be the one lasting effect of a run that failed.
+            if !failed {
+                register_written(env, registering, scope, failures);
+            }
+            return Ok(None);
+        }
+    }
+    Ok(Some(write_scope(
+        env,
+        scope,
+        report,
+        &pending,
+        &start,
+        context,
+        |after| {
+            context.synced.suppress_busy_pending(&mut after.notes);
+            let deferred = defer_process_installs(env, scope, context.options, after)?;
+            *attention = print_attention(env, after, listed, context.reach);
+            failures.extend(refresh_failures(after, &deferred));
+            Ok(())
+        },
+    )))
+}
+
+/// What a written scope owes before the run moves on: what its armed
+/// packages say now that it is written, said and never acted on (a
+/// refresh arms nothing, and `commands::repo_effects` says why the record
+/// of an earlier yes does not change that), its registration, its closing
+/// line, and what a write that stopped short owes ([`stopped`]). `Some`
+/// is the cancel that ends the run.
+fn close_written(
+    env: &Env,
+    registering: &super::project::Registering,
+    written: Written,
+    close: Closing,
+    closing: &mut Vec<Closing>,
+    failures: &mut Vec<String>,
+) -> Option<Box<dyn std::error::Error>> {
+    let scope = close.scope.clone();
+    super::repo_effects::say_lapsed(env, &scope, &[]);
+    register_written(env, registering, &scope, failures);
+    closing.push(close);
+    stopped(env, &scope, written, failures)
+}
+
+/// What a write that stopped short of its last write owes: a cancel ends
+/// the run, and a decline or any other stop still reaches the offer, from
 /// the reading taken before the scope's first write where there was one.
+/// The scope's closing line and snapshot are the caller's, for every
+/// written scope alike.
 fn stopped(
     env: &Env,
     scope: &kendex_core::model::Scope,
     written: Written,
-    recovered: Option<&Recovered>,
     failures: &mut Vec<String>,
 ) -> Option<Box<dyn std::error::Error>> {
-    let error = written.stop?;
-    if ui::cancelled(error.as_ref()) {
-        return Some(error);
+    match written.stop? {
+        Stop::Failed(error) if ui::cancelled(error.as_ref()) => return Some(error),
+        Stop::Failed(error) => failures.push(error.to_string()),
+        Stop::Declined => ui::report::notice(&format!(
+            "{}: remaining changes declined",
+            consent_scope(scope)
+        )),
     }
-    failures.push(error.to_string());
-    let before = recovered.map_or(&Before::Untaken, |recovered| &recovered.before);
+    let before = written.before.as_ref().unwrap_or(&Before::Untaken);
     if let Err(error) = after_writing(env, scope, &written.report.generated, before) {
         failures.push(error.to_string());
     }
     None
 }
 
+/// A scope ready to write: its plan, the Pi settlement it owes, and what
+/// this run already wrote into it.
+struct Writing {
+    report: EngineReport,
+    pending: Vec<Pending>,
+    start: Start,
+}
+
 /// Where a scope stands before its write.
 enum Ready {
-    /// The plan to write, the Pi settlement it owes, and the version 10
-    /// record recovered before it, where there was one.
-    Write(Box<(EngineReport, Vec<Pending>, Option<Recovered>)>),
+    Write(Box<Writing>),
     /// The scope failed before its write, said among the run's failures.
     Skip,
-    /// Nothing written: the recovery was declined (`None`), or the run
-    /// cancelled.
-    Stopped(Option<Box<dyn std::error::Error>>),
+    /// The scope's outcome is settled before its own write: the recovery
+    /// declined or cancelled, which wrote nothing, or a plan after a
+    /// written recovery that failed, which ends written.
+    Ended(Outcome),
 }
+
+/// How one scope's write ended: written, declined with nothing written,
+/// or stopped by an error before anything was.
+type Outcome = Result<ScopeWrite, Box<dyn std::error::Error>>;
 
 /// A prepared scope made ready to write. A scope whose version 10 record
 /// the plan recovers writes the recovery first, then is planned again over
 /// the record that wrote, Pi settlement included; a plan after the
-/// recovery that fails still owes the recovery its offer.
+/// recovery that fails ends the scope through [`Start::stopped_short`].
 fn ready_to_write(
     env: &Env,
     scope: &kendex_core::model::Scope,
     planned: Planned,
-    run: (
-        &kendex_core::remote::Synced,
-        &PlanOptions,
-        Reached,
-        bool,
-        bool,
-    ),
+    context: &Context,
     failures: &mut Vec<String>,
 ) -> Result<Ready, Box<dyn std::error::Error>> {
-    let (synced, options, reached, verbose, yes) = run;
     // An unreachable catalog is reported, not fatal: what came from every
     // other catalog still refreshes.
-    print_synced(synced);
-    failures.extend(synced.failures.iter().cloned());
+    print_synced(context.synced);
+    failures.extend(context.synced.failures.iter().cloned());
     let (report, pending) = match planned {
         Ok(planned) => planned,
         Err(error) => {
@@ -918,31 +1051,35 @@ fn ready_to_write(
         }
     };
     if report.recovers.is_none() {
-        return Ok(Ready::Write(Box::new((report, pending, None))));
+        return Ok(Ready::Write(Box::new(Writing {
+            report,
+            pending,
+            start: Start::Fresh,
+        })));
     }
-    let written = match recover_scope(env, scope, &report, yes) {
-        Ok(Some(written)) => written,
-        Ok(None) => {
-            declined_scope(scope);
-            return Ok(Ready::Stopped(None));
-        }
-        Err(error) if ui::cancelled(error.as_ref()) => return Ok(Ready::Stopped(Some(error))),
+    let start = match recover_scope(env, scope, &report, context.yes) {
+        Ok(Some(recovered)) => Start::Recovered(recovered),
+        Ok(None) => return Ok(Ready::Ended(Ok(ScopeWrite::Declined))),
+        Err(error) if ui::cancelled(error.as_ref()) => return Ok(Ready::Ended(Err(error))),
         Err(error) => {
-            print_attention(env, &report, listing(verbose), reached);
+            print_attention(env, &report, listing(context.verbose), context.reach);
             failures.push(error.to_string());
             return Ok(Ready::Skip);
         }
     };
-    match plan_scope(env, scope, synced, options)? {
-        Ok((report, pending)) => Ok(Ready::Write(Box::new((report, pending, Some(written))))),
-        Err(error) => {
-            failures.push(error);
-            if let Err(error) = after_writing(env, scope, &report.generated, &written.before) {
-                failures.push(error.to_string());
-            }
-            Ok(Ready::Skip)
-        }
-    }
+    let replanned = match plan_scope(env, scope, context.synced, context.options) {
+        Ok(Ok(replanned)) => Ok(replanned),
+        Ok(Err(error)) => Err(error.into()),
+        Err(error) => Err(error),
+    };
+    Ok(match replanned {
+        Ok((report, pending)) => Ready::Write(Box::new(Writing {
+            report,
+            pending,
+            start,
+        })),
+        Err(error) => Ready::Ended(start.stopped_short(report, None, Stop::Failed(error))),
+    })
 }
 
 fn refresh_result(

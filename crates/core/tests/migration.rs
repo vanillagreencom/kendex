@@ -716,6 +716,25 @@ fn a_version_10_recovery_moves_the_record_in_its_own_transaction() {
     assert!(recovered.entries.contains_key("skill:gh:claude"));
 }
 
+/// An earlier recovery's record aside holding these same bytes is this
+/// record already moved, as a checkout back to a commit from before that
+/// recovery leaves it: the recovery goes on, the record aside stays byte
+/// for byte, and a current record takes the version 10 one's place.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_record_already_aside_is_recovered_in_place() {
+    let (f, older) = version_10_project();
+    let aside = f.project().join(kendex_core::lock::VERSION_10_LOCK_FILE);
+    fs::write(&aside, &older).unwrap();
+    let report = plan_apply(&f.env, &f.scope, &recovering()).unwrap();
+    assert_eq!(report.recovers.as_deref(), Some(aside.as_path()));
+
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(&aside).unwrap(), older);
+    let recovered = load_lock(&f.scope_lock()).unwrap();
+    assert!(recovered.entries.contains_key("skill:gh:claude"));
+}
+
 /// A version 10 record is recovered only where the plan opted in, as the
 /// record file itself, and with no earlier recovery's record aside. Each
 /// other state refuses by its type before any write, with both files left

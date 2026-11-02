@@ -715,6 +715,7 @@ fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
     for writing in [
         ["apply", "--project-path", path, "-y"],
         ["refresh", "--project-path", path, "-y"],
+        ["update-pi", "--project-path", path, "--leave"],
     ] {
         let refused = kendex(&home, &project, &writing);
         let text = said(&refused);

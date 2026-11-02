@@ -122,7 +122,7 @@ pub enum CoreError {
     LockCorrupt { path: PathBuf, message: String },
 
     #[error(
-        "{}; {path}: this project lock is a version 10 record. A refresh or an apply in this project recovers it: the record moves to {aside}, renders whose current bytes match it are replaced, and other files remain conflicts",
+        "{}; {path}: this project lock is a version 10 record. A refresh or an apply in this project recovers it unless it says why it cannot: the record moves to {aside}, renders whose current bytes match it are replaced, and other files remain conflicts. Keep the moved record: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well",
         lock_version_refused(path, Some(10))
     )]
     LegacyProjectLock { path: PathBuf, aside: PathBuf },

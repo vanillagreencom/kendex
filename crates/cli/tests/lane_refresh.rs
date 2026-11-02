@@ -112,6 +112,10 @@ fn every_project_writer_refuses_before_writes_and_the_unmarked_control_lands() {
             "",
             vec!["refresh", "--project-path", "../main", "--yes", "--leave"],
         ),
+        (
+            "",
+            vec!["update-pi", "--project-path", "../main", "--leave"],
+        ),
         ("", vec!["apply", "--yes", "--leave"]),
         ("", vec!["apply", "--scope", "all", "--yes", "--leave"]),
         (
@@ -756,6 +760,8 @@ fn named_cross_checkout_writes_require_the_existing_override() {
         ("vendor", "apply"),
         ("", "updates"),
         ("vendor", "updates"),
+        ("", "update-pi"),
+        ("vendor", "update-pi"),
     ] {
         for scope in ["project", "all"] {
             let fixture = world();
@@ -782,12 +788,14 @@ fn named_cross_checkout_writes_require_the_existing_override() {
                 target,
                 "--scope",
                 scope,
-                "--yes",
                 "--leave",
                 "--throwaway",
             ];
-            if verb == "updates" {
-                args.push("--apply");
+            match verb {
+                "updates" => args.extend(["--yes", "--apply"]),
+                // `update-pi` asks no question, so it has no `--yes`.
+                "update-pi" => {}
+                _ => args.push("--yes"),
             }
             let before = snapshot(&fixture.root);
             let output = kendex(&fixture, &cwd, &args);
