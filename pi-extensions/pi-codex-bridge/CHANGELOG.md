@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 1.0.1
 
 - `package.json` declares the supported Codex CLI releases as an optional `@openai/codex` peer range, and the bridge reads that range from its own installed copy. Codex 0.163.0 remains the one supported release. Codex 0.166.0 is not supported, because it offers the model Codex's own `apply_patch` file-edit tool, and the bridge allows the model only Pi's tools.
 - An unsupported Codex release is refused with `codex-version-unsupported found=<version> supported=<list>`, which replaces `expected=0.163.0`.
