@@ -869,41 +869,6 @@ fn a_rejected_session_notice_is_marked_by_its_result_never_sent() {
     );
 }
 
-/// R-U6-2 opus L1 and Copilot's crash construction (decisions 187 (2), 188
-/// (d)): the session send is keyed by the notice, so a crash between the
-/// send's settle and the stage's mark replays without a second call. The
-/// job's run sends once and the lane records `sent` under the notice's key;
-/// the stage's notice planted `owed` again (the crash, or a mark the store
-/// refused), the round's reconcile reads that keyed send on the lane and
-/// marks the stage `sent` with no CLI call. Defect caught: the replay
-/// finding no owed record and sending the notice again (the reviewer's
-/// `copilot_cloud_notice_crash_after_send_mark_does_not_send_twice`: six
-/// CLI lines for three).
-#[test]
-fn a_crash_between_the_sends_settle_and_the_stages_mark_replays_without_a_second_call() {
-    let (w, item) = validation_world();
-    let (dir, ended) = w.validated(&[]);
-    assert_eq!(ended["notice"], "sent", "{ended}");
-    let key = w.stage(&item, &dir)["notice"]["key"].clone();
-    let record = w.lane(CLOUD)["directive_send"].clone();
-    assert_eq!(record["result"], "sent", "{record}");
-    assert_eq!(record["key"], key, "{record}");
-    assert_eq!(w.cli_calls(), one_call_of(&w, "validation-end run="));
-    w.owe_notice(&item, &dir);
-    w.reconcile_round();
-    assert_eq!(
-        w.cli_calls().len(),
-        3,
-        "a send already settled under this notice's key is not made again"
-    );
-    assert_eq!(w.stage(&item, &dir)["notice"]["owner"], "sent");
-    assert_eq!(
-        w.lane(CLOUD)["directive_send"],
-        record,
-        "the lane's record as it stood"
-    );
-}
-
 /// The three lines the one CLI call of the notice logs: the argv, the
 /// account, and the notice's first line starting `prefix`.
 fn one_call_of(w: &World, prefix: &str) -> Vec<String> {
@@ -921,15 +886,16 @@ fn one_call_of(w: &World, prefix: &str) -> Vec<String> {
     calls
 }
 
-/// Decision 188 (d), the replay's reading table: a notice still owed reads
-/// the lane's `directive_send` first and acts on what this notice's own
-/// send settled. Settled `archived` under this key takes the terminal mark
-/// with no call; owed under this key waits, the stage left owed with no
-/// call; settled under another key, or no record at all, is the first
-/// call's case and sends. Defect caught: a replay taking another send's
-/// result as this notice's, or waiting on a send that was never its own.
+/// Decision 188 (d), the replay's reading table, read where the send's
+/// owed write decides (decision 193 (a)): a notice still owed acts on what
+/// the lane's `directive_send` says of this notice's own send. Settled
+/// `archived` under this key takes the terminal mark with no call; owed
+/// under this key waits, the stage left owed with no call; settled under
+/// another key, or no record at all, is the first call's case and sends.
+/// Defect caught: a replay taking another send's result as this notice's,
+/// or waiting on a send that was never its own.
 #[test]
-fn a_replay_reads_the_lanes_keyed_send_before_it_sends() {
+fn a_replay_acts_on_what_the_lanes_send_under_its_key_settled() {
     let (w, item) = validation_world();
     let (dir, _) = w.validated(&[]);
     let key = w.stage(&item, &dir)["notice"]["key"]
@@ -968,5 +934,145 @@ fn a_replay_reads_the_lanes_keyed_send_before_it_sends() {
     assert_eq!(
         record["key"], key,
         "the send made under this notice's key: {record}"
+    );
+}
+
+impl World {
+    /// The mailbox program behind a wrapper that runs the second walker of
+    /// the notice, the round's reconcile, while the first walker's send is
+    /// in flight: the first's owed stage written, its program started and
+    /// not yet reading the notice file. It keeps the fleet file as it stood
+    /// before and after the second walker (`before.json`, `after.json`),
+    /// the item file after it (`item.json`) and the second walker's exit
+    /// status (`rc`), under `dir`, then runs the real program with the
+    /// first walker's arguments.
+    fn second_walker_lane_mail(&self, dir: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let request = dir.join("reconcile.json");
+        std::fs::write(
+            &request,
+            json!({"op": "reconcile-round", "round_id": ROUND}).to_string(),
+        )
+        .unwrap();
+        let wrapper = dir.join("lane-mail-second-walker");
+        script(
+            &wrapper,
+            &format!(
+                "#!/bin/bash\n\
+                 set -u\n\
+                 d={dir}\n\
+                 cp -- {fleet} \"$d/before.json\"\n\
+                 LANE_MAIL_CLI={real} {bin} --no-private-env --state-dir {root} op --item {CLOUD} --request {request} >\"$d/walker.json\" 2>\"$d/walker.err\"\n\
+                 printf '%s\\n' \"$?\" >\"$d/rc\"\n\
+                 cp -- {fleet} \"$d/after.json\"\n\
+                 cp -- {item} \"$d/item.json\"\n\
+                 exec {real} \"$@\"\n",
+                dir = dir.display(),
+                real = self.lane_mail.display(),
+                fleet = self.fleet_path().display(),
+                bin = binary().display(),
+                root = self.root.display(),
+                request = request.display(),
+                item = self
+                    .root
+                    .join(format!("workflow-state-{CLOUD}.json"))
+                    .display(),
+            ),
+        );
+        wrapper
+    }
+}
+
+/// Decision 193 (a) (R-U6-3 follow-up 2): two walkers of one notice, the
+/// job's own send and the round's reconcile, make one send, because the
+/// read of the lane's send under the notice's key is the owed write's own,
+/// inside the store's lock, and never a walker's reading made before the
+/// other's settle. The reconcile meets the job's send in flight (the lane
+/// owed under this key, the job's program not yet reading its notice
+/// file): it holds, writes nothing (the fleet file byte for byte as it
+/// was), runs no CLI, and removes only its own notice file, so the job's
+/// program still reads the job's (the one CLI call carries the notice's
+/// text); the stage it read is still owed. The job then settles `sent` and
+/// marks, and no notice file is left. The reconcile meets the settled send
+/// with a reading of the stage made before the job's mark (the stage
+/// planted owed again): it takes the settled result as this notice's,
+/// marks `sent`, runs no CLI and leaves the lane's record as it stood. The
+/// call log holds the one `send`. Defect caught: the read made outside
+/// the lock, where a walker that read "no send of mine" before the other's
+/// settle writes a second owed stage over the settled record (the owed
+/// refusal reads only a standing owed send) and sends the notice again:
+/// six CLI lines for three; and one notice file shared by the walkers,
+/// which the second removes under the first's program, so the first's send
+/// fails and the stage is marked `unsent`.
+#[test]
+fn two_walkers_of_one_notice_make_one_send_the_later_reading_the_earliers_inside_the_write() {
+    let (w, item) = validation_world();
+    let dir = w._aux.path().join("second-walker");
+    let wrapper = w.second_walker_lane_mail(&dir);
+    let (run_dir, ended) = w.validated(&[("LANE_MAIL_CLI", wrapper.to_str().unwrap())]);
+    assert_eq!(ended["notice"], "sent", "{ended}");
+    let key = w.stage(&item, &run_dir)["notice"]["key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The second walker ran, met the first's send owed under this key,
+    // held, and wrote nothing.
+    let text = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
+    assert_eq!(text("rc").trim(), "0", "{}", text("walker.err"));
+    let before: Value = serde_json::from_str(&text("before.json")).unwrap();
+    let in_flight = before["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["item"] == CLOUD)
+        .cloned()
+        .unwrap()["directive_send"]
+        .clone();
+    assert_eq!(in_flight["result"], "owed", "{in_flight}");
+    assert_eq!(in_flight["key"], key, "{in_flight}");
+    assert_eq!(
+        text("before.json"),
+        text("after.json"),
+        "the fleet file as it stood: nothing written by the second walker"
+    );
+    let during: Value = serde_json::from_str(&text("item.json")).unwrap();
+    let stage = during["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["run_dir"] == run_dir)
+        .cloned()
+        .unwrap();
+    assert_eq!(stage["notice"]["owner"], "owed", "held: {stage}");
+    // The first walker settled and marked.
+    let record = w.lane(CLOUD)["directive_send"].clone();
+    assert_eq!(record["result"], "sent", "{record}");
+    assert_eq!(record["key"], key, "{record}");
+    assert_eq!(w.stage(&item, &run_dir)["notice"]["owner"], "sent");
+    assert_eq!(w.cli_calls(), one_call_of(&w, "validation-end run="));
+    let notice_files = std::fs::read_dir(w.root.join("validate"))
+        .map(|d| {
+            d.filter(|e| {
+                e.as_ref()
+                    .is_ok_and(|e| e.file_name().to_string_lossy().ends_with(".notice"))
+            })
+            .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(notice_files, 0, "each walker removed its own notice file");
+    // The second walker again, its reading of the stage made before the
+    // first's mark: the settled send is this notice's, no second call.
+    w.owe_notice(&item, &run_dir);
+    w.reconcile_round();
+    assert_eq!(
+        w.cli_calls().len(),
+        3,
+        "a send settled under this notice's key is read inside the write and not made again"
+    );
+    assert_eq!(w.stage(&item, &run_dir)["notice"]["owner"], "sent");
+    assert_eq!(
+        w.lane(CLOUD)["directive_send"],
+        record,
+        "the lane's record as the first walker left it"
     );
 }

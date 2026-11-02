@@ -1594,6 +1594,17 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                     .map(|_| ())
                     .map_err(|e| e.to_string())
             };
+            // U7a: the hosted arms' reads (step7-map § A1): `gh` as the GitHub
+            // duty names it, the account roster for a draft pull request's
+            // credit, and the connected repositories for a record naming no
+            // repository of its own.
+            let gh = std::path::PathBuf::from("gh");
+            let roster = || accounts::roster(&ctx.settings, None);
+            let hosted_reads = super::hosted::Reads {
+                gh: &gh,
+                roster: &roster,
+                repos: &ctx.settings.reads.connected_repos,
+            };
             let lanes = super::lanes::observe(&super::lanes::Pass {
                 fleet: &fleet,
                 readers: &readers,
@@ -1607,6 +1618,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 scripts: &legacy.scripts,
                 route: &route,
                 wall_pauses: &wall_pauses,
+                hosted: &hosted_reads,
             });
             absorb(&mut produced, lanes);
         }

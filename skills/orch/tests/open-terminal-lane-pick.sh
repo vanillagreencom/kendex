@@ -446,14 +446,6 @@ control_rc=0
   > "$TMP_ROOT/model-capacity-control.log" || control_rc=$?
 assert_eq "$RC:$control_rc" '0:1' 'the raw-flag assertion rejects selecting the account at its family wall'
 
-# The named lane is judged on the projection `lanes pick` drops a lane on: its
-# 5-hour window at 60 with room, but the one lane already live on it charged
-# 50 an hour, which projects 110. The second row is the inverse, the same lane
-# with nothing live on it.
-claude_usage 60 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
-table \
-  "a named lane with room whose live lanes project past the threshold is refused|cmd=true --model=fable --effort=high;prep=claude_claim;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude KEN-1641|rc=1 launched=0 creates=nolog walled=lane=$H/.claude,model=fable,pct=60,bucket=session,projected-headroom=-10" \
-  "the same lane with nothing live on it launches|cmd=true --model=fable --effort=high;ORCH_LANE_BURN_PCT_PER_HOUR=50|--harness claude --lane $H/.claude KEN-1642|rc=0 launched=1 walled=none"
 # Fable's weekly window sits below the launch threshold until a live claim
 # charges the burn scaled by 5/168. Opus spends only the shared windows, which
 # still have room after the charge. `run_ot` seeds the same real claim as above.

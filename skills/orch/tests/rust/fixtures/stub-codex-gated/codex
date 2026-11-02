@@ -1,0 +1,35 @@
+#!/bin/bash
+# A gated stub Codex for the orch-runtime live-effect tests, named `codex`
+# so the kernel records the harness's own process name for it; the `#!`
+# line names bash directly, since `env` would exec bash under its own name.
+# It draws Codex's composer line (`› Ask Codex to do anything`, the marker
+# the judge reads the pane idle by) at once and writes its rollout only
+# after the row releases the FIFO `rollout-gate` under CODEX_HOME: until
+# then the runner stands at its composer with no session file, the state a
+# real Codex account's session is in between its composer and its first
+# rollout write, which the runtime's binding reads as `session-unbound`. A
+# gate the row never made ends this process, so the runtime reads the runner
+# exited rather than a start that was never held. The rollout is Codex's
+# shape as the native run recorded it
+# (`tmp/orch-rebuild/native/run2/codex/home/sessions`): under
+# `sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl`, a `session_meta` row
+# naming the id and this directory, then one `event_msg` row completing a
+# `UserMessage` item per line it reads on stdin, so a delivery to it is
+# confirmed the way the runtime confirms one to the real harness. It
+# launches no model and reaches no account; it stands until its stdin
+# closes, which a kill-server or a window kill does.
+printf '\xe2\x80\xba Ask Codex to do anything\n'
+home="${CODEX_HOME:?}"
+read -r _ < "$home/rollout-gate" || exit 4
+id="stub-$$"
+day="$home/sessions/$(date -u +%Y/%m/%d)"
+mkdir -p "$day" || exit 4
+rollout="$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$id.jsonl"
+printf '{"timestamp":"%s","type":"session_meta","payload":{"id":"%s","cwd":"%s","parent_thread_id":null,"source":"cli"}}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$id" "$PWD" > "$rollout"
+while IFS= read -r line; do
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"%s-%s","content":[{"type":"text","text":"%s"}]}}}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$id" "$RANDOM" "$escaped" >> "$rollout"
+done

@@ -258,20 +258,34 @@ if [[ -z "$LANE_HOST" ]]; then
   [[ "$host_rc" -eq 0 ]] || { ot_message host-resolve-failed "exit=$host_rc" >&2; exit 1; }
 fi
 preference_host="$LANE_HOST"
-# Prints the `lanes pick --json` record for pick_record_env.
-# Returns the helper's status, or local status 6 when a successful API-credit
-# pick conflicts with the requested harness pool.
+# The auto pick, asked of the orch runtime's `accounts pick`, the one judge
+# (its `--fleet` target the state --state-dir names, else the checkout's
+# own): the reply carries `lanes pick`'s exit by number and the record it
+# judged, so the callers read the verdict they read before. Prints the
+# record for pick_record_env. Returns the judge's status, or local status 6
+# when a successful API-credit pick conflicts with the requested harness
+# pool: the judge hands an `api-credit` pool to `lanes pick` and answers for
+# the harness it was asked about, so the pool rule stays this comparison. A
+# runtime that fails or answers no number is `lane-judge-failed`, status 7,
+# the judge's own refusal.
 pick_auto_lane() {
-  local model_args=() state_env=() pick_harness="$LANE_HARNESS" record rc=0
+  local model_args=() pct_args=() pick_harness="$LANE_HARNESS" reply record rc=0
   # An explicit auto pool cannot substitute plan room for Pi API credit.
   # Preference entries already name the harness whose model they spend.
   if [[ "$PREFERENCE_ACTIVE" != true && "$(lane_pick_pool "$LAUNCH_HARNESS" "$LAUNCH_MODEL")" == api-credit ]]; then
     pick_harness="$LAUNCH_HARNESS"
   fi
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--native-model "$LAUNCH_MODEL")
-  [[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")
-  record="$(env ${state_env[@]+"${state_env[@]}"} ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --harness "$pick_harness" \
-    ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"} "$@" --json)" || rc=$?
+  # A caller's own --max-pct (the preference's room probe) is the one bound
+  # the verb takes.
+  pct_args=(${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"})
+  case " $* " in *' --max-pct '*) pct_args=() ;; esac
+  reply="$(ORCH_LANE_HOST="$LANE_HOST" "$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet \
+    --harness "$pick_harness" ${pct_args[@]+"${pct_args[@]}"} ${model_args[@]+"${model_args[@]}"} "$@")" || rc=$?
+  [[ "$rc" -eq 0 ]] || { ot_message lane-judge-failed lane=auto "harness=$pick_harness" "exit=runtime:$rc" >&2; return 7; }
+  rc="$(jq -er '.result.exit | numbers' <<<"$reply")" \
+    && record="$(jq -r 'if .result.record == null then "" else (.result.record | tojson) end' <<<"$reply")" \
+    || { ot_message lane-judge-failed lane=auto "harness=$pick_harness" exit=invalid-reply >&2; return 7; }
   printf '%s\n' "$record"
   [[ "$rc" -eq 0 ]] || return "$rc"
   [[ "$pick_harness" == "$LANE_HARNESS" ]] || return 6
@@ -1210,39 +1224,34 @@ host_account_read() { # CONFIG_DIR HARNESS
     *) ot_message host-accounts-unanswered "host=$LANE_HOST" "exit=$match_rc" >&2 ;;
   esac
 }
-# The usage judge for a lane the caller NAMED, asked of `lanes pick --lane` on
-# the model the launch passes, with --projected: this launch adds a lane to the
-# account, so it is judged on the wall `--lane auto` judges, the reading plus
-# the expected burn of the lanes already on it. With REPLACES, the item of a
-# fleet lane this relaunch replaces, the question goes to the orch runtime's
-# `accounts pick` instead, which judges the same reading with that lane's
-# charge left out (step6-map A5): a replacement adds no lane. Its reply
-# carries `lanes pick`'s exit by number and the record it judged, so the arms
-# below read either judge alike. Returns 1 with its refusal printed. The block
-# that calls it below says why each answer is what it is.
+# The usage judge for a lane the caller NAMED, asked of the orch runtime's
+# `accounts pick --lane` on the model the launch passes, with --projected:
+# this launch adds a lane to the account, so it is judged on the wall `--lane
+# auto` judges, the reading plus the expected burn of the lanes already on
+# it. With REPLACES, the item of a fleet lane this relaunch replaces, the
+# judge leaves that lane's charge out (step6-map A5): a replacement adds no
+# lane. The reply carries `lanes pick`'s exit by number and the record it
+# judged, so the arms below read the verdict as the legacy call's. Returns 1
+# with its refusal printed. The block that calls it below says why each
+# answer is what it is.
 named_lane_judge() { # [REPLACES]
   local lane_rc=0 lane_record lane_wall lane_bucket lane_projected lane_status lane_detail
-  local lane_refusal lane_cause lane_retry lane_reply
+  local lane_refusal lane_cause lane_retry lane_reply replaces=()
   # `held`, `missing` or `unanswered`, and empty until something asks. Only the
   # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
   LANE_PICK_RECORD=""
   lane_rc=0
-  if [[ -n "${1:-}" ]]; then
-    lane_reply="$(ORCH_LANE_HOST="$LANE_HOST" "$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet \
-      --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" --native-model "$LAUNCH_MODEL" --projected --replaces "$1" \
-      ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"})" || lane_rc=$?
-    [[ "$lane_rc" -eq 0 ]] || { ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=runtime:$lane_rc" >&2; return 1; }
-    # A `null` record is the judge printing none (exit 4, a directory it holds
-    # no row for), read as the empty output the legacy call gave.
-    lane_rc="$(jq -er '.result.exit | numbers' <<<"$lane_reply")" \
-      && lane_record="$(jq -r 'if .result.record == null then "" else (.result.record | tojson) end' <<<"$lane_reply")" \
-      || { ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-reply" >&2; return 1; }
-  else
-    [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; return 1; }
-    lane_record="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
-      --native-model "$LAUNCH_MODEL" --projected ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
-  fi
+  [[ -z "${1:-}" ]] || replaces=(--replaces "$1")
+  lane_reply="$(ORCH_LANE_HOST="$LANE_HOST" "$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet \
+    --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" --native-model "$LAUNCH_MODEL" --projected ${replaces[@]+"${replaces[@]}"} \
+    ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"})" || lane_rc=$?
+  [[ "$lane_rc" -eq 0 ]] || { ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=runtime:$lane_rc" >&2; return 1; }
+  # A `null` record is the judge printing none (exit 4, a directory it holds
+  # no row for), read as the empty output the legacy call gave.
+  lane_rc="$(jq -er '.result.exit | numbers' <<<"$lane_reply")" \
+    && lane_record="$(jq -r 'if .result.record == null then "" else (.result.record | tojson) end' <<<"$lane_reply")" \
+    || { ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-reply" >&2; return 1; }
   if [[ "$lane_rc" == 3 || "$lane_rc" == 5 ]]; then
     lane_refusal="$(jq -r 'if .refusal == null then empty
       elif .refusal.cause == "cloud-credit" or .refusal.cause == "api-credit" then [.refusal.cause, (.refusal.retry_at // "none")] | @tsv
@@ -1424,8 +1433,9 @@ if [[ -n "$LANE" ]]; then
   # sessions silently.
   if lane_value_error "$LANE_ENV"; then exit 1; fi
   # A named lane without a preference pick has not been judged, so usage is
-  # still open for it. `lanes pick --lane` answers it — the one judge, which
-  # also validates the threshold this script only forwards. Without the answer
+  # still open for it. The runtime's `accounts pick --lane` answers it, the
+  # one judge, by `lanes pick`'s exits, which also validates the threshold
+  # this script only forwards. Without the answer
   # a --wake or --relaunch onto a named account whose window is full spends its
   # first turn on a usage banner instead of the session it resumed.
   #

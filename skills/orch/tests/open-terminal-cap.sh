@@ -135,10 +135,12 @@ OT="$REPO/scripts/open-terminal"
 WS="$REPO/scripts/workflow-state"
 # The orch runtime every launch here asks, named by ORCH_RUNTIME_CLI for the
 # shipped script and each mutant copy: the admission is answered admitted,
-# this suite being the cap's; a fleet relaunch's room (`accounts pick`) is
-# this suite's `lanes` stub asked the same question, its answer wrapped as
-# the verb's reply with the exit by number, `--replaces` dropped as the
-# legacy judge has no such word; and `state inspect --fleet` from the reply
+# this suite being the cap's; every lane pick (`accounts pick`: the auto pick,
+# a named lane's judge, a relaunch's room) is the `lanes` a run names, else
+# the launcher's own, asked the same question under the ORCH_STATE_DIR its
+# --state-dir names, its answer wrapped as the verb's reply with the exit by
+# number, `--replaces` dropped as the legacy judge has no such word; and
+# `state inspect --fleet` from the reply
 # a row plants in $OT_RUNTIME_REPLY; with no reply planted the stub is a
 # runtime not set up, exit 69.
 cat > "$TMP_ROOT/orch-runtime" <<'EOF'
@@ -146,17 +148,21 @@ cat > "$TMP_ROOT/orch-runtime" <<'EOF'
 case " $* " in
   *' admit '*) echo '{"ok":true,"result":{"touched":[],"in_scope":[],"rebase":[],"recorded":false}}'; exit 0 ;;
   *' accounts pick '*)
-    args=() skip=false
+    args=() state_env=() skip=""
     for arg in "$@"; do
-      if [[ "$skip" == true ]]; then skip=false; continue; fi
+      if [[ -n "$skip" ]]; then
+        [[ "$skip" != --state-dir ]] || state_env=("ORCH_STATE_DIR=$arg")
+        skip=""
+        continue
+      fi
       case "$arg" in
-        --state-dir | --replaces) skip=true ;;
+        --state-dir | --replaces) skip="$arg" ;;
         accounts | pick | --fleet) ;;
         *) args+=("$arg") ;;
       esac
     done
     rc=0
-    out="$("$LANES_CLI" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
+    out="$(env ${state_env[@]+"${state_env[@]}"} "${LANES_CLI:-$SCRIPT_DIR/lanes}" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
     jq -cn --argjson rc "$rc" --arg out "$out" '{ok: true, result: {exit: $rc, record: (try ($out | fromjson) catch null)}}'
     exit 0 ;;
 esac
@@ -650,12 +656,14 @@ printf '%s\n' "$LANE_A" > "$ROW/pick"
 STATE="" launch one 10 --lane auto CC-1
 assert_eq "rc=$(rc one) state=$(cat "$ROW/pick.state")" "rc=0 state=unset" \
   "an auto pick naming no fleet hands no state directory"
-# Control: a pick that is not handed the state reads no fleet's.
+# Control: a pick that is not handed the state (the verb's --state-dir words,
+# which the runtime reads its fleet from) reads no fleet's.
 STATELESS="$REPO/scripts/open-terminal.stateless"
 cp -p -- "$OT" "$STATELESS"
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-perl -i -pe 'BEGIN { $o = shift } s/\Q$o\E//g' '[[ "$FLEET" != true ]] || state_env=("ORCH_STATE_DIR=$STATE_DIR")' "$STATELESS"
-assert_eq "$(grep -cF 'state_env=("ORCH_STATE_DIR=$STATE_DIR")' "$STATELESS" || true)" "0" \
+perl -i -pe 'BEGIN { $o = shift; $n = shift } s/\Q$o\E/$n/g' \
+  '${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet' 'accounts pick --fleet' "$STATELESS"
+assert_eq "$(grep -cF 'WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet' "$STATELESS" || true)" "0" \
   "control removed the state hand-off from the copy"
 row seat-state-control
 printf '%s\n' "$LANE_A" > "$ROW/pick"

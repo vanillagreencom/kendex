@@ -42,6 +42,8 @@ pub mod claim;
 pub mod context;
 pub mod events;
 pub mod github;
+// U7a: the hosted readings of the lane duty (step7-map § A1).
+pub mod hosted;
 pub mod lanes;
 pub mod mail;
 pub mod overseer;

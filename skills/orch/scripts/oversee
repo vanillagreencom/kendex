@@ -86,48 +86,70 @@
 #        preference that names two harnesses is never handed one harness's
 #        spelling for the other. The launch is made trusted for --cwd
 #        first, refusing `launch-trust-missing` where the entry cannot be made.
-#     6. Open the session through the adapter's `create`, at its base index,
-#        also with --predecessor, once the command and its identity are written as the
-#        record's `pending` successor (a write that fails refuses
-#        `record-unwritten step=pending` with nothing opened) and the --cwd
-#        checkout is fast-forwarded to its base branch's origin head through
-#        `sync-base` (lib/overseer-launch.sh § ol_checkout_sync), inside
-#        ORCH_OVERSEER_SYNC_TIMEOUT_S seconds. A checkout that is dirty,
-#        diverged, off its base branch, not synced inside that bound or
-#        otherwise refused is the notice `checkout-unsynced cause=<key>
+#     6. Fast-forward the --cwd checkout to its base branch's origin head
+#        through `sync-base` (lib/overseer-launch.sh § ol_checkout_sync),
+#        inside ORCH_OVERSEER_SYNC_TIMEOUT_S seconds. A checkout that is
+#        dirty, diverged, off its base branch, not synced inside that bound
+#        or otherwise refused is the notice `checkout-unsynced cause=<key>
 #        path=<checkout> fix=<what clears it>` on stderr and, its path left
 #        out, in the fleet log, and the session opens on the tree as it
-#        stands. With --predecessor the predecessor still runs in that
-#        checkout: a succession abandoned after the sync leaves it on the
-#        fast-forwarded tree, and this launcher calls the moved helpers for
-#        the rest of its run. Then print
-#        `overseer-launch` naming the form, lane, session and window, and
-#        write the session record before the first turn: runtime tmux, the
-#        server, the pane, its window, the launch identity (harness, account,
-#        home, model, effort and directory, as the command built in step 5
-#        carries them), the launch line and generation 1, or one past the
-#        record a stopped fleet left. A record
-#        that cannot be written closes the session and refuses
-#        `record-unwritten`, with --predecessor before the predecessor is
+#        stands. Then hand the launch to the orch runtime as one
+#        `start-controller` request (`orch-runtime op --fleet`): the walk's
+#        pick and launch identity, the line built in step 5 and its bypass
+#        posture as the record's `controller`, the brief naming --handoff
+#        as `brief_file` (written under the fleet state directory's
+#        `intents/`, where the runtime reads it at delivery, a reconcile
+#        after this command ended included), and the fleet watch's launch line as
+#        ../workflows/oversee.md § 4 spells it as `watch`: the `oversee-watch`
+#        entry beside this script, `--repeat 60 --state` the fleet state,
+#        `--interval 240 --since` the first lane record's `launched_at` or
+#        this launch's time, `--harness` the entry's, `--repo` the
+#        checkout's repository where one resolves, and the step-5 flags
+#        after `--`. The runtime opens the session at the base index through
+#        the overseer-host provider, brings it to its composer, delivers the
+#        brief, launches the watch detached through the job launcher and
+#        writes the session record: the identity, the line, the watch and
+#        generation 1, or one past the record a stopped fleet left. A
+#        runtime that refuses the request, or is not set up (the wrapper's
+#        `setup-required` line, exit 69), refuses `start-refused` naming its
+#        key, and nothing opens in its place. A start the runtime recorded
+#        and could not confirm (a watch it could not launch or claim, a
+#        session it could not bring to its brief) refuses
+#        `controller-unconfirmed` naming the intent, the note and its cause:
+#        the record names no controller, and the runtime's reconcile runs
+#        the step again.
+#     7. Read the record the runtime wrote and print `overseer-launched`
+#        naming its session, window, server, generation and lane, at exit 0.
+#     With --predecessor, steps 6 and 7 are lib/overseer-launch.sh's
+#        ol_succession, the one `oversee-succeed` runs: the command and its
+#        identity are written as the record's `pending` successor (a write
+#        that fails refuses `record-unwritten step=pending` with nothing
+#        opened), the checkout is fast-forwarded as above (the predecessor
+#        still runs in it: a succession abandoned after the sync leaves it
+#        on the fast-forwarded tree, and this launcher calls the moved
+#        helpers for the rest of its run), the session opens through the
+#        adapter's `create` beside the predecessor, `overseer-launch` names
+#        the form, lane, session and window, and the record names the new
+#        session before its first turn (a write that fails closes the
+#        session and refuses `record-unwritten` before the predecessor is
 #        stopped: an overseer nothing records is one the hooks and the watch
-#        cannot tell from any other session, and a live-overseer check that
-#        read the stopped predecessor's record would open a second overseer
-#        beside it.
-#     7. Verify the session inside --wait-secs, as a succession does: read its
-#        account, wait for a running turn through `inspect --launch`, read the
-#        account again. `overseer-wrong-lane`, `overseer-dialog` and
-#        `overseer-not-working` each close the session, put the record back
-#        and refuse. `overseer-lane-unobserved` is a notice: the launch stands.
-#     8. With --predecessor, stop the predecessor through the adapter with
-#        the successor named: on tmux the successor stays at the base index
-#        and the predecessor's window closes. That is the commit
-#        point, so HUP, INT and TERM are ignored across it; a stop that fails
-#        closes the successor, puts the record back and refuses
-#        `close-failed`, the predecessor still running. Run from inside the
-#        predecessor's own window, the stop ends this command with it.
-#     The fleet's standing watch is the overseer session's to start and
-#        stop through the orch runtime (references/watch-delivery.md); a
-#        launch or a succession neither starts nor hands it over.
+#        cannot tell from any other session). The session is verified
+#        inside --wait-secs: its account read, a running turn awaited
+#        through `inspect --launch`, the account read again;
+#        `overseer-wrong-lane`, `overseer-dialog` and `overseer-not-working`
+#        each close the session, put the record back and refuse, and
+#        `overseer-lane-unobserved` is a notice. Then the predecessor is
+#        stopped through the adapter with the successor named: on tmux the
+#        successor stays at the base index and the predecessor's window
+#        closes. That is the commit point, so HUP, INT and TERM are ignored
+#        across it; a stop that fails closes the successor, puts the record
+#        back and refuses `close-failed`, the predecessor still running. Run
+#        from inside the predecessor's own window, the stop ends this
+#        command with it.
+#     The fleet's standing watch is the overseer session's: a first launch
+#        starts it through the runtime from the `watch` words above, and a
+#        succession neither starts nor hands it over, the scheduler
+#        outliving the controller (references/watch-delivery.md).
 #     On success `overseer-launched` names the session, window, generation
 #     and lane, and the predecessor where one was stopped, at exit 0.
 #   register writes the session record for the session this command runs in,
@@ -174,12 +196,16 @@
 #            full-bypass words and the brief naming --handoff, in the
 #            recorded cwd. A harness with no resume form
 #            there, pi, which resumes a session file, refuses
-#            `resume-unsupported`. Steps 6 and 7 follow as on a first
-#            launch: the record names the new pane, its window and server, and
-#            the fresh command for the same identity as its launch line, the
-#            one a successor or a dead-pane relaunch replays. Prints `resumed`
-#            naming the session, window, server, generation, lane and native
-#            session id.
+#            `resume-unsupported`. The session then opens as a succession's
+#            does, through the adapter's `create` at the base index, its
+#            record written and verified inside --wait-secs as --predecessor
+#            above describes: the runtime's `start-controller` builds the
+#            session's command from typed fields and has no resume form by
+#            session id, so a resume opens its own. The record names the new
+#            pane, its window and server, and the fresh command for the same
+#            identity as its launch line, the one a successor or a dead-pane
+#            relaunch replays. Prints `resumed` naming the session, window,
+#            server, generation, lane and native session id.
 #
 # Options:
 #   --session NAME   The tmux session the window opens in (default
@@ -252,7 +278,10 @@ message() { # KEY FIELD=VALUE...
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
     model-window-unknown) text='The Claude adapter could not read the family or default handoff budget. Nothing was launched. Check the adapter error before this message.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
-    launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
+    launch-failed) text='The session could not be opened or read; the step field names the call that failed. step=runtime is the orch runtime recording the start failed, its note field the cause.' ;;
+    start-refused) text='The orch runtime refused the start, or could not run: the key field is the first word of its own line, which follows; setup-required names the setup to run. Nothing was opened in its place.' ;;
+    controller-unconfirmed) text='The orch runtime recorded the start and could not confirm it: the note field names the step it holds at (watch-launch-failed, watch-unclaimed or watch-claim-unreadable for the fleet watch; a session step otherwise) and cause its cause. The record names no controller, and the runtime'\''s reconcile runs the step again from the intent named. A session the start opened stands at its composer under the record'\''s pending runner.' ;;
+    repo-unresolved) text='The checkout'\''s repository resolved to a value that is not owner/name, so the fleet watch'\''s --repo cannot be named. Nothing was launched. Set GH_REPO, or fix the origin remote.' ;;
     record-unwritten) text='The session record could not be written to the fleet state, so the session was closed again, or at step=pending never opened, and a predecessor keeps running: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
     overseer-launch) text='The command is built and the session opened; the form names how the picked lane reaches the harness.' ;;
     overseer-dialog) text='The session stopped at a dialog nobody is there to answer; it was closed and the record put back. The pane line follows.' ;;
@@ -335,7 +364,17 @@ matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
 
 DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
 export DEP_ERR
-trap 'rm -f -- "$DEP_ERR"' EXIT
+# A first launch's request file, written by start_controller below and read
+# by the runtime inside the request's own call. The brief file the request
+# names is not removed here: the runtime records its path in the intent and
+# reads it when it delivers the first turn, and a start held before delivery
+# (a session not yet bound, a pane unobservable, an interrupted launch) is
+# delivered by a later reconcile, after this process ended. The brief lives
+# under the fleet state directory's intents/ beside the runtime's own
+# per-intent files and leaves with that directory at the state's prune
+# (decision 198).
+START_REQUEST=""
+trap 'rm -f -- "$DEP_ERR" ${START_REQUEST:+"$START_REQUEST"}' EXIT
 
 # A launch runs from the directory the session starts in: the settings it
 # loads and the fleet state its record goes into are that repository's, the
@@ -363,6 +402,12 @@ source "$SCRIPT_DIR/lib/overseer-launch.sh"
 PREFERENCE_ACTIVE=false
 # shellcheck source=lib/tmux-server.sh
 source "$SCRIPT_DIR/lib/tmux-server.sh"
+# shellcheck source=lib/gh-repo.sh
+source "$SCRIPT_DIR/lib/gh-repo.sh"
+# The orch runtime a first launch hands its start-controller request to; the
+# wrapper beside this script runs the binary scripts/setup placed for these
+# sources.
+ORCH_RUNTIME="${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}"
 
 
 # The runtime, held to tmux by the library both launchers share: this
@@ -536,8 +581,6 @@ if [[ "$COMMAND" == register || -n "$PREDECESSOR" ]]; then
 else
   [[ -n "$SESSION_NAME" ]] || SESSION_NAME="${ORCH_TMUX_SESSION:-}"
   if [[ -z "$SESSION_NAME" ]]; then
-    # shellcheck source=lib/gh-repo.sh
-    source "$SCRIPT_DIR/lib/gh-repo.sh"
     repo_rc=0
     repo_name="$(GH_REPO= orch_resolve_gh_repo "$PROJECT_ROOT")" || repo_rc=$?
     case "$repo_rc" in
@@ -743,6 +786,72 @@ refuse_unverified() {
   esac
 }
 
+# A first launch is the runtime's `start-controller` (header step 6): this
+# script hands on what it computed (the walk's pick and launch identity, the
+# line it built and its bypass posture, the brief, and the fleet watch's
+# words as the workflow's launch block spells them) and the runtime mints
+# the record, opens the session, delivers the brief, launches the watch and
+# publishes the controller. A runtime that is not set up refuses the launch;
+# no session is opened in its place. The reply's effect report carries the
+# recorded outcome: confirmed, with the record to read; unconfirmed, held
+# with its note; failed before anything opened, with its note.
+start_controller() {
+  local state_abs since repo repo_rc=0 watch_words reply rc=0 key outcome note cause intent fields brief
+  ol_checkout_sync "$CWD" || ol_checkout_notice
+  state_abs="$STATE_PATH"
+  [[ "$state_abs" == /* ]] || state_abs="$PWD/$state_abs"
+  # `--since`: the first lane record's launched_at, else this launch's time
+  # (../workflows/oversee.md § 4).
+  since="$(jq -r '[.lanes[]? | .launched_at | strings] | min // empty' "$STATE_PATH" 2>"$DEP_ERR")" \
+    || die state-unwritable "path=$STATE_PATH"
+  [[ -n "$since" ]] || since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # `--repo`: the checkout's own repository; the connected repositories are
+  # the runtime's own setting. A checkout naming none passes no --repo.
+  repo="$(orch_resolve_gh_repo "$PROJECT_ROOT")" || repo_rc=$?
+  case "$repo_rc" in
+    0) ;;
+    1) repo="" ;;
+    *) die repo-unresolved "repo=$repo" ;;
+  esac
+  START_REQUEST="$(mktemp)" || die launch-failed step=mktemp
+  # The brief, under the state directory's intents/ (the EXIT trap above says
+  # why), named by this launch's stamp and pid and created exclusively, so two
+  # launches never share one file and no file is written over.
+  brief="${state_abs%/*}/intents"
+  mkdir -p -- "$brief" || die launch-failed step=brief
+  brief="$brief/start-controller.$(date -u +%Y%m%dT%H%M%SZ).$$.brief"
+  ( set -o noclobber && printf '%s\n' "$OL_BRIEF" > "$brief" ) || die launch-failed step=brief
+  # The words as a JSON array: `--args` takes each as one positional string,
+  # so a flag word crosses whole; `--` ends jq's own option parsing.
+  watch_words="$(jq -n '$ARGS.positional' --args -- "$SCRIPT_DIR/oversee-watch" --repeat 60 --state "$state_abs" \
+    --interval 240 --since "$since" --harness "$OL_HARNESS" ${repo:+--repo "$repo"} -- ${OL_FLAGS[@]+"${OL_FLAGS[@]}"} 2>"$DEP_ERR")" \
+    || die launch-failed step=request
+  jq -cn --argjson identity "${OL_IDENTITY:-null}" --arg line "$OL_CMD" --arg brief "$brief" --argjson watch "$watch_words" '
+    {op: "start-controller",
+     controller: (($identity // {}) + {launch_line: $line, permission: "bypass"}),
+     brief_file: $brief,
+     watch: $watch}' > "$START_REQUEST" 2>"$DEP_ERR" || die launch-failed step=request
+  reply="$(ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" "$ORCH_RUNTIME" op --fleet --request "$START_REQUEST" 2>"$DEP_ERR")" || rc=$?
+  if (( rc )); then
+    key="$(sed -n '1s/^orch-runtime: \([^ ]*\).*/\1/p' "$DEP_ERR")"
+    die start-refused "key=${key:-runtime-unavailable}" "exit=$rc"
+  fi
+  outcome="$(jq -r '.result.effect.report.intent.outcome // empty' <<<"$reply" 2>"$DEP_ERR")" || die start-refused key=reply-unread
+  [[ -n "$outcome" ]] || die start-refused key=reply-unread
+  fields="$(jq -r '.result.effect.report.intent | [(.id // "none"), (.observation.note // "none"), (.observation.cause // "none")] | join("\u001f")' <<<"$reply" 2>"$DEP_ERR")" \
+    || die start-refused key=reply-unread
+  IFS=$'\x1f' read -r intent note cause <<<"$fields"
+  case "$outcome" in
+    confirmed) ;;
+    unconfirmed) die controller-unconfirmed "intent=$intent" "note=$note" "cause=$cause" ;;
+    *) die launch-failed step=runtime "outcome=$outcome" "note=$note" ;;
+  esac
+  ol_record_read || die state-unwritable "path=$STATE_PATH"
+  fields="$(jq -r '[(.pane // ""), (.window // ""), (.generation // "")] | map(tostring) | join("\u001f")' <<<"$OL_PRIOR" 2>"$DEP_ERR")" \
+    || die state-unwritable "path=$STATE_PATH"
+  IFS=$'\x1f' read -r SESSION OL_WINDOW OL_GENERATION <<<"$fields"
+}
+
 SESSION=""
 if [[ -n "$PREDECESSOR" ]]; then
   # A succession is lib/overseer-launch.sh's ol_succession, the one
@@ -758,16 +867,21 @@ if [[ -n "$PREDECESSOR" ]]; then
       *) refuse_unverified ;;
     esac
   fi
-else
-  # A first launch or a resume opens at the base index, and a record it
-  # cannot write closes it again: nothing else would tell it from any other
-  # session.
-  ol_session_open "$CWD" overseer "${RESUME_LINE:-$OL_CMD}" --session "$SESSION_NAME" || abandon launch-failed "step=$OL_REASON"
+elif [[ "$COMMAND" == resume ]]; then
+  # A resume opens the recorded session's resume form itself, at the base
+  # index, and a record it cannot write closes it again: nothing else would
+  # tell it from any other session. The runtime's start-controller builds a
+  # session's command from typed fields and has no resume form by session id
+  # (header, resume), so this route keeps the library's session path.
+  ol_session_open "$CWD" overseer "$RESUME_LINE" --session "$SESSION_NAME" || abandon launch-failed "step=$OL_REASON"
   ol_succession_hook opened
   ol_record_write "$OL_RUNTIME" "$SESSION" "$OL_WINDOW" "$OL_SERVER" "$OL_IDENTITY" "$OL_CMD" \
     || abandon record-unwritten field=overseer step=write
   ol_session_verify "$SESSION" "$OL_LANE_VAR" "$lane_dir" "$OL_FORM" "$WAIT_SECS" || refuse_unverified
   ol_succession_hook verified
+else
+  trap - HUP TERM INT
+  start_controller
 fi
 trap - HUP TERM INT
 if [[ "$COMMAND" == resume ]]; then

@@ -196,8 +196,19 @@ pub enum Event {
         report: String,
         cause: String,
     },
-    /// `oversee-watch:2735`, `age` in seconds.
-    LaneStalled { item: String, age: u64 },
+    /// `oversee-watch:2735` and `lib/watch-host-kinds.sh:420`, `age` in
+    /// seconds, `state` the cloud lane's `finished` or `out-of-credit`
+    /// where its pull request or account read one.
+    LaneStalled {
+        item: String,
+        age: u64,
+        state: Option<String>,
+    },
+    // U7a: the hosted readings' lines (step7-map § A1).
+    /// `lib/watch-host-kinds.sh:443`: a stalled cloud lane closed through
+    /// `lane-close` once its directive stood unanswered past the bound,
+    /// `directive_age` the seconds since that directive was sent.
+    CloudStallClosed { item: String, directive_age: u64 },
     /// `oversee-watch:3178`.
     OwnerAskResolved { re: String, by: String, id: String },
     /// `oversee-watch:3179`.
@@ -485,7 +496,20 @@ impl Event {
             } => format!(
                 "EVENT refresh-failing {repo} runs=2 last={last} since={since} report={report} cause={cause}"
             ),
-            Event::LaneStalled { item, age } => format!("EVENT lane-stalled {item} age={age}"),
+            Event::LaneStalled { item, age, state } => {
+                let state = state
+                    .as_deref()
+                    .map(|s| format!(" state={s}"))
+                    .unwrap_or_default();
+                format!("EVENT lane-stalled {item} age={age}{state}")
+            }
+            // U7a: the hosted readings' render arm.
+            Event::CloudStallClosed {
+                item,
+                directive_age,
+            } => {
+                format!("EVENT cloud-stall-closed {item} directive_age={directive_age}")
+            }
             Event::OwnerAskResolved { re, by, id } => {
                 format!("EVENT owner-ask-resolved {re} by={by} id={id}")
             }

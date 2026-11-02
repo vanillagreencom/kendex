@@ -1323,8 +1323,27 @@ fn every_event_renders_to_the_legacy_bytes() {
             Event::LaneStalled {
                 item: s("KEN-1"),
                 age: 3601,
+                state: None,
             },
             "EVENT lane-stalled KEN-1 age=3601",
+        ),
+        // U7a: the hosted readings' lines (step7-map § A1).
+        // lib/watch-host-kinds.sh:420, the state word a ready pull request adds
+        (
+            Event::LaneStalled {
+                item: s("CC-1"),
+                age: 0,
+                state: Some(s("finished")),
+            },
+            "EVENT lane-stalled CC-1 age=0 state=finished",
+        ),
+        // lib/watch-host-kinds.sh:443, the bytes references/oversee-events.md:631 pins
+        (
+            Event::CloudStallClosed {
+                item: s("CC-1"),
+                directive_age: 1900,
+            },
+            "EVENT cloud-stall-closed CC-1 directive_age=1900",
         ),
         // oversee-watch:3178
         (
@@ -1691,6 +1710,199 @@ fn every_event_renders_to_the_legacy_bytes() {
     for (event, line) in rows {
         assert_eq!(event.render(), line, "{event:?}");
     }
+}
+
+// U7a: the hosted close through `watch run` (step7-map § A1 row (2)).
+/// The watch over a stalled cloud lane, started through the entry with the
+/// `lane-host` and `lane-close` fixtures under the project's scripts
+/// directory and the `gh` fixture first on `PATH`, `extra` on its
+/// environment.
+fn spawn_hosted_watch_run(dir: &Path, extra: &[(&str, &str)]) -> std::process::Child {
+    let mut command = entry_command(dir, &["--interval", "1"]);
+    for (name, value) in extra {
+        command.env(name, value);
+    }
+    command.spawn().expect("spawn the entry")
+}
+
+/// Decision 192 Q2; `lib/watch-host-kinds.sh:431` (`cloud_stall_close`),
+/// `oversee-watch:1420` (`close_hosted_lane`), the case
+/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned on one pass.
+/// Defect: a close asked again after a crash between the ask and its answer,
+/// so a lane `lane-close` closed is closed again (its archive line lost, a
+/// second `lane-closed` on the log); or a close asked with nothing written
+/// first. Through `watch run` over a cloud lane whose pull request stood
+/// still past the stall bound and whose directive went unanswered past the
+/// cloud stall bound, `lane-close --state-dir [DIR] CC-1` is asked once with
+/// the close marker written before it; the fixture ends the runtime before
+/// it answers, and the next run finds the marker beside the open lane, asks
+/// nothing, and says `lane-close-unconfirmed` as the duty's failure.
+#[test]
+fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let state = state_dir.join(FLEET_FILE_NAME);
+    // The scripts directory the lane duty resolves under the project root,
+    // the two fixtures linked there with their planted answers beside.
+    let scripts = state_dir.join(".agents/skills/orch/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    link_fixture("lane-host/lane-host", &scripts.join("lane-host"));
+    link_fixture("lane-close/lane-close", &scripts.join("lane-close"));
+    std::fs::write(
+        scripts.join("lane-host.json"),
+        json!({"capabilities": {"stdout": "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none"}})
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("lane-close.json"),
+        json!({"exit": 0, "stdout": "kept=/archive/CC-1\n"}).to_string(),
+    )
+    .unwrap();
+    // The `gh` the entry's credential ladder and the lane duty share: the
+    // ladder's `auth status` answered here, every other call the `gh`
+    // fixture's, its map and log in `bin`.
+    let bin = state_dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("gh"),
+        format!(
+            "#!/bin/bash\nif [ \"${{1:-}}\" = auth ] && [ \"${{2:-}}\" = status ]; then exit 0; fi\nexport GH_FAKE_REPLIES={0}/gh.json GH_FAKE_LOG={0}/gh.log\nexec {1} \"$@\"\n",
+            bin.display(),
+            fixtures().join("gh/gh").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        bin.join("gh"),
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::write(
+        bin.join("gh.json"),
+        json!({"repos/o/r/pulls?head=o:cc-1&state=open": {"body": [{"head": {"sha": "aaa111"}, "body": "", "draft": true}]}})
+            .to_string(),
+    )
+    .unwrap();
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let lane = json!({
+        "item": "CC-1", "harness": "claude", "host": "claude-cloud", "kind": "claude-cloud",
+        "repo": "o/r", "account": "/home/me/.eclaude", "mail_root": state_dir.join("wt"),
+        "window": null, "status": "running",
+        "launched_at": agent_runtime::clock::iso_utc(now - 7200),
+        "running_at": agent_runtime::clock::iso_utc(now - 7200),
+        "directive_send": {"at": now - 1900, "result": "sent", "text": "Rebase."}
+    });
+    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    fleet["lanes"] = json!([lane]);
+    std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
+    // The stall row as the earlier passes left it: the head and digest the
+    // fixture answers, standing still since past the stall bound.
+    let paths = Paths::of(&state).unwrap();
+    let mut baseline = watch::Baseline::default();
+    baseline.apply(Change::Set {
+        kind: "lane-stalled".into(),
+        identity: "CC-1".into(),
+        value: format!(
+            "aaa111|{}|{}||",
+            orch_runtime::ops::wall::cksum(b"\n"),
+            now - 3700
+        ),
+    });
+    baseline.store(&paths.baseline).unwrap();
+    let close_log = scripts.join("lane-close.log");
+    let marker = orch_runtime::watch::hosted::close_marker_path(
+        orch_runtime::watch::lanes::watch_state_dir(&settings_in(&state_dir, 20).claim_store),
+        "CC-1",
+    );
+    // Run 1: the fixture ends the runtime before it answers.
+    let child = spawn_hosted_watch_run(&state_dir, &[("LANE_CLOSE_KILL_PARENT", "1")]);
+    let cut = bounded_output(
+        child,
+        secs(30),
+        "the runtime ran on past the fixture's kill",
+    );
+    assert!(!cut.status.success(), "{}", cut.status);
+    let calls = |log: &Path| -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    };
+    // The entry names no `--state-dir`, so the runtime's is the default
+    // under the project root, as `recovery_args` hands it to `open-terminal`.
+    assert_eq!(
+        calls(&close_log),
+        vec![format!(
+            "--state-dir {} CC-1",
+            state_dir.join("tmp").display()
+        )],
+        "one close asked: {}",
+        stderr(&cut)
+    );
+    assert!(
+        std::fs::metadata(&marker).is_ok(),
+        "the marker written before the close stands: {}",
+        marker.display()
+    );
+    // Run 2: the gone claim taken over, the marker found, nothing asked.
+    let mut child = spawn_hosted_watch_run(&state_dir, &[]);
+    await_claim(&mut child, &paths);
+    let deadline = Instant::now() + secs(20);
+    loop {
+        if let Ok(baseline) = watch::Baseline::load(&paths.baseline)
+            && baseline.passes.contains_key(&Duty::NativeObservation)
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the lane duty never passed: {}",
+            String::from_utf8_lossy(&std::fs::read(&paths.log).unwrap_or_default())
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
+    assert!(
+        reply(&stop)["ok"].as_bool().unwrap_or(false),
+        "{}",
+        stderr(&stop)
+    );
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        calls(&close_log).len(),
+        1,
+        "no second close: {:?}",
+        calls(&close_log)
+    );
+    assert!(
+        std::fs::metadata(&marker).is_ok(),
+        "the marker stands beside the open lane"
+    );
+    let err = stderr(&out);
+    assert!(
+        err.contains("lane-close-unconfirmed item=CC-1"),
+        "the duty's failure names the unconfirmed close: {err}"
+    );
+    let log = log_lines(&paths);
+    assert!(
+        log.iter()
+            .any(|l| l.starts_with("EVENT watch-step-failed step=native-observation ")),
+        "{log:?}"
+    );
+    assert!(
+        !log.iter()
+            .any(|l| l.starts_with("EVENT lane-closed ")
+                || l.starts_with("EVENT cloud-stall-closed ")),
+        "nothing closed on the log: {log:?}"
+    );
 }
 
 /// Run the binary's `watch` verb against `dir` with the fleet server's

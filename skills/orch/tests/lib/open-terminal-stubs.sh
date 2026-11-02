@@ -21,16 +21,20 @@
 # three questions the launcher asks: `admit` with an admitted judgement, the
 # request's in_scope echoed and an empty touched set, or with the reply at
 # $OT_RUNTIME_ADMIT where a row plants one; `state inspect` with the reply
-# at $OT_RUNTIME_REPLY, else no open intent; `accounts pick`, a fleet
-# relaunch's room judge, with the reply at $OT_RUNTIME_PICK where a row
-# plants one, else the suite's own `lanes` ($LANES_CLI, or the shipped
-# script) asked the same question and its answer wrapped as the verb's
-# reply, `exit` by number and the record: `--replaces` is dropped, the
-# legacy judge having no such word, so that answer charges the replaced
-# lane as it always did, and a row about the replacement rule plants its
-# reply. Every request file's content, and every `accounts pick` argv, is
-# appended to $OT_RUNTIME_LOG where set, so a row can read what the launcher
-# asked. Anything else is a runtime not set up, exit 69.
+# at $OT_RUNTIME_REPLY, else no open intent; `accounts pick`, every lane
+# pick of a launch (the auto pick, a named lane's judge, a fleet relaunch's
+# room judge), with the reply at $OT_RUNTIME_PICK where a row plants one,
+# else the suite's own `lanes` ($LANES_CLI, else the one beside the launcher
+# under test, SCRIPT_DIR being that launcher's export, so a mutant copy's
+# judge answers for it, else the shipped script) asked the same question and
+# its answer wrapped as the verb's reply, `exit` by number and the record:
+# `--state-dir` becomes the ORCH_STATE_DIR that judge reads its fleet from,
+# and `--replaces` is dropped, the legacy judge having no such word, so that
+# answer charges the replaced lane as it always did, and a row about the
+# replacement rule plants its reply. Every request file's content, and every
+# `accounts pick` argv, is appended to $OT_RUNTIME_LOG where set, so a row
+# can read what the launcher asked. Anything else is a runtime not set up,
+# exit 69.
 ot_stub_runtime() {
 mkdir -p "$1"
 cat > "$1/orch-runtime" <<'STUBEOF'
@@ -49,17 +53,26 @@ case " $* " in
   *' accounts pick '*)
     [[ -z "${OT_RUNTIME_LOG:-}" ]] || printf '%s\n' "$*" >> "$OT_RUNTIME_LOG"
     if [[ -n "${OT_RUNTIME_PICK:-}" ]]; then cat -- "$OT_RUNTIME_PICK"; exit 0; fi
-    args=() skip=false
+    args=() state_env=() skip=""
     for arg in "$@"; do
-      if [[ "$skip" == true ]]; then skip=false; continue; fi
+      if [[ -n "$skip" ]]; then
+        # The fleet the verb's --state-dir names is the state the legacy
+        # judge reads its overseer seat from, as ORCH_STATE_DIR.
+        [[ "$skip" != --state-dir ]] || state_env=("ORCH_STATE_DIR=$arg")
+        skip=""
+        continue
+      fi
       case "$arg" in
-        --state-dir | --replaces) skip=true ;;
+        --state-dir | --replaces) skip="$arg" ;;
         accounts | pick | --fleet) ;;
         *) args+=("$arg") ;;
       esac
     done
+    lanes_cli="${LANES_CLI:-}"
+    [[ -n "$lanes_cli" || -z "${SCRIPT_DIR:-}" ]] || lanes_cli="$SCRIPT_DIR/lanes"
+    [[ -n "$lanes_cli" ]] || lanes_cli="$OT_STUB_LANES"
     rc=0
-    out="$("${LANES_CLI:-$OT_STUB_LANES}" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
+    out="$(env ${state_env[@]+"${state_env[@]}"} "$lanes_cli" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
     jq -cn --argjson rc "$rc" --arg out "$out" '{protocol: "orch-runtime-v1", ok: true, result: {
       answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured"}[$rc | tostring] // "unjudged"),
       exit: $rc, record: (try ($out | fromjson) catch null)}}' ;;

@@ -729,6 +729,7 @@
   ".agents/skills/orch/runtime/src/watch/events.rs",
   ".agents/skills/orch/runtime/src/watch/github.rs",
   ".agents/skills/orch/runtime/src/watch/heartbeat.rs",
+  ".agents/skills/orch/runtime/src/watch/hosted.rs",
   ".agents/skills/orch/runtime/src/watch/lanes.rs",
   ".agents/skills/orch/runtime/src/watch/mail.rs",
   ".agents/skills/orch/runtime/src/watch/mod.rs",

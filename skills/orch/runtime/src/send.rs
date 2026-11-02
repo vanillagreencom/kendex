@@ -19,8 +19,8 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Refusal, Sent};
 use crate::ops::mail::{
-    Credit, DirectiveSend, DirectiveSendRecorded, DirectiveWrite, RecordDirectiveSend, SendResult,
-    Word, owed,
+    Credit, DirectiveSend, DirectiveSendRecorded, DirectiveWrite, KeyedSend, RecordDirectiveSend,
+    SendResult, Word, owed,
 };
 use crate::ops::{self, Env, Report, Request};
 use crate::settings::Settings;
@@ -81,11 +81,9 @@ struct Receipt {
 /// that ran no CLI, recorded `failed` with that line; a program that gave
 /// no answer, ended on a signal or printed a receipt that does not decode
 /// leaves the record owed and refuses `directive-send-unsettled`, since
-/// whether the directive reached the session is unknown. `key` is the
-/// caller's name for this send, kept on the record through its settles so
-/// the caller's replay can read whether the lane's send was its own (the
-/// validation end notice's `validate-<run_id>`, decision 188 (d)); the
-/// `send` verb hands none.
+/// whether the directive reached the session is unknown. The `send` verb's
+/// send, made under no key: the owed write reads no earlier send as this
+/// one's, so every send it admits is made.
 pub fn run(
     path: &Path,
     item: &str,
@@ -93,8 +91,52 @@ pub fn run(
     settings: &Settings,
     env: &Env,
     locking: Locking,
-    key: Option<&str>,
 ) -> Result<DirectiveSent> {
+    match send(path, item, file, settings, env, locking, None)? {
+        Keyed::Sent(sent) => Ok(sent),
+        Keyed::Found(found) => {
+            unreachable!("an owed write under no key reads no send as its own: {found:?}")
+        }
+    }
+}
+
+/// What a send made under a key answered: the send made, or what the owed
+/// write found standing under the key on the lane and left as it was, with
+/// no program run (decision 193 (a)).
+#[derive(Debug)]
+pub enum Keyed {
+    Sent(DirectiveSent),
+    Found(KeyedSend),
+}
+
+/// [`run`] under `key`, the caller's name for this send (the validation end
+/// notice's `validate-<run_id>`, decision 188 (d)): the owed write carries
+/// it, every settle keeps it on the record, and the write reads the lane's
+/// send under it before it writes, inside the store's lock (decision 193
+/// (a)), so a replay of the notice, whichever walker makes it, learns from
+/// the one record whether its own send is out or settled and makes no
+/// second one; nothing is run on a found send.
+pub fn run_keyed(
+    path: &Path,
+    item: &str,
+    file: &Path,
+    settings: &Settings,
+    env: &Env,
+    locking: Locking,
+    key: &str,
+) -> Result<Keyed> {
+    send(path, item, file, settings, env, locking, Some(key))
+}
+
+fn send(
+    path: &Path,
+    item: &str,
+    file: &Path,
+    settings: &Settings,
+    env: &Env,
+    locking: Locking,
+    key: Option<&str>,
+) -> Result<Keyed> {
     let text = std::fs::read_to_string(file)
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("read-directive", file, e)))?
         .trim_end()
@@ -109,6 +151,9 @@ pub fn run(
         env,
         locking,
     )?;
+    if let Some(found) = owed.found {
+        return Ok(Keyed::Found(found));
+    }
     let Some(name) = receipt_name(&owed.directive_send) else {
         unreachable!("the owed write names its receipt: {owed:?}");
     };
@@ -175,11 +220,11 @@ pub fn run(
             }
         },
     };
-    Ok(DirectiveSent {
+    Ok(Keyed::Sent(DirectiveSent {
         item: item.to_owned(),
         send,
         mark,
-    })
+    }))
 }
 
 fn unsettled(item: &str, cause: String) -> Error {

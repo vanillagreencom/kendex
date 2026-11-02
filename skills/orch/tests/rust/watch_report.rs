@@ -84,7 +84,7 @@ impl World {
         for (name, fixture) in [
             ("linear", "linear-fixture/linear.sh"),
             ("gh", "gh/gh"),
-            ("lanes", "lanes-fixture/lanes"),
+            ("lanes", "lanes-listing/lanes"),
             ("oversee-report", "oversee-report-fixture/oversee-report"),
             ("github.sh", "github-fixture/github.sh"),
         ] {
@@ -669,48 +669,85 @@ fn owed((id, state, priority, lane, host, harness, model, delivery): OwedRow<'_>
     }
 }
 
-/// Decisions 121 Q5, Q9, 126 (1), 130; step5-map § A1, § B row 5.
+/// Decisions 121 Q5, Q9, 126 (1), 130; step5-map § A1, § B row 5; U7d.
 /// Defect: a heartbeat body that moves its own due time or is moved by
 /// mail; a body line drifting from the legacy bytes (the open list, the
 /// roster, the verifying and owed lines with their wall verdicts); the
-/// capacity line missing or naming held items. Under one mail event every
-/// 7 s for 7000 s, with the tracker, GitHub and verification slots holding
-/// `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s world and the account fixture its roster and
-/// picks: one heartbeat at the first tick at or past 6000 s, its block the
-/// legacy's recorded bytes, then the quota, reducer and capacity lines.
+/// capacity line missing or naming held items; an owed verdict that
+/// ignores the listing the judge reads. Under one mail event every 7 s for
+/// 7000 s, with the tracker, GitHub and verification slots holding
+/// `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s world and the
+/// listing fixture its roster: one heartbeat at the first tick at or past
+/// 6000 s, its block the legacy's recorded bytes, then the quota, reducer
+/// and capacity lines. The owed verdicts are the accounts judge's over the
+/// listing's windows (the legacy's were planted `lanes pick` answers): the
+/// Opus windows of both claude accounts walled until 2026-10-04 and their
+/// shared windows with room, so an Opus launch is `dated` there and a
+/// Sonnet one `queue`; every codex window walled, codex2 resetting first;
+/// the hosted codex record judged by the delegated `lanes pick` under its
+/// host, the one call the reader takes.
 #[test]
 fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     let world = World::new();
     let paths = world.paths();
-    let account = |alias: &str, harness: &str, verdict: &str, resets: &str| {
-        json!({"alias": alias, "harness": harness, "config_dir": format!("/home/u/.{alias}"),
+    // The roster line's fields as the legacy recorded them, and the windows
+    // the judge reads beside them: the 5-hour and weekly percentages with
+    // their resets, and the model-scoped buckets.
+    let account = |alias: &str, harness: &str, verdict: &str, resets: &str, windows: Value| {
+        let mut row = json!({"alias": alias, "harness": harness, "config_dir": format!("/home/u/.{alias}"),
                "measured_through": "local", "status": "ok", "verdict": verdict, "headroom_pct": 0,
-               "binding_bucket": "weekly", "binding_resets_at": resets})
+               "binding_bucket": "weekly", "binding_resets_at": resets});
+        for (key, value) in windows.as_object().unwrap() {
+            row[key] = value.clone();
+        }
+        row
+    };
+    let opus_walled = |weekly: u64, weekly_resets: &str| {
+        json!({"session_5h_pct": 10, "weekly_pct": weekly,
+               "resets": {"session": "2026-10-01T04:00:00Z", "weekly": weekly_resets},
+               "model_buckets": [{"label": "Opus", "pct": 100, "resets_at": "2026-10-04T00:00:00Z"}]})
     };
     world.plant(
         "lanes.json",
         &json!([
-            account("claude", "claude", "room", "2026-10-01T00:00:00Z"),
-            account("claude2", "claude", "walled", "2026-10-02T00:00:00Z"),
-            account("codex", "codex", "walled", "2026-10-05T00:00:00Z"),
-            account("codex2", "codex", "walled", "2026-10-03T00:00:00Z"),
+            account(
+                "claude",
+                "claude",
+                "room",
+                "2026-10-01T00:00:00Z",
+                opus_walled(10, "2026-10-01T00:00:00Z")
+            ),
+            account(
+                "claude2",
+                "claude",
+                "walled",
+                "2026-10-02T00:00:00Z",
+                opus_walled(60, "2026-10-02T00:00:00Z")
+            ),
+            account(
+                "codex",
+                "codex",
+                "walled",
+                "2026-10-05T00:00:00Z",
+                json!({})
+            ),
+            account(
+                "codex2",
+                "codex",
+                "walled",
+                "2026-10-03T00:00:00Z",
+                json!({})
+            ),
         ]),
     );
+    // The hosted record's pick is delegated to the reader under its host,
+    // whose answer is the row it chose as `lanes pick --json` prints it.
     world.plant(
-        "pick-claude-claude-sonnet-5.json",
-        &json!({"exit": 0, "body": {"config_dir": "/home/u/.claude"}}),
-    );
-    world.plant(
-        "pick-codex--.json",
-        &json!({"exit": 3, "body": {"walled": 2, "unmeasured": 0, "walled_resets_at": "2026-10-03T00:00:00Z"}}),
-    );
-    world.plant(
-        "pick-claude-claude-opus-5.json",
-        &json!({"exit": 3, "body": {"walled": 2, "unmeasured": 0, "walled_resets_at": "2026-10-04T00:00:00Z"}}),
-    );
-    world.plant(
-        "pick-provider-x-codex--.json",
-        &json!({"exit": 0, "body": {"config_dir": "/home/u/.codex"}}),
+        "pick.json",
+        &json!({"exit": 0, "body": {
+            "alias": "codex", "harness": "codex", "config_dir": "/home/u/.codex",
+            "measured_through": "provider-x", "status": "ok", "verdict": "room", "headroom_pct": 60,
+            "binding_bucket": "weekly", "binding_resets_at": "2026-10-05T00:00:00Z", "claims": 0}}),
     );
     world.plant(
         "gh.json",
@@ -853,6 +890,7 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
         Duty::Heartbeat,
         heartbeat::body(heartbeat::Context {
             settings: world.settings.clone(),
+            path: world.fleet_path(),
             max_loops: 25,
             interval: secs(240),
             since: None,
@@ -912,24 +950,28 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
             && log[at + want.len()].starts_with("EVENT directive-read KEN-1 "),
         "mail ran on both sides of the heartbeat"
     );
-    // The roster once with no host, the hosted listing under its host, one
-    // pick per host, harness and model.
+    // What the judge asked the reader: the listing under no host and under
+    // the hosted record's host, and one `pick`, the hosted record's, under
+    // its host; a local record's verdict is judged here and reaches the
+    // reader as no pick.
     let calls = lines(&world.path().join("lanes.log"));
+    let hosts_listed: std::collections::BTreeSet<&str> = calls
+        .iter()
+        .filter(|c| c.ends_with(" list --json"))
+        .map(|c| c.split(' ').next().unwrap())
+        .collect();
     assert_eq!(
-        calls
-            .iter()
-            .filter(|c| c.ends_with(" list --json"))
-            .cloned()
-            .collect::<Vec<_>>(),
-        vec![
-            "ORCH_LANE_HOST=unset list --json".to_owned(),
-            "ORCH_LANE_HOST=provider-x list --json".to_owned()
-        ],
+        hosts_listed,
+        ["ORCH_LANE_HOST=unset", "ORCH_LANE_HOST=provider-x"]
+            .into_iter()
+            .collect(),
         "{calls:?}"
     );
-    assert_eq!(
-        calls.iter().filter(|c| c.contains(" pick ")).count(),
-        4,
+    let picks: Vec<&String> = calls.iter().filter(|c| c.contains(" pick ")).collect();
+    assert_eq!(picks.len(), 1, "{calls:?}");
+    assert!(
+        picks[0].starts_with("ORCH_LANE_HOST=provider-x ")
+            && picks[0].ends_with(" pick --harness codex --json"),
         "{calls:?}"
     );
 }
@@ -946,6 +988,7 @@ fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
     let clock = FakeClock::new();
     let mut body = heartbeat::body(heartbeat::Context {
         settings: world.settings.clone(),
+        path: world.fleet_path(),
         max_loops: 25,
         interval: secs(240),
         since: None,
@@ -997,6 +1040,7 @@ fn account_record(alias: &str, through: &str, reading: &str) -> Value {
 fn roster_body(world: &World) -> watch::Body<'static> {
     heartbeat::body(heartbeat::Context {
         settings: world.settings.clone(),
+        path: world.fleet_path(),
         max_loops: 25,
         interval: secs(240),
         since: None,

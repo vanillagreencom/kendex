@@ -875,8 +875,10 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # codex after its `resume ID` subcommand, which takes the flags before it, and
 # copilot beside `--resume=ID`, whose value is optional, so the id is
 # attached. Pi resumes a session file, not an id, so --resume on pi returns 1
-# with OL_REASON=resume-unsupported.
-OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
+# with OL_REASON=resume-unsupported. OL_BRIEF is the brief's text on its own,
+# for a launcher that hands it on apart from the line (`oversee launch`'s
+# start-controller request names it as the brief file the runtime delivers).
+OL_CMD="" OL_BRIEF="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
 OL_HANDOFF_PROMPT='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at '
 ol_command_line() { # [--brief TEXT] [--resume ID] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
   local brief_given=0 caller_brief="" resume=""
@@ -898,6 +900,7 @@ ol_command_line() { # [--brief TEXT] [--resume ID] HARNESS HANDOFF LANE_DIR LAUN
     *) cmd="codex" ;;
   esac
   (( ! brief_given )) || brief="$caller_brief"
+  OL_BRIEF="$brief"
   model="$(launch_choice_launch_model "$harness" "$*")"
   OL_LANE_VAR="$(lane_env_prefix "$harness" - "$model")"
   OL_LANE_VAR="${OL_LANE_VAR%%=*}"

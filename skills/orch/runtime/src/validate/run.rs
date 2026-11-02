@@ -19,14 +19,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use agent_runtime::clock;
 use agent_runtime::host::{self, Place};
 use serde::Serialize;
-use serde_json::Value;
 
 use super::{KILL_GRACE, apply, item_of_run_dir, load};
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Sent};
-use crate::ops::mail::SendResult;
+use crate::ops::mail::{KeyedSend, SendResult};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
 use crate::ops::{self, Env, ReconcileRound, Request, job_ended};
+use crate::send::Keyed;
 use crate::settings::Settings;
 use crate::state::{
     self, FleetState, ItemState, Lane, Locking, Record, Stage, StageKind, StageOutcome, Stop,
@@ -209,10 +209,15 @@ enum NoticeSend {
 /// under the lock, so a replay after a lost mark lands once and reads
 /// `duplicate` = delivered. `sent` on a delivered or duplicate receipt;
 /// `unsent:<cause>` where the route refused or could not run, recorded, never
-/// a reason to hold the close.
+/// a reason to hold the close. The file the program reads the notice from
+/// is this walker's own scratch, `<key>.<the request's stamp>.notice`,
+/// created exclusively and removed by this walker alone, so a second walker
+/// of the same notice (the owed walk meeting the job's send in flight)
+/// never removes the file the first's program is about to read; the record
+/// carries the key, never the file.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the end notice's file, written under the state directory for the mailbox program to read and removed after the send"
+    reason = "the end notice's file, this walker's own under the state directory, created exclusively for the mailbox program to read and removed by this walker after its send"
 )]
 fn send_notice(
     settings: &Settings,
@@ -222,12 +227,18 @@ fn send_notice(
     env: &Env,
     locking: Locking,
 ) -> NoticeSend {
+    use std::io::Write;
     let dir = settings.state_dir.join("validate");
     if let Err(e) = fs::create_dir_all(&dir) {
         return NoticeSend::Marked(format!("unsent:notice-dir:{e}"));
     }
-    let path = dir.join(format!("{key}.notice"));
-    if let Err(e) = fs::write(&path, format!("{text}\n")) {
+    let path = dir.join(format!("{key}.{}.notice", env.round_id()));
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(format!("{text}\n").as_bytes()));
+    if let Err(e) = written {
         return NoticeSend::Marked(format!("unsent:notice-write:{e}"));
     }
     let mark = match lane_record(settings, item) {
@@ -246,7 +257,7 @@ fn send_notice(
 /// non-cloud lane reads.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the notice send's one read of the fleet record, to route a cloud session lane to its own send owner and to read its keyed send on a replay"
+    reason = "the notice send's one read of the fleet record, to route a cloud session lane to its own send owner"
 )]
 fn lane_record(settings: &Settings, item: &str) -> Option<Lane> {
     let fleet = state::fleet_path(&settings.state_dir);
@@ -276,36 +287,6 @@ fn send_directive(settings: &Settings, item: &str, key: &str, file: &Path) -> St
     }
 }
 
-/// What the lane's `directive_send` says of the send under `key`.
-enum KeyedSend {
-    /// No record, or a record of a send under another key: this notice's
-    /// send has not been made (the first call's case).
-    Other,
-    /// This notice's send is out and its outcome not yet known.
-    Owed,
-    /// This notice's send settled with the result.
-    Settled(SendResult),
-    /// A record under this key whose result is no word the send writes.
-    Unreadable,
-}
-
-fn keyed_send(lane: &Lane, key: &str) -> KeyedSend {
-    let Some(send) = lane.extra.get("directive_send") else {
-        return KeyedSend::Other;
-    };
-    if send.get("key").and_then(Value::as_str) != Some(key) {
-        return KeyedSend::Other;
-    }
-    match send.get("result").and_then(Value::as_str) {
-        Some(crate::ops::mail::OWED) => KeyedSend::Owed,
-        Some(word) => match serde_json::from_value::<SendResult>(Value::String(word.to_owned())) {
-            Ok(result) => KeyedSend::Settled(result),
-            Err(_) => KeyedSend::Unreadable,
-        },
-        None => KeyedSend::Unreadable,
-    }
-}
-
 /// The owner word a session send's result marks the stage with: delivered
 /// is `sent`; an archived session or a failed send is terminal, the stage
 /// marked `unsent:session:<result>` and never retried blindly (the lane's
@@ -319,15 +300,16 @@ fn session_mark(result: SendResult) -> String {
 }
 
 /// The session send owner (U6d) for a cloud lane, keyed by the notice
-/// (decision 188 (d)): the lane's `directive_send` is read first, so a
-/// replay (the stage still owed when the owed walk or the job's own retry
-/// meets it) takes what this notice's own send already settled, with no
-/// CLI call: settled `sent` under this key marks `sent`; settled `archived`
-/// or `failed` under this key takes the terminal mark; owed under this key
-/// is held until it settles (the verb's reconcile, or the operator's mark
-/// after the watch's `directive-send-unsettled` line). No record, or a
-/// record under another key, sends through `send::run` under this key, and
-/// the result it answers is consumed exhaustively; a refusal (the send's
+/// (decision 188 (d)): `send::run_keyed` reads the lane's `directive_send`
+/// under this key inside its owed write, under the store's lock (decision
+/// 193 (a)), so a replay (the stage still owed when the owed walk or the
+/// job's own retry meets it) takes what this notice's own send already
+/// settled, with no CLI call, whichever walker's settle it was: a send made
+/// `sent` and a found `sent` both mark `sent`; `archived` or `failed`, made
+/// or found, takes the terminal mark; a send found owed under this key is
+/// held until it settles (the verb's reconcile, or the operator's mark
+/// after the watch's `directive-send-unsettled` line), and one found
+/// unreadable is held too, never a reason to act. A refusal (the send's
 /// outcome unknown, another send still owed on the lane, the lane's record
 /// moved) holds the stage owed and sends nothing. The residual, stated and
 /// not claimed exactly-once: a crash after this send's settle, then another
@@ -341,15 +323,11 @@ fn send_session(
     env: &Env,
     locking: Locking,
 ) -> NoticeSend {
-    match keyed_send(lane, key) {
-        KeyedSend::Owed | KeyedSend::Unreadable => return NoticeSend::Held,
-        KeyedSend::Settled(result) => return NoticeSend::Marked(session_mark(result)),
-        KeyedSend::Other => {}
-    }
     let fleet = state::fleet_path(&settings.state_dir);
-    match crate::send::run(&fleet, &lane.item, file, settings, env, locking, Some(key)) {
-        Ok(sent) => NoticeSend::Marked(session_mark(sent.send.result)),
-        Err(_) => NoticeSend::Held,
+    match crate::send::run_keyed(&fleet, &lane.item, file, settings, env, locking, key) {
+        Ok(Keyed::Sent(sent)) => NoticeSend::Marked(session_mark(sent.send.result)),
+        Ok(Keyed::Found(KeyedSend::Settled(result))) => NoticeSend::Marked(session_mark(result)),
+        Ok(Keyed::Found(KeyedSend::Owed | KeyedSend::Unreadable)) | Err(_) => NoticeSend::Held,
     }
 }
 

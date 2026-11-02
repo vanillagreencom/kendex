@@ -3160,8 +3160,11 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
 }
 
 /// The workflow block's entry line for the fleet state `state`, the words a
-/// `start-controller` request's `watch` carries: the shipped entry beside
-/// these tests, then its arguments as `workflows/oversee.md` § 4 spells them.
+/// `start-controller` request's `watch` carries as `oversee launch` composes
+/// them (U7d): the shipped entry beside these tests, then its arguments as
+/// `workflows/oversee.md` § 4 spells them, the overseer's harness and, after
+/// `--`, the overseer's own flag words. `--repo` is left out: the row claims
+/// the watch, and a repository would set the GitHub duty reading.
 fn watch_words(state: &Path) -> Value {
     let entry = job_unit()
         .parent()
@@ -3179,6 +3182,13 @@ fn watch_words(state: &Path) -> Value {
         "240",
         "--since",
         "2026-01-01T00:00:00Z",
+        "--harness",
+        "claude",
+        "--",
+        "--model",
+        "opus",
+        "--effort",
+        "high",
     ])
 }
 
@@ -3501,4 +3511,427 @@ fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch
         intent["notice"]["key"], "watch-unclaimed",
         "one notice per intent: {intent}"
     );
+}
+
+/// The orch package's `scripts/` directory beside these tests: the shipped
+/// launcher and the entries it names.
+fn shipped_scripts() -> std::path::PathBuf {
+    job_unit().parent().unwrap().parent().unwrap().to_path_buf()
+}
+
+/// The checkout the real `oversee launch` runs from, under the runner's
+/// state directory: `skills/orch/scripts` links every shipped script but
+/// the three this world answers for (`orch-runtime` is the wrapper
+/// `watch_world` wrote around the test binary, `lanes` the listing fixture
+/// whose `pick.json` names `account` on `harness` as the one lane with room,
+/// `lane-host` the host fixture answering the local capabilities), and the
+/// sibling skills the scripts source are linked beside `orch`. The walk's
+/// `kendex tier-model` finds the `kendex-launch` fixture in `bin`, the
+/// watch world's directory first on the rows' `PATH`, never the operator's
+/// install (decisions 164, 175). Returns the scripts directory the launcher
+/// is started from.
+fn launcher_checkout(
+    runner: &Runner,
+    bin: &Path,
+    account: &Path,
+    harness: &str,
+) -> std::path::PathBuf {
+    use std::os::unix::fs::symlink;
+    let dir = runner.state_dir();
+    symlink(fixtures().join("kendex-launch/kendex"), bin.join("kendex")).unwrap();
+    let shipped = shipped_scripts();
+    let skills = shipped.parent().unwrap().parent().unwrap();
+    let scripts = dir.join("skills/orch/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    for entry in std::fs::read_dir(skills).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() != "orch" {
+            symlink(entry.path(), dir.join("skills").join(entry.file_name())).unwrap();
+        }
+    }
+    for entry in std::fs::read_dir(&shipped).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if ["orch-runtime", "lanes", "lane-host"]
+            .iter()
+            .any(|n| name == *n)
+        {
+            continue;
+        }
+        symlink(entry.path(), scripts.join(name)).unwrap();
+    }
+    symlink(dir.join("orch-runtime"), scripts.join("orch-runtime")).unwrap();
+    symlink(
+        fixtures().join("lanes-listing/lanes"),
+        scripts.join("lanes"),
+    )
+    .unwrap();
+    symlink(
+        fixtures().join("lane-host/lane-host"),
+        scripts.join("lane-host"),
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("lane-host.json"),
+        json!({
+            "capabilities": {"stdout": "kind=local\tlaunch=tmux\tchannel=mailbox\tfiles=local\tstatus=pane\tstop=local\tpool=plan\n"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("pick.json"),
+        json!({"body": {
+            "config_dir": account.display().to_string(),
+            "harness": harness,
+            "alias": "fixture",
+            "status": "active",
+            "verdict": "room",
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    scripts
+}
+
+/// `oversee launch` as the operator runs it from `work` on the row's server,
+/// with one preference entry, `harness:model:high`, and `program` as that
+/// harness's executable: the runtime beside the launcher is the row's own,
+/// the watch's world `bin` and `env` are `watch_world`'s, the mailbox and
+/// validation runner the quiet fixtures. The command, ready to run.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the launcher's whole world, named once per row"
+)]
+fn oversee_launch(
+    server: &Server,
+    scripts: &Path,
+    bin: &Path,
+    env: &[(String, String)],
+    work: &Path,
+    harness: &str,
+    model: &str,
+    program_path: &Path,
+) -> std::process::Command {
+    let mut command = program(scripts.join("oversee"));
+    command
+        .args(["launch", "--wait-secs", "10"])
+        .current_dir(work)
+        .env("PATH", tool_path(&[bin]))
+        .env("TMUX", format!("{},0,0", server.socket.display()))
+        .env("ORCH_TMUX_SESSION", &server.session)
+        .env(
+            "ORCH_OVERSEER_PREFERENCE",
+            format!("{harness}:{model}:high"),
+        )
+        .env(
+            "ORCH_HARNESS_BINARIES",
+            format!("{harness}={}", program_path.display()),
+        )
+        .env("ORCH_JOB_UNIT", job_unit())
+        .env(
+            "LANE_MAIL_CLI",
+            fixtures().join("lane-mail-quiet/lane-mail"),
+        )
+        .env(
+            "DEV_VALIDATE_CLI",
+            fixtures().join("dev-validate-quiet/dev-validate-run"),
+        );
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    command
+}
+
+/// The fields of the keyed line `oversee: <key> field=value...` in `text`,
+/// the launcher's one line another program reads; `None` where it printed
+/// no line under `key`.
+fn oversee_fields(text: &str, key: &str) -> Option<Vec<String>> {
+    let prefix = format!("oversee: {key}");
+    text.lines()
+        .find(|l| *l == prefix || l.starts_with(&format!("{prefix} ")))
+        .map(|l| l.split_whitespace().skip(2).map(str::to_owned).collect())
+}
+
+/// The runner's one window on the server, as the record and the receipt
+/// name it: the pane that is not the session's first.
+fn runner_pane(server: &Server) -> String {
+    let panes: Vec<String> = server.panes().into_iter().filter(|p| p != "%0").collect();
+    assert_eq!(panes.len(), 1, "one runner opened: {panes:?}");
+    panes.into_iter().next().unwrap()
+}
+
+/// The user turns the gated Codex stub's rollouts under `home` record, as
+/// the text of each completed `UserMessage` item, in file order.
+fn codex_turns(home: &Path) -> Vec<String> {
+    fn walk(dir: &Path, into: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, into);
+            } else if path.extension().is_some_and(|e| e == "jsonl") {
+                into.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&home.join("sessions"), &mut files);
+    files.sort();
+    let mut turns = Vec::new();
+    for file in files {
+        for line in std::fs::read_to_string(&file).unwrap().lines() {
+            let row: Value = serde_json::from_str(line).unwrap();
+            if row["type"] == "event_msg"
+                && row["payload"]["type"] == "item_completed"
+                && row["payload"]["item"]["type"] == "UserMessage"
+            {
+                turns.push(
+                    row["payload"]["item"]["content"][0]["text"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    turns
+}
+
+/// The number of units the fake user manager started under `bin`: the fleet
+/// watches launched.
+fn units_started(bin: &Path) -> usize {
+    std::fs::read_dir(bin.join("units")).map_or(0, |d| d.count())
+}
+
+/// The runtime's claim on the fleet state at `state`, live, then the watch
+/// holding it stopped and read gone, so no row leaves a watch behind.
+fn stop_live_watch(runner: &Runner, state: &Path) {
+    let paths = orch_runtime::watch::claim::Paths::of(state).unwrap();
+    let claim = orch_runtime::watch::claim::read(&paths)
+        .unwrap()
+        .expect("the runtime claimed the fleet state");
+    assert!(live(claim.pid), "a live watch claim: {claim:?}");
+    let out = runner.run(&["watch", "stop", "--fleet"]);
+    assert!(out.status.success(), "watch stop: {}", stderr(&out));
+    wait_until("the stopped watch ended", Duration::from_secs(20), || {
+        !live(claim.pid)
+    });
+}
+
+/// Decisions 197a and 198 (R-U7-1 M1/H1): the first launch's brief outlives
+/// the launcher, because the runtime delivers it, and a start held before
+/// delivery is delivered by a reconcile that runs after `oversee launch`
+/// ended. Defect: the launcher wrote the brief to a scratch file its EXIT
+/// trap removed, so a start held `session-unbound` (a Codex account whose
+/// rollout appears after its composer is drawn, the shipped producer) was
+/// held `brief-unreadable` by every reconcile, and a repeated launch met the
+/// same intent and held the same way; only a hand-closed window let it fail.
+/// The row drives the real `scripts/oversee launch` into the real runtime's
+/// `start-controller` (the join of the launcher's request and the runtime's
+/// effect, which every pinned half missed twice this round): the gated
+/// Codex stub holds the start before delivery and the launcher exits
+/// `controller-unconfirmed`; the brief file the intent names stands under
+/// the state directory; a repeated launch before the release meets the
+/// same intent and holds, opening no second runner and no watch; the gate
+/// released, the next reconcile binds the session, types that file's text
+/// and publishes the controller, one intent.
+#[test]
+fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    let work = runner.state_dir().join("work");
+    let account = runner.state_dir().join("codex-account");
+    std::fs::create_dir(&work).unwrap();
+    std::fs::create_dir(&account).unwrap();
+    // The account trusts the launch directory already, so the launch runs
+    // under the account as its home, where the stub writes its rollout.
+    std::fs::write(
+        account.join("config.toml"),
+        format!(
+            "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+            work.display()
+        ),
+    )
+    .unwrap();
+    let gate = account.join("rollout-gate");
+    mkfifo(&gate);
+    let scripts = launcher_checkout(&runner, &bin, &account, "codex");
+    let codex = fixtures().join("stub-codex-gated/codex");
+    let mut launch = oversee_launch(
+        &server,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "codex",
+        "gpt-6-astra",
+        &codex,
+    );
+    let held = launch.output().unwrap();
+    assert!(!held.status.success(), "{}", stderr(&held));
+    let fields = oversee_fields(&stderr(&held), "controller-unconfirmed")
+        .unwrap_or_else(|| panic!("no controller-unconfirmed line: {}", stderr(&held)));
+    assert!(
+        fields.iter().any(|f| f == "note=session-unbound"),
+        "held before delivery: {fields:?}"
+    );
+    let fleet = runner.fleet();
+    let intents = fleet["intents"].as_array().unwrap();
+    assert_eq!(intents.len(), 1, "{fleet}");
+    let intent = intents[0].clone();
+    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+    assert_eq!(intent["observation"]["note"], "session-unbound", "{intent}");
+    assert!(fleet["overseer"].get("generation").is_none(), "{fleet}");
+    let brief = Path::new(intent["phase"]["brief"].as_str().unwrap());
+    assert!(
+        brief.starts_with(runner.state_dir().join("intents")),
+        "the brief lives with the runtime's per-intent files: {}",
+        brief.display()
+    );
+    let text = std::fs::read_to_string(brief)
+        .unwrap_or_else(|e| panic!("the brief left with the launcher: {} {e}", brief.display()));
+    assert_eq!(
+        server.panes().len(),
+        2,
+        "the runner's one pane: {:?}",
+        server.panes()
+    );
+    let pane = runner_pane(&server);
+
+    // A repeated launch before the release meets the open intent and holds
+    // where it held: no second runner, no watch.
+    let repeated = launch.output().unwrap();
+    assert!(!repeated.status.success(), "{}", stderr(&repeated));
+    let fields = oversee_fields(&stderr(&repeated), "controller-unconfirmed")
+        .unwrap_or_else(|| panic!("no controller-unconfirmed line: {}", stderr(&repeated)));
+    assert!(
+        fields.iter().any(|f| f == "note=session-unbound"),
+        "the same hold: {fields:?}"
+    );
+    let fleet = runner.fleet();
+    assert_eq!(fleet["intents"].as_array().unwrap().len(), 1, "{fleet}");
+    assert_eq!(fleet["intents"][0]["id"], intent["id"], "{fleet}");
+    assert_eq!(runner_pane(&server), pane, "the same runner");
+    assert_eq!(units_started(&bin), 0, "no watch before the controller");
+
+    // The rollout appears; the reconcile delivers the launcher's brief and
+    // publishes the controller.
+    release_hold(&gate, Duration::from_secs(10), || {
+        format!("{:?}", server.window_names())
+    });
+    wait_until(
+        "the stub wrote its rollout",
+        Duration::from_secs(10),
+        || account.join("sessions").is_dir(),
+    );
+    runner.tools = Some(bin.clone());
+    runner.env.extend(env.iter().cloned());
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("codex={}", codex.display()),
+    ));
+    let report = runner.reconcile_one();
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let fleet = runner.fleet();
+    assert_eq!(fleet["intents"].as_array().unwrap().len(), 1, "{fleet}");
+    let overseer = &fleet["overseer"];
+    assert_eq!(overseer["generation"], 1, "{overseer}");
+    assert_eq!(overseer["harness"], "codex", "{overseer}");
+    assert_eq!(overseer["pane"], pane, "{overseer}");
+    assert_eq!(
+        codex_turns(&account),
+        vec![text.trim_end().to_owned()],
+        "the reconcile typed the file the launcher wrote"
+    );
+    assert_eq!(units_started(&bin), 1, "the controller's one watch");
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    stop_live_watch(&runner, &state);
+}
+
+/// Decision 197a: the launcher's request against the real effect in one
+/// call, the healthy path. Defect: a launcher and a runtime each pinned
+/// against a fixture of the other and joined wrong (this round's bridge
+/// stand-in answered the wrong shape; the brief's scratch lifetime passed
+/// every half). The real `scripts/oversee launch` with the Claude stub
+/// confirms in its own call, prints `overseer-launched` from the record,
+/// and the record carries the launcher's directory, line, model, account
+/// and pane as the bridge rows read them; the brief typed into the stub is
+/// the file the request named, which the launcher left standing.
+#[test]
+fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    let work = runner.state_dir().join("work");
+    let account = runner.state_dir().join("claude-account");
+    std::fs::create_dir(&work).unwrap();
+    std::fs::create_dir(&account).unwrap();
+    let scripts = launcher_checkout(&runner, &bin, &account, "claude");
+    let launched = oversee_launch(
+        &server,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-confirm"),
+    )
+    .output()
+    .unwrap();
+    let stdout = String::from_utf8_lossy(&launched.stdout).into_owned();
+    assert!(
+        launched.status.success(),
+        "stdout={stdout}\nstderr={}",
+        stderr(&launched)
+    );
+    let fields = oversee_fields(&stdout, "overseer-launched")
+        .unwrap_or_else(|| panic!("no overseer-launched line: {stdout}"));
+    assert!(
+        fields.iter().any(|f| f == "generation=1")
+            && fields
+                .iter()
+                .any(|f| *f == format!("lane={}", account.display())),
+        "{fields:?}"
+    );
+    let fleet = runner.fleet();
+    let overseer = &fleet["overseer"];
+    assert_eq!(overseer["generation"], 1, "{overseer}");
+    assert_eq!(overseer["cwd"], work.display().to_string(), "{overseer}");
+    assert_eq!(
+        overseer["account"],
+        account.display().to_string(),
+        "{overseer}"
+    );
+    assert_eq!(overseer["model"], "fable", "{overseer}");
+    assert_eq!(overseer["pane"], runner_pane(&server), "{overseer}");
+    let line = overseer["launch_line"].as_str().unwrap();
+    assert!(
+        line.contains("claude -n overseer") && line.contains("--model fable"),
+        "the launcher's own line, kept for the replay: {line}"
+    );
+    let intent = &fleet["intents"][0];
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let brief = Path::new(intent["phase"]["brief"].as_str().unwrap());
+    let text = std::fs::read_to_string(brief)
+        .unwrap_or_else(|e| panic!("the brief left with the launcher: {} {e}", brief.display()));
+    assert_eq!(
+        runner.stub_turns(&account, &work),
+        vec![text.trim_end().to_owned()],
+        "the start typed the file the launcher wrote"
+    );
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    stop_live_watch(&runner, &state);
 }

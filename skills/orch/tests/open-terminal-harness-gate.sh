@@ -34,6 +34,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
+# The orch runtime every lane pick of a launch asks (`accounts pick`): the
+# shared stub, which hands the question to the lanes this world names.
+# shellcheck source=lib/open-terminal-stubs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-stubs.sh"
+ot_stub_runtime "$TMP_ROOT/runtime-bin"
 printf '#!/usr/bin/env bash\nprintf "term %%s\\n" "$*" >> "$OT_TERM_LOG"\n' > "$BIN/term"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
 # The worktree CLI a launch the gate passes reaches next: an empty path, which

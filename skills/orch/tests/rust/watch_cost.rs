@@ -160,6 +160,7 @@ fn fifteen_lane_pass_inner() {
     let verifying = watch::verifying::register(&mut runner, &settings, shared.clone());
     watch::heartbeat::register(
         &mut runner,
+        &path,
         &settings,
         secs(240),
         25,
@@ -231,6 +232,7 @@ fn fifteen_lane_pass_inner() {
     let verifying: watch::verifying::Lines = Arc::new(Mutex::new(Vec::new()));
     watch::heartbeat::register(
         &mut runner,
+        &path,
         &settings,
         secs(1),
         1,

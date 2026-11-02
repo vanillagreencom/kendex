@@ -33,8 +33,14 @@
 //! and exits (`check_handoff`): the record is read where `workflow-state
 //! handoff-standing` read it and is `handoff` once per record.
 //!
-//! Hosted lanes (`host` other than local, a cloud `kind`) are not observed
-//! here (decision 57); the legacy watch reads them until step 7.
+//! Hosted lanes are observed here by the capability line their host
+//! declares (`watch::hosted`; decisions 57, 176 (1), 192 Q1): a kind with a
+//! local pane is read by that pane as a local lane is, a `status=verb` kind
+//! through the provider's status verb as well, a `status=none` kind (a
+//! cloud session) by its pull request alone; a hosted lane's status file
+//! and records are read through the provider, and a merged hosted lane
+//! whose worktree the host no longer has is closed through `lane-close` at
+//! its `lane-exited` or `lane-idle` line.
 
 // Every reading is matched variant by variant (decision 105).
 #![deny(clippy::wildcard_enum_match_arm)]
@@ -56,8 +62,8 @@ use serde_json::Value;
 use super::Produced;
 use super::baseline::{Baseline, Change};
 use super::events::Event;
+use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
-use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
 };
@@ -66,7 +72,7 @@ use crate::state::{self, Document, FleetState, Lane, LaneStatus, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
-const LANE_ROWS: [&str; 7] = [
+const LANE_ROWS: [&str; 8] = [
     "lane-exited",
     "lane-asking",
     "lane-idle",
@@ -74,6 +80,7 @@ const LANE_ROWS: [&str; 7] = [
     "usage-limit",
     "lane-unreadable",
     "start-stalled",
+    hosted::CLOSE_PENDING_ROW,
 ];
 
 /// Lines kept above the banner in a usage-limit block (`WATCH_BANNER_LEAD`).
@@ -457,6 +464,9 @@ pub struct Pass<'a> {
     /// Record the lane walls this pass observed on the fleet record
     /// (`ops::wall`); `Err` is the store's refusal.
     pub wall_pauses: &'a dyn Fn(RecordWallPauses) -> Result<(), String>,
+    /// The hosted arms' reads beyond the scripts directory: `gh`, the
+    /// account roster and the fleet's repositories.
+    pub hosted: &'a hosted::Reads<'a>,
 }
 
 /// What one lane's pass read, kept for the report a row asks for.
@@ -478,12 +488,13 @@ fn hash_of(text: &str) -> u64 {
 
 /// The lane's name in a line: the window name the launcher gave it, else
 /// its item.
-fn lane_name(lane: &Lane) -> String {
+pub(super) fn lane_name(lane: &Lane) -> String {
     lane.window.clone().unwrap_or_else(|| lane.item.clone())
 }
 
+/// A lane on this machine: its record names no host, and no cloud kind.
 fn is_local(lane: &Lane) -> bool {
-    lane.kind.as_deref() != Some(CLOUD_KIND) && lane.host.as_deref().is_none_or(|h| h == "local")
+    hosted::host_of(lane) == "local"
 }
 
 fn identity_of(lane: &Lane) -> Option<Identity> {
@@ -499,27 +510,44 @@ fn identity_word(identity: Option<&Identity>) -> String {
 }
 
 /// Read one lane: the pane, its foreground, its screen and, for a Pi lane,
-/// its rows, each once.
-fn read_lane<'a>(lane: &'a Lane, readers: &Readers) -> Observed<'a> {
+/// its rows, each once. `remote` is the provider's status verb where the
+/// lane's kind declares one (`lane_state`, `lib/lane-state.sh:1137`): an
+/// exited harness is the lane exited whatever its pane shows, a failed read
+/// leaves it unjudged, and a running one is judged by the pane.
+fn read_lane<'a>(
+    lane: &'a Lane,
+    readers: &Readers,
+    remote: Option<Result<HostStatus, String>>,
+) -> Observed<'a> {
     let name = lane_name(lane);
     let harness = lane.harness.as_deref().and_then(Harness::parse);
     let identity = identity_of(lane);
     let launch = lane.launch.as_ref();
-    let (Some(server), Some(pane_id)) = (
+    let recorded = match (
         launch.and_then(|l| l.server),
         launch.and_then(|l| l.pane.as_deref()),
-    ) else {
-        return Observed {
-            lane,
-            name,
-            pane_key: None,
-            identity,
-            screen: None,
-            rows_key: None,
-            state: LaneState::Unjudged {
-                cause: "pane-unrecorded".to_owned(),
-            },
-        };
+    ) {
+        (Some(server), Some(pane_id)) => Some((server, pane_id)),
+        (None, _) | (_, None) => None,
+    };
+    let unread = |state: LaneState| Observed {
+        lane,
+        name: name.clone(),
+        pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
+        identity: identity.clone(),
+        screen: None,
+        rows_key: None,
+        state,
+    };
+    match remote {
+        Some(Err(cause)) => return unread(LaneState::Unjudged { cause }),
+        Some(Ok(HostStatus::Exited)) => return unread(LaneState::Exited),
+        Some(Ok(HostStatus::Running)) | None => {}
+    }
+    let Some((server, pane_id)) = recorded else {
+        return unread(LaneState::Unjudged {
+            cause: "pane-unrecorded".to_owned(),
+        });
     };
     let pane_key = Some(format!("{server} {pane_id}"));
     let pane = (readers.pane)(server, launch.and_then(|l| l.server_start), pane_id);
@@ -627,7 +655,7 @@ fn payload(lines: Vec<String>) -> impl Iterator<Item = Event> {
 }
 
 /// A set-change for a lane row.
-fn set(kind: &str, lane: &str, value: String) -> Change {
+pub(super) fn set(kind: &str, lane: &str, value: String) -> Change {
     Change::Set {
         kind: kind.to_owned(),
         identity: lane.to_owned(),
@@ -635,7 +663,7 @@ fn set(kind: &str, lane: &str, value: String) -> Change {
     }
 }
 
-fn clear(kind: &str, lane: &str) -> Change {
+pub(super) fn clear(kind: &str, lane: &str) -> Change {
     Change::Clear {
         kind: kind.to_owned(),
         identity: lane.to_owned(),
@@ -644,7 +672,7 @@ fn clear(kind: &str, lane: &str) -> Change {
 
 /// A partial failure of the pass, said by the runner under its one rule
 /// (decision 156 (1)); the first one stands, the pass goes on.
-fn fail(out: &mut Produced, line: String) {
+pub(super) fn fail(out: &mut Produced, line: String) {
     out.failed.get_or_insert(line);
 }
 
@@ -655,19 +683,34 @@ pub fn watch_state_dir(claim_store: &Path) -> &Path {
     claim_store.parent().unwrap_or(claim_store)
 }
 
-/// The lanes pass: every in-flight local lane read once and judged, the
-/// lines the legacy printed for each kind, the stray sweep and the start
-/// stall, with the rows that keep each line news once.
+/// The lanes pass: every in-flight lane a pane or the provider's status verb
+/// judges read once, the lines the legacy printed for each kind, the hosted
+/// readings (the prepare records, the cloud stall, the finished-hosted
+/// close), the stray sweep and the start stall, with the rows that keep each
+/// line news once. A host whose capability line could not be read is the
+/// pass's failure once, and its lanes are left unjudged this pass.
 pub fn observe(pass: &Pass) -> Produced {
     let mut out = Produced::default();
     let cap = pass.settings.tail_lines as usize;
-    let lanes: Vec<&Lane> = pass
+    // The hosts of the lanes this pass judges, the in-flight ones alone, as
+    // the legacy read the running rows' hosts (`fleet_merge`,
+    // `oversee-watch:959-969`): a parked, done or stopped record's host is
+    // not asked; `lane_long`'s parked arm reads no line (R-U7-1 L1, R-U7-2
+    // L1).
+    let hosts = Hosts::read(
+        pass.scripts,
+        pass.fleet.lanes.iter().filter(|l| l.status.in_flight()),
+    );
+    for cause in hosts.unreadable() {
+        fail(&mut out, cause.to_owned());
+    }
+    let in_flight: Vec<&Lane> = pass
         .fleet
         .lanes
         .iter()
-        .filter(|l| l.status.in_flight() && is_local(l))
+        .filter(|l| l.status.in_flight())
         .collect();
-    let names: BTreeSet<String> = lanes.iter().map(|l| lane_name(l)).collect();
+    let names: BTreeSet<String> = in_flight.iter().map(|l| lane_name(l)).collect();
     // Rows of lanes that left the record no longer describe an observation.
     for kind in LANE_ROWS {
         for identity in pass.baseline.identities(kind) {
@@ -676,22 +719,48 @@ pub fn observe(pass: &Pass) -> Produced {
             }
         }
     }
-    let observed: Vec<Observed> = lanes.iter().map(|l| read_lane(l, pass.readers)).collect();
+    hosted::prune_close_markers(pass, &mut out);
+    // A `status=none` kind's window holds no harness the pane passes judge
+    // (`fleet_merge`, `oversee-watch:964`).
+    let lanes: Vec<(&Lane, Capabilities)> = in_flight
+        .iter()
+        .filter_map(|l| hosts.of(l).ok().map(|caps| (*l, caps)))
+        .filter(|(_, caps)| caps.status != Status::None)
+        .collect();
+    let observed: Vec<Observed> = lanes
+        .iter()
+        .map(|(lane, caps)| {
+            let remote = match (caps.status, lane.harness.as_deref()) {
+                (Status::Verb, Some(harness)) => Some(hosted::status(
+                    pass.scripts,
+                    hosted::host_of(lane),
+                    &lane.item,
+                    harness,
+                )),
+                (Status::Verb, None) | (Status::Pane | Status::Task | Status::None, _) => None,
+            };
+            read_lane(lane, pass.readers, remote)
+        })
+        .collect();
     let mut walls = Vec::new();
     for obs in &observed {
-        let reading = observe_one(obs, pass, cap, &mut out);
+        let reading = observe_one(obs, pass, &hosts, cap, &mut out);
         walls.push(WallObservation {
             item: obs.lane.item.clone(),
             window: obs.lane.window.clone().unwrap_or_default(),
             reading,
         });
     }
+    let observed_lanes: Vec<&Lane> = observed.iter().map(|o| o.lane).collect();
+    hosted::retry_pending_closes(&observed_lanes, pass, &hosts, &mut out);
     handoffs(pass, &mut out);
     wall_pauses(&walls, pass, &mut out);
-    for lane in &lanes {
-        start_stall(lane, pass, &mut out);
+    hosted::prepare(pass, &mut out);
+    hosted::cloud_stalls(pass, &hosts, &mut out);
+    for lane in &in_flight {
+        start_stall(lane, pass, &hosts, &mut out);
     }
-    lane_long(pass, &mut out);
+    lane_long(pass, &hosts, &mut out);
     if let Some(session) = pass.session {
         strays(session, pass, &mut out);
     }
@@ -836,7 +905,13 @@ fn handoffs(pass: &Pass, out: &mut Produced) {
 
 /// One lane's lines and rows from what was read, and what the record's
 /// wall transition is told of it.
-fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> WallReading {
+fn observe_one(
+    obs: &Observed,
+    pass: &Pass,
+    hosts: &Hosts,
+    cap: usize,
+    out: &mut Produced,
+) -> WallReading {
     let lane = &obs.name;
     let get = |kind: &str| pass.baseline.get(kind, lane).map(str::to_owned);
     let pane_key = obs.pane_key.clone().unwrap_or_default();
@@ -852,7 +927,7 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
             kind,
             banner,
             source,
-        } => wall(obs, *kind, banner, *source, &slice, pass, cap, out),
+        } => wall(obs, *kind, banner, *source, &slice, pass, hosts, cap, out),
         LaneState::Unreadable { .. } => (obs.state.clone(), WallReading::Unavailable),
         LaneState::Gone
         | LaneState::Exited
@@ -927,6 +1002,7 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
             out.changes
                 .push(set("lane-exited", lane, format!("{pane_key}|reported")));
             out.changes.push(clear("lane-asking", lane));
+            hosted::close_finished(obs.lane, pass, hosts, "lane-exited", &pane_key, out);
         } else {
             out.changes.push(set("lane-exited", lane, pane_key));
         }
@@ -992,6 +1068,7 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
                     note: cause.as_ref().map(|word| format!("cause={word}")),
                 });
                 out.events.extend(payload(bounded_tail(&slice, cap)));
+                hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
             } else {
                 out.changes.push(set("lane-idle", lane, key));
             }
@@ -1020,7 +1097,7 @@ fn observe_one(obs: &Observed, pass: &Pass, cap: usize, out: &mut Produced) -> W
 /// not be judged; and what the record's wall transition is told.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the wall's inputs are the observation, the judge's three words, the slice, the pass and the sink"
+    reason = "the wall's inputs are the observation, the judge's three words, the slice, the pass, the hosts and the sink"
 )]
 fn wall(
     obs: &Observed,
@@ -1029,6 +1106,7 @@ fn wall(
     source: WallSource,
     slice: &str,
     pass: &Pass,
+    hosts: &Hosts,
     cap: usize,
     out: &mut Produced,
 ) -> (LaneState, WallReading) {
@@ -1147,7 +1225,7 @@ fn wall(
     };
     let mut notes = Vec::new();
     if !passed {
-        match route(obs, &account, pass, out, &mut notes) {
+        match route(obs, &account, pass, hosts, out, &mut notes) {
             Routed::Relaunched => {
                 out.changes.push(set(
                     "usage-limit",
@@ -1203,13 +1281,17 @@ enum Routed {
 /// answer the line under the event; under `ORCH_WALL_RELAUNCH=auto` a
 /// qualifying account takes the lane through the record's own relaunch,
 /// started detached through the one runner, its marker written first for
-/// the legacy outcome reader. A relaunch refused after the pick is said
-/// under the event, after the pick's line, and never asked again this
-/// pass.
+/// the legacy outcome reader. A hosted lane whose kind declares a local pane
+/// has its harness stopped through the provider first (`oversee-watch:4727-
+/// 4735`: `lane-host stop --item --harness`), and a stop not confirmed
+/// refuses the relaunch as `stop-failed` with the status. A relaunch refused
+/// after the pick is said under the event, after the pick's line, and never
+/// asked again this pass.
 fn route(
     obs: &Observed,
     account: &str,
     pass: &Pass,
+    hosts: &Hosts,
     out: &mut Produced,
     notes: &mut Vec<String>,
 ) -> Routed {
@@ -1253,6 +1335,24 @@ fn route(
         Ok(args) => args,
         Err(cause) => return refused(notes, &format!("context-unavailable cause={cause}")),
     };
+    let host = hosted::host_of(obs.lane);
+    if host != "local" {
+        match hosts.of(obs.lane) {
+            Ok(Capabilities {
+                pane: PaneKind::Local,
+                ..
+            }) => {
+                if let Err(rc) = hosted::stop(pass.scripts, host, &obs.lane.item, harness.name()) {
+                    return refused(notes, &format!("stop-failed exit={rc}"));
+                }
+            }
+            Ok(Capabilities {
+                pane: PaneKind::Verb,
+                ..
+            }) => {}
+            Err(cause) => return refused(notes, &format!("stop-unjudged cause={cause}")),
+        }
+    }
     let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
     let log = pass
         .state_dir
@@ -1367,8 +1467,13 @@ fn recovery_args(lane: &Lane, harness: Harness, to: &str, pass: &Pass) -> Result
 /// `start-stalled`: a lane `running_at` for `start_stall` seconds with no
 /// status file under its mail root, repeated every `mark_repeat` passes
 /// while the file is missing; a file that stands ends it, and one that
-/// cannot be read settles nothing.
-fn start_stall(lane: &Lane, pass: &Pass, out: &mut Produced) {
+/// cannot be read settles nothing. The file is read where the lane's kind
+/// keeps it (`check_start_stall`, `oversee-watch:2662`): on this disk for a
+/// local kind, through the provider for a `files=verb` kind (a fetch that
+/// failed is `start-stall-unread`, the pass's failure and no line; a lane
+/// whose worktree the host no longer has is left), and a `files=none` kind,
+/// a cloud session, by its pull request (`hosted::cloud_start_stall`).
+fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     let name = lane_name(lane);
     let Some(running) = lane.running_at.as_deref().and_then(clock::epoch_secs) else {
         return;
@@ -1376,6 +1481,13 @@ fn start_stall(lane: &Lane, pass: &Pass, out: &mut Produced) {
     let Some(root) = lane.mail_root.as_deref() else {
         return;
     };
+    let Ok(caps) = hosts.of(lane) else {
+        return;
+    };
+    if caps.files == Files::None {
+        hosted::cloud_start_stall(lane, pass, out);
+        return;
+    }
     let prior = pass
         .baseline
         .get("start-stalled", &name)
@@ -1383,17 +1495,48 @@ fn start_stall(lane: &Lane, pass: &Pass, out: &mut Produced) {
     if prior == format!("{running}|seen") {
         return;
     }
-    let path = Path::new(root)
-        .join("tmp")
-        .join(format!("lane-status-{}.md", lane.item));
-    match (pass.readers.status_file)(&path) {
-        Reading::Live(()) => {
+    let file = match caps.files {
+        Files::Local => {
+            let path = Path::new(root)
+                .join("tmp")
+                .join(format!("lane-status-{}.md", lane.item));
+            match (pass.readers.status_file)(&path) {
+                Reading::Live(()) => Answer::Live(()),
+                Reading::Gone => Answer::Gone,
+                Reading::Unreadable { cause } => Answer::Unreadable {
+                    cause: cause.to_owned(),
+                },
+            }
+        }
+        Files::Verb => match hosted::status_file(pass, lane) {
+            Answer::Live(_) => Answer::Live(()),
+            Answer::Gone => match hosted::worktree(pass, lane) {
+                // The worktree the lane's own close-out removed writes no
+                // status file: the merged check's lane, not a stalled one.
+                Answer::Gone => return,
+                Answer::Live(()) => Answer::Gone,
+                Answer::Unreadable { cause } => Answer::Unreadable { cause },
+            },
+            Answer::Unreadable { cause } => Answer::Unreadable { cause },
+        },
+        Files::None => return,
+    };
+    match file {
+        Answer::Live(()) => {
             out.changes
                 .push(set("start-stalled", &name, format!("{running}|seen")));
             return;
         }
-        Reading::Gone => {}
-        Reading::Unreadable { .. } => return,
+        Answer::Gone => {}
+        Answer::Unreadable { cause } => {
+            if caps.files == Files::Verb {
+                fail(
+                    out,
+                    format!("start-stall-unread item={} cause={cause}", lane.item),
+                );
+            }
+            return;
+        }
     }
     let age = pass.now.saturating_sub(running);
     if age < pass.settings.start_stall.as_secs() {
@@ -1492,12 +1635,14 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
 }
 
 /// `lane-long` (`lib/watch-host-kinds.sh:446`, `check_lane_long`): a
-/// running or parked local lane `lane_age` past its record's `launched_at`,
-/// reported once per age interval with the counters the legacy read from
-/// its records, the row keyed by the item and pruned only once no record
-/// names it, so the gap a relaunch or a handoff leaves keeps the reported
-/// interval.
-fn lane_long(pass: &Pass, out: &mut Produced) {
+/// running or parked lane, on this disk or hosted, `lane_age` past its
+/// record's `launched_at`, reported once per age interval with the counters
+/// the legacy read from its records, the row keyed by the item and pruned
+/// only once no record names it, so the gap a relaunch or a handoff leaves
+/// keeps the reported interval. A hosted lane's `Step` line and records are
+/// read through the provider; a `files=none` kind's stage is `none` and its
+/// counts `unread`.
+fn lane_long(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     let bound = pass.settings.lane_age.as_secs();
     let recorded: BTreeSet<&str> = pass.fleet.lanes.iter().map(|l| l.item.as_str()).collect();
     for identity in pass.baseline.identities("lane-long") {
@@ -1507,7 +1652,7 @@ fn lane_long(pass: &Pass, out: &mut Produced) {
     }
     for lane in &pass.fleet.lanes {
         let aged = match lane.status {
-            LaneStatus::Running | LaneStatus::Parked => is_local(lane),
+            LaneStatus::Running | LaneStatus::Parked => true,
             LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done => false,
         };
         let Some(launched) = aged
@@ -1534,12 +1679,41 @@ fn lane_long(pass: &Pass, out: &mut Produced) {
         if prior == format!("{launched}|{interval}") {
             continue;
         }
-        let counters = match lane.status {
-            LaneStatus::Parked => Counters::unread(),
-            LaneStatus::Running
-            | LaneStatus::Preparing
-            | LaneStatus::Stopped
-            | LaneStatus::Done => lane_counters(lane, pass),
+        let files = match hosts.of(lane) {
+            Ok(caps) => Some(caps.files),
+            Err(_) => None,
+        };
+        let (counters, stage) = match (lane.status, files) {
+            (LaneStatus::Parked, _) => (Counters::unread(), "parked".to_owned()),
+            (
+                LaneStatus::Running
+                | LaneStatus::Preparing
+                | LaneStatus::Stopped
+                | LaneStatus::Done,
+                Some(Files::Local),
+            ) => (lane_counters(lane, pass), lane_step(lane)),
+            (
+                LaneStatus::Running
+                | LaneStatus::Preparing
+                | LaneStatus::Stopped
+                | LaneStatus::Done,
+                Some(Files::Verb),
+            ) => (hosted::counters(pass, lane, out), hosted::step(pass, lane)),
+            (
+                LaneStatus::Running
+                | LaneStatus::Preparing
+                | LaneStatus::Stopped
+                | LaneStatus::Done,
+                Some(Files::None),
+            ) => (Counters::unread(), "none".to_owned()),
+            // A host whose line could not be read: said once by the pass.
+            (
+                LaneStatus::Running
+                | LaneStatus::Preparing
+                | LaneStatus::Stopped
+                | LaneStatus::Done,
+                None,
+            ) => (Counters::unread(), "unread".to_owned()),
         };
         out.events.push(Event::LaneLong {
             item: lane.item.clone(),
@@ -1549,7 +1723,7 @@ fn lane_long(pass: &Pass, out: &mut Produced) {
             validation_runs: counters.validation_runs,
             restacks: counters.restacks,
             repeated_class_rounds: counters.repeated_class_rounds,
-            stage: lane_step(lane),
+            stage,
         });
         out.changes.push(set(
             "lane-long",
@@ -1559,15 +1733,11 @@ fn lane_long(pass: &Pass, out: &mut Produced) {
     }
 }
 
-/// The `Step` line of the lane's status file as `lane_step` read it
-/// (`lib/watch-host-kinds.sh:498`): `parked` for a parked lane, `unread`
-/// where the read failed, `none` where the lane writes no file or its file
-/// names no step; the line bare or as a list item, its value after the
-/// colon.
+/// The `Step` line of a local lane's status file as `lane_step` read it
+/// (`lib/watch-host-kinds.sh:498`): `unread` where the read failed, `none`
+/// where the lane writes no file or its file names no step; the line bare
+/// or as a list item, its value after the colon.
 fn lane_step(lane: &Lane) -> String {
-    if lane.status == LaneStatus::Parked {
-        return "parked".to_owned();
-    }
     let Some(root) = lane.mail_root.as_deref() else {
         return "none".to_owned();
     };
@@ -1664,7 +1834,7 @@ fn lane_counters(lane: &Lane, pass: &Pass) -> Counters {
 /// (`lane_item_state`, `jq -c .`): the file's JSON object, whatever its
 /// shape; `Gone` where the lane has written none, unreadable where the
 /// file is no object.
-fn item_doc(path: &Path) -> Reading<Document> {
+pub(super) fn item_doc(path: &Path) -> Reading<Document> {
     match std::fs::read_to_string(path) {
         Ok(text) => match serde_json::from_str::<Value>(&text) {
             Ok(Value::Object(doc)) => Reading::Live(doc),

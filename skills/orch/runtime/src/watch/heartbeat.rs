@@ -6,7 +6,8 @@
 //! the GitHub duty's `bot-fix` row; the account roster through the legacy
 //! `lanes list --json` (Q9); the `verifying` lines of the verification
 //! duty's last pass; the `owed` lines of the tracker duty's last pass with
-//! their wall verdicts through `lanes pick` (Q9); the standing tracker
+//! their wall verdicts through the accounts judge (`ops::accounts`, the
+//! chooser's answer by `lanes pick`'s exits, U7d); the standing tracker
 //! quota receipt; the reducer's standing attention; and one line naming
 //! the open unblocked items no lane holds (126 (1)). The body reads no
 //! inventory itself: the tracker, GitHub and verification duties' slots are
@@ -38,29 +39,22 @@
 //! contradicts is a line under it.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::clock;
-use agent_runtime::host::{self, Place};
 use serde::Deserialize;
-use serde_json::Value;
 
-use crate::ops::accounts::{self, Roster, pick_harness, pick_pool, text_or_dash};
+use crate::ops::Host;
+use crate::ops::accounts::{
+    self, PickAnswer, PickRequest, Roster, pick_harness, pick_pool, text_or_dash,
+};
 use crate::settings::Settings;
 use crate::watch::github::Gh;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
-
-/// The bound on one `lanes` call, the legacy `READ_CEILING`
-/// (`oversee-watch:275`).
-const BOUND: Duration = Duration::from_secs(60);
-
-/// The start-counter tag every call of this duty is counted under.
-const TAG: &str = "heartbeat";
 
 /// The host word of a lane record with no host (`oversee-watch:5409`).
 const LOCAL: &str = "local";
@@ -68,6 +62,9 @@ const LOCAL: &str = "local";
 /// What the duty runs with, fixed at registration.
 pub struct Context {
     pub settings: Settings,
+    /// The fleet state the owed verdicts' judge reads its seats and live
+    /// charges from.
+    pub path: PathBuf,
     /// The legacy `--max-loops`, `--interval` and `--since`, the line's
     /// own fields.
     pub max_loops: u32,
@@ -95,6 +92,7 @@ pub fn body<'a>(ctx: Context) -> Body<'a> {
 )]
 pub fn register(
     runner: &mut Runner<'_>,
+    path: &Path,
     settings: &Settings,
     interval: Duration,
     max_loops: u32,
@@ -107,6 +105,7 @@ pub fn register(
         crate::schedule::Duty::Heartbeat,
         body(Context {
             settings: settings.clone(),
+            path: path.to_path_buf(),
             max_loops,
             interval,
             since,
@@ -269,50 +268,26 @@ fn check_accounts(listing: &Roster, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
     (events, changes)
 }
 
-/// `lanes pick` through the one runner, under `ORCH_LANE_HOST=<host>` where
-/// a host is named, as the legacy `bounded_account_read` ran it: the
-/// answer, or the call's own failure. The one legacy pick left in this
-/// crate: the owed verdict's rows plant its answers (`watch_report`).
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the heartbeat's legacy owed verdict, `lanes pick` (decision 121 Q9), through the one runner under its tag with the lane host named"
-)]
-fn lanes(
-    settings: &Settings,
-    host: Option<&str>,
-    args: &[&str],
-) -> std::result::Result<std::process::Output, String> {
-    let env: Vec<(&str, &OsStr)> = host
-        .map(|h| vec![("ORCH_LANE_HOST", OsStr::new(h))])
-        .unwrap_or_default();
-    host::run_tagged_in(
-        TAG,
-        "lanes",
-        &settings.lanes_cli,
-        "pick",
-        args,
-        Place {
-            cwd: None,
-            env: &env,
-        },
-        BOUND,
-    )
-    .map_err(|e| e.to_string())
-}
-
 // --- the owed verdict ------------------------------------------------------------------------
 
 /// `owed_wall` (`oversee-watch:5641`): the verdict of one host, harness and
-/// model, judged on that host's listing and `lanes pick`.
+/// model, judged on that host's listing and the accounts judge's chooser
+/// (`ops::accounts::pick_fleet`, the call the legacy made as `lanes pick
+/// --harness H [--native-model M] --json` under `ORCH_LANE_HOST`): an
+/// account to spend is `queue`; no account, some walled, is `dated` until
+/// the earliest reset the judge names; anything else, an unjudged pick
+/// among it, is `unjudged`, never a verdict (decision 99).
 fn wall_verdict(
-    settings: &Settings,
+    ctx: &Context,
+    host: &Host,
     listings: &mut BTreeMap<String, Option<Roster>>,
     owed: &OwedItem,
+    now: u64,
 ) -> String {
     let unjudged = format!("verdict=unjudged harness={}", owed.harness);
-    let host = (owed.host != LOCAL).then_some(owed.host.as_str());
+    let lane_host = (owed.host != LOCAL).then_some(owed.host.as_str());
     let listing = listings.entry(owed.host.clone()).or_insert_with(|| {
-        accounts::roster(settings, host)
+        accounts::roster(&ctx.settings, lane_host)
             .map_err(|cause| note("accounts", &cause))
             .ok()
     });
@@ -325,54 +300,53 @@ fn wall_verdict(
     ) {
         return "verdict=queue".to_owned();
     }
-    let mut args = vec!["pick", "--harness", owed.harness.as_str(), "--json"];
-    if owed.model != "-" {
-        args.push("--native-model");
-        args.push(owed.model.as_str());
-    }
-    let out = match lanes(settings, host, &args) {
-        Ok(out) => out,
-        Err(cause) => {
+    let request = PickRequest {
+        harness: owed.harness.clone(),
+        model: (owed.model != "-").then(|| owed.model.clone()),
+        host: lane_host.map(str::to_owned),
+        ..PickRequest::default()
+    };
+    match accounts::pick_fleet(&ctx.settings, &ctx.path, host, &request, now) {
+        PickAnswer::Lane(_) => "verdict=queue".to_owned(),
+        PickAnswer::None {
+            walled,
+            walled_resets_at,
+            ..
+        } if walled > 0 => format!(
+            "verdict=dated harness={} until={}",
+            owed.harness,
+            walled_resets_at.unwrap_or_else(|| "-".to_owned())
+        ),
+        PickAnswer::None { .. } => unjudged,
+        PickAnswer::Unjudged { cause } => {
             note(
                 "pick",
                 &format!("host={} harness={} {cause}", owed.host, owed.harness),
             );
-            return unjudged;
+            unjudged
         }
-    };
-    match out.status.code() {
-        Some(0) => "verdict=queue".to_owned(),
-        Some(3) => {
-            let Ok(answer) = serde_json::from_str::<Value>(&host::stdout_text(&out)) else {
-                return unjudged;
-            };
-            match answer.get("walled").and_then(Value::as_u64) {
-                Some(walled) if walled > 0 => {
-                    let until = match answer.get("walled_resets_at") {
-                        None | Some(Value::Null) => "-".to_owned(),
-                        Some(Value::String(s)) => s.clone(),
-                        Some(_) => return unjudged,
-                    };
-                    format!("verdict=dated harness={} until={until}", owed.harness)
-                }
-                Some(_) | None => unjudged,
-            }
-        }
-        _ => unjudged,
+        // A named-lane answer never reaches a chooser's request.
+        PickAnswer::Walled(_)
+        | PickAnswer::Reserved(_)
+        | PickAnswer::Retired { .. }
+        | PickAnswer::Unmeasured(_)
+        | PickAnswer::NoRecord => unjudged,
     }
 }
 
 /// The `owed` line (`:5455-5470`): the record's fields, then the verdict,
 /// a merged delivery or a queue verdict needing no account read.
 fn owed_line(
-    settings: &Settings,
+    ctx: &Context,
+    host: &Host,
     listings: &mut BTreeMap<String, Option<Roster>>,
     owed: &OwedItem,
+    now: u64,
 ) -> String {
     let verdict = match &owed.delivery {
         Some(delivery) => format!("verdict=merged {delivery}"),
         None if owed.harness == "-" => "verdict=queue".to_owned(),
-        None => wall_verdict(settings, listings, owed),
+        None => wall_verdict(ctx, host, listings, owed, now),
     };
     format!(
         "owed {} state={} priority={} lane={} {verdict}",
@@ -385,7 +359,18 @@ fn owed_line(
 
 // --- the body ----------------------------------------------------------------------------------
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the heartbeat's one construction of the kernel host for the owed verdicts' occupancy read; the judge acts on nothing"
+)]
 fn run(ctx: &Context, tick: &Tick) -> Produced {
+    // The occupancy reader the owed verdicts' judge charges live lanes
+    // through, as the overseer duty's walk and the `accounts pick` verb
+    // build it.
+    let host = Host::kernel(
+        ctx.settings.lane_cap,
+        Some(ctx.settings.claim_store.clone()),
+    );
     let (owed, quota, open, github) = {
         let latest = ctx.shared.lock().unwrap_or_else(|p| p.into_inner());
         (
@@ -458,7 +443,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
         None => body("owed unread".to_owned()),
         Some(items) => {
             for item in items {
-                body(owed_line(&ctx.settings, &mut listings, item));
+                body(owed_line(ctx, &host, &mut listings, item, tick.wall));
             }
         }
     }

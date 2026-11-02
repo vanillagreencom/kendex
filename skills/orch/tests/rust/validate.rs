@@ -664,17 +664,21 @@ fn the_job_closes_once_records_the_notice_owed_before_the_send_and_a_second_end_
     assert_eq!(stage["notice"]["text"], text);
     // The send is the mailbox's outbound directive route to the lane, keyed
     // by the run, not the inbound `notice` verb that lands in the overseer's
-    // box; the fixture logs the call and the directive's first line.
-    assert_eq!(
-        w.log_lines("lane-mail"),
-        vec![
-            format!(
-                "send --item {ITEM_ID} --directive --file {}/validate/{key}.notice --delivery-id {key}",
-                w.state.display(),
-            ),
-            format!("send-text {text}"),
-        ]
+    // box; the fixture logs the call and the directive's first line. The
+    // file is this walker's own, named by the key and the walker's stamp
+    // (decision 193 (a)): the key is the record's, the file is scratch.
+    let calls = w.log_lines("lane-mail");
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    let file_prefix = format!(
+        "send --item {ITEM_ID} --directive --file {}/validate/{key}.",
+        w.state.display()
     );
+    let file_suffix = format!(".notice --delivery-id {key}");
+    assert!(
+        calls[0].starts_with(&file_prefix) && calls[0].ends_with(&file_suffix),
+        "the outbound route with this walker's own file: {calls:?}"
+    );
+    assert_eq!(calls[1], format!("send-text {text}"));
     let after = w.stage(&run_dir);
     assert_eq!(after["notice"]["owner"], "sent");
     assert_eq!(after["proof"]["selection"], "battery");

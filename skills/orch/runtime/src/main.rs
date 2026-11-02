@@ -694,7 +694,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let path = state::fleet_path(&settings.state_dir);
             let env = system_env()?;
             serde_json::to_value(orch_runtime::send::run(
-                &path, &item, &file, &settings, &env, locking, None,
+                &path, &item, &file, &settings, &env, locking,
             )?)?
         }
     };
@@ -771,6 +771,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             let verifying = watch::verifying::register(&mut runner, &settings, shared.clone());
             watch::heartbeat::register(
                 &mut runner,
+                &path,
                 &settings,
                 std::time::Duration::from_secs(interval),
                 max_loops,

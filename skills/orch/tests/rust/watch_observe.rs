@@ -10,7 +10,10 @@
 //! (decision 160 (1)): the reset the banner names and `usage-limit-passed`,
 //! the account wall record and the lane record's wall keyed to the
 //! identity, the wall relaunch through the route, `lane-long`'s counters
-//! and the mark line's payload.
+//! and the mark line's payload. U7a's rows (step7-map § A1): the hosted
+//! readings over the `lane-host`, `lane-close` and `gh` fixtures linked
+//! into a row's world, the provider calls made by the production runner
+//! from that world's scripts directory.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows hold a private tmux server, write the records they plant and read the panes they opened"
@@ -31,11 +34,13 @@ use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use jiff::tz::TimeZone;
+use orch_runtime::ops::accounts::Roster;
 use orch_runtime::ops::wall::{self, AccountWall, RecordWallPauses};
 use orch_runtime::ops::{self, RequestTransfer};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings, Succession};
 use orch_runtime::state::{self, FleetState, Locking, Record, TransferCause};
 use orch_runtime::watch::context;
+use orch_runtime::watch::hosted;
 use orch_runtime::watch::lanes::{self, Readers, Relaunch, WallRoute, WindowRow};
 use orch_runtime::watch::overseer::{self, Legacy, Marks, Pick, Slot, Source, Verdict};
 use orch_runtime::watch::{Baseline, Change, Event, Produced};
@@ -307,6 +312,16 @@ struct LaneDriver<'a> {
     now: u64,
     pick: Pick,
     relaunches: RefCell<Vec<Relaunch>>,
+    /// The scripts directory the provider calls run from: a row's world
+    /// with the fixtures linked in, or nowhere for a local fleet.
+    scripts: PathBuf,
+    /// `gh` as the hosted reads run it: the fixture in a row's world.
+    gh: PathBuf,
+    /// The account roster a draft pull request's credit is read from;
+    /// `None` is a roster that could not be read.
+    roster: Option<Roster>,
+    /// The fleet's repositories for a record naming none.
+    repos: Vec<String>,
 }
 
 impl LaneDriver<'_> {
@@ -320,6 +335,16 @@ impl LaneDriver<'_> {
             relaunch: self.settings.watch.wall_relaunch,
             pick: &pick,
             start: &start,
+        };
+        let roster = || {
+            self.roster
+                .clone()
+                .ok_or_else(|| "host=local exit=1 roster-unread".to_owned())
+        };
+        let reads = hosted::Reads {
+            gh: &self.gh,
+            roster: &roster,
+            repos: &self.repos,
         };
         let env = ops::Env {
             now_secs: self.now,
@@ -344,9 +369,10 @@ impl LaneDriver<'_> {
             own_panes: &["%0".to_owned()],
             state_dir: &self.state_dir,
             claim_store: &self.settings.claim_store,
-            scripts: Path::new("/nonexistent"),
+            scripts: &self.scripts,
             route: &route,
             wall_pauses: &wall_pauses,
+            hosted: &reads,
         });
         apply(&mut self.baseline, &produced);
         self.now += 240;
@@ -384,6 +410,10 @@ macro_rules! lane_driver {
             now: 1_800_000_000,
             pick: Pick::None,
             relaunches: RefCell::new(Vec::new()),
+            scripts: PathBuf::from("/nonexistent"),
+            gh: PathBuf::from("/nonexistent/gh"),
+            roster: None,
+            repos: Vec::new(),
         };
     };
 }
@@ -2339,4 +2369,1052 @@ fn an_unreadable_relaunch_marker_is_the_pass_s_failure_not_a_gone_window() {
             "no row moves on a failed read"
         );
     }
+}
+
+// --- U7a: the hosted readings (step7-map § A1; decisions 57, 176 (1) (e)-(i), 192 Q1, Q2) ---
+
+/// The `local` and `claude-cloud` lines the dispatcher answers, and a static
+/// ssh provider's (`schemas/lane-host.md` § Host kinds).
+const CLOUD_LINE: &str =
+    "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none";
+const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb";
+/// A provider path, the host a hosted record names.
+const PROVIDER: &str = "/w/provider";
+
+/// A row's world for the hosted reads: the `lane-host`, `lane-close` and
+/// `gh` fixtures linked under one scripts directory, their planted answers
+/// and logs beside them, as the production runner finds them from the
+/// pass's scripts directory and the `gh` path the pass carries.
+struct HostedWorld {
+    scripts: PathBuf,
+}
+
+impl HostedWorld {
+    fn new(dir: &Path) -> HostedWorld {
+        let scripts = dir.join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        for (fixture, name) in [
+            ("lane-host/lane-host", "lane-host"),
+            ("lane-close/lane-close", "lane-close"),
+            ("gh/gh", "gh"),
+        ] {
+            std::os::unix::fs::symlink(fixtures().join(fixture), scripts.join(name)).unwrap();
+        }
+        let world = HostedWorld { scripts };
+        world.plant_host(&[]);
+        world.plant_close(json!({}));
+        world.plant_gh(json!({}));
+        world
+    }
+
+    fn gh(&self) -> PathBuf {
+        self.scripts.join("gh")
+    }
+
+    /// The `lane-host` answers, by argv (or `<host> <argv>`).
+    fn plant_host(&self, answers: &[(&str, Value)]) {
+        let map: serde_json::Map<String, Value> = answers
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), value.clone()))
+            .collect();
+        std::fs::write(
+            self.scripts.join("lane-host.json"),
+            Value::Object(map).to_string(),
+        )
+        .unwrap();
+    }
+
+    /// The one `lane-close` answer.
+    fn plant_close(&self, answer: Value) {
+        std::fs::write(self.scripts.join("lane-close.json"), answer.to_string()).unwrap();
+    }
+
+    /// The `gh api` answers, by path.
+    fn plant_gh(&self, answers: Value) {
+        std::fs::write(self.scripts.join("gh.json"), answers.to_string()).unwrap();
+    }
+
+    fn log(&self, name: &str) -> Vec<String> {
+        std::fs::read_to_string(self.scripts.join(name))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn host_log(&self) -> Vec<String> {
+        self.log("lane-host.log")
+    }
+
+    fn close_log(&self) -> Vec<String> {
+        self.log("lane-close.log")
+    }
+}
+
+/// A fixture answer: the status and the bytes printed.
+fn answer(exit: i32, stdout: &str) -> Value {
+    json!({"exit": exit, "stdout": stdout})
+}
+
+fn ok(stdout: &str) -> Value {
+    answer(0, stdout)
+}
+
+/// `gh api repos/O/R/pulls?head=O:B&state=open`'s one open pull request.
+fn open_pull(sha: &str, body: &str, draft: Option<bool>) -> Value {
+    json!({"body": [{"head": {"sha": sha}, "body": body, "draft": draft}]})
+}
+
+/// The body digest as the stall row keeps it (`cksum` over the body and
+/// the newline jq printed after it).
+fn digest(body: &str) -> String {
+    wall::cksum(format!("{body}\n").as_bytes()).to_string()
+}
+
+/// A running Claude cloud lane: its session opened at `now - 7000`, on
+/// `account`, in `o/r`.
+fn cloud_lane(item: &str, account: &str, now: u64) -> Value {
+    json!({
+        "item": item, "harness": "claude", "host": "claude-cloud", "kind": "claude-cloud",
+        "repo": "o/r", "account": account, "mail_root": "/remote/cloud", "status": "running",
+        "running_at": clock::iso_utc(now - 7200), "launched_at": clock::iso_utc(now - 7200),
+        "session_since": clock::iso_utc(now - 7000),
+    })
+}
+
+/// A running lane on the ssh provider, its worktree at `root` on the host.
+fn hosted_lane(item: &str, window: &str, root: &str) -> Value {
+    json!({
+        "item": item, "window": window, "harness": "claude", "host": PROVIDER, "kind": "ssh",
+        "mail_root": root, "status": "running",
+    })
+}
+
+/// The tracker's quota receipt line, holding until `reset`.
+fn quota_receipt(reset: u64) -> String {
+    json!({"code": "RATELIMITED", "quota": {"limit": "requests", "status": "future", "reset": clock::iso_utc(reset), "reset_epoch": reset}})
+        .to_string()
+}
+
+fn stalled_lines(produced: &Produced) -> Vec<String> {
+    event_lines(produced)
+        .into_iter()
+        .filter(|l| l.starts_with("EVENT lane-stalled ") || l.starts_with("EVENT start-stalled "))
+        .collect()
+}
+
+/// `lib/watch-host-kinds.sh:368` (`check_lane_stall`), the cases
+/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned on the cloud
+/// lane's pull request (`stalled`, `finished`, `credit`). Defect: a cloud
+/// session no pane shows never said stalled, said on every pass, said while
+/// its pull request still moves, or a ready pull request closed as a stall.
+/// A cloud lane's open pull request standing still for
+/// `ORCH_WATCH_LANE_STALL_SECS` is `lane-stalled` with the age once, then
+/// every `mark_repeat` passes; a head that moved starts the bound over; a
+/// ready one is `state=finished` at once, a draft on an account the roster
+/// reads out of credit `state=out-of-credit`, each once per repeat; none of
+/// them is closed.
+#[test]
+fn a_cloud_lane_whose_pull_request_stands_still_is_lane_stalled_and_a_ready_or_unpaid_one_said_at_once()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let now = 1_800_000_000;
+    fleet.set_lanes(vec![
+        cloud_lane("CC-1", "/a", now),
+        cloud_lane("CC-2", "/a", now),
+        cloud_lane("CC-3", "/b", now),
+    ]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[("capabilities", ok(CLOUD_LINE))]);
+    let body = "## Lane status\nStep: implement";
+    let pulls = |sha: &str| {
+        json!({
+            "repos/o/r/pulls?head=o:cc-1&state=open": open_pull(sha, body, Some(true)),
+            "repos/o/r/pulls?head=o:cc-2&state=open": open_pull("bbb222", "", Some(false)),
+            "repos/o/r/pulls?head=o:cc-3&state=open": open_pull("ccc333", "", Some(true)),
+        })
+    };
+    world.plant_gh(pulls("aaa111"));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    driver.roster = Roster::parse(
+        &json!([
+            {"alias": "a", "harness": "claude", "config_dir": "/a", "status": "ok", "verdict": "pick",
+             "credits": {"remaining_dollars": 12.5}},
+            {"alias": "b", "harness": "claude", "config_dir": "/b", "status": "ok", "verdict": "pick",
+             "credits": {"remaining_dollars": 0, "locked_reason": "spend-limit"}}
+        ])
+        .to_string(),
+        &driver.settings.accounts,
+    );
+    assert!(driver.roster.is_some(), "the planted roster reads");
+    let first = driver.pass(&state);
+    assert_eq!(
+        stalled_lines(&first),
+        vec![
+            "EVENT lane-stalled CC-2 age=0 state=finished",
+            "EVENT lane-stalled CC-3 age=0 state=out-of-credit",
+        ],
+        "{:?}",
+        lines(&first)
+    );
+    assert_eq!(first.failed, None);
+    assert_eq!(
+        driver.baseline.get("lane-stalled", "CC-1"),
+        Some(format!("aaa111|{}|{now}||", digest(body)).as_str())
+    );
+    for _ in 0..4 {
+        let quiet = driver.pass(&state);
+        assert!(stalled_lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    }
+    driver.now = now + 3600;
+    let sixth = driver.pass(&state);
+    assert_eq!(
+        stalled_lines(&sixth),
+        vec![
+            "EVENT lane-stalled CC-1 age=3600",
+            "EVENT lane-stalled CC-2 age=3600 state=finished",
+            "EVENT lane-stalled CC-3 age=3600 state=out-of-credit",
+        ],
+        "the stalled lane at the bound, the two states on their repeat"
+    );
+    // The head moved: the bound starts over and the lane is quiet.
+    world.plant_gh(pulls("ddd444"));
+    let moved = driver.pass(&state);
+    assert!(stalled_lines(&moved).is_empty(), "{:?}", lines(&moved));
+    assert_eq!(
+        driver.baseline.get("lane-stalled", "CC-1"),
+        Some(format!("ddd444|{}|{}||", digest(body), now + 3840).as_str())
+    );
+    assert!(world.close_log().is_empty(), "no stall closes a lane here");
+    assert!(
+        world
+            .host_log()
+            .iter()
+            .all(|l| l == "ORCH_LANE_HOST=claude-cloud capabilities"),
+        "{:?}",
+        world.host_log()
+    );
+}
+
+/// Decisions 120, 192 Q2; `lib/watch-host-kinds.sh:431` (`cloud_stall_close`),
+/// `oversee-watch:1420` (`close_hosted_lane`), the case
+/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned as `closed`.
+/// Defect: a stalled cloud lane whose directive went unanswered closed on
+/// every pass, closed without a record that it was asked, a refusal read as
+/// a close, a tracker quota hold read as a failure, or a close asked beside
+/// a marker an earlier runtime left. The directive at or after the stall's
+/// `since` and `ORCH_CLOUD_STALL_MINUTES` old closes the lane once through
+/// `lane-close --state-dir [DIR] [ITEM]`, the marker created before the ask
+/// and gone after its answer: `lane-closed` with the archive line, then
+/// `cloud-stall-closed` with the directive's age. Exit 3 is
+/// `lane-close-refused` with the path, the lane kept and the stall said; a
+/// quota receipt defers it with no line; a standing hold asks nothing; a
+/// standing marker beside the open lane asks nothing and is the pass's
+/// failure; a marker of an earlier launch is pruned and the close proceeds.
+#[test]
+fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_marker_before_the_ask()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let now = 1_800_000_000;
+    let mut lane = cloud_lane("CC-1", "/a", now);
+    lane["directive_send"] = json!({"at": now - 1900, "result": "sent", "text": "Rebase."});
+    fleet.set_lanes(vec![lane.clone()]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[("capabilities", ok(CLOUD_LINE))]);
+    world.plant_gh(json!({
+        "repos/o/r/pulls?head=o:cc-1&state=open": open_pull("aaa111", "", Some(true)),
+    }));
+    world.plant_close(ok("kept=/archive/CC-1\n"));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    driver.baseline.apply(Change::Set {
+        kind: "lane-stalled".into(),
+        identity: "CC-1".into(),
+        value: format!("aaa111|{}|{}||", digest(""), now - 3700),
+    });
+    let marker =
+        hosted::close_marker_path(lanes::watch_state_dir(&driver.settings.claim_store), "CC-1");
+    let close = format!("--state-dir {} CC-1", driver.state_dir.display());
+    let closed = driver.pass(&state);
+    assert_eq!(
+        lines(&closed),
+        vec![
+            "EVENT lane-closed CC-1",
+            "kept=/archive/CC-1",
+            "EVENT cloud-stall-closed CC-1 directive_age=1900",
+        ]
+    );
+    assert_eq!(closed.failed, None);
+    assert_eq!(world.close_log(), vec![close.clone()]);
+    assert!(
+        std::fs::metadata(&marker).is_ok(),
+        "the marker stands until the record confirms the close"
+    );
+    // The record still reads the lane open (decision 194): the operator's
+    // lane, named each pass, never a second close.
+    let open_still = driver.pass(&state);
+    assert!(
+        open_still
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-close-unconfirmed item=CC-1 marker=")),
+        "{:?}",
+        open_still.failed
+    );
+    assert_eq!(
+        world.close_log().len(),
+        1,
+        "no second close beside the marker"
+    );
+    // The record `lane-close` wrote: the lane out of flight, the marker leaves.
+    let mut stopped = lane.clone();
+    stopped["status"] = json!("stopped");
+    fleet.set_lanes(vec![stopped]);
+    let after_close = driver.pass(&fleet.read());
+    assert_eq!(after_close.failed, None);
+    assert!(lines(&after_close).is_empty(), "{:?}", lines(&after_close));
+    assert!(
+        std::fs::metadata(&marker).is_err(),
+        "the marker leaves once the record confirms the close"
+    );
+    // The lane launched again on the same record and stalled again (the
+    // stopped lane's row left with it): the close refused, the lane kept,
+    // the stall said.
+    fleet.set_lanes(vec![lane.clone()]);
+    let state = fleet.read();
+    driver.baseline.apply(Change::Set {
+        kind: "lane-stalled".into(),
+        identity: "CC-1".into(),
+        value: format!("aaa111|{}|{}||", digest(""), driver.now - 3700),
+    });
+    world.plant_close(json!({"exit": 3, "stdout": "lane-close: close-refused path=/w/cc-1\n"}));
+    let refused = driver.pass(&state);
+    assert_eq!(
+        lines(&refused),
+        vec![
+            "EVENT lane-close-refused CC-1",
+            "path=/w/cc-1",
+            "EVENT lane-stalled CC-1 age=3700",
+        ]
+    );
+    assert_eq!(refused.failed, None);
+    assert_eq!(world.close_log().len(), 2);
+    assert!(
+        std::fs::metadata(&marker).is_err(),
+        "an answer that closed nothing takes its marker"
+    );
+    // The tracker's quota refusal on the answer: deferred, no line.
+    world.plant_close(json!({"exit": 1, "stderr": format!("{}\n", quota_receipt(now + 7200))}));
+    let deferred = driver.pass(&state);
+    assert!(lines(&deferred).is_empty(), "{:?}", lines(&deferred));
+    assert_eq!(deferred.failed, None);
+    assert_eq!(world.close_log().len(), 3);
+    // The hold the tracker duty recorded: nothing asked.
+    driver.baseline.apply(Change::Set {
+        kind: "tracker-quota".into(),
+        identity: "fleet".into(),
+        value: json!({"limit": "requests", "status": "future", "reset": clock::iso_utc(now + 7200), "reset_epoch": now + 7200}).to_string(),
+    });
+    let held = driver.pass(&state);
+    assert!(lines(&held).is_empty(), "{:?}", lines(&held));
+    assert_eq!(world.close_log().len(), 3, "a standing hold asks nothing");
+    driver.baseline.apply(Change::Clear {
+        kind: "tracker-quota".into(),
+        identity: "fleet".into(),
+    });
+    // A marker an earlier runtime left beside the open lane: nothing asked.
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    let launch = lane["launched_at"].as_str().unwrap();
+    std::fs::write(
+        &marker,
+        json!({"item": "CC-1", "reason": "cloud-stall", "at": now, "launch": launch}).to_string(),
+    )
+    .unwrap();
+    world.plant_close(ok("kept=/archive/CC-1\n"));
+    let standing = driver.pass(&state);
+    assert!(
+        standing
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-close-unconfirmed item=CC-1 marker=")),
+        "{:?}",
+        standing.failed
+    );
+    assert!(lines(&standing).is_empty(), "{:?}", lines(&standing));
+    assert_eq!(world.close_log().len(), 3, "a standing marker asks nothing");
+    assert!(std::fs::metadata(&marker).is_ok(), "the marker stands");
+    // A marker of an earlier launch of the item: pruned, the close proceeds.
+    std::fs::write(
+        &marker,
+        json!({"item": "CC-1", "reason": "cloud-stall", "at": now, "launch": "2000-01-01T00:00:00Z"}).to_string(),
+    )
+    .unwrap();
+    let again = driver.pass(&state);
+    assert_eq!(
+        event_lines(&again),
+        vec![
+            "EVENT lane-closed CC-1",
+            "EVENT cloud-stall-closed CC-1 directive_age=3580"
+        ]
+    );
+    assert_eq!(again.failed, None);
+    assert_eq!(world.close_log().len(), 4);
+    assert!(
+        std::fs::metadata(&marker).is_ok(),
+        "this close's own marker stands for the record read"
+    );
+}
+
+/// `oversee-watch:2662` (`check_start_stall`, the `HOSTED_ROOT` arm), the
+/// case `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` pinned as
+/// `hosted_fetch`. Defect: a hosted lane's status file read on this disk,
+/// where it is not, so every hosted lane is `start-stalled`; or a fetch that
+/// failed read as "no file". The file is read through `lane-host cat` under
+/// the record's host, a `2` confirmed by `touch`: a missing file past the
+/// bound is `start-stalled`, a file that stands ends the watch, and a fetch
+/// that failed (the provider's own failure, the dispatcher's busy refusal)
+/// is `start-stall-unread`, the pass's failure and no line (decision 99); a
+/// lane whose worktree the host no longer has (its `.git` gone, the merged
+/// check's lane, c11:2678's `HOSTED_GONE_ITEMS` skip) writes no status file
+/// and is no stall.
+#[test]
+fn a_hosted_lane_s_status_file_is_read_through_the_provider_and_a_failed_fetch_is_no_stall() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let now = 1_800_000_000;
+    let running = clock::iso_utc(now - 700);
+    let mut lanes = Vec::new();
+    for n in 1..=5 {
+        let mut lane = hosted_lane(
+            &format!("KEN-{n}"),
+            &format!("gh-{n}"),
+            &format!("/remote/KEN-{n}"),
+        );
+        lane["running_at"] = json!(running);
+        lanes.push(lane);
+    }
+    fleet.set_lanes(lanes);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    let status = |n: u32| {
+        (
+            format!("status --item KEN-{n} --harness claude"),
+            ok("running\n"),
+        )
+    };
+    let statuses: Vec<(String, Value)> = (1..=5).map(status).collect();
+    let mut answers: Vec<(&str, Value)> = statuses
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.clone()))
+        .collect();
+    answers.extend([
+        ("capabilities", ok(SSH_LINE)),
+        ("cat --item KEN-1 /remote/KEN-1/tmp/lane-status-KEN-1.md", answer(2, "")),
+        ("touch --item KEN-1", ok("")),
+        ("cat --item KEN-1 /remote/KEN-1/.git", ok("gitdir: /x/.git/worktrees/KEN-1\n")),
+        (
+            "cat --item KEN-2 /remote/KEN-2/tmp/lane-status-KEN-2.md",
+            json!({"exit": 1, "stderr": "lane-host: ssh-failed host=/w/provider\n"}),
+        ),
+        // Read only by a reader that takes the failure above for no file.
+        ("cat --item KEN-2 /remote/KEN-2/.git", ok("gitdir: /x/.git/worktrees/KEN-2\n")),
+        ("cat --item KEN-3 /remote/KEN-3/tmp/lane-status-KEN-3.md", answer(2, "")),
+        (
+            "touch --item KEN-3",
+            json!({"exit": 69, "stderr": "lane-host: lane-host-busy count=4 cap=4 verb=touch item=KEN-3\n"}),
+        ),
+        ("cat --item KEN-4 /remote/KEN-4/tmp/lane-status-KEN-4.md", ok("Step: start\n")),
+        ("cat --item KEN-5 /remote/KEN-5/tmp/lane-status-KEN-5.md", answer(2, "")),
+        ("touch --item KEN-5", ok("")),
+        ("cat --item KEN-5 /remote/KEN-5/.git", answer(2, "")),
+    ]);
+    world.plant_host(&answers);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    let produced = driver.pass(&state);
+    assert_eq!(
+        event_lines(&produced),
+        vec!["EVENT start-stalled gh-1 age=700"]
+    );
+    assert_eq!(
+        produced.failed.as_deref(),
+        Some(
+            "start-stall-unread item=KEN-2 cause=cat exit=1 lane-host: ssh-failed host=/w/provider"
+        )
+    );
+    assert_eq!(
+        driver.baseline.get("start-stalled", "gh-1"),
+        Some(format!("{}|0", now - 700).as_str())
+    );
+    assert_eq!(driver.baseline.get("start-stalled", "gh-2"), None);
+    assert_eq!(
+        driver.baseline.get("start-stalled", "gh-3"),
+        None,
+        "the busy refusal is no file"
+    );
+    assert_eq!(
+        driver.baseline.get("start-stalled", "gh-4"),
+        Some(format!("{}|seen", now - 700).as_str())
+    );
+    assert_eq!(
+        driver.baseline.get("start-stalled", "gh-5"),
+        None,
+        "a worktree the host no longer has is no stall"
+    );
+    let log = world.host_log();
+    assert!(
+        log.iter()
+            .all(|l| l.starts_with("ORCH_LANE_HOST=/w/provider ")),
+        "{log:?}"
+    );
+    assert!(
+        log.contains(&"ORCH_LANE_HOST=/w/provider touch --item KEN-3".to_owned()),
+        "{log:?}"
+    );
+    assert!(
+        log.contains(&"ORCH_LANE_HOST=/w/provider cat --item KEN-5 /remote/KEN-5/.git".to_owned()),
+        "{log:?}"
+    );
+}
+
+/// R-U7-1 L1 and R-U7-2 L1 (`fleet_merge`, `oversee-watch:959-969`: the
+/// running rows' hosts alone; a parked row went to `PARKED_ITEMS` with no
+/// host read). Defect: a done, stopped or parked record's host asked for
+/// its capability line every pass, so a provider that is gone is `host-
+/// capabilities-unread` ahead of every live lane's line, hiding a live
+/// lane's `start-stall-unread` and the standing marker's
+/// `lane-close-unconfirmed`, the operator's one signal (decision 194); the
+/// parked lane's one reader, `lane_long`, reads no line for it. A done
+/// lane, a stopped lane and a parked lane (the `lanes park` record) on a
+/// gone provider beside a running lane whose fetch fails: the pass's
+/// failure is the live lane's, and no call runs under the gone host.
+#[test]
+fn a_lane_out_of_flight_s_gone_provider_is_not_asked_and_hides_no_live_lane_s_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let now = 1_800_000_000;
+    let mut live = hosted_lane("KEN-1", "gh-1", "/remote/KEN-1");
+    live["running_at"] = json!(clock::iso_utc(now - 700));
+    let mut done = hosted_lane("KEN-8", "gh-8", "/remote/KEN-8");
+    done["host"] = json!("/w/gone");
+    done["status"] = json!("done");
+    let mut stopped = hosted_lane("KEN-9", "gh-9", "/remote/KEN-9");
+    stopped["host"] = json!("/w/gone");
+    stopped["status"] = json!("stopped");
+    let mut parked = hosted_lane("KEN-7", "gh-7", "/remote/KEN-7");
+    parked["host"] = json!("/w/gone");
+    parked["status"] = json!("parked");
+    parked["parked"] = json!({"head": "abc", "repo": "o/r", "at": "2026-10-24T20:00:00Z"});
+    fleet.set_lanes(vec![done, live, stopped, parked]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        ("status --item KEN-1 --harness claude", ok("running\n")),
+        (
+            "cat --item KEN-1 /remote/KEN-1/tmp/lane-status-KEN-1.md",
+            json!({"exit": 1, "stderr": "lane-host: ssh-failed host=/w/provider\n"}),
+        ),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    let produced = driver.pass(&state);
+    assert_eq!(
+        produced.failed.as_deref(),
+        Some(
+            "start-stall-unread item=KEN-1 cause=cat exit=1 lane-host: ssh-failed host=/w/provider"
+        ),
+        "the live lane's line, not the gone provider's"
+    );
+    assert!(event_lines(&produced).is_empty(), "{:?}", lines(&produced));
+    let log = world.host_log();
+    assert!(
+        !log.iter().any(|l| l.starts_with("ORCH_LANE_HOST=/w/gone ")),
+        "no call under the gone host: {log:?}"
+    );
+}
+
+/// `oversee-watch:2662` (`check_start_stall`, the `FILELESS` arm), the cases
+/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned as `pushed`
+/// and `never_pushed`. Defect: a cloud session that pushed said
+/// `start-stalled` for want of a status file it never writes, or a session
+/// that never pushed left unsaid. A branch head committed at or after the
+/// record's `session_since` reads the session started: `start-stalled`
+/// never goes out, and a started session whose head stands still for
+/// `ORCH_WATCH_LANE_STALL_SECS` is `lane-stalled`; a session with no branch
+/// is `start-stalled` past the start bound, counted as the local arm counts.
+#[test]
+fn a_cloud_session_with_no_pull_request_is_quiet_once_pushed_and_lane_stalled_when_nothing_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let now = 1_800_000_000;
+    fleet.set_lanes(vec![
+        cloud_lane("CC-1", "/a", now),
+        cloud_lane("CC-2", "/a", now),
+    ]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[("capabilities", ok(CLOUD_LINE))]);
+    world.plant_gh(json!({
+        "repos/o/r/pulls?head=o:cc-1&state=open": {"body": []},
+        "repos/o/r/branches/cc-1": {"body": {"commit": {"sha": "bbb222", "commit": {"committer": {"date": clock::iso_utc(now - 100)}}}}},
+        "repos/o/r/pulls?head=o:cc-2&state=open": {"body": []},
+    }));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let first = driver.pass(&state);
+    assert_eq!(
+        stalled_lines(&first),
+        vec!["EVENT start-stalled CC-2 age=7200"]
+    );
+    assert_eq!(first.failed, None);
+    assert_eq!(
+        driver.baseline.get("start-stalled", "CC-1"),
+        Some(format!("{}|pushed|o/r:bbb222|{now}|", now - 7200).as_str())
+    );
+    assert_eq!(
+        driver.baseline.get("start-stalled", "CC-2"),
+        Some(format!("{0}|0||{0}|", now - 7200).as_str())
+    );
+    for _ in 0..3 {
+        let quiet = driver.pass(&state);
+        assert!(stalled_lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    }
+    driver.now = now + 3600;
+    let stalled = driver.pass(&state);
+    assert_eq!(
+        stalled_lines(&stalled),
+        vec!["EVENT lane-stalled CC-1 age=3600"]
+    );
+    assert_eq!(
+        driver.baseline.get("start-stalled", "CC-1"),
+        Some(format!("{}|pushed|o/r:bbb222|{now}|0", now - 7200).as_str())
+    );
+}
+
+/// `lib/watch-host-kinds.sh:446` (`check_lane_long`, the hosted arms of
+/// `lane_step` and `lane_long_rounds`), the cases
+/// `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` pinned as
+/// `hosted_stage`. Defect: a hosted lane's stage and counts read off this
+/// disk, so every hosted lane reads `none` and zero; a fetch that failed
+/// read as no file. A hosted lane's `Step` line, workflow state and run
+/// index come through the provider; a fetch that failed is `stage=unread`
+/// and `unread` counts with the pass's failure; a parked hosted lane reads
+/// `parked`; a `files=none` kind `none` with `unread` counts.
+#[test]
+fn a_long_hosted_lane_s_stage_and_counters_are_read_through_the_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let now = 1_800_000_000;
+    let launched = clock::iso_utc(now - 12_601);
+    let mut one = hosted_lane("KEN-1", "gh-1", "/remote/KEN-1");
+    one["launched_at"] = json!(launched);
+    let mut two = hosted_lane("KEN-2", "gh-2", "/remote/KEN-2");
+    two["launched_at"] = json!(launched);
+    let mut parked = hosted_lane("KEN-3", "gh-3", "/remote/KEN-3");
+    parked["launched_at"] = json!(launched);
+    parked["status"] = json!("parked");
+    let mut cloud = cloud_lane("CC-4", "/a", now);
+    cloud["launched_at"] = json!(launched);
+    fleet.set_lanes(vec![one, two, parked, cloud]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        ("claude-cloud capabilities", ok(CLOUD_LINE)),
+        ("status --item KEN-1 --harness claude", ok("running\n")),
+        ("status --item KEN-2 --harness claude", ok("running\n")),
+        (
+            "cat --item KEN-1 /remote/KEN-1/tmp/lane-status-KEN-1.md",
+            ok("# Lane status\n- Step: dev round 1\n"),
+        ),
+        ("cat --item KEN-1 /remote/KEN-1/tmp/workflow-state-KEN-1.json", ok(COUNTS_STATE)),
+        (
+            "cat --item KEN-1 /remote/KEN-1/tmp/validation-runs",
+            ok("dev-validate-runs-v1\ndev-validate-implement\ndev-validate-fix\ndev-validate-restack-a\ndev-validate-restack-b\n"),
+        ),
+        ("cat --item KEN-2 /remote/KEN-2/tmp/lane-status-KEN-2.md", answer(1, "")),
+        ("cat --item KEN-2 /remote/KEN-2/tmp/workflow-state-KEN-2.json", answer(1, "")),
+        ("cat --item KEN-2 /remote/KEN-2/tmp/validation-runs", answer(1, "")),
+    ]);
+    world.plant_gh(json!({"repos/o/r/pulls?head=o:cc-4&state=open": {"body": []}}));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let produced = driver.pass(&state);
+    let long: Vec<String> = event_lines(&produced)
+        .into_iter()
+        .filter(|l| l.starts_with("EVENT lane-long "))
+        .collect();
+    assert_eq!(
+        long,
+        vec![
+            "EVENT lane-long KEN-1 age=12601 review_rounds=5 fix_receipts=3 validation_runs=4 restacks=4 repeated_class_rounds=1 stage=dev round 1",
+            "EVENT lane-long KEN-2 age=12601 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=unread",
+            "EVENT lane-long KEN-3 age=12601 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked",
+            "EVENT lane-long CC-4 age=12601 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=none",
+        ]
+    );
+    assert!(
+        produced
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-long-rounds-unread item=KEN-2 cause=cat exit=1")),
+        "{:?}",
+        produced.failed
+    );
+    let log = world.host_log();
+    assert!(
+        !log.iter()
+            .any(|l| l.contains("KEN-3") || l.contains("CC-4")),
+        "a parked lane and a cloud lane fetch nothing: {log:?}"
+    );
+}
+
+/// A hosted lane with a pane on the fleet server, its `.git` answered as
+/// `git_answer` by the provider and its status verb as `exited`.
+fn hosted_pane_lane(server: &Server, item: &str, window: &str, dir: &Path) -> (Value, String) {
+    let pane = server.open_window(window, dir, "bash --norc --noprofile");
+    let mut lane = hosted_lane(item, window, &format!("/remote/{item}"));
+    lane["launch"] = json!({"pane": pane, "server": server.pid});
+    (lane, pane)
+}
+
+/// `oversee-watch:1477-1510` (`finished_hosted_lane_eligible`,
+/// `close_finished_hosted_lane` at `:4857`), `:4796` (the status verb), the
+/// case `744fd5727:skills/orch/tests/oversee_watch_hosted.sh` pinned as
+/// `merged_gone_closes`. Defect: a merged hosted lane whose worktree its own
+/// close-out removed left open on the host for a person to close, or a lane
+/// still inside its merge close-out (its worktree standing) closed under
+/// it. A hosted lane the provider's status verb reads exited is
+/// `lane-exited` on the second pass; one whose item the GitHub duty read
+/// merged and whose `.git` the host has not is closed through `lane-close`
+/// then, `lane-closed` with its archive line under it; one whose worktree
+/// stands, and one with no merged row, are not; the next pass says nothing.
+#[test]
+fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited_and_a_standing_one_is_not()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (one, _) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
+    let (two, _) = hosted_pane_lane(&server, "KEN-2", "gh-2", dir.path());
+    let (three, _) = hosted_pane_lane(&server, "KEN-3", "gh-3", dir.path());
+    fleet.set_lanes(vec![one.clone(), two.clone(), three.clone()]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        ("capabilities", ok(SSH_LINE)),
+        ("status --item KEN-1 --harness claude", ok("exited\n")),
+        ("status --item KEN-2 --harness claude", ok("exited\n")),
+        ("status --item KEN-3 --harness claude", ok("exited\n")),
+        ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
+        ("touch --item KEN-1", ok("")),
+        (
+            "cat --item KEN-2 /remote/KEN-2/.git",
+            ok("gitdir: /x/.git/worktrees/KEN-2\n"),
+        ),
+    ]);
+    world.plant_close(ok("kept=/archive/KEN-1\n"));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    for (item, key) in [("KEN-1", "o/r#7"), ("KEN-2", "o/r#8")] {
+        driver.baseline.apply(Change::Set {
+            kind: "merged".into(),
+            identity: item.into(),
+            value: key.into(),
+        });
+    }
+    let first = driver.pass(&state);
+    assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
+    assert!(world.close_log().is_empty());
+    let second = driver.pass(&state);
+    assert_eq!(
+        lines(&second),
+        vec![
+            "EVENT lane-exited gh-1",
+            "EVENT lane-closed KEN-1",
+            "kept=/archive/KEN-1",
+            "EVENT lane-exited gh-2",
+            "EVENT lane-exited gh-3",
+        ]
+    );
+    assert_eq!(second.failed, None);
+    assert_eq!(
+        world.close_log(),
+        vec![format!("--state-dir {} KEN-1", driver.state_dir.display())]
+    );
+    assert!(
+        !world.host_log().iter().any(|l| l.contains("KEN-3 /remote")),
+        "no merged row, no worktree read: {:?}",
+        world.host_log()
+    );
+    let marker = hosted::close_marker_path(
+        lanes::watch_state_dir(&driver.settings.claim_store),
+        "KEN-1",
+    );
+    assert!(
+        std::fs::metadata(&marker).is_ok(),
+        "the close's marker stands"
+    );
+    // The record `lane-close` wrote, read on the next pass: the marker leaves.
+    let mut closed = one;
+    closed["status"] = json!("stopped");
+    fleet.set_lanes(vec![closed, two, three]);
+    let third = driver.pass(&fleet.read());
+    assert!(event_lines(&third).is_empty(), "{:?}", lines(&third));
+    assert_eq!(third.failed, None);
+    assert_eq!(world.close_log().len(), 1);
+    assert!(std::fs::metadata(&marker).is_err());
+}
+
+/// `oversee-watch:1490-1510`, `:5100` (the `close-pending` retry), the case
+/// `744fd5727:skills/orch/tests/oversee_watch_hosted.sh` pinned as
+/// `quota_defers_close`. Defect: a close the tracker's quota refusal
+/// deferred never asked again, since its `lane-exited` line was already
+/// reported, or asked again after the pane changed under it. The deferred
+/// close keeps `close-pending` as `lane-exited|<pane key>`; the next pass,
+/// its line still reported under that key, asks again and closes.
+#[test]
+fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_stands() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (one, pane) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
+    fleet.set_lanes(vec![one.clone()]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        ("capabilities", ok(SSH_LINE)),
+        ("status --item KEN-1 --harness claude", ok("exited\n")),
+        ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
+        ("touch --item KEN-1", ok("")),
+    ]);
+    world.plant_close(json!({"exit": 1, "stderr": format!("{}\n", quota_receipt(1_800_007_200))}));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-1".into(),
+        value: "o/r#7".into(),
+    });
+    let first = driver.pass(&state);
+    assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
+    let second = driver.pass(&state);
+    assert_eq!(event_lines(&second), vec!["EVENT lane-exited gh-1"]);
+    assert_eq!(second.failed, None);
+    let pane_key = format!("{} {pane}", server.pid);
+    assert_eq!(
+        driver.baseline.get("close-pending", "gh-1"),
+        Some(format!("lane-exited|{pane_key}").as_str())
+    );
+    assert_eq!(world.close_log().len(), 1);
+    world.plant_close(ok("kept=/archive/KEN-1\n"));
+    let third = driver.pass(&state);
+    assert_eq!(
+        lines(&third),
+        vec!["EVENT lane-closed KEN-1", "kept=/archive/KEN-1"]
+    );
+    assert_eq!(driver.baseline.get("close-pending", "gh-1"), None);
+    assert_eq!(world.close_log().len(), 2);
+    let mut closed = one;
+    closed["status"] = json!("stopped");
+    fleet.set_lanes(vec![closed]);
+    let fourth = driver.pass(&fleet.read());
+    assert!(lines(&fourth).is_empty(), "{:?}", lines(&fourth));
+    assert_eq!(fourth.failed, None);
+    assert_eq!(world.close_log().len(), 2);
+}
+
+/// `oversee-watch:4727-4735` (`wall_route`, the hosted stop), the cases
+/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` pinned as
+/// `hosted_stop` and `hosted_stop_failed`. Defect: a walled hosted lane's
+/// harness left running on its host under the successor the relaunch opens,
+/// or a stop the provider did not confirm followed by a relaunch anyway. A
+/// walled lane whose kind declares a local pane has its harness stopped
+/// through `lane-host stop --item --harness` under the record's host before
+/// the relaunch starts; a stop the provider refuses, or answers with exit 0
+/// and a line that is not `stopped item=ITEM processes=N`
+/// (`lane_recovery_stop_confirmed`'s second arm), leaves the wall to the
+/// overseer with `wall-relaunch-refused reason=stop-failed` and the status
+/// under the line, and nothing starts.
+#[test]
+fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_relaunch() {
+    for (stop, refused) in [
+        (ok("stopped item=KEN-4 processes=1\n"), None),
+        (
+            json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
+            Some("exit=4"),
+        ),
+        (ok("stopped item=KEN-4\n"), Some("exit=0")),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+        let mut record = relaunchable(
+            lane_record(
+                "KEN-4",
+                "gh-4",
+                "claude",
+                &server,
+                &pane,
+                Some(&identity),
+                dir.path(),
+            ),
+            dir.path(),
+        );
+        record["host"] = json!(PROVIDER);
+        record["kind"] = json!("ssh");
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        let world = HostedWorld::new(dir.path());
+        let status_file = format!(
+            "cat --item KEN-4 {}/tmp/lane-status-KEN-4.md",
+            dir.path().display()
+        );
+        world.plant_host(&[
+            ("capabilities", ok(&format!("{SSH_LINE}\tpane=local"))),
+            ("status --item KEN-4 --harness claude", ok("running\n")),
+            (status_file.as_str(), ok("Step: start\n")),
+            ("stop --item KEN-4 --harness claude", stop),
+        ]);
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = world.scripts.clone();
+        driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+        let produced = driver.pass(&state);
+        let stop_line = "ORCH_LANE_HOST=/w/provider stop --item KEN-4 --harness claude".to_owned();
+        assert!(
+            world.host_log().contains(&stop_line),
+            "{:?}",
+            world.host_log()
+        );
+        let started = driver.relaunches.borrow();
+        if let Some(status) = refused {
+            assert!(
+                lines(&produced).contains(&format!(
+                    "wall-relaunch-refused lane=gh-4 reason=stop-failed {status}"
+                )),
+                "{:?}",
+                lines(&produced)
+            );
+            assert!(
+                event_lines(&produced)
+                    .iter()
+                    .any(|l| l.starts_with("EVENT usage-limit gh-4 ")),
+                "{:?}",
+                lines(&produced)
+            );
+            assert!(started.is_empty(), "nothing starts on a failed stop");
+        } else {
+            assert!(
+                event_lines(&produced).contains(
+                    &"EVENT lane-relaunched KEN-4 lane=/home/me/.bclaude from=/home/me/.eclaude"
+                        .to_owned()
+                ),
+                "{:?}",
+                lines(&produced)
+            );
+            assert_eq!(started.len(), 1);
+            assert!(
+                started[0]
+                    .args
+                    .windows(2)
+                    .any(|w| w[0] == "--host" && w[1] == PROVIDER),
+                "{:?}",
+                started[0].args
+            );
+        }
+    }
+}
+
+/// `oversee-watch:2148` (`check_prepare`) over `PREPARE_ROWS_FILTER`
+/// (`:859`), the cases `744fd5727:skills/orch/tests/oversee_watch_prepare.sh`
+/// pinned as `stuck`, `ready`, `failed`. Defect: a hosted launch's
+/// background preparation that never ends left unsaid, or said on every
+/// pass; a preparation that ended never said ready or failed. A `prepare`
+/// record past `ORCH_WATCH_PREPARE_SECS` while `preparing` is
+/// `lane-prepare-stuck` with its age and log once, one whose lane runs
+/// `lane-ready` once, one whose lane stopped with a reason
+/// `lane-prepare-failed` with the reason and log once; the next pass says
+/// nothing, and a record that leaves takes its row.
+#[test]
+fn the_prepare_records_are_said_once_per_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let now = 1_800_000_000;
+    let prepare = |item: &str, status: &str, since: u64, log: &str, reason: Option<&str>| {
+        let mut record = json!({"since": clock::iso_utc(since), "log": log, "pid": 7});
+        if let Some(reason) = reason {
+            record["reason"] = json!(reason);
+        }
+        json!({"item": item, "harness": "claude", "host": PROVIDER, "kind": "ssh", "status": status, "prepare": record})
+    };
+    let lanes = vec![
+        prepare("KEN-1", "preparing", now - 1801, "/l1", None),
+        prepare("KEN-2", "running", now - 10, "/l2", None),
+        prepare("KEN-3", "stopped", now - 20, "/l3", Some("create-failed")),
+        prepare("KEN-4", "preparing", now - 100, "/l4", None),
+    ];
+    fleet.set_lanes(lanes.clone());
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        ("capabilities", ok(SSH_LINE)),
+        ("status --item KEN-1 --harness claude", ok("running\n")),
+        ("status --item KEN-2 --harness claude", ok("running\n")),
+        ("status --item KEN-4 --harness claude", ok("running\n")),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    let prepare_lines = |produced: &Produced| -> Vec<String> {
+        event_lines(produced)
+            .into_iter()
+            .filter(|l| l.starts_with("EVENT lane-prepare") || l.starts_with("EVENT lane-ready "))
+            .collect()
+    };
+    let first = driver.pass(&state);
+    assert_eq!(
+        prepare_lines(&first),
+        vec![
+            "EVENT lane-prepare-stuck KEN-1 age=1801s log=/l1",
+            "EVENT lane-ready KEN-2",
+            "EVENT lane-prepare-failed KEN-3 reason=create-failed log=/l3",
+        ]
+    );
+    assert_eq!(first.failed, None);
+    assert_eq!(
+        driver.baseline.get("lane-prepare", "KEN-1"),
+        Some(format!("{}|stuck", now - 1801).as_str())
+    );
+    assert_eq!(driver.baseline.get("lane-prepare", "KEN-4"), None);
+    let second = driver.pass(&state);
+    assert!(prepare_lines(&second).is_empty(), "{:?}", lines(&second));
+    fleet.set_lanes(lanes[..2].to_vec());
+    let third = driver.pass(&fleet.read());
+    assert!(prepare_lines(&third).is_empty(), "{:?}", lines(&third));
+    assert_eq!(
+        driver.baseline.get("lane-prepare", "KEN-3"),
+        None,
+        "the row left with the record"
+    );
+    assert_eq!(
+        driver.baseline.get("lane-prepare", "KEN-2"),
+        Some(format!("{}|ready", now - 10).as_str())
+    );
 }

@@ -103,12 +103,50 @@ pub struct RecordDirectiveSend {
     pub write: DirectiveWrite,
 }
 
-/// What the write recorded: the `directive_send` object as the lane now
-/// holds it.
+/// What the write answered: the `directive_send` object as the lane now
+/// holds it, and, for a keyed owed write that found this key's send on the
+/// lane already, what it found and left standing (decision 193 (a)); a
+/// stage this write made carries no `found`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DirectiveSendRecorded {
     pub item: String,
     pub directive_send: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub found: Option<KeyedSend>,
+}
+
+/// What the lane's `directive_send` says of the send under the owed write's
+/// key: the write's one read of it, made where the write decides, inside
+/// the store's lock (decision 193 (a)), so two walkers of one notice read
+/// one record and the later never writes a second owed stage over a send
+/// the earlier settled. No record, or a record of a send under another key,
+/// is this notice's first call and reads as nothing found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyedSend {
+    /// This key's send is out and its outcome not yet known.
+    Owed,
+    /// This key's send settled with the result.
+    Settled(SendResult),
+    /// A record under this key whose result is no word the send writes:
+    /// never a reason to act.
+    Unreadable,
+}
+
+impl KeyedSend {
+    /// The reading of a `directive_send` record made under the write's key.
+    fn read(send: &Value) -> KeyedSend {
+        match send.get("result").and_then(Value::as_str) {
+            Some(OWED) => KeyedSend::Owed,
+            Some(word) => {
+                match serde_json::from_value::<SendResult>(Value::String(word.to_owned())) {
+                    Ok(result) => KeyedSend::Settled(result),
+                    Err(_) => KeyedSend::Unreadable,
+                }
+            }
+            None => KeyedSend::Unreadable,
+        }
+    }
 }
 
 /// The characters of the text the record keeps, the legacy
@@ -133,6 +171,13 @@ fn send_key(lane: &Document) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// A lane object's `directive_send` where the send it records was made
+/// under `key`.
+fn under_key<'a>(lane: &'a Document, key: &str) -> Option<&'a Value> {
+    lane.get("directive_send")
+        .filter(|send| send.get("key").and_then(Value::as_str) == Some(key))
+}
+
 /// `record` with the send's key beside its fields, where one stands.
 fn keyed(mut record: Value, key: Option<String>) -> Value {
     if let (Some(key), Some(fields)) = (key, record.as_object_mut()) {
@@ -148,7 +193,13 @@ fn keyed(mut record: Value, key: Option<String>) -> Value {
 /// whose channel is a cloud session (`lane-channel` otherwise: a mailbox
 /// lane's send is the mailbox's own, repeatable under its delivery id) and
 /// only where no send stands owed (`directive-send-owed`: the earlier send's
-/// receipt settles first, or the directive would be queued twice). The
+/// receipt settles first, or the directive would be queued twice). An owed
+/// write made under a `key` first reads the lane's record under that key
+/// (decision 193 (a)): a send of this key already on the lane, owed,
+/// settled or unreadable, is answered as [`KeyedSend`] with nothing
+/// written, so the caller's replay learns its own send's standing from the
+/// one record the write judges, under the one lock; a write under no key
+/// reads no key. The
 /// settled stage, `{at, result, text, credit}` as the legacy wrote it, is
 /// written only over an owed record (`directive-send-unowed`: a record
 /// replaced under the send takes no stale receipt), and so is the failed
@@ -184,6 +235,13 @@ pub fn record_directive_send(
             if !record.session_channel() {
                 return Err(Error::LaneChannel {
                     item: r.item.clone(),
+                });
+            }
+            if let Some(send) = key.as_deref().and_then(|key| under_key(lane, key)) {
+                return Ok(DirectiveSendRecorded {
+                    item: r.item.clone(),
+                    directive_send: send.clone(),
+                    found: Some(KeyedSend::read(send)),
                 });
             }
             if owed(lane) {
@@ -237,6 +295,7 @@ pub fn record_directive_send(
     Ok(DirectiveSendRecorded {
         item: r.item.clone(),
         directive_send,
+        found: None,
     })
 }
 
@@ -492,7 +551,17 @@ mod tests {
                 "key": "validate-x",
             })
         );
-        record_directive_send(path, &mut doc, &owed, &env()).unwrap();
+        // The next notice's send, under its own key (a repeat under the
+        // settled key is the replay, answered without a write: the row
+        // below), and the operator's mark over it keeps that key.
+        let next = write(
+            "KEN-4437",
+            DirectiveWrite::Owed {
+                text: "validation-end run=y state=fail".into(),
+                key: Some("validate-y".into()),
+            },
+        );
+        record_directive_send(path, &mut doc, &next, &env()).unwrap();
         let by_hand = write(
             "KEN-4437",
             DirectiveWrite::Failed {
@@ -500,7 +569,7 @@ mod tests {
             },
         );
         let recorded = record_directive_send(path, &mut doc, &by_hand, &env()).unwrap();
-        assert_eq!(recorded.directive_send["key"], "validate-x");
+        assert_eq!(recorded.directive_send["key"], "validate-y");
         assert_eq!(recorded.directive_send["owner"], "operator");
         // A send under no key writes none, and a settle over it adds none.
         let bare = write(
@@ -514,5 +583,125 @@ mod tests {
         assert!(recorded.directive_send.get("key").is_none(), "{recorded:?}");
         let recorded = record_directive_send(path, &mut doc, &settled, &env()).unwrap();
         assert!(recorded.directive_send.get("key").is_none(), "{recorded:?}");
+    }
+
+    /// Decision 193 (a): the owed write under a key reads the lane's send
+    /// under that key where it decides, inside the one write, and answers
+    /// what it found with nothing written: settled under this key answers
+    /// `settled` with the result, owed under this key answers `owed`, a
+    /// record under this key whose result is no word the send writes
+    /// answers `unreadable`; owed under another key refuses
+    /// `directive-send-owed` as any owed send does; settled under another
+    /// key, or no record, is the first call's case and writes the owed
+    /// stage; a write under no key reads no key and refuses or writes by
+    /// the standing stage alone. Defect: a second owed stage written over
+    /// a send this key had settled, and the notice sent again, because the
+    /// read of the lane's send was a walker's own, made outside the lock
+    /// the write takes, so another walker's settle could land between the
+    /// read and the write.
+    #[test]
+    fn a_keyed_owed_write_reads_the_send_under_its_key_where_it_decides() {
+        let path = Path::new("/w/workflow-state-oversee.json");
+        let key = "validate-x";
+        let keyed_write = write(
+            "KEN-4437",
+            DirectiveWrite::Owed {
+                text: "validation-end run=x state=pass".into(),
+                key: Some(key.into()),
+            },
+        );
+        let bare_write = write(
+            "KEN-4437",
+            DirectiveWrite::Owed {
+                text: "Rebase.".into(),
+                key: None,
+            },
+        );
+        let settled = |result: &str, key: &str| json!({"at": 1_769_700_000, "result": result, "text": "", "credit": "unread", "key": key});
+        let owed = |key: &str| json!({"result": "owed", "text": "x", "receipt": "r", "key": key});
+        // the record planted, the write made, what it answers
+        let rows: [(Value, &RecordDirectiveSend, Option<KeyedSend>); 10] = [
+            (
+                settled("sent", key),
+                &keyed_write,
+                Some(KeyedSend::Settled(SendResult::Sent)),
+            ),
+            (
+                settled("archived", key),
+                &keyed_write,
+                Some(KeyedSend::Settled(SendResult::Archived)),
+            ),
+            (
+                settled("failed", key),
+                &keyed_write,
+                Some(KeyedSend::Settled(SendResult::Failed)),
+            ),
+            (owed(key), &keyed_write, Some(KeyedSend::Owed)),
+            (
+                json!({"result": "queued", "text": "", "key": key}),
+                &keyed_write,
+                Some(KeyedSend::Unreadable),
+            ),
+            (
+                json!({"text": "", "key": key}),
+                &keyed_write,
+                Some(KeyedSend::Unreadable),
+            ),
+            (settled("sent", "validate-other"), &keyed_write, None),
+            (Value::Null, &keyed_write, None),
+            (settled("sent", key), &bare_write, None),
+            (Value::Null, &bare_write, None),
+        ];
+        for (record, request, found) in rows {
+            let mut doc = cloud_fleet();
+            if record.is_null() {
+                doc["lanes"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("directive_send");
+            } else {
+                doc["lanes"][0]["directive_send"] = record.clone();
+            }
+            let before = doc.clone();
+            let recorded = record_directive_send(path, &mut doc, request, &env()).unwrap();
+            assert_eq!(recorded.found, found, "planted {record}");
+            match found {
+                Some(_) => {
+                    assert_eq!(recorded.directive_send, record, "planted {record}");
+                    assert_eq!(doc, before, "nothing written for {record}");
+                }
+                None => {
+                    assert_eq!(
+                        recorded.directive_send["result"], "owed",
+                        "planted {record}"
+                    );
+                    assert_eq!(
+                        recorded.directive_send.get("key"),
+                        match &request.write {
+                            DirectiveWrite::Owed { key, .. } => key.clone().map(Value::String),
+                            DirectiveWrite::Settled { .. } | DirectiveWrite::Failed { .. } => {
+                                unreachable!("the rows write the owed stage")
+                            }
+                        }
+                        .as_ref(),
+                        "planted {record}"
+                    );
+                    assert_eq!(doc["lanes"][0]["directive_send"], recorded.directive_send);
+                }
+            }
+        }
+        // Owed under another key, and owed under this key met by a write
+        // under no key: refused, nothing written.
+        for (record, request) in [
+            (owed("validate-other"), &keyed_write),
+            (owed(key), &bare_write),
+        ] {
+            let mut doc = cloud_fleet();
+            doc["lanes"][0]["directive_send"] = record.clone();
+            let before = doc.clone();
+            let refused = record_directive_send(path, &mut doc, request, &env()).unwrap_err();
+            assert_eq!(refused.key(), "directive-send-owed", "planted {record}");
+            assert_eq!(doc, before, "nothing written for {record}");
+        }
     }
 }

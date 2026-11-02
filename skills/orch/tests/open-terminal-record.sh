@@ -365,13 +365,17 @@ assert_eq "rc=$RC walled=$(walled_of) summary=$(grep -c '^open-terminal: summary
 assert_eq "$(grep -o -- 'accounts pick .*' "$TMP_ROOT/runtime.log")" \
   "accounts pick --fleet --lane $LANE_DIR --harness claude --native-model opus --projected --replaces CC-1" \
   'the judge is asked for the named lane on the launch model with the replaced lane named'
+# Control: a relaunch judged up front, as a fresh launch is, asks the judge
+# with no replaced item, so its own lane's charge counts against it; the row
+# above, which names the replaced item, is what the per-item judge holds.
 JUDGE_OT="$(mutant_scripts judge-mutant open-terminal)/open-terminal" || exit 1
 mutate_file "$JUDGE_OT" '|| RELAUNCH_JUDGE=true' '|| RELAUNCH_JUDGE=false'
 : > "$TMP_ROOT/runtime.log"
 OT_RUNTIME_PICK="$WALLED_REPLY" OT_RUNTIME_LOG="$TMP_ROOT/runtime.log" RUN_TMUX=stub,1,0 \
   run_ot SCRIPT="$JUDGE_OT" --relaunch --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-1
-assert_eq "walled=$(walled_of) asked=$(grep -c 'accounts pick' "$TMP_ROOT/runtime.log" || true)" 'walled=0 asked=0' \
-  "control: a fleet relaunch judged by the legacy pick never asks the runtime and misses its walled verdict"
+assert_eq "$(grep -o -- 'accounts pick .*' "$TMP_ROOT/runtime.log")" \
+  "accounts pick --fleet --lane $LANE_DIR --harness claude --native-model opus --projected" \
+  "control: a fleet relaunch judged up front names no replaced item, so the replacement rule is lost on its own lane's charge"
 # An account the judge refuses by its word, reserved or retired from its
 # day, is refused by that word: the launcher prints no window, since the
 # account's room is no part of the reason (the judge's own line is the key
@@ -391,6 +395,48 @@ OT_RUNTIME_PICK="$WORD_REPLY" RUN_TMUX=stub,1,0 \
   run_ot --relaunch --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-1
 assert_eq "rc=$RC retired=$(grep -c "^open-terminal: lane-retired lane=$LANE_DIR model=opus ends=2026-10-01$" <<<"$ERR" || true) walled=$(grep -c 'lane-model-walled' <<<"$ERR" || true)" \
   'rc=1 retired=1 walled=0' "a fleet relaunch onto an account the judge retires is lane-retired with the day and no window"
+
+echo "=== a fleet launch's picks are the runtime's judge: the auto pick and the fresh named lane ==="
+# `--lane auto` asks the runtime's `accounts pick` for the harness on the
+# launch model under the fleet's state, and launches on the account the reply
+# names (decision 185 (5)): the account the record carries is the judge's.
+# Its control restores the legacy `lanes pick` call, which this world answers
+# with no record, so the launch never asks the runtime and resolves no lane.
+LANE_REPLY="$TMP_ROOT/lane-reply.json"
+jq -cn --arg dir "$LANE_DIR" '{protocol: "orch-runtime-v1", ok: true, result: {answer: "lane", exit: 0, record: {
+  config_dir: $dir, alias: "eclaude", harness: "claude", wall: 10, claims: 0, binding_bucket: "weekly",
+  projected_headroom_pct: 80, verdict: "room"}}}' > "$LANE_REPLY"
+: > "$TMP_ROOT/runtime.log"
+OT_RUNTIME_PICK="$LANE_REPLY" OT_RUNTIME_LOG="$TMP_ROOT/runtime.log" RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane auto --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-860
+assert_eq "rc=$RC account=$(field "$(record CC-860)" account) asked=$(grep -o -- 'accounts pick .*' "$TMP_ROOT/runtime.log")" \
+  "rc=0 account=$LANE_DIR asked=accounts pick --fleet --harness claude --native-model opus" \
+  "a fleet --lane auto launch asks the runtime's judge for the harness and model and launches on the account it names"
+AUTO_OT="$(mutant_scripts auto-pick-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$AUTO_OT" '  reply="$(ORCH_LANE_HOST="$LANE_HOST" "$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet \' \
+  '  reply="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick \'
+: > "$TMP_ROOT/runtime.log"
+OT_RUNTIME_PICK="$LANE_REPLY" OT_RUNTIME_LOG="$TMP_ROOT/runtime.log" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$AUTO_OT" --tmux --harness claude --lane auto --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-861
+assert_eq "rc=$RC records=$(records CC-861) asked=$(grep -c 'accounts pick' "$TMP_ROOT/runtime.log" || true)" 'rc=1 records=0 asked=0' \
+  "control: an auto pick through the legacy call never asks the runtime and launches nothing on its empty answer"
+# A fresh launch naming its lane is judged by the same verb with `--lane
+# --projected` and no replaced item: the walled answer is read as the legacy
+# judge's, and nothing launches. Its control restores the legacy call.
+: > "$TMP_ROOT/runtime.log"
+OT_RUNTIME_PICK="$WALLED_REPLY" OT_RUNTIME_LOG="$TMP_ROOT/runtime.log" RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-862
+assert_eq "rc=$RC walled=$(walled_of) records=$(records CC-862) asked=$(grep -o -- 'accounts pick .*' "$TMP_ROOT/runtime.log")" \
+  "rc=1 walled=1 records=0 asked=accounts pick --fleet --lane $LANE_DIR --harness claude --native-model opus --projected" \
+  "a fresh fleet launch naming its lane is judged by the runtime on the projection with no replaced item and refused with its figures"
+NAMED_OT="$(mutant_scripts named-pick-mutant open-terminal)/open-terminal" || exit 1
+mutate_file "$NAMED_OT" 'lane_reply="$(ORCH_LANE_HOST="$LANE_HOST" "$ORCH_RUNTIME" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} accounts pick --fleet \' \
+  'lane_reply="$(ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" pick \'
+: > "$TMP_ROOT/runtime.log"
+OT_RUNTIME_PICK="$WALLED_REPLY" OT_RUNTIME_LOG="$TMP_ROOT/runtime.log" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$NAMED_OT" --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high $QUESTION_OFF_ALL $COMPACTION_OFF_ALL" CC-863
+assert_eq "walled=$(walled_of) asked=$(grep -c 'accounts pick' "$TMP_ROOT/runtime.log" || true)" 'walled=0 asked=0' \
+  "control: a fresh named launch judged by the legacy call never asks the runtime and misses its walled verdict"
 
 # The launch identity lane-close stops the harness by: the pane and its tmux
 # server from the window's creation and, once the launch stands, the harness

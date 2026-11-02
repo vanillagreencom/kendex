@@ -56,6 +56,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 # and a fake gh (exit 1 so resolve_repo yields empty without touching network).
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
+# The orch runtime every lane pick of a launch asks (`accounts pick`): the
+# shared stub, which hands the question to the lanes this world names.
+# shellcheck source=lib/open-terminal-stubs.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/open-terminal-stubs.sh"
+ot_stub_runtime "$TMP_ROOT/runtime-bin"
 cat > "$BIN/ghostty" <<'EOF'
 #!/usr/bin/env bash
 # The capture is renamed into place, so it exists only once whole: a test
