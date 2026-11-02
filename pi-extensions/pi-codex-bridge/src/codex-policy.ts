@@ -56,7 +56,10 @@ export const PI_TOOL_NAMESPACE = "pi";
  * MCP and plugin server sources, hooks, turns Pi did not ask for (goals, the
  * guardian reviewer, sub-agents), and UI-only surfaces that have no place in a
  * bridge. Every supported release knows each name: 0.163.0 refuses to start
- * on `--disable` of a name it lacks.
+ * on `--disable` of a name it lacks. `worktrees` and `realtime_conversation`
+ * serve 0.163.0 only: 0.166.0 marks both flags removed and reports them
+ * enabled whatever the launch says, so its review is in
+ * `REVIEWED_ENABLED_FEATURES`.
  */
 export const DISABLED_FEATURES = [
 	"shell_tool",
@@ -106,10 +109,10 @@ export const DISABLED_FEATURES = [
 export const REVIEWED_ENABLED_FEATURES: ReadonlyMap<string, string> = new Map([
 	// `--disable unified_exec`, `-c features.unified_exec=false` and
 	// `experimental_use_unified_exec_tool=false` all leave it reported on in
-	// 0.163.0. Its exec_command and write_stdin tools are not offered while
-	// shell_tool is off and the thread has no environment; the fixture suite
-	// reads the tools Codex offers the model to hold that.
-	["unified_exec", "tools not offered: shell_tool off, environments []"],
+	// every supported release. Its exec_command and write_stdin tools are not
+	// offered while shell_tool is off; the fixture suite reads the tools Codex
+	// offers the model to hold that.
+	["unified_exec", "tools not offered: shell_tool off"],
 	["api_key_cyber_access_programs", "API-key access programs; no tool"],
 	["api_key_model_discovery", "API-key model listing; no tool"],
 	["cli_daybreak", "access-program selection; no tool"],
@@ -124,6 +127,13 @@ export const REVIEWED_ENABLED_FEATURES: ReadonlyMap<string, string> = new Map([
 	["plugin_sharing", "plugin sharing; plugins are off"],
 	["system_proxy_fallback", "proxy transport; no tool"],
 	["unbounded_connection_retries", "transport retries; no tool"],
+	["bedrock_setup_wizard", "TUI sign-in onboarding; no tool"],
+	["incremental_tools", "tool-definition context updates; no tool"],
+	["mcp_oauth_refresh_coordination", "MCP OAuth refresh; MCP servers stay off"],
+	["prediction_preserve_parent_tools", "prediction forks keep tool declarations; no tool"],
+	["reasoning_effort_override", "response config items on effort change; no tool"],
+	["realtime_conversation", "flag removed in 0.166.0; realtime starts only on a client thread/realtime/start, which the bridge never sends"],
+	["worktrees", "flag removed in 0.166.0; no runtime path in core or app-server"],
 	["collaboration_modes", "stage removed in 0.163.0"],
 	["item_ids", "stage removed in 0.163.0"],
 	["resize_all_images", "stage removed in 0.163.0"],
@@ -154,8 +164,8 @@ export const APPROVAL_POLICY = "untrusted";
 /**
  * Launch settings beside the feature list. Web search is off, and Codex does
  * not offer the model `request_user_input`, because no user answers Codex
- * here. None of them enables a feature, so the feature audit's list is the
- * same with them as without.
+ * here. None of them enables a feature; `features.plugin_discovery_prefetch=false`
+ * disables one.
  */
 export const LAUNCH_CONFIG = [
 	'web_search="disabled"',
@@ -171,6 +181,11 @@ export const LAUNCH_CONFIG = [
 	// inside `exec`, which fails closed while code_mode_host is off. A setting
 	// under the code_mode table that enables no feature.
 	`features.code_mode.direct_only_tool_namespaces=["${PI_TOOL_NAMESPACE}"]`,
+	// 0.166.0 reads the plugin directory over the network at app-server start.
+	// A `-c` setting, not `--disable`, because 0.163.0 lacks the name and
+	// refuses `--disable` of it; it moves to DISABLED_FEATURES once 0.163.0
+	// leaves the supported list.
+	"features.plugin_discovery_prefetch=false",
 ] as const;
 
 export function appServerArgs(configOverrides: readonly string[]): string[] {

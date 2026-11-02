@@ -35,7 +35,7 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.86.0",
     "@earendil-works/pi-coding-agent": ">=0.86.0",
-    "@openai/codex": "0.163.0"
+    "@openai/codex": "0.163.0 || 0.166.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
@@ -53,6 +53,7 @@
     "@earendil-works/pi-coding-agent": "1.0.0",
     "@types/node": "^24.3.0",
     "codex-0.163.0": "npm:@openai/codex@0.163.0",
+    "codex-0.166.0": "npm:@openai/codex@0.166.0",
     "esbuild": "^0.28.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"

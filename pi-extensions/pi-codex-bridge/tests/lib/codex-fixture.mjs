@@ -101,35 +101,40 @@ export async function fixtureWorld(name, { codex, script = [], model = "gpt-5.5"
 	const sentLines = [];
 	/** Called with each JSON-RPC line the bridge writes, before Codex reads it. */
 	let beforeWrite = () => undefined;
-	const recordingSpawn = (command, args, options) => {
+	/** `rewrite` maps each chunk the bridge writes to the text Codex reads. */
+	const recordingSpawn = (command, args, options, rewrite) => {
 		const child = spawn(command, args, options);
 		const record = { command, args: [...args], env: { ...options.env }, child, sent: [], received: [] };
 		children.push(record);
 		createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => record.received.push(line));
 		const write = child.stdin.write.bind(child.stdin);
 		child.stdin.write = (chunk, ...rest) => {
-			const line = chunk.toString();
+			const line = rewrite === undefined ? chunk.toString() : rewrite(chunk.toString());
 			sentLines.push(line);
 			record.sent.push(line);
 			beforeWrite(line);
-			return write(chunk, ...rest);
+			return write(line, ...rest);
 		};
 		return child;
 	};
-	/** `withoutSetting` drops one `-c` launch setting the bridge passes, for a
-	 * contrast launch. */
-	const newBridge = ({ withoutSetting } = {}) => {
+	/** `withoutSetting` drops one `-c` launch setting the bridge passes, and
+	 * `withoutEnvironments` the `environments` of every `thread/start` and
+	 * `turn/start` it writes, each for a contrast launch. */
+	const newBridge = ({ withoutSetting, withoutEnvironments = false } = {}) => {
 		if (codex === undefined) throw new Error("fixture-codex-unset");
+		const rewrite = withoutEnvironments ? dropEnvironments : undefined;
+		const spawnChild = (command, args, options) => {
+			if (withoutSetting === undefined) return recordingSpawn(command, args, options, rewrite);
+			const at = args.findIndex((arg, index) => args[index - 1] === "-c" && arg === withoutSetting);
+			if (at < 0) throw new Error(`fixture-setting-absent setting=${withoutSetting}`);
+			return recordingSpawn(command, args.toSpliced(at - 1, 2), options, rewrite);
+		};
 		return new CodexBridge({
 			codexHome: home,
 			cwd: project,
 			executable: codex,
 			configOverrides,
-			connect: (launch, signal) => startAppServer(launch, signal, withoutSetting === undefined ? recordingSpawn : (command, args, options) => {
-				const at = args.findIndex((arg, index) => args[index - 1] === "-c" && arg === withoutSetting);
-				if (at < 0) throw new Error(`fixture-setting-absent setting=${withoutSetting}`);
-				return recordingSpawn(command, args.toSpliced(at - 1, 2), options);
-			}),
+			connect: (launch, signal) => startAppServer(launch, signal, spawnChild),
 		});
 	};
 	return {
@@ -150,6 +155,9 @@ export async function fixtureWorld(name, { codex, script = [], model = "gpt-5.5"
 			const ids = new Set(sent.flatMap((chunk) => chunk.split("\n").filter(Boolean)).map((line) => JSON.parse(line)).filter((frame) => frame.method === "experimentalFeature/list").map((frame) => frame.id));
 			return received.map((line) => JSON.parse(line)).filter((frame) => ids.has(frame.id) && frame.result !== undefined).flatMap((frame) => frame.result.data.filter((feature) => feature.enabled).map((feature) => feature.name)).sort();
 		}),
+		/** The type of every item Codex reported started to any bridge of this
+		 * world, read from the frames Codex wrote. */
+		startedItemTypes: () => children.flatMap(({ received }) => received.map((line) => JSON.parse(line)).filter((frame) => frame.method === "item/started").map((frame) => frame.params.item.type)),
 		sentMethods: () => sentLines.flatMap((line) => line.split("\n").filter(Boolean)).map((line) => JSON.parse(line).method).filter(Boolean),
 		addLateServer: () => appendFileSync(homeConfig, `\n${serverTable("late_marker", markers.late)}`),
 		startedMarkers: () => Object.entries(markers).filter(([, path]) => existsSync(path)).map(([key]) => key),
@@ -187,6 +195,20 @@ export async function fixtureWorld(name, { codex, script = [], model = "gpt-5.5"
 			rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 		},
 	};
+}
+
+/** One written chunk with `environments` removed from each `thread/start` and
+ * `turn/start` frame. A frame of either method without the key refuses: the
+ * contrast would then run the bridge's own launch and prove nothing. */
+function dropEnvironments(chunk) {
+	return chunk.split("\n").map((line) => {
+		if (line === "") return line;
+		const frame = JSON.parse(line);
+		if (frame.method !== "thread/start" && frame.method !== "turn/start") return line;
+		if (!Object.hasOwn(frame.params ?? {}, "environments")) throw new Error(`fixture-environments-absent method=${frame.method}`);
+		delete frame.params.environments;
+		return JSON.stringify(frame);
+	}).join("\n");
 }
 
 function markerCommands(markers, separator) {

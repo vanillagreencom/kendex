@@ -52,6 +52,11 @@ export function functionCall(name, args, callId, namespace) {
 	return { type: "function_call", call_id: callId, name, arguments: JSON.stringify(args), ...(namespace === undefined ? {} : { namespace }) };
 }
 
+/** A call to a freeform tool, the shape Codex declares `apply_patch` in. */
+export function customToolCall(name, input, callId) {
+	return { type: "custom_tool_call", call_id: callId, name, input };
+}
+
 /** Every tool name offered to the model in one request, nested ones included. */
 export function offeredTools(body) {
 	const names = [];
