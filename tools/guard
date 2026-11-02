@@ -1634,8 +1634,8 @@ PY
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or, scoped, per key a changed
-# settings example of the tree adds or removes (example_keys) beside its path
-# query, that key in SCAN_KEYS and empty for every other query. One batch
+# settings example of the tree adds, removes or changes (example_keys) beside
+# its path query, that key in SCAN_KEYS and empty for every other query. One batch
 # extracts file metadata and compares the document-read lines, retaining
 # source text inside that process.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
@@ -1960,8 +1960,8 @@ reach_join() { # ROLE PATH [changed]
 # seeds only the file's input notes. Any other settings change seeds by path
 # as an unscoped run does.
 # Scoped too, a changed skills/<name>/kendex.settings.toml.example, or its
-# render under .agents/skills/<name>/, that adds or removes a declared key
-# (example_keys) reads as a doc of its tree: it seeds its input notes, the
+# render under .agents/skills/<name>/, that adds, removes or changes the
+# line declaring a key (example_keys) reads as a doc of its tree: it seeds its input notes, the
 # files doc_readers finds naming it by path, and per such key the files
 # naming the key. A key no suite, helper, test module or test program of the
 # tree names runs the tree's whole set. Any other example change is a path
@@ -2191,35 +2191,39 @@ settings_shape() { # FILE
 # its first character, such as SECOND_OPINION_<NAME>_CMD, printed as written.
 # A comment line seeds nothing into a consumer's settings, so the placeholder
 # never becomes a key there; any other item of the line declares nothing.
-settings_declared() { # TREE
+# With --lines in place of TREE, `<key> <text>` instead, the text being what
+# declares the key: its whole assignment line, or the family item itself, so
+# a key's text changes when its value does but not when a family beside it on
+# a `# keys:` line comes or goes.
+settings_declared() { # TREE | --lines
   awk -v tree="$1" '
     match($0, /^[ \t]*(#[ \t]*)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=/) {
       key = substr($0, 1, RLENGTH - 1)
       gsub(/^[ \t#]+|[ \t]+$/, "", key)
-      print key " " tree
+      print key " " (tree == "--lines" ? $0 : tree)
       next
     }
     match($0, /^[ \t]*#[ \t]*keys:/) {
       n = split(substr($0, RLENGTH + 1), items, /[ \t,]+/)
       for (i = 1; i <= n; i++)
-        if (items[i] ~ /^[A-Z_][A-Z0-9_]*<NAME>[A-Z0-9_]*$/) print items[i] " " tree
+        if (items[i] ~ /^[A-Z_][A-Z0-9_]*<NAME>[A-Z0-9_]*$/) print items[i] " " (tree == "--lines" ? items[i] : tree)
     }
   '
 }
-# Each key the settings example FILE, a source or its render, declares at REV
-# or in the working tree but not at both (settings_declared): the keys its
-# change adds or removes. An absent side declares nothing. Status 1: a side
-# could not be read.
+# Each key whose declaring lines (settings_declared --lines) in the settings
+# example FILE, a source or its render, differ between REV and the working
+# tree: the keys its change adds, removes or gives a new value or form. An
+# absent side declares nothing. Status 1: a side could not be read.
 example_keys() { # REV FILE
   local base="" head=""
   if git cat-file -e "$1:$2" 2>/dev/null; then
     base=$(git show "$1:$2") || return 1
-    base=$(settings_declared - <<<"$base" | cut -d ' ' -f 1 | sort -u) || return 1
+    base=$(settings_declared --lines <<<"$base" | sort -u) || return 1
   fi
   if [ -e "$2" ]; then
-    head=$(settings_declared - <"$2" | cut -d ' ' -f 1 | sort -u) || return 1
+    head=$(settings_declared --lines <"$2" | sort -u) || return 1
   fi
-  printf '%s\n%s\n' "$base" "$head" | sort | uniq -u | sed '/^$/d'
+  printf '%s\n%s\n' "$base" "$head" | sed '/^$/d' | sort | uniq -u | cut -d ' ' -f 1 | sort -u
 }
 # `<key>=<value>` for each KEY as the shared loader decodes the settings FILE,
 # in a subshell of its own so no key reaches this script or its suites.

@@ -229,9 +229,9 @@ done
 # declares FIXTURE_AREA_KEY, commented out, and no test of it names the key;
 # no example declares FIXTURE_LOOSE_KEY. skills/second-opinion declares its
 # reviewer key family alone, and no test of it names a key. skills/keyed has
-# an example render and a test module naming FIXTURE_NEW_KEY, which neither
-# copy declares yet. tools/ holds a
-# copier noting the file alone and one noting it first in a comma list. Every
+# an example render and a test module naming FIXTURE_OLD_KEY, which both
+# copies declare, and FIXTURE_NEW_KEY, which neither declares yet. tools/
+# holds a copier noting the file alone and one noting it first in a comma list. Every
 # key a row edits is appended here, never one of the copied live file.
 printf '\nFIXTURE_READ_KEY = "a"\nFIXTURE_AREA_KEY = "b"\nFIXTURE_LOOSE_KEY = "c"\nSECOND_OPINION_FIXTURE_CMD = "d"\n' >> "$R/kendex.settings.toml"
 mkdir -p "$R/skills/settings/tests" "$R/skills/area/tests" "$R/skills/second-opinion/tests"
@@ -248,7 +248,7 @@ done
 mkdir -p "$R/skills/keyed/tests/lib" "$R/.agents/skills/keyed"
 printf '[env]\nFIXTURE_OLD_KEY = "a"\n' > "$R/skills/keyed/kendex.settings.toml.example"
 cp "$R/skills/keyed/kendex.settings.toml.example" "$R/.agents/skills/keyed/kendex.settings.toml.example"
-printf 'KEY = "FIXTURE_NEW_KEY"\n' > "$R/skills/keyed/tests/lib/world.py"
+printf 'KEYS = ("FIXTURE_OLD_KEY", "FIXTURE_NEW_KEY")\n' > "$R/skills/keyed/tests/lib/world.py"
 printf 'python3 -B "$PWD/skills/keyed/tests/lib/world.py"\nprintf "keyed-reader\\n" >> "$SUITE_LOG"\n' > "$R/skills/keyed/tests/reader.sh"
 printf 'printf "keyed-other\\n" >> "$SUITE_LOG"\n' > "$R/skills/keyed/tests/other.sh"
 printf '# Inputs: kendex.settings.toml\ncat "$PWD/kendex.settings.toml" >/dev/null\nprintf "copy\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-copy.sh"
@@ -274,6 +274,11 @@ settings_change() { # CHANGE: one edit of the settings world, then a clean SUITE
         printf '%s = "b"\n' "$key" >> "$R/$example/kendex.settings.toml.example"
       done
       ;;
+    changed-example-value)
+      for example in skills/keyed .agents/skills/keyed; do
+        printf '[env]\nFIXTURE_OLD_KEY = "z"\n' > "$R/$example/kendex.settings.toml.example"
+      done
+      ;;
   esac
   rm -f "$R/kendex.settings.toml.bak"
   [ -n "$(git -C "$R" status --porcelain)" ] || { bad "settings fixture change $1 changed nothing"; }
@@ -292,7 +297,8 @@ for row in \
   "a path of no role selects the suite noting it|noted-example|skills/settings/tests/example-noted.sh " \
   "a path of no role no note names selects its tree's whole set|unnoted-example|skills/area/tests/one.sh skills/area/tests/two.sh " \
   "an example and its render adding a key a test module names select its reader|named-example-key|skills/keyed/tests/reader.sh " \
-  "an example and its render adding a key no test names select the tree's whole set|unnamed-example-key|skills/keyed/tests/other.sh skills/keyed/tests/reader.sh "; do
+  "an example and its render adding a key no test names select the tree's whole set|unnamed-example-key|skills/keyed/tests/other.sh skills/keyed/tests/reader.sh " \
+  "an example and its render changing a named key's value select its reader|changed-example-value|skills/keyed/tests/reader.sh "; do
   IFS='|' read -r name change expected <<<"$row"
   settings_change "$change"
   doc_selection "$GUARD"
@@ -331,6 +337,18 @@ if mutant_guard '/^      kendex\.settings\.toml\.example)$/,/^        ;;$/d'; th
   git -C "$R" checkout -q -- .
 else
   bad 'control changes the example key queries'
+fi
+# Control: comparing only which keys the example declares misses a value change.
+if mutant_guard 's/settings_declared --lines/settings_declared -/'; then
+  settings_change changed-example-value
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/keyed/tests/other.sh skills/keyed/tests/reader.sh ' ] \
+    && grep -qx 'guard-note: suites=all reason=unidentified path=.agents/skills/keyed/kendex.settings.toml.example' <<<"$OUT" \
+    && ok 'control: comparing declared keys alone selects the whole set and breaks the value row' \
+    || bad 'control: comparing declared keys alone selects the whole set and breaks the value row' "rc=$RC plan=$PLAN out=$OUT"
+  git -C "$R" checkout -q -- .
+else
+  bad 'control changes the example line comparison'
 fi
 
 # A tree with no run-all.sh runs each suite through guard's direct loop.
