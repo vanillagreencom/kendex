@@ -27,6 +27,7 @@ import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import { observedAt, type ScopeSelection } from "@/lib/derive";
+import { TAG_LABELS } from "@/lib/labels";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -2031,7 +2032,7 @@ describe("the tags a Library row is filed under", () => {
         observed: [],
         declared: ["review", "testing"],
         facet: "review",
-        column: "ReviewTesting",
+        column: `${TAG_LABELS.review}${TAG_LABELS.testing}`,
         kept: true,
       },
       {
@@ -2047,7 +2048,7 @@ describe("the tags a Library row is filed under", () => {
         observed: ["docs"],
         declared: null,
         facet: "docs",
-        column: "Docs",
+        column: TAG_LABELS.docs,
         kept: true,
       },
     ];
