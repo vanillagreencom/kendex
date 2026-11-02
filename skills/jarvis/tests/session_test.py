@@ -44,7 +44,7 @@ ANY_PERMISSION_WORD = set().union(*PERMISSION_WORDS.values())
 DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required")}
 
 
-def validate(output, code, verb, duplicate_boot=False):
+def validate(output, code, verb, duplicate_boot=False, adopt=False):
     lines = output.splitlines()
     assert len(lines) == 1
     answer = json.loads(lines[0])
@@ -69,7 +69,10 @@ def validate(output, code, verb, duplicate_boot=False):
         assert answer["state"] in ("blocked", "failed")
     else:
         assert code == 0
-        if verb == "start" and not duplicate_boot:
+        if verb == "start" and adopt:
+            # An adopting Start answers the succession it begins.
+            assert (answer["state"], answer["reason"]) == ("handing-over", "succession")
+        elif verb == "start" and not duplicate_boot:
             assert answer["state"] in ("running", "starting")
         elif verb == "stop":
             assert answer["state"] in ("off", "stopped", "stopping")
@@ -138,6 +141,8 @@ class SessionContract(unittest.TestCase):
             argv += ["--origin", origin]
         if kwargs.get("brief"):
             argv += ["--brief-file", str(kwargs["brief"])]
+        if kwargs.get("adopt"):
+            argv += ["--adopt-pane", kwargs["adopt"][0], "--adopt-pid", str(kwargs["adopt"][1])]
         for flag in ("model", "effort"):
             if kwargs.get(flag) is not None:
                 argv += ["--" + flag, kwargs[flag]]
@@ -162,7 +167,8 @@ class SessionContract(unittest.TestCase):
             result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=60)
         self.assertLess(time.monotonic() - start, 60)
         self.stderr = result.stderr
-        return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False)), result.returncode
+        return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False),
+                        bool(kwargs.get("adopt"))), result.returncode
 
     def model_classes(self):
         # Model classification is kendex's external boundary. Preserve native

@@ -186,6 +186,16 @@ case "$verb" in
     tmux if-shell -F -t "$4" "#{&&:$binding,#{==:#{pid},$2}}" "kill-window -t $5" ;;
   live)
     home_pane_live "$1" "$2" "$3" "$4" || exit "$?"
+    if [[ "$7" == adopted ]]; then
+      # An adopted session's pane carries no generation mark and lives in the
+      # consumer's own session, so its process ($5) and window bind it.
+      actual="$(tmux display-message -p -t "$4" '#{pane_pid}	#{window_id}	#{session_name}')" || exit 2
+      IFS=$'\t' read -r pid window session <<<"$actual"
+      [[ "$pid" == "$5" && "$window" == "$6" ]] || exit 1
+      jq -cn --arg socket "$1" --arg session "$session" --arg window "$window" --arg pane "$4" \
+        '{server:$socket,session:$session,window:$window,pane:$pane}'
+      exit
+    fi
     actual="$(tmux display-message -p -t "$4" '#{@jarvis-generation}')" || exit 2
     # Staging ownership precedes the native generation mark.
     [[ "$actual" == "$5" || ( "$7" == staging && -z "$actual" ) ]] || exit 1
@@ -194,6 +204,32 @@ case "$verb" in
     [[ "$session" == jarvis && "$window" == "$6" ]] || exit 1
     jq -cn --arg socket "$1" --arg session "$session" --arg window "$window" --arg pane "$4" \
       '{server:$socket,session:$session,window:$window,pane:$pane}' ;;
+  adopt)
+    # The unmanaged session a Start adopts, read once on the caller's tmux
+    # server: PANE's pane, window and server, PID's start, and the one harness
+    # running at or below PID. Status 3 is a PANE whose process is not PID, or
+    # that runs no harness or more than one; 2 is an unread process table.
+    pane="$1" pid="$2"
+    at="$(lane_process_start "$pid")" || exit 2
+    [[ -n "$at" ]] || exit 3
+    line="$(tmux display-message -p -t "$pane" '#{socket_path}	#{pid}	#{start_time}	#{session_name}	#{window_id}	#{pane_id}	#{pane_dead}	#{pane_pid}	#{pane_current_command}')" || exit 3
+    IFS=$'\t' read -r socket server started session window id dead pane_pid cmd <<<"$line"
+    [[ "$pane_pid" == "$pid" && "$dead" != 1 ]] || exit 3
+    harness=""
+    for name in claude codex copilot pi; do
+      rc=0
+      lane_pane_runs "$cmd" "$pid" "$name" || rc=$?
+      case "$rc" in
+        0) [[ -z "$harness" ]] || exit 3; harness="$name" ;;
+        1) ;;
+        *) exit 2 ;;
+      esac
+    done
+    [[ -n "$harness" ]] || exit 3
+    jq -cn --arg harness "$harness" --arg socket "$socket" --arg session "$session" --arg window "$window" --arg pane "$id" \
+      --argjson server "$server" --argjson started "$started" --argjson pid "$pid" --arg at "$at" \
+      '{harness:$harness,terminal:{server:$socket,session:$session,window:$window,pane:$pane},
+        server_pid:$server,server_started_at:$started,process:{pid:$pid,started_at:$at}}' ;;
   process)
     at="$(lane_process_start "$1")" || exit 1
     [[ -n "$at" ]] || exit 1
