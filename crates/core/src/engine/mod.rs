@@ -941,7 +941,7 @@ pub(crate) struct Version10Recoverable {
     /// bound to.
     pub(crate) hash: String,
     /// An earlier recovery already left these same bytes aside, so the
-    /// record is not moved again: the new one is written over it.
+    /// move onto the aside is bound to them rather than to its absence.
     pub(crate) moved: bool,
 }
 
@@ -994,7 +994,8 @@ pub(crate) fn version_10_recovery(
 /// An aside holding these exact bytes is this record already moved, the
 /// state a checkout back to a commit from before an earlier recovery
 /// leaves, since the record is committed and the file aside is ignored;
-/// it reads as the same proof, so the recovery goes on without a move.
+/// it reads as the same proof, so the recovery goes on and moves the
+/// record over it.
 fn recoverable(
     path: &std::path::Path,
     aside: &std::path::Path,

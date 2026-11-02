@@ -349,6 +349,9 @@ impl PreparedScope {
 struct Context<'a> {
     synced: &'a kendex_core::remote::Synced,
     options: &'a PlanOptions,
+    /// Every scope the run writes, whose Pi roots each settle's install
+    /// guard checks (`pi_ext::paired_roots`).
+    targeted: &'a [kendex_core::model::Scope],
     reach: Reached,
     verbose: bool,
     yes: bool,
@@ -371,6 +374,7 @@ fn prepare_scope(
     catalog: Catalog,
     takes: Takes,
     reach: Reached,
+    targeted: &[kendex_core::model::Scope],
 ) -> Result<PreparedScope, Box<dyn std::error::Error>> {
     let options = PlanOptions {
         sweep_unneeded: true,
@@ -378,7 +382,7 @@ fn prepare_scope(
         prune_retired: takes.prune,
         ..catalog.plan_options()
     };
-    let planned = plan_scope(env, &scope, &synced, &options)?;
+    let planned = plan_scope(env, &scope, &synced, &options, targeted)?;
     Ok(PreparedScope {
         scope,
         synced,
@@ -399,6 +403,7 @@ fn plan_scope(
     scope: &kendex_core::model::Scope,
     synced: &kendex_core::remote::Synced,
     options: &PlanOptions,
+    targeted: &[kendex_core::model::Scope],
 ) -> Result<Planned, Box<dyn std::error::Error>> {
     let report = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
@@ -410,7 +415,7 @@ fn plan_scope(
             if report.recovers.is_some() {
                 return Ok(Ok((report, Vec::new())));
             }
-            match super::update_pi::pending_settle(env, scope, options) {
+            match super::update_pi::pending_settle(env, scope, options, targeted) {
                 Ok(pending) => Ok((report, pending)),
                 Err(error)
                     if error
@@ -454,9 +459,10 @@ fn prepare_scopes(
     }
     let reach = Reached::of(target.path());
     let prepared: Vec<_> = scopes
-        .into_iter()
+        .iter()
+        .cloned()
         .zip(synced)
-        .map(|(scope, synced)| prepare_scope(env, scope, synced, catalog, takes, reach))
+        .map(|(scope, synced)| prepare_scope(env, scope, synced, catalog, takes, reach, &scopes))
         .collect::<Result<_, Box<dyn std::error::Error>>>()?;
     if prepared.iter().any(PreparedScope::needs_consent)
         && let Err(error) = require_yes_in_non_interactive(yes)
@@ -507,10 +513,11 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
 fn defer_process_installs(
     env: &Env,
     scope: &kendex_core::model::Scope,
-    options: &PlanOptions,
+    context: &Context,
     report: &EngineReport,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let deferred = super::update_pi::deferred_settle(env, scope, options)?;
+    let deferred =
+        super::update_pi::deferred_settle(env, scope, context.options, context.targeted)?;
     for row in &report.drift {
         if row.remedy == Some(kendex_core::engine::RowRemedy::UpdatePi)
             && deferred.contains(&row.name)
@@ -531,9 +538,12 @@ fn defer_process_installs(
 /// installs still ends on the same ledger, since the outcomes it has to
 /// report are the same either way. An empty plan closes on `None` — up to
 /// date — and still reaches the commit offer, on whatever an earlier run
-/// left uncommitted. Every exit short of the last write goes through
-/// [`Start::stopped_short`], which owns what a scope that already wrote
-/// is owed.
+/// left uncommitted. Every stop this function sees before the last write
+/// goes through [`Start::stopped_short`], which owns what a scope that
+/// already wrote is owed. A Fresh scope's error from
+/// `confirm_plan_and_apply` after that call has written its plan (a
+/// cancel at a consent asked after the write, a render failure, a failed
+/// commit offer) reaches it as a scope that wrote nothing.
 fn write_scope(
     env: &Env,
     scope: &kendex_core::model::Scope,
@@ -572,10 +582,11 @@ fn write_scope(
         Err(error) => return start.stopped_short(report, None, Stop::Failed(error)),
     }
     let names: Vec<_> = pending.iter().map(|pending| pending.name.clone()).collect();
-    let settled = match super::update_pi::settle_scope(env, scope, &names, options) {
-        Ok(settled) => settled,
-        Err(error) => return start.stopped_short(report, None, Stop::Failed(error)),
-    };
+    let settled =
+        match super::update_pi::settle_scope(env, scope, &names, options, context.targeted) {
+            Ok(settled) => settled,
+            Err(error) => return start.stopped_short(report, None, Stop::Failed(error)),
+        };
     let planned = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         plan_apply(env, scope, options)
@@ -797,6 +808,7 @@ pub fn run(
     let mut cancelled: Option<Box<dyn std::error::Error>> = None;
     let (prepared, registering) =
         prepare_scopes(env, filter, target, verbose, yes, catalog, takes)?;
+    let targeted: Vec<_> = prepared.iter().map(|scope| scope.scope.clone()).collect();
 
     for prepared in prepared {
         let PreparedScope {
@@ -810,6 +822,7 @@ pub fn run(
         let context = Context {
             synced: &synced,
             options: &options,
+            targeted: &targeted,
             reach,
             verbose,
             yes,
@@ -864,10 +877,13 @@ pub fn run(
             // and the exit code a script keys a cancel on is 130.
             //
             // It stops the scopes after this one, never the finishing of
-            // the ones before it. An error reaches here only from a scope
-            // that wrote nothing (`Start::stopped_short`), so this scope
+            // the ones before it. An error reaches here from a scope
+            // `Start::stopped_short` reads as unwritten, so this scope
             // drops off the reached list, while what earlier scopes wrote
-            // is on disk and owed both a snapshot and a closing line.
+            // is on disk and owed both a snapshot and a closing line. That
+            // reading includes a scope with no recovery whose
+            // `confirm_plan_and_apply` failed after writing its plan, which
+            // gets neither here.
             Err(error) if ui::cancelled(error.as_ref()) => {
                 reached.pop();
                 cancelled = Some(error);
@@ -912,7 +928,7 @@ fn write_ready(
     } = writing;
     let listed = listing(context.verbose);
     if pending.is_empty() {
-        let deferred = match defer_process_installs(env, scope, context.options, &report) {
+        let deferred = match defer_process_installs(env, scope, context, &report) {
             Ok(deferred) => deferred,
             Err(error) => return Ok(Some(start.stopped_short(report, None, Stop::Failed(error)))),
         };
@@ -950,7 +966,7 @@ fn write_ready(
         context,
         |after| {
             context.synced.suppress_busy_pending(&mut after.notes);
-            let deferred = defer_process_installs(env, scope, context.options, after)?;
+            let deferred = defer_process_installs(env, scope, context, after)?;
             *attention = print_attention(env, after, listed, context.reach);
             failures.extend(refresh_failures(after, &deferred));
             Ok(())
@@ -1067,7 +1083,13 @@ fn ready_to_write(
             return Ok(Ready::Skip);
         }
     };
-    let replanned = match plan_scope(env, scope, context.synced, context.options) {
+    let replanned = match plan_scope(
+        env,
+        scope,
+        context.synced,
+        context.options,
+        context.targeted,
+    ) {
         Ok(Ok(replanned)) => Ok(replanned),
         Ok(Err(error)) => Err(error.into()),
         Err(error) => Err(error),

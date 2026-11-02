@@ -280,8 +280,8 @@ pub fn compare_unmanaged_copies(
 /// bound to the hash of the bytes the caller read, and the record write to
 /// the path standing empty once the move has run. A refusal at any op
 /// rolls back to the version 10 record where it was. Where an earlier
-/// recovery already left these bytes aside (`moved`) there is no move:
-/// the record write replaces the version 10 record, bound to its hash.
+/// recovery already left these bytes aside (`moved`), the move replaces
+/// that aside bound to the same hash, so its bytes are unchanged.
 ///
 /// What the old record carried is not news to the person: its packages
 /// are no addition the consent claims, and this plan's own write offers
@@ -309,32 +309,35 @@ pub(super) fn plan_version_10(
     let mut report = super::plan_scope(env, scope, manifest, &fresh, options)?;
     for planned in &mut report.plan.ops {
         if let Op::WriteLock { pre, .. } = &mut planned.op {
-            *pre = match moved {
-                true => Pre::HashIs { hash: hash.clone() },
-                false => Pre::Absent,
-            };
+            *pre = Pre::Absent;
         }
     }
-    if !moved {
-        report.plan.insert(
-            0,
-            PlannedOp {
-                description: Description::around(
-                    "Move the version 10 install record ",
-                    format!(
-                        " to {}, where it keeps proving which renders kendex wrote",
-                        crate::lock::VERSION_10_LOCK_FILE
-                    ),
+    // The aside is the destination either way, so the record path stands
+    // empty after the move even where the fresh plan writes no record. An
+    // aside an earlier recovery left holds these bytes, and the move over
+    // it is bound to them.
+    let to_pre = match moved {
+        true => Pre::HashIs { hash: hash.clone() },
+        false => Pre::Absent,
+    };
+    report.plan.insert(
+        0,
+        PlannedOp {
+            description: Description::around(
+                "Move the version 10 install record ",
+                format!(
+                    " to {}, where it keeps proving which renders kendex wrote",
+                    crate::lock::VERSION_10_LOCK_FILE
                 ),
-                op: Op::Rename {
-                    from: path,
-                    to: aside.clone(),
-                    from_pre: Pre::HashIs { hash },
-                    to_pre: Pre::Absent,
-                },
+            ),
+            op: Op::Rename {
+                from: path,
+                to: aside.clone(),
+                from_pre: Pre::HashIs { hash },
+                to_pre,
             },
-        )?;
-    }
+        },
+    )?;
     report.set_changes.retain(|change| {
         change.direction != super::SetDirection::Add
             || !carried.contains(&crate::lock::entry_key(

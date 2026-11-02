@@ -719,20 +719,43 @@ fn a_version_10_recovery_moves_the_record_in_its_own_transaction() {
 /// An earlier recovery's record aside holding these same bytes is this
 /// record already moved, as a checkout back to a commit from before that
 /// recovery leaves it: the recovery goes on, the record aside stays byte
-/// for byte, and a current record takes the version 10 one's place.
+/// for byte, and no version 10 record is left at the record path, so the
+/// next plan has nothing to recover. That holds where the plan records an
+/// entry and where a hand-made copy in the declared skill's place leaves
+/// the fresh plan nothing to record.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_version_10_record_already_aside_is_recovered_in_place() {
-    let (f, older) = version_10_project();
-    let aside = f.project().join(kendex_core::lock::VERSION_10_LOCK_FILE);
-    fs::write(&aside, &older).unwrap();
-    let report = plan_apply(&f.env, &f.scope, &recovering()).unwrap();
-    assert_eq!(report.recovers.as_deref(), Some(aside.as_path()));
+    type Plant = fn(&Fixture);
+    let nothing: Plant = |_| {};
+    let hand_made: Plant = |f| {
+        let position = f.installed_skill();
+        fs::remove_file(&position).unwrap();
+        fs::create_dir_all(&position).unwrap();
+        fs::write(position.join("SKILL.md"), "---\nname: gh\n---\nMine.\n").unwrap();
+    };
+    let rows: [(&str, Plant, bool); 2] = [
+        ("the plan records an entry", nothing, true),
+        ("every declared item a hand-made copy", hand_made, false),
+    ];
+    for (label, plant, recorded) in rows {
+        let (f, older) = version_10_project();
+        plant(&f);
+        let aside = f.project().join(kendex_core::lock::VERSION_10_LOCK_FILE);
+        fs::write(&aside, &older).unwrap();
+        let report = plan_apply(&f.env, &f.scope, &recovering()).unwrap();
+        assert_eq!(report.recovers.as_deref(), Some(aside.as_path()), "{label}");
 
-    apply::execute(&f.env, &report.plan).unwrap();
-    assert_eq!(fs::read_to_string(&aside).unwrap(), older);
-    let recovered = load_lock(&f.scope_lock()).unwrap();
-    assert!(recovered.entries.contains_key("skill:gh:claude"));
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(fs::read_to_string(&aside).unwrap(), older, "{label}");
+        let entries = match kendex_core::lock::load_file(&f.scope_lock()).unwrap() {
+            kendex_core::lock::LockFile::Current(lock) => lock.entries,
+            kendex_core::lock::LockFile::Absent => Default::default(),
+        };
+        assert_eq!(entries.contains_key("skill:gh:claude"), recorded, "{label}");
+        let replan = plan_apply(&f.env, &f.scope, &recovering()).unwrap();
+        assert_eq!(replan.recovers, None, "{label}");
+    }
 }
 
 /// A version 10 record is recovered only where the plan opted in, as the

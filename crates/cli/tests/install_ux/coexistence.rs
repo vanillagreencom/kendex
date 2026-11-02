@@ -741,6 +741,12 @@ fn a_version_10_recovery_commits_once_after_its_pi_settlement() {
         "settlement cancelled",
         "settlement failed",
     ] {
+        // Root writes through a mode bit, so the install this row fails
+        // lands on such a runner.
+        if case == "settlement failed" && rustix::process::geteuid().is_root() {
+            eprintln!("skipped {case}: root writes through the unwritable packages directory");
+            continue;
+        }
         let world = pi_widgets_installed();
         super::write(
             &world.catalog.join("skills/deploy/SKILL.md"),

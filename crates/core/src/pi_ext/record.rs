@@ -418,21 +418,32 @@ pub fn scope_root(env: &Env, scope: &crate::model::Scope) -> Result<PathBuf> {
 /// must be checked against before writing: Pi loads the global root and
 /// a project's together, and which project comes later, so a guard that
 /// refuses a package registered twice looks at every project this
-/// machine knows, the registered ones and the one the command runs in.
+/// machine knows, the registered ones, the one the command runs in, and
+/// each project in `targeted`, the scopes the command writes. A project
+/// a command names is registered only after its write, or never (a
+/// declined write, a linked work tree, a temporary folder), and a
+/// personal copy of a package it already holds would load twice there.
 /// For a project that is the global root alone.
 pub fn paired_roots(
     env: &Env,
     settings: &crate::settings::AppSettings,
     scope: &crate::model::Scope,
+    targeted: &[crate::model::Scope],
 ) -> (PathBuf, Vec<PathBuf>) {
     let global = global_root(env, settings);
     match scope {
         crate::model::Scope::Global => {
             let mut projects = settings.projects.clone();
-            if let Some(here) = crate::discover::current_project(env)
-                && !projects.contains(&here)
-            {
-                projects.push(here);
+            let reached = crate::discover::current_project(env).into_iter().chain(
+                targeted.iter().filter_map(|scope| match scope {
+                    crate::model::Scope::Project { root } => Some(root.clone()),
+                    crate::model::Scope::Global => None,
+                }),
+            );
+            for project in reached {
+                if !projects.contains(&project) {
+                    projects.push(project);
+                }
             }
             (
                 global,
