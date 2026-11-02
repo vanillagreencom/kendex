@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Mapping, Optional
+from typing import List, Mapping, Optional, Tuple
 
 from refusals import Refusal, keyed
 
@@ -69,6 +70,13 @@ class Settings:
     poll_seconds: int
     thread_days: int
     api_url: str
+    # The optional slash commands and Home tab: each command line runs with
+    # no shell; empty is off. report_root is the checkout whose overseer
+    # mailbox /report writes to, None for off.
+    status_command: Tuple[str, ...] = ()
+    asks_command: Tuple[str, ...] = ()
+    home_command: Tuple[str, ...] = ()
+    report_root: Optional[Path] = None
 
     def horizon(self, now: float) -> float:
         """SLACK_THREAD_DAYS before `now`: the one age every judge of age reads."""
@@ -83,6 +91,28 @@ def _positive_int(name: str, default: int, env: Mapping[str, str] = os.environ, 
         where = f" root={root}" if root is not None else ""
         raise Refusal("setting-invalid", f"{name}={raw}{where}")
     return int(raw)
+
+
+def _command(name: str) -> Tuple[str, ...]:
+    """A command line setting split as a shell splits words, run with no
+    shell; unset or empty is off."""
+    raw = os.environ.get(name, "").strip()
+    try:
+        return tuple(shlex.split(raw))
+    except ValueError as err:
+        raise Refusal("setting-invalid", f"{name}={raw}") from err
+
+
+def _report_root() -> Optional[Path]:
+    """SLACK_REPORT_ROOT as an absolute path, ~ expanded; whether it is a
+    root the relay serves is the relay's to judge."""
+    raw = os.environ.get("SLACK_REPORT_ROOT", "").strip()
+    if raw == "":
+        return None
+    path = os.path.expanduser(raw)
+    if not os.path.isabs(path):
+        raise Refusal("setting-invalid", f"SLACK_REPORT_ROOT={raw}")
+    return Path(path)
 
 
 def owners_from_env() -> List[str]:
@@ -168,4 +198,8 @@ def load(need_token: bool = True, need_owners: bool = True, need_app_token: bool
         poll_seconds=_positive_int("SLACK_POLL_SECONDS", DEFAULT_POLL_SECONDS),
         thread_days=_positive_int("SLACK_THREAD_DAYS", DEFAULT_THREAD_DAYS),
         api_url=os.environ.get("SLACK_API_URL", "").strip() or DEFAULT_API_URL,
+        status_command=_command("SLACK_STATUS_COMMAND"),
+        asks_command=_command("SLACK_ASKS_COMMAND"),
+        home_command=_command("SLACK_HOME_COMMAND"),
+        report_root=_report_root(),
     )

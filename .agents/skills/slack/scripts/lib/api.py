@@ -151,6 +151,20 @@ class Slack:
         req.add_header("Content-Type", "application/json; charset=utf-8")
         return self._request(req, method, RETRIES)
 
+    def respond(self, url: str, body: Dict) -> None:
+        """One reply to a slash command's `response_url`, the temporary
+        webhook Slack's payload names, which takes a message payload as JSON
+        and needs no token (https://docs.slack.dev/interactivity/handling-user-interaction).
+        Slack documents no answer body, so any 2xx status succeeds and any
+        other refuses `slack-api-failed http=N`. Nothing retries: Slack
+        takes 5 replies per payload, and a lost response may have posted."""
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+        try:
+            self._open(req, "response_url")
+        except urllib.error.HTTPError as err:
+            raise Refusal("slack-api-failed", f"response_url http={err.code}") from err
+
     def paged(self, method: str, key: str, retries: int = RETRIES, **params: object):
         """Every item of a cursor-paginated method, page after page."""
         cursor: Optional[str] = None

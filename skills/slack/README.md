@@ -13,6 +13,7 @@ A relay between an overseer's mailbox and one private Slack channel. Session own
 - Post an alert or a file to any channel from a script, with `--mention` for the owners. While the root's Jarvis session hold stands, including a presence-file rename, `--mention` posts with no mention and prints one `mention-held` line on stderr.
 - Send text as standard Markdown and file comments as Slack's mrkdwn markup. [Message standard](SKILL.md#message-standard) defines the difference.
 - Refuse any text or file that matches the secret-value pattern.
+- Optionally answer `/status`, `/asks` and `/report` with no agent turn, and draw the app's Home tab: [Slash commands and the Home tab](#slash-commands-and-the-home-tab).
 
 ## Install
 
@@ -55,6 +56,7 @@ Create one Slack app per machine from [this manifest](app-manifest.yaml) and ins
 | `groups:write` | Create a private channel, set its purpose and invite the owners |
 | `reactions:write` | Mark an owner message as delivered and as read |
 | `users:read`, `users:read.email` | Resolve an owner's email to a user, and name a user an owner mentions |
+| `commands` | Optional: receive the slash commands the app registers |
 
 For an existing app, add missing OAuth scopes, enable Socket Mode, subscribe to `message.groups` under Event Subscriptions, then reinstall it to the workspace.
 
@@ -66,6 +68,36 @@ The app must be a member of every channel it posts to. `setup` creates or adopts
 2. Reinstall the app to the workspace. If Slack shows its sudo page, the human completes that step.
 3. Put the replacement token in the project's private env file and restart the relay.
 4. Re-add the bot to each private channel it serves.
+
+## Slash commands and the Home tab
+
+Both are optional. With their settings empty, the relay answers no command and draws no Home tab. Both arrive on the relay's one Socket Mode connection, and the package uses the standard library alone, no Slack SDK or Bolt.
+
+- `/status` and `/asks` reply with the output of the command lines `SLACK_STATUS_COMMAND` and `SLACK_ASKS_COMMAND` name. The reply is ephemeral: only the owner who typed the command sees it, in the channel it was typed in. No mailbox is written and no agent takes a turn.
+- `/report` writes one directive to the overseer mailbox of `SLACK_REPORT_ROOT`, asking for a progress report now. The reply names that checkout and the directive's id. Where no overseer is recorded there, it says so, and nothing is written. The overseer's report reaches its channel as any owner notice does.
+- An enabled command whose setting is empty replies that it is off; an unknown command replies that the relay does not answer it.
+- The relay acknowledges each envelope as it reads it, inside Slack's 3 seconds, and answers on its worker through the command's `response_url`. A command line holds the worker for at most 10 seconds. A reply is cut at 4,000 characters, with a marker.
+- Only `SLACK_OWNERS` run commands and see the Home tab. Anyone else is told so, and nothing runs.
+- `/report` keys its directive by the command's `trigger_id`, so a payload Slack sends again lands once. Slack's documentation does not state that a resent payload keeps its `trigger_id`; the relay assumes it does, and two distinct ids are two directives. A payload with no usable `trigger_id` is answered as unavailable before any mailbox write. A command acknowledged and then lost to a relay stop is not recovered and never retried under another key: type it again.
+- The Home tab shows `SLACK_HOME_COMMAND`'s output as Slack's mrkdwn, cut at 100 sections of 3,000 characters. The relay publishes it with `views.publish` each time an owner opens the tab; nothing polls to keep it fresh. With the setting empty, or with Slack answering `not_enabled`, the relay prints one `home-not-enabled` line, leaves Home off until a restart, and keeps running.
+
+Only the settings choose a command line. No field of a Slack payload reaches its arguments, environment or stdin. It runs with no shell, in the checkout the relay was launched from, with the caller's environment and none of the settings the launcher loaded from the checkout's files. Its stdout is the reply or the Home tab, after the secret-value check. Its stderr goes to the relay's log. A failed command's reply names the cause, `start`, `timeout`, `exit-N`, `empty` or a refusal key, and carries none of its output.
+
+To register them on an app:
+
+1. Under OAuth & Permissions, add the bot scope `commands`.
+2. Under Slash Commands, create each command you enable: `/status`, `/asks`, `/report`. Socket Mode needs no request URL.
+3. For the Home tab, turn on the Home tab under App Home and subscribe to the `app_home_opened` bot event under Event Subscriptions.
+4. Reinstall the app to the workspace.
+
+Slack sends a command name that two apps of one workspace register to the app installed most recently. Which app registers which command is the deployment's choice; the package needs one app. For example:
+
+```toml
+[env]
+SLACK_STATUS_COMMAND = "scripts/fleet-status --slack"
+SLACK_REPORT_ROOT = "~/dev/fleet"
+SLACK_HOME_COMMAND = "scripts/fleet-status --slack --merges"
+```
 
 ## The Jarvis session hold
 
@@ -124,6 +156,10 @@ Other Slack settings are process-wide and use the launch checkout, the first `--
 | `SLACK_THREAD_DAYS` | Journal retention and reconnect lookback in days; live replies have no age limit | `7` |
 | `SLACK_JARVIS_SESSION_FILE` | Per root: the Jarvis session's presence file; while fresh it holds mailbox posts except replies to messages the owner typed in the channel, which still post in their threads | empty: no hold |
 | `SLACK_JARVIS_SESSION_MAX_AGE` | Per root: seconds after the file's last touch that it still holds posts | `600` |
+| `SLACK_STATUS_COMMAND` | The command line `/status` replies with the output of | empty: off |
+| `SLACK_ASKS_COMMAND` | The command line `/asks` replies with the output of | empty: off |
+| `SLACK_REPORT_ROOT` | The `--root` checkout whose overseer mailbox `/report` writes to; another path refuses the relay's start with `setting-invalid` | empty: off |
+| `SLACK_HOME_COMMAND` | The command line whose output the Home tab shows | empty: off |
 
 ## Licence
 
