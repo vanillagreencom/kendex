@@ -174,10 +174,13 @@ class Session:
             return None
         if not shutil.which("tmux"):
             raise Refusal("tmux-missing")
-        native_generation = (record.get("pending") or {}).get("generation", record["generation"])
+        if record.get("adopted"):
+            binding, mode = record["process"]["pid"], "adopted"
+        else:
+            binding = (record.get("pending") or {}).get("generation", record["generation"])
+            mode = "staging" if not record.get("process") and not (record.get("pending") or {}).get("started_at") else "native"
         live = self.backend("live", terminal["server"], record["server_pid"], record["server_started_at"],
-                            terminal["pane"], native_generation, terminal["window"],
-                            "staging" if not record.get("process") and not (record.get("pending") or {}).get("started_at") else "native", check=False)
+                            terminal["pane"], binding, terminal["window"], mode, check=False)
         if live.returncode == 1:
             return None
         if live.returncode:
@@ -306,12 +309,48 @@ class Session:
         retained.pop("worker", None)
         return retained
 
+    @staticmethod
+    def start_brief(args):
+        brief = START_BRIEF
+        if args.brief_file:
+            private = Path(args.brief_file).read_text().strip()
+            if not private or not clean(private):
+                raise Refusal("record-unreadable")
+            brief += " " + private
+        return brief
+
+    def _adopt(self, args, record, choice, stated):
+        # The unmanaged session takes the predecessor's place in succession's
+        # order: its record is this one entry, read once here.
+        if not os.environ.get("TMUX"):
+            raise Refusal("selection-conflict")
+        read = self.backend("adopt", args.adopt_pane, args.adopt_pid, check=False, env=dict(self.env, TMUX=os.environ["TMUX"]))
+        if read.returncode == 3:
+            raise Refusal("selection-conflict")
+        if read.returncode:
+            print("jarvis-session: operation=adopt exit=" + str(read.returncode), file=sys.stderr)
+            print(read.stderr, file=sys.stderr)
+            raise Refusal("record-unreadable")
+        # The state fields serve the answer and Stop's reads of a live entry.
+        predecessor = dict(json.loads(read.stdout), adopted=True, home=self.home, account=None, origin=None,
+                           state="running", reason="existing")
+        brief = self.start_brief(args)
+        if stated and stated["warning"]:
+            print(stated["warning"], file=sys.stderr)
+        base = {"generation": record["generation"] if record else 0, "report_started_at": int(time.time()),
+                "origin": args.origin, "boot": record.get("boot") if record else None}
+        return self._hand_over(base, choice, predecessor, None, brief)
+
     def start(self, args):
         boot = None
         if args.origin == "boot":
             boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip() + ":" + os.environ.get("XDG_SESSION_ID", "")
         with self.locked():
             record = self.read()
+            if args.adopt_pane and record and (self.terminal(record) or self.worker_live(record)
+                                               or self.terminal(record.get("predecessor"))):
+                # An adopted session would be a second controller beside this one.
+                raise Refusal("name-conflict")
             if record and record.get("intent") == "succeed" and record["state"] != "running":
                 # Boot reads the transition, never history from its retired owner.
                 answer = self.answer(record)
@@ -350,6 +389,9 @@ class Session:
             if args.model is not None:
                 stated = json.loads(self.backend("choice", args.harness, args.model, args.effort, self.home).stdout)
                 requested = {"harness": args.harness, "account": account, "model": stated["model"], "effort": stated["effort"]}
+            if args.adopt_pane:
+                return self._adopt(args, record, requested or {"harness": args.harness, "account": account, "model": "", "effort": ""},
+                                   stated)
             matching = (record and record.get("harness") == args.harness and record.get("account") == account
                         and same_choice(record, requested))
             if record and record["state"] == "starting" and not self.worker_live(record):
@@ -387,12 +429,7 @@ class Session:
                                 boot=boot or record.get("boot"))
                 self.write(restored)
                 return self.answer(restored, state="running", reason="existing"), 0
-            brief = START_BRIEF
-            if args.brief_file:
-                private = Path(args.brief_file).read_text().strip()
-                if not private or not clean(private):
-                    raise Refusal("record-unreadable")
-                brief += " " + private
+            brief = self.start_brief(args)
             history_record = self.confirmed_history(predecessor or record)
             history_matches = (history_record and history_record.get("harness") == args.harness
                                and history_record.get("account") == account and same_choice(history_record, requested))
@@ -449,41 +486,49 @@ class Session:
                 if not self.terminal(predecessor):
                     self.end_task_session()
                 saved_handoff = record["transfer"]["handoff"]
+                # An adoption's retry keeps the brief its Start named.
+                brief = (record.get("launch") or {}).get("brief", START_BRIEF)
             else:
                 if record["state"] != "running" or not self.terminal(record):
                     raise Refusal("record-unreadable")
                 predecessor = record
                 saved_handoff = None
+                brief = START_BRIEF
             choice = record.get("choice") or {}
             choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
                                              choice.get("model", ""), choice.get("effort", "")).stdout)
             if not shutil.which(choice["harness"]):
                 raise Refusal("app-missing")
-            generation = record["generation"] + 1
-            handoff = Path(self.home) / "state/handoff.md"
-            contents = handoff.read_bytes()
-            if not contents.strip():
-                raise Refusal("record-unreadable")
-            archive = handoff.parent / "archive"
-            archive.mkdir(exist_ok=True)
-            saved = archive / ("handoff-" + str(generation) + "-" + uuid.uuid4().hex + ".md")
-            with saved.open("xb") as stream:
-                stream.write(contents)
-                stream.flush()
-                os.fsync(stream.fileno())
-            if saved.read_bytes() != contents:
-                raise Refusal("record-unreadable")
-            transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
-            next_record = {"v": 1, "home": self.home, "harness": choice["harness"], "account": choice["account"], "choice": choice,
-                           "report_started_at": record.get("report_started_at", int(time.time())),
-                           "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
-                           "generation": generation, "intent": "succeed", "state": "handing-over", "reason": "succession", "detail": "",
-                           "terminal": None, "predecessor": predecessor, "transfer": transfer,
-                           "launch": {"id": str(uuid.uuid4()), "file": "", "reason": "new-requested", "brief": START_BRIEF}}
-            next_record["worker"] = json.loads(self.backend("process", os.getpid()).stdout)
-            self.write(next_record)
-            self.detach("succeed", next_record)
-            return self.answer(next_record), 0
+            return self._hand_over(record, choice, predecessor, saved_handoff, brief)
+
+    def _hand_over(self, record, choice, predecessor, saved_handoff, brief):
+        # Save the handoff, record the transition and detach its worker: the
+        # one route succession and adoption take. The caller holds the lock.
+        generation = record["generation"] + 1
+        handoff = Path(self.home) / "state/handoff.md"
+        contents = handoff.read_bytes()
+        if not contents.strip():
+            raise Refusal("record-unreadable")
+        archive = handoff.parent / "archive"
+        archive.mkdir(exist_ok=True)
+        saved = archive / ("handoff-" + str(generation) + "-" + uuid.uuid4().hex + ".md")
+        with saved.open("xb") as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if saved.read_bytes() != contents:
+            raise Refusal("record-unreadable")
+        transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
+        next_record = {"v": 1, "home": self.home, "harness": choice["harness"], "account": choice["account"], "choice": choice,
+                       "report_started_at": record.get("report_started_at", int(time.time())),
+                       "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
+                       "generation": generation, "intent": "succeed", "state": "handing-over", "reason": "succession", "detail": "",
+                       "terminal": None, "predecessor": predecessor, "transfer": transfer,
+                       "launch": {"id": str(uuid.uuid4()), "file": "", "reason": "new-requested", "brief": brief}}
+        next_record["worker"] = json.loads(self.backend("process", os.getpid()).stdout)
+        self.write(next_record)
+        self.detach("succeed", next_record)
+        return self.answer(next_record), 0
 
     def successor(self, generation):
         # This pane waits on the same record. It cannot start native work
@@ -579,12 +624,21 @@ class Session:
     def end_owned(self, record, *, window=False):
         if self.terminal(record):
             pane = record["terminal"]["pane"]
+            adopted = record.get("adopted")
             # tmux evaluates ownership and closes the pane's session in one
             # server command, before another client can reuse that pane id.
-            native_generation = (record.get("pending") or {}).get("generation", record["generation"])
-            binding = "#{==:#{@jarvis-generation}," + str(native_generation) + "}"
-            if not record.get("process") and not (record.get("pending") or {}).get("started_at"):
-                binding = "#{||:" + binding + ",#{==:#{@jarvis-generation},}}"
+            if adopted:
+                # An adopted pane carries no generation mark and shares the
+                # consumer's server. Every end of it is succession's: its
+                # process by identity, then only its own pane, bound to that
+                # process.
+                binding = "#{==:#{pane_pid}," + str(record["process"]["pid"]) + "}"
+                window = True
+            else:
+                native_generation = (record.get("pending") or {}).get("generation", record["generation"])
+                binding = "#{==:#{@jarvis-generation}," + str(native_generation) + "}"
+                if not record.get("process") and not (record.get("pending") or {}).get("started_at"):
+                    binding = "#{||:" + binding + ",#{==:#{@jarvis-generation},}}"
             condition = "#{&&:" + binding + ",#{==:#{pid}," + str(record["server_pid"]) + "}}"
             if window and record.get("process"):
                 identity = record["process"]
@@ -599,11 +653,12 @@ class Session:
                         raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")
                 if not self.terminal(record):
                     return
-                # tmux clears pane_pid at EOF, while a retained dead pane
-                # still has this server and generation's ownership marks.
-                process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(identity["pid"]) + "}}"
-                condition = "#{&&:" + condition + "," + process_binding + "}"
-            action = "kill-window" if window else "kill-session"
+                if not adopted:
+                    # tmux clears pane_pid at EOF, while a retained dead pane
+                    # still has this server and generation's ownership marks.
+                    process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(identity["pid"]) + "}}"
+                    condition = "#{&&:" + condition + "," + process_binding + "}"
+            action = "kill-pane" if adopted else "kill-window" if window else "kill-session"
             self.tmux("if-shell", "-F", "-t", pane, condition, action + " -t " + pane, socket=record["terminal"]["server"])
             if window and self.terminal(record):
                 raise Refusal("handover-failed", "The predecessor window remains open. Retry jarvis-session succeed for this home.", "failed")
@@ -647,7 +702,10 @@ class Session:
                     self.end_owned(record.get("predecessor"))
                 existing = self.tmux("has-session", "-t", "=jarvis", check=False)
                 if existing.returncode == 0:
-                    if not succeeding or not self.terminal(record.get("predecessor")):
+                    # An adopted predecessor's pane is on another server, so
+                    # its successor opens the home's session, as a first Start.
+                    predecessor = record.get("predecessor")
+                    if not succeeding or (predecessor or {}).get("adopted") or not self.terminal(predecessor):
                         raise Refusal("name-conflict")
                 # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
@@ -784,10 +842,13 @@ class Session:
                     record.update({key: acquired[key] for key in
                                    ("terminal", "server_pid", "server_started_at", "pending", "effective_home", "account_var")})
                 predecessor = record.get("predecessor")
+                # An adopted session never becomes a managed record: its
+                # transition stands, as a killed worker's does, and succeed
+                # retries it.
                 live = record if self.terminal(record) else predecessor if self.terminal(predecessor) else None
-                if live:
+                if live and not live.get("adopted"):
                     record = self.retain_live(record, live)
-                else:
+                elif not live:
                     self.end_task_session()
                     if verb == "stop":
                         record.update(state="off" if record["app_off"] else "stopped",
@@ -825,6 +886,8 @@ def main():
             command.add_argument("--brief-file")
             command.add_argument("--model")
             command.add_argument("--effort")
+            command.add_argument("--adopt-pane")
+            command.add_argument("--adopt-pid", type=int)
         elif verb == "stop":
             command.add_argument("--origin", choices=("app-off",))
     args = parser.parse_args()
@@ -834,6 +897,12 @@ def main():
             value is None or clean(value) and value and ":" not in value for value in (args.model, args.effort))):
         # One preference entry carries both, colon-separated.
         parser.error("choice")
+    if args.verb == "start" and (args.adopt_pane is None) != (args.adopt_pid is None):
+        parser.error("adopt")
+    if args.verb == "start" and args.adopt_pane is not None and not (
+            clean(args.adopt_pane) and args.adopt_pane and args.adopt_pid > 0 and args.origin == "manual" and args.mode == "new"):
+        # Adoption replaces a running session with a new one, at a person's request.
+        parser.error("adopt")
     try:
         session = Session(args.home)
     except OSError:
