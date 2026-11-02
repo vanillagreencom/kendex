@@ -126,25 +126,19 @@ impl Eval<'_> {
                 crate::pi_ext::RecordBasis::Recorded,
             )
         });
-        let left = match &admitted {
-            Ok(admission @ crate::pi_ext::Admission::LoadedElsewhere { .. }) => {
-                admission.unsettled().map(|(_, reason)| reason)
-            }
-            _ => None,
-        };
-        let compared = match admitted {
+        let (compared, left) = match admitted {
             // Nothing newer is on offer for what the catalog retired.
-            Ok(crate::pi_ext::Admission::Retired) => Ok(None),
-            Ok(crate::pi_ext::Admission::Install { .. }) => Ok(Some(true)),
-            Ok(
-                crate::pi_ext::Admission::Current { .. }
-                | crate::pi_ext::Admission::LoadedElsewhere { .. },
-            ) => Ok(Some(false)),
+            Ok(crate::pi_ext::Admission::Retired) => (Ok(None), None),
+            Ok(crate::pi_ext::Admission::Install { .. }) => (Ok(Some(true)), None),
+            Ok(crate::pi_ext::Admission::Current { .. }) => (Ok(Some(false)), None),
+            Ok(left @ crate::pi_ext::Admission::LoadedElsewhere { .. }) => {
+                (Ok(Some(false)), left.unsettled().map(|(_, reason)| reason))
+            }
             Ok(
                 crate::pi_ext::Admission::OriginRefused(error)
                 | crate::pi_ext::Admission::NotEvaluated(error),
             )
-            | Err(error) => Err(error),
+            | Err(error) => (Err(error), None),
         };
         match compared {
             Ok(None) => {}

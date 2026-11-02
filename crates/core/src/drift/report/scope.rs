@@ -131,6 +131,7 @@ pub(super) fn check_scope(
     let admissions = pi_admissions(env, scope, manifest.current(), &lock);
     ctx.lock_lines(&manifest, &lock, sections);
     let mut scan = crate::pi_ext::ShadowScan::default();
+    let mut moved_on = BTreeSet::new();
     if let Some(manifest) = manifest.current() {
         ctx.pi_scope_duplicate_lines(manifest, sections);
         // Every declaration's line, recorded or not, so a package
@@ -146,13 +147,15 @@ pub(super) fn check_scope(
                 Ok(crate::lock::LockFile::Absent) => None,
                 Err(_) => continue,
             };
-            ctx.pi_installation_line(
+            if ctx.pi_installation_line(
                 name,
                 expected.flatten(),
                 decl.enabled,
                 admissions.get(name),
                 sections,
-            );
+            ) {
+                moved_on.insert(name.as_str());
+            }
         }
         scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
     }
@@ -169,7 +172,13 @@ pub(super) fn check_scope(
         .unwrap_or_default();
     ctx.command_lines(manifest.current(), record_view, &occupied, sections);
     ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
-    ctx.snapshot_lines(manifest.current(), &admissions, sections, oldest_age);
+    ctx.snapshot_lines(
+        manifest.current(),
+        &admissions,
+        &moved_on,
+        sections,
+        oldest_age,
+    );
     ctx.stamp_lines(manifest.current(), sections);
     ScopeOutcome {
         scan,
@@ -216,6 +225,18 @@ fn pi_admissions(
             (name.clone(), admission)
         })
         .collect()
+}
+
+/// Whether `check` answers this package's standing as it runs: a declared
+/// Pi package's is its admission's ([`pi_admissions`]), so what the deep
+/// pass noted or compared for it says only what was true when the snapshot
+/// was taken.
+fn answered_live(
+    admissions: &BTreeMap<String, crate::pi_ext::Admission>,
+    kind: ItemKind,
+    name: &str,
+) -> bool {
+    kind == ItemKind::PiExtension && admissions.contains_key(name)
 }
 
 /// A Pi line the check could not produce: the settings, root or package
@@ -708,16 +729,17 @@ impl ScopeCheck<'_> {
         }
     }
 
-    /// One Pi package's line. A package `update-pi` leaves, its
-    /// admission's answer ([`pi_admissions`]), is named with that reason
-    /// and no fix, whatever its copy and record say. Otherwise the line
-    /// reads the copy against its record, without the source, and the
-    /// admission says who settles it: `update-pi` only where it installs
-    /// the package, `apply` only for a current copy whose native switch
-    /// differs. With no answer, where the declaration would not read, the
-    /// line names nothing. A copy that matches its record, its switch as
-    /// declared, while its source moved on is [`Self::package_line`]'s,
-    /// with its holds and mutes.
+    /// One Pi package's line, read from its admission's answer
+    /// ([`pi_admissions`]) as `check` runs. A package `update-pi` leaves is
+    /// named with that reason and no fix, whatever its copy and record say.
+    /// Otherwise the line reads the copy against its record, without the
+    /// source, and the admission says who settles it: `update-pi` only
+    /// where it installs the package, `apply` only for a current copy whose
+    /// native switch differs. With no answer, where the declaration would
+    /// not read, the line names nothing. Returns whether the copy matches
+    /// its record, its switch as declared, while `update-pi` installs the
+    /// source that moved on: that line is [`Self::package_line`]'s, with
+    /// the holds and mutes the update standing keeps.
     fn pi_installation_line(
         &self,
         name: &str,
@@ -725,25 +747,40 @@ impl ScopeCheck<'_> {
         enabled: bool,
         admission: Option<&crate::pi_ext::Admission>,
         sections: &mut Sections,
-    ) {
+    ) -> bool {
         use crate::pi_ext::Admission;
         let subject = format!("pi-extension '{}'", shown(name));
         let line = |detail: &str| format!("{}{subject} (pi) {detail}", self.prefix);
-        if let Some(Admission::Retired) = admission {
-            return;
-        }
-        if let Some((why, reason)) = admission.and_then(Admission::unsettled) {
-            match why {
-                crate::engine::PiUnsettled::NotEvaluated => {
-                    pi_unknown_line(self.prefix, &subject, &reason, sections);
+        let remedy = match admission {
+            None => None,
+            Some(Admission::Retired) => return false,
+            Some(Admission::Install { .. }) => Some(Remedy::UpdatePi {
+                global: self.global,
+            }),
+            // Current holds the copy to its completed record, so what
+            // differs is the switch, which apply's plan writes.
+            Some(Admission::Current { .. }) => Some(Remedy::Apply {
+                global: self.global,
+            }),
+            Some(
+                left @ (Admission::LoadedElsewhere { .. }
+                | Admission::OriginRefused(_)
+                | Admission::NotEvaluated(_)),
+            ) => {
+                if let Some((why, reason)) = left.unsettled() {
+                    match why {
+                        crate::engine::PiUnsettled::NotEvaluated => {
+                            pi_unknown_line(self.prefix, &subject, &reason, sections);
+                        }
+                        crate::engine::PiUnsettled::LoadedElsewhere
+                        | crate::engine::PiUnsettled::OriginRefused => {
+                            sections.missing.push(drift(line(&reason), None));
+                        }
+                    }
                 }
-                crate::engine::PiUnsettled::LoadedElsewhere
-                | crate::engine::PiUnsettled::OriginRefused => {
-                    sections.missing.push(drift(line(&reason), None));
-                }
+                return false;
             }
-            return;
-        }
+        };
         let state = self
             .pi_roots
             .as_ref()
@@ -760,7 +797,7 @@ impl ScopeCheck<'_> {
             Ok((crate::pi_ext::PackageState::Current { .. }, native))
                 if native == Some(enabled) =>
             {
-                return;
+                return matches!(remedy, Some(Remedy::UpdatePi { .. }));
             }
             Ok((crate::pi_ext::PackageState::Current { .. }, _)) => {
                 "has a native extension filter that differs from its declaration"
@@ -774,27 +811,11 @@ impl ScopeCheck<'_> {
             }
             Err(error) => {
                 pi_unknown_line(self.prefix, &subject, &error, sections);
-                return;
+                return false;
             }
         };
-        let remedy = match admission {
-            None => None,
-            Some(Admission::Install { .. }) => Some(Remedy::UpdatePi {
-                global: self.global,
-            }),
-            // Current holds the copy to its completed record, so what
-            // differs is the switch, which apply's plan writes.
-            Some(Admission::Current { .. }) => Some(Remedy::Apply {
-                global: self.global,
-            }),
-            Some(
-                Admission::Retired
-                | Admission::LoadedElsewhere { .. }
-                | Admission::OriginRefused(_)
-                | Admission::NotEvaluated(_),
-            ) => unreachable!("a package update-pi leaves has its line above"),
-        };
         sections.missing.push(drift(line(detail), remedy));
+        false
     }
 
     /// Pi packages this project declares that the global manifest declares
@@ -1277,6 +1298,7 @@ impl ScopeCheck<'_> {
         &self,
         manifest: Option<&crate::manifest::Manifest>,
         admissions: &BTreeMap<String, crate::pi_ext::Admission>,
+        moved_on: &BTreeSet<&str>,
         sections: &mut Sections,
         oldest_age: &mut Option<u64>,
     ) {
@@ -1312,14 +1334,7 @@ impl ScopeCheck<'_> {
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
         let mut unreadable: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for note in &snapshot.unreadable {
-            // A Pi package `update-pi` leaves now has its reason on its
-            // own line (`pi_installation_line`); the deep pass's warning
-            // for it would say the same twice.
-            if note.kind == ItemKind::PiExtension
-                && admissions
-                    .get(&note.name)
-                    .is_some_and(|admission| admission.unsettled().is_some())
-            {
+            if answered_live(admissions, note.kind, &note.name) {
                 continue;
             }
             let notes = unreadable
@@ -1337,15 +1352,20 @@ impl ScopeCheck<'_> {
             }
             let key = (package.kind, package.name.as_str(), package.repo.as_str());
             let notes = unreadable.get(&key).map_or(&[][..], Vec::as_slice);
-            if let Some(line) = self.comparison_line(
-                manifest,
-                package.kind,
-                &package.name,
-                &package.repo,
-                package.refs_state.as_deref(),
-                age,
-                notes,
-            ) {
+            let compared_line = if answered_live(admissions, package.kind, &package.name) {
+                None
+            } else {
+                self.comparison_line(
+                    manifest,
+                    package.kind,
+                    &package.name,
+                    &package.repo,
+                    package.refs_state.as_deref(),
+                    age,
+                    notes,
+                )
+            };
+            if let Some(line) = compared_line {
                 if compared.insert(key) {
                     match line.class {
                         Class::Unknown => sections
@@ -1356,7 +1376,7 @@ impl ScopeCheck<'_> {
                     }
                 }
             } else {
-                self.package_line(package, admissions, sections);
+                self.package_line(package, moved_on, sections);
             }
         }
         for (key, notes) in unreadable {
@@ -1502,15 +1522,16 @@ impl ScopeCheck<'_> {
 
     /// One package's dominant classification. An edited package's update is
     /// blocked by the edit, so the edit is the line; the others follow the
-    /// same "what must be decided first" order. A Pi package's standing is
-    /// from the last deep pass, so whether `update-pi` installs it now is
-    /// its admission's answer ([`pi_admissions`]): where it does not, this
-    /// draws no line, and [`Self::pi_installation_line`] names a package
-    /// `update-pi` leaves with its reason.
+    /// same "what must be decided first" order. A Pi package's update is
+    /// not the last deep pass's standing but what `update-pi` installs as
+    /// `check` runs: this draws it only for a package in `moved_on`, whose
+    /// copy [`Self::pi_installation_line`] found its record's while its
+    /// admission installs the source that moved on. Every other Pi line is
+    /// that function's.
     fn package_line(
         &self,
         package: &crate::drift::snapshot::PackageSnapshot,
-        admissions: &BTreeMap<String, crate::pi_ext::Admission>,
+        moved_on: &BTreeSet<&str>,
         sections: &mut Sections,
     ) {
         let prefix = self.prefix;
@@ -1545,8 +1566,8 @@ impl ScopeCheck<'_> {
                     global: self.global,
                 }),
             ));
-        } else if package.update_available && package.kind == ItemKind::PiExtension {
-            if let Some(crate::pi_ext::Admission::Install { .. }) = admissions.get(&package.name) {
+        } else if package.kind == ItemKind::PiExtension {
+            if moved_on.contains(package.name.as_str()) {
                 sections.stale.push(drift(
                     format!("{prefix}{kind} '{name}' needs installation from its declared source"),
                     Some(Remedy::UpdatePi {

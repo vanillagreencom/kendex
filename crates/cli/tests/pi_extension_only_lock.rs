@@ -174,12 +174,12 @@ fn keyed(output: &str, key: &str) -> Vec<String> {
 
 /// What `check --json --scope project` says of the Pi packages, read from
 /// the typed remedy a program acts on: the packages a line names
-/// `update-pi` for, the packages a line names with no fix at all, each
-/// once, and whether the check came out clean.
+/// `update-pi` for, the packages a line names with no fix at all, once per
+/// line, and the exit code a program reads (1 drift, 2 could not check).
 struct Checked {
     update_pi: Vec<String>,
     no_fix: Vec<String>,
-    clean: bool,
+    exit: Option<i32>,
 }
 
 #[allow(clippy::unwrap_used)]
@@ -206,13 +206,12 @@ fn checked(home: &Path, project: &Path) -> Checked {
             })
             .collect();
         named.sort();
-        named.dedup();
         named
     };
     Checked {
         update_pi: named(&|line| line["remedy"]["verb"] == "update-pi"),
         no_fix: named(&|line| line.get("remedy").is_none()),
-        clean: json.status.success(),
+        exit: json.status.code(),
     }
 }
 
@@ -260,8 +259,9 @@ fn loaded_from_the_personal_scope(home: &Path) {
 /// finishes the scope, and a declared package neither the run's write nor
 /// `update-pi` settles is named and counted, so the run never closes as up
 /// to date over it. `check` names `update-pi` for the packages it installs
-/// and for no other, and `verify` does not offer it as the record's remedy
-/// for a package it leaves. Beside a package whose source no longer ships it,
+/// and for no other, once each, reading that from the scope as it stands
+/// and not from the run's snapshot, and `verify` does not offer it as the
+/// record's remedy for a package it leaves. Beside a package whose source no longer ships it,
 /// update-pi notes that one as not evaluated and fails; for a copy Pi
 /// already loads from the personal scope, it leaves the copy blocked, so
 /// neither finish is named beside it, the take-over included, which
@@ -288,6 +288,8 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         /// The packages `check` names with their reason and no fix, which
         /// the update standing carries a warning for.
         check_left: &'static [&'static str],
+        /// `check`'s exit code: 2 where a package was not evaluated.
+        check_exit: i32,
     }
     fn settled_once(home: &Path, project: &Path) {
         kendex(home, project, &["apply", "--yes"]);
@@ -365,6 +367,27 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         );
     };
     let loaded_from_the_personal_scope_now: Plant = |home, _| loaded_from_the_personal_scope(home);
+    let personal_copy_removed: Plant = |home, project| {
+        let env = kendex_core::env::Env::host_rooted(home);
+        let scope = kendex_core::model::Scope::Project {
+            root: project.to_path_buf(),
+        };
+        let kendex_core::drift::snapshot::SnapshotFile::Current(snapshot) =
+            kendex_core::drift::snapshot::load(&env, &scope)
+        else {
+            panic!("the run wrote no snapshot");
+        };
+        assert!(
+            snapshot
+                .unreadable
+                .iter()
+                .any(|note| note.name == "pi-widgets"),
+            "the run's snapshot carries the loaded-twice warning"
+        );
+        let personal =
+            kendex_core::pi_ext::scope_root(&env, &kendex_core::model::Scope::Global).unwrap();
+        fs::remove_dir_all(personal.join("packages/pi-widgets")).unwrap();
+    };
     const UPDATE_PI: &str = "update-pi scope=project";
     let rows = [
         Row {
@@ -376,6 +399,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             unsettled: Some("pi-gone"),
             check_update_pi: &["pi-widgets"],
             check_left: &["pi-gone"],
+            check_exit: 2,
         },
         Row {
             case: "a copy Pi already loads from the personal scope",
@@ -386,6 +410,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             unsettled: Some("pi-widgets"),
             check_update_pi: &[],
             check_left: &["pi-widgets"],
+            check_exit: 1,
         },
         Row {
             case: "a filter the run writes beside a package left for update-pi",
@@ -396,6 +421,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             unsettled: None,
             check_update_pi: &["pi-other"],
             check_left: &[],
+            check_exit: 1,
         },
         Row {
             case: "a copy Pi loads twice beside a conflict the take-over replaces",
@@ -406,6 +432,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             unsettled: Some("pi-widgets"),
             check_update_pi: &[],
             check_left: &["pi-widgets"],
+            check_exit: 1,
         },
         Row {
             case: "a record naming another source than the declaration",
@@ -416,6 +443,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             unsettled: Some("pi-widgets"),
             check_update_pi: &[],
             check_left: &["pi-widgets"],
+            check_exit: 1,
         },
         Row {
             case: "a recorded copy whose source moved on, loaded from the personal scope too",
@@ -426,6 +454,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             unsettled: Some("pi-widgets"),
             check_update_pi: &[],
             check_left: &["pi-widgets"],
+            check_exit: 1,
         },
         Row {
             case: "a copy Pi loads from the personal scope since the run's snapshot",
@@ -436,6 +465,18 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             unsettled: None,
             check_update_pi: &[],
             check_left: &["pi-widgets"],
+            check_exit: 1,
+        },
+        Row {
+            case: "a recorded copy whose source moved on, its personal-scope copy removed since the run",
+            plant: moved_on_and_loaded_twice,
+            finish: &[],
+            settle_with: &[],
+            after: Some(personal_copy_removed),
+            unsettled: Some("pi-widgets"),
+            check_update_pi: &["pi-widgets"],
+            check_left: &[],
+            check_exit: 1,
         },
     ];
     for row in rows {
@@ -457,11 +498,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         let check = checked(&home, &project);
         assert_eq!(check.update_pi, row.check_update_pi, "{case}: check");
         assert_eq!(check.no_fix, row.check_left, "{case}: check");
-        assert_eq!(
-            check.clean,
-            row.check_update_pi.is_empty() && row.check_left.is_empty(),
-            "{case}: check"
-        );
+        assert_eq!(check.exit, Some(row.check_exit), "{case}: check");
         let (offered, warned) = standing(&home, &project);
         assert_eq!(offered, row.check_update_pi, "{case}: update standing");
         for name in row.check_left {
