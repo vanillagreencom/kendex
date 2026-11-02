@@ -186,17 +186,21 @@ case "$verb" in
     tmux if-shell -F -t "$4" "#{&&:$binding,#{==:#{pid},$2}}" "kill-window -t $5" ;;
   live)
     home_pane_live "$1" "$2" "$3" "$4" || exit "$?"
-    # The mark last: tab is IFS whitespace, so an empty field before it would
-    # shift the fields after.
-    actual="$(tmux display-message -p -t "$4" '#{pane_pid}	#{session_name}	#{window_id}	#{@jarvis-generation}')" || exit 2
-    IFS=$'\t' read -r pid session window generation <<<"$actual"
+    # One read per field: a dead pane's pid (tmux 3.8 clears it at EOF) and
+    # an unmarked pane's generation are empty, and a split on IFS whitespace
+    # would drop an empty field and shift the ones after it.
+    session="$(tmux display-message -p -t "$4" '#{session_name}')" || exit 2
+    window="$(tmux display-message -p -t "$4" '#{window_id}')" || exit 2
     case "$7" in
       # An adopted pane carries no generation mark and lives in the
       # consumer's own session, where moving it keeps its pane and process
       # but not its window: its process ($5) binds it.
-      adopted) [[ "$pid" == "$5" ]] || exit 1 ;;
+      adopted)
+        pid="$(tmux display-message -p -t "$4" '#{pane_pid}')" || exit 2
+        [[ "$pid" == "$5" ]] || exit 1 ;;
       # Staging ownership precedes the native generation mark.
       staging | native)
+        generation="$(tmux display-message -p -t "$4" '#{@jarvis-generation}')" || exit 2
         [[ ( "$generation" == "$5" || ( "$7" == staging && -z "$generation" ) ) && "$session" == jarvis && "$window" == "$6" ]] || exit 1 ;;
       *) printf 'jarvis-session: live=invalid mode=%s\n' "$7" >&2; exit 2 ;;
     esac

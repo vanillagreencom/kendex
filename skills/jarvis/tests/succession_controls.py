@@ -62,7 +62,7 @@ def main():
                       '      if [[ -z "$nearest" ]] || (( hops > nearest )); then'),),
                     "test_adoption_contract"),
                    ("moved pane", backend,
-                    (('      adopted) [[ "$pid" == "$5" ]] || exit 1 ;;', '      adopted) [[ "$pid" == "$5" && "$window" == "$6" ]] || exit 1 ;;'),),
+                    (('        [[ "$pid" == "$5" ]] || exit 1 ;;', '        [[ "$pid" == "$5" && "$window" == "$6" ]] || exit 1 ;;'),),
                     "test_adoption_recovery"),
                    ("retry brief", session,
                     (('brief = (record.get("launch") or {}).get("brief", START_BRIEF)', "brief = START_BRIEF"),),
