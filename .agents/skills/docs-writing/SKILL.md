@@ -90,7 +90,7 @@ Nothing else lives under `docs/`. A software implementation plan, research repor
 
 Each section says who reads the file, what it holds, and what it never carries. Each finished example under [examples/](examples/) ends with a contrast drawn from a real failure and one sentence on why that failure fails the reader.
 
-Before writing a file, find its type in this table, then read its section and its example. The first row whose path matches wins; `*` matches across `/`. Shape names the structural rules that apply to the type: `order` is the numbered section order, and `value-table` is the rule against a value table.
+Before writing a file, find its type in this table, then read its section and its example. The first row whose path matches wins; `*` matches across `/`. Shape names the structural rules that apply to the type: `order` is the numbered section order, and `value-table` is the rule against a value table. The commit-guards `md-type` lane checks them.
 
 | Path | Section | Example | Shape |
 |---|---|---|---|
@@ -128,7 +128,7 @@ The `changelog-entries` lane owns the shape, and its release-version rule, the c
 
 - Update a doc when a change makes a claim in it false. A code change alone owes no doc change.
 - A constraint without an enforcer names review, an operator step, or the gap.
-- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures instruction files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else; shape elsewhere is held by the rules above and the owner's review of each rewrite.
+- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures instruction files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else. The commit-guards `md-type` lane checks the shapes the route table names; every other rule is held by the owner's review of each rewrite.
 
 ## Plans and research
 
@@ -136,7 +136,7 @@ A software implementation plan, research report, measurement or handoff is not r
 
 ## Format
 
-- One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it.
+- One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-reflow` script rewrites a file to this format, and `md-reflow --check` names a file that departs from it.
 - Relative links in Markdown must resolve. The commit-guards skill's CHECKS.md § md-refs owns the checked forms.
 - Keep release and implementation narration out of agent-loaded markdown. Keep dates, attribution, source links and supersession that establish a current rule or qualify its evidence.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.

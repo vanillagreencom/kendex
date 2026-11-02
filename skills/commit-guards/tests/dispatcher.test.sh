@@ -68,8 +68,8 @@ single() { # ENVS ARGS [STDIN]
 }
 
 # Stable dispatcher records and scope values.
-DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
-STAGED_SCOPED="todo-ban byte-ceiling md-format md-refs py-names secrets comments"
+DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
+STAGED_SCOPED="todo-ban byte-ceiling md-type md-refs py-names secrets comments"
 ERR="commit-guards: "
 steps() { # MODE CHECKS [INCOMPLETE]
   local mode="$1" c flag
@@ -122,21 +122,33 @@ staged_batch() { # NAME — a committed marker, and a staged change that adds no
   # its own suite's, so no row here can tell this change from none.
   printf 'fn other() {}\n' >>"$R/ok.rs"; git -C "$R" add ok.rs
 }
-fx_staged_md() { staged_batch staged-md; put doc.md 'Wrapped\ntext.\n'; }
-# A committed, hard-wrapped document and nothing staged: the markdown lanes
+# A document md-type refuses whatever its baseline: a fence the parser cannot
+# end.
+UNENDED='```\nunclosed\n'
+fx_staged_md() { staged_batch staged-md; put doc.md "$UNENDED"; }
+# A committed, unended document and nothing staged: the markdown lanes
 # select their files from the staged diff, so an unflagged batch opens it
 # never and calls the tree clean.
 fx_committed_md() { # NAME
   clean "$1"
-  put doc.md 'Wrapped\ntext.\n'
+  put doc.md "$UNENDED"
   commit
 }
 full_scope() { repo "$1"; put big.txt "\0$(head -c 2047 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
-# A hard-wrapped document committed BEFORE the base tag, then one commit that
+# An unended document committed BEFORE the base tag, then one commit that
 # touches no markdown: the range since base excludes the document entirely.
 fx_swept_md() { # NAME
   clean "$1"
-  put doc.md 'Wrapped\ntext.\n'
+  put doc.md "$UNENDED"
+  commit
+  git -C "$R" tag base
+  put other.txt 'unrelated\n'
+  commit 'feat: touch no markdown'
+}
+# The same, with a dead reference in a document md-refs judges.
+fx_swept_refs() { # NAME
+  clean "$1"
+  put AGENTS.md '# Agents\n\nSee [the guide](missing.md).\n'
   commit
   git -C "$R" tag base
   put other.txt 'unrelated\n'
@@ -158,17 +170,17 @@ run_rows() { # label | fixture | envs | args | expect — through `batch`
 echo "=== a scope that stages nothing withholds the checks that read only that ==="
 # The lanes are named rather than counted clean, and which lanes those are is
 # read off their own scripts, so this row moves if the library does.
-MD_ONLY=COMMIT_GUARDS_CHECKS=md-format
-MD_AND_MARKERS='COMMIT_GUARDS_CHECKS=todo-ban md-format'
+MD_ONLY=COMMIT_GUARDS_CHECKS=md-type
+MD_AND_MARKERS='COMMIT_GUARDS_CHECKS=todo-ban md-type'
 SECRETS_ONLY=COMMIT_GUARDS_CHECKS=secrets
 SECRETS_WITHHELD="rc=0 commit-guards: unscoped=secrets;commit-guards: withheld-all=secrets"
 run_rows \
-  "must-fail: without the flag the batch reports a document it never opened as clean|fx_committed_md md-folded|$MD_ONLY||rc=0 commit-guards: step=md-format;$(ok md-format)" \
-  "control: the document really is malformed, which --all over the same tree finds|fx_committed_md md-really|$MD_ONLY|md-format --all|rc=1" \
-  "with the flag the lane is named as unscoped, and every enabled check being one is said outright|fx_committed_md md-withheld|$MD_ONLY|all --skip-unscoped|rc=0 commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format" \
-  "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_MARKERS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-format;commit-guards: step=todo-ban;$(ok todo-ban)" \
+  "must-fail: without the flag the batch reports a document it never opened as clean|fx_committed_md md-folded|$MD_ONLY||rc=0 commit-guards: step=md-type;$(ok md-type)" \
+  "control: the document really is malformed, which --all over the same tree finds|fx_committed_md md-really|$MD_ONLY|md-type --all|rc=1" \
+  "with the flag the lane is named as unscoped, and every enabled check being one is said outright|fx_committed_md md-withheld|$MD_ONLY|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
+  "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_MARKERS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: step=todo-ban;$(ok todo-ban)" \
   "--skip-unscoped under --staged is a contradiction, since that is the scope those checks read|fx_committed_md md-contradiction|$MD_ONLY|all --staged --skip-unscoped|rc=2 ${ERR}scope-contradiction=--staged,--skip-unscoped" \
-  "a project that configured the lane to sweep the tree gets it run, since that scope stages nothing either|fx_committed_md md-scope-all|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=1 commit-guards: step=md-format;$VIOLATIONS" \
+  "a project that configured the lane to sweep the tree gets it run, since that scope stages nothing either|fx_committed_md md-scope-all|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=1 commit-guards: step=md-type;$VIOLATIONS" \
   "an unusable scope setting is the configuration error it is, not a lane quietly withheld|fx_committed_md md-scope-bogus|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=bogus|all --skip-unscoped|rc=2 ${ERR}scope=bogus" \
   "secrets takes no range from a caller that stages nothing, the push hook, and is withheld|grown secrets-range|$SECRETS_ONLY|all --skip-unscoped --base base|$SECRETS_WITHHELD" \
   "nor the whole tree|grown secrets-all|$SECRETS_ONLY|all --skip-unscoped|$SECRETS_WITHHELD"
@@ -180,7 +192,7 @@ run_rows \
 gg_mutant INFERRED_GG commit-guards '[ "$MD_BARE_SCOPE" = touched ] && defers_to_md_selector "$1"' 'defers_to_md_selector "$1"'
 fx_committed_md md-scope-all-inferred
 assert_eq "must-fail: deciding from the library withholds the sweep the project asked for" \
-  "rc=0 commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format" \
+  "rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
   "$(GG="$INFERRED_GG" batch "$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all" "all --skip-unscoped")"
 gg_mutant PUSHED_GG commit-guards 'PUSH_WITHHELD_CHECKS="secrets"' 'PUSH_WITHHELD_CHECKS=""'
 grown secrets-pushed
@@ -254,11 +266,29 @@ run_rows \
   "'--history' without a ref is exit 2|grown history-2||all --history|rc=2 ${ERR}argument-missing=--history" \
   "an unknown base ref is a check that could not complete|grown base-6|COMMIT_GUARDS_CHECKS=byte-ceiling|all --base no-such-ref|rc=2 $(steps base:no-such-ref byte-ceiling byte-ceiling)$INCOMPLETE"
 
-echo "=== a range never narrows a lane whose configured scope is the whole tree ==="
+echo "=== a range never narrows a lane whose configured scope is the whole tree, except a change-scoped one ==="
+SWEPT_TYPE="rc=0 commit-guards: step=md-type --base base;$(ok md-type)"
 run_rows \
-  "a lane configured to sweep the tree keeps that scope under --base, so a document the range never touched still fails|fx_swept_md swept-1|COMMIT_GUARDS_CHECKS=md-format,COMMIT_GUARDS_MD_SCOPE=all|all --base base|rc=1 commit-guards: step=md-format --all;$VIOLATIONS" \
-  "control: under the default touched scope the same batch hands that lane the range, which changed no markdown|fx_swept_md swept-2|COMMIT_GUARDS_CHECKS=md-format|all --base base|rc=0 commit-guards: step=md-format --base base;$(ok md-format)" \
+  "md-refs configured to sweep the tree keeps that scope under --base, so a document the range never touched still fails|fx_swept_refs swept-1|COMMIT_GUARDS_CHECKS=md-refs,COMMIT_GUARDS_MD_SCOPE=all|all --base base|rc=1 commit-guards: step=md-refs --all;$VIOLATIONS" \
+  "md-type takes the range under the sweep setting, since it asks what the change introduced, and this range changed no markdown|fx_swept_md swept-2|COMMIT_GUARDS_CHECKS=md-type,COMMIT_GUARDS_MD_SCOPE=all|all --base base|$SWEPT_TYPE" \
+  "and under the default touched scope|fx_swept_md swept-4|COMMIT_GUARDS_CHECKS=md-type|all --base base|$SWEPT_TYPE" \
   "byte-ceiling takes the range under either setting: it is ratcheted, and the range is the question it answers|grown swept-3|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling,COMMIT_GUARDS_MD_SCOPE=all|all --base base|rc=1 $(steps base:base byte-ceiling)$VIOLATIONS"
+
+gg_mutant SWEEPING_GG commit-guards 'CHANGE_SCOPED_CHECKS="md-type"' 'CHANGE_SCOPED_CHECKS=""'
+fx_swept_md swept-5
+assert_eq "must-fail: without the change-scoped list md-type sweeps the tree and refuses a document the range never touched" \
+  "rc=1 commit-guards: step=md-type --all;$VIOLATIONS" \
+  "$(GG="$SWEEPING_GG" batch "COMMIT_GUARDS_CHECKS=md-type,COMMIT_GUARDS_MD_SCOPE=all" "all --base base")"
+
+echo "=== a retired check name is dropped with one warning until the next major release ==="
+run_rows \
+  "a setting naming md-format runs the rest and warns once|clean retired-1|COMMIT_GUARDS_CHECKS=md-format md-refs||rc=0 commit-guards: retired-check=md-format;commit-guards: step=md-refs;$(ok md-refs)" \
+  "a setting naming only md-format runs nothing and passes|clean retired-2|COMMIT_GUARDS_CHECKS=md-format||rc=0 commit-guards: retired-check=md-format;commit-guards: unrun-all=retired"
+gg_mutant UNRETIRED_GG commit-guards 'RETIRED_CHECKS="md-format"' 'RETIRED_CHECKS=""'
+clean retired-3
+assert_eq "must-fail: without the retired list the setting is refused as unknown" \
+  "rc=2 commit-guards: check-unknown=md-format" \
+  "$(GG="$UNRETIRED_GG" batch "COMMIT_GUARDS_CHECKS=md-format md-refs" "")"
 
 echo "=== a single check runs alone, flags and exit status passed through; a batch announces before the check speaks ==="
 single_rows() { # label | fixture | envs | args | stdin | expect — through `single`
@@ -278,6 +308,7 @@ single_rows \
   "control: the named check's exit status is the run's|planted single-3||todo-ban||rc=1 todo-ban: match=work marker:planted.rs:1:// $TD: planted for the dispatcher" \
   "commit-msg is invocable by name over stdin: only the batch refuses it|clean single-4||commit-msg|feat: dispatched\n|rc=0 commit-msg: header-valid=feat: dispatched" \
   "an unknown check name is exit 2 naming the known set|clean single-5||no-such-check||rc=2 ${ERR}check-unknown=no-such-check" \
+  "a retired check by name warns and exits 0|clean single-6||md-format --all||rc=0 ${ERR}retired-check=md-format" \
   "--help prints usage at exit 0|clean help||--help||rc=0 commit-guards: usage=commit-guards" \
   "-h is --help|clean help-h||-h||rc=0 commit-guards: usage=commit-guards"
 
@@ -298,9 +329,9 @@ python3 - "$R/.agents/skills/commit-guards/scripts/commit-guards" <<'EDIT'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
-needle = 'BATCH_DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"'
+needle = 'BATCH_DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"'
 assert s.count(needle) == 1
-p.write_text(s.replace(needle, needle.replace('changelog-entries md-format', 'changelog-entries prose md-format')))
+p.write_text(s.replace(needle, needle.replace('changelog-entries md-type', 'changelog-entries prose md-type')))
 EDIT
 printf 'Published: 2026-10-06.\n' >>"$R/SKILL.md"
 git -C "$R" add SKILL.md

@@ -6,7 +6,7 @@
 # reserves its own INDEX row, judged only where the decisions directory is tracked; the same
 # section citation is
 # judged in a source file's comment text and a TOML file's string literals;
-# fenced code is never read; the scopes and the path list are md-format's.
+# fenced code is never read; the scopes and the path list are md-type's.
 # Two tables: the first holds what one document cites over a seeded world,
 # the second the walk, the scopes and the source carriers. A row runs the
 # judge once and reads back the exit status with every line printed, so the
@@ -181,7 +181,7 @@ cite_rows \
   "a #anchor citation matches a slug|refs||See \`docs/architecture/overview.md#fish--chips-v2-code\`.\n|rc=0 $(clean 1 3)" \
   "control: a #anchor citation naming no slug fails|refs||See \`docs/architecture/overview.md#nope\`.\n|rc=1 $(dead AGENTS.md 1 "anchor-missing=\`docs/architecture/overview.md#nope\`:docs/architecture/overview.md:nope");$(failed 1 1 3)" \
   "a root-relative citation resolves at the root|refs||See \`docs/guide.md § Guide\`.\n|rc=0 $(clean 1 3)" \
-  "a code span that is not a path shape is not a citation|refs||Run \`md-format --all\`, see \`*.md\`, \`changelog.d/<section>/<name>.md\`, \`foo.md:12\`.\n|rc=0 $(clean 0 3)" \
+  "a code span that is not a path shape is not a citation|refs||Run \`md-type --all\`, see \`*.md\`, \`changelog.d/<section>/<name>.md\`, \`foo.md:12\`.\n|rc=0 $(clean 0 3)" \
   "a citation in a fence is not read|refs||\`\`\`\n\`docs/nope.md § X\`\n\`\`\`\n|rc=0 $(clean 0 3)"
 
 echo "=== content citations: <path>::<phrase>, the file holds the phrase ==="

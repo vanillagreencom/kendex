@@ -267,7 +267,7 @@ if git ls-files --error-unmatch -- "$DEC_DIR" >/dev/null 2>&1; then
 fi
 
 # A construct md-blocks cannot end leaves the rest of the file unread. That
-# is the file's own malformation, md-format's to judge, and no reference in
+# is the file's own malformation, md-type's to judge, and no reference in
 # or into it can be judged, so it is named unjudged rather than refused.
 lines_of() { # BLOBFILE PATH — md-blocks' line stream; 1 when the parser cannot end the file, named
   local status=0 block_stderr="" refusal="" row
@@ -288,7 +288,7 @@ lines_of() { # BLOBFILE PATH — md-blocks' line stream; 1 when the parser canno
     gg_message unjudged "$GG_MD_RULE:$GG_MD_DETAIL" "$GG_MD_EXPLANATION${block_stderr:+ $block_stderr}
 references=unjudged
 The Markdown parser cannot read this file past the construct named above, so no
-reference in it or into its headings was judged. md-format names the construct
+reference in it or into its headings was judged. md-type names the construct
 in your own file; in a file kendex renders, report it with kendex report."
     return 1
   fi

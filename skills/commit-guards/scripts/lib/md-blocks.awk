@@ -1,9 +1,8 @@
 # md-blocks.awk — the one reading of a markdown file's block structure that
-# md-format, md-reflow and md-refs share. POSIX awk, one file per run.
+# md-reflow, md-refs and md-type share. POSIX awk, one file per run.
 #
-# Parsed by md-format, md-reflow and md-refs. V/R rules are stable enums;
+# Parsed by md-reflow, md-refs and md-type. R reasons are stable enums;
 # block-unclosed carries its closing tag after a colon.
-#   -v mode=check    "V<TAB>line<TAB>rule" per format violation
 #   -v mode=reflow   the file rewritten to the format, on stdout
 #   -v mode=lines    "T<TAB>line<TAB>content" per judged line, "X..." per
 #                    HTML block line, "H<TAB>line<TAB>text" per heading;
@@ -11,9 +10,8 @@
 #
 # An unterminated fence, front matter, HTML comment or prompt-section block
 # is "R<TAB>line<TAB>reason" and exit 2 in every mode: what follows cannot
-# be judged. A CRLF line is refused the same way, except in check mode,
-# where it is the file's one violation. The grammar and the rules are
-# stated once, in CHECKS.md § md-format and § md-reflow; this file is that
+# be judged. A CRLF line is refused the same way. The grammar and the rules
+# are stated once, in CHECKS.md § md-reflow; this file is that
 # statement as a state machine, and the line-shape predicates it asks
 # (heading, thematic break, tag, delimiter row, blockquote prefix) are
 # md-shapes.awk's, loaded as the first `-f` program beside it.
@@ -30,13 +28,10 @@ function flush() {
   }
 }
 
-function violation(rule) { if (mode == "check") printf "V\t%d\t%s\n", FNR, rule }
-
 # The blank line the format requires after a heading or a fence closer,
 # whatever follows; anything else just ends the open paragraph.
 function close_block() {
-  if (prev == "heading") separate("heading-after")
-  else if (prev == "fence") separate("fence-after")
+  if (prev == "heading" || prev == "fence") separate()
   else flush()
 }
 
@@ -47,9 +42,8 @@ function refuse(line, reason) {
 }
 
 # A separating blank line the format requires before the current line, in
-# the current container; check mode names the rule instead.
-function separate(rule) {
-  violation(rule)
+# the current container.
+function separate() {
   if (mode == "reflow") {
     flush()
     out(rtrim(PREFIX))
@@ -70,8 +64,8 @@ function list_push(ind, cind) {
 }
 
 BEGIN {
-  if (mode != "check" && mode != "reflow" && mode != "lines") {
-    printf "md-blocks: mode=%s\n  Expected check, reflow or lines.\n", mode > "/dev/stderr"
+  if (mode != "reflow" && mode != "lines") {
+    printf "md-blocks: mode=%s\n  Expected reflow or lines.\n", mode > "/dev/stderr"
     exit 2
   }
   region = ""
@@ -82,21 +76,11 @@ BEGIN {
   nstack = 0
   list_indent = 0
   refused = 0
-  stopped = 0
 }
-
-stopped { next }
 
 {
   raw = $0
-  if (raw ~ /\r$/) {
-    if (mode == "check") {
-      violation("crlf")
-      stopped = 1
-      next
-    }
-    refuse(FNR, "crlf")
-  }
+  if (raw ~ /\r$/) refuse(FNR, "crlf")
 
   # Front matter: both delimiters at column zero, on the raw line.
   if (FNR == 1 && raw ~ /^---[ \t]*$/) {
@@ -207,7 +191,7 @@ stopped { next }
     flen = 0
     while (substr(body, flen + 1, 1) == fchar) flen++
     if (fchar == "~" || index(substr(body, flen + 1), "`") == 0) {
-      if (prev == "para" || prev == "item") separate("fence-before")
+      if (prev == "para" || prev == "item") separate()
       else close_block()
       out(raw)
       region = "fence"
@@ -224,10 +208,10 @@ stopped { next }
     if (prev == "bound") {
       full = PREFIX
       PREFIX = bound_prefix
-      separate("heading-before")
+      separate()
       PREFIX = full
     }
-    else if (!(prev == "blank" || prev == "start" || prev == "html")) separate("heading-before")
+    else if (!(prev == "blank" || prev == "start" || prev == "html")) separate()
     else flush()
     out(raw)
     text = body
@@ -331,9 +315,8 @@ stopped { next }
     cind = (ws == 0 || ws >= 5) ? ind + mlen + 1 : ind + RLENGTH
     list_pop_to(ind)
     list_push(ind, cind)
-    if (prev == "para") separate("list-before")
+    if (prev == "para") separate()
     else close_block()
-    if (raw ~ /  $/) violation("trailing-space")
     emit("T", content)
     buf = rtrim(raw)
     have_buf = 1
@@ -344,7 +327,6 @@ stopped { next }
 
   # A paragraph line.
   if (prev == "para" || prev == "item" || lazy) {
-    violation(prev == "item" ? "item-wrap" : "paragraph-wrap")
     buf = buf " " rtrim(body)
     if (prev == "para") setext_text = setext_text " " rtrim(body)
     para_lines++
@@ -359,13 +341,12 @@ stopped { next }
     prev = "para"
     prev_depth = depth
   }
-  if (raw ~ /  $/) violation("trailing-space")
   emit("T", content)
   next
 }
 
 END {
-  if (refused || stopped) exit (refused ? 2 : 0)
+  if (refused) exit 2
   if (region == "fence") refuse(open_line, "fence-unclosed")
   if (region == "front") refuse(open_line, "front-unclosed")
   if (region == "html" && html_end != "") refuse(open_line, (html_kind == "HTML block") ? "html-unclosed" : "block-unclosed:" html_kind)

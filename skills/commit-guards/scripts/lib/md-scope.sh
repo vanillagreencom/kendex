@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # The scope the markdown lanes share: which files a run judges, and where it
-# reads them. Sourced by md-format, md-refs and md-reflow after lib/common.sh
+# reads them. Sourced by md-type, md-refs and md-reflow after lib/common.sh
 # and lib/settings.sh; the caller runs under `set -f`, has cd'd to the
 # repository root, and calls gg_tmpdir before selecting.
 #
@@ -236,7 +236,8 @@ gg_md_lock_paths() { # OUTPUT: newline-separated emitted paths
     || gg_fail_cause lock-paths .kendex-lock.json "$GG_TMP/lock.err" "Could not read emitted paths from .kendex-lock.json."
 }
 
-# Present the shared block-parser enum without putting prose in its records.
+# Present the shared block parser's refusal enum without putting prose in its
+# records.
 gg_md_block_message() { # RULE PATH LINE — sets GG_MD_RULE and GG_MD_DETAIL
   local rule="$1" path="$2" line="$3"
   GG_MD_RULE="${rule%%:*}"
@@ -245,14 +246,6 @@ gg_md_block_message() { # RULE PATH LINE — sets GG_MD_RULE and GG_MD_DETAIL
     block-unclosed:*) GG_MD_DETAIL="$GG_MD_DETAIL:${rule#*:}" ;;
   esac
   case "$GG_MD_RULE" in
-    heading-before) GG_MD_EXPLANATION="Put a blank line before the heading." ;;
-    heading-after) GG_MD_EXPLANATION="Put a blank line after the heading." ;;
-    fence-before) GG_MD_EXPLANATION="Put a blank line before the fence." ;;
-    fence-after) GG_MD_EXPLANATION="Put a blank line after the fence." ;;
-    list-before) GG_MD_EXPLANATION="Put a blank line before the list." ;;
-    paragraph-wrap) GG_MD_EXPLANATION="Put the whole paragraph on one line." ;;
-    item-wrap) GG_MD_EXPLANATION="Put the whole list item on one line." ;;
-    trailing-space) GG_MD_EXPLANATION="Remove the trailing double-space break." ;;
     crlf) GG_MD_EXPLANATION="Use LF line endings. The file cannot be read past this line." ;;
     fence-unclosed) GG_MD_EXPLANATION="Close the fence before the file ends." ;;
     front-unclosed) GG_MD_EXPLANATION="Close the front matter before the file ends." ;;

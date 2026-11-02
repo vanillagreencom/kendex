@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Pins for scripts/md-reflow, the remedy md-format names: over a corpus of
-# shapes a reflowed file is the bytes the format asks for, passes md-format,
-# and reflows to itself again; the constructs the format leaves alone come
-# out byte-identical; a clean file is untouched; CRLF and an open construct
-# are refused with nothing written; --check writes nothing; a path resolves
-# from the invoking directory inside the repository; --staged and --all
-# select the files md-format would judge. Two tables: the corpus, and the
+# Pins for scripts/md-reflow, the format's rewrite and its --check judge: over
+# a corpus of shapes a reflowed file is the bytes the format asks for and
+# reflows to itself again; the constructs the format leaves alone come out
+# byte-identical; a clean file is untouched; CRLF and an open construct are
+# refused with nothing written; --check writes nothing; a path resolves from
+# the invoking directory inside the repository; --staged and --all select the
+# files the markdown lanes judge. Two tables: the corpus, and the
 # runs over a built repository. A row runs the tool once and pins the exit
 # status with every line printed, then the state it left behind.
 set -euo pipefail
@@ -14,7 +14,6 @@ set -f
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 MDR="$SKILL_DIR/scripts/md-reflow"
-MDF="$SKILL_DIR/scripts/md-format"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
@@ -67,7 +66,7 @@ WRAPPED='Wrapped\ntext.\n'
 bytes() { local b; b="$(cat -- "$R/$1"; printf x)"; printf '%s=%q' "$1" "${b%x}"; } # PATH — the file's bytes, %q-rendered
 mtime() { printf 'mtime=%s' "$(stat -c %Y -- "$R/$1" 2>/dev/null || stat -f %m -- "$R/$1")"; } # PATH
 leftovers() { printf 'leftovers=%s' "$(find "$R" -maxdepth 1 -type f ! -name doc.md | LC_ALL=C sort | paste -sd ',' -)"; }
-format_all() { git -C "$R" add -A; printf 'format:%s' "$(run '' --all "$MDF")"; } # the judge over what the row staged
+format_all() { git -C "$R" add -A; printf 'format:%s' "$(run '' '--check --all')"; } # the judge over what the row staged
 q() { local b; b="$(printf '%b' "$1"; printf x)"; printf '%q' "${b%x}"; } # CONTENT — its bytes, %q-rendered
 
 # Expected records keep the changed-file list and checked-file count; a
@@ -79,11 +78,9 @@ unchanged() { printf 'md-reflow: rewrite-summary=changed=0 checked=%s skipped=0'
 would() { local n=$1 t=$2; shift 2; printf 'md-reflow: would-reflow=%s;' "$@"; printf 'md-reflow: check-summary=changed=%s checked=%s skipped=%s' "$n" "$t" "$SKIPPED"; } # N T PATH...
 in_format() { printf 'md-reflow: check-summary=changed=0 checked=%s skipped=%s' "$1" "${2:-0}"; } # T [SKIPPED]
 refused() { local rule="$3"; printf 'md-reflow: %s=%s:%s' "${rule%%:*}" "$1" "$2"; case "$rule" in *:*) printf ':%s' "${rule#*:}" ;; esac; } # PATH LINE RULE
-FORMAT_OK="format:rc=0 md-format: summary=violations=0 files=1 scope=all skipped=0"
 
 # Table one: doc.md holds CONTENT in a fresh repository; one reflow, then
-# the bytes it left, md-format's verdict over them, and a --check pass that
-# must find nothing more to do. A row whose WANT equals its CONTENT pins the
+# the bytes it left and a --check pass that must find nothing more to do. A row whose WANT equals its CONTENT pins the
 # clean file's untouched verdict instead.
 ROW=0
 corpus_rows() { # label | content | want
@@ -95,8 +92,8 @@ corpus_rows() { # label | content | want
     repo "corpus-$ROW"
     write doc.md "$content"
     if [ "$(printf '%b' "$content")" = "$(printf '%b' "$want")" ]; then verdict="rc=0 $(unchanged 1)"; else verdict="rc=0 $(reflowed 1 1 doc.md)"; fi
-    expect="$verdict / doc.md=$(q "$want") / $FORMAT_OK / rc=0 $(in_format 1)"
-    assert_eq "$label" "$expect" "$(run '' doc.md) / $(bytes doc.md) / $(format_all) / $(run '' '--check doc.md')"
+    expect="$verdict / doc.md=$(q "$want") / rc=0 $(in_format 1)"
+    assert_eq "$label" "$expect" "$(run '' doc.md) / $(bytes doc.md) / $(run '' '--check doc.md')"
   done
 }
 
@@ -209,7 +206,7 @@ run_rows \
   "an absolute path outside the repository is refused, named as given|fx_outside abs||$TMP/outside-abs.md||rc=2 ${ERR}path-outside=$TMP/outside-abs.md" \
   "a relative path climbing out of the repository is refused, named as resolved|fx_outside rel||../outside-rel.md||rc=2 ${ERR}path-outside=$TMP/outside-rel/../outside-rel.md"
 
-echo "=== --staged and --all select the files md-format would judge ==="
+echo "=== --staged and --all select the files the markdown lanes judge ==="
 selection() { # NAME — three wrapped files, the vendored one excluded, one.md re-wrapped and staged
   repo "$1"
   put one.md 'Wrapped\none.\n'
@@ -226,8 +223,8 @@ fx_linked_wrapped() { fx_linked "$1"; put doc.md "$WRAPPED"; }
 st_selection() { bytes one.md; printf ' '; bytes two.md; printf ' '; bytes vendor/three.md; printf ' '; format_all; }
 st_doc() { bytes doc.md; }
 run_rows \
-  "--staged reflows the work-tree copy of the staged file and leaves the rest|selection staged||--staged|st_selection|rc=0 $(reflowed 1 1 one.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped\ntwo.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=1 md-format: paragraph-wrap=two.md:2;md-format: summary=violations=1 files=2 scope=all skipped=0" \
-  "--all reflows every tracked markdown file minus the excludes, and md-format then passes on them|selection all||--all|st_selection|rc=0 $(reflowed 2 2 one.md two.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped two.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=0 md-format: summary=violations=0 files=2 scope=all skipped=0" \
+  "--staged reflows the work-tree copy of the staged file and leaves the rest|selection staged||--staged|st_selection|rc=0 $(reflowed 1 1 one.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped\ntwo.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=1 $(would 1 2 two.md)" \
+  "--all reflows every tracked markdown file minus the excludes, and the check then passes on them|selection all||--all|st_selection|rc=0 $(reflowed 2 2 one.md two.md) / one.md=$(q 'Wrapped one more.\n') two.md=$(q 'Wrapped two.\n') vendor/three.md=$(q 'Wrapped\nthree.\n') format:rc=0 $(in_format 2)" \
   "staged reflow leaves the excluded document unchanged|fx_staged_excluded||--staged|st_doc|rc=0 $(unchanged 0) / doc.md=$(q "$WRAPPED")" \
   "control: the same staged document reflows without its exclusion|fx_staged_included||--staged|st_doc|rc=0 $(reflowed 1 1 doc.md) / doc.md=$(q 'Wrapped text.\n')" \
   "a tracked markdown symlink is counted on the check summary|fx_linked linked||--check --all||rc=0 $(in_format 1 1)" \

@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Read committed Markdown growth through Git's documented metadata interface.
+# Read committed Markdown growth through Git's documented metadata interface,
+# and judge each committed document's shape with the commit-guards md-type
+# installed beside this package.
 set -euo pipefail
-exec python3 - "$@" <<'PY'
+case "${BASH_SOURCE[0]}" in
+  */*) SELF_DIR="${BASH_SOURCE[0]%/*}" ;;
+  *) SELF_DIR=. ;;
+esac
+SELF_DIR="$(cd -- "$SELF_DIR" && pwd -P)"
+DOCS_AUDIT_MD_TYPE="$SELF_DIR/../../commit-guards/scripts/md-type" DOCS_AUDIT_BASH="$BASH" exec python3 - "$@" <<'PY'
 import argparse
 import datetime as dt
 import json
@@ -24,7 +31,7 @@ def timestamp(value):
 parser = argparse.ArgumentParser(description="Report committed Markdown snapshot growth.")
 parser.add_argument("--since", required=True, type=timestamp)
 parser.add_argument("--until", required=True, type=timestamp)
-parser.add_argument("--top", type=int, default=10, help="Maximum growth rows per repository (default: %(default)s)")
+parser.add_argument("--top", type=int, default=10, help="Maximum growth and size rows per repository (default: %(default)s)")
 parser.add_argument("repos", nargs="+")
 args = parser.parse_args()
 if args.since > args.until or args.top < 0:
@@ -36,6 +43,9 @@ for key in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
 env["GIT_TERMINAL_PROMPT"] = "0"
 exclude = re.compile(rb"(^|/)(plans|research|node_modules|fixtures)/|^(changelog\.d|state)/|^CHANGELOG\.md$")
 quote = json.dumps
+md_type = os.environ["DOCS_AUDIT_MD_TYPE"]
+bash = os.environ["DOCS_AUDIT_BASH"]
+signal_words = re.compile(r" words=(\d+) example_words=(\d+) ")
 
 
 def git(repo, operation, *argv, data=None):
@@ -84,7 +94,35 @@ def snapshot(repo, revision):
             if len(fields) != 3 or fields[:2] != [oid, b"blob"] or not fields[2].isdigit():
                 raise ValueError(f"{operation}: invalid size response {line!r}")
             sizes[oid] = int(fields[2])
-    return {path: sizes[oid] for path, oid in selected.items()}
+    return {path: sizes[oid] for path, oid in selected.items()}, selected
+
+
+def shape(repo, identity, revision, selected):
+    """Each selected document's md-type rows, ranked size signals, and the first unjudged document's cause."""
+    rows, sizes = [], []
+    for path in sorted(selected):
+        shown = f"{identity} path={quote(os.fsdecode(path))}"
+        blob = git(repo, f"shape {revision}", "cat-file", "blob", selected[path])
+        try:
+            result = subprocess.run([bash, md_type, "--as", path, "--root", repo, "-"], input=blob,
+                                    capture_output=True, env=env, timeout=60)
+        except (OSError, subprocess.SubprocessError) as error:
+            return rows, sizes, (shown, f"md-type unrunnable: {error}")
+        output = (result.stdout + result.stderr).decode(errors="replace").splitlines()
+        lines = [line for line in output if line.startswith("md-type: ")]
+        # Exit 2 is md-type's refusal to judge, a missing or unreadable rule
+        # set among them; nothing past it is judged by the same rules.
+        if result.returncode not in (0, 1):
+            return rows, sizes, (shown, lines[0] if lines else f"md-type exit {result.returncode}")
+        for line in lines:
+            match = signal_words.search(line)
+            if line.startswith("md-type: signal=") and match:
+                words, example = int(match.group(1)), int(match.group(2))
+                sizes.append((-(words / example if example else float(words)), os.fsdecode(path),
+                              f"shape-size {shown} md_type={quote(line)}"))
+            elif result.returncode == 1:
+                rows.append(f"shape {shown} md_type={quote(line)}")
+    return rows, sizes, None
 
 
 failed = False
@@ -102,13 +140,22 @@ for named in args.repos:
         base = git(repo, "base endpoint", "rev-list", "-1", f"--before={start}", head).decode().strip()
         if not base:
             raise ValueError("base endpoint: no commit at or before since")
-        old, new = snapshot(repo, base), snapshot(repo, head)
+        (old, _), (new, head_blobs) = snapshot(repo, base), snapshot(repo, head)
         rows = [f"{identity} base={base} head={head} since={start} until={end} "
                 f"md_files={len(old)}->{len(new)} md_bytes={sum(old.values())}->{sum(new.values())}"]
         growth = sorted(((size - old.get(path, 0), size, path) for path, size in new.items()
                          if size > old.get(path, 0)), key=lambda row: (-row[0], row[2]))
         rows.extend(f"growth {identity} delta_bytes={delta} bytes={size} path={quote(os.fsdecode(path))}"
                     for delta, size, path in growth[:args.top])
+        if os.access(md_type, os.R_OK):
+            shapes, sizes, unjudged = shape(repo, identity, head, head_blobs)
+        else:
+            shapes, sizes, unjudged = [], [], (identity, f"md-type missing at {md_type}")
+        rows.extend(shapes)
+        rows.extend(row for _, _, row in sorted(sizes)[:args.top])
+        if unjudged:
+            failed = True
+            rows.append(f"shape {unjudged[0]} status=unjudged cause={quote(unjudged[1])}")
         print("\n".join(rows))
     except (ValueError, OSError) as error:
         failed = True

@@ -5,8 +5,8 @@
 # bytes, byte-ceiling protects against large files,
 # changelog-entries judges changelog fragments, todo-ban catches work markers, suppression-ban catches blanket
 # allows, conflict-markers catches merge markers, prose keeps history out of
-# the markdown agents load, md-format and md-refs hold that markdown to one
-# paragraph per line with live references, and the opt-in comments lane
+# the markdown agents load, md-type holds markdown to its file type's shape,
+# md-refs keeps its references live, and the opt-in comments lane
 # judges source comments. What is here is what none of them ships.
 # Repository scans read the working tree. COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS
 # in kendex.settings.toml names the paths this default mode reads; a rule over
