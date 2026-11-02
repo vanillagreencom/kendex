@@ -7,6 +7,7 @@ import type {
   PackageRef,
   ProvenanceRow,
   Scope,
+  Tag,
 } from "@/bindings";
 import { PLACE_COUNTING_LABEL, PLACE_UNCHECKED_LABEL } from "@/lib/copy";
 import { observedAt, type PackageIdentity, packageKey } from "@/lib/derive";
@@ -86,6 +87,28 @@ export function summaryIndex(rows: ProvenanceRow[]): SummaryOf {
   return (item) =>
     byInstallation.get(installationKey({ ...item, at: observedAt(item) })) ??
     null;
+}
+
+/** The tags one observed installation's package is filed under. */
+export type TagsOf = (item: ObservedItem) => Tag[];
+
+/** The tags every surface files an installed package under, out of the
+ *  join its summary comes from.
+ *
+ *  An installed skill copy carries no tags of its own, so the declaration
+ *  the join reads is the only place a managed skill's tags are. A list,
+ *  empty or not, is that declaration's answer and stands as written: an
+ *  author who declared none gets none, never the installed file's. Only a
+ *  row with no declaration behind it, `null`, leaves the observation's own
+ *  tags as all there is. */
+export function tagsIndex(rows: ProvenanceRow[]): TagsOf {
+  const byInstallation = new Map<string, Tag[]>();
+  for (const row of rows) {
+    if (row.tags !== null) byInstallation.set(installationKey(row), row.tags);
+  }
+  return (item) =>
+    byInstallation.get(installationKey({ ...item, at: observedAt(item) })) ??
+    item.tags;
 }
 
 /** What the author says one recorded package does, or null where the
@@ -178,6 +201,13 @@ export function useOriginIndex(): OriginOf | null {
 export function useSummaryIndex(): SummaryOf {
   const rows = useProvenanceStore((s) => s.rows);
   return useMemo(() => summaryIndex(rows), [rows]);
+}
+
+/** The tags lookup for a component, stale and never null for the reason
+ *  {@link useSummaryIndex} is. */
+export function useTagsIndex(): TagsOf {
+  const rows = useProvenanceStore((s) => s.rows);
+  return useMemo(() => tagsIndex(rows), [rows]);
 }
 
 /** The same words for a package the records account for, for the rows no

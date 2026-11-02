@@ -58,6 +58,7 @@ import {
   usePackagesRead,
   useRecordedSummaryIndex,
   useSummaryIndex,
+  useTagsIndex,
 } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
 import { afforded, type ColumnBudget, useRoom } from "@/lib/table-room";
@@ -169,6 +170,10 @@ export function InstalledView() {
   // The words each package's author wrote, from the same join, so the row,
   // its preview and its page cannot describe one package differently.
   const summaryOf = useSummaryIndex();
+  // The tags each package's author declared, from the same join: an
+  // installed skill copy carries none, so the Tags column and the tag
+  // facet read them here rather than off the scan.
+  const tagsOf = useTagsIndex();
   // The same words keyed by the package, for a row whose every copy was
   // deleted: it has no installation to ask about and the record carries
   // the text.
@@ -256,12 +261,12 @@ export function InstalledView() {
     () =>
       result && packageOf
         ? withRecordedMissing(
-            groupItems(result.items, packageOf, summaryOf),
+            groupItems(result.items, packageOf, summaryOf, tagsOf),
             missingRows ?? [],
             recordedSummaryOf,
           )
         : [],
-    [result, packageOf, summaryOf, recordedSummaryOf, missingRows],
+    [result, packageOf, summaryOf, tagsOf, recordedSummaryOf, missingRows],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
@@ -302,12 +307,12 @@ export function InstalledView() {
     // this page exists to stop. With the read failed and nothing retained
     // the note above stands in their place instead.
     if (!result || !packageOf || packagesUnreadable) return [];
-    const filtered = filterItems(result.items, narrowing);
+    const filtered = filterItems(result.items, narrowing, tagsOf);
     // Searched after grouping, because what a search reads is the
     // package's name and its author's words, and both belong to the
     // package rather than to any one of its installations.
     let grouped = withRecordedMissing(
-      groupItems(filtered, packageOf, summaryOf),
+      groupItems(filtered, packageOf, summaryOf, tagsOf),
       missingUnder(missingRows ?? [], narrowing),
       recordedSummaryOf,
     ).filter((group) => groupMatches(group, search));
@@ -340,6 +345,7 @@ export function InstalledView() {
     provenance,
     packageOf,
     summaryOf,
+    tagsOf,
     recordedSummaryOf,
     packagesUnreadable,
     editedAnywhere,

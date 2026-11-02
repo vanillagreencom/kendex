@@ -8,6 +8,7 @@ import type {
   Origin,
   ProvenanceRow,
   Scope,
+  Tag,
 } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
@@ -1984,5 +1985,101 @@ describe("the columns a narrow Library table keeps", () => {
     expect(row[3].textContent, "Status is still the last cell").toContain(
       "Active",
     );
+  });
+});
+
+// An installed skill copy carries no tags of its own, so the Library files a
+// managed skill under the tags its declaration writes, through the join that
+// says which package the copy is. A declared list stands as written, empty
+// included; only a row with no declaration behind it leaves the
+// observation's own tags.
+describe("the tags a Library row is filed under", () => {
+  const copy = (tags: Tag[]): ObservedItem =>
+    ({ ...installed(VG), at: installed(VG).path, tags }) as ObservedItem;
+  const joined = (tags: Tag[] | null): ProvenanceRow => ({
+    scope: VG,
+    kind: "skill",
+    name: "gh",
+    harness: "claude",
+    at: installed(VG).path,
+    origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+    summary: null,
+    tags,
+    package: { kind: "skill", name: "gh" },
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    roomIs(1400);
+  });
+
+  it("reads the declaration's tags in the column and under the facet", () => {
+    const cases: {
+      name: string;
+      observed: Tag[];
+      declared: Tag[] | null;
+      facet: Tag;
+      column: string;
+      kept: boolean;
+    }[] = [
+      {
+        name: "declared on a copy that carries none",
+        observed: [],
+        declared: ["review", "testing"],
+        facet: "review",
+        column: "ReviewTesting",
+        kept: true,
+      },
+      {
+        name: "declared none over a copy that carries some",
+        observed: ["docs"],
+        declared: [],
+        facet: "docs",
+        column: "",
+        kept: false,
+      },
+      {
+        name: "no declaration reachable",
+        observed: ["docs"],
+        declared: null,
+        facet: "docs",
+        column: "Docs",
+        kept: true,
+      },
+    ];
+    expect(cases.length, "tag join table is empty").toBeGreaterThan(0);
+    for (const { name, observed, declared, facet, column, kept } of cases) {
+      useScanStore.setState({
+        result: {
+          harnesses: [],
+          items: [copy(observed)],
+          missingProjects: [],
+          readProjects: [],
+          warnings: [],
+        } as never,
+      });
+      joinAnswered([joined(declared)]);
+
+      useLibraryViewStore.setState({ ...NO_FILTERS });
+      const all = mount(<InstalledView />);
+      const cells = [
+        ...(all.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+      ];
+      expect(cells, name).toHaveLength(8);
+      expect(cells[2].textContent, name).toBe(column);
+
+      useLibraryViewStore.setState({ ...NO_FILTERS, tag: facet });
+      const narrowed = mount(<InstalledView />);
+      // An emptied table draws a row of its own, whose first cell is the
+      // way out of the narrowing, so the package's row is asked for by name.
+      const names = [
+        ...narrowed.querySelectorAll("tbody tr td:first-child"),
+      ].map((cell) => cell.querySelector("button")?.textContent?.trim());
+      expect(names.includes("gh"), name).toBe(kept);
+    }
   });
 });
