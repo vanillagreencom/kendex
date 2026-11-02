@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { hasCodexLogin, requireCodexLogin, resolveCodexHome } from "../src/auth-presence.ts";
+import { hasCodexLogin, loginMissingMessage, requireCodexLogin, resolveCodexHome } from "../src/auth-presence.ts";
 import { codexChildEnvironment } from "../src/codex-environment.ts";
 
 const scratchRoot = join(process.cwd(), "tmp");
@@ -22,24 +21,47 @@ test("the bridge home is PI_CODEX_BRIDGE_HOME, else CODEX_HOME, else ~/.codex, a
 	}
 });
 
-// The remedy's command runs in a person's shell, so the row runs it through
-// sh, with a stand-in codex that signs in where CODEX_HOME points, as the
-// Codex CLI does. The shell's own CODEX_HOME names another home.
-test("a missing login names the bridge home, and its sign-in command writes the login there", () => {
+test("login presence checks only the resolved home's auth file", () => {
 	const root = mkdtempSync(join(scratchRoot, "auth-presence-"));
-	const bridgeHome = resolveCodexHome({ PI_CODEX_BRIDGE_HOME: join(root, "bridge's home"), CODEX_HOME: join(root, "shell") });
-	const shellHome = join(root, "shell");
-	const bin = join(root, "bin");
-	for (const dir of [bridgeHome, shellHome, bin]) mkdirSync(dir);
-	writeFileSync(join(bin, "codex"), '#!/bin/sh\n[ "$1" = login ] && printf x > "$CODEX_HOME/auth.json"\n');
-	chmodSync(join(bin, "codex"), 0o755);
-	assert.equal(hasCodexLogin(bridgeHome), false);
-	let message = "";
-	assert.throws(() => requireCodexLogin(bridgeHome), (error) => (message = error.message).split("\n")[0] === `codex-login-missing home=${bridgeHome}`);
-	const remedy = message.split("\n").at(-1);
-	execFileSync("sh", ["-c", remedy.slice(remedy.lastIndexOf(": ") + 2)], { env: { PATH: `${bin}:${process.env.PATH}`, CODEX_HOME: shellHome } });
-	assert.equal(hasCodexLogin(bridgeHome), true);
-	assert.equal(hasCodexLogin(shellHome), false);
+	const seededHome = join(root, "seeded home");
+	mkdirSync(seededHome);
+	assert.equal(hasCodexLogin(seededHome), false);
+	assert.throws(() => requireCodexLogin(seededHome), (error) => error.message.split("\n")[0] === `codex-login-missing home=${seededHome}`);
+	writeFileSync(join(seededHome, "auth.json"), "credential-bytes-never-read");
+	assert.equal(hasCodexLogin(seededHome), true);
+	assert.doesNotThrow(() => requireCodexLogin(seededHome));
+});
+
+// A person copies the remedy's command. A plain `codex login` signs in to
+// CODEX_HOME, else ~/.codex, creating ~/.codex, and refuses a CODEX_HOME folder
+// that does not exist (Codex 0.163.0 and 0.166.0). So the command is offered
+// only where it signs in to the bridge home; elsewhere the remedy names the
+// home and carries no shell assignment.
+test("the sign-in remedy is a plain codex login only where that login reaches the bridge home", () => {
+	const userHome = "/home/lane";
+	const cliDefault = join(userHome, ".codex");
+	for (const row of [
+		{ env: {}, plain: true },
+		{ env: { CODEX_HOME: "/shell" }, plain: true },
+		{ env: { PI_CODEX_BRIDGE_HOME: " ", CODEX_HOME: "/shell" }, plain: true },
+		{ env: { PI_CODEX_BRIDGE_HOME: "/shell", CODEX_HOME: "/shell" }, plain: true },
+		{ env: { PI_CODEX_BRIDGE_HOME: cliDefault }, plain: true },
+		{ env: { PI_CODEX_BRIDGE_HOME: "/bridge's home" }, plain: false },
+		{ env: { PI_CODEX_BRIDGE_HOME: "/bridge's home", CODEX_HOME: "/shell" }, plain: false },
+		{ env: { PI_CODEX_BRIDGE_HOME: cliDefault, CODEX_HOME: "/shell" }, plain: false },
+	]) {
+		const label = JSON.stringify(row.env);
+		const home = resolveCodexHome(row.env, userHome);
+		const [key, remedy] = loginMissingMessage(home, row.env, userHome).split("\n");
+		assert.equal(key, `codex-login-missing home=${home}`, label);
+		if (row.plain) {
+			assert.ok(remedy.endsWith(": codex login"), label);
+			assert.ok(!remedy.includes("CODEX_HOME"), label);
+		} else {
+			assert.ok(remedy.includes(home), label);
+			assert.ok(!remedy.includes("CODEX_HOME=") && !remedy.endsWith(": codex login"), label);
+		}
+	}
 });
 
 // Every name outside the allowlist is dropped, whatever it is called: the

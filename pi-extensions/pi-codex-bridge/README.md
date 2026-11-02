@@ -20,7 +20,7 @@ source = "kendex"
 - Pi 0.86 or later.
 - Node 22.19 or later.
 - Codex CLI 0.163.0 or 0.166.0 on `PATH`. The bridge refuses any other release and offers no model. `package.json` lists the supported releases as its optional `@openai/codex` peer range.
-- A Codex login in the bridge home, stored in `<bridge home>/auth.json`. The bridge home is `PI_CODEX_BRIDGE_HOME` when set, else `CODEX_HOME`, else `~/.codex`; a blank value counts as unset. `PI_CODEX_BRIDGE_HOME` gives the bridge a home apart from the one a `codex` run in Pi's tool shell reads. The Codex CLI reads only `CODEX_HOME`, so sign in to that home with `CODEX_HOME=<bridge home> codex login`.
+- A Codex login in the bridge home, stored in `<bridge home>/auth.json`. The bridge home is `PI_CODEX_BRIDGE_HOME` when set, else `CODEX_HOME`, else `~/.codex`; a blank value counts as unset. `PI_CODEX_BRIDGE_HOME` gives the bridge a home apart from the one a `codex` run in Pi's tool shell reads. Without it, sign in with `codex login`. For a home `PI_CODEX_BRIDGE_HOME` names, create that folder first, then run `codex login` with `CODEX_HOME` set to it.
 
 A login kept in the system keyring (`cli_auth_credentials_store = "keyring"`) has no `auth.json`, so the bridge treats it as absent. Sign in with file storage to use the bridge.
 

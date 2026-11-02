@@ -7,8 +7,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 var LOGIN_MISSING_KEY = "codex-login-missing";
 function resolveCodexHome(env = process.env, userHome = homedir()) {
-  const configured = env.PI_CODEX_BRIDGE_HOME?.trim() || env.CODEX_HOME?.trim();
-  return configured ? configured : join(userHome, ".codex");
+  return env.PI_CODEX_BRIDGE_HOME?.trim() || codexCliHome(env, userHome);
+}
+function codexCliHome(env, userHome) {
+  return env.CODEX_HOME?.trim() || join(userHome, ".codex");
 }
 function hasCodexLogin(codexHome) {
   return existsSync(join(codexHome, "auth.json"));
@@ -16,12 +18,10 @@ function hasCodexLogin(codexHome) {
 function requireCodexLogin(codexHome) {
   if (!hasCodexLogin(codexHome)) throw new Error(loginMissingMessage(codexHome));
 }
-function loginMissingMessage(codexHome) {
+function loginMissingMessage(codexHome, env = process.env, userHome = homedir()) {
+  const remedy = codexHome === codexCliHome(env, userHome) ? "Sign in: codex login" : `PI_CODEX_BRIDGE_HOME gives Pi Codex its own Codex home, ${codexHome}. Make that folder if it does not exist. Then set the CODEX_HOME environment variable to that folder and run codex login.`;
   return `${LOGIN_MISSING_KEY} home=${codexHome}
-Pi Codex needs a Codex CLI login in this home. Sign in: CODEX_HOME=${shellQuote(codexHome)} codex login`;
-}
-function shellQuote(value) {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+Pi Codex needs a Codex CLI login. ${remedy}`;
 }
 
 // src/bridge.ts
