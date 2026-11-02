@@ -29,9 +29,9 @@ Before each launch, `codex-policy.ts::supportedCodexVersions` reads the range fr
 | Key | Cause |
 |---|---|
 | `codex-version-unsupported found=<v> supported=<list>` | The installed Codex is not a listed release. |
-| `codex-version-unreadable executable=<path> code=<code>` | `codex --version` did not run. |
-| `codex-support-unreadable path=<path> code=<code>` | The manifest is missing or is not JSON. |
-| `codex-support-malformed range=<range>` | The range is absent, open, or names a prerelease. |
+| `codex-version-unreadable executable=<path> code=<code>` | `codex --version` failed: it could not run, did not exit 0, or printed more than 4 KiB. |
+| `codex-support-unreadable path=<path> code=<code>` | The manifest cannot be read or is not JSON. |
+| `codex-support-malformed range=<range>` | The range is absent or not a string, both reported as `range=absent`, or it holds anything but exact stable versions in the form above. |
 
 Model discovery runs the same check, so the provider offers no model and the session-start notice carries the key. A stream or cold resume on a saved model selection refuses with the same key.
 
