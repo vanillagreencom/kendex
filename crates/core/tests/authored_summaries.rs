@@ -21,6 +21,7 @@ use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::{ItemKind, ObservedItem, Scope};
 use kendex_core::source::browse;
 use kendex_core::source_read::SealedSource;
+use kendex_core::tags::Tag;
 
 /// A hook whose author wrote both lines: the constraint for the agent, and
 /// the sentence for the person.
@@ -739,61 +740,88 @@ fn a_row_escapes_author_text_the_way_a_catalog_row_does() {
     );
 }
 
-/// A Library row's tags are the ones the package declares. An installed
-/// skill copy carries no `tags`, so the scan reads none off it, and the
-/// declaration's stand in the scan the Library shows; where no source can
-/// be reached the observation keeps its own, which for a copy is none.
+/// A Library row's tags are the ones the package declares, carried on
+/// its provenance row, whether the scan sees the installation or only the
+/// record holds it. An installed skill copy carries no `tags`, so the scan
+/// reads none off it. A declaration naming no tag is an empty list that
+/// stands as written, and no declaration at all is `None`, which leaves
+/// the observation's own tags to the reader.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_library_row_reads_its_skill_tags_from_the_declaration() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let env = Env::fake(&home, FakeOs::Linux);
-    let project = home.join("dev/app");
-    fs::create_dir_all(project.join(".claude")).unwrap();
-    let catalog = home.join("up");
-    fs::create_dir_all(catalog.join("skills/gh")).unwrap();
-    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    fs::write(
-        catalog.join("skills/gh/SKILL.md"),
-        "---\nname: gh\ndescription: Use for GitHub work.\ntags: [review, testing]\n---\nBody.\n",
-    )
-    .unwrap();
-    fs::write(
-        project.join("kendex.toml"),
-        format!(
-            "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.up]\n{}\n\n[skills.gh]\nsource = \"up\"\n",
-            source_path(&catalog)
+fn a_library_row_carries_the_tags_its_declaration_writes() {
+    for (tags, declared) in [
+        (
+            "tags: [review, testing]\n",
+            Some(vec![Tag::Review, Tag::Testing]),
         ),
-    )
-    .unwrap();
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    apply::execute(&env, &audit(&env, &scope).unwrap().plan).unwrap();
-    let tags = |declared: bool| {
-        let mut scan = kendex_core::scan::scan_scopes(
-            &env,
-            &std::collections::BTreeMap::new(),
-            std::slice::from_ref(&scope),
-        );
-        if declared {
-            kendex_core::library::declared_tags(&env, &mut scan);
-        }
-        scan.items
+        ("", Some(vec![])),
+    ] {
+        for seen in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = rooted(&tmp);
+            let env = Env::fake(&home, FakeOs::Linux);
+            let project = home.join("dev/app");
+            fs::create_dir_all(project.join(".claude")).unwrap();
+            let catalog = home.join("up");
+            fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+            fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+            fs::write(
+                catalog.join("skills/gh/SKILL.md"),
+                format!("---\nname: gh\ndescription: Use for GitHub work.\n{tags}---\nBody.\n"),
+            )
+            .unwrap();
+            fs::write(
+                project.join("kendex.toml"),
+                format!(
+                    "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.up]\n{}\n\n[skills.gh]\nsource = \"up\"\n",
+                    source_path(&catalog)
+                ),
+            )
+            .unwrap();
+            let scope = Scope::Project {
+                root: project.clone(),
+            };
+            apply::execute(&env, &audit(&env, &scope).unwrap().plan).unwrap();
+            let copies: Vec<_> = kendex_core::scan::scan_scopes(
+                &env,
+                &std::collections::BTreeMap::new(),
+                std::slice::from_ref(&scope),
+            )
+            .items
             .into_iter()
-            .find(|item| item.kind == ItemKind::Skill && item.name == "gh")
-            .unwrap()
-            .tags
-    };
-    assert!(tags(false).is_empty(), "the copy carries no tags");
-    assert_eq!(
-        tags(true),
-        [
-            kendex_core::tags::Tag::Review,
-            kendex_core::tags::Tag::Testing
-        ]
-    );
-    fs::remove_dir_all(&catalog).unwrap();
-    assert!(tags(true).is_empty(), "an unreachable source lends no tags");
+            .filter(|item| item.kind == ItemKind::Skill && item.name == "gh")
+            .collect();
+            assert!(!copies.is_empty(), "the scan sees the installed copy");
+            assert!(
+                copies.iter().all(|item| item.tags.is_empty()),
+                "the copy carries no tags"
+            );
+            if !seen {
+                for copy in &copies {
+                    let dir = if copy.path.is_dir() {
+                        copy.path.clone()
+                    } else {
+                        copy.path.parent().unwrap().to_path_buf()
+                    };
+                    fs::remove_dir_all(dir).unwrap();
+                }
+            }
+            let row = || {
+                kendex_core::library::provenance(&env, std::slice::from_ref(&scope))
+                    .unwrap()
+                    .into_iter()
+                    .find(|row| row.package_ref().name == "gh")
+                    .unwrap()
+            };
+            let answered = row();
+            assert_eq!(answered.at.is_some(), seen, "{tags:?} seen={seen}");
+            assert_eq!(answered.tags, declared, "{tags:?} seen={seen}");
+            fs::remove_dir_all(&catalog).unwrap();
+            assert_eq!(
+                row().tags,
+                None,
+                "{tags:?} seen={seen}: an unreachable source declares nothing"
+            );
+        }
+    }
 }

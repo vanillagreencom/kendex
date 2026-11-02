@@ -192,6 +192,7 @@ const openPage = async (
           repo: "o/r",
         },
         summary: null,
+        tags: null,
         package: { kind, name: "gh" },
       };
     }),
@@ -333,6 +334,7 @@ it.each([false, true])(
         at: item.at,
         origin: { origin: "builtin" },
         summary: null,
+        tags: null,
         package: recorded ? { kind: item.kind, name: item.name } : null,
       },
     ]);
@@ -408,6 +410,7 @@ it("routes grouped native and catalog MCP toggles through each scope's observati
           ? { origin: "builtin" }
           : { origin: "marketplace", source: "cat", repo: "o/r" },
       summary: null,
+      tags: null,
       package: { kind: item.kind, name: item.name },
     })),
   );
@@ -560,6 +563,7 @@ describe("the words the package page shows", () => {
               scopeKey(scope) === scopeKey(VG)
                 ? "What this project installed."
                 : "What the other project installed.",
+            tags: null,
             package: { kind: "skill" as ItemKind, name: "gh" },
           };
         }),
@@ -593,6 +597,7 @@ describe("the words the package page shows", () => {
         at: null,
         origin: { origin: "marketplace", source: "cat", repo: "o/r" },
         summary,
+        tags: null,
         package: { kind: "skill", name: "gh" },
       };
       act(() => {
@@ -1237,6 +1242,7 @@ describe("the package page's safety tab", () => {
           at: installedAt(VG).at,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
           summary: null,
+          tags: null,
           package: { kind: "skill", name: "gh" },
         },
       ],
@@ -1428,6 +1434,7 @@ describe("the package page's file actions", () => {
           at: installedAt(VG).at,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
           summary: null,
+          tags: null,
           package: { kind: "skill", name: "gh" },
         },
       ],
@@ -1652,6 +1659,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         at: null,
         origin: { origin: "marketplace", source: "cat", repo: "o/r" },
         summary: null,
+        tags: null,
         package: { kind: "skill", name: "gh" },
       },
       {
@@ -1662,6 +1670,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         at: null,
         origin: { origin: "unmanaged" },
         summary: null,
+        tags: null,
         package: null,
       },
     ]);

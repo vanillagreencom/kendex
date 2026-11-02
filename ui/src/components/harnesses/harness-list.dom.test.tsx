@@ -111,6 +111,7 @@ beforeEach(() => {
       at: item.path,
       origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
       summary: null,
+      tags: null,
       package: { kind: item.kind, name: item.name },
     })),
     loaded: true,

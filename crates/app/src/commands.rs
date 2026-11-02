@@ -21,9 +21,7 @@ pub fn app_version() -> Result<String, String> {
 pub fn scan_machine() -> Result<ScanResult, String> {
     let env = env()?;
     let app_settings = settings::load(&env).map_err(|e| e.to_string())?;
-    let mut scanned = scan::scan(&env, &app_settings);
-    kendex_core::library::declared_tags(&env, &mut scanned);
-    Ok(scanned)
+    Ok(scan::scan(&env, &app_settings))
 }
 
 #[derive(Serialize, Type)]

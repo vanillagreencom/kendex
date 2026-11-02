@@ -102,6 +102,7 @@ describe("a customized package in the Library list", () => {
         at: installed(scope).path,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
         summary: null,
+        tags: null,
         package: { kind: "skill" as const, name: "gh" },
       })),
       loaded: true,
@@ -400,6 +401,7 @@ describe("the places a narrowed Library row names", () => {
       at: null,
       origin: { origin: "marketplace", source: "cat", repo: "o/r" },
       summary: null,
+      tags: null,
       package: GH,
     },
     {
@@ -409,6 +411,7 @@ describe("the places a narrowed Library row names", () => {
       at: seen.at,
       origin: { origin: "marketplace", source: "hyprcat", repo: "o/h" },
       summary: null,
+      tags: null,
       package: GH,
     },
   ];
@@ -650,6 +653,7 @@ describe("a package whose rendering is gone everywhere", () => {
     at: null,
     origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
     summary: SEEDED_WORDS,
+    tags: null,
     package: { kind: "skill" as const, name: "gh" },
   };
 
@@ -893,6 +897,7 @@ describe("a package whose rendering is gone everywhere", () => {
         at: loose.at,
         origin: { origin: "unmanaged" },
         summary: null,
+        tags: null,
         package: null,
       },
     ] as never);
@@ -1226,6 +1231,7 @@ describe("the marketplace a Library row came from", () => {
     harness: item.harness,
     at: observedAt(item),
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
     origin,
   });
@@ -1421,6 +1427,7 @@ describe("one package several tools store differently", () => {
     at: item.at,
     origin: { origin: "marketplace", source: "kendex", repo: "vg/kendex" },
     summary: null,
+    tags: null,
     package: { kind: "hook", name: "block-bare-cd" },
   });
 
@@ -1440,6 +1447,7 @@ describe("one package several tools store differently", () => {
           at: items[2].at,
           origin: { origin: "unmanaged" },
           summary: null,
+          tags: null,
           package: null,
         },
       ] as never,
@@ -1568,6 +1576,7 @@ describe("what a Library row says a package is for", () => {
             repo: "vg/kendex",
           },
           summary: WORDS,
+          tags: null,
           package: { kind: "hook", name: "block-bare-cd" },
         },
       ] as never,
@@ -1952,6 +1961,7 @@ describe("the columns a narrow Library table keeps", () => {
         at: installed({ scope: "project", root }).path,
         origin: { origin: "own" as const, forkedFrom: null, source: "local" },
         summary: null,
+        tags: null,
         package: { kind: "skill" as const, name: "gh" },
       })) as never,
     );

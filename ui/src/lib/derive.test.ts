@@ -598,6 +598,7 @@ describe("withRecordedMissing", () => {
     at: null,
     origin: { origin: "marketplace", source: "kendex", repo: "kendex" },
     summary,
+    tags: null,
     package: { kind: "skill", name: "deploy" },
   });
 

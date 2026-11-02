@@ -83,6 +83,17 @@ pub struct ProvenanceRow {
     /// direction-flipping character is here as its escape, never as
     /// itself.
     pub summary: Option<String>,
+    /// The tags the package's own declaration writes, read where
+    /// [`ProvenanceRow::summary`] is. An installed copy of a skill carries
+    /// no `tags` of its own (the installed key set), so these are the
+    /// row's tags wherever a declaration answers.
+    ///
+    /// `Some` with an empty list says the declaration answered and names
+    /// no tag, which stands as written. `None` says no declaration could
+    /// be reached — content nobody manages, an observation the records tie
+    /// to no package, a source this machine cannot reach — and the
+    /// observation's own tags are all there is.
+    pub tags: Option<Vec<crate::tags::Tag>>,
     /// Which package this installation is, where the records establish
     /// one. `None` says they do not: the observation keeps its own
     /// identity and stays distinct from every other, because a name two
@@ -103,6 +114,7 @@ struct RowFacts {
     origin: Origin,
     package: Option<PackageRef>,
     summary: Option<String>,
+    tags: Option<Vec<crate::tags::Tag>>,
 }
 
 impl ProvenanceRow {
@@ -155,7 +167,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         let claimed = index.of(&item);
         let package = claimed.as_ref().map(|(package, _)| package.clone());
         let origin = observed_origin(env, records, &item, claimed.as_ref());
-        let summary = observed_summary(env, &mut headers, records, &item, package.as_ref());
+        let (summary, tags) = observed_words(env, &mut headers, records, &item, package.as_ref());
         // Keyed by which observation it is as well: a tool reads more than
         // one root and one registry file holds every entry, so two things
         // it finds under one name are two installations rather than one
@@ -166,6 +178,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
                 origin,
                 package,
                 summary,
+                tags,
             });
     }
     // A record seeded a row for every installation it holds, so that one
@@ -224,6 +237,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
             // marketplace row, so one package version reads the same in
             // both places.
             summary: facts.summary.as_deref().map(crate::names::shown),
+            tags: facts.tags,
             package: facts.package,
         })
         .collect())
@@ -248,42 +262,23 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
 /// this one. Where nothing declared answers — content nobody manages, an
 /// observation the records tie to no package, a source this machine
 /// cannot reach — the observation's own words stand.
-fn observed_summary(
+///
+/// The tags come from the same declaration, and only from it: `None`
+/// where none answers, so a reader tells "declares no tag" from "nothing
+/// declared could be read".
+fn observed_words(
     env: &Env,
     headers: &mut crate::source::header::DeclaredHeaders,
     records: &crate::ownership::Records,
     item: &crate::model::ObservedItem,
     package: Option<&PackageRef>,
-) -> Option<String> {
+) -> (Option<String>, Option<Vec<crate::tags::Tag>>) {
     match declared_header(env, headers, records, item, package) {
-        Some(header) => header.summary_or_description().map(str::to_owned),
-        None => item.summary.clone(),
-    }
-}
-
-/// Each observed installation's tags as its package declares them, in a
-/// scan the Library shows. An installed copy of a skill carries no `tags`
-/// (the installed key set), so the declaration's tags stand wherever one
-/// can be reached, by the rule [`observed_summary`] applies to the words
-/// beside them; an observation no declaration answers for keeps its own.
-pub fn declared_tags(env: &Env, scan: &mut crate::scan::ScanResult) {
-    let mut records_by_scope = BTreeMap::new();
-    let mut headers = crate::source::header::DeclaredHeaders::default();
-    for item in &mut scan.items {
-        if item.vendor.is_some() {
-            continue;
-        }
-        let (records, index) = records_by_scope
-            .entry(item.scope.canonical())
-            .or_insert_with_key(|scope| {
-                let records = crate::ownership::read(env, scope);
-                let index = identity::index(env, scope, &records.lock);
-                (records, index)
-            });
-        let package = index.of(item).map(|(package, _)| package);
-        if let Some(header) = declared_header(env, &mut headers, records, item, package.as_ref()) {
-            item.tags = header.tags;
-        }
+        Some(header) => (
+            header.summary_or_description().map(str::to_owned),
+            Some(header.tags),
+        ),
+        None => (item.summary.clone(), None),
     }
 }
 
@@ -333,12 +328,12 @@ fn installed_from(
     })
 }
 
-/// The words for every row the scan could not see.
+/// The words and tags for every row the scan could not see.
 ///
 /// Only a seeded row, whose name IS the declared one: an observed row is
 /// named however its tool stores the package, and looking a declaration up
 /// under that spelling is the mistake the identity join exists to stop —
-/// its own words were settled in [`observed_summary`], through the package
+/// its own words were settled in [`observed_words`], through the package
 /// the records established. Run after the sweep that drops the seeded rows
 /// the scan also saw, so a catalog is read only for a row that survived.
 fn seeded_summaries(
@@ -348,7 +343,7 @@ fn seeded_summaries(
     rows: &mut BTreeMap<RowKey, RowFacts>,
 ) {
     for ((scope, kind, name, harness, at), facts) in rows {
-        if at.is_some() || facts.summary.is_some() {
+        if at.is_some() || facts.summary.is_some() || facts.tags.is_some() {
             continue;
         }
         let Some(records) = records_by_scope.get(scope) else {
@@ -358,9 +353,11 @@ fn seeded_summaries(
             continue;
         };
         let installed = installed_from(records, *kind, name, *harness);
-        facts.summary = headers
-            .of(env, scope, manifest, *kind, name, installed.as_ref())
-            .and_then(|header| header.summary_or_description().map(str::to_owned));
+        let Some(header) = headers.of(env, scope, manifest, *kind, name, installed.as_ref()) else {
+            continue;
+        };
+        facts.summary = header.summary_or_description().map(str::to_owned);
+        facts.tags = Some(header.tags);
     }
 }
 
@@ -403,6 +400,7 @@ fn recorded(
                 // keeps one, and reading a catalog for the rest would pay
                 // for every row twice.
                 summary: None,
+                tags: None,
             },
         );
     }

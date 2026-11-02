@@ -75,6 +75,7 @@ const owned = (scope: Scope): ProvenanceRow => ({
   at: install(scope).path,
   origin: { origin: "marketplace", source: "cat", repo: "o/r" },
   summary: null,
+  tags: null,
   package: { kind: "skill", name: "commit-guards" },
 });
 

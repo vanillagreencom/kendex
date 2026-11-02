@@ -4292,6 +4292,19 @@ export type ProvenanceRow = {
 	 */
 	summary: string | null,
 	/**
+	 *  The tags the package's own declaration writes, read where
+	 *  [`ProvenanceRow::summary`] is. An installed copy of a skill carries
+	 *  no `tags` of its own (the installed key set), so these are the
+	 *  row's tags wherever a declaration answers.
+	 * 
+	 *  `Some` with an empty list says the declaration answered and names
+	 *  no tag, which stands as written. `None` says no declaration could
+	 *  be reached — content nobody manages, an observation the records tie
+	 *  to no package, a source this machine cannot reach — and the
+	 *  observation's own tags are all there is.
+	 */
+	tags: Tag[] | null,
+	/**
 	 *  Which package this installation is, where the records establish
 	 *  one. `None` says they do not: the observation keeps its own
 	 *  identity and stays distinct from every other, because a name two
