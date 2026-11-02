@@ -177,7 +177,7 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
                 String::from_utf8_lossy(&output.stdout).contains(" legs=fresh,upgrade"),
                 "{output:?}"
             );
-            let target = "        ceilings = os.pathsep.join((str(catalog.parent), str(root)))\n";
+            let target = "        ceilings = os.pathsep.join((str(boundary.parent), str(root)))\n";
             assert_eq!(text.matches(target).count(), 1);
             let mutated = text.replace(target, "        ceilings = \"\"\n");
             assert_ne!(text, mutated);

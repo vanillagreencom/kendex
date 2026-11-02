@@ -11,8 +11,12 @@ Rendered kendex.toml files also pass their schema declaration through the
 released manifest reader, independently of their install declarations.
 Report protocol: catalog-release: version=JSON leg=NAME feature=JSON then
 catalog-release: remedy=KEY on failure, catalog-release: version=JSON
-result=pass legs=NAMES on success, and catalog-release: upgrade=skip
-cause=prior-uninstallable feature=JSON before a pass on the fresh leg alone.
+result=pass legs=NAMES followed by the catalog check's report on success, and
+catalog-release: upgrade=skip cause=prior-uninstallable feature=JSON before a
+pass on the fresh leg alone. catalog-release: cause=repository-probe means git
+could not say which repository holds CATALOG.
+Every leg sees the repository that holds CATALOG, unless that repository
+ignores it.
 An engine without bundle names reports bundles=unavailable
 cause=engine-missing-bundles and keeps the package upgrade checks.
 The feature value is the engine's diagnostic, not a second feature classifier.
@@ -99,6 +103,40 @@ def settle(run, commands, diagnostics):
     return None
 
 
+def repository_boundary(catalog, home):
+    """The directory whose parent bounds Git discovery for the catalog.
+
+    A catalog inside its repository's working tree sees that repository,
+    with its ignore rules, as a consumer's checkout does. A catalog with no
+    repository of its own, or one its enclosing repository ignores, such as
+    a snapshot under an ignored tmp/, is bounded at itself. The caller's own
+    discovery ceiling holds.
+    """
+    environment = {"PATH": os.environ["PATH"], "HOME": str(home), "LC_ALL": "C"}
+    if "GIT_CEILING_DIRECTORIES" in os.environ:
+        environment["GIT_CEILING_DIRECTORIES"] = os.environ["GIT_CEILING_DIRECTORIES"]
+
+    def git(*arguments):
+        return subprocess.run(
+            ["git", *arguments], env=environment, cwd=catalog,
+            capture_output=True, text=True,
+        )
+    found = git("rev-parse", "--show-toplevel")
+    if found.returncode != 0:
+        # Only git's own words mean no repository; any other failure is a
+        # boundary this check could not find.
+        if "not a git repository" in found.stderr:
+            return catalog
+        raise SystemExit(f"catalog-release: cause=repository-probe\n{found.stderr.strip()}")
+    top = Path(found.stdout.removesuffix("\n")).resolve(strict=True)
+    if top == catalog:
+        return catalog
+    ignored = git("check-ignore", "--quiet", "--", ".")
+    if ignored.returncode not in (0, 1):
+        raise SystemExit(f"catalog-release: cause=repository-probe\n{ignored.stderr.strip()}")
+    return catalog if ignored.returncode == 0 else top
+
+
 def shipped_manifests(binary, project, place, ceilings):
     """Ask the released reader about schema declarations in rendered files.
 
@@ -135,9 +173,11 @@ def main():
         root = Path(scratch)
         # An archived catalog and the render project must not inherit an
         # enclosing checkout's ignored tmp/ directory. A catalog's own
-        # repository remains discoverable, including its ignore rules; git
-        # resolves the upgrade leg's source link to the catalog it names.
-        ceilings = os.pathsep.join((str(catalog.parent), str(root)))
+        # repository remains discoverable, including its ignore rules, from
+        # the repository root or any directory under it; git resolves the
+        # upgrade leg's source link to the catalog it names.
+        boundary = repository_boundary(catalog, root)
+        ceilings = os.pathsep.join((str(boundary.parent), str(root)))
         fresh = leg(binary, root / "fresh", ceilings)
         version = fresh(["--version"], check=True).stdout.strip().removeprefix("kendex ")
 
@@ -147,12 +187,16 @@ def main():
             print(f"catalog-release: remedy={key}\n{remedy}")
             return 1
 
+        diagnostics = []
         diagnostic = settle(fresh, [
             ["check", "--catalog", str(catalog), *strict],
             install(catalog), REFRESH, VERIFY,
-        ], [])
+        ], diagnostics)
         if diagnostic is not None:
             return failed("fresh", diagnostic)
+        # The catalog check's report, printed once on a pass: its safety
+        # findings fail nothing, and no other step prints them.
+        report = diagnostics[0]
         diagnostic = shipped_manifests(binary, root / "fresh/project", root / "manifests", ceilings)
         if diagnostic is not None:
             return failed("fresh", diagnostic)
@@ -190,6 +234,8 @@ def main():
                     return failed("upgrade", diagnostic)
                 legs.append("upgrade")
         print(f"catalog-release: version={json.dumps(version)} result=pass legs={','.join(legs)}")
+        if report:
+            print(report)
         return 0
 
 
