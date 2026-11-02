@@ -1,4 +1,4 @@
-// A login-free world for the real Codex 0.163.0 app-server: a scratch
+// A login-free world for a real Codex app-server: a scratch
 // CODEX_HOME whose user config declares one marker MCP server and trusts a
 // scratch project that declares another, a mock model provider on 127.0.0.1,
 // and a spawn seam that records every child the bridge starts.
@@ -9,10 +9,28 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { startAppServer } from "../../src/app-server.ts";
 import { CodexBridge } from "../../src/bridge.ts";
+import { codexChildEnvironment } from "../../src/codex-environment.ts";
+import { decodeVersion } from "../../src/protocol.ts";
 import { startMockResponses } from "./mock-responses.mjs";
 
 const packageDir = fileURLToPath(new URL("../..", import.meta.url));
-export const CODEX = join(packageDir, "node_modules", "@openai", "codex", "bin", "codex.js");
+
+/** The real CLI of one supported release: the `codex-<version>` dev
+ * dependency, an alias of `@openai/codex@<version>`. A release without one
+ * fails every row that asks for it. */
+export function fixtureCodex(version, root = packageDir) {
+	const path = join(root, "node_modules", `codex-${version}`, "bin", "codex.js");
+	if (!existsSync(path)) throw new Error(`fixture-codex-missing version=${version} path=${path}`);
+	return path;
+}
+
+/** Refuse a fixture CLI that is not `version`, since a release's rows prove
+ * only the CLI that ran them. */
+export function assertFixtureRelease(codex, version, codexHome) {
+	const found = decodeVersion(execFileSync(codex, ["--version"], { env: codexChildEnvironment(codexHome), encoding: "utf8", timeout: 30_000 }));
+	if (found !== version) throw new Error(`fixture-codex-release-mismatch version=${version} found=${found}`);
+}
+
 export const ENV_SENTINEL = "SENTINEL-ENV-7f3a1658";
 export const ARG_SENTINEL = "SENTINEL-ARG-9c2e1658";
 
@@ -49,8 +67,9 @@ export function codeModeOnlyModel(slug) {
 	};
 }
 
-/** `modelCatalog` replaces Codex's model catalog through `model_catalog_json`. */
-export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userConfig = "", modelCatalog } = {}) {
+/** `codex` is the CLI the world's bridges launch, from `fixtureCodex`.
+ * `modelCatalog` replaces Codex's model catalog through `model_catalog_json`. */
+export async function fixtureWorld(name, { codex, script = [], model = "gpt-5.5", userConfig = "", modelCatalog } = {}) {
 	const scratch = join(packageDir, "tmp");
 	mkdirSync(scratch, { recursive: true });
 	const root = mkdtempSync(join(scratch, `fixture-${name}-`));
@@ -99,17 +118,20 @@ export async function fixtureWorld(name, { script = [], model = "gpt-5.5", userC
 	};
 	/** `withoutSetting` drops one `-c` launch setting the bridge passes, for a
 	 * contrast launch. */
-	const newBridge = ({ withoutSetting } = {}) => new CodexBridge({
-		codexHome: home,
-		cwd: project,
-		executable: CODEX,
-		configOverrides,
-		connect: (launch, signal) => startAppServer(launch, signal, withoutSetting === undefined ? recordingSpawn : (command, args, options) => {
-			const at = args.findIndex((arg, index) => args[index - 1] === "-c" && arg === withoutSetting);
-			if (at < 0) throw new Error(`fixture-setting-absent setting=${withoutSetting}`);
-			return recordingSpawn(command, args.toSpliced(at - 1, 2), options);
-		}),
-	});
+	const newBridge = ({ withoutSetting } = {}) => {
+		if (codex === undefined) throw new Error("fixture-codex-unset");
+		return new CodexBridge({
+			codexHome: home,
+			cwd: project,
+			executable: codex,
+			configOverrides,
+			connect: (launch, signal) => startAppServer(launch, signal, withoutSetting === undefined ? recordingSpawn : (command, args, options) => {
+				const at = args.findIndex((arg, index) => args[index - 1] === "-c" && arg === withoutSetting);
+				if (at < 0) throw new Error(`fixture-setting-absent setting=${withoutSetting}`);
+				return recordingSpawn(command, args.toSpliced(at - 1, 2), options);
+			}),
+		});
+	};
 	return {
 		root,
 		home,

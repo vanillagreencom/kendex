@@ -1,21 +1,62 @@
-// What the bridge asks of Codex CLI 0.163.0, and what it accepts back. Each
-// list here was read from that exact release (`codex features list`, the
-// app-server protocol and the fixture suites); a different release is refused
-// before any of it applies, so no list carries a compatibility branch.
+// What the bridge asks of the Codex CLI releases it supports, and what it
+// accepts back. Each list here was read from every supported release (`codex
+// features list`, the app-server protocol and the fixture suites); a release
+// outside the supported list is refused before any of it applies.
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { JsonObject } from "./protocol.js";
 
-export const SUPPORTED_CODEX_VERSION = "0.163.0";
+/** This package's manifest: the parent of `src/` in a checkout and of
+ * `bundle/` in an installed copy, so the bridge reads the copy Pi runs. */
+const PACKAGE_MANIFEST = new URL("../package.json", import.meta.url);
+
+/**
+ * The Codex releases the bridge supports: the manifest's optional
+ * `@openai/codex` peer range, exact stable versions joined by ` || `. That
+ * range is the one list; a release joins it only once the fixture suite
+ * passed on it. An unreadable manifest or a malformed range refuses with its
+ * keyed cause.
+ */
+export function supportedCodexVersions(manifest: URL = PACKAGE_MANIFEST): string[] {
+	let text: string;
+	try {
+		text = readFileSync(manifest, "utf8");
+	} catch (error) {
+		throw new Error(`codex-support-unreadable path=${fileURLToPath(manifest)} code=${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
+	}
+	let manifestJson: { peerDependencies?: Record<string, unknown> } | null;
+	try {
+		manifestJson = JSON.parse(text);
+	} catch {
+		throw new Error(`codex-support-unreadable path=${fileURLToPath(manifest)} code=invalid-json`);
+	}
+	// Optional chaining reads every JSON value safely: a non-object yields
+	// undefined, which the parse refuses.
+	return parseCodexSupport(manifestJson?.peerDependencies?.["@openai/codex"]);
+}
+
+/** The exact versions of an `@openai/codex` peer range. Anything else, an open
+ * range or a prerelease included, is malformed. */
+export function parseCodexSupport(range: unknown): string[] {
+	const versions = typeof range === "string" ? range.trim().split(/\s*\|\|\s*/) : [];
+	if (versions.length === 0 || !versions.every((version) => /^\d+\.\d+\.\d+$/.test(version))) {
+		throw new Error(`codex-support-malformed range=${typeof range === "string" ? JSON.stringify(range) : "absent"}`);
+	}
+	return versions;
+}
 
 /** The dynamic-tool namespace that carries Pi's tools. Codex reserves no such
  * name and none of its own tools uses it. */
 export const PI_TOOL_NAMESPACE = "pi";
 
 /**
- * Default-on 0.163.0 features that run something outside Pi: native shell,
- * exec and patch tools, browsers, computer use, image tools, MCP and plugin
- * server sources, hooks, turns Pi did not ask for (goals, the guardian
- * reviewer, sub-agents), and UI-only surfaces that have no place in a bridge.
+ * Default-on features of the supported releases that run something outside
+ * Pi: native shell, exec and patch tools, browsers, computer use, image tools,
+ * MCP and plugin server sources, hooks, turns Pi did not ask for (goals, the
+ * guardian reviewer, sub-agents), and UI-only surfaces that have no place in a
+ * bridge. Every supported release knows each name: 0.163.0 refuses to start
+ * on `--disable` of a name it lacks.
  */
 export const DISABLED_FEATURES = [
 	"shell_tool",
@@ -58,9 +99,9 @@ export const DISABLED_FEATURES = [
 ] as const;
 
 /**
- * Features 0.163.0 still reports enabled for a thread after the launch list
- * above, each reviewed as running nothing outside Pi. Any other enabled
- * feature refuses the thread before its first turn.
+ * Features a supported release still reports enabled for a thread after the
+ * launch list above, each reviewed as running nothing outside Pi. Any other
+ * enabled feature refuses the thread before its first turn.
  */
 export const REVIEWED_ENABLED_FEATURES: ReadonlyMap<string, string> = new Map([
 	// `--disable unified_exec`, `-c features.unified_exec=false` and

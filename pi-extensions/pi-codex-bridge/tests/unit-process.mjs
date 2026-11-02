@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -14,7 +14,7 @@ import { CodexBridge } from "../src/bridge.ts";
 import { CodexProtocolClient } from "../src/json-rpc.ts";
 import { descendantsOf, parseProcStat, parsePsRows } from "../src/process-tree.ts";
 import { finish, model, system, user } from "./lib/fake-client.mjs";
-import { ARG_SENTINEL, fixtureWorld, markerPidsFromPs } from "./lib/codex-fixture.mjs";
+import { ARG_SENTINEL, assertFixtureRelease, fixtureCodex, fixtureWorld, markerPidsFromPs } from "./lib/codex-fixture.mjs";
 import { alive, goneWithin, recordedPids, writeStubCodex } from "./lib/stub-codex.mjs";
 
 const scratch = join(fileURLToPath(new URL("..", import.meta.url)), "tmp");
@@ -144,17 +144,43 @@ test("marker assertions reject zombie and foreign-world cleanup regressions", as
 	}
 });
 
+/** The refusal of an unlisted release names the supported list, which keeps
+ * the accepted 0.163.0 release. */
+const unsupported = (version) => new RegExp(`^codex-version-unsupported found=${version.replaceAll(".", "\\.")} supported=(?:\\S+,)?0\\.163\\.0(?:,\\S+)?$`);
+
 for (const row of [
-	{ name: "another release", write: (dir) => writeStubCodex(dir, { version: "0.164.0" }), error: "codex-version-unsupported found=0.164.0 expected=0.163.0" },
-	{ name: "unreadable output", write: (dir) => { const path = join(dir, "codex"); writeFileSync(path, `#!${process.execPath}\nconsole.log("not a version");\n`, { mode: 0o755 }); return path; }, error: "codex-protocol-invalid method=--version field=stdout" },
-	{ name: "no executable", write: (dir) => join(dir, "missing-codex"), error: "codex-version-unreadable" },
-	{ name: "the supported release", write: (dir) => writeStubCodex(dir), error: undefined },
+	{ name: "the unproved 0.166.0 release", write: (dir) => writeStubCodex(dir, { version: "0.166.0" }), error: unsupported("0.166.0") },
+	{ name: "a prerelease of a listed release", write: (dir) => writeStubCodex(dir, { version: "0.163.0-alpha.1" }), error: /^codex-version-unsupported found=0\.163\.0-alpha\.1 / },
+	{ name: "unreadable output", write: (dir) => { const path = join(dir, "codex"); writeFileSync(path, `#!${process.execPath}\nconsole.log("not a version");\n`, { mode: 0o755 }); return path; }, error: /^codex-protocol-invalid method=--version field=stdout$/ },
+	{ name: "no executable", write: (dir) => join(dir, "missing-codex"), error: /^codex-version-unreadable / },
+	{ name: "the accepted 0.163.0 release", write: (dir) => writeStubCodex(dir), error: undefined },
 ]) {
 	test(`the version gate: ${row.name}`, async (t) => {
 		const dir = scratchDir(t, "version");
 		const outcome = assertSupportedCodex(launch(row.write(dir), dir));
 		if (row.error === undefined) await outcome;
-		else await assert.rejects(outcome, (error) => error.message.startsWith(row.error));
+		else await assert.rejects(outcome, (error) => row.error.test(error.message));
+	});
+}
+
+// The fixture suite's first row per listed release: a release whose fixture
+// CLI is absent, or is another release, fails instead of lending its rows the
+// proof of a CLI that did not run.
+for (const row of [
+	{ name: "absent", cli: undefined, error: /^fixture-codex-missing version=0\.164\.0 / },
+	{ name: "another release", cli: "0.163.0", error: /^fixture-codex-release-mismatch version=0\.164\.0 found=0\.163\.0$/ },
+	{ name: "the listed release", cli: "0.164.0", error: undefined },
+]) {
+	test(`the fixture release check: a fixture CLI that is ${row.name}`, (t) => {
+		const dir = scratchDir(t, "fixture-cli");
+		if (row.cli !== undefined) {
+			const bin = join(dir, "node_modules", "codex-0.164.0", "bin");
+			mkdirSync(bin, { recursive: true });
+			renameSync(writeStubCodex(bin, { version: row.cli }), join(bin, "codex.js"));
+		}
+		const check = () => assertFixtureRelease(fixtureCodex("0.164.0", dir), "0.164.0", dir);
+		if (row.error === undefined) check();
+		else assert.throws(check, (error) => row.error.test(error.message));
 	});
 }
 
@@ -162,7 +188,7 @@ test("a stream on another Codex release is refused before any app-server starts"
 	const dir = scratchDir(t, "version-stream");
 	const bridge = new CodexBridge({ codexHome: dir, cwd: dir, executable: writeStubCodex(dir, { version: "0.164.0" }), env: { PATH: process.env.PATH } });
 	const end = await finish(bridge.streamSimple(model, { messages: [system(), user("Hello")] }));
-	assert.equal(end.error.errorMessage, "codex-version-unsupported found=0.164.0 expected=0.163.0");
+	assert.match(end.error.errorMessage, unsupported("0.164.0"));
 	assert.equal(existsSync(join(dir, "app-server.pid")), false);
 	await bridge.close();
 });

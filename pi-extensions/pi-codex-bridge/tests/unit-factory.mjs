@@ -105,14 +105,17 @@ for (const enabled of [false, true]) {
 	});
 }
 
-// Where the provider comes from on a fresh start, per login and project
-// setting. `factory` and `started` are the providers registered after the
-// factory and after session_start; `server` is whether model discovery
-// started an app-server. A project's disable holds only once Pi trusts it,
-// and Pi's trust answer arrives at session_start.
+// Where the provider comes from on a fresh start, per login, Codex release
+// and project setting. `factory` and `started` are the providers registered
+// after the factory and after session_start; `server` is whether model
+// discovery started an app-server; `notice` is, or matches, the first line of the
+// one session_start notice. A project's disable holds only once Pi trusts it, and
+// Pi's trust answer arrives at session_start. A release outside the supported
+// list offers no model, and a stream on it starts no app-server.
 for (const row of [
-	{ name: "no login", login: false, project: {}, trusted: true, factory: 1, started: 1, server: false, notice: "codex-login-missing" },
+	{ name: "no login", login: false, project: {}, trusted: true, factory: 1, started: 1, server: false, notice: (home) => `codex-login-missing home=${home}` },
 	{ name: "a login", login: true, project: {}, trusted: true, factory: 1, started: 1, server: true, notice: undefined },
+	{ name: "a login and a Codex release outside the supported list", login: true, codexVersion: "0.164.0", project: {}, trusted: true, factory: 1, started: 1, server: false, notice: () => /^codex-version-unsupported found=0\.164\.0 supported=(?:\S+,)?0\.163\.0(?:,\S+)?$/ },
 	{ name: "a login, and a trusted project disables the package", login: true, project: disabled, trusted: true, factory: 0, started: 0, server: false, notice: undefined },
 	{ name: "a login, and an untrusted project disables the package", login: true, project: disabled, trusted: false, factory: 0, started: 1, server: true, notice: undefined },
 ]) {
@@ -120,7 +123,7 @@ for (const row of [
 		const home = mkdtempSync(join(scratch, "factory-home-"));
 		if (row.login) writeFileSync(join(home, "auth.json"), "{}");
 		const bin = mkdtempSync(join(scratch, "factory-bin-"));
-		writeStubCodex(bin);
+		writeStubCodex(bin, row.codexVersion === undefined ? {} : { version: row.codexVersion });
 		const project = mkdtempSync(join(scratch, "factory-project-"));
 		mkdirSync(join(project, ".pi"));
 		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify(row.project));
@@ -141,12 +144,24 @@ for (const row of [
 			for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
 			assert.equal(pi.providers.length, row.started);
 			assert.equal(existsSync(join(bin, "app-server.pid")), row.server);
-			assert.deepEqual(notices, row.notice === undefined ? [] : [[`${row.notice} home=${home}`, "warning"]]);
+			if (row.notice === undefined) assert.deepEqual(notices, []);
+			else {
+				assert.deepEqual(notices.map(([, level]) => level), ["warning"]);
+				const expected = row.notice(home);
+				if (typeof expected === "string") assert.equal(notices[0][0], expected);
+				else assert.match(notices[0][0], expected);
+			}
 			const [provider] = pi.providers;
 			if (provider !== undefined && !row.login) {
 				assert.deepEqual(provider.getModels(), []);
 				assert.equal(await provider.auth.apiKey.check(), undefined);
 				assert.throws(() => provider.streamSimple(model, { messages: [system(), user("Hello")] }), (error) => error.message.split("\n")[0] === `codex-login-missing home=${home}`);
+			}
+			if (row.codexVersion !== undefined) {
+				assert.deepEqual(provider.getModels(), []);
+				const end = await finish(provider.streamSimple(model, { messages: [system(), user("Saved selection")] }));
+				assert.match(end.error.errorMessage, row.notice(home));
+				assert.equal(existsSync(join(bin, "app-server.pid")), false, "a stream started an unsupported child");
 			}
 		} finally {
 			for (const handler of pi.handlers.get("session_shutdown") ?? []) await handler({}, {});

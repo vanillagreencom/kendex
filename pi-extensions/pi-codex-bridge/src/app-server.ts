@@ -1,6 +1,6 @@
 import { execFile, spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { promisify } from "node:util";
-import { appServerArgs, SUPPORTED_CODEX_VERSION } from "./codex-policy.js";
+import { appServerArgs, supportedCodexVersions } from "./codex-policy.js";
 import { codexChildEnvironment } from "./codex-environment.js";
 import { CodexProtocolClient, type ProtocolClient } from "./json-rpc.js";
 import { decodeModelPage, decodeVersion, type CodexModel } from "./protocol.js";
@@ -34,8 +34,10 @@ export const INITIALIZE_PARAMS = {
 	},
 };
 
-/** Read `codex --version`. An abort of `signal` rejects with its reason. */
+/** Read `codex --version` and refuse a release outside the supported list.
+ * An abort of `signal` rejects with its reason. */
 export async function assertSupportedCodex(launch: Launch, signal?: AbortSignal): Promise<void> {
+	const supported = supportedCodexVersions();
 	let stdout: string;
 	try {
 		({ stdout } = await execFileAsync(launch.executable, ["--version"], {
@@ -49,8 +51,8 @@ export async function assertSupportedCodex(launch: Launch, signal?: AbortSignal)
 		throw new Error(`codex-version-unreadable executable=${launch.executable} code=${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
 	}
 	const found = decodeVersion(stdout);
-	if (found !== SUPPORTED_CODEX_VERSION) {
-		throw new Error(`codex-version-unsupported found=${found} expected=${SUPPORTED_CODEX_VERSION}`);
+	if (!supported.includes(found)) {
+		throw new Error(`codex-version-unsupported found=${found} supported=${supported.join(",")}`);
 	}
 }
 
