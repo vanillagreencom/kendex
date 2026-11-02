@@ -27,7 +27,8 @@ SLACK_THREAD_DAYS = "7"
 # relay holds its mailbox posts and `slack listen --status` shows
 # held-by=jarvis; owner messages in the channel still reach the overseer.
 # Replies to messages the owner typed in the channel still post in their threads,
-# and a notice that names a /report directive as a new message.
+# a notice that names a /report directive as a new message, and a notice that
+# names a forwarded directive under its root.
 # README.md says what posts on resume. Empty means no hold.
 SLACK_JARVIS_SESSION_FILE = ""
 

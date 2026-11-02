@@ -53,7 +53,8 @@ def child_failure(operation, result):
     if first.startswith("jarvis: failure="):
         record = json.loads(first[len("jarvis: failure="):])
         return Failure(*record["key"], record["detail"])
-    keyed = re.match(r"^(?:lane-mail|kendex|jarvis): ([a-z][a-z0-9-]*)=", first)
+    # owner-note and forward prefix the refusals their host scripts print.
+    keyed = re.match(r"^(?:lane-mail|kendex|jarvis|owner-note|forward): ([a-z][a-z0-9-]*)=", first)
     return Failure(operation, "refusal" if keyed else "exit",
                    keyed[1] if keyed else result.returncode, detail)
 
@@ -254,6 +255,45 @@ def lane_mail():
     return LIB.parents[2] / "mailbox/scripts/lane-mail"
 
 
+def mailbox_header(line):
+    """The `count=N first=ID` header lane-mail's drain and events print, as (count, first), or None."""
+    match = re.fullmatch(r"count=(\d+) first=(\S*)", line)
+    return (int(match[1]), match[2]) if match else None
+
+
+def mailbox_receipts(lines):
+    """`drain --receipts` output as (index, cursor, count, rows).
+
+    index is the receipts line's, cursor its value or None where it reads
+    `missed`, count to-lane's logical line count, and rows each listed
+    directive as (line, id, epoch), epoch None where its `at` did not parse.
+    """
+    index = next((i for i, row in enumerate(lines) if row.startswith("receipts ")), None)
+    match = re.fullmatch(r"receipts cursor=(\d+|missed) count=(\d+) first=\S*", lines[index]) if index is not None else None
+    if not match:
+        raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
+    rows = []
+    for row in lines[index + 1:]:
+        parts = row.split(" ")
+        if len(parts) == 3 and parts[0].isdigit() and (parts[2].isdigit() or not parts[2]):
+            rows.append((int(parts[0]), parts[1], int(parts[2]) if parts[2] else None))
+    return index, None if match[1] == "missed" else int(match[1]), int(match[2]), rows
+
+
+def send_receipt(result, key):
+    """A `lane-mail send --delivery-id KEY` result as (id, repeated), or None with no receipt.
+
+    A new append prints `sent` and exits 0; a key the mailbox already holds
+    refuses `delivery-repeated`, naming the envelope that landed.
+    """
+    if result.returncode == 0:
+        match = re.search(r"^lane-mail: sent item=overseer id=([^\s]+)(?:\s|$)", result.stdout, re.M)
+    else:
+        match = re.search(r"^lane-mail: delivery-repeated=" + re.escape(key) + r" id=([^\s]+)(?:\s|$)",
+                          result.stderr, re.M)
+    return (match[1], result.returncode != 0) if match else None
+
+
 def mailbox_events(bash, root, box, after=0, mark_read=False):
     """One `lane-mail events --item overseer --box` read in root, as (count, rows)."""
     operation = "mailbox-events-" + box
@@ -261,10 +301,10 @@ def mailbox_events(bash, root, box, after=0, mark_read=False):
     if mark_read:
         args.append("--mark-read")
     lines = checked(args, root, operation=operation).split("\n")
-    header = re.fullmatch(r"count=(\d+) first=.*", lines[0])
+    header = mailbox_header(lines[0])
     if not header:
         raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
-    return int(header[1]), [json.loads(row) for row in lines[1:] if row]
+    return header[0], [json.loads(row) for row in lines[1:] if row]
 
 
 def owner_unread(bash, root, cursor, count, now, reported, events):
@@ -335,20 +375,13 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
                     root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
             if len(boxes) > 1:
                 receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
-                index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
-                if index is None:
-                    raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
-                receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
-                if not receipt:
+                _, cursor_read, lane_count, listed = mailbox_receipts(receipts)
+                if cursor_read is None:
                     raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
-                unread = []
-                for row in receipts[index + 1:]:
-                    parts = row.split()
-                    if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
-                        unread.append(parts)
+                unread = [row for row in listed if row[2] is not None and row[0] > cursor_read]
                 if side == "local" and root == home:
                     # Only the home inbox's receipts say whether owner mail was read.
-                    owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
+                    owned = owner_unread(bash, root, cursor_read, lane_count, now,
                                          prior.get("owner_unread", []), root_events)
                     if owned:
                         next_root["owner_unread"] = owned
@@ -534,16 +567,13 @@ class Watch:
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 print("watch-loop: send=pending " + str(error), file=sys.stderr)
                 return
-        sent = re.search(r"^lane-mail: sent item=overseer id=([^\s]+)(?:\s|$)", result.stdout, re.M)
-        repeated = re.search(r"^lane-mail: delivery-repeated=" + re.escape(pending["key"]) +
-                             r" id=([^\s]+)(?:\s|$)", result.stderr, re.M)
-        receipt = sent if result.returncode == 0 else repeated
+        receipt = send_receipt(result, pending["key"])
         if not receipt:
             print("watch-loop: send=pending " + result.stderr.strip(), file=sys.stderr)
             return
         self.state.update(spans=pending["retained"], pending=None, due=None)
         self.save()
-        print("watch-loop: batch=" + pending["key"] + " id=" + receipt[1] + " inbox=overseer", flush=True)
+        print("watch-loop: batch=" + pending["key"] + " id=" + receipt[0] + " inbox=overseer", flush=True)
 
     def live(self, now=None):
         try:

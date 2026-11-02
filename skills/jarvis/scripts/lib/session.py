@@ -81,15 +81,20 @@ def environment(harness=None):
             if key in keys or key.startswith(("XDG_", "LC_"))}
 
 
+def home_state(home):
+    """The private state directory of the resolved HOME: its session record and its forward outbox."""
+    key = hashlib.sha256(os.fsencode(home)).hexdigest()
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "kendex/jarvis" / key
+
+
 class Session:
     def __init__(self, home):
         self.home = str(Path(home).resolve(strict=True))
-        key = hashlib.sha256(os.fsencode(self.home)).hexdigest()
-        state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-        self.path = state / "kendex/jarvis" / key / "jarvis-session.json"
+        state = home_state(self.home)
+        self.path = state / "jarvis-session.json"
         # tmux places its socket in its own runtime root, whose pathname fits
         # Unix socket limits even when XDG_STATE_HOME is a deep directory.
-        self.label = "jarvis-" + key[:32]
+        self.label = "jarvis-" + state.name[:32]
         self.deadline = time.monotonic() + CALL_SECONDS
         self.env = environment()
         self.emitted = False
@@ -940,7 +945,7 @@ def main():
     if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import forward
-        return forward.main(args)
+        return forward.main(args, home_state)
     try:
         session = Session(args.home)
     except OSError:

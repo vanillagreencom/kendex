@@ -28,6 +28,12 @@ import watch  # noqa: E402
 DRAIN_SECONDS = 45
 CONNECT_SECONDS = 10
 CLOSED_KEEP_DAYS = 30
+# How long a delivered forward waits for its answer. Past it, an answer the
+# main's compaction dropped unread, or one sent without --ref, cannot be told
+# from none, so the forward closes as answer-unseen and is read no more. The
+# main keeps a read answer max(ORCH_RECORD_RETENTION_DAYS, SLACK_THREAD_DAYS)
+# days, seven by default, a setting the satellite cannot read.
+ANSWER_WAIT_DAYS = 7
 RECORD_BYTES = 65536
 WORDS_LIMIT = 300
 # A caller that records how the owner confirmed, not his words: VGS records
@@ -45,12 +51,11 @@ cd -- "$1"
 [ -f %(mail)s ] || { printf 'forward: mailbox-missing=%%s\\n' "$1" >&2; exit 2; }
 "$BASH" %(mail)s drain --item overseer --after "$2" ${3:+--receipts}
 """ % {"mail": owner_note.LANE_MAIL}
-# A host refusal's first stderr line, in order. Anything else is send-failed.
-CAUSES = ((r"(?:owner-note|forward): mailbox-missing=", "mailbox-missing"),
-          (r"lane-mail: overseer-absent=", "overseer-absent"),
-          (r"lane-mail: overseer-unreadable=", "overseer-unreadable"))
+# The host refusal keys a forward names as its cause; any other refusal takes
+# the operation's own cause.
+HOST_CAUSES = ("mailbox-missing", "overseer-absent", "overseer-unreadable")
 # Causes no retry clears: the drain reports each once as an event.
-TERMINAL = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed")
+TERMINAL = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen")
 UNREACHABLE = "main-unreachable"
 
 
@@ -133,19 +138,22 @@ def confirms(words):
 
 
 class Outbox:
-    """forward.json beside the home's session record, under its own lock."""
+    """forward.json in the home's state DIRECTORY, beside its session record, under its own lock.
 
-    def __init__(self, home):
-        key = hashlib.sha256(os.fsencode(home)).hexdigest()
-        state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+    `first` is the main to-overseer's first id, so a replaced mailbox is
+    seen; each entry's `after` is the logical count past which its answer
+    lies, None before its first send.
+    """
+
+    def __init__(self, home, directory):
         self.home = home
-        self.path = state / "kendex/jarvis" / key / "forward.json"
+        self.path = directory / "forward.json"
 
     def read(self):
         try:
             value = json.loads(self.path.read_text())
         except FileNotFoundError:
-            return {"v": 1, "home": self.home, "read": None, "probe": None, "last_answer": None, "entries": []}
+            return {"v": 1, "home": self.home, "first": None, "probe": None, "last_answer": None, "entries": []}
         except (OSError, ValueError) as error:
             raise Refusal("outbox-unreadable", str(error)) from error
         if not (isinstance(value, dict) and value.get("v") == 1 and value.get("home") == self.home
@@ -177,20 +185,38 @@ def find(state, key):
     return next((entry for entry in state["entries"] if entry["key"] == key), None)
 
 
-def close(entry, now):
-    """A closed entry keeps only what answered-already needs."""
+def close(entry, now, cause=None):
+    """A closed entry keeps only what answered-already, or its unseen answer's event, needs."""
     for field in list(entry):
         if field not in ("key", "request"):
             del entry[field]
     entry["closed_at"] = now
+    if cause is not None:
+        entry["cause"] = cause
+
+
+def replaced(state, first):
+    """Record the main to-overseer's FIRST id; True when it names another mailbox.
+
+    A replaced mailbox restarts its logical lines, so every open entry reads
+    it whole.
+    """
+    if state["first"] and first != state["first"]:
+        for entry in state["entries"]:
+            if entry_state(entry) != "closed" and entry.get("after") is not None:
+                entry["after"] = 0
+        state["first"] = first
+        return True
+    state["first"] = first
+    return False
 
 
 class Forwarder:
-    def __init__(self, bash, home):
+    def __init__(self, bash, home, directory):
         self.bash, self.home = bash, home
         self.settings = watch.config(bash, home)
         self.role = watch.role(self.settings)
-        self.outbox = Outbox(home)
+        self.outbox = Outbox(home, directory)
         self.deadline = time.monotonic() + DRAIN_SECONDS
 
     def satellite(self):
@@ -215,37 +241,39 @@ class Forwarder:
         return "ok", result
 
     @staticmethod
-    def refusal(result):
-        first = result.stderr.strip().split("\n", 1)[0]
-        cause = next((cause for pattern, cause in CAUSES if re.match(pattern, first)), "send-failed")
-        return cause, first[:200]
+    def refusal(result, fallback):
+        """A host call's refusal as (cause, first diagnostic line); FALLBACK names an unknown one."""
+        error = watch.child_failure("forward-host", result)
+        _, category, code = error.record["key"]
+        cause = code if category == "refusal" and code in HOST_CAUSES else fallback
+        return cause, error.record["detail"].split("\n", 1)[0][:200]
 
     def probe(self, cause):
         reachable = cause != UNREACHABLE
         with self.outbox.locked() as state:
             state["probe"] = {"at": watch.epoch(), "reachable": reachable, "cause": None if reachable else UNREACHABLE}
 
-    def start_cursor(self):
-        """Begin the answer read at the main's current end, once no delivered entry waits.
+    def take_cursor(self, keys):
+        """Give the entries KEYS the main's current to-overseer end as their answer cursor.
 
-        An answer cannot precede its send, so a read started here misses none.
-        Returns None, or the (cause, detail) that stopped it.
+        It is read before their first send, and an answer follows its
+        directive, so a read from there misses none of theirs. Returns None,
+        or the (cause, detail) that stopped it.
         """
-        state = self.outbox.read()
-        waiting = [entry for entry in state["entries"] if entry_state(entry) in ("delivered", "read")]
-        if waiting and state["read"] is not None:
-            return None
         outcome, result = self.host(HOST_READ, [HEADER_ONLY])
         self.probe(outcome)
         if outcome != "ok":
             return outcome, result
         if result.returncode:
-            return self.refusal(result)
-        header = re.fullmatch(r"count=(\d+) first=(\S*)", result.stdout.split("\n", 1)[0])
+            return self.refusal(result, "send-failed")
+        header = watch.mailbox_header(result.stdout.split("\n", 1)[0])
         if not header:
             return "read-failed", "header-unread"
         with self.outbox.locked() as state:
-            state["read"] = {"count": int(header[1]), "first": header[2]}
+            replaced(state, header[1])
+            for entry in state["entries"]:
+                if entry["key"] in keys and entry.get("after") is None:
+                    entry["after"] = header[0]
         return None
 
     def send(self, keys=None):
@@ -254,7 +282,8 @@ class Forwarder:
                   if entry_state(entry) == "queued" and (keys is None or entry["key"] in keys)]
         if not queued:
             return
-        stopped = self.start_cursor()
+        fresh = {entry["key"] for entry in queued if entry.get("after") is None}
+        stopped = self.take_cursor(fresh) if fresh else None
         if stopped is not None:
             self.record(queued, *stopped)
             return
@@ -266,17 +295,13 @@ class Forwarder:
                 if outcome == UNREACHABLE:
                     return
                 continue
-            # The two receipts Watch.batch and the Slack relay accept.
-            sent = re.search(r"^lane-mail: sent item=overseer id=(\S+)", result.stdout, re.M)
-            repeated = re.search(r"^lane-mail: delivery-repeated=" + re.escape(entry["key"]) + r" id=(\S+)",
-                                 result.stderr, re.M)
-            receipt = sent if result.returncode == 0 else repeated
+            receipt = watch.send_receipt(result, entry["key"])
             if receipt:
-                self.record([entry], None, None, receipt[1])
+                self.record([entry], None, None, *receipt)
             else:
-                self.record([entry], *self.refusal(result))
+                self.record([entry], *self.refusal(result, "send-failed"))
 
-    def record(self, entries, cause, detail, forwarded=None):
+    def record(self, entries, cause, detail, forwarded=None, repeated=False):
         at = watch.epoch()
         with self.outbox.locked() as state:
             for each in entries:
@@ -287,59 +312,86 @@ class Forwarder:
                 entry.update(last_attempt={"at": at, "cause": cause}, cause=cause, detail=detail)
                 if forwarded is not None:
                     entry.update(forwarded=forwarded, delivered_at=at, detail=None)
+                if repeated:
+                    # The directive landed at an unknown earlier point, perhaps
+                    # before this entry's cursor: read its answer from the start.
+                    entry["after"] = 0
 
     def read_main(self):
-        """The main's answers and reader receipts, read only while a delivered entry waits."""
+        """The main's answers and reader receipts, read while an open entry may have landed.
+
+        A queued entry may have landed once a send was attempted, its
+        receipt lost, so its answer is read too and closes it.
+        """
         state = self.outbox.read()
-        if not any(entry_state(entry) in ("delivered", "read") for entry in state["entries"]) or state["read"] is None:
+        keys = {entry["key"] for entry in state["entries"] if entry_state(entry) != "closed"
+                and entry.get("after") is not None and entry.get("attempts", 0) > 0}
+        if not keys:
             return
-        outcome, result = self.host(HOST_READ, [str(state["read"]["count"]), "receipts"])
+        after = min(entry["after"] for entry in state["entries"] if entry["key"] in keys)
+        outcome, result = self.host(HOST_READ, [str(after), "receipts"])
         self.probe(outcome)
+        header = receipts = None
         if outcome == "ok" and result.returncode:
-            outcome = self.refusal(result)[0]
-            outcome = "read-failed" if outcome == "send-failed" else outcome
-        lines = result.stdout.split("\n") if outcome == "ok" else []
-        header = re.fullmatch(r"count=(\d+) first=(\S*)", lines[0]) if lines else None
-        index = next((i for i, line in enumerate(lines) if line.startswith("receipts ")), None)
-        receipt = re.fullmatch(r"receipts cursor=(\d+|missed) count=\d+ first=\S*", lines[index]) if index else None
-        if outcome == "ok" and not (header and receipt):
-            outcome = "read-failed"
+            outcome = self.refusal(result, "read-failed")[0]
+        elif outcome == "ok":
+            lines = result.stdout.split("\n")
+            header = watch.mailbox_header(lines[0])
+            try:
+                receipts = watch.mailbox_receipts(lines)
+            except watch.Failure:
+                pass
+            if not (header and receipts):
+                outcome = "read-failed"
         now = watch.epoch()
         with self.outbox.locked() as state:
-            waiting = [entry for entry in state["entries"] if entry_state(entry) in ("delivered", "read")]
+            reading = [entry for entry in state["entries"] if entry["key"] in keys and entry_state(entry) != "closed"]
             if outcome != "ok":
-                for entry in waiting:
-                    entry["cause"] = outcome
+                # A queued entry keeps the cause of its own send.
+                for entry in reading:
+                    if entry_state(entry) != "queued":
+                        entry["cause"] = outcome
                 return
-            if state["read"]["first"] and header[2] != state["read"]["first"]:
-                # A replaced mailbox restarts its logical lines: read it whole next time.
-                state["read"] = {"count": 0, "first": header[2]}
+            if replaced(state, header[1]):
                 return
-            envelopes = [json.loads(line) for line in lines[1:index] if line]
-            directives = {parts[1]: int(parts[0]) for parts in (line.split() for line in lines[index + 1:])
-                          if len(parts) == 3}
-            for entry in waiting:
-                answer = next((row for row in envelopes if row.get("kind") == "notice" and not row.get("progress")
-                               and row.get("re_delivery_id") == entry["key"]), None)
+            index, cursor, _, listed = receipts
+            # Each key's first final answer, and its place in the mailbox.
+            answers = {}
+            for place, row in enumerate(json.loads(line) for line in lines[1:index] if line):
+                if row.get("kind") == "notice" and not row.get("progress") and isinstance(row.get("re_delivery_id"), str):
+                    answers.setdefault(row["re_delivery_id"], (place, row))
+            directives = {directive: line for line, directive, _ in listed}
+            latest = None
+            for entry in reading:
+                if entry["key"] in answers:
+                    place, answer = answers[entry["key"]]
+                    if latest is None or place > latest[0]:
+                        latest = (place, {"request": entry["request"], "forwarded": entry.get("forwarded"),
+                                          "answer": answer["id"], "at": answer["at"]})
+                    close(entry, now)
+                    continue
+                entry["after"] = header[0]
+                if entry_state(entry) == "queued":
+                    continue
                 line = directives.get(entry["forwarded"])
-                if receipt[1] == "missed":
+                entry["cause"] = None
+                if cursor is None:
                     entry["cause"] = "receipts-missed"
-                elif line is not None and line <= int(receipt[1]):
-                    entry.update(read=True, cause=None)
+                elif line is not None and line <= cursor:
+                    entry["read"] = True
                 elif line is not None:
                     entry["cause"] = "main-unread"
-                if answer is not None:
-                    state["last_answer"] = {"request": entry["request"], "forwarded": entry["forwarded"],
-                                            "answer": answer["id"], "at": answer["at"]}
-                    close(entry, now)
-            state["read"] = {"count": int(header[1]), "first": header[2]}
+                if now - entry["delivered_at"] >= ANSWER_WAIT_DAYS * 86400:
+                    close(entry, now, "answer-unseen")
+            if latest is not None:
+                state["last_answer"] = latest[1]
 
     def events(self):
-        """One forward-failed block per open entry whose cause no retry clears."""
+        """One forward-failed block per entry whose cause no retry clears, a closed answer-unseen one included."""
         state = self.outbox.read()
         blocks = []
         for entry in state["entries"]:
-            if entry_state(entry) != "closed" and entry.get("cause") in TERMINAL:
+            if entry.get("cause") in TERMINAL:
                 fields = {"request": entry["request"], "cause": entry["cause"]}
                 if entry.get("detail"):
                     fields["detail"] = entry["detail"]
@@ -387,7 +439,7 @@ class Forwarder:
                                 or now - entry["closed_at"] < CLOSED_KEEP_DAYS * 86400]
             entry = find(state, key)
             if entry is not None and entry_state(entry) == "closed":
-                raise Refusal("answered-already", request["ref"])
+                raise Refusal(entry.get("cause") or "answered-already", request["ref"])
             # An open forward of this reference holds it, whatever its key.
             if any(entry_state(each) != "closed" and each["request"] == request["ref"]
                    and (each["request_sha256"], canonical_at(each["request_at"])) != (digest, canonical_at(request["at"]))
@@ -401,7 +453,7 @@ class Forwarder:
                     "confirmation": confirmation["ref"], "confirmed_at": confirmation["at"],
                     "text": request["text"] + "\n\n" + line, "queued_at": now, "attempts": 0,
                     "last_attempt": None, "cause": None, "detail": None, "forwarded": None,
-                    "delivered_at": None, "read": False, "closed_at": None})
+                    "delivered_at": None, "read": False, "after": None, "closed_at": None})
         self.send([key])
         entry = find(self.outbox.read(), key)
         delivered = entry_state(entry) != "queued"
@@ -423,11 +475,14 @@ class Forwarder:
                 "last_answer": state.get("last_answer"), "requests": requests}
 
 
-def main(args):
-    """Run forward, forward-drain or status --main for the parsed ARGS; return the exit code."""
+def main(args, home_state):
+    """Run forward, forward-drain or status --main for the parsed ARGS; return the exit code.
+
+    home_state(home) is the home's state directory, the session record's.
+    """
     try:
         home = str(Path(args.home).resolve(strict=True))
-        forwarder = Forwarder(os.environ["JARVIS_BASH"], home)
+        forwarder = Forwarder(os.environ["JARVIS_BASH"], home, home_state(home))
         if args.verb == "forward":
             answer = forwarder.forward(args.record)
             print(json.dumps(answer, separators=(",", ":")), flush=True)

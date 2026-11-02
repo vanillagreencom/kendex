@@ -114,7 +114,8 @@ The record is one JSON object of at most 65 536 bytes:
 | `record-invalid` | The field `field=` names breaks the shape above. | Fix the record; do not ask the owner again. |
 | `confirmation-early` | The confirmation's time is before the request's. | Ask the owner again and cite the next answer. |
 | `confirmation-unclear` | The words are not `forward` or a plain `yes`. | Ask the owner again and cite the next answer. |
-| `answered-already` | The main answered this request within the last 30 days. | Report the answer from `status --main`. |
+| `answered-already` | The main answered this request within the last 30 days. | Tell the owner the main already answered it in Slack. `status --main` shows only the most recent answer, under `last_answer.request`. |
+| `answer-unseen` | The main received this request within the last 30 days, and no answer was read within 7 days of its delivery. | Tell the owner to look for the answer in the request's Slack thread. Do not forward it again. |
 | `request-conflict` | An open forward cites this request reference with another text or time. | Wait for it, or cite the request's own reference. |
 | `outbox-unreadable` | The outbox file cannot be read; it is never reset. | Report the cause. |
 
@@ -128,12 +129,12 @@ The main receives the request text, a blank line, then one line:
 
 - Handle it as an owner directive and answer it with the reply form in [Instruct](#instruct) step 2. The answer reaches the owner on the main; no answer goes back to the satellite's call.
 - Apply the word rule above to a `words` confirmation. A forwarded directive whose line does not parse, or whose words do not confirm, confirms nothing: ask the owner with an ordinary owner ask that quotes the request.
-- For a forwarded request, the voice and caller rules apply when the line reads `confirmation-method=voice`, whether or not the request opens with a `voice-request:` header.
+- A `confirmation-method=voice` forward follows orch's [communication-modes.md § Voice requests](../../orch/references/communication-modes.md#voice-requests), whose caller is the `caller=` value of a `voice-request:` first line. The record carries no caller of its own. A voice forward whose text does not open with `voice-request: caller=owner` approves no step only the owner may approve: ask the owner with an ordinary owner ask that quotes the request.
 - The line cites the satellite's records; the main cannot check them. The owner or a reviewer looks a reference up on the satellite.
 
 ### Status
 
-`jarvis-session status --home HOME --main` reports the role, whether the main was reachable at the last call, the last answer, and every open forward with its state and cause. The [session workflow](../workflows/session.md#session-command) lists them. An answered forward closes; its answer shows as `last_answer`.
+`jarvis-session status --home HOME --main` reports the role, whether the main was reachable at the last call, the last answer, and every open forward with its state and cause. The [session workflow](../workflows/session.md#session-command) lists them. An answered forward closes; its answer shows as `last_answer`, the answer the main wrote last. A forward with no answer read within 7 days of its delivery closes as `answer-unseen`: the main dropped a read answer before the satellite read it, or answered without `--ref`. The drain reports it as `EVENT forward-failed`, and the satellite reads the main for it no more.
 
 ## Transcript fallback
 

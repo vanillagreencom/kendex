@@ -32,7 +32,7 @@ The home mailbox writer receives one directive with a retained delivery key. A r
 
 ## Satellite
 
-A satellite, a home whose `JARVIS_MAIN_HOST` is set, reads only its own home's mailbox, as a registered home. It runs no host pass, renews no presence and polls no `report-due`. Every 60 seconds it runs `jarvis-session forward-drain` instead. The drain prints `EVENT forward-failed` for a forward whose cause is `mailbox-missing`, `send-failed`, `setting-invalid` or `receipts-missed`. The loop appends each block once: the pass cursor keeps the headers already appended, so a restart appends none twice. A failed drain reports once as `EVENT root-unreachable` for the home.
+A satellite, a home whose `JARVIS_MAIN_HOST` is set, reads only its own home's mailbox, as a registered home. It runs no host pass, renews no presence and polls no `report-due`. Every 60 seconds it runs `jarvis-session forward-drain` instead. The drain prints `EVENT forward-failed` for a forward whose cause is `mailbox-missing`, `send-failed`, `setting-invalid` or `receipts-missed`, and for one closed as `answer-unseen`. The loop appends each block once: the pass cursor keeps the headers already appended, so a restart appends none twice. A failed drain reports once as `EVENT root-unreachable` for the home.
 
 ## Presence
 

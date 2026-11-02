@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 from mail_world import BASH, LANE_MAIL, REPO, SCRIPTS, MailWorld, make_project
 
+WORKFLOW_STATE = REPO / "skills/orch/scripts/workflow-state"
+
 # Independent of the producer: the status --main shape a consumer validates.
 SATELLITE_KEYS = {"v", "role", "main", "reachable", "checked_at", "cause", "last_answer", "requests"}
 REQUEST_KEYS = {"request", "key", "state", "cause", "forwarded", "queued_at", "attempts"}
@@ -24,7 +26,7 @@ mode="$(cat "$SSH_MODE")"
 case "$mode" in
   down) exit 255 ;;
   hang) exec sleep 30 ;;
-  drop-receipt) sh -c "$*" >/dev/null 2>&1; exit 255 ;;
+  drop-receipt) case "$*" in *--delivery-id*) sh -c "$*" >/dev/null 2>&1; exit 255 ;; esac ;;
 esac
 exec sh -c "$*"
 '''
@@ -114,12 +116,41 @@ class Forward(MailWorld):
     def outbox(self):
         return json.loads(self.outbox_path().read_text())
 
-    def age_closed(self, days):
+    def age(self, field, days, record=None):
+        """Move FIELD's time DAYS back on every entry, or on RECORD's, as if that long had passed."""
         outbox = self.outbox()
         for entry in outbox["entries"]:
-            if entry.get("closed_at") is not None:
-                entry["closed_at"] -= days * DAY
+            if entry.get(field) is not None and (record is None or entry["key"] == self.key(record)):
+                entry[field] -= days * DAY
         self.outbox_path().write_text(json.dumps(outbox))
+
+    def age_closed(self, days):
+        self.age("closed_at", days)
+
+    def landed(self, record):
+        """The main's directive that carries RECORD's delivery key."""
+        rows = [row for row in self.directives() if row.get("delivery_id") == self.key(record)]
+        self.assertEqual(len(rows), 1)
+        return rows[0]["id"]
+
+    def unregister(self, root):
+        """Clear ROOT's overseer record, as a main session that ended leaves it."""
+        env = {k: v for k, v in self.env.items() if not k.startswith("JARVIS_")}
+        result = self.command([WORKFLOW_STATE, "set", "oversee", "overseer", "null"], root, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def compact_all(self, root):
+        """lane-mail compact on ROOT at a clock past every row's retention."""
+        late = self.root / "late"
+        late.mkdir(exist_ok=True)
+        date = late / "date"
+        date.write_text('#!/bin/sh\ncase "$*" in *+%s*) echo 9999999999;; *) exec '
+                        + shutil.which("date") + ' "$@";; esac\n')
+        date.chmod(0o755)
+        result = self.command([LANE_MAIL, "compact", "--item", "overseer"], root,
+                              dict(self.env, PATH=str(late) + os.pathsep + self.env["PATH"]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("to-overseer=0", result.stdout)
 
     def answer(self, forwarded, text, *options):
         self.mail(self.main, "notice", text, "--to", "owner", "--ref", forwarded, *options)
@@ -239,25 +270,36 @@ class Forward(MailWorld):
         self.assertEqual([row.get("delivery_id") for row in self.directives()], [self.key(record)])
 
     def test_unavailable_main(self):
-        rows = (("down", True, "main-unreachable"), ("overseer absent", False, "overseer-absent"))
-        for name, registered, cause in rows:
+        rows = (("down", "down", "main-unreachable"), ("overseer absent", "unregistered", "overseer-absent"),
+                ("mailbox missing", "bare", "mailbox-missing"))
+        requests = []
+        for name, main, cause in rows:
             with self.subTest(row=name):
-                if not registered:
-                    self.main = make_project(self.root / "unregistered", overseer=False)
+                if main == "down":
+                    self.mode.write_text("down")
+                else:
+                    self.main = make_project(self.root / main, overseer=False)
+                    if main == "bare":
+                        shutil.rmtree(self.main / ".agents/skills/mailbox")
                     self.env["JARVIS_MAIN_HOST"] = "main.example:" + str(self.main)
                     self.mode.write_text("up")
-                else:
-                    self.mode.write_text("down")
                 record = self.record()
+                requests.append(record["request"]["ref"])
                 result = self.forward(record)
                 self.assertEqual(result.returncode, 75, result.stderr)
                 answer = json.loads(result.stdout)
                 self.assertEqual((answer["state"], answer["cause"], answer["forwarded"]), ("queued", cause, None))
                 self.assertEqual(self.directives(), [])
                 status = self.status()
-                self.assertEqual(status["reachable"], not registered)
+                self.assertEqual(status["reachable"], main != "down")
                 self.assertEqual([(row["state"], row["cause"]) for row in status["requests"]
                                   if row["request"] == record["request"]["ref"]], [("queued", cause)])
+        # No retry clears a missing mailbox: the drain reports every request
+        # it now holds, each as one event block the watch loop appends.
+        drained = self.jarvis("forward-drain")
+        self.assertEqual((drained.returncode, drained.stdout), (0, "".join(
+            "EVENT forward-failed request=%s cause=mailbox-missing detail=forward:\\u0020mailbox-missing=%s\n"
+            % (request, self.main) for request in requests)), drained.stderr)
 
     def test_hung_main_records_its_cause_within_the_budget(self):
         self.mode.write_text("hang")
@@ -265,7 +307,7 @@ class Forward(MailWorld):
         module = importlib.util.module_from_spec(spec)
         with patch.dict(os.environ, self.env, clear=True):
             spec.loader.exec_module(module)
-            forwarder = module.Forwarder(BASH, str(self.satellite))
+            forwarder = module.Forwarder(BASH, str(self.satellite), self.outbox_path().parent)
             with forwarder.outbox.locked() as state:
                 state["entries"].append({"key": "forward-hang", "request": "vgs-audit:r", "text": "x",
                                          "queued_at": 0, "attempts": 0, "forwarded": None})
@@ -291,7 +333,6 @@ class Forward(MailWorld):
             rows = self.directives()
             self.assertEqual([(row["from"], row.get("delivery_id"), row["text"]) for row in rows[1:]],
                              [("owner", self.key(record), frozen)])
-            self.assertEqual(self.outbox()["read"]["count"], len(self.box(self.main, "to-overseer")))
             self.assertEqual(self.outbox()["entries"][0]["forwarded"], rows[1]["id"])
             self.assertIsNone(self.status()["last_answer"])
         with self.subTest(row="lost receipt lands once"):
@@ -304,6 +345,27 @@ class Forward(MailWorld):
             self.assertEqual(len(landed), 1)
             entry = next(entry for entry in self.outbox()["entries"] if entry["request"] == record["request"]["ref"])
             self.assertEqual((entry["forwarded"], landed[0].get("delivery_id")), (landed[0]["id"], entry["key"]))
+
+    def test_lost_receipt_then_answer(self):
+        # The main answers a request whose receipt the satellite lost, with no
+        # other forward open; the retry that follows lands, or is refused,
+        # and the answer closes it.
+        for name, registered in (("lost receipt, then the answer", True),
+                                 ("lost receipt, answer, then the main session ends", False)):
+            with self.subTest(row=name):
+                record = self.record()
+                self.mode.write_text("drop-receipt")
+                self.assertEqual(self.forward(record).returncode, 75)
+                self.answer(self.landed(record), "Done: " + record["request"]["ref"])
+                if not registered:
+                    self.unregister(self.main)
+                self.mode.write_text("up")
+                drained = self.jarvis("forward-drain")
+                self.assertEqual((drained.returncode, drained.stdout), (0, ""), drained.stderr)
+                status = self.status()
+                self.assertEqual(([row["request"] for row in status["requests"]
+                                   if row["request"] == record["request"]["ref"]], (status["last_answer"] or {}).get("request")),
+                                 ([], record["request"]["ref"]))
 
     def test_answer_closes_the_entry(self):
         with self.subTest(row="console request"):
@@ -333,10 +395,13 @@ class Forward(MailWorld):
             self.answer(forwarded, "Done.")
             self.assertEqual(self.jarvis("forward-drain").stdout, "")
             self.assertEqual(self.status()["requests"], [])
-            # Past the closed entry's keep, the same record sends again; the main lands it once.
+            # Past the closed entry's keep, the same record sends again; the main
+            # lands it once, and its earlier answer closes it again.
             self.age_closed(31)
             self.assertEqual(self.delivered(record)["forwarded"], forwarded)
             self.assertEqual(len([row for row in self.directives() if row.get("delivery_id") == self.key(record)]), 1)
+            self.assertEqual(self.jarvis("forward-drain").stdout, "")
+            self.assertEqual(self.status()["requests"], [])
         with self.subTest(row="reused reference, later request"):
             record = self.record()
             forwarded = self.delivered(record)["forwarded"]
@@ -350,6 +415,52 @@ class Forward(MailWorld):
             keys = {self.key(record), self.key(later)}
             self.assertEqual(len(keys), 2)
             self.assertEqual({row["delivery_id"] for row in self.directives() if row.get("delivery_id") in keys}, keys)
+        # Each row: name, the order the main answers requests A and B in
+        # between drains, and the request of the answer the main wrote last.
+        for name, order, last in (("an answer read beside a later delivery", "A, deliver B", "A"),
+                                  ("answers in request order", "AB", "B"), ("answers in reverse order", "BA", "A")):
+            with self.subTest(row=name):
+                first, second = self.record(), self.record()
+                forwarded = {"A": self.delivered(first)["forwarded"]}
+                if order == "A, deliver B":
+                    self.answer(forwarded["A"], "Done: " + forwarded["A"])
+                    self.delivered(second)
+                else:
+                    forwarded["B"] = self.delivered(second)["forwarded"]
+                    for request in order:
+                        self.answer(forwarded[request], "Done: " + forwarded[request])
+                drained = self.jarvis("forward-drain")
+                self.assertEqual((drained.returncode, drained.stdout), (0, ""), drained.stderr)
+                status = self.status()
+                refs = {"A": first["request"]["ref"], "B": second["request"]["ref"]}
+                self.assertEqual(([row["request"] for row in status["requests"] if row["request"] in refs.values()],
+                                  (status["last_answer"] or {}).get("request")),
+                                 ([refs["B"]] if order == "A, deliver B" else [], refs[last]))
+        # Each row: name, whether the main compacts the answer away, then the
+        # drain's output and whether the forward is still open, a week after delivery.
+        for name, compacted in (("an answer kept past the wait", False), ("an answer compacted unread", True)):
+            with self.subTest(row=name):
+                record = self.record()
+                forwarded = self.delivered(record)["forwarded"]
+                self.assertEqual(self.command([LANE_MAIL, "inbox", "--item", "overseer"], self.main).returncode, 0)
+                self.answer(forwarded, "Done: " + forwarded)
+                last = self.status()["last_answer"]
+                if compacted:
+                    self.compact_all(self.main)
+                self.age("delivered_at", 7, record)
+                drained = self.jarvis("forward-drain")
+                expected = ("EVENT forward-failed request=%s cause=answer-unseen\n" % record["request"]["ref"]
+                            if compacted else "")
+                self.assertEqual((drained.returncode, drained.stdout), (0, expected), drained.stderr)
+                status = self.status()
+                self.assertEqual([row for row in status["requests"] if row["request"] == record["request"]["ref"]], [])
+                self.assertEqual(status["last_answer"]["request"], last["request"] if compacted else record["request"]["ref"])
+                if compacted:
+                    self.assertEqual(self.jarvis("forward-drain").stdout, expected)
+                    calls = self.ssh_calls()
+                    again = self.forward(record)
+                    self.assertEqual(again.stderr.split("\n")[0], "jarvis-session: forward=refused cause=answer-unseen")
+                    self.assertEqual(self.ssh_calls(), calls)
 
     def test_role_refusals(self):
         record = self.write(self.record())
