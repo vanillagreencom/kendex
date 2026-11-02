@@ -276,12 +276,25 @@ impl ManifestRead {
     }
 }
 
+/// Where one skill's command declarations come from: text already read,
+/// or a catalog to read behind the check's deadline, at the revision the
+/// install record names where one does.
+enum DeclarationRead {
+    Text(Result<String, String>),
+    Catalog(Option<crate::source::header::InstalledFrom>),
+}
+
 impl ScopeCheck<'_> {
     /// PATH is machine state, so saved source-comparison verdicts cannot
     /// answer this check. Each skill with an installed tree is checked once,
     /// against what its source declares: an installed copy's SKILL.md
     /// carries no `dependencies`, and an edit to one changes no
     /// requirement.
+    ///
+    /// A catalog read opens a source snapshot, which validates and may
+    /// publish it, so every such read runs behind this check's deadline
+    /// ([`crate::drift::copies::gated`]); one the deadline cuts off is
+    /// named as not checked.
     fn command_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
@@ -290,7 +303,6 @@ impl ScopeCheck<'_> {
         sections: &mut Sections,
     ) {
         let mut seen = BTreeSet::new();
-        let mut headers = crate::source::header::DeclaredHeaders::default();
         let recorded = lock
             .entries
             .values()
@@ -304,11 +316,7 @@ impl ScopeCheck<'_> {
                         .as_ref()
                         .map(|artifact| artifact.paths.as_slice())
                         .unwrap_or_default(),
-                    Some(crate::source::header::InstalledFrom {
-                        source: entry.source.clone(),
-                        repo: entry.source_repo.clone(),
-                        commit: entry.source_commit.clone(),
-                    }),
+                    Some(crate::source::header::InstalledFrom::of(entry)),
                 )
             });
         let unrecorded = occupied
@@ -348,6 +356,7 @@ impl ScopeCheck<'_> {
                     None,
                 )
             });
+        let mut reads = Vec::new();
         for (name, source, paths, installed) in recorded.chain(unrecorded).chain(native) {
             let in_place = crate::engine::desired::in_place_source(
                 self.env,
@@ -364,58 +373,107 @@ impl ScopeCheck<'_> {
             if !seen.insert(name.to_owned()) {
                 continue;
             }
-            let Some(text) =
-                self.declaration_text(&mut headers, manifest, name, in_place, installed)
-            else {
-                continue;
-            };
-            self.command_source_lines(name, text, sections);
+            if let Some(read) = self.declaration_read(manifest, in_place, installed) {
+                reads.push((name.to_owned(), read));
+            }
+        }
+        for (name, text) in self.declaration_texts(manifest, reads) {
+            self.command_source_lines(&name, text, sections);
         }
     }
 
-    /// The SKILL.md text a skill's commands are read from, or `None` where
-    /// the scope's catalog refusal already speaks for it.
+    /// Each read's text, in the order asked. The catalog reads run on one
+    /// thread behind the check's deadline, sending each text as it is
+    /// read; a read the deadline cuts off is named as not checked.
+    fn declaration_texts(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        mut reads: Vec<(String, DeclarationRead)>,
+    ) -> Vec<(String, Result<String, String>)> {
+        let catalog_reads: Vec<(String, Option<crate::source::header::InstalledFrom>)> = reads
+            .iter_mut()
+            .filter_map(|(name, read)| match read {
+                DeclarationRead::Catalog(installed) => Some((name.clone(), installed.take())),
+                DeclarationRead::Text(_) => None,
+            })
+            .collect();
+        let stages = match (manifest, catalog_reads.is_empty()) {
+            (Some(manifest), false) => {
+                let (env, scope, manifest) =
+                    (self.env.clone(), self.scope.clone(), manifest.clone());
+                Some(crate::drift::copies::gated(self.deadline, move |sender| {
+                    let mut headers = crate::source::header::DeclaredHeaders::default();
+                    for (name, installed) in catalog_reads {
+                        let text = headers.text(
+                            &env,
+                            &scope,
+                            &manifest,
+                            ItemKind::Skill,
+                            &name,
+                            installed.as_ref(),
+                        );
+                        if sender.send(text).is_err() {
+                            return;
+                        }
+                    }
+                }))
+            }
+            (Some(_), true) | (None, _) => None,
+        };
+        reads
+            .into_iter()
+            .map(|(name, read)| {
+                let text = match read {
+                    DeclarationRead::Text(text) => text,
+                    // Sent in the order they were asked, so the next stage is
+                    // this skill's; none by the deadline leaves it unread.
+                    DeclarationRead::Catalog(_) => stages
+                        .as_ref()
+                        .and_then(|stages| stages.next(self.deadline))
+                        .unwrap_or_else(|| {
+                            Err(
+                                "the check ran out of time before it could read the skill's source"
+                                    .to_owned(),
+                            )
+                        }),
+                };
+                (name, text)
+            })
+            .collect()
+    }
+
+    /// Where a skill's commands are read from, or `None` where the scope's
+    /// catalog refusal already speaks for it.
     ///
     /// An in-place tree is the source itself, and its bytes are the
-    /// person's as authored. A recorded install is read at the revision
-    /// its record names. A copy no record claims is read at its
-    /// declaration, which is the reading copy settlement holds to the
-    /// catalog gate: a scope that gate refused already says so for every
-    /// such copy, and one it had no time for leaves the commands unknown.
-    fn declaration_text(
+    /// person's as authored: one local file, read here. A recorded install
+    /// is read at the revision its record names. A copy no record claims
+    /// is read at its declaration, which is the reading copy settlement
+    /// holds to the catalog gate: a scope that gate refused already says
+    /// so for every such copy, and one it had no time for leaves the
+    /// commands unknown.
+    fn declaration_read(
         &self,
-        headers: &mut crate::source::header::DeclaredHeaders,
         manifest: Option<&crate::manifest::Manifest>,
-        name: &str,
         in_place: Option<PathBuf>,
         installed: Option<crate::source::header::InstalledFrom>,
-    ) -> Option<Result<String, String>> {
-        let read = |headers: &mut crate::source::header::DeclaredHeaders,
-                    manifest: &crate::manifest::Manifest,
-                    installed: Option<&crate::source::header::InstalledFrom>| {
-            headers.text(
-                self.env,
-                self.scope,
-                manifest,
-                ItemKind::Skill,
-                name,
-                installed,
-            )
-        };
+    ) -> Option<DeclarationRead> {
         Some(match (in_place, manifest, installed) {
-            (Some(root), _, _) => crate::source_read::SealedSource::open(&root)
-                .and_then(|sealed| sealed.read_to_string(&sealed.root().join("SKILL.md")))
-                .map_err(|error| error.to_string()),
-            (None, None, _) => {
-                Err("the manifest could not be read, so the skill's source is unknown".to_owned())
-            }
-            (None, Some(manifest), Some(installed)) => read(headers, manifest, Some(&installed)),
-            (None, Some(manifest), None) => match self.catalogs.refusals() {
-                Some([]) => read(headers, manifest, None),
+            (Some(root), _, _) => DeclarationRead::Text(
+                crate::source_read::SealedSource::open(&root)
+                    .and_then(|sealed| sealed.read_to_string(&sealed.root().join("SKILL.md")))
+                    .map_err(|error| error.to_string()),
+            ),
+            (None, None, _) => DeclarationRead::Text(Err(
+                "the manifest could not be read, so the skill's source is unknown".to_owned(),
+            )),
+            (None, Some(_), Some(installed)) => DeclarationRead::Catalog(Some(installed)),
+            (None, Some(_), None) => match self.catalogs.refusals() {
+                Some([]) => DeclarationRead::Catalog(None),
                 Some([_, ..]) => return None,
-                None => Err(
+                None => DeclarationRead::Text(Err(
                     "the check ran out of time before it could read the skill's source".to_owned(),
-                ),
+                )),
             },
         })
     }

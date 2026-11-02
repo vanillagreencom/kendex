@@ -121,6 +121,17 @@ pub(crate) struct InstalledFrom {
     pub(crate) commit: Option<String>,
 }
 
+impl InstalledFrom {
+    /// What one lock entry records about where its bytes came from.
+    pub(crate) fn of(entry: &crate::lock::LockEntry) -> InstalledFrom {
+        InstalledFrom {
+            source: entry.source.clone(),
+            repo: entry.source_repo.clone(),
+            commit: entry.source_commit.clone(),
+        }
+    }
+}
+
 /// Everything that decides which catalog a read opens: the scope, the
 /// source name, what that name is required to resolve to, and the
 /// revision the read is held at.

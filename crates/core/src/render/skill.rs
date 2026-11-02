@@ -8,7 +8,7 @@ use crate::source_read::SealedSource;
 
 mod keys;
 mod rendered;
-pub(crate) use keys::{authored_keys, dropped_metadata, installed_keys};
+pub(crate) use keys::{KeysUnreadable, dropped_metadata, installed_keys};
 pub(crate) use rendered::with_name;
 pub use rendered::{Files, Rendered};
 
@@ -180,16 +180,43 @@ pub(crate) fn bounded_description(text: &str) -> String {
 /// holds; the plan renders through `render_variant`, which validates the
 /// full source keys between the two steps.
 pub(crate) fn installed_form(files: Files) -> Files {
+    with_skill_text(files, |text| installed_keys(&bounded_description(text)))
+}
+
+/// A captured copy's tree with the keys its install cut put back from
+/// `authored`, the publisher's SKILL.md ([`keys::authored_keys`]), around
+/// whatever the person edited: what a fork or an import of an edited copy
+/// keeps. A copy with no SKILL.md text, or either frontmatter that does
+/// not read, is an error naming that side, never the copy as it stands,
+/// which would lose every key the install cut.
+pub(crate) fn authored_form(
+    mut files: Files,
+    authored: &str,
+) -> std::result::Result<Files, KeysUnreadable> {
+    let Some((_, bytes)) = files
+        .iter_mut()
+        .find(|(rel, _)| rel == Path::new(SKILL_FILE))
+    else {
+        return Err(KeysUnreadable::Copy(format!("there is no {SKILL_FILE}")));
+    };
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| KeysUnreadable::Copy("the file is not UTF-8 text".to_owned()))?;
+    *bytes = keys::authored_keys(text, authored)?.into_bytes();
+    Ok(files)
+}
+
+/// The tree with SKILL.md's text rewritten by `rewrite`, every other file
+/// as it is; a SKILL.md that is not text is left as it is, for the
+/// validators to name.
+fn with_skill_text(mut files: Files, rewrite: impl Fn(&str) -> String) -> Files {
+    for (rel, bytes) in &mut files {
+        if rel == Path::new(SKILL_FILE)
+            && let Ok(text) = std::str::from_utf8(bytes)
+        {
+            *bytes = rewrite(text).into_bytes();
+        }
+    }
     files
-        .into_iter()
-        .map(|(rel, bytes)| match rel == Path::new(SKILL_FILE) {
-            true => match std::str::from_utf8(&bytes) {
-                Ok(text) => (rel, installed_keys(&bounded_description(text)).into_bytes()),
-                Err(_) => (rel, bytes),
-            },
-            false => (rel, bytes),
-        })
-        .collect()
 }
 
 /// `[skill-instructions]` as `name` renders them: the merge every

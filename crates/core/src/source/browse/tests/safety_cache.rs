@@ -100,6 +100,34 @@ fn agent_safety(env: &Env, scope: &Scope) -> PackageSafety {
     .unwrap()
 }
 
+/// The preview scores the tree a copy installs, whose SKILL.md carries the
+/// installed key set alone, and cites what it finds in the catalog's file:
+/// a body line at the line the catalog holds it at, and nothing in a key
+/// the copy never carries. The same reading the plan's scoring cites by.
+#[test]
+fn a_preview_scores_the_installed_key_set_and_cites_the_catalog_line() {
+    let (tmp, env, scope) = fixture();
+    let upstream = tmp.path().join("base/owner/repo");
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: about gh\nsummary: chmod 777 /tmp/y\ntags: [review]\n---\nIntro.\nchmod 777 /tmp/x\n",
+    )
+    .unwrap();
+    commit(&upstream, "two");
+    crate::remote::sync(&env, REPO, None).unwrap();
+
+    let scored = score(&env, &scope);
+    let cited: Vec<(&str, Option<u32>)> = scored
+        .advisory
+        .findings
+        .iter()
+        .chain(&scored.advisory.mentions)
+        .chain(&scored.advisory.accepted)
+        .map(|finding| (finding.location.as_str(), finding.line))
+        .collect();
+    assert_eq!(cited, [("skills/gh/SKILL.md", Some(8))], "{scored:?}");
+}
+
 #[test]
 fn a_second_call_reads_the_verified_cache_and_a_moved_hash_rescores() {
     let (_tmp, env, scope) = fixture();

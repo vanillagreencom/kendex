@@ -85,6 +85,49 @@ pub struct CatalogSource {
     pub skill_lines: Option<SkillLines>,
 }
 
+impl CatalogSource {
+    /// Carry these line facts from `was`, the rendering they describe, to
+    /// `now`, the tree that stands in its place: a line of `now` is a line
+    /// of the catalog's file only where it is one of `was` that is one.
+    /// Every site that swaps a rendered tree for other bytes asks this, so
+    /// no fact is left describing bytes that are no longer there.
+    pub(super) fn follow(&mut self, was: &[(PathBuf, Vec<u8>)], now: &[(PathBuf, Vec<u8>)]) {
+        match self.skill_lines {
+            Some(outer) => {
+                let (others, lines) = skill_tree_lines(was, now);
+                self.verbatim &= others;
+                self.skill_lines = Some(lines.onto(outer));
+            }
+            None => self.verbatim &= was == now,
+        }
+    }
+}
+
+/// How `artifact`, a skill tree, stands in `catalog`, the tree it renders
+/// from: whether every file but SKILL.md is the catalog's bytes, and where
+/// SKILL.md's lines stand in the catalog's.
+pub(crate) fn skill_tree_lines(
+    catalog: &[(PathBuf, Vec<u8>)],
+    artifact: &[(PathBuf, Vec<u8>)],
+) -> (bool, SkillLines) {
+    fn skill_file(files: &[(PathBuf, Vec<u8>)]) -> Option<&[u8]> {
+        files
+            .iter()
+            .find(|(rel, _)| crate::render::skill::carries_name(rel))
+            .map(|(_, bytes)| bytes.as_slice())
+    }
+    fn others(files: &[(PathBuf, Vec<u8>)]) -> impl Iterator<Item = &(PathBuf, Vec<u8>)> {
+        files
+            .iter()
+            .filter(|(rel, _)| !crate::render::skill::carries_name(rel))
+    }
+    let lines = match (skill_file(catalog), skill_file(artifact)) {
+        (Some(catalog), Some(artifact)) => SkillLines::of(catalog, artifact),
+        (None, _) | (_, None) => SkillLines::Rewritten,
+    };
+    (others(catalog).eq(others(artifact)), lines)
+}
+
 /// How the lines of a rendered SKILL.md stand in the catalog's SKILL.md. A
 /// copy cuts the frontmatter to the installed key set and keeps the body,
 /// so a body line sits at another number in each file.
@@ -114,11 +157,35 @@ impl SkillLines {
     /// How `rendered`'s lines stand in `catalog`, two texts of one SKILL.md:
     /// all of them where the bytes are equal, those of the body where only
     /// the frontmatter differs, none otherwise.
-    fn of(catalog: &[u8], rendered: &[u8]) -> SkillLines {
+    pub(crate) fn of(catalog: &[u8], rendered: &[u8]) -> SkillLines {
         if catalog == rendered {
             return Self::Shifted { from: 1, to: 1 };
         }
         Self::body(catalog, rendered).unwrap_or(Self::Rewritten)
+    }
+
+    /// Where a line of the first text stands in the catalog's file, `self`
+    /// placing it in a second text and `outer` placing that one's lines in
+    /// the catalog's: a line `self` places inside the block `outer` calls
+    /// rewritten stands nowhere.
+    fn onto(self, outer: SkillLines) -> SkillLines {
+        let (
+            Self::Shifted { from, to },
+            Self::Shifted {
+                from: outer_from, ..
+            },
+        ) = (self, outer)
+        else {
+            return Self::Rewritten;
+        };
+        // The first line `self` places at or past the first line `outer`
+        // places at all.
+        let first = from.checked_add(outer_from.saturating_sub(to));
+        match first.and_then(|first| Some((first, outer.catalog_line(self.catalog_line(first)?)?)))
+        {
+            Some((from, to)) => Self::Shifted { from, to },
+            None => Self::Rewritten,
+        }
     }
 
     fn body(catalog: &[u8], rendered: &[u8]) -> Option<SkillLines> {
@@ -1165,24 +1232,8 @@ impl ItemCtx<'_> {
                     .sealed
                     .rendered_item(kind, self.item_path)?
                     .into_files();
-                fn skill_file(files: &[(PathBuf, Vec<u8>)]) -> Option<&[u8]> {
-                    files
-                        .iter()
-                        .find(|(rel, _)| crate::render::skill::carries_name(rel))
-                        .map(|(_, bytes)| bytes.as_slice())
-                }
-                fn others(
-                    files: &[(PathBuf, Vec<u8>)],
-                ) -> impl Iterator<Item = &(PathBuf, Vec<u8>)> {
-                    files
-                        .iter()
-                        .filter(|(rel, _)| !crate::render::skill::carries_name(rel))
-                }
-                let skill_lines = match (skill_file(&catalog), skill_file(files)) {
-                    (Some(catalog), Some(rendered)) => SkillLines::of(catalog, rendered),
-                    (None, _) | (_, None) => SkillLines::Rewritten,
-                };
-                (others(&catalog).eq(others(files)), Some(skill_lines))
+                let (verbatim, lines) = skill_tree_lines(&catalog, files);
+                (verbatim, Some(lines))
             }
             _ => (
                 self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),

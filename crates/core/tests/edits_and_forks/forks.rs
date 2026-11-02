@@ -1231,22 +1231,106 @@ fn a_fork_keeps_the_publishers_keys_from_the_installed_commit() {
     apply::execute(&w.env, &report.plan).unwrap();
     assert_eq!(fs::read_to_string(skill_file(&w)).unwrap(), edited);
     assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
+}
 
-    let w = world();
-    write_skill(&w.upstream, "gh", "Upstream.");
-    commit(&w.upstream, "one");
-    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
-    sync_and_apply(&w);
-    fs::write(
-        skill_file(&w),
-        "---\nname: gh\ndescription: mine\n---\nMine.\n",
-    )
-    .unwrap();
-    fs::remove_dir_all(w.env.source_cache_dir()).unwrap();
-    let refused = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude);
-    assert!(
-        matches!(&refused, Err(CoreError::SourcePending { name }) if name == "cat"),
-        "{refused:?}"
-    );
-    assert!(!w.home.join("app/.kendex-local/skills/gh").exists());
+/// A fork whose capture cannot put the publisher's keys back refuses
+/// before anything is written, with the cause: a source this machine
+/// cannot read at the installed commit, for its own reason, or a
+/// frontmatter on either side that does not read. Taken anyway, the
+/// capture would drop every key the install cut. One row per cause; a
+/// path source stands in where the catalog itself has to move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_that_cannot_restore_the_publishers_keys_writes_nothing() {
+    type Refused = fn(&CoreError) -> bool;
+    type Setup = fn(&World);
+    let duplicate_key = |w: &World| {
+        let installed = fs::read_to_string(skill_file(w)).unwrap();
+        let edited = installed.replacen("name: gh\n", "name: gh\nname: gh\n", 1);
+        fs::write(skill_file(w), edited.replace("Upstream.", "Mine.")).unwrap();
+    };
+    let rows: [(&str, bool, Setup, Refused); 5] = [
+        (
+            "the source's snapshot is gone",
+            false,
+            |w| fs::remove_dir_all(w.env.source_cache_dir()).unwrap(),
+            |error| matches!(error, CoreError::SourcePending { name } if name == "cat"),
+        ),
+        (
+            "the source is switched off",
+            false,
+            |w| {
+                let path = manifest::manifest_path(&w.env, &w.scope);
+                let text = fs::read_to_string(&path).unwrap();
+                let off = text.replacen(
+                    &format!("repo = \"{REPO}\"\n"),
+                    &format!("repo = \"{REPO}\"\nenabled = false\n"),
+                    1,
+                );
+                assert_ne!(off, text);
+                fs::write(&path, off).unwrap();
+            },
+            |error| matches!(error, CoreError::SourceDisabled { name } if name == "cat"),
+        ),
+        (
+            "the folder source is gone from its path",
+            true,
+            |w| fs::remove_dir_all(w.home.join("catalog")).unwrap(),
+            |error| matches!(error, CoreError::SourceMissing { name, .. } if name == "cat"),
+        ),
+        (
+            "the copy's frontmatter names a key twice",
+            false,
+            duplicate_key,
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+        (
+            "the published frontmatter does not read",
+            true,
+            |w| {
+                fs::write(
+                    w.home.join("catalog/skills/gh/SKILL.md"),
+                    "---\nname: gh\ndescription: about gh\ndependencies:\n  commands: [unclosed\n---\nUpstream.\n",
+                )
+                .unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+    ];
+    for (what, folder, setup, refused) in rows {
+        let w = world();
+        if folder {
+            write_skill(&w.home.join("catalog"), "gh", "Upstream.");
+            let path = manifest::manifest_path(&w.env, &w.scope);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(
+                &path,
+                format!(
+                    "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+                    crate::test_util::source_path(&w.home.join("catalog"))
+                ),
+            )
+            .unwrap();
+            let report = audit(&w.env, &w.scope).unwrap();
+            apply::execute(&w.env, &report.plan).unwrap();
+        } else {
+            write_skill(&w.upstream, "gh", "Upstream.");
+            commit(&w.upstream, "one");
+            declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+            sync_and_apply(&w);
+        }
+        let installed = fs::read_to_string(skill_file(&w)).unwrap();
+        fs::write(skill_file(&w), installed.replace("Upstream.", "Mine.")).unwrap();
+        setup(&w);
+
+        let result = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude);
+        assert!(
+            matches!(&result, Err(error) if refused(error)),
+            "{what}: {result:?}"
+        );
+        assert!(
+            !w.home.join("app/.kendex-local/skills/gh").exists(),
+            "{what}"
+        );
+    }
 }

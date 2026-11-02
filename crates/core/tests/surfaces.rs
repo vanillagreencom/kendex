@@ -349,3 +349,107 @@ fn every_surface_installs_the_shared_key_set_and_claude_still_links() {
         );
     }
 }
+
+/// An add that reaches a skill another tool already holds in the shared
+/// tree reuses the copy on disk, which an earlier release wrote with the
+/// whole catalog frontmatter. A finding in it is cited where the catalog
+/// file holds that line, as the line facts of the bytes actually scored
+/// say: a body line at its catalog line, a line of the copy's own
+/// frontmatter at none, and the files beside SKILL.md, which did not
+/// change, still at theirs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_reused_copy_cites_the_catalog_line_of_the_bytes_it_holds() {
+    const CATALOG: &str =
+        "---\nname: d\ndescription: about d\nsummary: Does d.\n---\nIntro.\nchmod 777 /tmp/x\n";
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let source = home.join("catalog");
+    fs::create_dir_all(source.join("skills/d/scripts")).unwrap();
+    fs::create_dir_all(source.join("skills/s")).unwrap();
+    fs::write(source.join("skills/d/SKILL.md"), CATALOG).unwrap();
+    fs::write(
+        source.join("skills/d/scripts/run.sh"),
+        "#!/bin/sh\nchmod 777 /tmp/y\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("skills/s/SKILL.md"),
+        "---\nname: s\ndescription: about s\ndependencies:\n  required: [d]\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"symlink\"\n\n[skills.d]\nsource = \"cat\"\n",
+            source_path(&source)
+        ),
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let report = audit(&env, &scope).unwrap();
+    apply::execute(&env, &report.plan).unwrap();
+    // The copy as an earlier release wrote it, its record attesting it.
+    let shared = project.join(".agents/skills/d");
+    fs::write(shared.join("SKILL.md"), CATALOG).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&env, &scope);
+    let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+    lock.entries.get_mut("skill:d:codex").unwrap().rendered_hash = Some(
+        kendex_core::hash::RenderedIdentity::from_path(&shared, false)
+            .unwrap()
+            .exact()
+            .to_owned(),
+    );
+    kendex_core::lock::save(&lock_path, &lock).unwrap();
+
+    let added = kendex_core::engine::ops::add(
+        &env,
+        &scope,
+        &kendex_core::engine::ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["s".into()],
+            harnesses: Some(vec![kendex_core::model::HarnessId::Pi]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // The Pi copy is the one the add reuses; the Codex one it keeps.
+    let row = added
+        .safety
+        .iter()
+        .find(|row| {
+            row.name == "d"
+                && row
+                    .targets
+                    .iter()
+                    .any(|target| target.harness == kendex_core::model::HarnessId::Pi)
+        })
+        .unwrap_or_else(|| panic!("{:?}", added.safety));
+    let source = row.source.as_ref().unwrap();
+    let cited: Vec<(String, Option<u32>)> = row
+        .advisory
+        .findings
+        .iter()
+        .map(|finding| {
+            let file = finding.location.rsplit('/').next().unwrap().to_owned();
+            let line = match (file.as_str(), source.skill_lines) {
+                ("SKILL.md", Some(lines)) => finding.line.and_then(|line| lines.catalog_line(line)),
+                _ => finding.line.filter(|_| source.verbatim),
+            };
+            (file, line)
+        })
+        .collect();
+    assert_eq!(
+        cited,
+        [
+            ("SKILL.md".to_owned(), Some(7)),
+            ("run.sh".to_owned(), Some(2))
+        ],
+        "{row:?}"
+    );
+}

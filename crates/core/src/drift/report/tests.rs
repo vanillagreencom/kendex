@@ -1178,3 +1178,56 @@ fn item_lines(report: &CheckReport) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+/// An installed skill's command declarations are read out of its catalog,
+/// which opening can validate and publish, so the read runs behind the
+/// check's deadline: inside it, an absent required command is drift; past
+/// it, the skill's commands are one could-not-check line, never an empty
+/// requirement and never a read the deadline does not hold.
+#[test]
+fn a_command_declaration_read_past_the_deadline_is_not_checked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    let catalog = tmp.path().join("catalog");
+    std::fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+    std::fs::write(
+        catalog.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: about gh\ndependencies:\n  commands:\n    - command: kendex-fixture-absent\n      purpose: Call GitHub\n---\nBody.\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    std::fs::write(
+        crate::manifest::manifest_path(&env, &scope),
+        format!(
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+            crate::test_util::source_path(&catalog)
+        ),
+    )
+    .unwrap();
+    let planned = crate::engine::audit(&env, &scope).unwrap();
+    crate::apply::execute(&env, &planned.plan).unwrap();
+
+    let count = |budget: std::time::Duration, class: Class| {
+        let report = check_within(
+            &env,
+            std::slice::from_ref(&scope),
+            budget,
+            crate::drift::copies::CheckMode::ReportOnly,
+        );
+        report
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .filter(|line| line.class == class)
+            .count()
+    };
+    let budget = crate::drift::hook::DEEP_PASS_BUDGET;
+    let zero = std::time::Duration::ZERO;
+    assert_eq!(count(budget, Class::Unknown), 0);
+    assert_eq!(count(zero, Class::Unknown), 1);
+    assert_eq!(count(zero, Class::Drift), count(budget, Class::Drift) - 1);
+}

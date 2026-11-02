@@ -187,11 +187,9 @@ enum Capture {
 struct Captured {
     files: Capture,
     /// What the captured bytes render back to, beside the bytes they were
-    /// captured from. Both kinds a fork admits have such a text, so `None`
-    /// says the capture found none to compare — a skill tree whose
-    /// SKILL.md is gone — which an absorb refuses like any other bytes the
-    /// source cannot hold.
-    rendering: Option<(String, String)>,
+    /// captured from. Both kinds a fork admits have such a text: a skill
+    /// tree with no SKILL.md text is refused by the capture itself.
+    rendering: (String, String),
     carry: Option<crate::engine::agent_carry::AgentCarry>,
     /// The catalog revision an agent's bytes were read at, `None` for a
     /// skill: a skill's tree is one capture no per-tool rendering derives
@@ -223,8 +221,9 @@ struct PublishedItem {
 }
 
 /// The published item behind this fork. Nothing is fetched: a source this
-/// machine holds no copy of at that commit refuses, because a capture
-/// without the publisher's file would drop what only that file declares.
+/// machine holds no copy of at that commit refuses with the cause
+/// [`crate::source::require_ready_at`] gives, because a capture without
+/// the publisher's file would drop what only that file declares.
 fn published_item(of: &ForkOf) -> Result<PublishedItem> {
     let ForkOf {
         env,
@@ -238,14 +237,7 @@ fn published_item(of: &ForkOf) -> Result<PublishedItem> {
     } = *of;
     let commit = installed_commit(env, scope, kind, name, harness, decl)?;
     let resolved =
-        match crate::source::resolve_at(env, scope, &decl.source, manifest, commit.as_deref())? {
-            crate::source::SourceState::Ready(ready) => ready,
-            _ => {
-                return Err(CoreError::SourcePending {
-                    name: decl.source.clone(),
-                });
-            }
-        };
+        crate::source::require_ready_at(env, scope, &decl.source, manifest, commit.as_deref())?;
     let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
     let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
     let Some(path) = crate::source::find_item(&sealed, &config, kind, name) else {
@@ -265,8 +257,7 @@ fn published_item(of: &ForkOf) -> Result<PublishedItem> {
 fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
     Ok(match of.kind {
         ItemKind::Skill => {
-            let mut files = source_form(crate::capture::read_tree(edited)?);
-            let on_disk = skill_text(&files);
+            let files = source_form(crate::capture::read_tree(edited)?);
             // The copy carries only the installed key set; the
             // publisher's other keys come back from the file it was
             // rendered from, around the person's edits.
@@ -274,15 +265,18 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             let authored = published
                 .sealed
                 .read_to_string(&published.path.join(crate::render::skill::SKILL_FILE))?;
-            if let Some(text) = &on_disk
-                && let Some((_, bytes)) = files
-                    .iter_mut()
-                    .find(|(rel, _)| rel == std::path::Path::new("SKILL.md"))
-            {
-                *bytes = crate::render::skill::authored_keys(text, &authored).into_bytes();
-            }
+            let on_disk = skill_text(&files);
+            let files = crate::render::skill::authored_form(files, &authored).map_err(|cause| {
+                CoreError::ForkWidensAccess {
+                    name: crate::names::shown(of.name),
+                    problem: format!("the publisher's keys, because {cause}"),
+                }
+            })?;
+            let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
+                unreachable!("authored_form refuses a tree with no SKILL.md text")
+            };
             Captured {
-                rendering: skill_round_trip(of, &files, on_disk),
+                rendering: skill_round_trip(of, &captured, on_disk),
                 files: Capture::Tree(files),
                 carry: None,
                 read_at: None,
@@ -297,7 +291,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 files: Capture::File(captured.bytes),
                 carry: captured.carry,
                 read_at: captured.read_at,
-                rendering: Some((captured.rendering, on_disk)),
+                rendering: (captured.rendering, on_disk),
             }
         }
     })
@@ -506,7 +500,8 @@ pub(super) fn absorb_ops(
     // leave the two disagreeing for good: the same never-settling state
     // this whole path exists to end. Asked of the renderer's own output,
     // never of a list of the fields that can be lost.
-    if !matches!(&captured.rendering, Some((rendered, on_disk)) if rendered == on_disk) {
+    let (rendered, on_disk) = &captured.rendering;
+    if rendered != on_disk {
         return Err(CoreError::ForkWidensAccess {
             name: crate::names::shown(name),
             problem: "the edit changes something its source form cannot hold".into(),
@@ -564,7 +559,7 @@ fn carry_needs_writing(
 fn skill_text(files: &[(PathBuf, Vec<u8>)]) -> Option<String> {
     files
         .iter()
-        .find(|(rel, _)| rel == std::path::Path::new("SKILL.md"))
+        .find(|(rel, _)| rel == std::path::Path::new(crate::render::skill::SKILL_FILE))
         .and_then(|(_, bytes)| String::from_utf8(bytes.clone()).ok())
 }
 
@@ -575,18 +570,13 @@ fn skill_text(files: &[(PathBuf, Vec<u8>)]) -> Option<String> {
 /// frontmatter to the installed key set, which the capture put the
 /// publisher's other keys back around. What the round trip asks is
 /// whether the captured source renders to the bytes on disk.
-fn skill_round_trip(
-    of: &ForkOf,
-    files: &[(PathBuf, Vec<u8>)],
-    on_disk: Option<String>,
-) -> Option<(String, String)> {
-    let captured = skill_text(files)?;
+fn skill_round_trip(of: &ForkOf, captured: &str, on_disk: String) -> (String, String) {
     let instructions = crate::render::skill::skill_instructions(of.manifest, of.name);
-    Some((
+    (
         crate::render::skill::installed_keys(&crate::render::skill::inject_instructions(
-            &captured,
+            captured,
             instructions.as_deref(),
         )),
-        on_disk?,
-    ))
+        on_disk,
+    )
 }

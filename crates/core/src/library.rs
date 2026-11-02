@@ -317,15 +317,11 @@ fn installed_from(
     name: &str,
     harness: HarnessId,
 ) -> Option<crate::source::header::InstalledFrom> {
-    let entry = records
+    records
         .lock
         .entries
-        .get(&crate::lock::entry_key(kind, name, harness))?;
-    Some(crate::source::header::InstalledFrom {
-        source: entry.source.clone(),
-        repo: entry.source_repo.clone(),
-        commit: entry.source_commit.clone(),
-    })
+        .get(&crate::lock::entry_key(kind, name, harness))
+        .map(crate::source::header::InstalledFrom::of)
 }
 
 /// The words and tags for every row the scan could not see.

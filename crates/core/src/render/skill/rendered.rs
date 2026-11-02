@@ -141,14 +141,7 @@ impl Rendered {
     /// it runs before [`Rendered::disable`]: switching a copy off is then a
     /// rename of the same bytes.
     pub fn keep_installed_keys(&mut self) {
-        for (rel, bytes) in self.files.iter_mut() {
-            if rel.to_str() != Some(super::SKILL_FILE) {
-                continue;
-            }
-            if let Ok(text) = std::str::from_utf8(bytes) {
-                *bytes = super::installed_keys(text).into_bytes();
-            }
-        }
+        self.files = super::with_skill_text(std::mem::take(&mut self.files), super::installed_keys);
     }
 
     /// Keep a disabled installation's content under the `.disabled` name.

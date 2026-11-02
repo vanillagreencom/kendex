@@ -80,15 +80,30 @@ fn a_derived_compatibility_past_the_bound_is_left_out() {
     assert_eq!(installed_keys(&source), skill("name: gh\n", "\n"));
 }
 
+/// A text whose frontmatter does not read is cut to nothing and left as
+/// it is, and puts nothing back: whichever side does not read is named,
+/// because the copy as it stands would lose every key the install cut.
 #[test]
-fn text_without_readable_frontmatter_is_unchanged() {
+fn text_without_readable_frontmatter_is_unchanged_and_restores_nothing() {
+    let readable = skill(ROWS[0].1, "\n");
     for text in [
         "# No block\n",
         "---\nname: gh\n",
         "---\nname: a\nname: b\n---\n",
+        "---\nname: gh\ndependencies:\n  commands: [unclosed\n---\n",
     ] {
         assert_eq!(installed_keys(text), text);
-        assert_eq!(authored_keys(text, &skill(ROWS[0].1, "\n")), text);
+        assert!(
+            matches!(authored_keys(text, &readable), Err(KeysUnreadable::Copy(_))),
+            "{text:?}"
+        );
+        assert!(
+            matches!(
+                authored_keys(&readable, text),
+                Err(KeysUnreadable::Published(_))
+            ),
+            "{text:?}"
+        );
     }
 }
 
@@ -100,7 +115,7 @@ fn an_edited_copy_takes_back_what_its_install_cut() {
         for newline in ["\n", "\r\n"] {
             let authored = skill(source, newline);
             let copy = installed_keys(&authored).replace("# Body", "# Edited body");
-            let restored = authored_keys(&copy, &authored);
+            let restored = authored_keys(&copy, &authored).unwrap();
             assert!(restored.contains("# Edited body"), "{what}");
             assert_eq!(installed_keys(&restored), copy, "{what} ({newline:?})");
             let map = |text: &str| {
@@ -130,7 +145,7 @@ fn a_key_the_person_wrote_into_the_copy_is_theirs() {
         "name: gh\ndescription: edited\nmetadata:\n  version: \"2\"\ntags: [testing]\n",
         "\n",
     );
-    assert_eq!(authored_keys(&copy, &authored), copy);
+    assert_eq!(authored_keys(&copy, &authored).unwrap(), copy);
 }
 
 #[test]

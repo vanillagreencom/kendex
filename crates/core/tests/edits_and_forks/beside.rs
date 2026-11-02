@@ -480,13 +480,19 @@ fn fork_beside_rewrites_the_copys_name_line() {
         assert_eq!(own, want);
     }
 
-    for (text, problem) in [
-        (
-            "---\nname: |\n  gh\n---\nBody.\n",
-            "runs on past its own line",
-        ),
-        ("---\nname: gh\nname: gh\n---\nBody.\n", "names it twice"),
-    ] {
+    // A name named twice is a frontmatter that does not read, refused
+    // before the rename by the capture that puts the publisher's keys back.
+    type Refused = fn(&CoreError) -> bool;
+    let rows: [(&str, Refused); 2] = [
+        ("---\nname: |\n  gh\n---\nBody.\n", |refused| {
+            matches!(refused, CoreError::ForkNameUnusable { problem, .. }
+                if problem.contains("runs on past its own line"))
+        }),
+        ("---\nname: gh\nname: gh\n---\nBody.\n", |refused| {
+            matches!(refused, CoreError::ForkWidensAccess { .. })
+        }),
+    ];
+    for (text, refused_as) in rows {
         let (w, _one, _two) = edited_world();
         fs::write(skill_file(&w), text).unwrap();
         let before = manifest_text(&w);
@@ -501,8 +507,7 @@ fn fork_beside_rewrites_the_copys_name_line() {
         )
         .unwrap_err();
         assert!(
-            matches!(&refused, CoreError::ForkNameUnusable { problem: said, .. }
-                if said.contains(problem)),
+            refused_as(&refused),
             "the refusal says which shape the file is in — {text:?}: {refused:?}"
         );
         assert_eq!(manifest_text(&w), before);

@@ -685,11 +685,12 @@ fn unknown(text: impl Into<Sentence>) -> Line {
 /// the fetch stamps, stats what the lock says should be on disk, and for
 /// a scope declaring Pi packages lists the `extensions/` of the two roots
 /// Pi loads together with the `package.json` of what sits there and of
-/// each managed copy under `packages/`, and nothing else — no source
-/// trees, no module files, no hashing, no per-package subprocesses —
-/// until a declaration sits on files no record accounts for, which is
-/// the one state it plans the scope to judge, inside the session hook's
-/// budget. Before the first such plan, every selected scope's catalog
+/// each managed copy under `packages/`, and nothing else — no module
+/// files, no per-package subprocesses — but two reads inside the session
+/// hook's budget: the plan it makes of a scope whose declaration sits on
+/// files no record accounts for, and each installed skill's command
+/// declarations, read from its catalog snapshot at its recorded commit.
+/// Before the first such plan, every selected scope's catalog
 /// compatibility must answer within that same deadline. `mode` says
 /// whether that plan may write a project's committed install record.
 pub fn check(env: &Env, scopes: &[Scope], mode: crate::drift::copies::CheckMode) -> CheckReport {

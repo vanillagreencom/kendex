@@ -87,7 +87,10 @@ pub struct PackageDiff {
 /// compare — the rendered files for skills and agents (the harness names
 /// which rendering, agents render per tool) — so the fork question "what
 /// did I change" is answered against real bytes, not source that never hit
-/// disk in that form.
+/// disk in that form. A commit compared with the install is read as an
+/// install holds it, a skill's SKILL.md cut to the installed key set; two
+/// commits are compared as the catalog holds them, where a change to a
+/// key the install cuts is still a change.
 pub fn package_diff(
     env: &Env,
     scope: &Scope,
@@ -97,8 +100,13 @@ pub fn package_diff(
     to: &VersionSel,
     harness: Option<HarnessId>,
 ) -> Result<PackageDiff> {
-    let from_files = side(env, scope, kind, name, from, harness)?;
-    let to_files = side(env, scope, kind, name, to, harness)?;
+    let against_install = matches!(
+        (from, to),
+        (VersionSel::Commit(_), VersionSel::Installed)
+            | (VersionSel::Installed, VersionSel::Commit(_))
+    );
+    let from_files = side(env, scope, kind, name, from, harness, against_install)?;
+    let to_files = side(env, scope, kind, name, to, harness, against_install)?;
     Ok(diff_trees(&from_files, &to_files))
 }
 
@@ -118,19 +126,28 @@ fn side(
     name: &str,
     sel: &VersionSel,
     harness: Option<HarnessId>,
+    against_install: bool,
 ) -> Result<Tree> {
     match sel {
-        VersionSel::Commit(commit) => commit_tree(env, scope, kind, name, commit),
+        VersionSel::Commit(commit) => commit_tree(env, scope, kind, name, commit, against_install),
         VersionSel::Installed => installed_tree(env, scope, kind, name, harness),
     }
 }
 
-/// The package's source subtree at one commit as an install holds it
-/// ([`SealedSource::rendered_item`]), so an unedited install diffs empty
-/// against the commit it came from. Read through the sealed reader — a
-/// historical commit of a catalog is still a catalog, budgets and symlink
-/// refusals included.
-fn commit_tree(env: &Env, scope: &Scope, kind: ItemKind, name: &str, commit: &str) -> Result<Tree> {
+/// The package's source subtree at one commit with the files an install
+/// holds ([`SealedSource::rendered_item`]). `as_installed` reads a skill's
+/// SKILL.md as a copy carries it ([`crate::render::skill::installed_form`]),
+/// so an unedited install diffs empty against the commit it came from.
+/// Read through the sealed reader — a historical commit of a catalog is
+/// still a catalog, budgets and symlink refusals included.
+fn commit_tree(
+    env: &Env,
+    scope: &Scope,
+    kind: ItemKind,
+    name: &str,
+    commit: &str,
+    as_installed: bool,
+) -> Result<Tree> {
     // A commit id from IPC is joined into cache paths; a value like
     // `../other-key/<sha>` would resolve to a different repository's
     // checkout. Only a real object id ever gets that far.
@@ -185,6 +202,10 @@ fn commit_tree(env: &Env, scope: &Scope, kind: ItemKind, name: &str, commit: &st
     let mut tree = Tree::new();
     match sealed.rendered_item(kind, &item_path)? {
         ItemBytes::Tree(files) => {
+            let files = match as_installed {
+                true => crate::render::skill::installed_form(files),
+                false => files,
+            };
             for (rel, bytes) in files {
                 tree.insert(slashed(&rel), bytes);
             }

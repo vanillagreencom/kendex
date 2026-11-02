@@ -138,8 +138,11 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
         version: crate::lock::LOCK_VERSION,
         ..Lock::default()
     };
+    // What an install records as a folder source's provenance, which a
+    // read of the installed package's declaration is held to.
+    let cat = crate::source::declared_path_identity(&catalog.display().to_string());
     for (kind, name, source, repo) in [
-        (ItemKind::Skill, "gh", "cat", "cat"),
+        (ItemKind::Skill, "gh", "cat", cat.as_str()),
         (ItemKind::Skill, "mine", "local", "local"),
         (ItemKind::Hook, "watcher", "local", "local"),
         (ItemKind::McpServer, "server", "local", "local"),

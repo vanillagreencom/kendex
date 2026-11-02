@@ -275,11 +275,18 @@ fn a_diff_in_an_unregistered_project_keeps_what_its_lock_names() {
 fn installed_vs_version_shows_the_local_edit() {
     let w = world();
     // The package's tests, evaluation sets and maintainer notes never reach
-    // an install, so they are not a difference from one.
+    // an install, so they are not a difference from one; nor are the
+    // SKILL.md keys a copy does not carry.
+    let tagged = V1.replacen(
+        "description: github flows\n",
+        "description: github flows\ntags: [x]\n",
+        1,
+    );
+    assert_ne!(tagged, V1);
     write_gh(
         &w,
         &[
-            ("SKILL.md", V1.as_bytes()),
+            ("SKILL.md", tagged.as_bytes()),
             ("tests/run.test.sh", b"#!/bin/sh\n"),
             ("evals/cases.json", b"[]\n"),
             ("DEVELOPMENT.md", b"# notes\n"),

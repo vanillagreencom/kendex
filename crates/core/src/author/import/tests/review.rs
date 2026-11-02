@@ -184,6 +184,134 @@ fn an_installed_copy_is_read_against_the_installed_key_set() {
     }
 }
 
+/// An edited copy takes back the keys the commit it was installed from
+/// declares, not what its source declares since. Where those keys cannot
+/// be put back — a recorded commit this machine does not hold, or a copy
+/// whose own frontmatter does not read — the edited copy is listed with
+/// the cause and nothing to select: offered as it stands, it would import
+/// without them. One row per installation.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
+    const REPO: &str = "owner/repo";
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let output = crate::process::Hardened::git(args, Some(dir))
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+    };
+    let commit = |dir: &std::path::Path| {
+        git(dir, &["add", "-A"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--quiet",
+                "-m",
+                "c",
+            ],
+        );
+    };
+    let authored = |tag: &str| {
+        format!("---\nname: gh\ndescription: about gh\ntags: [{tag}]\n---\nmarket bytes\n")
+    };
+    use crate::test_util::rooted;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let upstream = home.join("base").join(REPO);
+    fs::create_dir_all(upstream.join("skills/gh")).unwrap();
+    fs::write(
+        upstream.join("kendex.toml"),
+        "[marketplace]\nname = \"cat\"\nlicense = \"MIT\"\n",
+    )
+    .unwrap();
+    fs::write(upstream.join("skills/gh/SKILL.md"), authored("one")).unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    commit(&upstream);
+    let base = format!("file://{}", home.join("base").display());
+    let env =
+        crate::env::Env::fake(&home, crate::env::FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let root = home.join("app");
+    fs::create_dir_all(root.join(".claude/skills/gh")).unwrap();
+    fs::write(
+        root.join("kendex.toml"),
+        format!("schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[skills.gh]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let scope = Scope::Project { root: root.clone() };
+    let one = crate::remote::sync(&env, REPO, None).unwrap().commit;
+    fs::write(upstream.join("skills/gh/SKILL.md"), authored("two")).unwrap();
+    commit(&upstream);
+    crate::remote::sync(&env, REPO, None).unwrap();
+
+    let edited_copy = "---\nname: gh\ndescription: about gh\n---\nmy edited bytes\n";
+    let rows: [(&str, String, &str, Option<&str>); 3] = [
+        (
+            "the commit it was installed from",
+            one.clone(),
+            edited_copy,
+            Some("tags: [one]"),
+        ),
+        (
+            "a commit this machine does not hold",
+            "0".repeat(40),
+            edited_copy,
+            None,
+        ),
+        (
+            "a copy whose frontmatter names a key twice",
+            one.clone(),
+            "---\nname: gh\nname: gh\ndescription: about gh\n---\nmy edited bytes\n",
+            None,
+        ),
+    ];
+    for (n, (what, installed_at, copy, kept)) in rows.into_iter().enumerate() {
+        let mut lock = crate::lock::Lock {
+            version: crate::lock::LOCK_VERSION,
+            ..crate::lock::Lock::default()
+        };
+        let mut gh = entry(ItemKind::Skill, "gh", "cat", REPO);
+        gh.source_commit = Some(installed_at);
+        lock.entries.insert(
+            crate::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
+            gh,
+        );
+        crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
+        fs::write(root.join(".claude/skills/gh/SKILL.md"), copy).unwrap();
+
+        let scopes = [scope.clone()];
+        let candidates = inventory(&env, &scopes).unwrap();
+        let gh = find(&candidates, "gh");
+        let edited = gh
+            .origins
+            .iter()
+            .find(|origin| matches!(origin.group, CandidateGroup::Edited { .. }))
+            .unwrap_or_else(|| panic!("{what}: {:?}", gh.origins));
+        let Some(kept) = kept else {
+            assert!(edited.hash.is_empty(), "{what}: {edited:?}");
+            assert!(edited.problem.is_some(), "{what}: {edited:?}");
+            continue;
+        };
+        let target = target(&env, &tmp, &format!("mine-{n}"));
+        let chosen = ImportSelection {
+            kind: ItemKind::Skill,
+            name: "gh".to_owned(),
+            destination: "gh".to_owned(),
+            hash: edited.hash.clone(),
+            license_confirmed: true,
+            license_basis: None,
+        };
+        apply(&env, &scopes, &target, &[chosen]).unwrap();
+        let copied = fs::read_to_string(target.join("skills/gh/SKILL.md")).unwrap();
+        assert!(copied.contains("my edited bytes"), "{what}: {copied}");
+        assert!(copied.contains(kept), "{what}: {copied}");
+    }
+}
+
 /// A licence kendex does not recognize as redistributable cannot be
 /// checkbox-confirmed — it needs a stated basis, like no licence at all.
 #[test]

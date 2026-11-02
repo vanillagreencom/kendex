@@ -237,10 +237,12 @@ fn marketplace_origins(
     {
         // A copy's SKILL.md carries only the installed key set; the
         // publisher's other keys come back around the edits, so importing
-        // the edited copy keeps what the package declares.
-        let edited = match &origins[0].bytes {
-            Some(package) => with_authored_keys(edited, package),
-            None => edited,
+        // the edited copy keeps what the package declares. Where they
+        // cannot, the copy is listed with the cause and selecting it
+        // refuses: offered as it stands, it would drop them.
+        let (edited, problem) = match with_published_keys(env, row, &manifest, &package, edited) {
+            Ok(edited) => (Some(edited), None),
+            Err(cause) => (None, Some(cause)),
         };
         // An agent installs as the file its harness reads, so the edited
         // copy of a marketplace agent under Codex is the TOML rendering —
@@ -253,9 +255,9 @@ fn marketplace_origins(
                 license_recognized: license.as_deref().is_some_and(license_recognized),
                 license,
             },
-            bytes: Some(edited),
+            bytes: edited,
             location: crate::paths::slashed(installed),
-            problem: None,
+            problem,
             read_from: Some(installed.clone()),
         });
     }
@@ -305,29 +307,50 @@ fn installed_hash(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<
     })
 }
 
-/// An edited skill copy with the keys its install cut put back from the
-/// package's own SKILL.md ([`crate::render::skill::authored_keys`]). Any
-/// other kind's bytes, or a tree either side of which holds no SKILL.md
-/// text, come back as they are.
-fn with_authored_keys(edited: ItemBytes, package: &ItemBytes) -> ItemBytes {
-    let skill_text = |files: &[(PathBuf, Vec<u8>)]| {
-        files
-            .iter()
-            .find(|(rel, _)| rel == Path::new(crate::render::skill::SKILL_FILE))
-            .and_then(|(_, bytes)| String::from_utf8(bytes.clone()).ok())
+/// An edited skill copy with the keys its install cut put back
+/// ([`crate::render::skill::authored_form`]) from the package's SKILL.md
+/// as the copy's own install record names it: the source and commit it
+/// was installed from, not whatever the source holds now, which may have
+/// changed what it declares since. Nothing is fetched. Any other kind's
+/// bytes are its own whole file and come back as they are.
+///
+/// The error is the cause, for the origin's `problem`: no readable record,
+/// a source or commit this machine cannot read, or a frontmatter on
+/// either side that does not read.
+fn with_published_keys(
+    env: &Env,
+    row: &crate::library::ProvenanceRow,
+    manifest: &Manifest,
+    package: &crate::library::PackageRef,
+    edited: ItemBytes,
+) -> std::result::Result<ItemBytes, String> {
+    let ItemBytes::Tree(files) = edited else {
+        return Ok(edited);
     };
-    let (ItemBytes::Tree(mut files), ItemBytes::Tree(package)) = (edited.clone(), package) else {
-        return edited;
-    };
-    let (Some(copy), Some(authored)) = (skill_text(&files), skill_text(package)) else {
-        return edited;
-    };
-    for (rel, bytes) in &mut files {
-        if rel == Path::new(crate::render::skill::SKILL_FILE) {
-            *bytes = crate::render::skill::authored_keys(&copy, &authored).into_bytes();
-        }
-    }
-    ItemBytes::Tree(files)
+    let unrestored =
+        |cause: String| format!("the keys its install cut cannot be put back: {cause}");
+    let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope))
+        .map_err(|error| unrestored(error.to_string()))?;
+    let installed = lock
+        .entries
+        .get(&crate::lock::entry_key(
+            package.kind,
+            &package.name,
+            row.harness,
+        ))
+        .map(crate::source::header::InstalledFrom::of);
+    let authored = crate::source::header::installed_text(
+        env,
+        &row.scope,
+        manifest,
+        package.kind,
+        &package.name,
+        installed.as_ref(),
+    )
+    .map_err(unrestored)?;
+    crate::render::skill::authored_form(files, &authored)
+        .map(ItemBytes::Tree)
+        .map_err(|cause| unrestored(cause.to_string()))
 }
 
 /// Where a package's bytes sit: a skill's directory, whichever file a

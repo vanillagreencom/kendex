@@ -5,7 +5,8 @@
 //!
 //! [`installed_keys`] cuts a rendered copy down to that set and
 //! [`authored_keys`] puts the cut keys back over a person's edited copy, so a
-//! fork or an import keeps what the publisher declared.
+//! fork or an import keeps what the publisher declared, or says which file
+//! kept it from doing so.
 
 use crate::frontmatter::{Entry, Map, Value};
 
@@ -41,7 +42,7 @@ const COMPATIBILITY_CAP: usize = 500;
 /// A text whose frontmatter does not parse comes back unchanged: the skill
 /// validator refuses it first, and a preview shows what it read.
 pub(crate) fn installed_keys(text: &str) -> String {
-    let Some(block) = Block::of(text) else {
+    let Ok(block) = Block::of(text) else {
         return text.to_owned();
     };
     let mut yaml = block.lead.to_owned();
@@ -67,13 +68,13 @@ pub(crate) fn installed_keys(text: &str) -> String {
 /// own.
 ///
 /// Cutting the result again gives `installed` back wherever the person
-/// kept the entries in the order the render wrote them. Either text not
-/// parsing gives `installed` unchanged: nothing can be put back into a
-/// block that cannot be read.
-pub(crate) fn authored_keys(installed: &str, authored: &str) -> String {
-    let (Some(copy), Some(source)) = (Block::of(installed), Block::of(authored)) else {
-        return installed.to_owned();
-    };
+/// kept the entries in the order the render wrote them. Either text's
+/// frontmatter not reading is an error naming that side: nothing can be
+/// put back into a block that cannot be read, and the copy as it stands
+/// would lose every key the install cut.
+pub(crate) fn authored_keys(installed: &str, authored: &str) -> Result<String, KeysUnreadable> {
+    let copy = Block::of(installed).map_err(KeysUnreadable::Copy)?;
+    let source = Block::of(authored).map_err(KeysUnreadable::Published)?;
     let written_metadata = metadata_block(&source.map, copy.newline);
     let derived = derived_compatibility(&source.map, copy.newline);
     let mut yaml = copy.lead.to_owned();
@@ -98,7 +99,35 @@ pub(crate) fn authored_keys(installed: &str, authored: &str) -> String {
             yaml.push_str(entry.text);
         }
     }
-    copy.with_yaml(&yaml)
+    Ok(copy.with_yaml(&yaml))
+}
+
+/// Which SKILL.md's frontmatter [`authored_keys`] could not read, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum KeysUnreadable {
+    /// The installed copy's, which the person may have edited.
+    Copy(String),
+    /// The publisher's, which holds the keys the install cut.
+    Published(String),
+}
+
+impl std::fmt::Display for KeysUnreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Copy(problem) => {
+                write!(
+                    f,
+                    "your copy's SKILL.md frontmatter does not read: {problem}"
+                )
+            }
+            Self::Published(problem) => {
+                write!(
+                    f,
+                    "the published SKILL.md frontmatter does not read: {problem}"
+                )
+            }
+        }
+    }
 }
 
 /// The `metadata` keys [`installed_keys`] leaves out, as `metadata.<key>`,
@@ -181,12 +210,12 @@ struct Block<'a> {
 }
 
 impl<'a> Block<'a> {
-    fn of(text: &'a str) -> Option<Block<'a>> {
-        let (yaml, _) = crate::frontmatter::split(text).ok()?;
-        let map = crate::frontmatter::parse_tolerant(yaml).ok()?.map;
+    fn of(text: &'a str) -> Result<Block<'a>, String> {
+        let (yaml, _) = crate::frontmatter::split(text)?;
+        let map = crate::frontmatter::parse_tolerant(yaml)?.map;
         let start = yaml.as_ptr() as usize - text.as_ptr() as usize;
         let (lead, entries) = crate::frontmatter::entries(yaml);
-        Some(Block {
+        Ok(Block {
             text,
             span: (start, start + yaml.len()),
             lead,
