@@ -213,12 +213,76 @@ struct ForkOf<'a> {
     harness: HarnessId,
 }
 
+/// The catalog an installation's bytes were published in, opened at the
+/// commit they were installed from, and the item's path inside it.
+struct PublishedItem {
+    sealed: crate::source_read::SealedSource,
+    config: crate::source::SourceConfig,
+    path: PathBuf,
+    commit: Option<String>,
+}
+
+/// The published item behind this fork. Nothing is fetched: a source this
+/// machine holds no copy of at that commit refuses, because a capture
+/// without the publisher's file would drop what only that file declares.
+fn published_item(of: &ForkOf) -> Result<PublishedItem> {
+    let ForkOf {
+        env,
+        scope,
+        manifest,
+        decl,
+        kind,
+        name,
+        harness,
+        ..
+    } = *of;
+    let commit = installed_commit(env, scope, kind, name, harness, decl)?;
+    let resolved =
+        match crate::source::resolve_at(env, scope, &decl.source, manifest, commit.as_deref())? {
+            crate::source::SourceState::Ready(ready) => ready,
+            _ => {
+                return Err(CoreError::SourcePending {
+                    name: decl.source.clone(),
+                });
+            }
+        };
+    let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
+    let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
+    let Some(path) = crate::source::find_item(&sealed, &config, kind, name) else {
+        return Err(CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: decl.source.clone(),
+        });
+    };
+    Ok(PublishedItem {
+        sealed,
+        config,
+        path,
+        commit,
+    })
+}
+
 fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
     Ok(match of.kind {
         ItemKind::Skill => {
-            let files = source_form(crate::capture::read_tree(edited)?);
+            let mut files = source_form(crate::capture::read_tree(edited)?);
+            let on_disk = skill_text(&files);
+            // The copy carries only the installed key set; the
+            // publisher's other keys come back from the file it was
+            // rendered from, around the person's edits.
+            let published = published_item(of)?;
+            let authored = published
+                .sealed
+                .read_to_string(&published.path.join(crate::render::skill::SKILL_FILE))?;
+            if let Some(text) = &on_disk
+                && let Some((_, bytes)) = files
+                    .iter_mut()
+                    .find(|(rel, _)| rel == std::path::Path::new("SKILL.md"))
+            {
+                *bytes = crate::render::skill::authored_keys(text, &authored).into_bytes();
+            }
             Captured {
-                rendering: skill_round_trip(of, &files),
+                rendering: skill_round_trip(of, &files, on_disk),
                 files: Capture::Tree(files),
                 carry: None,
                 read_at: None,
@@ -495,22 +559,34 @@ fn carry_needs_writing(
         || after.agent_frontmatter != manifest.agent_frontmatter
 }
 
-/// A captured skill tree beside what it renders back to. A skill's tree is
-/// nearly its own source form, but not quite: the renderer strips and
-/// re-injects the project-instructions block in `SKILL.md`, so bytes
-/// written inside that block are not bytes a source can hold. Source and
-/// disk carry the same `SKILL.md` here — the capture only renames it — so
-/// what the round trip asks is whether those bytes are already what this
-/// project renders.
-fn skill_round_trip(of: &ForkOf, files: &[(PathBuf, Vec<u8>)]) -> Option<(String, String)> {
-    let bytes = files
+/// The captured tree's `SKILL.md` as text, `None` where it has none or its
+/// bytes are not text.
+fn skill_text(files: &[(PathBuf, Vec<u8>)]) -> Option<String> {
+    files
         .iter()
         .find(|(rel, _)| rel == std::path::Path::new("SKILL.md"))
-        .map(|(_, bytes)| bytes)?;
-    let text = String::from_utf8(bytes.clone()).ok()?;
+        .and_then(|(_, bytes)| String::from_utf8(bytes.clone()).ok())
+}
+
+/// A captured skill tree's `SKILL.md` beside what it renders back to. A
+/// skill's tree is nearly its own source form, but not quite: the renderer
+/// strips and re-injects the project-instructions block, so bytes written
+/// inside that block are not bytes a source can hold, and it cuts the
+/// frontmatter to the installed key set, which the capture put the
+/// publisher's other keys back around. What the round trip asks is
+/// whether the captured source renders to the bytes on disk.
+fn skill_round_trip(
+    of: &ForkOf,
+    files: &[(PathBuf, Vec<u8>)],
+    on_disk: Option<String>,
+) -> Option<(String, String)> {
+    let captured = skill_text(files)?;
     let instructions = crate::render::skill::skill_instructions(of.manifest, of.name);
     Some((
-        crate::render::skill::inject_instructions(&text, instructions.as_deref()),
-        text,
+        crate::render::skill::installed_keys(&crate::render::skill::inject_instructions(
+            &captured,
+            instructions.as_deref(),
+        )),
+        on_disk?,
     ))
 }

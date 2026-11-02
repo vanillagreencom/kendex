@@ -610,17 +610,24 @@ fn git(dir: &Path, args: &[&str]) {
 fn a_rebound_declaration_does_not_relabel_what_is_installed() {
     // Both rebinds, as a person writes them: the item pointed at another
     // declared source, and the source itself pointed at another folder.
+    //
+    // The record's source still reads for the first, so the row keeps its
+    // summary. For the second it does not, and the row reads the installed
+    // copy, which carries the description and no summary: the copy holds
+    // the installed key set alone. Neither borrows the other catalog's.
     let rebinds = [
         (
             "the item now names another source",
             "[sources.up]\n{up}\n\n[sources.other]\n{other}\n\n[skills.gh]\nsource = \"other\"\n",
+            "Reads the repositories you work in.",
         ),
         (
             "the source now reads another folder",
             "[sources.up]\n{other}\n\n[skills.gh]\nsource = \"up\"\n",
+            "Use for GitHub work.",
         ),
     ];
-    for (rebind, declarations) in rebinds {
+    for (rebind, declarations, expected) in rebinds {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = Env::fake(&home, FakeOs::Linux);
@@ -659,11 +666,7 @@ fn a_rebound_declaration_does_not_relabel_what_is_installed() {
             .iter()
             .find(|row| row.package_ref().name == "gh")
             .unwrap_or_else(|| panic!("{rebind}: the skill has no provenance row"));
-        assert_eq!(
-            row.summary.as_deref(),
-            Some("Reads the repositories you work in."),
-            "{rebind}"
-        );
+        assert_eq!(row.summary.as_deref(), Some(expected), "{rebind}");
     }
 }
 
@@ -734,4 +737,63 @@ fn a_row_escapes_author_text_the_way_a_catalog_row_does() {
         row.summary, catalog_row.summary,
         "one package version reads differently on its two surfaces"
     );
+}
+
+/// A Library row's tags are the ones the package declares. An installed
+/// skill copy carries no `tags`, so the scan reads none off it, and the
+/// declaration's stand in the scan the Library shows; where no source can
+/// be reached the observation keeps its own, which for a copy is none.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_library_row_reads_its_skill_tags_from_the_declaration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let catalog = home.join("up");
+    fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: Use for GitHub work.\ntags: [review, testing]\n---\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.up]\n{}\n\n[skills.gh]\nsource = \"up\"\n",
+            source_path(&catalog)
+        ),
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    apply::execute(&env, &audit(&env, &scope).unwrap().plan).unwrap();
+    let tags = |declared: bool| {
+        let mut scan = kendex_core::scan::scan_scopes(
+            &env,
+            &std::collections::BTreeMap::new(),
+            std::slice::from_ref(&scope),
+        );
+        if declared {
+            kendex_core::library::declared_tags(&env, &mut scan);
+        }
+        scan.items
+            .into_iter()
+            .find(|item| item.kind == ItemKind::Skill && item.name == "gh")
+            .unwrap()
+            .tags
+    };
+    assert!(tags(false).is_empty(), "the copy carries no tags");
+    assert_eq!(
+        tags(true),
+        [
+            kendex_core::tags::Tag::Review,
+            kendex_core::tags::Tag::Testing
+        ]
+    );
+    fs::remove_dir_all(&catalog).unwrap();
+    assert!(tags(true).is_empty(), "an unreachable source lends no tags");
 }

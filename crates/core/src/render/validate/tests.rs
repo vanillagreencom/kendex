@@ -548,6 +548,16 @@ fn a_skill_tree_must_carry_a_skill_md_that_names_its_own_directory() {
             )],
             None,
         ),
+        // The installed copy keeps string metadata alone.
+        (
+            "gh",
+            "gh",
+            skill_tree("---\nname: gh\ndescription: d\nmetadata:\n  author: a\n  list: [a]\n---\n"),
+            Some((
+                false,
+                "kendex-skill-metadata-dropped: skill=gh key=metadata.list",
+            )),
+        ),
     ];
     for (declared, installed, files, expected) in cases {
         let findings = validate_skill_tree(HarnessId::Claude, declared, installed, &files);

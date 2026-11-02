@@ -1092,10 +1092,31 @@ impl ItemCtx<'_> {
     /// file otherwise — so a rendering that changes the shape (a command
     /// wrapped into a skill tree) reads as changed, which it is.
     pub(super) fn source(&self, kind: ItemKind, artifact: &Artifact) -> Result<CatalogSource> {
+        let tree = self.sealed.is_dir(self.item_path);
+        // A skill tree is asked of every file but SKILL.md, whose
+        // frontmatter a copy cuts to the installed key set: a line in it is
+        // never one of the catalog's, and the citation leaves it out.
+        let verbatim = match artifact {
+            Artifact::Tree { files, .. } if kind == ItemKind::Skill && tree => {
+                let catalog = self
+                    .sealed
+                    .rendered_item(kind, self.item_path)?
+                    .into_files();
+                let besides_skill_file = |files: &[(PathBuf, Vec<u8>)]| {
+                    files
+                        .iter()
+                        .filter(|(rel, _)| !crate::render::skill::carries_name(rel))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                besides_skill_file(&catalog) == besides_skill_file(files)
+            }
+            _ => self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),
+        };
         Ok(CatalogSource {
             path: self.sealed.catalog_path(self.item_path),
-            verbatim: self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),
-            tree: self.sealed.is_dir(self.item_path),
+            verbatim,
+            tree,
         })
     }
 }

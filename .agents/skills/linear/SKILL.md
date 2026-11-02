@@ -1,15 +1,13 @@
 ---
 name: linear
 description: "Load for any Linear read or write: issues, projects, cycles, milestones, initiatives, labels."
-summary: "Bash CLI over Linear's GraphQL API, read live: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [integration]
 ---
 
 <!-- kendex:project-instructions:start -->

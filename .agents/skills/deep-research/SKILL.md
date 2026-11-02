@@ -1,19 +1,14 @@
 ---
 name: deep-research
 description: "Load for research tasks, architectural investigations, and vendor, library, or technology comparisons."
-summary: "Exa-powered deep research that produces an evidence-backed findings.md report."
 license: MIT
 user-invocable: true
 argument-hint: "report [query] --output findings.md"
-dependencies:
-  required: [code-quality]
-  optional: [decider]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [research]
 ---
 
 <!-- kendex:project-instructions:start -->

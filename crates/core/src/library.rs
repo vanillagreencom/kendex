@@ -261,6 +261,32 @@ fn observed_summary(
     }
 }
 
+/// Each observed installation's tags as its package declares them, in a
+/// scan the Library shows. An installed copy of a skill carries no `tags`
+/// (the installed key set), so the declaration's tags stand wherever one
+/// can be reached, by the rule [`observed_summary`] applies to the words
+/// beside them; an observation no declaration answers for keeps its own.
+pub fn declared_tags(env: &Env, scan: &mut crate::scan::ScanResult) {
+    let mut records_by_scope = BTreeMap::new();
+    let mut headers = crate::source::header::DeclaredHeaders::default();
+    for item in &mut scan.items {
+        if item.vendor.is_some() {
+            continue;
+        }
+        let (records, index) = records_by_scope
+            .entry(item.scope.canonical())
+            .or_insert_with_key(|scope| {
+                let records = crate::ownership::read(env, scope);
+                let index = identity::index(env, scope, &records.lock);
+                (records, index)
+            });
+        let package = index.of(item).map(|(package, _)| package);
+        if let Some(header) = declared_header(env, &mut headers, records, item, package.as_ref()) {
+            item.tags = header.tags;
+        }
+    }
+}
+
 /// The header of the package one observation belongs to, out of the
 /// source its scope declared it from. `None` where no declaration of it
 /// can be reached, which is not the same as a declaration that says

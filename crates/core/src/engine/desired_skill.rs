@@ -248,7 +248,7 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     }
     // Rendering collects requirements only. A copy comparison must not
     // launch host commands while it proves the installed bytes.
-    collect_command_dependencies(ctx, state, &trees);
+    collect_command_dependencies(ctx, state, &variants, &trees);
     for (group, tree) in groups.iter().zip(trees) {
         if let Some(tree) = tree {
             push_installs(ctx, state, group, tree, enabled, method)?;
@@ -257,15 +257,26 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     Ok(())
 }
 
-fn collect_command_dependencies(ctx: &ItemCtx, state: &mut DesiredState, trees: &[Option<Tree>]) {
+/// The commands the source declares, for a skill some tree of which lands.
+/// Read from the source bytes the variant validated, never from the copy,
+/// which no longer carries the declaration.
+fn collect_command_dependencies(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    variants: &[Variant],
+    trees: &[Option<Tree>],
+) {
     if !ctx.decl.enabled {
         return;
     }
-    let Some(tree) = trees.iter().flatten().next() else {
+    let Some(Variant::Rendered { source_files, .. }) = trees
+        .iter()
+        .zip(variants)
+        .find_map(|(tree, variant)| tree.as_ref().map(|_| variant))
+    else {
         return;
     };
-    let (_, bytes) = tree
-        .files
+    let (_, bytes) = source_files
         .iter()
         .find(|(path, _)| crate::render::skill::carries_name(path))
         .unwrap_or_else(|| unreachable!("validated skill tree has no skill entry"));
@@ -503,6 +514,11 @@ fn render_variant(
             detail: None,
         });
     }
+    // Validated above with every source key in place, so a malformed
+    // declaration refuses before the cut takes it out of the copy. Every
+    // group cuts to one key set, so a variant still deduplicates onto the
+    // shared tree by its hash.
+    rendered.keep_installed_keys();
     if !enabled {
         rendered.disable();
     }

@@ -235,6 +235,13 @@ fn marketplace_origins(
             .and_then(|sealed| read_bytes(&sealed, row.kind, installed))
         && edited.hash() != source_hash
     {
+        // A copy's SKILL.md carries only the installed key set; the
+        // publisher's other keys come back around the edits, so importing
+        // the edited copy keeps what the package declares.
+        let edited = match &origins[0].bytes {
+            Some(package) => with_authored_keys(edited, package),
+            None => edited,
+        };
         // An agent installs as the file its harness reads, so the edited
         // copy of a marketplace agent under Codex is the TOML rendering —
         // the same bytes a catalog cannot store, reaching `offered` by the
@@ -284,11 +291,43 @@ pub(super) fn read_bytes(sealed: &SealedSource, kind: ItemKind, path: &Path) -> 
 }
 
 /// The hash of what an unedited install of the package at `path` holds
-/// ([`SealedSource::rendered_item`]), the side an installed copy is
-/// compared against to say whether someone edited it.
+/// ([`SealedSource::rendered_item`], a skill's SKILL.md as a copy carries
+/// it), the side an installed copy is compared against to say whether
+/// someone edited it.
 fn installed_hash(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<String> {
     let path = package_path(sealed, kind, path)?;
-    Some(sealed.rendered_item(kind, &path).ok()?.hash())
+    let rendered = sealed.rendered_item(kind, &path).ok()?;
+    Some(match rendered {
+        ItemBytes::Tree(files) => {
+            crate::hash::hash_files(&crate::render::skill::installed_form(files))
+        }
+        ItemBytes::File(_) => rendered.hash(),
+    })
+}
+
+/// An edited skill copy with the keys its install cut put back from the
+/// package's own SKILL.md ([`crate::render::skill::authored_keys`]). Any
+/// other kind's bytes, or a tree either side of which holds no SKILL.md
+/// text, come back as they are.
+fn with_authored_keys(edited: ItemBytes, package: &ItemBytes) -> ItemBytes {
+    let skill_text = |files: &[(PathBuf, Vec<u8>)]| {
+        files
+            .iter()
+            .find(|(rel, _)| rel == Path::new(crate::render::skill::SKILL_FILE))
+            .and_then(|(_, bytes)| String::from_utf8(bytes.clone()).ok())
+    };
+    let (ItemBytes::Tree(mut files), ItemBytes::Tree(package)) = (edited.clone(), package) else {
+        return edited;
+    };
+    let (Some(copy), Some(authored)) = (skill_text(&files), skill_text(package)) else {
+        return edited;
+    };
+    for (rel, bytes) in &mut files {
+        if rel == Path::new(crate::render::skill::SKILL_FILE) {
+            *bytes = crate::render::skill::authored_keys(&copy, &authored).into_bytes();
+        }
+    }
+    ItemBytes::Tree(files)
 }
 
 /// Where a package's bytes sit: a skill's directory, whichever file a

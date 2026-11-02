@@ -1,17 +1,13 @@
 ---
 name: code-quality
 description: "Load for any coding or development task in any repository: writing, changing, fixing, refactoring, or testing code or scripts in any language."
-summary: "Code-authoring standards: failure semantics, resource ownership, shared decisions, evidence, test contracts, and stack-specific references."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [docs-writing]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review]
 ---
 
 <!-- kendex:project-instructions:start -->

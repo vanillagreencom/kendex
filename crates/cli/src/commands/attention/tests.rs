@@ -13,7 +13,7 @@ use crate::commands::advisory::Listing;
 use crate::ui::testing::{plain, rich, tagged};
 
 /// One skill's reading for one tool, carrying `findings` at a line each of
-/// its catalog file.
+/// its catalog script: a line in a copy's SKILL.md is never cited.
 fn scored(name: &str, harness: HarnessId, findings: &[(Severity, &str)]) -> ItemSafety {
     let root = format!("/home/one/.{}/skills/{name}", harness.name());
     let deducted: u32 = findings
@@ -40,7 +40,7 @@ fn scored(name: &str, harness: HarnessId, findings: &[(Severity, &str)]) -> Item
                 .map(|((severity, message), line)| Finding {
                     rule: "rule".to_owned(),
                     severity: *severity,
-                    location: format!("{root}/SKILL.md"),
+                    location: format!("{root}/scripts/run.sh"),
                     line: Some(line),
                     message: (*message).to_owned(),
                     remediation: "fix it".to_owned(),
@@ -82,7 +82,7 @@ fn read_past(message: &str, line: u32) -> Finding {
     Finding {
         rule: "rule".to_owned(),
         severity: Severity::High,
-        location: "/home/one/.claude/skills/release/SKILL.md".to_owned(),
+        location: "/home/one/.claude/skills/release/scripts/run.sh".to_owned(),
         line: Some(line),
         message: message.to_owned(),
         remediation: "fix it".to_owned(),
@@ -188,11 +188,11 @@ fn a_compact_report_holds_only_what_needs_the_reader() {
             "  to install the packages this place lists instead: kendex apply --replace-unmanaged --global",
             "safety:",
             "  skill deploy for Claude Code, Codex scores 0/100",
-            "    [critical] pipes a download into a shell at 6 sites (skills/deploy/SKILL.md:1)",
+            "    [critical] pipes a download into a shell at 6 sites (skills/deploy/scripts/run.sh:1)",
             "  skill release for Claude Code scores 85/100",
-            "    [high] overrides the agent's instructions (skills/release/SKILL.md:1)",
+            "    [high] overrides the agent's instructions (skills/release/scripts/run.sh:1)",
             "  skill lint for Claude Code scores 97/100",
-            "    [low] reads the environment (skills/lint/SKILL.md:1)",
+            "    [low] reads the environment (skills/lint/scripts/run.sh:1)",
             "  skill unread for Claude Code scores 100/100",
             "    not fully checked: 1 rule(s) had nothing to read — this item ships no script to read",
             "notes:",
@@ -229,8 +229,8 @@ fn a_verbose_report_draws_every_package_and_the_exclusions() {
         "every site on a line of its own: {lines:#?}"
     );
     for aside in [
-        "    named, not run: names --no-verify (skills/release/SKILL.md:7)",
-        "    accepted in kendex's own package: names rm -rf / (skills/release/SKILL.md:9)",
+        "    named, not run: names --no-verify (skills/release/scripts/run.sh:7)",
+        "    accepted in kendex's own package: names rm -rf / (skills/release/scripts/run.sh:9)",
     ] {
         assert!(lines.contains(&aside.to_owned()), "{aside:?}: {lines:#?}");
     }

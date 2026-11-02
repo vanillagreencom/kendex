@@ -1,18 +1,13 @@
 ---
 name: orch
 description: "PRIMARY AGENT ONLY. Load to orchestrate a Linear or GitHub work item from preparation through merge."
-summary: "Work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, hand off, and oversee fleets of sessions."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [communication, mailbox, github, worktree, dev, project-management, decider, reviewer, review-gate]
-  optional: [harness-ci, linear, second-opinion, commit-guards, jarvis]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation]
 ---
 
 <!-- kendex:project-instructions:start -->

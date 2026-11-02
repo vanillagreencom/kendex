@@ -1,17 +1,13 @@
 ---
 name: commit-guards
 description: "Load to add, tune, or debug a commit guard lane, its git hooks, or COMMIT_GUARDS_* settings."
-summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown, Python names and commit messages, plus an optional comment audit and git hook shims."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation]
-dependencies:
-  optional: [docs-writing]
 repo-effects:
   summary: "Arms git pre-commit, commit-msg and pre-push hooks, so every commit in this repository runs the guard chain and every push runs it over the branch, for everyone who commits or pushes here, not only for kendex."
   writes:

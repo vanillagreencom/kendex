@@ -1,17 +1,13 @@
 ---
 name: github-repository-settings
 description: "Load to preview, render or check a repository's selected review instruction files and local review pointer."
-summary: "Reads GitHub standard settings and calls the existing bot-instructions library."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [bot-instructions, review-gate]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review, configuration]
 ---
 
 <!-- kendex:project-instructions:start -->

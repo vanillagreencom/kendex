@@ -14,14 +14,17 @@ use super::super::Browsed;
 use super::Item;
 
 /// The tree this project would install, from the publisher's own bytes: a
-/// marked block is the project's to write and never installs. Every tool
-/// reads the same rendering, so there is one tree to score.
+/// marked block is the project's to write and never installs, and SKILL.md
+/// carries the installed key set a copy does. Every tool reads the same
+/// rendering, so there is one tree to score.
 ///
 /// The project's own instructions are deliberately *not* folded in — the
 /// page says so — because a preview is about the package, and the plan's
 /// own scoring says what the combination scores.
 fn installs_as(browsed: &Browsed, path: &std::path::Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-    crate::render::skill::render_authored(&browsed.sealed, path)
+    Ok(crate::render::skill::installed_form(
+        crate::render::skill::render_authored(&browsed.sealed, path)?,
+    ))
 }
 
 pub(super) fn input_for(

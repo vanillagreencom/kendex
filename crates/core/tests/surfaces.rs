@@ -273,3 +273,79 @@ fn a_global_copy_for_codex_writes_the_directory_only_codex_reads() {
     );
     assert!(audit(&env, &Scope::Global).unwrap().drift.is_empty());
 }
+
+/// Every surface installs one frontmatter key set. A source carrying
+/// kendex's own keys installs, for a Claude-only copy, a Codex copy and
+/// the shared group alike, as the standard keys, its repository-effect
+/// declaration and the required commands stated as `compatibility`; the
+/// catalog file stays as written, and Claude Code still links onto the
+/// shared tree because every group cuts to the same bytes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_surface_installs_the_shared_key_set_and_claude_still_links() {
+    const SOURCE: &str = "---\nname: gh\ndescription: github\nsummary: Work with GitHub\ntags: [review]\nlicense: MIT\nmetadata:\n  version: 1\n  author: acme\ndependencies:\n  commands:\n    - command: gh\n      purpose: Call GitHub\n    - command: jq\n      purpose: Read JSON\n      optional: true\nrepo-effects:\n  summary: \"Arms nothing.\"\n  installer: \"scripts/install\"\nunknown-key: x\n---\nBody.\n";
+    const INSTALLED: &str = "---\nname: gh\ndescription: github\nlicense: MIT\nmetadata:\n  version: \"1\"\n  author: \"acme\"\nrepo-effects:\n  summary: \"Arms nothing.\"\n  installer: \"scripts/install\"\ncompatibility: \"Requires these commands on PATH: gh\"\n---\nBody.\n";
+    for (harnesses, method, copies, link) in [
+        ("\"claude\"", "copy", &[".claude/skills/gh"][..], None),
+        ("\"codex\"", "copy", &[".agents/skills/gh"][..], None),
+        (
+            "\"claude\", \"codex\", \"pi\"",
+            "symlink",
+            &[".agents/skills/gh"][..],
+            Some(".claude/skills/gh"),
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("dev/app");
+        fs::create_dir_all(project.join(".claude")).unwrap();
+        let source = home.join("catalog");
+        fs::create_dir_all(source.join("skills/gh/scripts")).unwrap();
+        fs::write(source.join("skills/gh/SKILL.md"), SOURCE).unwrap();
+        fs::write(source.join("skills/gh/scripts/install"), "#!/bin/sh\n").unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{harnesses}]\nmethod = \"{method}\"\n\n[skills.gh]\nsource = \"cat\"\n",
+                source_path(&source)
+            ),
+        )
+        .unwrap();
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        let report = audit(&env, &scope).unwrap();
+        assert!(
+            report.refused.is_empty(),
+            "{harnesses}: {:?}",
+            report.refused
+        );
+        apply::execute(&env, &report.plan).unwrap();
+        for copy in copies {
+            let tree = project.join(copy);
+            assert!(!tree.is_symlink(), "{harnesses}: {copy} is a tree");
+            assert_eq!(
+                fs::read_to_string(tree.join("SKILL.md")).unwrap(),
+                INSTALLED,
+                "{harnesses}: {copy}"
+            );
+        }
+        if let Some(link) = link {
+            assert_eq!(
+                project.join(link).canonicalize().unwrap(),
+                project.join(copies[0]).canonicalize().unwrap(),
+                "{harnesses}: {link} links onto the shared tree"
+            );
+            assert!(project.join(link).is_symlink());
+        }
+        assert_eq!(
+            fs::read_to_string(source.join("skills/gh/SKILL.md")).unwrap(),
+            SOURCE
+        );
+        assert!(
+            audit(&env, &scope).unwrap().drift.is_empty(),
+            "{harnesses}: a clean install reads as clean"
+        );
+    }
+}

@@ -1,19 +1,14 @@
 ---
 name: second-opinion
 description: "Load for a cross-model review, challenge, audit, or quick consult."
-summary: "Cross-model second opinion: review, challenge, audit, and consult through an external AI CLI (Pi on Copilot, Claude and Codex, or one a settings entry names)."
 license: MIT
 user-invocable: true
 argument-hint: "review [scope] | challenge [description] | audit [path] | quick [question]"
-dependencies:
-  required: [github]
-  optional: [orch]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review]
 ---
 
 <!-- kendex:project-instructions:start -->

@@ -6,7 +6,9 @@ use crate::error::Result;
 use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
+mod keys;
 mod rendered;
+pub(crate) use keys::{authored_keys, dropped_metadata, installed_keys};
 pub(crate) use rendered::with_name;
 pub use rendered::{Files, Rendered};
 
@@ -170,6 +172,24 @@ pub(crate) fn bounded_description(text: &str) -> String {
         super::yaml_quoted(prefix[..cut].trim_end()),
         &text[to..]
     )
+}
+
+/// The tree a copy installs from these publisher bytes: SKILL.md with the
+/// description every loader takes and the installed key set
+/// ([`installed_keys`]). For a reader comparing or scoring what a copy
+/// holds; the plan renders through `render_variant`, which validates the
+/// full source keys between the two steps.
+pub(crate) fn installed_form(files: Files) -> Files {
+    files
+        .into_iter()
+        .map(|(rel, bytes)| match rel == Path::new(SKILL_FILE) {
+            true => match std::str::from_utf8(&bytes) {
+                Ok(text) => (rel, installed_keys(&bounded_description(text)).into_bytes()),
+                Err(_) => (rel, bytes),
+            },
+            false => (rel, bytes),
+        })
+        .collect()
 }
 
 /// `[skill-instructions]` as `name` renders them: the merge every

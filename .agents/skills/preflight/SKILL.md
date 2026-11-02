@@ -1,15 +1,13 @@
 ---
 name: preflight
 description: "Load to run, tune, or debug preflight."
-summary: "Diff-scoped fail-only checks over one change: shell safety, unwired suites, scratch directories, temp paths, dead path citations, applied migrations and data syntax."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review, testing]
 ---
 
 <!-- kendex:project-instructions:start -->

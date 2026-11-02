@@ -127,6 +127,63 @@ fn an_unedited_install_of_a_skill_with_tests_is_one_origin() {
     assert!(target.join("skills/gh/DEVELOPMENT.md").is_file());
 }
 
+/// An install holds the installed key set alone. A copy that is only
+/// that is the marketplace original, and an edited one is offered with the
+/// package's cut keys back around the edits, so importing it keeps what
+/// the package declares.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installed_copy_is_read_against_the_installed_key_set() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    fs::write(
+        tmp.path().join("catalog/skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: about gh\nsummary: Works with GitHub\ntags: [review]\n---\nmarket bytes\n",
+    )
+    .unwrap();
+    let copy = root.join(".claude/skills/gh");
+    fs::create_dir_all(&copy).unwrap();
+    let installed = "---\nname: gh\ndescription: about gh\n---\nmarket bytes\n";
+    fs::write(copy.join("SKILL.md"), installed).unwrap();
+    let scopes = [scope.clone()];
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+    assert_eq!(gh.origins.len(), 1, "{:?}", gh.origins);
+
+    fs::write(
+        copy.join("SKILL.md"),
+        installed.replace("market bytes", "my edited bytes"),
+    )
+    .unwrap();
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+    let edited = gh
+        .origins
+        .iter()
+        .find(|origin| matches!(origin.group, CandidateGroup::Edited { .. }))
+        .unwrap();
+    let target = target(&env, &tmp, "mine-keys");
+    let chosen = ImportSelection {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+        destination: "gh".to_owned(),
+        hash: edited.hash.clone(),
+        license_confirmed: true,
+        license_basis: None,
+    };
+    apply(&env, &scopes, &target, &[chosen]).unwrap();
+    let copied = fs::read_to_string(target.join("skills/gh/SKILL.md")).unwrap();
+    for kept in [
+        "my edited bytes",
+        "summary: Works with GitHub",
+        "tags: [review]",
+    ] {
+        assert!(copied.contains(kept), "{kept:?} in {copied}");
+    }
+}
+
 /// A licence kendex does not recognize as redistributable cannot be
 /// checkbox-confirmed — it needs a stated basis, like no licence at all.
 #[test]

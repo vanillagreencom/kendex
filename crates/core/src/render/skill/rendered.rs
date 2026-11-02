@@ -136,6 +136,21 @@ impl Rendered {
         }
     }
 
+    /// Cut SKILL.md's frontmatter to the key set every harness reads
+    /// ([`super::installed_keys`]). Asked of the enabled spelling only, so
+    /// it runs before [`Rendered::disable`]: switching a copy off is then a
+    /// rename of the same bytes.
+    pub fn keep_installed_keys(&mut self) {
+        for (rel, bytes) in self.files.iter_mut() {
+            if rel.to_str() != Some(super::SKILL_FILE) {
+                continue;
+            }
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                *bytes = super::installed_keys(text).into_bytes();
+            }
+        }
+    }
+
     /// Keep a disabled installation's content under the `.disabled` name.
     /// The rename is lossless.
     pub fn disable(&mut self) {

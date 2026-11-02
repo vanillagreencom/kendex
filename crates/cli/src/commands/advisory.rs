@@ -360,7 +360,13 @@ fn cited(
         (false, true) => place.trim_start_matches('/').to_owned(),
         (false, false) => format!("{}{place}", source.path),
     };
-    (path, finding.line.filter(|_| source.verbatim))
+    // A copy's SKILL.md is never the catalog's bytes: its frontmatter is
+    // cut to the installed key set, so its lines are counted in a rewrite.
+    let skill_file = inside_a_tree && source.tree && place.trim_start_matches('/') == named;
+    (
+        path,
+        finding.line.filter(|_| source.verbatim && !skill_file),
+    )
 }
 
 /// The rules that apply to this kind and had no bytes to read here.
@@ -474,6 +480,13 @@ mod tests {
             }];
             other
         };
+        // A line is cited only outside a copy's SKILL.md, whose
+        // frontmatter the install cuts.
+        let in_script = |mut row: ItemSafety| {
+            row.advisory.findings[0].location =
+                format!("{}/scripts/run.sh", row.targets[0].location);
+            row
+        };
         type Row = (&'static str, Vec<ItemSafety>, Vec<Vec<HarnessId>>);
         let rows: [Row; 8] = [
             (
@@ -513,8 +526,8 @@ mod tests {
             (
                 "a different citation: verbatim beside rewritten",
                 vec![
-                    sourced(Claude, PIPES, &[], true),
-                    sourced(Codex, PIPES, &[], false),
+                    in_script(sourced(Claude, PIPES, &[], true)),
+                    in_script(sourced(Codex, PIPES, &[], false)),
                 ],
                 vec![vec![Claude], vec![Codex]],
             ),
@@ -589,7 +602,7 @@ mod tests {
                     verbatim: true,
                     tree: true,
                 },
-                ("skills/deploy/SKILL.md", Some(12)),
+                ("skills/deploy/SKILL.md", None),
             ),
             (
                 "only the parked skill file has its rename undone",

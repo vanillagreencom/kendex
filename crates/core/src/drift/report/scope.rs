@@ -268,7 +268,10 @@ impl ManifestRead {
 
 impl ScopeCheck<'_> {
     /// PATH is machine state, so saved source-comparison verdicts cannot
-    /// answer this check. Read each installed skill's own declaration once.
+    /// answer this check. Each skill with an installed tree is checked once,
+    /// against what its source declares: an installed copy's SKILL.md
+    /// carries no `dependencies`, and an edit to one changes no
+    /// requirement.
     fn command_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
@@ -277,6 +280,7 @@ impl ScopeCheck<'_> {
         sections: &mut Sections,
     ) {
         let mut seen = BTreeSet::new();
+        let mut headers = crate::source::header::DeclaredHeaders::default();
         let recorded = lock
             .entries
             .values()
@@ -290,6 +294,11 @@ impl ScopeCheck<'_> {
                         .as_ref()
                         .map(|artifact| artifact.paths.as_slice())
                         .unwrap_or_default(),
+                    Some(crate::source::header::InstalledFrom {
+                        source: entry.source.clone(),
+                        repo: entry.source_repo.clone(),
+                        commit: entry.source_commit.clone(),
+                    }),
                 )
             });
         let unrecorded = occupied
@@ -308,6 +317,7 @@ impl ScopeCheck<'_> {
                     copy.name.as_str(),
                     copy.source.as_str(),
                     copy.positions.as_slice(),
+                    None,
                 )
             });
         let native = manifest
@@ -325,40 +335,88 @@ impl ScopeCheck<'_> {
                     name.as_str(),
                     decl.source.as_str(),
                     &[] as &[std::path::PathBuf],
+                    None,
                 )
             });
-        for (name, source, paths) in recorded.chain(unrecorded).chain(native) {
-            let root = paths
-                .iter()
-                .find(|path| path.is_dir())
-                .cloned()
-                .or_else(|| {
-                    crate::engine::desired::in_place_source(
-                        self.env,
-                        self.scope,
-                        (ItemKind::Skill, source, name),
-                    )
-                    .filter(|path| path.is_dir())
-                });
-            let Some(root) = root else {
+        for (name, source, paths, installed) in recorded.chain(unrecorded).chain(native) {
+            let in_place = crate::engine::desired::in_place_source(
+                self.env,
+                self.scope,
+                (ItemKind::Skill, source, name),
+            );
+            let present = paths.iter().any(|path| path.is_dir())
+                || in_place.as_ref().is_some_and(|path| path.is_dir());
+            if !present {
                 continue;
-            };
+            }
             // A selected source has one read result. A second harness cannot
             // replace its unreadable declaration with a different answer.
             if !seen.insert(name.to_owned()) {
                 continue;
             }
-            self.command_source_lines(name, &root, sections);
+            let Some(text) =
+                self.declaration_text(&mut headers, manifest, name, in_place, installed)
+            else {
+                continue;
+            };
+            self.command_source_lines(name, text, sections);
         }
     }
 
-    fn command_source_lines(&self, name: &str, root: &std::path::Path, sections: &mut Sections) {
-        let declarations = (|| {
-            let sealed =
-                crate::source_read::SealedSource::open(root).map_err(|error| error.to_string())?;
-            let text = sealed
-                .read_to_string(&sealed.root().join("SKILL.md"))
-                .map_err(|error| error.to_string())?;
+    /// The SKILL.md text a skill's commands are read from, or `None` where
+    /// the scope's catalog refusal already speaks for it.
+    ///
+    /// An in-place tree is the source itself, and its bytes are the
+    /// person's as authored. A recorded install is read at the revision
+    /// its record names. A copy no record claims is read at its
+    /// declaration, which is the reading copy settlement holds to the
+    /// catalog gate: a scope that gate refused already says so for every
+    /// such copy, and one it had no time for leaves the commands unknown.
+    fn declaration_text(
+        &self,
+        headers: &mut crate::source::header::DeclaredHeaders,
+        manifest: Option<&crate::manifest::Manifest>,
+        name: &str,
+        in_place: Option<PathBuf>,
+        installed: Option<crate::source::header::InstalledFrom>,
+    ) -> Option<Result<String, String>> {
+        let read = |headers: &mut crate::source::header::DeclaredHeaders,
+                    manifest: &crate::manifest::Manifest,
+                    installed: Option<&crate::source::header::InstalledFrom>| {
+            headers.text(
+                self.env,
+                self.scope,
+                manifest,
+                ItemKind::Skill,
+                name,
+                installed,
+            )
+        };
+        Some(match (in_place, manifest, installed) {
+            (Some(root), _, _) => crate::source_read::SealedSource::open(&root)
+                .and_then(|sealed| sealed.read_to_string(&sealed.root().join("SKILL.md")))
+                .map_err(|error| error.to_string()),
+            (None, None, _) => {
+                Err("the manifest could not be read, so the skill's source is unknown".to_owned())
+            }
+            (None, Some(manifest), Some(installed)) => read(headers, manifest, Some(&installed)),
+            (None, Some(manifest), None) => match self.catalogs.refusals() {
+                Some([]) => read(headers, manifest, None),
+                Some([_, ..]) => return None,
+                None => Err(
+                    "the check ran out of time before it could read the skill's source".to_owned(),
+                ),
+            },
+        })
+    }
+
+    fn command_source_lines(
+        &self,
+        name: &str,
+        text: Result<String, String>,
+        sections: &mut Sections,
+    ) {
+        let declarations = text.and_then(|text| {
             if !crate::frontmatter::opens(&text) {
                 return Ok(Vec::new());
             }
@@ -366,7 +424,7 @@ impl ScopeCheck<'_> {
             let parsed = crate::frontmatter::parse_tolerant(yaml)?;
             crate::engine::deps::commands::declared(&parsed.map)
                 .map_err(|problem| format!("row={} field={}", problem.row, problem.field))
-        })();
+        });
         match declarations {
             Ok(dependencies) => {
                 for issue in

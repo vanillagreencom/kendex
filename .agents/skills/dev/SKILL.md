@@ -1,18 +1,13 @@
 ---
 name: dev
 description: "Load when implementing an issue or applying review fixes as a dev agent."
-summary: "Dev-agent workflows for implementing an issue and applying review fixes, invoked by orch or specialist agents."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [orch, github, decider, code-quality, reviewer]
-  optional: [linear, commit-guards]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation]
 ---
 
 <!-- kendex:project-instructions:start -->

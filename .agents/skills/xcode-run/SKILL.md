@@ -1,15 +1,13 @@
 ---
 name: xcode-run
 description: "Load to install or dispatch a macOS GitHub Actions build, test or simulator screenshot run for an Xcode project."
-summary: "Installs a manual Mac workflow for Xcode builds, tests and simulator screenshots. Each run returns its logs and PNGs in one artifact."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [swift, testing]
 repo-effects:
   summary: "Adds a manual Mac build, test and simulator screenshot workflow to this repository."
   writes:

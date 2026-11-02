@@ -1,15 +1,13 @@
 ---
 name: communication
 description: "Load before writing a message to a person: a reply, report, briefing, decision request, or issue or comment addressed to the user."
-summary: "Plain-language messages, reader modes, decision questions, reports, threads and spoken replies."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [communication]
 ---
 
 <!-- kendex:project-instructions:start -->

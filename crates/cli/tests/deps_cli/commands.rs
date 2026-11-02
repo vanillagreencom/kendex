@@ -131,7 +131,10 @@ fn install_and_check_report_required_and_optional_commands_once() {
         "{}",
         String::from_utf8_lossy(&installed.stderr)
     );
-    assert!(project.join(".claude/skills/external/SKILL.md").is_file());
+    // The check below answers with no declaration in the installed copy:
+    // it reads the source's.
+    let copy = fs::read_to_string(project.join(".claude/skills/external/SKILL.md")).unwrap();
+    assert!(!copy.contains("dependencies:"), "{copy}");
     assert_install_categories(&home, &project);
     // The check JSON preserves the install's keyed command records.
     let diagnostic = String::from_utf8_lossy(&installed.stderr);
@@ -377,13 +380,15 @@ fn command_source_fixture(home: &Path) -> (PathBuf, PathBuf) {
     (project, bin)
 }
 
+/// `present` says the check reports the source's two required commands,
+/// `unknown` how many could-not-check lines it prints.
 #[allow(clippy::unwrap_used)]
 fn assert_command_source_result(
     home: &Path,
     project: &Path,
     bin: &Path,
     present: bool,
-    unreadable: bool,
+    unknown: usize,
 ) {
     let path = project.join(".kendex-lock.json");
     let before = fs::read(&path).ok();
@@ -405,15 +410,15 @@ fn assert_command_source_result(
         }));
     }
     let report: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
-    let unknown = report["sections"]
+    let unknowns = report["sections"]
         .as_array()
         .unwrap()
         .iter()
         .flat_map(|section| section["lines"].as_array().unwrap())
         .filter(|line| line["class"] == "unknown")
         .count();
-    assert_eq!(unknown, usize::from(unreadable));
-    if unreadable {
+    assert_eq!(unknowns, unknown);
+    if unknown > 0 {
         assert_eq!(report["status"], "unknown");
     }
     let probes = fs::read_to_string(bin.join("kendex-fixture-source-version.probes")).unwrap();
@@ -458,7 +463,7 @@ fn command_source_cell(form: &str, record: &str) {
         &project,
         &bin,
         form != "absent",
-        record == "unreadable",
+        usize::from(record == "unreadable"),
     );
 }
 
@@ -480,53 +485,65 @@ command_source_cells! {
     absent_unreadable => ("absent", "unreadable"),
 }
 
+/// The check reads the declaration in the skill's source: an edit to the
+/// installed copy changes no requirement, and a source declaration that
+/// cannot be read is one could-not-check line, never an empty requirement.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn selected_command_source_read_failure_stays_unknown_once() {
-    for (body, unreadable) in [
-        (Some("By hand.\n"), false),
-        (Some("---\nname: external\n"), true),
-        (Some("---\ndependencies:\n  commands: [\n---\n"), true),
+fn check_reads_the_source_declaration_whatever_the_copy_says() {
+    const SOURCE: &str = "catalog/skills/external/SKILL.md";
+    const COPY: &str = "dev/app/.claude/skills/external/SKILL.md";
+    for (what, file, text, present, unknown) in [
         (
-            Some("---\ndependencies:\n  commands:\n    - purpose: Render pages\n---\n"),
+            "a copy with no frontmatter",
+            COPY,
+            Some("By hand.\n"),
             true,
+            0,
         ),
-        (None, true),
+        ("a copy with no SKILL.md", COPY, None, true, 0),
+        (
+            "a source with an unterminated block",
+            SOURCE,
+            Some("---\nname: external\n"),
+            false,
+            1,
+        ),
+        (
+            "a source whose commands will not parse",
+            SOURCE,
+            Some("---\nname: external\ndependencies:\n  commands: [\n---\n"),
+            false,
+            1,
+        ),
+        (
+            "a source with an invalid row",
+            SOURCE,
+            Some(
+                "---\nname: external\ndependencies:\n  commands:\n    - purpose: Render pages\n---\n",
+            ),
+            false,
+            1,
+        ),
+        ("a source with no SKILL.md", SOURCE, None, false, 1),
+        (
+            "a source that declares nothing",
+            SOURCE,
+            Some("By hand.\n"),
+            false,
+            0,
+        ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let (project, bin) = command_source_fixture(&home);
-        // Claude sorts first. Its declaration has one result, even when
-        // the valid Codex copy could supply a different answer.
-        let path = project.join(".claude/skills/external/SKILL.md");
-        match body {
-            Some(text) => fs::write(path, text).unwrap(),
-            None => fs::remove_file(path).unwrap(),
+        let path = home.join(file);
+        match text {
+            Some(text) => fs::write(&path, text).unwrap(),
+            None => fs::remove_file(&path).unwrap(),
         }
-        let checked = run(
-            &home,
-            &project,
-            &["check", "--scope", "project", "--json", "--report-only"],
-            Some(&bin),
-        );
-        assert!(command_lines(&checked).is_empty());
-        let report: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
-        assert_eq!(report["status"] == "unknown", unreadable);
-        assert_eq!(
-            report["sections"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .flat_map(|section| section["lines"].as_array().unwrap())
-                .filter(|line| line["class"] == "unknown")
-                .count(),
-            usize::from(unreadable)
-        );
-        assert!(
-            fs::read_to_string(bin.join("kendex-fixture-source-version.probes"))
-                .unwrap()
-                .is_empty()
-        );
+        println!("{what}");
+        assert_command_source_result(&home, &project, &bin, present, unknown);
     }
 }
 
@@ -576,15 +593,18 @@ fn occupied_command_sources_obey_declaration_enablement() {
     let manifest = kendex_core::manifest::load_current(&path).unwrap().unwrap();
     let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
     assert!(kendex_core::engine::declared_over_existing_files(&env, &scope, &manifest, &lock).values().any(|copy| copy.kind == kendex_core::model::ItemKind::Skill && copy.name == "external"));
-    assert_command_source_result(&home, &project, &bin, false, false);
+    assert_command_source_result(&home, &project, &bin, false, 0);
 }
 
+/// The source a recorded skill installed from is reached through the
+/// manifest's source declarations, so with none to read its commands are
+/// unknown, said beside the manifest's own line.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn recorded_command_sources_survive_an_unreadable_manifest() {
+fn an_unreadable_manifest_leaves_recorded_command_sources_unknown() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let (project, bin) = command_source_fixture(&home);
     fs::write(project.join("kendex.toml"), b"[invalid manifest").unwrap();
-    assert_command_source_result(&home, &project, &bin, true, true);
+    assert_command_source_result(&home, &project, &bin, false, 2);
 }
