@@ -67,7 +67,10 @@ when its settings files change. Other settings need slack setup or a restart.
 While SLACK_JARVIS_SESSION_FILE is younger than SLACK_JARVIS_SESSION_MAX_AGE a Jarvis session
 answers the overseer, and the relay holds mailbox posts except replies to
 messages the owner typed in the channel, which still post in their threads,
-and the answer to a /report, which posts as a new message.
+and a notice whose --ref names a /report directive, which posts as a new
+message. oversee-report's report notice carries no --ref, so it is an
+ordinary owner notice under the hold, and oversee-report sends none during
+ORCH_REPORT_QUIET_HOURS.
 Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
 is dropped once the new one is fresh or the replaced one stale. An emptied
@@ -75,7 +78,8 @@ setting ends the hold. When the file goes stale or
 absent the relay resumes. The Jarvis session's watch writes its last mailbox read
 count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
 skips notices and asks, including closed asks, on lines at or below that count, with no post and
-no mention, and journals their ids; later ones post. A missing or unreadable
+no mention, and journals their ids; later ones post, and so does a reply to
+a Slack-origin directive at any line. A missing or unreadable
 seen file skips nothing. The count is clamped to the lines listed. Held answers
 still post; closure records update thread state independently of post age.
 `slack post --mention` checks the root's OS hold lock, including a renamed
@@ -181,7 +185,8 @@ SECTION_CHARS = 3000
 TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 # The delivery id of a /report directive is its trigger_id under this
 # prefix. `report` writes it and `RootRelay.routes` reads it as typed in
-# Slack, so the overseer's notice answering the directive posts, held or not.
+# Slack, so a notice whose --ref names the directive posts, held or not.
+# oversee-report's report notice names no directive: an ordinary notice.
 COMMAND_KEY = "command:"
 
 # Slack's answer when the reaction is already as the call would leave it, or
@@ -908,7 +913,7 @@ class RootRelay:
 
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
-        `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume,
+        `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume, never a reply,
         `overdue` for a reserved ask with a posted thread or unresolved post
         open past its deadline, or `skip`
         for another that never posts; answers carry their ask's record."""
@@ -945,30 +950,36 @@ class RootRelay:
             box = envelope.get("box")
             kind = envelope.get("kind")
             owner = box == "to-overseer" and envelope.get("to") == "owner"
+            ref = envelope.get("ref")
+            reference = by_id.get(ref, {})
+            # A notice whose ref is a directive the owner typed in Slack:
+            # send_directive writes a message's thread pointer and channel:ts,
+            # `report` a /report's COMMAND_KEY. It is a reply, posted while
+            # held, and the Jarvis session reading it is no reason to skip it
+            # on resume, since only Slack shows it to the owner who typed there.
+            # post_notice threads it under the message, and a /report, which
+            # has no thread, gets a new message.
+            delivery_id = str(reference.get("delivery_id", ""))
+            reply = owner and kind == "notice" and bool(
+                reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
+                or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
+            if (owner and kind in ("notice", "ask") and not reply
+                    and envelope["line"] is not None and envelope["line"] <= seen):
+                route = "seen"
             # `store.compact` drops an `out` line by this same age, so an
             # envelope whose line it may drop must never post again.
-            if owner and kind in ("notice", "ask") and envelope["line"] is not None and envelope["line"] <= seen:
-                route = "seen"
             elif at < horizon:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in closed else "ask"
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
+            elif reply:
+                route = "reply"
             elif owner and kind == "notice":
-                ref = envelope.get("ref")
-                reference = by_id.get(ref, {})
-                # A directive the owner typed in Slack: send_directive writes
-                # a message's thread pointer and channel:ts, `report` a
-                # /report's COMMAND_KEY. Its answer is a reply, posted even
-                # while held; post_notice threads it under the message, and a
-                # /report, which has no thread, gets a new message. Owner asks
-                # originate here too, so their rulings still post.
-                delivery_id = str(reference.get("delivery_id", ""))
-                slack_origin = (reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
-                                or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
+                # Owner asks originate here too, so their rulings still post.
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
-                route = "reply" if slack_origin else "notice" if not ref or owner_ask else "skip"
+                route = "notice" if not ref or owner_ask else "skip"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:

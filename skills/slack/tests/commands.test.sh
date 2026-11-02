@@ -165,8 +165,8 @@ report_trip() {
   sk_relay_stop
 }
 # held_report: /report to alpha while the Jarvis session presence file is
-# fresh, then an unrelated owner notice and the overseer's notice answering
-# the directive; the hold as status shows it once the answer posted, the
+# fresh, then an unrelated owner notice and a notice whose --ref names the
+# directive (oversee-report's own report notice carries none); the hold as status shows it once the answer posted, the
 # answer's top-level posts and the unrelated notice's posts.
 held_report() {
   local key answer
@@ -225,7 +225,7 @@ assert_eq "$RESULT" "0|1" "with beta configured, /report lands in beta and not i
 report_trip
 assert_eq "$RESULT" "1|1" "a resent /report lands one directive, and the overseer's notice answering it posts once in the channel"
 held_report
-assert_eq "$RESULT" "jarvis|1|" "while a Jarvis session hold stands, the answer to a /report posts once as a new message and an unrelated notice stays held"
+assert_eq "$RESULT" "jarvis|1|" "while a Jarvis session hold stands, a notice naming the /report directive posts once as a new message and an unrelated notice stays held"
 
 # --- unavailable destination, off commands and Home off -------------------------------
 relay "$GAMMA" "SLACK_REPORT_ROOT=$GAMMA" "SLACK_ASKS_COMMAND=$CMD/secret"
@@ -313,9 +313,9 @@ sk_assert_red "$RESULT" "1|1" "control: a delivery id that changes on a resend l
 sk_mutant report-skip relay.py 'reference\.get\("thread_ts"\) or delivery_id\.startswith\(COMMAND_KEY\)' 'reference.get("thread_ts")'
 report_trip
 sk_assert_red "$RESULT" "1|1" "control: the notice answering a /report, skipped as another medium's reply, posts nothing"
-sk_mutant report-notice relay.py 'route = "reply" if slack_origin else' 'route = "notice" if delivery_id.startswith(COMMAND_KEY) else "reply" if slack_origin else'
+sk_mutant report-notice relay.py 'elif reply:\n                route = "reply"' 'elif reply:\n                route = "notice" if delivery_id.startswith(COMMAND_KEY) else "reply"'
 held_report
-sk_assert_red "$RESULT" "jarvis|1|" "control: the answer to a /report routed as a notice stays held"
+sk_assert_red "$RESULT" "jarvis|1|" "control: a notice naming the /report directive, routed as a notice, stays held"
 sk_mutant home-unchecked relay.py '        try:\n            secret_check\(out\.encode\(\), f"command=\{setting\}"\)\n        except Refusal as refusal:\n            print_refusal\(refusal\)\n            return "", refusal\.key\n' ''
 withheld
 sk_assert_red "${VIEWS[2]}" "$HOME_SECRET" "control: a Home command's output sent unchecked publishes the secret"
