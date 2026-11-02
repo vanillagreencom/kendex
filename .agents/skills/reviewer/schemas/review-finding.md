@@ -73,13 +73,13 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 | `title` | Yes | Concise title (5-10 words) — used if the item becomes a tracked issue |
 | `location` | Yes | One string: stable path plus symbol, no line numbers — line/hunk evidence belongs in `description` |
 | `owner` | No | One string in the `location` form naming the symbol that should hold the broken rule. Set it when another site can break that rule; omit it otherwise |
-| `description` | Yes | Problem statement |
+| `description` | Yes | Problem statement. A finding in the classes [code-quality § Finding Evaluation](../../code-quality/SKILL.md#finding-evaluation) names ends it with that section's evaluation line |
 | `recommendation` | Yes | Actionable fix/improvement steps |
 | `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low). There is no P5 — a finding below P4 is not worth reporting |
 | `estimate` | Yes | 1-5 points, a relative size class from 1, smallest, through 5, largest ([project-management § Disposition](../../project-management/SKILL.md#disposition)) |
 | `category` | Suggestions only | `fix` (this PR's concern) or `issue` (track separately) — the orchestrator routes on this field; orch [review-pr.md § 4](../../orch/workflows/review-pr.md#4-handle-review-items) says what reaches a fix round |
 
-`category: "issue"` items become tracked issue candidates: `description` 2-3 sentences; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is not an issue — note it in the review summary instead.
+`category: "issue"` items become tracked issue candidates: `description` 2-3 sentences, before any evaluation line; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is not an issue — note it in the review summary instead.
 
 ## Question Fields (PR comment triage only)
 
