@@ -19,4 +19,4 @@ Load the Jarvis skill before you act for the user.
 
 - Carry out authorized work, then report the results you checked.
 
-Before writing a message to a person, read `.agents/skills/communication/SKILL.md`.
+Read `.agents/skills/communication/SKILL.md` once per revision, on the terms of its § Reading routes, and apply it before every message to a person.
