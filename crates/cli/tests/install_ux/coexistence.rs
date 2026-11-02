@@ -476,6 +476,20 @@ fn version_10_hook_recovery_keeps_an_edited_script_and_registration() {
     assert_eq!(settings.matches("guard.sh").count(), 1, "{settings}");
 }
 
+/// Drop the memo a check leaves, so the next check plans afresh: the
+/// take-over is a fresh plan's answer alone, and a check that reads an
+/// earlier check's memo names the plan instead (`drift::copies`).
+#[allow(clippy::unwrap_used)]
+fn plan_afresh(world: &World) {
+    kendex_core::drift::copies::invalidate(
+        &kendex_core::env::Env::host_rooted(&world.home),
+        &kendex_core::model::Scope::Project {
+            root: world.project.clone(),
+        },
+    )
+    .unwrap();
+}
+
 /// The `replace-unmanaged` remedies `check --json` printed, each as its
 /// `allowRepoEffects` value: the remedy a program reads off the check.
 #[allow(clippy::unwrap_used)]
@@ -560,20 +574,24 @@ fn version_10_recovery_names_one_completion_with_its_repository_effect() {
 
     // Beside a hand edit to a recorded install the take-over settles
     // nothing whole, so check names the plan for the copy, as apply and
-    // refresh name no finish; undone, the take-over is named again.
+    // refresh name no finish; undone, the take-over is named again. Each
+    // check below plans afresh.
     let deploy = world.at(".agents/skills/deploy/SKILL.md");
     let recovered = read(&deploy);
     super::write(&deploy, &format!("{recovered}\nmy own line\n"));
+    plan_afresh(&world);
     let edited = world.try_run(&["check", "--json"]);
     let empty: [bool; 0] = [];
     assert_eq!(replace_remedies(&edited), empty, "{}", super::said(&edited));
     super::write(&deploy, &recovered);
 
+    plan_afresh(&world);
     let person = super::said(&world.try_run(&["check"]));
     assert!(
         person.contains("kendex apply --replace-unmanaged --allow-repo-effects"),
         "{person}"
     );
+    plan_afresh(&world);
     let session = super::said(&world.try_run(&["check", "--quiet"]));
     assert!(
         session.contains("kendex apply --replace-unmanaged"),
@@ -913,7 +931,7 @@ fn settle_with(output: &std::process::Output) -> Vec<String> {
 /// the take-over is no finish: it leaves the Pi package, so no
 /// `finish-with` is named, each keeps its own way out, and check names
 /// the plan for the copy; once `update-pi` settles the package, the next
-/// check names the take-over.
+/// check that plans names the take-over.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_version_10_recovery_names_update_pi_for_an_edited_pi_copy() {
@@ -983,6 +1001,7 @@ fn a_version_10_recovery_names_update_pi_for_an_edited_pi_copy() {
             read(&world.catalog.join("pi-extensions/pi-widgets/index.js"))
         );
         if beside_a_conflict {
+            plan_afresh(&world);
             let json = world.try_run(&["check", "--json"]);
             assert_eq!(replace_remedies(&json), [false], "{}", super::said(&json));
             continue;

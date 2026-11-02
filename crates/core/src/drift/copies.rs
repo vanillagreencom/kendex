@@ -9,8 +9,9 @@
 //! every position it would take as the comparison reads it, and the
 //! fetch state of its source's mirror), and the plan runs again only
 //! when one of them moves. The take-over a differing copy names is the
-//! scope's answer rather than the copy's, so it is kept once, under a key
-//! of every input that answer reads beyond any one installation. A run
+//! scope's answer rather than the copy's, which only a fresh plan gives
+//! (`engine::completion`): it is never memoized, so a check that reads
+//! the memo names the plan as the copy's fix instead. A run
 //! inside the session hook has one deadline for every scope the check
 //! covers; a pass that outruns it is finished by the detached background
 //! refresh, which writes the same file for the next session to read. A proven copy is recorded only
@@ -37,7 +38,7 @@ use crate::model::Scope;
 
 /// Bumped when the shape changes; an older or newer file reads as absent,
 /// which costs one plan.
-pub const MEMO_SCHEMA: u32 = 4;
+pub const MEMO_SCHEMA: u32 = 5;
 
 /// The memoized verdicts of one scope. Retired by every record write
 /// (`apply::execute`), since what a plan proved it proved against the
@@ -57,11 +58,6 @@ pub struct Memo {
     /// One verdict per occupied installation, by lock entry key, with the
     /// key of the inputs it was measured under.
     pub entries: BTreeMap<String, Memoed>,
-    /// The plan's one completion for the scope (`engine::completion`).
-    pub completion: Option<Completion>,
-    /// The key of the inputs `completion` was judged under
-    /// ([`scope_inputs`]).
-    pub scope_inputs: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,7 +127,8 @@ pub enum Settled {
     /// `unrecorded` is every proven entry the check left out of the
     /// record on purpose. `completion` is the plan's one completion for
     /// the scope (`engine::completion`), the fix every differing copy
-    /// names where there is one.
+    /// names where there is one; `None` where the verdicts were read off
+    /// the memo, which holds no completion.
     Judged {
         verdicts: BTreeMap<String, Verdict>,
         record_failed: Option<String>,
@@ -244,63 +241,13 @@ fn manifest_digest(manifest: &Manifest) -> String {
     crate::hash::hash_bytes(&serde_json::to_vec(manifest).unwrap_or_default())
 }
 
-/// The inputs the scope's completion reads beyond any one occupied
-/// installation's, as one digest: the manifest, the whole record, every
-/// position the record holds as the comparison reads it, each declared Pi
-/// package's position, and the fetch state of every declared repository.
-/// The completion withholds the take-over for a conflict anywhere in the
-/// scope and for a Pi package left for `update-pi`, so a hand edit to a
-/// recorded install, or an `update-pi` that records its package without
-/// a plan, moves this key and costs one plan.
-fn scope_inputs(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    manifest_digest: &str,
-    lock: &Lock,
-) -> String {
-    let mut parts = vec![
-        manifest_digest.to_owned(),
-        serde_json::to_string(lock).unwrap_or_default(),
-    ];
-    let mut positions: Vec<PathBuf> = lock
-        .entries
-        .values()
-        .flat_map(|entry| crate::engine::installed_paths(env, scope, entry))
-        .collect();
-    if let Ok(root) = crate::pi_ext::scope_root(env, scope) {
-        positions.extend(
-            manifest
-                .pi_extensions
-                .keys()
-                .filter_map(|name| crate::pi_ext::package_path(&root, name).ok()),
-        );
-    }
-    for position in positions {
-        parts.push(crate::paths::slashed(&position));
-        parts.push(position_signature(&position));
-    }
-    for repo in manifest
-        .sources
-        .values()
-        .filter_map(|decl| decl.repo.as_deref())
-    {
-        let stamp = super::stamps::load(env, &crate::remote::cache_key(env, repo));
-        parts.push(stamp.refs_state.unwrap_or_default());
-    }
-    crate::hash::hash_bytes(parts.join("\n").as_bytes())
-}
-
-/// The key of every occupied installation, by lock entry key, and of the
-/// inputs the scope's completion reads.
+/// The key of every occupied installation, by lock entry key.
 struct Keys {
     entries: BTreeMap<String, String>,
-    scope: String,
 }
 
 fn keys(
     env: &Env,
-    scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     occupied: &BTreeMap<String, Occupied>,
@@ -316,18 +263,14 @@ fn keys(
                 )
             })
             .collect(),
-        scope: scope_inputs(env, scope, manifest, &digest, lock),
     }
 }
 
 /// The memoized verdicts, where the memo holds every occupied
-/// installation under its current inputs and the scope's completion
-/// under the inputs it reads.
+/// installation under its current inputs. They carry no completion: the
+/// take-over is a fresh plan's answer alone.
 fn memoized(memo: Option<Memo>, keys: &Keys) -> Option<UnmanagedCopies> {
     let memo = memo?;
-    if memo.scope_inputs != keys.scope {
-        return None;
-    }
     let mut measured = BTreeMap::new();
     for (key, inputs) in &keys.entries {
         let memoed = memo.entries.get(key)?;
@@ -340,7 +283,7 @@ fn memoized(memo: Option<Memo>, keys: &Keys) -> Option<UnmanagedCopies> {
         measured,
         proven: memo.proven,
         registrations: memo.registrations,
-        completion: memo.completion,
+        completion: None,
     })
 }
 
@@ -349,8 +292,6 @@ fn memo_of(keys: &Keys, copies: &UnmanagedCopies) -> Memo {
         schema: MEMO_SCHEMA,
         proven: copies.proven.clone(),
         registrations: copies.registrations.clone(),
-        completion: copies.completion,
-        scope_inputs: keys.scope.clone(),
         entries: keys
             .entries
             .iter()
@@ -385,7 +326,7 @@ pub fn derive(env: &Env, scope: &Scope) -> Result<()> {
     if occupied.is_empty() {
         return Ok(());
     }
-    let keys = keys(env, scope, &manifest, &lock, &occupied);
+    let keys = keys(env, &manifest, &lock, &occupied);
     if memoized(load(env, scope), &keys).is_some() {
         return Ok(());
     }
@@ -514,7 +455,7 @@ pub fn settle(
             occupied.clone(),
         );
         gated(deadline, move |sender| {
-            let keys = keys(&env, &scope, &manifest, &lock, &occupied);
+            let keys = keys(&env, &manifest, &lock, &occupied);
             let (copies, fresh) = match memoized(load(&env, &scope), &keys) {
                 Some(copies) => (copies, false),
                 None => match crate::engine::compare_unmanaged_copies(
@@ -850,7 +791,6 @@ mod tests {
             .send(Stage::Judged {
                 keys: Keys {
                     entries: BTreeMap::new(),
-                    scope: String::new(),
                 },
                 copies: judged(),
                 fresh: false,
