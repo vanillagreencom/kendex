@@ -1601,12 +1601,12 @@ jobs:
         run: skills/preflight/scripts/preflight --base "$BASE"
 
   markdown:
-    # The range scan checks the change against the merge group's base. The
-    # full scan keeps the repository's configured all-tree push scope. This
-    # required check prevents a hook bypass from putting Markdown on main
+    # The range scans check the change against the merge group's base: md-type
+    # refuses a shape finding the group introduced, md-refs a dead reference.
+    # This required check prevents a hook bypass from putting Markdown on main
     # that the next local push must refuse. CI requires it on every merge
     # group.
-    name: Markdown (format + references)
+    name: Markdown (shape + references)
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1615,12 +1615,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: markdown format against the group's base and across the full tree
+      - name: markdown shape against the group's base
         env:
           BASE: ${{ github.event.merge_group.base_sha }}
-        run: |
-          skills/commit-guards/scripts/md-format --against "$BASE"
-          skills/commit-guards/scripts/md-format --all
+        run: skills/commit-guards/scripts/md-type --against "$BASE"
       - name: markdown references against the group's base
         env:
           BASE: ${{ github.event.merge_group.base_sha }}

@@ -49,8 +49,9 @@ changed, so a malformed document or a broken reference a replay carried in is
 caught; where none can be, the whole tree is the scope and those lanes are
 withheld, since that sweep is absolute rather than ratcheted and choosing it
 is COMMIT_GUARDS_MD_SCOPE=all, the project's call. A project that has chosen
-it keeps the sweep under every scope, a range included. Git passes the remote
-name and its URL as arguments and the ref lines
+it keeps the md-refs sweep under every scope, a range included; md-type
+takes the range even then, since it asks what the branch introduced. Git
+passes the remote name and its URL as arguments and the ref lines
 `<local-ref> <local-oid> <remote-ref> <remote-oid>` on stdin. Wire it through
 the installed shim: `install-git-hooks --repo <root>`.
 
@@ -64,8 +65,8 @@ asked what landing HEAD there would DO to that tree: `--against`, two dots,
 against the oid git read from the destination's own advertisement. Three dots
 would answer what the branch adds over the ancestor the two share, which on a
 diverged or force-pushed branch excuses a file that in fact grows at the
-destination. changelog-entries asks instead which version increases the
-branch made: where this lane can establish the remote's default branch, its
+destination. changelog-entries and md-type ask instead what the branch
+made: where this lane can establish the remote's default branch, their
 baseline excludes commits already there, else it is the oid:
 https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#the-pre-push-lane
 
@@ -397,9 +398,12 @@ judge() { # SCOPE REF SCOPE-FLAGS... — run the batch once per distinct scope
   # absolute sweep there would refuse every push in a repository holding
   # markdown that predates the guard, and choosing it is the project's to
   # make, COMMIT_GUARDS_MD_SCOPE=all. Where a project HAS chosen it, the
-  # batch keeps that sweep and hands the range to no markdown lane: a range
-  # is narrower, so substituting one would answer a smaller question under
-  # the setting's name. That decision is the batch's, not this lane's.
+  # batch keeps that sweep for md-refs: a range is narrower, so substituting
+  # one would answer a smaller question under the setting's name. md-type
+  # takes the range even then, since a sweep where the index equals HEAD
+  # finds nothing introduced, and the whole-tree scope, which has no range
+  # to hand it, withholds it by name. Those decisions are the batch's, not
+  # this lane's.
   #
   # The batch reads no input, and is given none: a check that read stdin
   # would take the ref lines this loop has not reached, and a line nobody

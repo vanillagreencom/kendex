@@ -28,7 +28,7 @@ A binary file not over the ceiling but at or above `COMMIT_GUARDS_BYTE_WARN_PCT`
 - `--against REF`: the same files between REF's own tree and HEAD — two dots, so the baseline is REF's own blob. Where REF is an ancestor of HEAD the two scopes agree. Where they have diverged they do not, and only this one measures what landing HEAD at REF would do to REF: a file over the ceiling at the shared ancestor, smaller at REF and larger at HEAD, is a shrink to `--base` and growth to `--against`.
 - `--all`: every tracked file. A sweep has no source blob, so an oversized file's prior is its row in `COMMIT_GUARDS_BYTE_BASELINE` (`path<TAB>bytes`, read from the index), overridden by `--baseline FILE`. A file at its row passes, one past its row fails as growth, and one with no row fails as oversized. Rows naming text files are ignored. Every other row larger than its file fails `baseline-loose`, and every other row naming no oversized binary file the sweep judges fails `baseline-stale`, so the binary baseline only tightens.
 
-The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --against REF` hands `--against REF`, `all --staged` hands `--staged`. byte-ceiling takes a range under every setting, since it is ratcheted and the range is the question it answers. The two range scopes also reach md-format and md-refs, on the same dot conventions, but only where `COMMIT_GUARDS_MD_SCOPE` is `touched`; under `all` those lanes are handed `--all` instead, because a range is narrower than the sweep that setting asks for. A copy is an addition; symlinks and gitlinks are not sized.
+The batch names the scope: `commit-guards all` hands the lane `--all`, `all --base REF` hands `--base REF`, `all --against REF` hands `--against REF`, `all --staged` hands `--staged`. byte-ceiling takes a range under every setting, since it is ratcheted and the range is the question it answers. The two range scopes also reach md-type and md-refs, on the same dot conventions. md-refs takes them only where `COMMIT_GUARDS_MD_SCOPE` is `touched`; under `all` it is handed `--all` instead, because a range is narrower than the sweep that setting asks for. md-type takes them under either setting. A copy is an addition; symlinks and gitlinks are not sized.
 
 ## suppression-ban
 
@@ -126,11 +126,43 @@ SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md GEMINI.md */GEMI
 
 The `no tracked file matches` verdict prints only when nothing was skipped.
 
-## md-format
+## md-type
 
-A scanned markdown file holds one paragraph per line and one list item per line, blank lines between paragraphs, list blocks, headings and fences, and no trailing-double-space break. `md-reflow` rewrites a file to the format.
+A Markdown file's structure, judged against its docs-writing file type. The rules are docs-writing's own files, read as data; the lane holds no rule list and matches no prose. docs-writing is found the way the pre-commit chain finds a sibling gate: the judged tree's install first, then the copy beside this package.
 
-The grammar is `scripts/lib/md-blocks.awk`'s, with the line-shape predicates in `scripts/lib/md-shapes.awk`; both lanes and the reflow read by that pair:
+- **Classification.** The route table under docs-writing's `## Per file type`, the one table whose header is `Path | Section | Example | Shape`. The first row with a code-span glob matching the repo-relative path wins; `*` crosses `/`. A path no row matches is unclassified and only parsed.
+- **Shapes.** The row's Shape cell names the checks: `value-table` and `order`, or `none`.
+- `value-table`: a pipe table whose header row has a cell `Default`, `Budget`, `Limit`, `Ceiling` or `Threshold`, singular or plural, any case, emphasis ignored. The finding cites the route row.
+- `order`: the routed reference's first numbered list. An item's name is its text before the first `:`, `,` or `.`; an `X or Y` name accepts either side. An H2 equal to an item's name, any case, must follow the list's order; other headings are not ordered. The first item is the description slot, whatever it names: content between the title and the first H2, whose absence is `description-missing`. Each finding cites the list item.
+- **Size.** The file's words outside front matter and code blocks, beside the words of the row's example document counted the same way: the content of the example's first `markdown` fence before any thematic break, else the example up to its first thematic break. A signal only; it never changes the exit status, and a sweep prints it only beside a finding.
+
+Each finding prints one line, which docs-audit relays:
+
+```
+md-type: finding=<value-table|section-order|description-missing> path=<p> type=<t> line=<n> rule=<docs-writing file>:<line> count=<n> baseline=<n|none> introduced=<yes|no> section=<heading|top>
+md-type: signal=size path=<p> type=<t> words=<n> example_words=<n> example=<file>
+```
+
+A finding is `(finding, type)` in one file with a count. It is introduced when the count exceeds the baseline's: the file's earlier self in the HEAD commit under `--staged` and `--all`, on the range's base side under `--base` and `--against` (the merge base for three dots, the ref for two), none for a new path or `--as`. A renamed file's earlier self is the path git's rename detection says it moved from, also when the change writes a new file at that path (`git mv README.md docs/README.md` and a new `README.md`), which git records as a copy from a modified file. A new file copied from a file the change also edits is judged against that file too, because git records it the same way; a copy of a file the change leaves alone is a new path. One that moved from another type, or from an unclassified path, has a count of 0, so a reference moved into a README brings every value table in as new. Every line of an introduced pair fails the lane; an inherited pair warns. Renaming the heading over an inherited table keeps the count; a second table raises it. CRLF line ends are normalized, not judged.
+
+Every selected file is parsed, classified or not. A fence, front matter, HTML comment or prompt-section block left open fails, keyed by md-blocks' refusal (`fence-unclosed=<path>:<line>`), since nothing past it can be judged.
+
+| Condition | Lane scopes | `--as` | `--route` |
+|---|---|---|---|
+| An introduced finding, or an unended file | 1 | 1, any finding | n/a |
+| Only inherited findings | 0, warns | n/a | n/a |
+| No docs-writing | 0, `gap=docs-writing-missing` | 2 | 2 |
+| docs-writing breaks the route-table contract | 0, `rules=unreadable detector=<d> path=<file>` | 2 | 2 |
+
+A lane gap is exit 0 because docs-writing is a render the committer cannot edit; the audit's `--as` refuses, so an unread rule set is never reported clean. The detectors are `unended` (a SKILL.md the block parser cannot end), `route-table` (no such table, or more than one), `cells`, `type` and `shape` (a row the table contract cannot read), `link` (a linked reference or example missing), `order` (an `order` row whose reference has no numbered list or cannot be ended), `example` (an example document the block parser cannot end), and `floor` (no row classifies `README.md`, or none routes to both a reference and an example).
+
+md-type's scopes, from `scripts/lib/md-scope.sh`, are `--staged`, `--base REF`, `--against REF` and `--all` over `COMMIT_GUARDS_MD_PATHS` minus `COMMIT_GUARDS_MD_EXCLUDES`, renders excluded as [SKILL.md § Generated-file exclusions](SKILL.md#generated-file-exclusions) states; with no flag, `COMMIT_GUARDS_MD_SCOPE` decides. md-type alone detects renames at git's default similarity, and copies from the files the change modifies, in every scope, so every moved file is judged at its new path against the path it moved from, an unchanged move included: the bare `touched` run counts a staged move as staged, and `--all` measures a staged move against the HEAD path it left. The batch hands it `--staged` at commit and the range a caller hands under either `COMMIT_GUARDS_MD_SCOPE`, or `--against` the ref a `--history REF` caller names: a sweep at push, where the index equals HEAD, would find nothing introduced, so a `--skip-unscoped` run with no range to hand it withholds it by name. `--route PATH` prints `type=`, `reference=` and `example=` lines, or `route=ignored`, `route=outside-repo`, or `route=unclassified` with `skill=`; it runs only `git rev-parse` and `git check-ignore` in the path's repository. A path under a `.git` entry that git cannot read, or where git cannot run, is exit 2 `route-repo=<dir>` with git's message. `[--root REPO] --as PATH FILE` judges FILE, `-` for stdin, as PATH with docs-writing read from REPO's install first; repeated pairs are judged in order with the rules read once, each followed by `judged=<n>`.
+
+## md-reflow
+
+`md-reflow` writes a markdown file in one format: one paragraph per line and one list item per line, blank lines between paragraphs, list blocks, headings and fences, and no trailing-double-space break. No lane refuses a file off the format; `md-reflow --check` names one.
+
+The grammar is `scripts/lib/md-blocks.awk`'s, with the line-shape predicates in `scripts/lib/md-shapes.awk`; md-reflow, md-refs and md-type read by that pair:
 
 - Front matter (`---` on line 1 to the next `---` line) is skipped.
 - A fence opens on three or more backticks or tildes (a backtick run whose info string holds a backtick opens nothing) and closes on a run of the same character at least as long, alone on its line; every line between is skipped. A fence opened inside a blockquote closes when the quote ends.
@@ -145,24 +177,7 @@ The grammar is `scripts/lib/md-blocks.awk`'s, with the line-shape predicates in 
 - A blockquote's `>` markers are stripped and its content judged by the same rules. A change of depth is a boundary, except a paragraph line at a lower depth directly under a quoted paragraph line, its lazy continuation; a heading or fence closer beside the change still needs its blank line.
 - Anything else is a paragraph line.
 
-Violations, each naming file, line and rule:
-
-- a paragraph line directly under a paragraph or list item line;
-- a heading, a fence or a list item directly under a paragraph or list line;
-- a heading, or a fence closer, not followed by a blank line;
-- a heading not preceded by a blank line, an HTML block line excepted;
-- a paragraph or list line ending in two or more spaces;
-- a CRLF line ending, after which the file is not judged.
-
-An unterminated fence, front matter, HTML comment or prompt-section block is a violation naming the file and opening line, after which the rest of the file is not judged.
-
-The render paths `.kendex-generated.json` lists are not judged, read at the first markdown path the scope selects; an inventory that cannot be read follows [SKILL.md § Generated-file exclusions](SKILL.md#generated-file-exclusions).
-
-`--staged` judges every markdown file the staged diff adds, modifies or type-changes, in full, from the index, renames held to exact content. `--base REF` and `--against REF` judge the same over a commit range, byte-ceiling's dots: three for what the branch adds over the ancestor it and REF share, two for what the change would do to REF's own tree. `--all` judges every tracked file `COMMIT_GUARDS_MD_PATHS` names minus `COMMIT_GUARDS_MD_EXCLUDES`. With no flag, `COMMIT_GUARDS_MD_SCOPE` decides: `touched` is `--staged`, judging nothing when nothing is staged; `all` is `--all`. The commit batch hands the lane `--staged`. A range-scoped batch hands it the range only under `touched`; under `all` it hands `--all`, since a range would answer a narrower question than the scope the project configured. The push batch withholds the lane where it has no range and the scope is `touched`.
-
-### md-reflow
-
-`scripts/md-reflow [--check] PATH...`, or `--staged` or `--all` with md-format's selection, rewrites the work-tree copy: the lines of a paragraph, a list item and a blockquote paragraph join with single spaces, a trailing-double-space break joins away, and a missing blank line goes before a heading, fence or list that follows a paragraph line, on both sides of a heading, and after a fence closer. Skipped blocks and one-line definitions come out byte-identical, as does a clean file; a file with no trailing newline keeps none. A rewritten file passes md-format and a second rewrite changes nothing. `--check` writes nothing and exits 1 naming each file a rewrite would change. A CRLF file, a symlink and a file holding a NUL are refused at exit 2. A PATH is taken from the current directory and must lie inside the repository.
+`scripts/md-reflow [--check] PATH...`, or `--staged` or `--all` over the files `scripts/lib/md-scope.sh` selects from `COMMIT_GUARDS_MD_PATHS` minus `COMMIT_GUARDS_MD_EXCLUDES`, rewrites the work-tree copy: the lines of a paragraph, a list item and a blockquote paragraph join with single spaces, a trailing-double-space break joins away, and a missing blank line goes before a heading, fence or list that follows a paragraph line, on both sides of a heading, and after a fence closer. `--staged` holds renames to exact content, so an unchanged move is not taken; `--all` takes every matching tracked file, an unchanged move included. Skipped blocks and one-line definitions come out byte-identical, as does a clean file; a file with no trailing newline keeps none. A second rewrite changes nothing. `--check` writes nothing and exits 1 naming each file a rewrite would change. A CRLF file, a symlink and a file holding a NUL are refused at exit 2. A PATH is taken from the current directory and must lie inside the repository.
 
 ## md-refs
 
@@ -184,7 +199,7 @@ A source file carries the same citations outside markdown, and they are judged t
 - One `git grep` over the index names the files this pass opens: a file whose bytes do not hold the section sign holds none of these citations, so it is counted without being read. A carrier whose content is binary is counted as unmeasured, as the other lanes count theirs. md-refs breaks its count out by reason on the summary line (`skipped=503 symlink=503`) and names one skipped path anyway where a judged reference lands on it; `--verbose` names every one.
 - A carrier the extractor cannot read is named `extraction=<path>:<cause>` with the reader's `comment-reader:` cause and `citations=unjudged`, and counted on the summary line as `extraction`: no citation in that file was judged, so the citation is not what to edit. The reader's gap is the package's, so the run does not fail for it.
 
-A Markdown file the block parser cannot end, a fence, front matter or block left open, is named `unjudged=<rule>:<path>:<line>` and counted as `malformed`; md-format is the gate for that construct. A heading or anchor reference into a target the parser cannot end prints `unmeasured=<target>:unread` in place of a dead verdict. `--strict` refuses each of these as `incomplete=files=<n>`, exit 2: the catalog install check is where a package's author judges its own files.
+A Markdown file the block parser cannot end, a fence, front matter or block left open, is named `unjudged=<rule>:<path>:<line>` and counted as `malformed`; md-type is the gate for that construct. A heading or anchor reference into a target the parser cannot end prints `unmeasured=<target>:unread` in place of a dead verdict. `--strict` refuses each of these as `incomplete=files=<n>`, exit 2: the catalog install check is where a package's author judges its own files.
 
 `--staged` and `--all` check every tracked file named by `COMMIT_GUARDS_MD_REFS_PATHS` or `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, each with the globs its `_EXTRA` setting adds, minus `COMMIT_GUARDS_MD_EXCLUDES`. `--base REF` and `--against REF` check that same set when the commit range carries any change, including a deletion, and nothing when it carries none; the dots are byte-ceiling's. With no flag, `COMMIT_GUARDS_MD_SCOPE=touched` checks the set when any change is staged, including deletions; `all` checks it unconditionally, and a range-scoped batch hands the lane `--all` under that setting rather than a range. Every scope that checks anything checks the whole set, so this includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.
 

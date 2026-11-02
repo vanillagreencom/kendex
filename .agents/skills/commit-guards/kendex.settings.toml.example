@@ -6,7 +6,7 @@
 # set; delete a name to turn that one off. A project can add the optional
 # byte-ceiling, prose and comments checks by name. Commit-msg never runs in
 # this batch. What each name refuses is in the skill's CHECKS.md.
-COMMIT_GUARDS_CHECKS = "todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
+COMMIT_GUARDS_CHECKS = "todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
 
 # Kilobytes one tracked binary file may reach before a commit carrying it
 # is refused. An oversized binary file may hold or shrink, but never grow.
@@ -41,16 +41,18 @@ COMMIT_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 # say [no-changelog] in its subject line. Empty turns the rule off.
 COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
-# How much markdown these two checks read when nothing tells them otherwise.
-# Under "touched" the formatting check reads the changed documents and the
-# link check reads every configured document whenever anything is staged.
-# "all" reads every matching file in the project, every time.
+# How much markdown the shape and link checks read when nothing tells them
+# otherwise. Before a commit or push, the shape check reads the changed
+# documents under either value. Under "touched" the link check reads every
+# configured document whenever anything is staged; "all" has it read them
+# every time. A shape check run by hand with no scope reads every matching
+# file under "all".
 # values: touched | all
 COMMIT_GUARDS_MD_SCOPE = "touched"
 
-# The markdown the formatting check reads in a full sweep, as path patterns
-# separated by spaces. The excludes list carves out files these patterns
-# would otherwise pull in.
+# The markdown the shape check and the reflow tool's full sweep read, as
+# path patterns separated by spaces. The excludes list carves out files these
+# patterns would otherwise pull in.
 COMMIT_GUARDS_MD_PATHS = "*.md"
 
 # The markdown whose links are checked, as path patterns separated by

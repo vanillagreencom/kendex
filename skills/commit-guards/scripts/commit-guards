@@ -40,15 +40,15 @@ source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/md-scope.sh
 source "$SCRIPT_DIR/lib/md-scope.sh"
 
-KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets comments commit-msg"
+KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-type md-refs py-names secrets comments commit-msg"
 # Binary size is opt-in because no proven failure requires a default ceiling.
-BATCH_DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
+BATCH_DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
 # The checks the batch hands --staged when it is asked for commit scope.
 # todo-ban and comments default to the whole index, which is a CI subject:
-# at commit each judges what the commit adds. md-format judges touched
+# at commit each judges what the commit adds. md-type judges touched
 # documents; md-refs checks every configured document for broken incoming
 # references. The rest read the index by design.
-STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs py-names secrets comments"
+STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-type md-refs py-names secrets comments"
 # byte-ceiling, py-names and secrets are the batch lanes whose bare default is
 # the commit scope, so the full batch names their scope outright: --all with
 # no flag. A batch summary that listed one clean over a scope it never read
@@ -61,20 +61,33 @@ FULL_SCOPED_CHECKS="byte-ceiling py-names secrets"
 # files each judges.
 # changelog-entries uses the range's prior versions against the index; its
 # fragment scan stays index-wide.
-# A markdown lane takes one only where its configured scope is `touched`,
-# which selects from the staged diff and so opens no file at a caller that
-# stages nothing; the range is what gives it a document a replay carried in.
-# Under COMMIT_GUARDS_MD_SCOPE=all its configured scope is the whole-tree
-# sweep, which is WIDER than any range, and scope_for hands it that sweep
-# instead — a range there would answer a smaller
-# question under the setting's name.
-RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"
+# md-refs takes one only where its configured scope is `touched`, which
+# selects from the staged diff and so opens no file at a caller that stages
+# nothing; the range is what gives it a document a replay carried in. Under
+# COMMIT_GUARDS_MD_SCOPE=all its configured scope is the whole-tree sweep,
+# which is WIDER than any range, and scope_for hands it that sweep instead —
+# a range there would answer a smaller question under the setting's name.
+# md-type takes the range under every setting: CHANGE_SCOPED_CHECKS below.
+RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-type md-refs py-names secrets"
+# The markdown lanes whose verdict compares a change with its base: a
+# finding blocks only where the change raised its count. A whole-tree sweep
+# at push, where the index equals HEAD, finds nothing introduced, so these
+# take the range a caller hands under every COMMIT_GUARDS_MD_SCOPE, as
+# byte-ceiling does, and a --skip-unscoped run that hands no range withholds
+# them under every setting: their bare run compares the index with HEAD.
+CHANGE_SCOPED_CHECKS="md-type"
+# Checks this package no longer ships, read until its next major release: a
+# setting or a call naming one is dropped with one retired-check warning,
+# never check-unknown, and counts toward no exit. md-format's style refusals
+# prevented no harm; md-reflow --check names a file off the format.
+RETIRED_CHECKS="md-format"
 # The range lanes whose baseline is the branch's base rather than the tree
 # the range lands on: changelog-entries asks which version increases the
-# branch made. A caller that knows that base hands it as --history, and these
-# lanes take --against it in place of the range: the push hook's remote head
-# can predate base commits the branch carries, which it never authored.
-HISTORY_SCOPED_CHECKS="changelog-entries"
+# branch made, md-type which shape findings it introduced. A caller that
+# knows that base hands it as --history, and these lanes take --against it in
+# place of the range: the push hook's remote head can predate base commits
+# the branch carries, which it never authored.
+HISTORY_SCOPED_CHECKS="changelog-entries md-type"
 # Withheld by a --skip-unscoped run, the push hook's: ../CHECKS.md § secrets.
 PUSH_WITHHELD_CHECKS="secrets"
 
@@ -112,6 +125,10 @@ any check that ran and could not complete.
 EOF
 }
 
+retired_notice() { # CHECK
+  gg_message retired-check "$1" "$1 was removed from commit-guards. md-reflow --check names a Markdown file that departs from the one-paragraph-per-line format, and md-type judges a file's shape. Remove $1 from COMMIT_GUARDS_CHECKS."
+}
+
 SCOPE_MODE="all"
 BASE_REF=""
 SKIP_UNSCOPED=0
@@ -126,6 +143,12 @@ if [ $# -ge 1 ]; then
     *)
       CHECK="$1"
       shift
+      case " $RETIRED_CHECKS " in
+        *" $CHECK "*)
+          retired_notice "$CHECK"
+          exit 0
+          ;;
+      esac
       case " $KNOWN_CHECKS " in
         *" $CHECK "*)
           # The batch's package-incomplete rule, for one check by name.
@@ -196,6 +219,21 @@ CHECKS="$(gg_setting COMMIT_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
 case "$CHECKS" in
   *[!\ ]*) ;;
   *) gg_fail checks-empty "COMMIT_GUARDS_CHECKS" "COMMIT_GUARDS_CHECKS resolved empty — name at least one check or unset it" ;;
+esac
+KEPT=""
+for c in $CHECKS; do
+  case " $RETIRED_CHECKS " in
+    *" $c "*) retired_notice "$c" ;;
+    *) KEPT="${KEPT:+$KEPT }$c" ;;
+  esac
+done
+CHECKS="$KEPT"
+case "$CHECKS" in
+  *[!\ ]*) ;;
+  *)
+    gg_message unrun-all "retired" "Every check COMMIT_GUARDS_CHECKS names is retired, so nothing ran."
+    exit 0
+    ;;
 esac
 for c in $CHECKS; do
   case "$c" in
@@ -301,21 +339,28 @@ scope_for() { # CHECK
   # A range is NARROWER than the whole-tree sweep. A lane whose CONFIGURED
   # scope is that sweep must therefore never be handed one: the project chose
   # an absolute scope, and answering a smaller question under its name is a
-  # refusal turning into a pass — a document already over the format rules,
-  # untouched by the range, reads clean. The sweep is handed over explicitly
-  # rather than left for the lane's own default to rediscover, so the batch's
+  # refusal turning into a pass — md-refs judges a range only when it
+  # carries a change, so over an empty range a dead reference the range never
+  # touched reads clean. The sweep is handed over explicitly rather than left
+  # for the lane's own default to rediscover, so the batch's
   # step line names the scope the lane actually read and this function stays
   # an honest answer to what the run gives a check.
   #
   # byte-ceiling, py-names and secrets are unaffected either way: none defers
   # to the selector, and a range is the question each was written to answer.
-  if defers_to_md_selector "$1"; then
-    md_bare_scope
-    if [ "$MD_BARE_SCOPE" = all ]; then
-      SCOPE=(--all)
-      return 0
-    fi
-  fi
+  # Nor is a change-scoped lane, whose question is the range's.
+  case " $CHANGE_SCOPED_CHECKS " in
+    *" $1 "*) ;;
+    *)
+      if defers_to_md_selector "$1"; then
+        md_bare_scope
+        if [ "$MD_BARE_SCOPE" = all ]; then
+          SCOPE=(--all)
+          return 0
+        fi
+      fi
+      ;;
+  esac
   case "$SCOPE_MODE" in
     base) SCOPE=(--base "$BASE_REF") ;;
     against) SCOPE=(--against "$BASE_REF") ;;
@@ -328,20 +373,23 @@ scope_for() { # CHECK
 withheld() { # CHECK — 0 for a push-withheld lane, or one handed no scope that reads the staged diff
   case " $PUSH_WITHHELD_CHECKS " in *" $1 "*) return 0 ;; esac
   scope_for "$1"
-  [ "${#SCOPE[@]}" -eq 0 ] && [ "$MD_BARE_SCOPE" = touched ] && defers_to_md_selector "$1"
+  [ "${#SCOPE[@]}" -eq 0 ] || return 1
+  case " $CHANGE_SCOPED_CHECKS " in *" $1 "*) return 0 ;; esac
+  [ "$MD_BARE_SCOPE" = touched ] && defers_to_md_selector "$1"
 }
 
 if [ "$SKIP_UNSCOPED" -eq 1 ]; then
   # Resolved up front: an invalid value is refused in the selector, and a lane
   # withheld before it runs never reaches its own validation. Under `all` a
-  # markdown lane sweeps the tree and needs nothing staged, so it runs.
+  # markdown lane sweeps the tree and needs nothing staged, so it runs,
+  # unless it is change-scoped.
   md_bare_scope
   KEPT=""
   WITHHELD=""
   for c in $CHECKS; do
     if withheld "$c"; then
       WITHHELD="${WITHHELD:+$WITHHELD }$c"
-      gg_message unscoped "$c" "This run withholds the check rather than count it clean: handed no scope it reads only the staged diff and nothing is staged, or it is a lane the push hook never runs."
+      gg_message unscoped "$c" "This run withholds the check rather than count it clean: handed no scope it reads only the staged diff, or compares only the index with HEAD, and nothing is staged; or it is a lane the push hook never runs."
     else
       KEPT="${KEPT:+$KEPT }$c"
     fi

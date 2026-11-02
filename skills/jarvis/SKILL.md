@@ -5,7 +5,7 @@ summary: "Guides a delegated desktop assistant through user decisions, checked r
 license: MIT
 user-invocable: true
 dependencies:
-  required: [communication, mailbox, orch, slack]
+  required: [commit-guards, communication, docs-writing, mailbox, orch, slack]
   optional: [linear]
   agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch, publicist]
   commands:
@@ -149,7 +149,7 @@ Read the linked workflow or reference for the task before acting.
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
-| Report committed Markdown growth for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
+| Report committed Markdown growth and shape for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |

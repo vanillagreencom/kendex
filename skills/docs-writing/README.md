@@ -21,7 +21,9 @@ kendex also installs decider, which supplies the decision-record format.
 
 ## How it works
 
-The author identifies the document type and reads its rules and its example in [SKILL.md](SKILL.md). The author checks existing claims against the code. A focused change edits only the affected text; a rewrite extracts what is unique, then writes from a blank page. Installed markdown guards check formatting and references after the change.
+The author finds the document type in the table in [SKILL.md](SKILL.md), then reads that type's rules and its example. The author checks existing claims against the code. A focused change edits only the affected text; a rewrite extracts what is unique, then writes from a blank page.
+
+On the first Markdown edit of a session, the docs-writing-note hook names that file's type, rules and example once. It never blocks the edit. When the change is committed or pushed, the commit-guards md-type check refuses a shape the table rules out for that type, such as a settings table in a README, and md-refs checks references. kendex delivers the skill and the hook by refresh, so a repository needs no `AGENTS.md` line that sends Markdown edits here. The workflow and commit-guards bundles carry both.
 
 ## Setup
 

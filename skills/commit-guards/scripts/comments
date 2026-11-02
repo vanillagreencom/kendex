@@ -262,11 +262,10 @@ index_lane() {
 }
 
 # --- staged scope ------------------------------------------------------------
-# A, M and T, renames held to exact content as todo-ban holds them: a pure
-# move adds no line, a file that moved and changed is read whole. Comment
-# text is extracted from the WHOLE staged blob, because a block comment's
-# state comes from lines the commit did not touch, and only hits on the
-# lines the diff adds are reported.
+# The staged walk in GG_WALK_RENAMES' exact mode: a pure move adds no line, a
+# file that moved and changed is read whole. Comment text is extracted from
+# the WHOLE staged blob, because a block comment's state comes from lines the
+# commit did not touch, and only hits on the lines the diff adds are reported.
 staged_file() { # PATH BLOBFILE SHA
   local f="$1" blob="$2" allow rec
   family_or_skip "$f" "$blob" || return 0

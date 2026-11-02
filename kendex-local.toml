@@ -681,6 +681,11 @@ source = "."
 harnesses = ["claude", "pi"]
 enabled = true
 
+[hooks.docs-writing-note]
+source = "."
+harnesses = ["claude", "codex", "pi"]
+enabled = true
+
 [hooks.reviewer-stop-check]
 source = "."
 harnesses = ["claude", "codex", "copilot"]

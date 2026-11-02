@@ -1,13 +1,16 @@
 # shellcheck shell=bash
-# The scope the markdown lanes share: which files a run judges, and where it
-# reads them. Sourced by md-format, md-refs and md-reflow after lib/common.sh
+# The scopes the markdown lanes share: which files a run judges, and where it
+# reads them. Sourced by md-type, md-refs and md-reflow after lib/common.sh
 # and lib/settings.sh; the caller runs under `set -f`, has cd'd to the
 # repository root, and calls gg_tmpdir before selecting.
 #
+# Each lane keeps its own rename policy, GG_MD_RENAMES below. The staged and
+# range scopes select by it; --all selects every matching tracked file under
+# either policy and reads it only to name a moved file's source.
+#
 # Four scopes, one setting:
-#   --staged   every markdown file the staged diff adds, modifies or
-#              type-changes, renames held to exact content as byte-ceiling
-#              holds them, judged in full from the index
+#   --staged   every markdown file the staged diff changes, renames as
+#              GG_MD_RENAMES selects them, judged in full from the index
 #   --base REF the same files over a commit range, three dots: what the
 #              branch ADDS over the ancestor it and REF share
 #              (the scopes are exclusive: naming two is exit 2 scope-flags,
@@ -19,8 +22,9 @@
 #              a flag name is two answers behind one word
 #   --all      every tracked markdown file matching the lane's path globs
 #   neither    COMMIT_GUARDS_MD_SCOPE decides: `touched` (the default) is
-#              --staged, and with nothing staged the lane judges nothing
-#              and says so; `all` is --all. gg_md_bare_scope reports which,
+#              --staged, and with no staged change under the lane's rename
+#              policy the lane judges nothing and says so; `all` is --all.
+#              gg_md_bare_scope reports which,
 #              for a caller that has to know before running the lane
 #
 # The range scopes are what the pre-push lane hands these lanes: nothing is
@@ -37,6 +41,13 @@
 
 GG_MD_SCOPE_DEFAULT="touched"
 GG_MD_EXCLUDES_DEFAULT="tools/md-excludes"
+
+# The lane's rename policy, one of the GG_WALK_RENAMES modes that
+# configured-paths.sh states, set by the lane before gg_md_scope; `exact`
+# unless the lane sets another. md-type sets `detect` and states why. The
+# staged trigger, the diff walks and the --all sweep all read this one value,
+# so no scope can select or measure a file without its rename source.
+GG_MD_RENAMES=exact
 
 # What a run with no scope flag resolves to, without resolving it.
 #
@@ -129,7 +140,7 @@ gg_md_scope_exclusive() {
 # scope with nothing staged, already announced on stdout. A range scope also
 # sets GG_MD_RANGE to the diff range, which gg_md_select hands the walk.
 gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
-  local lane="$1" staged="$2" all="$3" setting
+  local lane="$1" staged="$2" all="$3" setting status
   GG_MD_RANGE=""
   gg_md_scope_exclusive
   if [ -n "$GG_MD_RANGE_KIND" ]; then
@@ -155,12 +166,24 @@ gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
       ;;
   esac
   gg_require_merged_index
-  if git diff --cached --quiet --diff-filter=AMT 2>/dev/null; then
-    GG_MD_MODE=none
-    gg_message staged-count 0 "Nothing is staged for $lane. Use --all to check the configured files."
-    return 0
-  fi
-  GG_MD_MODE=staged
+  # The staged walk's own diff, so the trigger and the walk cannot disagree
+  # about a move: a bare --diff-filter=AMT under git's default rename
+  # detection drops every R record, an unchanged move and an edited one alike.
+  # --exit-code with the names discarded, never --quiet: git 2.54's --quiet
+  # stops before rename pairing, so a move reaches the filter as an addition
+  # and a deletion, never as the walk's pair.
+  GG_WALK_RENAMES="$GG_MD_RENAMES"
+  gg_walk_diff_flags
+  status=0
+  git diff --cached --exit-code --name-only "${GG_WALK_DIFF[@]}" >/dev/null || status=$?
+  case "$status" in
+    0)
+      GG_MD_MODE=none
+      gg_message staged-count 0 "Nothing is staged for $lane. Use --all to check the configured files."
+      ;;
+    1) GG_MD_MODE=staged ;;
+    *) gg_fail staged-read "$status" "Git could not read the staged changes." ;;
+  esac
 }
 
 # Load the lane's path globs and the shared excludes list. EXTRA-KEY names a
@@ -178,15 +201,18 @@ gg_md_load_paths() { # LANE KEY DEFAULT [EXTRA-KEY]
   gg_load_excludes "$excludes"
 }
 
-# The selected files, as alternating "sha NUL path NUL" records in
-# $GG_TMP/md-files.z, every one a text blob the lane may read. Sets
+# The selected files, as "sha NUL path NUL source NUL" records in
+# $GG_TMP/md-files.z, every one a text blob the lane may read; source is the
+# path the walk paired it with under GG_WALK_RENAMES, else empty. Sets
 # GG_MD_COUNT; the skips are counted in GG_WALK_SKIPPED.
 gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
   local noun="$1"
+  GG_WALK_RENAMES="$GG_MD_RENAMES"
   GG_MD_COUNT=0
   : >"$GG_TMP/md-files.z"
   case "$GG_MD_MODE" in
     all)
+      gg_md_staged_moves
       gg_walk_configured_paths "$noun" file gg_md_take
       ;;
     staged)
@@ -199,10 +225,38 @@ gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
   esac
 }
 
-# One selected file: the walk and the staged loop both hand the path, the
-# blob file and the sha.
+# The sweep reads index entries, which carry no rename, while its baseline is
+# HEAD: under `detect` a file the index holds at a new path is still measured
+# against the source the staged walk pairs it with. The staged moves are that
+# walk's own records and pairing, destination and source in parallel arrays
+# (Bash 3.2 has no map), read once per sweep. Under `exact` the sweep names no
+# source, as the exact walks name none.
+GG_MD_MOVED_TO=()
+GG_MD_MOVED_FROM=()
+gg_md_staged_moves() {
+  GG_MD_MOVED_TO=()
+  GG_MD_MOVED_FROM=()
+  [ "$GG_MD_RENAMES" = detect ] || return 0
+  gg_walk_staged_raw
+  while gg_walk_read_record; do
+    [ -n "$GG_WALK_SRC" ] || continue
+    GG_MD_MOVED_FROM+=("$GG_WALK_SRC")
+    GG_MD_MOVED_TO+=("$GG_WALK_PATH")
+  done <"$GG_TMP/raw.z"
+}
+
+# One selected file: every walk hands the path, the blob file and the sha;
+# the diff walks set GG_WALK_SRC, and the sweep's source is its staged move.
 gg_md_take() { # PATH BLOBFILE SHA
-  printf '%s\0%s\0' "$3" "$1" >>"$GG_TMP/md-files.z"
+  local src="$GG_WALK_SRC" i=0
+  while [ "$i" -lt "${#GG_MD_MOVED_TO[@]}" ]; do
+    if [ "${GG_MD_MOVED_TO[i]}" = "$1" ]; then
+      src="${GG_MD_MOVED_FROM[i]}"
+      break
+    fi
+    i=$((i + 1))
+  done
+  printf '%s\0%s\0%s\0' "$3" "$1" "$src" >>"$GG_TMP/md-files.z"
   GG_MD_COUNT=$((GG_MD_COUNT + 1))
 }
 
@@ -236,7 +290,8 @@ gg_md_lock_paths() { # OUTPUT: newline-separated emitted paths
     || gg_fail_cause lock-paths .kendex-lock.json "$GG_TMP/lock.err" "Could not read emitted paths from .kendex-lock.json."
 }
 
-# Present the shared block-parser enum without putting prose in its records.
+# Present the shared block parser's refusal enum without putting prose in its
+# records.
 gg_md_block_message() { # RULE PATH LINE — sets GG_MD_RULE and GG_MD_DETAIL
   local rule="$1" path="$2" line="$3"
   GG_MD_RULE="${rule%%:*}"
@@ -245,14 +300,6 @@ gg_md_block_message() { # RULE PATH LINE — sets GG_MD_RULE and GG_MD_DETAIL
     block-unclosed:*) GG_MD_DETAIL="$GG_MD_DETAIL:${rule#*:}" ;;
   esac
   case "$GG_MD_RULE" in
-    heading-before) GG_MD_EXPLANATION="Put a blank line before the heading." ;;
-    heading-after) GG_MD_EXPLANATION="Put a blank line after the heading." ;;
-    fence-before) GG_MD_EXPLANATION="Put a blank line before the fence." ;;
-    fence-after) GG_MD_EXPLANATION="Put a blank line after the fence." ;;
-    list-before) GG_MD_EXPLANATION="Put a blank line before the list." ;;
-    paragraph-wrap) GG_MD_EXPLANATION="Put the whole paragraph on one line." ;;
-    item-wrap) GG_MD_EXPLANATION="Put the whole list item on one line." ;;
-    trailing-space) GG_MD_EXPLANATION="Remove the trailing double-space break." ;;
     crlf) GG_MD_EXPLANATION="Use LF line endings. The file cannot be read past this line." ;;
     fence-unclosed) GG_MD_EXPLANATION="Close the fence before the file ends." ;;
     front-unclosed) GG_MD_EXPLANATION="Close the front matter before the file ends." ;;
