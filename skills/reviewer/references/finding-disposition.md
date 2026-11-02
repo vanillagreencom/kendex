@@ -86,7 +86,7 @@ When a same-surface bundle or umbrella parent already exists, residue attaches t
 
 ## Review pipeline
 
-**Finding schema.** [`../schemas/review-finding.md`](../schemas/review-finding.md), enforced by `review-artifact-check`. Routing reads `verdict` (`action_required` when blockers exist, else `pass`) and each suggestion's `category` ∈ {`fix`, `issue`}. A practice or design finding's code-quality evaluation line ends its `description`, so the body of an issue filed from it and the recorded entry of a decline carry the line; § Decision flow and § Filing bar judge the finding without it.
+**Finding schema.** [`../schemas/review-finding.md`](../schemas/review-finding.md), enforced by `review-artifact-check`. Routing reads `verdict` (`action_required` when blockers exist, else `pass`) and each suggestion's `category` ∈ {`fix`, `issue`}.
 
 **Disposition.** Classify each suggestion by § Decision flow: apply in-PR, file as a tracked issue, or decline with one line. The filing bar is § Filing bar.
 
