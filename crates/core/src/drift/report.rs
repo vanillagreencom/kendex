@@ -234,7 +234,7 @@ impl Remedy {
     }
 
     /// Whether this verb takes `--project-path`, the flag that puts the
-    /// project a write lands in into the command's own words. The four
+    /// project a write lands in into the command's own words. The
     /// whole-scope verbs have it; the rest reach a project only by being
     /// typed inside it.
     pub fn takes_project_path(&self) -> bool {
@@ -242,6 +242,7 @@ impl Remedy {
             self,
             Remedy::Apply { .. }
                 | Remedy::ReplaceUnmanaged { .. }
+                | Remedy::UpdatePi { .. }
                 | Remedy::Refresh { .. }
                 | Remedy::Updates { .. }
                 | Remedy::Plan { .. }
@@ -314,14 +315,12 @@ impl Remedy {
                     false => "",
                 }
             ),
-            // Its own scope spelling, so `place` says nothing here.
-            Remedy::UpdatePi { global } => format!(
-                "kendex update-pi --scope {}",
-                match global {
-                    true => "global",
-                    false => "project",
-                }
-            ),
+            // Its own scope spelling: it has no `--global`, and its
+            // default scope is both, so `--scope` is always said.
+            Remedy::UpdatePi { global: true } => "kendex update-pi --scope global".to_owned(),
+            Remedy::UpdatePi { global: false } => {
+                format!("kendex update-pi --scope project{place}")
+            }
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
             Remedy::Updates { .. } => format!("kendex updates{place}"),
             Remedy::DriftHook { global } => format!(

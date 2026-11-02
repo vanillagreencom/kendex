@@ -10,7 +10,7 @@ use super::engine_common::{
     Confirmation, PlanApplication, before_writing, confirm_before_writing, confirm_plan_and_apply,
     print_synced, refresh_failures, require_yes_in_non_interactive, write_report,
 };
-use super::ledger::{Folded, Wrote, say_ledger};
+use super::ledger::{Folded, Wrote, say_ledger_with};
 use super::offers::Reached;
 use super::update_pi::{Pending, PendingChange};
 use super::{CliResult, resolve_scopes_at, scope_label};
@@ -221,10 +221,11 @@ fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<
     record_snapshots(env, reached);
     super::engine_common::tidy_trash(env);
     for scope in closing {
-        say_ledger(
+        say_ledger_with(
             &scope.scope,
             refreshed(scope.count),
             &scope.attention.blocked,
+            scope.attention.update_pi,
             &scope.scored,
             match scope.attention.folded {
                 true => Folded::BehindVerbose,

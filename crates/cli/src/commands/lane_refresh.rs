@@ -184,13 +184,15 @@ fn writing_scopes<'a>(
         Command::UpdatePi {
             check: false,
             scope,
+            target,
             ..
         } => (
-            resolve_scopes(
+            resolve_scopes_at(
                 env,
                 ScopeFilter::resolve(scope.as_deref(), false, ScopeFilter::All)?,
+                target.path(),
             )?,
-            None,
+            Some(target),
         ),
         Command::Source(args) if args.writes_project() => {
             (resolve_scopes(env, args.effective_scope()?)?, None)

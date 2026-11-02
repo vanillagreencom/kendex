@@ -18,7 +18,7 @@ use std::io::IsTerminal;
 use kendex_core::engine::ItemSafety;
 use kendex_core::model::{ItemKind, Scope};
 
-use super::offers::{Blocked, finish_with};
+use super::offers::{Blocked, UpdatePiLeft, finish_with, update_pi_with};
 use super::scope_label;
 use crate::ui;
 
@@ -47,11 +47,11 @@ fn items(scored: &[ItemSafety], has: impl Fn(&ItemSafety) -> bool) -> usize {
 }
 
 /// What a run wrote, in its own verb. `None` where the plan had nothing
-/// to do — which is a current scope only where nothing was refused
-/// either, since a plan empty *because* every write was refused is not a
-/// scope that is up to date.
-fn wrote(verb: &str, count: Option<usize>, skipped: usize) -> String {
-    match (count, skipped) {
+/// to do — which is a current scope only where nothing was refused or
+/// left for another verb either, since a plan empty *because* every write
+/// was refused is not a scope that is up to date.
+fn wrote(verb: &str, count: Option<usize>, outstanding: usize) -> String {
+    match (count, outstanding) {
         (None, 0) => "up to date".to_owned(),
         (None, _) => format!("{verb} 0 changes"),
         (Some(n), _) => format!("{verb} {n} change{}", plural(n)),
@@ -94,7 +94,20 @@ pub fn say_ledger(
     scored: &[ItemSafety],
     folded: Folded,
 ) {
-    let (line, steps) = ledger(scope, wrote, blocked, scored, folded);
+    say_ledger_with(scope, wrote, blocked, None, scored, folded);
+}
+
+/// [`say_ledger`] for a verb whose plan can leave Pi packages for
+/// `update-pi`, which its own write never installs: `apply` and `refresh`.
+pub fn say_ledger_with(
+    scope: &Scope,
+    wrote: Wrote<'_>,
+    blocked: &[Blocked],
+    update_pi: Option<UpdatePiLeft>,
+    scored: &[ItemSafety],
+    folded: Folded,
+) {
+    let (line, steps) = ledger(scope, wrote, blocked, update_pi, scored, folded);
     ui::ledger(&line, &steps);
 }
 
@@ -102,8 +115,14 @@ pub fn say_ledger(
 /// carries no next step: the conflict lines above it are where the ways
 /// out are printed, and a closing line naming one of them again is the
 /// same sentence twice on one screen.
-pub fn say_preview(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
-    let (line, _) = ledger(scope, wrote, blocked, scored, Folded::None);
+pub fn say_preview(
+    scope: &Scope,
+    wrote: Wrote<'_>,
+    blocked: &[Blocked],
+    update_pi: Option<UpdatePiLeft>,
+    scored: &[ItemSafety],
+) {
+    let (line, _) = ledger(scope, wrote, blocked, update_pi, scored, Folded::None);
     ui::ledger(&line, &[]);
 }
 
@@ -111,13 +130,15 @@ fn ledger(
     scope: &Scope,
     said: Wrote<'_>,
     blocked: &[Blocked],
+    update_pi: Option<UpdatePiLeft>,
     scored: &[ItemSafety],
     folded: Folded,
 ) -> (String, Vec<ui::Step>) {
     let skipped = blocked.len();
+    let left = update_pi.map_or(0, |left| left.count);
     let flagged = flagged(scored);
     let unread = unread(scored);
-    let mut parts = vec![wrote(said.verb, said.count, skipped)];
+    let mut parts = vec![wrote(said.verb, said.count, skipped + left)];
     let mut steps: Vec<ui::Step> = Vec::new();
     // What this run's commit offer did in this project, read back off the
     // run's own record rather than passed down by each verb: the part has
@@ -129,6 +150,19 @@ fn ledger(
             plural(skipped)
         ));
         steps.push(ui::Step::Decision(conflict_exit(scope, blocked)));
+    }
+    // The one action that settles them, and the scope's finish where no
+    // conflict is left beside them; the take-over's completion is never
+    // named beside them (`engine::completion`), so one finish is said.
+    if let Some(update_pi) = update_pi {
+        parts.push(format!(
+            "left {left} Pi package{} for update-pi",
+            plural(left)
+        ));
+        steps.push(ui::Step::Decision(match skipped {
+            0 => update_pi_with("finish-with", scope, update_pi.reached),
+            _ => "left for update-pi — see the settle-with line above".to_owned(),
+        }));
     }
     // A scored run says what safety found either way: a clean scan and
     // a scan nobody ran would otherwise close on the same line. Clean is
@@ -356,7 +390,7 @@ mod tests {
             ),
         ];
         for (case, scored, want) in rows {
-            let (line, _) = ledger(&Scope::Global, wrote(), &[], scored, Folded::None);
+            let (line, _) = ledger(&Scope::Global, wrote(), &[], None, scored, Folded::None);
             assert_eq!(line, format!("global: {want}"), "{case}");
         }
     }

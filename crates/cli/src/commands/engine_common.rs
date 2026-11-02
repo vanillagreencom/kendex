@@ -77,22 +77,23 @@ pub fn print_report(
     report: &EngineReport,
     listing: Listing,
 ) -> Vec<super::offers::Blocked> {
-    print_report_for(env, report, listing, super::offers::Reached::Here)
+    print_report_for(env, report, listing, super::offers::Reached::Here).blocked
 }
 
 /// [`print_report`] for a verb that may have named its project with
-/// `--project-path`, which the completion it prints then names.
+/// `--project-path`, which the completion it prints then names, and that
+/// closes on what the attention report drew.
 pub fn print_report_for(
     env: &Env,
     report: &EngineReport,
     listing: Listing,
     reached: super::offers::Reached,
-) -> Vec<super::offers::Blocked> {
-    let blocked = super::attention::print_attention(env, report, listing, reached).blocked;
+) -> super::attention::Attention {
+    let attention = super::attention::print_attention(env, report, listing, reached);
     ui::report::print(Status::Notice, |style| {
-        report_lines(style, report, !blocked.is_empty())
+        report_lines(style, report, !attention.blocked.is_empty())
     });
-    blocked
+    attention
 }
 
 /// Whether a warning's message is a keyed line that opens with its own

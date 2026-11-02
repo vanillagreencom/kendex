@@ -1,0 +1,1 @@
+- `kendex update-pi` takes `--project-path PATH`, as `refresh` and `apply` do, and registers the project it names after the update; `kendex check` run in a linked worktree names it with the main checkout's path.

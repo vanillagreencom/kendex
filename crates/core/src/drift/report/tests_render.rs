@@ -242,10 +242,10 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             here("kendex updates"),
         ),
         (
-            "update-pi, which has no --project-path form and writes where it is typed",
+            "update-pi, a write that names the main checkout's project",
             Remedy::UpdatePi { global: false },
             here("kendex update-pi --scope project"),
-            elsewhere("kendex update-pi --scope project"),
+            elsewhere("kendex update-pi --scope project --project-path '/w/app'"),
             here("kendex update-pi --scope project"),
         ),
         (

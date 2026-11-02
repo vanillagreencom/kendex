@@ -765,3 +765,86 @@ fn a_version_10_recovery_settles_a_proved_pi_copy_whose_source_moved() {
         );
     }
 }
+
+/// Every `settle-with=` value a run printed: the action beside the Pi
+/// packages a plan leaves for `update-pi`.
+fn settle_with(output: &std::process::Output) -> Vec<String> {
+    super::said(output)
+        .lines()
+        .filter_map(|line| line.split_once("settle-with=").map(|(_, rest)| rest))
+        .map(|rest| rest.trim().to_owned())
+        .collect()
+}
+
+/// A version 10 build installed `pi-widgets`, its source moved on, and
+/// the installed copy was edited by hand, so no proof settles it and only
+/// `update-pi` installs it. Refresh, apply and check name that one action
+/// for the scope, with the project where the run named it; running it
+/// leaves the check clean. Beside a conflict the take-over would replace,
+/// the take-over is no finish: it leaves the Pi package, so no
+/// `finish-with` is named and each keeps its own way out.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_recovery_names_update_pi_for_an_edited_pi_copy() {
+    let edited = "export const version = \"mine\";\n";
+    for (case, beside_a_conflict) in [("alone", false), ("beside a conflict", true)] {
+        let world = pi_widgets_installed();
+        let installed = world.at(".pi/packages/pi-widgets/index.js");
+        super::write(&installed, edited);
+        write_pi_widgets(&world, "2.0.0");
+        if beside_a_conflict {
+            let render = world.at(".agents/skills/deploy/SKILL.md");
+            super::write(&render, &format!("{}\na line of my own\n", read(&render)));
+        }
+        plant_version_10_state(&world);
+        world.commit_all("the record a version 10 build left");
+        let project = world.project.display().to_string();
+        let elsewhere = |args: &[&str]| {
+            let mut named = args.to_vec();
+            named.extend(["--throwaway", "--project-path", &project]);
+            super::kendex(&world.home, &world.home, &named)
+        };
+        let finish = |named: bool| match (beside_a_conflict, named) {
+            (true, _) => Vec::new(),
+            (false, false) => vec!["update-pi".to_owned()],
+            (false, true) => vec![format!("update-pi project={project}")],
+        };
+
+        let refreshed = world.try_run(&["refresh", "--yes"]);
+        let said = super::said(&refreshed);
+        assert!(!refreshed.status.success(), "{case}: {said}");
+        assert_eq!(settle_with(&refreshed), ["update-pi"], "{case}: {said}");
+        assert_eq!(finish_with(&refreshed), finish(false), "{case}: {said}");
+
+        let planned = world.try_run(&["apply", "--plan"]);
+        let said = super::said(&planned);
+        assert_eq!(settle_with(&planned), ["update-pi"], "{case}: {said}");
+
+        let applied = elsewhere(&["apply", "--yes"]);
+        let said = super::said(&applied);
+        let want = format!("update-pi project={project}");
+        assert_eq!(settle_with(&applied), [want.as_str()], "{case}: {said}");
+        assert_eq!(finish_with(&applied), finish(true), "{case}: {said}");
+        assert_eq!(read(&installed), edited, "{case}: {said}");
+
+        let checked = world.try_run(&["check"]);
+        let said = super::said(&checked);
+        assert_eq!(checked.status.code(), Some(1), "{case}: {said}");
+        assert!(
+            said.contains("kendex update-pi --scope project"),
+            "{case}: {said}"
+        );
+        if beside_a_conflict {
+            continue;
+        }
+
+        let updated = elsewhere(&["update-pi"]);
+        assert!(updated.status.success(), "{}", super::said(&updated));
+        assert_eq!(
+            read(&installed),
+            read(&world.catalog.join("pi-extensions/pi-widgets/index.js"))
+        );
+        let clean = world.try_run(&["check"]);
+        assert_eq!(clean.status.code(), Some(0), "{}", super::said(&clean));
+    }
+}

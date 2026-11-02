@@ -8,7 +8,7 @@ use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 use kendex_core::{manifest, pi_ext, settings};
 
-use super::{CliResult, out, resolve_scopes, say};
+use super::{CliResult, out, resolve_scopes_at, say};
 use crate::scope::ScopeFilter;
 
 /// What update-pi found for one declared or installed package.
@@ -84,10 +84,23 @@ struct ScopePlan {
 }
 
 /// Compare every installed Pi package against the source it came from and
-/// reinstall the ones that fell behind.
-pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
+/// reinstall the ones that fell behind, in the project `target` names
+/// where it names one. A named project is registered as `apply` and
+/// `refresh` register theirs: the refusal asked before the first write,
+/// the registration once the write got through
+/// (`project::register_target`).
+pub fn run(
+    env: &Env,
+    filter: ScopeFilter,
+    target: &crate::flags::ProjectTargetFlag,
+    check: bool,
+) -> CliResult {
     let settings = settings::load(env)?;
-    let scopes = resolve_scopes(env, filter)?;
+    let scopes = resolve_scopes_at(env, filter, target.path())?;
+    let registering = match check {
+        true => super::project::Registering::Nothing,
+        false => super::project::target_registrable(env, target, &scopes)?,
+    };
     for scope in &scopes {
         if let Err(error) =
             kendex_core::engine::check_catalog_compatibility(env, scope, &PlanOptions::current())
@@ -129,7 +142,11 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         }
         return Ok(());
     }
-    update(env, &plans)
+    update(env, &plans)?;
+    for plan in &plans {
+        super::project::register_target(env, &registering, &plan.scope)?;
+    }
+    Ok(())
 }
 
 fn updatable(row: &&Row) -> bool {

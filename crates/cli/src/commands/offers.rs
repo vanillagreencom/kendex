@@ -3,7 +3,7 @@
 //! name and the scope it was read in, and it is only produced where
 //! following it would actually settle the item.
 
-use kendex_core::engine::{Completion, DriftCause, DriftRow, EngineReport};
+use kendex_core::engine::{Completion, DriftCause, DriftRow, EngineReport, RowRemedy};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 
@@ -209,7 +209,15 @@ pub fn finish_with(finish: Finish, scope: &Scope) -> String {
     if finish.completion.allow_repo_effects {
         line.push_str(" allow-repo-effects");
     }
-    match (scope, finish.reached) {
+    push_place(&mut line, scope, finish.reached);
+    line
+}
+
+/// The scope an action names: the personal scope by its one flag, a
+/// project by its root where the run named it, and nothing for the
+/// project the command was typed in.
+fn push_place(line: &mut String, scope: &Scope, reached: Reached) {
+    match (scope, reached) {
         (Scope::Global, _) => line.push_str(" global"),
         (Scope::Project { root }, Reached::Named) => {
             line.push_str(" project=");
@@ -217,6 +225,33 @@ pub fn finish_with(finish: Finish, scope: &Scope) -> String {
         }
         (Scope::Project { .. }, Reached::Here) => {}
     }
+}
+
+/// The declared Pi packages a plan leaves for `update-pi`, read off the
+/// rows the engine marks with that remedy, never off their wording. An
+/// apply's write installs no Pi package, so these stay whatever it writes.
+pub fn left_for_update_pi(report: &EngineReport) -> Vec<&DriftRow> {
+    report
+        .drift
+        .iter()
+        .filter(|row| row.remedy == Some(RowRemedy::UpdatePi))
+        .collect()
+}
+
+/// What a plan left for `update-pi` in one scope, and how the run reached
+/// that scope, which the action names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdatePiLeft {
+    pub count: usize,
+    pub reached: Reached,
+}
+
+/// The action that settles every row `left_for_update_pi` returns in one
+/// scope, keyed under `key` as `finish_with` keys the take-over:
+/// `settle-with` beside the rows, `finish-with` where nothing else is left.
+pub fn update_pi_with(key: &str, scope: &Scope, reached: Reached) -> String {
+    let mut line = format!("{key}=update-pi");
+    push_place(&mut line, scope, reached);
     line
 }
 

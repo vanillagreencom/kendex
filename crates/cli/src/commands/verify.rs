@@ -1381,6 +1381,9 @@ fn drift_problem(
                             "{}; its files were edited, which refresh holds — {removal}",
                             row.detail
                         ),
+                        // Only a Stale row carries it, which the arm above
+                        // reads; its detail names update-pi.
+                        RowRemedy::UpdatePi => row.detail.clone(),
                     }
                 }
                 None => row.detail.clone(),

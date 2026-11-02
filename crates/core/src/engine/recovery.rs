@@ -387,10 +387,14 @@ pub fn completion(report: &EngineReport) -> Option<Completion> {
 /// every position it sweeps up or none of them, so it is named only
 /// where the sweep would not refuse, every position it would take was
 /// measured as differing content — a position it would take without a
-/// count is one the reader never saw judged — and no row's take-over
-/// moves a second position the line never named.
+/// count is one the reader never saw judged — no row's take-over moves
+/// a second position the line never named, and no Pi package is left for
+/// `update-pi`, which the take-over does not install.
 fn take_over_settles(drift: &[DriftRow]) -> bool {
     !super::takeover::sweep_would_refuse(drift)
+        && drift
+            .iter()
+            .all(|row| row.remedy != Some(super::RowRemedy::UpdatePi))
         && drift.iter().all(|row| row.also_in_the_way.is_empty())
         && drift
             .iter()

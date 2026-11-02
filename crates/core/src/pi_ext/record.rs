@@ -240,6 +240,9 @@ fn record_matching<'a>(
         let Some(result) = result.transpose() else {
             continue;
         };
+        // The one row only update-pi settles: apply's write never installs
+        // a carrier package.
+        let remedy = matches!(result, Ok(None)).then_some(crate::engine::RowRemedy::UpdatePi);
         let (detail, cause) = match result {
             Ok(Some(mut entry)) => {
                 let differs = entry.enabled != decl.enabled;
@@ -297,7 +300,7 @@ fn record_matching<'a>(
             cause,
             compared: None,
             also_in_the_way: Vec::new(),
-            remedy: None,
+            remedy,
         });
     }
     if let Some(plan) = plan

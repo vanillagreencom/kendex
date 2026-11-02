@@ -167,6 +167,10 @@ pub enum RowRemedy {
     /// A kept retired item whose installed files are gone: refresh with
     /// `--prune` takes its record, or removing it by name does.
     PruneOrRemove,
+    /// A declared Pi package whose installed copy or completed install
+    /// record does not match its declaration: only `update-pi` installs it,
+    /// which an apply's write never runs.
+    UpdatePi,
 }
 
 /// Where a plan leaves an item its catalog retired, read off what the

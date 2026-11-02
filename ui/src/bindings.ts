@@ -4697,7 +4697,13 @@ export type RowRemedy =
  *  A kept retired item whose installed files are gone: refresh with
  *  `--prune` takes its record, or removing it by name does.
  */
-"prune-or-remove";
+"prune-or-remove" | 
+/**
+ *  A declared Pi package whose installed copy or completed install
+ *  record does not match its declaration: only `update-pi` installs it,
+ *  which an apply's write never runs.
+ */
+"update-pi";
 
 export type SafetyScore = {
 	score: number,
