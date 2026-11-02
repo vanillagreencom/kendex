@@ -182,8 +182,6 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
     suite)
       echo "that suite failed; its own output above names the case." ;;
-    unstarted-suite)
-      echo "this run selected that suite, but the direct-suite loop ended before it started, so it did not run." ;;
     kendex-unread)
       echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex. The parts of a --part run split one list, so this part ran none of that package's suites; its cause is above." ;;
     mapped-suites)
@@ -2587,19 +2585,23 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       active_runner=0
       continue
     fi
-    # The suite list is this loop's stdin, so a suite started with it can read
-    # the rest of the list and end the loop: the child gets no stdin.
-    while IFS= read -r t; do
-      suite_runs[suite_index]=${suite_runs[suite_index]#*"$t"}
+    # The loop walks an array by position, so a suite that reads stdin cannot
+    # take entries from the list. The child gets no stdin: a suite that reads
+    # it must not wait on the terminal of a guard run by hand.
+    direct_suites=()
+    while IFS= read -r t; do direct_suites+=("$t"); done <<<"$run"
+    for ((direct_index = 0; direct_index < ${#direct_suites[@]}; direct_index++)); do
+      t=${direct_suites[direct_index]}
+      # One assignment, so the signal report sees a complete remainder.
+      direct_later=""
+      for ((pending = direct_index + 1; pending < ${#direct_suites[@]}; pending++)); do
+        direct_later+="${direct_suites[pending]}"$'\n'
+      done
+      suite_runs[suite_index]=$direct_later
       [ -f "$t" ] || continue
       echo "=== $t"
       bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" </dev/null || say suite "$t"
-    done <<<"$run"
-    # The loop removes each entry as it starts it; one left was never run.
-    while IFS= read -r t; do
-      [ -n "$t" ] || continue
-      say unstarted-suite "$t"
-    done <<<"${suite_runs[suite_index]}"
+    done
   done
   trap - TERM INT HUP
 fi
