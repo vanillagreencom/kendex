@@ -165,7 +165,13 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
         .emitted = Some(crate::lock::EmittedArtifact {
         kind: ItemKind::Skill,
         name: "gh".to_owned(),
-        paths: vec![project.join(".claude/skills/gh")],
+        // Joined onto the root the lock is written against, as an install
+        // joins it: `canonicalize` above keeps Windows' verbatim prefix.
+        paths: vec![
+            crate::paths::canonical(&project)
+                .unwrap()
+                .join(".claude/skills/gh"),
+        ],
     });
     crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
     (tmp, env, scope)

@@ -1256,7 +1256,13 @@ fn a_fork_keeps_the_publishers_keys_from_the_installed_commit() {
             own.emitted = Some(kendex_core::lock::EmittedArtifact {
                 kind: ItemKind::Skill,
                 name: "gh".to_owned(),
-                paths: vec![w.home.join("app/.cursor/skills/gh")],
+                // Joined onto the root the lock is written against, as an
+                // install joins it.
+                paths: vec![
+                    kendex_core::paths::canonical(&w.home.join("app"))
+                        .unwrap()
+                        .join(".cursor/skills/gh"),
+                ],
             });
             kendex_core::lock::save(&path, &lock).unwrap();
         }

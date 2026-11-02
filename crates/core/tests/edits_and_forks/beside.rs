@@ -386,8 +386,9 @@ fn fork_beside_keeps_an_edited_agent_under_the_new_name() {
 #[allow(clippy::unwrap_used)]
 fn fork_beside_records_the_captured_harness_own_commit() {
     let (w, one, _two) = edited_world();
-    // A second tool's record at another commit, keyed to iterate first: the
-    // harness lookup must decide, not iteration order.
+    // A second tool's record of its own copy, in its own copy-delivery
+    // folder, at another commit: the record that wrote the captured copy
+    // decides, not another record of the package.
     let path = kendex_core::lock::lock_path(&w.env, &w.scope);
     let mut lock = kendex_core::lock::load(&path).unwrap();
     let claude = lock
@@ -399,7 +400,18 @@ fn fork_beside_records_the_captured_harness_own_commit() {
     let mut other = claude;
     other.harness = HarnessId::Opencode;
     other.source_commit = Some("0".repeat(40));
-    lock.entries.insert("0-opencode-first".to_owned(), other);
+    // Joined onto the root the lock is written against, as an install
+    // joins it.
+    let root = kendex_core::paths::canonical(&w.home.join("app")).unwrap();
+    other.emitted = Some(kendex_core::lock::EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+        paths: vec![root.join(".opencode/skills/gh")],
+    });
+    lock.entries.insert(
+        kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Opencode),
+        other,
+    );
     kendex_core::lock::save(&path, &lock).unwrap();
 
     let plan = fork::fork_beside(
