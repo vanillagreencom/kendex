@@ -360,13 +360,14 @@ fn cited(
         (false, true) => place.trim_start_matches('/').to_owned(),
         (false, false) => format!("{}{place}", source.path),
     };
-    // A copy's SKILL.md is never the catalog's bytes: its frontmatter is
-    // cut to the installed key set, so its lines are counted in a rewrite.
-    let skill_file = inside_a_tree && source.tree && place.trim_start_matches('/') == named;
-    (
-        path,
-        finding.line.filter(|_| source.verbatim && !skill_file),
-    )
+    // A skill's SKILL.md is read apart from the rest of its tree: a copy
+    // rewrites its frontmatter and keeps its body, so a body line stands
+    // at another number in the catalog's file.
+    let line = match (place.strip_prefix('/') == Some(named), source.skill_lines) {
+        (true, Some(lines)) => finding.line.and_then(|line| lines.catalog_line(line)),
+        (true, None) | (false, _) => finding.line.filter(|_| source.verbatim),
+    };
+    (path, line)
 }
 
 /// The rules that apply to this kind and had no bytes to read here.
@@ -387,6 +388,8 @@ mod tests {
         AuditResult, Deduction, Finding, QualityScore, RULESET_VERSION, SafetyScore, Severity,
         SkippedRule,
     };
+
+    use kendex_core::engine::desired::SkillLines;
 
     use super::*;
 
@@ -415,6 +418,10 @@ mod tests {
                 path: "skills/deploy".to_owned(),
                 verbatim,
                 tree: true,
+                skill_lines: Some(match verbatim {
+                    true => SkillLines::Shifted { from: 1, to: 1 },
+                    false => SkillLines::Rewritten,
+                }),
             }),
             advisory: AuditResult {
                 findings: vec![Finding {
@@ -480,13 +487,6 @@ mod tests {
             }];
             other
         };
-        // A line is cited only outside a copy's SKILL.md, whose
-        // frontmatter the install cuts.
-        let in_script = |mut row: ItemSafety| {
-            row.advisory.findings[0].location =
-                format!("{}/scripts/run.sh", row.targets[0].location);
-            row
-        };
         type Row = (&'static str, Vec<ItemSafety>, Vec<Vec<HarnessId>>);
         let rows: [Row; 8] = [
             (
@@ -526,8 +526,8 @@ mod tests {
             (
                 "a different citation: verbatim beside rewritten",
                 vec![
-                    in_script(sourced(Claude, PIPES, &[], true)),
-                    in_script(sourced(Codex, PIPES, &[], false)),
+                    sourced(Claude, PIPES, &[], true),
+                    sourced(Codex, PIPES, &[], false),
                 ],
                 vec![vec![Claude], vec![Codex]],
             ),
@@ -556,6 +556,105 @@ mod tests {
         ];
         for (what, rows, expected) in rows {
             assert_eq!(blocks(&rows), expected, "{what}");
+        }
+    }
+
+    /// Which line a finding in a skill tree keeps. A copy cuts SKILL.md's
+    /// frontmatter and keeps its body, so a body line is cited at the line
+    /// it stands at in the catalog's file, and a line inside the rewritten
+    /// block at none; a SKILL.md the project's instructions rewrote keeps
+    /// no line, and the files beside it answer for themselves. One row per
+    /// place and reading.
+    #[test]
+    fn a_skill_file_line_is_cited_where_the_catalog_file_holds_it() {
+        let cut = SkillLines::Shifted { from: 4, to: 9 };
+        let whole = SkillLines::Shifted { from: 1, to: 1 };
+        type Row = (
+            &'static str,
+            &'static str,
+            SkillLines,
+            bool,
+            u32,
+            Option<u32>,
+        );
+        let rows: [Row; 8] = [
+            (
+                "a SKILL.md the copy keeps whole",
+                "SKILL.md",
+                whole,
+                true,
+                2,
+                Some(2),
+            ),
+            (
+                "the first body line of a cut SKILL.md",
+                "SKILL.md",
+                cut,
+                true,
+                4,
+                Some(9),
+            ),
+            (
+                "a later body line of a cut SKILL.md",
+                "SKILL.md",
+                cut,
+                true,
+                12,
+                Some(17),
+            ),
+            (
+                "a line of the rewritten frontmatter",
+                "SKILL.md",
+                cut,
+                true,
+                3,
+                None,
+            ),
+            (
+                "a parked cut SKILL.md",
+                "SKILL.md.disabled",
+                cut,
+                true,
+                12,
+                Some(17),
+            ),
+            (
+                "a SKILL.md the project's instructions rewrote",
+                "SKILL.md",
+                SkillLines::Rewritten,
+                true,
+                12,
+                None,
+            ),
+            (
+                "a script beside a rewritten SKILL.md",
+                "scripts/run.sh",
+                SkillLines::Rewritten,
+                true,
+                12,
+                Some(12),
+            ),
+            (
+                "a script that is not the catalog's bytes",
+                "scripts/run.sh",
+                whole,
+                false,
+                12,
+                None,
+            ),
+        ];
+        for (what, file, lines, verbatim, line, cited_line) in rows {
+            let mut row = skill(Claude, PIPES, &[]);
+            row.advisory.findings[0].location = format!("{}/{file}", row.targets[0].location);
+            row.advisory.findings[0].line = Some(line);
+            row.source = Some(CatalogSource {
+                path: "skills/deploy".to_owned(),
+                verbatim,
+                tree: true,
+                skill_lines: Some(lines),
+            });
+            let (_, at) = cited(&row.advisory.findings[0], &row.targets, row.source.as_ref());
+            assert_eq!(at, cited_line, "{what}");
         }
     }
 
@@ -589,6 +688,7 @@ mod tests {
                     path: "commands/ship.md".to_owned(),
                     verbatim: false,
                     tree: false,
+                    skill_lines: None,
                 },
                 ("commands/ship.md", None),
             ),
@@ -601,8 +701,9 @@ mod tests {
                     path: "skills/deploy".to_owned(),
                     verbatim: true,
                     tree: true,
+                    skill_lines: Some(SkillLines::Shifted { from: 1, to: 1 }),
                 },
-                ("skills/deploy/SKILL.md", None),
+                ("skills/deploy/SKILL.md", Some(12)),
             ),
             (
                 "only the parked skill file has its rename undone",
@@ -613,6 +714,7 @@ mod tests {
                     path: "skills/deploy".to_owned(),
                     verbatim: true,
                     tree: true,
+                    skill_lines: Some(SkillLines::Shifted { from: 1, to: 1 }),
                 },
                 ("skills/deploy/references/old.disabled", Some(12)),
             ),
@@ -625,6 +727,7 @@ mod tests {
                     path: "hooks/guard.sh".to_owned(),
                     verbatim: true,
                     tree: false,
+                    skill_lines: None,
                 },
                 ("hooks/guard.sh (command)", Some(12)),
             ),

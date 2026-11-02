@@ -608,3 +608,61 @@ fn an_unreadable_manifest_leaves_recorded_command_sources_unknown() {
     fs::write(project.join("kendex.toml"), b"[invalid manifest").unwrap();
     assert_command_source_result(&home, &project, &bin, false, 2);
 }
+
+/// An absent manifest declares nothing, which is known, unlike one that
+/// will not read: a recorded skill from the reserved local source, which
+/// no declaration places, still has its commands read, and one from a
+/// named source, placed only by the declaration that is gone, is unknown.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_absent_manifest_reads_the_sources_that_need_no_declaration() {
+    for (source, present, unknown) in [("local", true, 0), ("named", false, 1)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let (project, bin) = match source {
+            "local" => local_command_source_fixture(&home),
+            _ => command_source_fixture(&home),
+        };
+        fs::remove_file(project.join("kendex.toml")).unwrap();
+        println!("{source}");
+        assert_command_source_result(&home, &project, &bin, present, unknown);
+    }
+}
+
+/// [`command_source_fixture`]'s skill, installed from the project's
+/// reserved local source instead of a declared catalog.
+#[allow(clippy::unwrap_used)]
+fn local_command_source_fixture(home: &Path) -> (PathBuf, PathBuf) {
+    let (catalog_project, bin) = command_source_fixture(home);
+    let project = home.join("dev/local");
+    let skill = project
+        .join(kendex_core::source::LOCAL_SOURCE_DIR)
+        .join("skills/external");
+    fs::create_dir_all(&skill).unwrap();
+    fs::copy(
+        home.join("catalog/skills/external/SKILL.md"),
+        skill.join("SKILL.md"),
+    )
+    .unwrap();
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 7\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[skills.external]\nsource = \"local\"\n",
+    )
+    .unwrap();
+    let output = run(
+        home,
+        &project,
+        &["apply", "--scope", "project", "-y"],
+        Some(&bin),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(project.join(".claude/skills/external/SKILL.md").is_file());
+    fs::remove_dir_all(catalog_project).unwrap();
+    fs::write(bin.join("kendex-fixture-source-version.probes"), "").unwrap();
+    (project, bin)
+}

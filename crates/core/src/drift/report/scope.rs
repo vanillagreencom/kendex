@@ -165,7 +165,17 @@ pub(super) fn check_scope(
             crate::engine::declared_over_existing_files(env, scope, manifest, record_view)
         })
         .unwrap_or_default();
-    ctx.command_lines(manifest.current(), record_view, &occupied, sections);
+    // An absent manifest declares nothing, which is known: a source that
+    // needs no declaration still reads, and any other is unknown for the
+    // cause its resolution gives. Only an unreadable one leaves every
+    // source unknown.
+    let nothing = crate::manifest::Manifest::default();
+    let declared = match &manifest {
+        ManifestRead::Current(manifest) => Some(manifest.as_ref()),
+        ManifestRead::Absent => Some(&nothing),
+        ManifestRead::Unreadable => None,
+    };
+    ctx.command_lines(declared, record_view, &occupied, sections);
     ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
     ctx.snapshot_lines(manifest.current(), sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);

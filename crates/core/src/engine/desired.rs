@@ -70,7 +70,8 @@ pub struct CatalogSource {
     /// The item's path within the catalog, `/`-spelled.
     pub path: String,
     /// Whether the rendering is the catalog's bytes unchanged, which is
-    /// what makes a line read off the rendering a line of `path`.
+    /// what makes a line read off the rendering a line of `path`. A skill
+    /// tree's SKILL.md is left to `skill_lines`.
     pub verbatim: bool,
     /// Whether the catalog holds this item as a directory. A place inside
     /// a rendering maps back onto `path` only where the catalog has a
@@ -78,6 +79,68 @@ pub struct CatalogSource {
     /// harness stores as a skill — has no `/SKILL.md` inside itself, and
     /// joining one on would name a path that does not exist.
     pub tree: bool,
+    /// For a skill tree, which lines of the rendering's SKILL.md are lines
+    /// of the catalog's; `verbatim` then speaks for every other file. `None`
+    /// for any other item, where `verbatim` speaks for the whole rendering.
+    pub skill_lines: Option<SkillLines>,
+}
+
+/// How the lines of a rendered SKILL.md stand in the catalog's SKILL.md. A
+/// copy cuts the frontmatter to the installed key set and keeps the body,
+/// so a body line sits at another number in each file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillLines {
+    /// Line `from` of the rendering, and every line after it, is line
+    /// `to`, and the one as far after it, of the catalog's file. A line
+    /// before `from` is in a frontmatter block the copy rewrote.
+    Shifted { from: u32, to: u32 },
+    /// The rendering's body is not the catalog's — the project's own
+    /// instructions are in it — so none of its lines is the catalog's.
+    Rewritten,
+}
+
+impl SkillLines {
+    /// The catalog line `rendered` stands at, where it stands at one.
+    pub fn catalog_line(self, rendered: u32) -> Option<u32> {
+        match self {
+            Self::Shifted { from, to } => rendered
+                .checked_sub(from)
+                .and_then(|past| to.checked_add(past)),
+            Self::Rewritten => None,
+        }
+    }
+
+    /// How `rendered`'s lines stand in `catalog`, two texts of one SKILL.md:
+    /// all of them where the bytes are equal, those of the body where only
+    /// the frontmatter differs, none otherwise.
+    fn of(catalog: &[u8], rendered: &[u8]) -> SkillLines {
+        if catalog == rendered {
+            return Self::Shifted { from: 1, to: 1 };
+        }
+        Self::body(catalog, rendered).unwrap_or(Self::Rewritten)
+    }
+
+    fn body(catalog: &[u8], rendered: &[u8]) -> Option<SkillLines> {
+        let (catalog, rendered) = (
+            std::str::from_utf8(catalog).ok()?,
+            std::str::from_utf8(rendered).ok()?,
+        );
+        let (_, catalog_body) = crate::frontmatter::split(catalog).ok()?;
+        let (_, rendered_body) = crate::frontmatter::split(rendered).ok()?;
+        if catalog_body != rendered_body {
+            return None;
+        }
+        // The body is the text's tail, so the lines before it are the
+        // newlines of everything else.
+        let first = |text: &str, body: &str| {
+            u32::try_from(text[..text.len() - body.len()].matches('\n').count() + 1).ok()
+        };
+        Some(Self::Shifted {
+            from: first(rendered, rendered_body)?,
+            to: first(catalog, catalog_body)?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1093,30 +1156,44 @@ impl ItemCtx<'_> {
     /// wrapped into a skill tree) reads as changed, which it is.
     pub(super) fn source(&self, kind: ItemKind, artifact: &Artifact) -> Result<CatalogSource> {
         let tree = self.sealed.is_dir(self.item_path);
-        // A skill tree is asked of every file but SKILL.md, whose
-        // frontmatter a copy cuts to the installed key set: a line in it is
-        // never one of the catalog's, and the citation leaves it out.
-        let verbatim = match artifact {
+        // A skill tree's SKILL.md is asked apart from its other files: a
+        // copy rewrites its frontmatter, and a line of its body is still a
+        // line of the catalog's file, at another number.
+        let (verbatim, skill_lines) = match artifact {
             Artifact::Tree { files, .. } if kind == ItemKind::Skill && tree => {
                 let catalog = self
                     .sealed
                     .rendered_item(kind, self.item_path)?
                     .into_files();
-                let besides_skill_file = |files: &[(PathBuf, Vec<u8>)]| {
+                fn skill_file(files: &[(PathBuf, Vec<u8>)]) -> Option<&[u8]> {
+                    files
+                        .iter()
+                        .find(|(rel, _)| crate::render::skill::carries_name(rel))
+                        .map(|(_, bytes)| bytes.as_slice())
+                }
+                fn others(
+                    files: &[(PathBuf, Vec<u8>)],
+                ) -> impl Iterator<Item = &(PathBuf, Vec<u8>)> {
                     files
                         .iter()
                         .filter(|(rel, _)| !crate::render::skill::carries_name(rel))
-                        .cloned()
-                        .collect::<Vec<_>>()
+                }
+                let skill_lines = match (skill_file(&catalog), skill_file(files)) {
+                    (Some(catalog), Some(rendered)) => SkillLines::of(catalog, rendered),
+                    (None, _) | (_, None) => SkillLines::Rewritten,
                 };
-                besides_skill_file(&catalog) == besides_skill_file(files)
+                (others(&catalog).eq(others(files)), Some(skill_lines))
             }
-            _ => self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),
+            _ => (
+                self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),
+                None,
+            ),
         };
         Ok(CatalogSource {
             path: self.sealed.catalog_path(self.item_path),
             verbatim,
             tree,
+            skill_lines,
         })
     }
 }

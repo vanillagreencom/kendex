@@ -129,7 +129,10 @@ fn assert_user_files(project: &Path, before: &BTreeMap<PathBuf, Vec<u8>>) {
 }
 
 #[allow(clippy::unwrap_used)]
-fn catalog_render(catalog: &Path) -> Vec<(String, Vec<u8>)> {
+/// The tree a copy installs from the catalog: its rendered files, with
+/// SKILL.md as the install wrote it, `skill_file`, since a copy's SKILL.md
+/// carries the installed key set rather than the catalog's frontmatter.
+fn catalog_render(catalog: &Path, skill_file: &[u8]) -> Vec<(String, Vec<u8>)> {
     tree(&catalog.join("skills/jarvis"))
         .into_iter()
         .filter(|(entry, _)| {
@@ -138,7 +141,23 @@ fn catalog_render(catalog: &Path) -> Vec<(String, Vec<u8>)> {
                 .iter()
                 .any(|name| Path::new(relative).starts_with(name))
         })
+        .map(|(entry, bytes)| match entry == "file:SKILL.md" {
+            true => (entry, skill_file.to_vec()),
+            false => (entry, bytes),
+        })
         .collect()
+}
+
+/// The installed SKILL.md, which carries the catalog's own body after its
+/// frontmatter.
+#[allow(clippy::unwrap_used)]
+fn installed_skill_file(render: &Path, catalog: &Path) -> Vec<u8> {
+    let installed = fs::read_to_string(render.join("SKILL.md")).unwrap();
+    let authored = fs::read_to_string(catalog.join("skills/jarvis/SKILL.md")).unwrap();
+    let (_, body) = kendex_core::frontmatter::split(&authored).unwrap();
+    let (_, installed_body) = kendex_core::frontmatter::split(&installed).unwrap();
+    assert_eq!(installed_body, body);
+    installed.into_bytes()
 }
 
 #[allow(clippy::unwrap_used)]
@@ -205,7 +224,8 @@ fn refresh_updates_jarvis_and_preserves_the_assistant_home() {
     println!("Install with private operator:\n{install_output}");
     let before = user_files(&project);
     let render = project.join(".agents/skills/jarvis");
-    assert_eq!(tree(&render), catalog_render(&catalog));
+    let skill_file = installed_skill_file(&render, &catalog);
+    assert_eq!(tree(&render), catalog_render(&catalog, &skill_file));
     release(&catalog);
     let refreshed = kendex(
         &home,
@@ -214,7 +234,8 @@ fn refresh_updates_jarvis_and_preserves_the_assistant_home() {
     );
     assert!(refreshed.status.success(), "{}", said(&refreshed));
     println!("Jarvis refresh:\n{}", said(&refreshed));
-    assert_eq!(tree(&render), catalog_render(&catalog));
+    // The release leaves SKILL.md as it was, so its installed form is too.
+    assert_eq!(tree(&render), catalog_render(&catalog, &skill_file));
     assert!(!project.join("skills/base").exists());
     assert_user_files(&project, &before);
     let verified = kendex(&home, &project, &["verify"]);
