@@ -586,23 +586,19 @@ print(json.dumps({"config_dir": row["account"]}))
                         if unrecorded:
                             self.assertEqual(self.call("status")[0]["state"], "stopped")
                             self.assertTrue(self.process_live(consumer["harness"]))
-                            self.adopt(consumer)
+                            answer, code = self.adopt(consumer)
+                            self.assertEqual(code, 0, json.dumps(answer) + "\n" + self.stderr + "\n" + self.session_log())
                         elif before_end:
                             settled = self.wait("running")
                             self.assertEqual(settled["terminal"]["pane"], consumer["pane"])
                             self.assertTrue(self.process_live(consumer["harness"]))
-                            # The waiting successor's pane follows its worker.
-                            deadline = time.monotonic() + 10
-                            while subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"], capture_output=True,
-                                                 env=self.env).returncode == 0:
-                                self.assertLess(time.monotonic(), deadline, "a managed controller outlived its worker")
-                                time.sleep(0.05)
+                            self.successor_ended()
                             if edge == "after":
                                 # A move keeps the pane and its process but gives it another window.
                                 subprocess.run(["tmux", "-L", consumer["label"], "break-pane", "-d", "-s", consumer["pane"]],
                                                capture_output=True, env=self.env, timeout=10, check=True)
                                 self.assertEqual((self.call("status")[0]["terminal"] or {}).get("pane"), consumer["pane"])
-                            self.call("succeed")
+                            self.retry()
                         elif completed:
                             self.assertEqual(self.wait("running")["terminal"], persisted["terminal"])
                         else:
@@ -611,7 +607,8 @@ print(json.dumps({"config_dir": row["account"]}))
                             failed = json.loads(self.record.read_text())
                             self.assertEqual(failed["transfer"]["handoff"], persisted["transfer"]["handoff"])
                             self.assertEqual(Path(failed["transfer"]["handoff"]).read_text(), contents)
-                            self.call("succeed")
+                            self.successor_ended()
+                            self.retry()
                         if not completed:
                             self.wait()
                         recovered = json.loads(self.record.read_text())
@@ -621,6 +618,23 @@ print(json.dumps({"config_dir": row["account"]}))
                             self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
                         self.call("stop")
                         self.wait("stopped", persisted_stop=True)
+
+    def successor_ended(self):
+        # The abandoned successor's pane follows its worker, and the home's
+        # session and server end with it. A retry inside that end can read
+        # the pane and then find no server, which refuses as record-unreadable.
+        deadline = time.monotonic() + 10
+        while subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"], capture_output=True,
+                             env=self.env).returncode == 0:
+            self.assertLess(time.monotonic(), deadline, "a managed controller outlived its worker")
+            time.sleep(0.05)
+
+    def retry(self):
+        # The retry's own answer and stderr name the operation it refused; a
+        # later status read reports only the generic handover-failed.
+        answer, code = self.call("succeed")
+        self.assertEqual((answer["state"], answer["reason"], code), ("handing-over", "succession", 0),
+                         json.dumps(answer) + "\n" + self.stderr + "\n" + self.session_log())
 
     def instrumented(self):
         # Interrupt the real writer before/after each transition write. Only
@@ -744,7 +758,7 @@ print(json.dumps({"config_dir": row["account"]}))
                                 start, code = self.call("start", harness=harness)
                                 self.assertEqual((start["state"], start["reason"], code), ("failed", "handover-failed", 1))
                             self.assertIn("TASK-ref", (self.home / "state/handoff.md").read_text())
-                            self.call("succeed")
+                            self.retry()
                             self.wait()
                             recovered = json.loads(self.record.read_text())
                             self.assertNotEqual(recovered["pending"]["native_session_id"], previous["pending"]["native_session_id"])
