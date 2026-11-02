@@ -901,9 +901,15 @@ class Arguments(argparse.ArgumentParser):
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed", "report-due"):
+    for verb in ("start", "status", "stop", "succeed", "report-due", "forward", "forward-drain"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
+        if verb == "status":
+            # The default answer's key set is the VGS-1439 contract; --main is a separate shape.
+            command.add_argument("--main", action="store_true")
+        elif verb == "forward":
+            # Text crosses this file, never argv.
+            command.add_argument("--record", required=True)
         if verb == "start":
             command.add_argument("--harness", choices=("claude", "codex", "copilot", "pi"), required=True)
             command.add_argument("--account", required=True)
@@ -929,6 +935,12 @@ def main():
             clean(args.adopt_pane) and args.adopt_pane and args.adopt_pid > 0 and args.origin == "manual" and args.mode == "new"):
         # Adoption replaces a running session with a new one, at a person's request.
         parser.error("adopt")
+    if args.verb == "forward" and not (clean(args.record) and args.record):
+        parser.error("record")
+    if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import forward
+        return forward.main(args)
     try:
         session = Session(args.home)
     except OSError:

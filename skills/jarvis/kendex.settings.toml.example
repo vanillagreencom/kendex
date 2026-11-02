@@ -1,6 +1,10 @@
 [env]
 # Empty means local mail only. The host needs kendex on its SSH PATH.
 JARVIS_CONTROL_HOST = ""
+# Empty makes this machine the main Jarvis. A satellite names the main as
+# DEST:/abs/main/home, DEST being what `ssh DEST` takes. Set a satellite's
+# value in its private env file, never here: a cloned home would carry it.
+JARVIS_MAIN_HOST = ""
 # Default when unset: ${XDG_STATE_HOME:-$HOME/.local/state}/jarvis.
 # Each home that runs at the same time needs a separate directory.
 JARVIS_LOG_DIR = "~/.local/state/jarvis"

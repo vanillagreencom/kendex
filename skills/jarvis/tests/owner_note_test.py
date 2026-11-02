@@ -82,6 +82,18 @@ class OwnerNote(MailWorld):
                 else:
                     self.assertEqual(calls, [])
 
+    def test_satellite_instructs_no_overseer(self):
+        base, sides = self.world("satellite", [("app", True)], [("app", True)])
+        listed = self.root / "kendex.log"
+        self.executable("kendex", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$KENDEX_LOG"\ncat "$REGISTRY"\n')
+        self.env.update(KENDEX_LOG=str(listed), JARVIS_MAIN_HOST="main.example:/srv/home")
+        result = self.send(base, True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr.split("\n")[0], "owner-note: role-satellite=main.example:/srv/home")
+        self.assertEqual([self.box(root, "to-lane") for roots in sides.values() for root in roots], [[], []])
+        self.assertFalse((base / "ssh.log").exists())
+        self.assertFalse(listed.exists())
+
     def test_instrument_control(self):
         # A route that also sends on this machine after the host took the note
         # must fail the host row.

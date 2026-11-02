@@ -56,7 +56,8 @@ class Presence(unittest.TestCase):
         env = dict(os.environ, PATH=str(bins)+os.pathsep+os.environ["PATH"], CLOCK=str(clock),
                    INSPECT_STATE=str(state), ORCH_OVERSEER_HOST=str(inspector),
                    FAIL_HOST=str(failure), REMOTE_ROOT=str(remote))
-        settings = dict(JARVIS_LOG_DIR=str(scratch / "log"), JARVIS_CONTROL_HOST="host", JARVIS_WAKE_SETTLE_SECS="0")
+        settings = dict(JARVIS_LOG_DIR=str(scratch / "log"), JARVIS_CONTROL_HOST="host", JARVIS_MAIN_HOST="",
+                        JARVIS_WAKE_SETTLE_SECS="0")
         with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = module.Watch(root, BASH, settings)
             def renew():

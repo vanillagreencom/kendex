@@ -55,7 +55,8 @@ class Producer(unittest.TestCase):
                         REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1")
         self.executable("kendex", '#!/bin/sh\ncat "$REGISTRY"\n')
         self.module = load(self.scripts / "lib/watch.py")
-        self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_LOG_DIR=str(self.root / "log"), JARVIS_WAKE_SETTLE_SECS="15")
+        self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_MAIN_HOST="", JARVIS_LOG_DIR=str(self.root / "log"),
+                             JARVIS_WAKE_SETTLE_SECS="15")
 
     def project(self, name):
         return make_project(self.root / name)
@@ -1011,6 +1012,39 @@ class Producer(unittest.TestCase):
             recovered.batch(5)
             self.assertIn("producer tail before state commit", self.inbox()[-1]["text"])
 
+    def test_satellite_is_no_fleet_contact(self):
+        self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home", JARVIS_CONTROL_HOST="host.example")
+        ssh_log = self.root / "ssh.log"
+        self.executable("ssh", '#!/bin/sh\nprintf "%s\\n" "$*" >> ' + shlex.quote(str(ssh_log)) + '\nexit 255\n')
+        self.mail(self.peer, "ask", "peer question", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+        self.mail(self.home, "notice", "home note", "--to", "owner")
+
+        class Submitted:
+            def __init__(self):
+                self.names = []
+
+            def submit(self, work, *args):
+                self.names.append(work.__name__)
+                return Future()
+
+        block = "EVENT forward-failed request=vgs-audit:r cause=send-failed\n"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            watch.tick(0, watch.acquire(0))
+            passes = Submitted()
+            watch._poll(passes, Future(), 1)
+            watch.accept_forward(block)
+            self.watch().accept_forward(block)
+        log = watch.log.read_text()
+        self.assertIn("home note", log)
+        self.assertNotIn("peer question", log)
+        self.assertTrue((self.home / "tmp/lane-mail/overseer/to-overseer.seen").exists())
+        self.assertFalse((self.peer / "tmp/lane-mail/overseer/to-overseer.seen").exists())
+        self.assertFalse(ssh_log.exists())
+        self.assertEqual(passes.names, ["forward"])
+        self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
+                         [block.split("\n")[0]])
+
     def test_instrument_control(self):
         # Each planted defect, in a disposable producer copy, turns its row red.
         gate = "if self.unanswered_pending is None and waiting and now >= self.next_unanswered:"
@@ -1018,6 +1052,7 @@ class Producer(unittest.TestCase):
         keep = 'if row["id"] not in checked_ids or row["id"] in listed]'
         window = '"--since", min(row["at"] for row in waiting)'
         unlisted = 'alone = side == "local" and home not in roots'
+        satellite = "roots = [home] if satellite else project_roots()"
         for name, old, new in (
                 # The watch never pages a report the cursor has not seen.
                 ("test_report_deadline_restart_and_receipt", report, "if False and " + report[len("if "):]),
@@ -1030,7 +1065,9 @@ class Producer(unittest.TestCase):
                 # A home the project list omits still delivers owner rows.
                 ("test_owner_unanswered_reminder", unlisted, "alone = False"),
                 # That home's read takes its to-lane alone.
-                ("test_owner_unanswered_reminder", 'boxes = ("to-lane",) if', 'boxes = ("to-lane", "to-overseer") if')):
+                ("test_owner_unanswered_reminder", 'boxes = ("to-lane",) if', 'boxes = ("to-lane", "to-overseer") if'),
+                # A satellite reads no other root.
+                ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()")):
             with self.subTest(row=name, planted=new):
                 case = Producer(methodName=name)
                 case.setUp()
