@@ -111,6 +111,8 @@ delivery_rows() {
     "docs-writing-note: path=$REPO/docs/architecture/x.md type=architecture" c2 "harness=codex session=c2 path=$REPO/docs/architecture/x.md"
   check "codex move" "$codex" "$(patch $'*** Begin Patch\n*** Update File: notes.txt\n*** Move to: README.md\n*** End Patch' c3)" \
     "docs-writing-note: path=$rf type=readme" c3 "harness=codex session=c3 path=$rf"
+  check "codex move of markdown" "$codex" "$(patch $'*** Begin Patch\n*** Update File: skills/x/references/settings.md\n*** Move to: skills/x/README.md\n*** End Patch' c5)" \
+    "docs-writing-note: path=$REPO/skills/x/README.md type=readme" c5 "harness=codex session=c5 path=$REPO/skills/x/README.md"
   check "codex patch of code" "$codex" "$(patch $'*** Begin Patch\n*** Update File: src/main.rs\n*** End Patch' c4)" "" c4 none
   check "pi write" "$pi" "$(edit Write "$rf" p1)" "docs-writing-note: path=$rf type=readme" p1 "harness=pi session=p1 path=$rf"
 }
