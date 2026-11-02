@@ -48,12 +48,13 @@ follows a paragraph line, no trailing-double-space break. Fenced code,
 tables, HTML blocks, indented code and front matter are untouched; a clean
 file is untouched; a CRLF file is refused rather than converted.
 
-PATH... names work-tree files. --staged takes the work-tree copy of every
-markdown file the staged diff adds or changes, --all every tracked markdown
-file COMMIT_GUARDS_MD_PATHS names minus COMMIT_GUARDS_MD_EXCLUDES; both
-select from the index with renames held to exact content, so an unchanged
-move is not taken. --check writes nothing and exits 1 naming each file a
-reflow would change.
+PATH... names work-tree files. --staged and --all select from the index
+the markdown files COMMIT_GUARDS_MD_PATHS names minus
+COMMIT_GUARDS_MD_EXCLUDES and take their work-tree copies. --staged takes
+each one the staged diff adds or changes, renames held to exact content, so
+an unchanged move is not taken; --all takes every tracked one, an unchanged
+move included. --check writes nothing and exits 1 naming each file a reflow
+would change.
 
 Exit codes: 0 clean or rewritten; 1 --check found work; 2 usage, config or
 collection error.

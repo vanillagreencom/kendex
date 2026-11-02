@@ -168,6 +168,26 @@ project_rows() {
 }
 project_rows
 
+# A project hook in a catalog repository, which keeps its skills' source in
+# skills/ beside their install in .agents/skills: the source's md-type writes
+# a sentinel if anything runs it, and the install is the one the hook takes.
+catalog_rows() {
+  local REPO="$TMP_ROOT/catalog" rf hook
+  rf="$REPO/README.md"
+  rm -rf -- "$STATE" "${TMP_ROOT:?}/catalog" "${TMP_ROOT:?}/catalog-sentinel"
+  mkdir -p "$REPO/.agents/skills" "$REPO/skills/commit-guards/scripts" "$REPO/.claude/hooks"
+  git -C "$REPO" -c init.defaultBranch=main init -q
+  cp -R -- "$CATALOG/skills/commit-guards" "$CATALOG/skills/docs-writing" "$REPO/.agents/skills/"
+  printf '#!/bin/sh\n: >"%s/catalog-sentinel"\n' "$TMP_ROOT" >"$REPO/skills/commit-guards/scripts/md-type"
+  chmod +x "$REPO/skills/commit-guards/scripts/md-type"
+  hook="$REPO/.claude/hooks/docs-writing-note.sh"
+  cp -- "$HOOK" "$hook"
+  check "catalog project hook" "$hook" "$(edit Write "$rf" ct)" \
+    "docs-writing-note: path=$rf type=readme" ct "harness=claude session=ct path=$rf"
+  assert_eq "$([ -e "$TMP_ROOT/catalog-sentinel" ] && echo ran || echo not-run)" not-run "catalog project hook: the source's md-type never runs"
+}
+catalog_rows
+
 failure_rows() {
   local claude bare nodocs rf=$REPO/README.md
   rm -rf -- "$STATE" "$TMP_ROOT/sentinel"
@@ -223,5 +243,9 @@ skill_load_control home-first "$HOOK" 'JUDGE=""' 'in_scope() { local at=$HOOK_DI
 # judge of its own.
 skill_load_control no-project "$HOOK" 'local at="$HOOK_DIR" levels=0 candidate' 'case "$HOOK_DIR" in "$ROOT"/*) at=/ ;; esac' HOOK project_rows \
   'project claude hook with an empty home: keyed first line' 'project codex hook beside a global commit-guards: keyed first line'
+# A walk that reads the root's skills/ before its install: a catalog's project
+# hook runs its source's md-type.
+skill_load_control root-source "$HOOK" 'JUDGE=""' 'in_scope() { local at=$HOOK_DIR n=0 c; while [ $n -lt 5 ] && [ "$at" != / ]; do for c in "$at/skills/$1" "$at/.agents/skills/$1"; do if [ -d "$c" ]; then printf "%s\n" "$c"; return 0; fi; done; [ "$at" != "$ROOT" ] && [ "$at" != "$HOME_DIR" ] || break; at=${at%/*}; n=$((n + 1)); done; return 1; }' HOOK catalog_rows \
+  'catalog project hook: keyed first line' "catalog project hook: the source's md-type never runs"
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

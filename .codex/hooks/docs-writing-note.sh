@@ -97,15 +97,18 @@ case "$HOOK_DIR" in
   *) HARNESS=source ;;
 esac
 # The skills come from this hook's own install, never from the edited path,
-# which a clone or another project controls. The walk is the one
-# hooks/lane-mail-check.sh owns for its reader, copied here since each hook is
-# installed as one file: from the hook's physical directory up five levels,
-# each level's `skills/` and shared `.agents/skills/` tree, which reaches a
-# harness's own copy delivery such as ~/.codex/skills, stopping after the open
-# repository's root and after the home directory. A hook installed in the
-# repository therefore takes the repository's own copy before any global one,
-# while a global hook never reaches that root. Then the home's shared tree,
-# for a harness root CODEX_HOME or PI_CODING_AGENT_DIR moved out of the home.
+# which a clone or another project controls. The walk goes from the hook's
+# physical directory up five levels, each level's `skills/` and shared
+# `.agents/skills/` tree, which reaches a harness's own copy delivery such as
+# ~/.codex/skills, stopping after the open repository's root and after the
+# home directory; then the home's shared tree, for a harness root CODEX_HOME
+# or PI_CODING_AGENT_DIR moved out of the home. At the root only
+# `.agents/skills/` is read: a repository's own `skills/` is a catalog's
+# source tree, not an install (docs/adapters/README.md). This departs from
+# hooks/lane-mail-check.sh's reader walk, which stops before the root and
+# reads the root's `.agents/skills/` last, after the home's tree: here a hook
+# installed in the repository takes the repository's install before any
+# global one, while a global hook never reaches that root.
 HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
 ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
 in_scope() { # SKILL — the skill's directory in this hook's install; 1 when none
@@ -113,6 +116,7 @@ in_scope() { # SKILL — the skill's directory in this hook's install; 1 when no
   [ -n "$at" ] || return 1
   while [ "$levels" -lt 5 ] && [ "$at" != / ]; do
     for candidate in "$at/skills/$1" "$at/.agents/skills/$1"; do
+      [ "$at" != "$ROOT" ] || [ "$candidate" = "$at/.agents/skills/$1" ] || continue
       if [ -d "$candidate" ]; then
         printf '%s\n' "$candidate"
         return 0

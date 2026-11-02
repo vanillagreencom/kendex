@@ -4,8 +4,9 @@
 # and lib/settings.sh; the caller runs under `set -f`, has cd'd to the
 # repository root, and calls gg_tmpdir before selecting.
 #
-# Each lane keeps its own rename policy, GG_MD_RENAMES below, and every scope
-# applies it.
+# Each lane keeps its own rename policy, GG_MD_RENAMES below. The staged and
+# range scopes select by it; --all selects every matching tracked file under
+# either policy and reads it only to name a moved file's source.
 #
 # Four scopes, one setting:
 #   --staged   every markdown file the staged diff adds, modifies or
