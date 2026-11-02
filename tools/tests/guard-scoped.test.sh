@@ -304,6 +304,73 @@ else
   bad 'control changes the settings seed'
 fi
 
+# A tree with no run-all.sh runs each suite through guard's direct loop.
+# skills/jarvis is such a tree, and a child of its session.test.sh reads
+# stdin. Here a-reader reads stdin, whole or one line, and every suite names
+# the changed script. A suite named by SIGNAL_SUITE sends the guard TERM once
+# it has logged, so the guard's signal report names what it had not started.
+mkdir -p "$R/skills/stdin/scripts" "$R/skills/stdin/tests"
+printf '#!/usr/bin/env bash\n:\n' > "$R/skills/stdin/scripts/tool"
+for name in a-reader b-later c-later d-later; do
+  {
+    printf '"$PWD/skills/stdin/scripts/tool"\n'
+    [ "$name" != a-reader ] || printf 'case "$READ_MODE" in whole) cat >/dev/null ;; line) read -r _ || : ;; esac\n'
+    printf 'printf "%s\\n" >> "$SUITE_LOG"\n' "$name"
+    printf '[ "$SIGNAL_SUITE" != %s ] || kill -TERM "$GUARD_PID"\n' "$name"
+  } > "$R/skills/stdin/tests/$name.sh"
+done
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm stdin
+BASE="$(git -C "$R" rev-parse HEAD)"
+stdin_row() { # GUARD ROW: run the normal range over a changed tool; fails naming what differs
+  local guard=$1 name read_mode signal want_rc want_ran want_left rc=0 out ran left
+  IFS='|' read -r name read_mode signal want_rc want_ran want_left <<<"$2"
+  printf '# changed\n' >> "$R/skills/stdin/scripts/tool"
+  : > "$SUITE_LOG"
+  out="$(cd "$R" && READ_MODE="$read_mode" SIGNAL_SUITE="$signal" SUITE_LOG="$SUITE_LOG" \
+    bash -c 'export GUARD_PID=$$; exec "$0" --range "$1"' "$guard" "$BASE" 2>&1)" || rc=$?
+  git -C "$R" checkout -q -- skills/stdin/scripts/tool
+  ran="$(sort "$SUITE_LOG" | tr '\n' ' ')"
+  left="$(sed -n 's#^guard-note: unstarted-suite=skills/stdin/tests/\(.*\)\.sh$#\1#p' <<<"$out" | tr '\n' ' ')"
+  [ "$rc" = "$want_rc" ] && [ "$ran" = "$want_ran" ] && [ "$left" = "$want_left" ] && return 0
+  ROW_DETAIL="$name: rc=$rc ran=$ran unstarted=$left out=$out"
+  return 1
+}
+# name | a-reader's read | suite that signals | exit | suites run | suites reported unstarted
+STDIN_ROWS=(
+  'whole-read|whole||0|a-reader b-later c-later d-later |'
+  'one-line|line||0|a-reader b-later c-later d-later |'
+  'one-line-then-signal|line|c-later|143|a-reader b-later c-later |d-later '
+)
+for row in "${STDIN_ROWS[@]}"; do
+  stdin_row "$GUARD" "$row" \
+    && ok "direct loop: ${row%%|*} runs or reports every selected suite" \
+    || bad "direct loop: ${row%%|*} runs or reports every selected suite" "$ROW_DETAIL"
+done
+# The loop shape before this guarantee: the list on the loop's stdin, which
+# the child inherits, and a remainder kept by stripping up to each entry
+# read. Every row must fail against it.
+if mutant_guard '/^    direct_suites=()$/d
+s/^    while IFS= read -r t; do direct_suites+=("\$t"); done <<<"\$run"$/    while IFS= read -r t; do/
+/^    for ((direct_index = 0; /d
+/^      t=\${direct_suites\[direct_index\]}$/d
+/^      # One assignment, so the signal report sees a complete remainder\.$/,/^      suite_runs\[suite_index\]=\$direct_later$/c\
+      suite_runs[suite_index]=${suite_runs[suite_index]#*"$t"}
+s#--local --suite "\$t" </dev/null ||#--local --suite "$t" ||#
+/--local --suite "\$t" ||/{
+n
+s/^    done$/    done <<<"$run"/
+}'; then
+  for row in "${STDIN_ROWS[@]}"; do
+    stdin_row "$MUTANT_TOOLS/guard" "$row" \
+      && bad "control: the stdin-fed loop breaks direct loop row ${row%%|*}" \
+      || ok "control: the stdin-fed loop breaks direct loop row ${row%%|*}"
+  done
+else
+  bad 'control restores the stdin-fed direct loop'
+fi
+
 # A real cancellation must also name suites in batteries not yet entered.
 # Each phase holds on its FIFO; the parent sends TERM only once its
 # non-blocking writer open proves a holder is there, then releases the hold.

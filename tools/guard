@@ -2585,12 +2585,23 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       active_runner=0
       continue
     fi
-    while IFS= read -r t; do
-      suite_runs[suite_index]=${suite_runs[suite_index]#*"$t"}
+    # The loop walks an array by position, so a suite that reads stdin cannot
+    # take entries from the list. The child gets no stdin: a suite that reads
+    # it must not wait on the terminal of a guard run by hand.
+    direct_suites=()
+    while IFS= read -r t; do direct_suites+=("$t"); done <<<"$run"
+    for ((direct_index = 0; direct_index < ${#direct_suites[@]}; direct_index++)); do
+      t=${direct_suites[direct_index]}
+      # One assignment, so the signal report sees a complete remainder.
+      direct_later=""
+      for ((pending = direct_index + 1; pending < ${#direct_suites[@]}; pending++)); do
+        direct_later+="${direct_suites[pending]}"$'\n'
+      done
+      suite_runs[suite_index]=$direct_later
       [ -f "$t" ] || continue
       echo "=== $t"
-      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" || say suite "$t"
-    done <<<"$run"
+      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" </dev/null || say suite "$t"
+    done
   done
   trap - TERM INT HUP
 fi
