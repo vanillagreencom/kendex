@@ -14,7 +14,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 mod identity;
 pub use identity::PackageRef;
-pub(crate) use identity::record_at;
+pub(crate) use identity::{Unclaimed, record_at};
 
 /// Where one installation came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]

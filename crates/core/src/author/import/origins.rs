@@ -319,8 +319,9 @@ fn installed_hash(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<
 /// as they are.
 ///
 /// The error is the cause, for the origin's `problem`: an unreadable
-/// lock, no record that claims the copy, a source or commit this machine
-/// cannot read, or a frontmatter on either side that does not read.
+/// lock, no record that claims the copy, a record of the package that
+/// names no installed path, a source or commit this machine cannot read,
+/// or a frontmatter on either side that does not read.
 fn with_published_keys(
     env: &Env,
     row: &crate::library::ProvenanceRow,

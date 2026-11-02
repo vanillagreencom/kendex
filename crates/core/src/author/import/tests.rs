@@ -152,6 +152,21 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
             entry(kind, name, source, repo),
         );
     }
+    // The marketplace skill's install wrote Claude's copy, and its record
+    // says where: a copy's record is what puts back the keys the install
+    // cut, and a record naming no position speaks for no copy.
+    lock.entries
+        .get_mut(&crate::lock::entry_key(
+            ItemKind::Skill,
+            "gh",
+            HarnessId::Claude,
+        ))
+        .unwrap_or_else(|| unreachable!("inserted above"))
+        .emitted = Some(crate::lock::EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+        paths: vec![project.join(".claude/skills/gh")],
+    });
     crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
     (tmp, env, scope)
 }

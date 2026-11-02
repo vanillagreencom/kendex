@@ -186,27 +186,59 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
     }
 }
 
+/// Why no record answers for a copy: the records establish nothing about
+/// it, which is a different thing to tell the person from a record of the
+/// package that cannot say where it wrote.
+pub(crate) enum Unclaimed {
+    /// No record of the package claims the copy's position — no record
+    /// claims it, two packages' records do, or the claim is another
+    /// package's — and every record of the package names where it
+    /// installed.
+    NoRecord,
+    /// No record claims the position, and a record of the package names
+    /// no position it installed at — written before records kept their
+    /// positions, and kept since, as a refresh keeps an edited
+    /// installation's record. It may have written this copy or another;
+    /// nothing on it says which.
+    NamesNoPosition,
+}
+
 /// The record that wrote the copy of `package` at `copy`: the one whose
 /// claim on that position the Library credits an observation there with,
 /// so every tool that reads one copy is answered from one record, however
 /// many records of the package each of them holds elsewhere.
 ///
-/// `None` where no record claims the position, two packages' records do,
-/// or the claim is another package's: a tool's record of its own copy
-/// somewhere else says nothing about these bytes.
+/// Refused where no record of the package claims the position: a tool's
+/// record of its own copy somewhere else says nothing about these bytes,
+/// and a record that names no position cannot say they are its own.
 pub(crate) fn record_at<'a>(
     env: &Env,
     scope: &Scope,
     lock: &'a Lock,
     package: (ItemKind, &str),
     copy: &Path,
-) -> Option<&'a LockEntry> {
+) -> Result<&'a LockEntry, Unclaimed> {
     let (kind, name) = package;
-    let (claimed, key) = index(env, scope, lock).at(copy)?;
-    if claimed.kind != kind || claimed.name != name {
-        return None;
+    if let Some((claimed, key)) = index(env, scope, lock).at(copy)
+        && claimed.kind == kind
+        && claimed.name == name
+        && let Some(entry) = lock.entries.get(&key)
+    {
+        return Ok(entry);
     }
-    lock.entries.get(&key)
+    // Read through the same reading of a record the index takes, so a
+    // record counts as naming no position exactly where it claims none.
+    let positionless = lock.entries.values().any(|entry| {
+        entry.kind == kind
+            && entry.name == name
+            && crate::engine::owned::installed(env, scope, entry)
+                .files
+                .is_empty()
+    });
+    Err(match positionless {
+        true => Unclaimed::NamesNoPosition,
+        false => Unclaimed::NoRecord,
+    })
 }
 
 impl Recorded {

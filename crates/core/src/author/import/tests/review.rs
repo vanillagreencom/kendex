@@ -190,12 +190,14 @@ fn an_installed_copy_is_read_against_the_installed_key_set() {
 /// record, including a reader whose own record, at another commit, names
 /// a copy of its own elsewhere, so every reader of one copy restores the
 /// same keys. Where those keys cannot be put back — a copy no record
-/// wrote, though its tool holds one for another position, a recorded
-/// commit this machine does not hold, a repository record naming no
-/// commit, or a copy whose own frontmatter does not read — the edited copy
-/// is listed with the cause and nothing to select: offered as it stands,
-/// it would import without them, and read at another revision it would
-/// import keys these bytes never carried. One row per installation.
+/// wrote, though its tool holds one for another position, a copy whose
+/// tool's record names no installed path and so cannot say the copy is
+/// its own, a recorded commit this machine does not hold, a repository
+/// record naming no commit, or a copy whose own frontmatter does not
+/// read — the edited copy is listed with the cause and nothing to
+/// select: offered as it stands, it would import without them, and read
+/// at another revision it would import keys these bytes never carried.
+/// One row per installation.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
@@ -264,11 +266,11 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
     let cursor = ".cursor/skills";
     // One record of the copy's package: the tool it is held for, the
     // commit it names, and the skills folder whose `gh` tree it records
-    // writing.
+    // writing, if it records any.
     struct Record<'a> {
         held_by: HarnessId,
         installed_at: Option<String>,
-        wrote: &'a str,
+        wrote: Option<&'a str>,
     }
     struct Row<'a> {
         what: &'a str,
@@ -283,7 +285,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             records: vec![Record {
                 held_by: HarnessId::Claude,
                 installed_at: Some(one.clone()),
-                wrote: own,
+                wrote: Some(own),
             }],
             copy_in: own,
             copy: edited_copy,
@@ -294,7 +296,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             records: vec![Record {
                 held_by: HarnessId::Codex,
                 installed_at: Some(one.clone()),
-                wrote: shared,
+                wrote: Some(shared),
             }],
             copy_in: shared,
             copy: edited_copy,
@@ -306,12 +308,12 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
                 Record {
                     held_by: HarnessId::Codex,
                     installed_at: Some(one.clone()),
-                    wrote: shared,
+                    wrote: Some(shared),
                 },
                 Record {
                     held_by: HarnessId::Cursor,
                     installed_at: Some(two.clone()),
-                    wrote: cursor,
+                    wrote: Some(cursor),
                 },
             ],
             copy_in: shared,
@@ -323,9 +325,20 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             records: vec![Record {
                 held_by: HarnessId::Cursor,
                 installed_at: Some(one.clone()),
-                wrote: shared,
+                wrote: Some(shared),
             }],
             copy_in: cursor,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a copy whose tool's record names no installed path",
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some(one.clone()),
+                wrote: None,
+            }],
+            copy_in: own,
             copy: edited_copy,
             kept: None,
         },
@@ -334,7 +347,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             records: vec![Record {
                 held_by: HarnessId::Claude,
                 installed_at: Some("0".repeat(40)),
-                wrote: own,
+                wrote: Some(own),
             }],
             copy_in: own,
             copy: edited_copy,
@@ -345,7 +358,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             records: vec![Record {
                 held_by: HarnessId::Claude,
                 installed_at: None,
-                wrote: own,
+                wrote: Some(own),
             }],
             copy_in: own,
             copy: edited_copy,
@@ -356,7 +369,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             records: vec![Record {
                 held_by: HarnessId::Claude,
                 installed_at: Some(one.clone()),
-                wrote: own,
+                wrote: Some(own),
             }],
             copy_in: own,
             copy: "---\nname: gh\nname: gh\ndescription: about gh\n---\nmy edited bytes\n",
@@ -379,10 +392,10 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             let mut gh = entry(ItemKind::Skill, "gh", "cat", REPO);
             gh.harness = record.held_by;
             gh.source_commit = record.installed_at;
-            gh.emitted = Some(crate::lock::EmittedArtifact {
+            gh.emitted = record.wrote.map(|dir| crate::lock::EmittedArtifact {
                 kind: ItemKind::Skill,
                 name: "gh".to_owned(),
-                paths: vec![root.join(record.wrote).join("gh")],
+                paths: vec![root.join(dir).join("gh")],
             });
             lock.entries.insert(
                 crate::lock::entry_key(ItemKind::Skill, "gh", record.held_by),

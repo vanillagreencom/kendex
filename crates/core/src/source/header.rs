@@ -146,30 +146,39 @@ pub(crate) struct Published {
 /// place: the current revision, or another repository under the same
 /// name, would put back keys these bytes never carried.
 ///
-/// `installed` is the record that wrote the copy, which the caller asks
-/// [`crate::library::record_at`] for. `None`, no record claiming the
-/// copy, refuses: unlike [`DeclaredHeaders::text`], no declaration
-/// stands in, because a declaration says what the scope asks for now,
-/// not what these bytes are.
+/// `installed` is the record that wrote the copy, as the caller's
+/// [`crate::library::record_at`] answered. A copy no record claims
+/// refuses: unlike [`DeclaredHeaders::text`], no declaration stands in,
+/// because a declaration says what the scope asks for now, not what these
+/// bytes are, and neither does a record that names no position, which
+/// cannot say these bytes are its own.
 ///
 /// The outer error is the read's own: a source
 /// [`super::require_ready_at`] refuses, or an item that revision does not
 /// hold. The inner one is why the record cannot be read here: no record
-/// claims the copy, a source with revisions whose record names none, a
-/// source that now resolves to another repository, or an item with no
-/// header file.
+/// claims the copy, the package's record names no position it installed
+/// at, a source with revisions whose record names none, a source that now
+/// resolves to another repository, or an item with no header file.
 pub(crate) fn published_text(
     env: &crate::env::Env,
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     package: (ItemKind, &str),
-    installed: Option<&InstalledFrom>,
+    installed: Result<&InstalledFrom, &crate::library::Unclaimed>,
 ) -> crate::error::Result<Result<Published, String>> {
     let (kind, name) = package;
-    let Some(installed) = installed else {
-        return Ok(Err(format!(
-            "no install record names where this copy of '{name}' came from"
-        )));
+    let installed = match installed {
+        Ok(installed) => installed,
+        Err(crate::library::Unclaimed::NoRecord) => {
+            return Ok(Err(format!(
+                "no install record names where this copy of '{name}' came from"
+            )));
+        }
+        Err(crate::library::Unclaimed::NamesNoPosition) => {
+            return Ok(Err(format!(
+                "the install record of '{name}' names no installed path, so it cannot say this copy is the one it wrote"
+            )));
+        }
     };
     // Only a repository source has revisions. A record of one that names
     // no commit cannot say which revision these bytes are, and the
