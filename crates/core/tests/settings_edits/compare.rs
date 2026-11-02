@@ -136,54 +136,122 @@ fn a_private_file_linked_from_another_checkout_is_read() {
     );
 }
 
+/// A second skill in `project`, from the catalog its first came from,
+/// switched on or off.
+#[allow(clippy::unwrap_used)]
+fn also_install(home: &Path, project: &Path, skill: &str, template: &str, enabled: bool) {
+    write(
+        home,
+        &format!("catalog/skills/{skill}/SKILL.md"),
+        &format!("---\nname: {skill}\ndescription: another skill\n---\nBody.\n"),
+    );
+    write(
+        home,
+        &format!("catalog/skills/{skill}/kendex.settings.toml.example"),
+        template,
+    );
+    let manifest = project.join("kendex.toml");
+    let mut text = fs::read_to_string(&manifest).unwrap();
+    text.push_str(&format!(
+        "\n[skills.{skill}]\nsource = \"cat\"\nenabled = {enabled}\n"
+    ));
+    fs::write(manifest, text).unwrap();
+}
+
 /// A key declared as a credential is never read, in any project: not
 /// where it is declared so, and not where another package declares it
-/// public.
+/// public. The declaration holds whether or not its own project can be
+/// compared.
 #[test]
 fn a_secret_key_never_appears_whatever_its_private_values() {
     const VAULT: &str = "[env]\n# Mode.\nMODE = \"a\"\n\n[secrets]\n# The token.\nTOKEN = \"\"\n";
-    const OPEN: &str = "[env]\n# The token, public here.\nTOKEN = \"x\"\n";
-    let (_tmp, home, env) = home();
-    let one = project_at(&home, "one", "vault", VAULT);
-    let two = project_at(&home, "two", "vault", VAULT);
-    let three = project_at(&home, "three", "open", OPEN);
-    let four = project_at(&home, "four", "open", OPEN);
-    write(&one, ".env.local", "TOKEN='alpha-secret'\nMODE='b'\n");
-    write(&two, ".env.local", "TOKEN='bravo-secret'\n");
-    write(&three, ".env.local", "TOKEN='charlie-secret'\n");
-    write(&four, ".env.local", "TOKEN='delta-secret'\n");
+    const BROKEN_VAULT: &str =
+        "[env]\n# Mode.\nMODE = \"a\"\nLOOSE = \"1\"\n\n[secrets]\n# The token.\nTOKEN = \"\"\n";
+    const OPEN: &str =
+        "[env]\n# The token, public here.\nTOKEN = \"x\"\n\n# A level.\nLEVEL = \"1\"\n";
+    const BROKEN: &str = "[env]\nNO_COMMENT = \"1\"\n";
+    type Plant = fn(&Path, &Path);
+    let rows: [(&str, &str, Plant, bool); 4] = [
+        ("the declaring project reads", VAULT, |_, _| {}, false),
+        (
+            "an unrelated skill there is switched off",
+            VAULT,
+            |home, one| also_install(home, one, "idle", TEMPLATE, false),
+            true,
+        ),
+        (
+            "an unrelated template there breaks the grammar",
+            VAULT,
+            |home, one| also_install(home, one, "noisy", BROKEN, true),
+            true,
+        ),
+        (
+            "the declaring template itself breaks the grammar",
+            BROKEN_VAULT,
+            |_, _| {},
+            true,
+        ),
+    ];
+    for (case, vault, plant, one_unread) in rows {
+        let (_tmp, home, env) = home();
+        let one = project_at(&home, "one", "vault", vault);
+        let three = project_at(&home, "three", "open", OPEN);
+        let four = project_at(&home, "four", "open", OPEN);
+        plant(&home, &one);
+        write(&one, ".env.local", "TOKEN='alpha-secret'\n");
+        write(&three, ".env.local", "TOKEN='charlie-secret'\n");
+        write(&four, ".env.local", "TOKEN='delta-secret'\nLEVEL='2'\n");
 
-    let compared = compare_settings(&env, &[one.clone(), two.clone(), three, four]);
+        let compared = compare_settings(&env, &[one.clone(), three.clone(), four.clone()]);
 
-    assert_eq!(compared.unread, Vec::new());
-    // The comparison ran: the public key the same projects differ on is
-    // there.
-    assert_eq!(
-        compared.differing,
-        vec![DifferingKey {
-            key: "MODE".to_owned(),
-            answers: vec![
-                value(
-                    "a",
-                    &[(
-                        &two,
-                        Layer::TemplateDefault {
-                            skills: vec!["vault".to_owned()]
-                        }
-                    )]
-                ),
-                value("b", &[(&one, private())]),
-            ],
-        }]
-    );
-    let rendered = format!("{compared:?}");
-    for secret in [
-        "alpha-secret",
-        "bravo-secret",
-        "charlie-secret",
-        "delta-secret",
-    ] {
-        assert!(!rendered.contains(secret), "a secret value was read");
+        let unread: Vec<&Path> = compared
+            .unread
+            .iter()
+            .filter(|one| matches!(one.reason, Unread::Template { .. }))
+            .map(|one| one.project.as_path())
+            .collect();
+        assert_eq!(
+            compared.unread.len(),
+            unread.len(),
+            "{case}: {:?}",
+            compared.unread
+        );
+        assert_eq!(
+            unread,
+            one_unread
+                .then_some(one.as_path())
+                .into_iter()
+                .collect::<Vec<_>>(),
+            "{case}"
+        );
+        // The comparison ran: the public key the same projects differ on
+        // is there, and the secret one is not.
+        assert_eq!(
+            compared.differing,
+            vec![DifferingKey {
+                key: "LEVEL".to_owned(),
+                answers: vec![
+                    value(
+                        "1",
+                        &[(
+                            &three,
+                            Layer::TemplateDefault {
+                                skills: vec!["open".to_owned()]
+                            }
+                        )]
+                    ),
+                    value("2", &[(&four, private())]),
+                ],
+            }],
+            "{case}"
+        );
+        let rendered = format!("{compared:?}");
+        for secret in ["alpha-secret", "charlie-secret", "delta-secret"] {
+            assert!(
+                !rendered.contains(secret),
+                "{case}: a secret value was read"
+            );
+        }
     }
 }
 

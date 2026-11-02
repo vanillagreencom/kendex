@@ -217,21 +217,38 @@ fn compare_settings(env: &Env) -> CliResult {
     for differing in &compared.differing {
         ui::stderr(&style.section(&differing.key, differing.answers.len(), Status::Decision));
         for one in &differing.answers {
-            let label = match &one.answer {
-                Answer::Value(value) => format!("\"{value}\""),
+            // A value and a file name are drawn verbatim: prose is
+            // re-spaced, and two values differing only in their spaces
+            // would show as one.
+            let (text, verbatim) = match &one.answer {
+                Answer::Value(value) => (format!("\"{value}\""), true),
                 Answer::Undecided { problem, lines } if lines.is_empty() => {
-                    format!("unknown: {problem}")
+                    (format!("unknown: {problem}"), false)
                 }
-                Answer::Undecided { problem, lines } => format!(
-                    "unknown: {problem} ({})",
-                    kendex_core::settings_file::lines_phrase(lines)
+                Answer::Undecided { problem, lines } => (
+                    format!(
+                        "unknown: {problem} ({})",
+                        kendex_core::settings_file::lines_phrase(lines)
+                    ),
+                    false,
                 ),
             };
-            ui::stderr(&style.row(Status::Decision, &[Span::Prose(&label)], None));
+            let label = match verbatim {
+                true => Span::Verbatim(&text),
+                false => Span::Prose(&text),
+            };
+            ui::stderr(&style.row(Status::Decision, &[label], None));
             for holder in &one.holders {
                 let project = holder.project.display().to_string();
-                let from = format!("  from {}", holder.layer);
-                ui::stderr(&style.detail(None, &[Span::Command(&project), Span::Prose(&from)]));
+                let layer = holder.layer.to_string();
+                ui::stderr(&style.detail(
+                    None,
+                    &[
+                        Span::Command(&project),
+                        Span::Prose(" from "),
+                        Span::Verbatim(&layer),
+                    ],
+                ));
             }
         }
     }

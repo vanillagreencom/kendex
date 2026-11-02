@@ -14,11 +14,12 @@
 //! reads, so it cannot differ between them, and a value there would hide
 //! the saved values this report is for.
 //!
-//! A key any compared project declares as a credential, or that two of its
-//! packages contest, leaves the report before any layer is read for it, so
-//! no secret value is ever held here to print. A project whose templates
-//! cannot all be read is unread, never compared: nothing could say which
-//! of its keys are secret.
+//! A key any project declares as a credential, or that two of its packages
+//! contest, leaves the report before any layer is read for it, so no secret
+//! value is ever held here to print. A project whose templates cannot all
+//! be read is unread, never compared: nothing could say which of its keys
+//! are secret. What its readable templates do declare secret still leaves
+//! the report for every other project.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -128,28 +129,31 @@ pub enum Unread {
 /// unread project never counts as agreeing, and the rest are compared
 /// without it.
 pub fn compare_settings(env: &Env, projects: &[PathBuf]) -> SettingsComparison {
-    let mut unread = Vec::new();
-    let mut declaring = Vec::new();
-    for project in projects {
-        match declarations(env, project) {
-            Ok(found) => declaring.push((project, found)),
-            Err(reason) => unread.push(UnreadProject {
-                project: project.clone(),
-                reason,
-            }),
-        }
-    }
-    // Settled across every project before any value is read: a key one
-    // project holds as a credential is a credential in each of them, as
-    // far as this report is concerned.
-    let secret: BTreeSet<String> = declaring
+    let scanned: Vec<(&PathBuf, Declarations)> = projects
+        .iter()
+        .map(|project| (project, declarations(env, project)))
+        .collect();
+    // Settled across every project before any value is read, unread ones
+    // included: a key one project holds as a credential is a credential in
+    // each of them, as far as this report is concerned.
+    let secret: BTreeSet<String> = scanned
         .iter()
         .flat_map(|(_, found)| found.secret.iter().cloned())
         .collect();
+    let mut unread = Vec::new();
     let mut answered: BTreeMap<String, Vec<(Answer, Holder)>> = BTreeMap::new();
-    for (project, found) in declaring {
-        let public: BTreeMap<&String, &Vec<(String, String)>> = found
-            .public
+    for (project, found) in scanned {
+        let public = match found.public {
+            Ok(public) => public,
+            Err(reason) => {
+                unread.push(UnreadProject {
+                    project: project.clone(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        let public: BTreeMap<&String, &Vec<(String, String)>> = public
             .iter()
             .filter(|(key, _)| !secret.contains(*key))
             .collect();
@@ -185,42 +189,68 @@ pub fn compare_settings(env: &Env, projects: &[PathBuf]) -> SettingsComparison {
 /// What one project's installed packages declare.
 struct Declarations {
     root: PathBuf,
-    /// Each public key and every `(package, default)` declaring it.
-    public: BTreeMap<String, Vec<(String, String)>>,
-    /// The keys declared as a credential, or contested, by kendex or any
-    /// package here.
+    /// Each public key and every `(package, default)` declaring it, or why
+    /// the project cannot be compared.
+    public: Result<BTreeMap<String, Vec<(String, String)>>, Unread>,
+    /// The keys kendex or any readable template here declares as a
+    /// credential, or contests. Collected whether or not the project can
+    /// be compared.
     secret: BTreeSet<String>,
 }
 
-fn declarations(env: &Env, project: &Path) -> Result<Declarations, Unread> {
-    let root = crate::paths::canonical(project).map_err(|error| Unread::Folder {
-        problem: error.to_string(),
-    })?;
-    let templates = crate::engine::settings_templates(env, &Scope::Project { root: root.clone() })
-        .map_err(|error| Unread::Packages {
-            problem: error.to_string(),
-        })?;
+fn declarations(env: &Env, project: &Path) -> Declarations {
+    let unread = |reason| Declarations {
+        root: project.to_path_buf(),
+        public: Err(reason),
+        secret: BTreeSet::new(),
+    };
+    let root = match crate::paths::canonical(project) {
+        Ok(root) => root,
+        Err(error) => {
+            return unread(Unread::Folder {
+                problem: error.to_string(),
+            });
+        }
+    };
+    let templates =
+        match crate::engine::settings_templates(env, &Scope::Project { root: root.clone() }) {
+            Ok(templates) => templates,
+            Err(error) => {
+                return unread(Unread::Packages {
+                    problem: error.to_string(),
+                });
+            }
+        };
+    let mut first_unread = None;
     let mut public: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    // `declared` and `contested` pass over a template that breaks the
+    // grammar. Its decoded `[secrets]` rows still say what its author
+    // holds as a credential, and this report prints values, so they leave
+    // it too.
+    let mut broken_secrets = BTreeSet::new();
     for (skill, source) in &templates {
         let text = match source {
             TemplateSource::Absent => continue,
             TemplateSource::Unreadable(reason) => {
-                return Err(Unread::Template {
+                first_unread.get_or_insert_with(|| Unread::Template {
                     skill: skill.clone(),
                     problem: reason.clone(),
                 });
+                continue;
             }
             TemplateSource::Text(text) => text,
         };
         let read = crate::settings_template::read(text);
         if !read.findings.is_empty() {
-            return Err(Unread::Template {
+            first_unread.get_or_insert_with(|| Unread::Template {
                 skill: skill.clone(),
                 problem: format!(
                     "its template breaks the settings grammar in {} place(s)",
                     read.findings.len()
                 ),
             });
+            broken_secrets.extend(read.secrets.into_iter().map(|entry| entry.key));
+            continue;
         }
         for entry in read.entries {
             public
@@ -237,12 +267,13 @@ fn declarations(env: &Env, project: &Path) -> Result<Declarations, Unread> {
                 .into_iter()
                 .map(|one| one.key),
         )
+        .chain(broken_secrets)
         .collect();
-    Ok(Declarations {
+    Declarations {
         root,
-        public,
+        public: first_unread.map_or(Ok(public), Err),
         secret,
-    })
+    }
 }
 
 /// Each public key's answer in one project, with the layer that gave it.

@@ -1,5 +1,5 @@
-//! `kendex project settings` reports a difference and writes nothing in
-//! any project it reads.
+//! `kendex project settings` reports a difference, each value as the
+//! loaders read it, and writes nothing in any project it reads.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -32,9 +32,18 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     out
 }
 
+/// Two values that differ only in their inner spaces. The report is the
+/// command's result, so each value is shown spelled as the loaders read
+/// it, in either rendering.
 #[test]
-#[allow(clippy::expect_used, reason = "fixture preconditions")]
 fn a_difference_is_reported_and_no_project_file_changes() {
+    for look in ["plain", "pretty"] {
+        report_in(look);
+    }
+}
+
+#[allow(clippy::expect_used, reason = "fixture preconditions")]
+fn report_in(look: &str) {
     let tmp = tempfile::tempdir().expect("fixture home");
     let home = rooted(&tmp);
     let env = Env::host_rooted(&home);
@@ -48,7 +57,7 @@ fn a_difference_is_reported_and_no_project_file_changes() {
     .expect("skill");
     fs::write(skill.join("kendex.settings.toml.example"), TEMPLATE).expect("template");
     let mut projects = Vec::new();
-    for (name, depth) in [("app", "3"), ("api", "5")] {
+    for (name, depth) in [("app", "a  b"), ("api", "a b")] {
         let project = home.join(name);
         fs::create_dir_all(project.join(".claude")).expect("project folder");
         fs::write(
@@ -87,18 +96,18 @@ fn a_difference_is_reported_and_no_project_file_changes() {
         .envs(fixture_env(&home))
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("KENDEX_BACKGROUND_REFRESH", "off")
-        .env("KENDEX_UI", "plain")
+        .env("KENDEX_UI", look)
         .output()
         .expect("kendex runs");
 
-    assert!(output.status.success(), "{output:?}");
-    // The plain grammar opens a block per differing key with the key.
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .any(|line| line == "DEPTH:"),
-        "{output:?}"
-    );
+    assert!(output.status.success(), "{look}: {output:?}");
+    let shown = console::strip_ansi_codes(&String::from_utf8_lossy(&output.stderr)).into_owned();
+    for value in ["\"a  b\"", "\"a b\""] {
+        assert!(
+            shown.lines().any(|line| line.contains(value)),
+            "{look}: {value} is not shown in {shown}"
+        );
+    }
     let after: Vec<_> = projects.iter().map(|project| snapshot(project)).collect();
-    assert_eq!(before, after);
+    assert_eq!(before, after, "{look}");
 }
