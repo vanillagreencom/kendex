@@ -807,6 +807,50 @@ assert_eq "and a push that edits a README carrying a table its base had passes, 
   "rc=0 pre-push: step=against:<oid>;md-type: finding=value-table path=README.md type=readme line=7 count=1 baseline=1 introduced=no section=Setup;md-type: summary=findings=1 introduced=0 unended=0 files=1 scope=range skipped=0;pre-push: result=0" \
   "$(push_ref "$INHERITED" topic | sed "$FINDING_KEEP")"
 
+# md-type asks what the branch introduced, so a restack takes its baseline
+# from the history boundary, as changelog-entries does. The base gains
+# pkg/README.md with a value table, landed with no hook, after the remote
+# head; two dots from that head would hold it against the branch. The branch
+# edits README.md: cleanly, which pushes, or adding a table, which is refused
+# naming README.md alone.
+md_restacked() { # VAR NAME ADDS — VAR gets a restacked repo whose topic edits README.md; ADDS=1 adds a table there
+  local __v="$1" r="" table='| Key | Default |\n|---|---|\n| poll | 30 |\n'
+  new_repo r "$2"
+  cp -R "$DOCS_WRITING" "$r/.agents/skills/docs-writing"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\n' >"$r/kendex.settings.toml"
+  printf '# Tool\n\nA tool for people.\n\n## Setup\n\nRun it.\n' >"$r/README.md"
+  q git -C "$r" add kendex.settings.toml README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" remote set-head origin main
+  q git -C "$r" checkout -q -b topic
+  if [ "$3" = 1 ]; then printf "\n$table" >>"$r/README.md"; else printf '\nMore setup.\n' >>"$r/README.md"; fi
+  q git -C "$r" add README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: edit the README"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  q git -C "$r" checkout -q main
+  mkdir -p "$r/pkg"
+  printf "# Pkg\n\nA package.\n\n## Setup\n\n$table" >"$r/pkg/README.md"
+  q git -C "$r" add pkg/README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the base's README"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" checkout -q topic
+  q git -C "$r" rebase -q main
+  eval "$__v=\$r"
+}
+
+MD_RESTACKED=""
+md_restacked MD_RESTACKED md-restacked 0
+assert_eq "a restacked branch is not refused for a README its base added after the remote head" \
+  "rc=0 pre-push: step=against:<oid>:history:<oid>;md-type: summary=findings=0 introduced=0 unended=0 files=1 scope=range skipped=0;pre-push: result=0" \
+  "$(push_ref "$MD_RESTACKED" topic --force-with-lease)"
+
+MD_OWN_TABLE=""
+md_restacked MD_OWN_TABLE md-own-table 1
+assert_eq "a restacked branch that adds a table to its own README is refused, and the base's is not named" \
+  "rc=1 pre-push: step=against:<oid>:history:<oid>;md-type: finding=value-table path=README.md type=readme line=9 count=1 baseline=0 introduced=yes section=Setup;md-type: summary=findings=1 introduced=1 unended=0 files=1 scope=range skipped=0;pre-push: result=1" \
+  "$(push_ref "$MD_OWN_TABLE" topic --force-with-lease | sed "$FINDING_KEEP")"
+
 # ------------------------------------------------- two dots against three
 #
 # The markdown lanes take a range under their default scope, and a push asks

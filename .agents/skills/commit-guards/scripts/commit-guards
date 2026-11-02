@@ -83,10 +83,11 @@ CHANGE_SCOPED_CHECKS="md-type"
 RETIRED_CHECKS="md-format"
 # The range lanes whose baseline is the branch's base rather than the tree
 # the range lands on: changelog-entries asks which version increases the
-# branch made. A caller that knows that base hands it as --history, and these
-# lanes take --against it in place of the range: the push hook's remote head
-# can predate base commits the branch carries, which it never authored.
-HISTORY_SCOPED_CHECKS="changelog-entries"
+# branch made, md-type which shape findings it introduced. A caller that
+# knows that base hands it as --history, and these lanes take --against it in
+# place of the range: the push hook's remote head can predate base commits
+# the branch carries, which it never authored.
+HISTORY_SCOPED_CHECKS="changelog-entries md-type"
 # Withheld by a --skip-unscoped run, the push hook's: ../CHECKS.md § secrets.
 PUSH_WITHHELD_CHECKS="secrets"
 
