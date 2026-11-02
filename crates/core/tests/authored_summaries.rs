@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use kendex_core::apply;
 use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::{ItemKind, ObservedItem, Scope};
+use kendex_core::model::{HarnessId, ItemKind, ObservedItem, Scope};
 use kendex_core::source::browse;
 use kendex_core::source_read::SealedSource;
 use kendex_core::tags::Tag;
@@ -560,6 +560,91 @@ fn a_row_reads_the_version_installed_not_the_one_upstream_moved_to() {
         row.summary.as_deref(),
         Some("Keeps the notes you had when you installed it.")
     );
+}
+
+/// Every tool reading one shared skill copy reads the words of the
+/// version the record that wrote the copy installed, the same record the
+/// row's origin comes from. A reader holding its own record of a copy
+/// elsewhere, at a newer commit, says nothing about these bytes: answered
+/// from it, one copy would read as two versions.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_reader_of_a_shared_copy_reads_the_version_its_writer_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let base = format!("file://{}", home.join("base").display());
+    let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let project = home.join("dev/app");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 7\n\n[sources.up]\nrepo = \"team/tools\"\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"up\"\n",
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let upstream = home.join("base/team/tools");
+    let write_version = |summary: &str, tag: &str| {
+        fs::create_dir_all(upstream.join("skills/gh")).unwrap();
+        fs::write(
+            upstream.join("skills/gh/SKILL.md"),
+            format!("---\nname: gh\ndescription: Use for GitHub work.\nsummary: {summary}\ntags: [{tag}]\n---\nBody.\n"),
+        )
+        .unwrap();
+    };
+    fs::create_dir_all(&upstream).unwrap();
+    fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    write_version("The version on disk.", "review");
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "one"]);
+    kendex_core::remote::sync(&env, "team/tools", None).unwrap();
+    apply::execute(&env, &audit(&env, &scope).unwrap().plan).unwrap();
+
+    write_version("A version nobody here installed.", "testing");
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "two"]);
+    let two = kendex_core::remote::sync(&env, "team/tools", None)
+        .unwrap()
+        .commit;
+    // Cursor reads the shared tree Codex wrote, and holds a record of its
+    // own copy in its own folder at the newer commit.
+    let lock_path = kendex_core::lock::lock_path(&env, &scope);
+    let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+    let mut own = lock.entries
+        [&kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Codex)]
+        .clone();
+    own.harness = HarnessId::Cursor;
+    own.source_commit = Some(two);
+    own.emitted = Some(kendex_core::lock::EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+        paths: vec![project.join(".cursor/skills/gh")],
+    });
+    lock.entries.insert(
+        kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Cursor),
+        own,
+    );
+    kendex_core::lock::save(&lock_path, &lock).unwrap();
+
+    let rows = kendex_core::library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
+    let readers: Vec<_> = rows
+        .iter()
+        .filter(|row| row.package_ref().name == "gh" && row.at.is_some())
+        .collect();
+    assert!(
+        readers.iter().any(|row| row.harness == HarnessId::Cursor),
+        "{readers:?}"
+    );
+    for row in readers {
+        assert_eq!(
+            row.summary.as_deref(),
+            Some("The version on disk."),
+            "{row:?}"
+        );
+        assert_eq!(row.tags, Some(vec![Tag::Review]), "{row:?}");
+    }
 }
 
 /// The catalog's agent, at one version of its words.

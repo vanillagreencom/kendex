@@ -34,9 +34,9 @@ pub(super) fn provenance(
 /// mid-refresh and the edits live in the one rendering being kept, so the
 /// captured tool answers first. `None` where nothing recorded one, which
 /// reads as the source's head — an approximate base beats none. A skill's
-/// capture takes its copy's own record instead
-/// ([`crate::source::header::published_text`]), which refuses rather than
-/// guess.
+/// capture takes the record that wrote its copy instead
+/// ([`crate::library::record_at`]), and refuses rather than guess where
+/// none did.
 pub(super) fn installed_commit(
     env: &Env,
     scope: &Scope,

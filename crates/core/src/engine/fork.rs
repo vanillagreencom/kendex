@@ -266,14 +266,18 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             };
             // The copy carries only the installed key set; the
             // publisher's other keys come back from the file it was
-            // rendered from, around the person's edits.
+            // rendered from, around the person's edits, at the revision
+            // the record that wrote this copy names.
+            let lock = crate::lock::load(&crate::lock::lock_path(of.env, of.scope))?;
+            let installed =
+                crate::library::record_at(of.env, of.scope, &lock, (of.kind, of.name), edited)
+                    .map(crate::source::header::InstalledFrom::of);
             let published = crate::source::header::published_text(
                 of.env,
                 of.scope,
                 of.manifest,
                 (of.kind, of.name),
-                of.harness,
-                edited,
+                installed.as_ref(),
             )?
             .map_err(unrestored)?;
             let on_disk = skill_text(&files);

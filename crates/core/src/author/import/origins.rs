@@ -310,15 +310,17 @@ fn installed_hash(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<
 
 /// An edited skill copy with the keys its install cut put back
 /// ([`crate::render::skill::authored_form`]) from the package's SKILL.md
-/// as the install record of the copy at `copy` names it
-/// ([`crate::source::header::published_text`]): the source and commit it
-/// was installed from, not whatever the source holds now, which may have
-/// changed what it declares since. Nothing is fetched. Any other kind's
-/// bytes are its own whole file and come back as they are.
+/// as the record that wrote the copy at `copy` names it
+/// ([`crate::library::record_at`], the claim the Library credits the
+/// row's observation with; [`crate::source::header::published_text`]):
+/// the source and commit it was installed from, not whatever the source
+/// holds now, which may have changed what it declares since. Nothing is
+/// fetched. Any other kind's bytes are its own whole file and come back
+/// as they are.
 ///
-/// The error is the cause, for the origin's `problem`: no record that
-/// names the copy, a source or commit this machine cannot read, or a
-/// frontmatter on either side that does not read.
+/// The error is the cause, for the origin's `problem`: an unreadable
+/// lock, no record that claims the copy, a source or commit this machine
+/// cannot read, or a frontmatter on either side that does not read.
 fn with_published_keys(
     env: &Env,
     row: &crate::library::ProvenanceRow,
@@ -332,13 +334,17 @@ fn with_published_keys(
     };
     let unrestored =
         |cause: String| format!("the keys its install cut cannot be put back: {cause}");
+    let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope))
+        .map_err(|error| unrestored(error.to_string()))?;
+    let installed =
+        crate::library::record_at(env, &row.scope, &lock, (package.kind, &package.name), copy)
+            .map(crate::source::header::InstalledFrom::of);
     let published = match crate::source::header::published_text(
         env,
         &row.scope,
         manifest,
         (package.kind, &package.name),
-        row.harness,
-        copy,
+        installed.as_ref(),
     ) {
         Ok(Ok(published)) => published,
         Ok(Err(cause)) => return Err(unrestored(cause)),

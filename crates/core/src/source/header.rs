@@ -130,44 +130,6 @@ impl InstalledFrom {
             commit: entry.source_commit.clone(),
         }
     }
-
-    /// The record the copy at `copy` was installed by, as `harness` reads
-    /// it: that tool's own record of the package, else the first of the
-    /// package's records, in key order, that names `copy` among the
-    /// positions it wrote. `None` where no record establishes it.
-    ///
-    /// A shared tree is written once and read by several tools, so most
-    /// of its readers hold no record of their own. Another tool's record
-    /// speaks for the copy only where it wrote that copy: a record of a
-    /// tool's own copy elsewhere says nothing about these bytes. Ties go
-    /// to key order, the order the Library's claim on a position keeps,
-    /// so every reader of one copy is answered from one record.
-    fn of_copy(
-        env: &crate::env::Env,
-        scope: &crate::model::Scope,
-        lock: &crate::lock::Lock,
-        package: (ItemKind, &str),
-        harness: crate::model::HarnessId,
-        copy: &Path,
-    ) -> Option<InstalledFrom> {
-        let (kind, name) = package;
-        let own = lock
-            .entries
-            .get(&crate::lock::entry_key(kind, name, harness));
-        let copy = crate::paths::canonical(copy).ok();
-        own.or_else(|| {
-            let copy = copy.as_ref()?;
-            lock.entries
-                .values()
-                .filter(|entry| entry.kind == kind && entry.name == name)
-                .find(|entry| {
-                    crate::engine::installed_paths(env, scope, entry)
-                        .iter()
-                        .any(|wrote| crate::paths::canonical(wrote).ok().as_ref() == Some(copy))
-                })
-        })
-        .map(InstalledFrom::of)
-    }
 }
 
 /// One installed package's own header file, read where its install
@@ -177,31 +139,34 @@ pub(crate) struct Published {
     pub(crate) commit: Option<String>,
 }
 
-/// The header file the copy at `copy` was rendered from, for a caller
-/// that puts back what the install cut from it: the source the copy's
-/// record names, held to the repository it resolved to then, at the
-/// commit it was installed from ([`InstalledFrom::of_copy`] picks the
-/// record). Nothing is fetched and nothing else is read in its place:
-/// the current revision, or another repository under the same name,
-/// would put back keys these bytes never carried.
+/// The header file one installed copy was rendered from, for a caller
+/// that puts back what the install cut from it: the source `installed`
+/// names, held to the repository it resolved to then, at the commit it
+/// was installed from. Nothing is fetched and nothing else is read in its
+/// place: the current revision, or another repository under the same
+/// name, would put back keys these bytes never carried.
 ///
-/// The outer error is the read's own: an unreadable lock, a source
-/// [`super::require_ready_at`] refuses, or an item that revision does
-/// not hold. The inner one is why the record cannot be read here: no
-/// record names the copy, a source with revisions whose record names
-/// none, a source that now resolves to another repository, or an item
-/// with no header file.
+/// `installed` is the record that wrote the copy, which the caller asks
+/// [`crate::library::record_at`] for. `None`, no record claiming the
+/// copy, refuses: unlike [`DeclaredHeaders::text`], no declaration
+/// stands in, because a declaration says what the scope asks for now,
+/// not what these bytes are.
+///
+/// The outer error is the read's own: a source
+/// [`super::require_ready_at`] refuses, or an item that revision does not
+/// hold. The inner one is why the record cannot be read here: no record
+/// claims the copy, a source with revisions whose record names none, a
+/// source that now resolves to another repository, or an item with no
+/// header file.
 pub(crate) fn published_text(
     env: &crate::env::Env,
     scope: &crate::model::Scope,
     manifest: &crate::manifest::Manifest,
     package: (ItemKind, &str),
-    harness: crate::model::HarnessId,
-    copy: &Path,
+    installed: Option<&InstalledFrom>,
 ) -> crate::error::Result<Result<Published, String>> {
     let (kind, name) = package;
-    let lock = crate::lock::load(&crate::lock::lock_path(env, scope))?;
-    let Some(installed) = InstalledFrom::of_copy(env, scope, &lock, package, harness, copy) else {
+    let Some(installed) = installed else {
         return Ok(Err(format!(
             "no install record names where this copy of '{name}' came from"
         )));
@@ -221,7 +186,7 @@ pub(crate) fn published_text(
             installed.source
         )));
     }
-    let read_at = ReadAt::recorded(&installed);
+    let read_at = ReadAt::recorded(installed);
     let (sealed, config) = match read_at.held(env, scope, manifest)? {
         Ok(opened) => opened,
         Err(cause) => return Ok(Err(cause)),
@@ -229,7 +194,7 @@ pub(crate) fn published_text(
     Ok(
         header_text(&sealed, &config, kind, name, &read_at.source)?.map(|text| Published {
             text,
-            commit: installed.commit,
+            commit: installed.commit.clone(),
         }),
     )
 }

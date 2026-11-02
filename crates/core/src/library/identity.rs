@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::env::Env;
-use crate::lock::Lock;
+use crate::lock::{Lock, LockEntry};
 use crate::model::{FileState, HarnessId, ItemKind, ObservedItem, Scope};
 
 /// Which record established a package, by the key its lock entry is held
@@ -186,6 +186,29 @@ pub(super) fn index(env: &Env, scope: &Scope, lock: &Lock) -> Recorded {
     }
 }
 
+/// The record that wrote the copy of `package` at `copy`: the one whose
+/// claim on that position the Library credits an observation there with,
+/// so every tool that reads one copy is answered from one record, however
+/// many records of the package each of them holds elsewhere.
+///
+/// `None` where no record claims the position, two packages' records do,
+/// or the claim is another package's: a tool's record of its own copy
+/// somewhere else says nothing about these bytes.
+pub(crate) fn record_at<'a>(
+    env: &Env,
+    scope: &Scope,
+    lock: &'a Lock,
+    package: (ItemKind, &str),
+    copy: &Path,
+) -> Option<&'a LockEntry> {
+    let (kind, name) = package;
+    let (claimed, key) = index(env, scope, lock).at(copy)?;
+    if claimed.kind != kind || claimed.name != name {
+        return None;
+    }
+    lock.entries.get(&key)
+}
+
 impl Recorded {
     /// The package this observation belongs to, or `None` where the
     /// records establish none.
@@ -201,11 +224,7 @@ impl Recorded {
         // position and nothing else: a file where no record claims one is
         // somebody else's, whatever it is called.
         if !Self::positionless(item) {
-            return self
-                .by_artifact
-                .get(&resolved(&item.path))
-                .cloned()
-                .flatten();
+            return self.at(&item.path);
         }
         // An entry inside a config file is not named by the file holding
         // it — every entry of its kind shares that path — so a hook entry
@@ -227,6 +246,12 @@ impl Recorded {
                 .map(|held| held.claim.clone());
         }
         self.named(item)
+    }
+
+    /// The claim on the artifact position at `path`, in either spelling
+    /// [`index`] recorded it under.
+    fn at(&self, path: &Path) -> Option<Claim> {
+        self.by_artifact.get(&resolved(path)).cloned().flatten()
     }
 
     /// Whether this observation has no artifact position a record could

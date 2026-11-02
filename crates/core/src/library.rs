@@ -14,6 +14,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 mod identity;
 pub use identity::PackageRef;
+pub(crate) use identity::record_at;
 
 /// Where one installation came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -167,7 +168,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         let claimed = index.of(&item);
         let package = claimed.as_ref().map(|(package, _)| package.clone());
         let origin = observed_origin(env, records, &item, claimed.as_ref());
-        let (summary, tags) = observed_words(env, &mut headers, records, &item, package.as_ref());
+        let (summary, tags) = observed_words(env, &mut headers, records, &item, claimed.as_ref());
         // Keyed by which observation it is as well: a tool reads more than
         // one root and one registry file holds every entry, so two things
         // it finds under one name are two installations rather than one
@@ -259,9 +260,12 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
 ///
 /// Asked of the package the records establish and never of the observed
 /// spelling — a name two packages share is no evidence that either wrote
-/// this one. Where nothing declared answers — content nobody manages, an
-/// observation the records tie to no package, a source this machine
-/// cannot reach — the observation's own words stand.
+/// this one — at the revision the record claiming the observation names,
+/// the same record [`observed_origin`] reads the origin from, so a row's
+/// words and its origin describe one installation. Where nothing declared
+/// answers — content nobody manages, an observation the records tie to no
+/// package, a source this machine cannot reach — the observation's own
+/// words stand.
 ///
 /// The tags come from the same declaration, and only from it: `None`
 /// where none answers, so a reader tells "declares no tag" from "nothing
@@ -271,9 +275,9 @@ fn observed_words(
     headers: &mut crate::source::header::DeclaredHeaders,
     records: &crate::ownership::Records,
     item: &crate::model::ObservedItem,
-    package: Option<&PackageRef>,
+    claimed: Option<&identity::Claim>,
 ) -> (Option<String>, Option<Vec<crate::tags::Tag>>) {
-    match declared_header(env, headers, records, item, package) {
+    match declared_header(env, headers, records, item, claimed) {
         Some(header) => (
             header.summary_or_description().map(str::to_owned),
             Some(header.tags),
@@ -283,34 +287,35 @@ fn observed_words(
 }
 
 /// The header of the package one observation belongs to, out of the
-/// source its scope declared it from. `None` where no declaration of it
-/// can be reached, which is not the same as a declaration that says
-/// nothing: an author who wrote no words leaves a blank row, and nothing
-/// downstream may fill that blank from the file a tool reads.
+/// source and revision the record claiming the observation names — not
+/// the observing tool's own record, which a reader of a shared tree may
+/// hold for a copy of its own somewhere else, at another revision. `None`
+/// where no record claims it or its source cannot be reached, which is not
+/// the same as a declaration that says nothing: an author who wrote no
+/// words leaves a blank row, and nothing downstream may fill that blank
+/// from the file a tool reads.
 fn declared_header(
     env: &Env,
     headers: &mut crate::source::header::DeclaredHeaders,
     records: &crate::ownership::Records,
     item: &crate::model::ObservedItem,
-    package: Option<&PackageRef>,
+    claimed: Option<&identity::Claim>,
 ) -> Option<crate::scan::metadata::Metadata> {
-    let package = package?;
+    let (package, key) = claimed?;
     let manifest = records.manifest.as_deref()?;
-    let installed = installed_from(records, package.kind, &package.name, item.harness);
+    let installed = crate::source::header::InstalledFrom::of(records.lock.entries.get(key)?);
     headers.of(
         env,
         &item.scope,
         manifest,
         package.kind,
         &package.name,
-        installed.as_ref(),
+        Some(&installed),
     )
 }
 
-/// What one installation's own record says it came from. `None` where no
-/// record claims it — content nobody installed, or one this build wrote
-/// before the field existed — and the current declaration answers then,
-/// because it is all there is to go on.
+/// What a seeded row's own record says it came from: the row is that
+/// record's, so its key names it.
 fn installed_from(
     records: &crate::ownership::Records,
     kind: ItemKind,

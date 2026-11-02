@@ -1185,9 +1185,12 @@ fn a_fork_tree_with_no_skill_file_is_not_absorbed() {
 
 /// A copy carries the installed key set alone, so a fork takes the
 /// publisher's other keys back from the file the copy was installed from,
-/// at the commit it was installed at, around the person's edits, and the
-/// fork renders back to the edited copy. A source this machine cannot read
-/// refuses the fork rather than capture a lossy one.
+/// at the commit the record that wrote the copy names, around the
+/// person's edits, and the fork renders back to the edited copy. Forked
+/// through a reader of the shared tree, that is still the writer's record:
+/// the reader's own record of a copy elsewhere, at a newer commit, says
+/// nothing about these bytes. A source this machine cannot read refuses
+/// the fork rather than capture a lossy one.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_keeps_the_publishers_keys_from_the_installed_commit() {
@@ -1196,41 +1199,91 @@ fn a_fork_keeps_the_publishers_keys_from_the_installed_commit() {
             "---\nname: gh\ndescription: about gh\nsummary: Works with GitHub\ntags: [{tag}]\nmetadata:\n  version: 1\ndependencies:\n  commands:\n    - command: kendex-fixture-absent\n      purpose: Call GitHub\n      optional: true\n---\nUpstream.\n"
         )
     };
-    let w = world();
-    fs::create_dir_all(w.upstream.join("skills/gh")).unwrap();
-    fs::write(w.upstream.join("skills/gh/SKILL.md"), authored("review")).unwrap();
-    commit(&w.upstream, "one");
-    declare(&w, "[skills.gh]\nsource = \"cat\"\n");
-    sync_and_apply(&w);
-    let installed = fs::read_to_string(skill_file(&w)).unwrap();
-    assert!(!installed.contains("tags:"), "{installed}");
-    let edited = installed.replace("Upstream.", "My fork.");
-    fs::write(skill_file(&w), &edited).unwrap();
-    // The source moves on and the mirror learns it, with no apply: the
-    // copy is still the one the first commit rendered.
-    fs::write(w.upstream.join("skills/gh/SKILL.md"), authored("testing")).unwrap();
-    commit(&w.upstream, "two");
-    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
-        .unwrap()
-        .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
-
-    let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude).unwrap();
-    apply::execute(&w.env, &plan).unwrap();
-    let local = fs::read_to_string(w.home.join("app/.kendex-local/skills/gh/SKILL.md")).unwrap();
-    for kept in [
-        "My fork.",
-        "summary: Works with GitHub",
-        "tags: [review]",
-        "  version: 1\n",
-        "      purpose: Call GitHub\n",
+    // Claude and Cursor both read the shared tree. The tool whose capture
+    // is forked, and whether its own record names a copy of its own at the
+    // newer commit, in its own folder, which no copy occupies.
+    for (what, harness, own_record) in [
+        (
+            "the tool whose record wrote the copy",
+            HarnessId::Claude,
+            false,
+        ),
+        (
+            "a reader of the shared tree whose own record names its own copy at the newer commit",
+            HarnessId::Cursor,
+            true,
+        ),
     ] {
-        assert!(local.contains(kept), "{kept:?} in {local}");
+        let w = world();
+        fs::create_dir_all(w.upstream.join("skills/gh")).unwrap();
+        fs::write(w.upstream.join("skills/gh/SKILL.md"), authored("review")).unwrap();
+        commit(&w.upstream, "one");
+        declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+        let manifest_path = manifest::manifest_path(&w.env, &w.scope);
+        let text = fs::read_to_string(&manifest_path).unwrap();
+        let both = text.replacen(
+            "harnesses = [\"claude\"]",
+            "harnesses = [\"claude\", \"cursor\"]",
+            1,
+        );
+        assert_ne!(both, text);
+        fs::write(&manifest_path, both).unwrap();
+        sync_and_apply(&w);
+        let installed = fs::read_to_string(skill_file(&w)).unwrap();
+        assert!(!installed.contains("tags:"), "{what}: {installed}");
+        let edited = installed.replace("Upstream.", "My fork.");
+        fs::write(skill_file(&w), &edited).unwrap();
+        // The source moves on and the mirror learns it, with no apply: the
+        // copy is still the one the first commit rendered.
+        fs::write(w.upstream.join("skills/gh/SKILL.md"), authored("testing")).unwrap();
+        commit(&w.upstream, "two");
+        let loaded = manifest::load_for_mutation(&manifest_path)
+            .unwrap()
+            .unwrap();
+        remote::sync_sources(&w.env, &loaded).unwrap();
+        if own_record {
+            let path = kendex_core::lock::lock_path(&w.env, &w.scope);
+            let mut lock = kendex_core::lock::load(&path).unwrap();
+            let own = lock
+                .entries
+                .get_mut(&kendex_core::lock::entry_key(
+                    ItemKind::Skill,
+                    "gh",
+                    harness,
+                ))
+                .unwrap();
+            own.source_commit = Some(head_commit(&w.upstream));
+            own.emitted = Some(kendex_core::lock::EmittedArtifact {
+                kind: ItemKind::Skill,
+                name: "gh".to_owned(),
+                paths: vec![w.home.join("app/.cursor/skills/gh")],
+            });
+            kendex_core::lock::save(&path, &lock).unwrap();
+        }
+
+        let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", harness).unwrap();
+        apply::execute(&w.env, &plan).unwrap();
+        let local =
+            fs::read_to_string(w.home.join("app/.kendex-local/skills/gh/SKILL.md")).unwrap();
+        for kept in [
+            "My fork.",
+            "summary: Works with GitHub",
+            "tags: [review]",
+            "  version: 1\n",
+            "      purpose: Call GitHub\n",
+        ] {
+            assert!(local.contains(kept), "{what}: {kept:?} in {local}");
+        }
+        assert!(!local.contains("tags: [testing]"), "{what}: {local}");
+        let report = audit(&w.env, &w.scope).unwrap();
+        apply::execute(&w.env, &report.plan).unwrap();
+        assert_eq!(
+            fs::read_to_string(skill_file(&w)).unwrap(),
+            edited,
+            "{what}"
+        );
+        assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty(), "{what}");
     }
-    let report = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &report.plan).unwrap();
-    assert_eq!(fs::read_to_string(skill_file(&w)).unwrap(), edited);
-    assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty());
 }
 
 /// A fork whose capture cannot put the publisher's keys back refuses

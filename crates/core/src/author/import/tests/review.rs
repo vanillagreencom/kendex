@@ -186,15 +186,16 @@ fn an_installed_copy_is_read_against_the_installed_key_set() {
 
 /// An edited copy takes back the keys the commit it was installed from
 /// declares, not what its source declares since, read from the record that
-/// installed that copy. A shared tree's readers hold no record of their
-/// own, so they are answered from the record that wrote the tree, and
-/// every reader of one copy restores the same keys. Where those keys
-/// cannot be put back — a recorded commit this machine does not hold, a
-/// repository record naming no commit, no record that wrote the copy, or
-/// a copy whose own frontmatter does not read — the edited copy is listed
-/// with the cause and nothing to select: offered as it stands, it would
-/// import without them, and read at the source's current revision it
-/// would import keys these bytes never carried. One row per installation.
+/// wrote that copy. Every reader of a shared tree is answered from that
+/// record, including a reader whose own record, at another commit, names
+/// a copy of its own elsewhere, so every reader of one copy restores the
+/// same keys. Where those keys cannot be put back — a copy no record
+/// wrote, though its tool holds one for another position, a recorded
+/// commit this machine does not hold, a repository record naming no
+/// commit, or a copy whose own frontmatter does not read — the edited copy
+/// is listed with the cause and nothing to select: offered as it stands,
+/// it would import without them, and read at another revision it would
+/// import keys these bytes never carried. One row per installation.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
@@ -255,73 +256,108 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
     let one = crate::remote::sync(&env, REPO, None).unwrap().commit;
     fs::write(upstream.join("skills/gh/SKILL.md"), authored("two")).unwrap();
     commit(&upstream);
-    crate::remote::sync(&env, REPO, None).unwrap();
+    let two = crate::remote::sync(&env, REPO, None).unwrap().commit;
 
     let edited_copy = "---\nname: gh\ndescription: about gh\n---\nmy edited bytes\n";
     let own = ".claude/skills";
     let shared = ".agents/skills";
-    // What the copy's record says: the tool it is held for, the commit it
-    // names, and whether it records writing the copy's tree.
-    struct Row<'a> {
-        what: &'a str,
+    let cursor = ".cursor/skills";
+    // One record of the copy's package: the tool it is held for, the
+    // commit it names, and the skills folder whose `gh` tree it records
+    // writing.
+    struct Record<'a> {
         held_by: HarnessId,
         installed_at: Option<String>,
-        wrote_copy: bool,
+        wrote: &'a str,
+    }
+    struct Row<'a> {
+        what: &'a str,
+        records: Vec<Record<'a>>,
         copy_in: &'a str,
         copy: &'a str,
         kept: Option<&'a str>,
     }
     let rows = [
         Row {
-            what: "the record of the tool that reads the copy",
-            held_by: HarnessId::Claude,
-            installed_at: Some(one.clone()),
-            wrote_copy: false,
+            what: "the tool that wrote the copy into its own folder",
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some(one.clone()),
+                wrote: own,
+            }],
             copy_in: own,
             copy: edited_copy,
             kept: Some("tags: [one]"),
         },
         Row {
             what: "a shared tree read by tools that hold no record of their own",
-            held_by: HarnessId::Codex,
-            installed_at: Some(one.clone()),
-            wrote_copy: true,
+            records: vec![Record {
+                held_by: HarnessId::Codex,
+                installed_at: Some(one.clone()),
+                wrote: shared,
+            }],
             copy_in: shared,
             copy: edited_copy,
             kept: Some("tags: [one]"),
         },
         Row {
-            what: "a shared tree a declaration claims and no record wrote",
-            held_by: HarnessId::Claude,
-            installed_at: Some(one.clone()),
-            wrote_copy: false,
+            what: "a shared tree whose reader's own record names its own copy at a newer commit",
+            records: vec![
+                Record {
+                    held_by: HarnessId::Codex,
+                    installed_at: Some(one.clone()),
+                    wrote: shared,
+                },
+                Record {
+                    held_by: HarnessId::Cursor,
+                    installed_at: Some(two.clone()),
+                    wrote: cursor,
+                },
+            ],
             copy_in: shared,
+            copy: edited_copy,
+            kept: Some("tags: [one]"),
+        },
+        Row {
+            what: "a copy in a tool's own folder that its record, of the shared tree, does not name",
+            records: vec![Record {
+                held_by: HarnessId::Cursor,
+                installed_at: Some(one.clone()),
+                wrote: shared,
+            }],
+            copy_in: cursor,
             copy: edited_copy,
             kept: None,
         },
         Row {
             what: "a commit this machine does not hold",
-            held_by: HarnessId::Claude,
-            installed_at: Some("0".repeat(40)),
-            wrote_copy: false,
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some("0".repeat(40)),
+                wrote: own,
+            }],
             copy_in: own,
             copy: edited_copy,
             kept: None,
         },
         Row {
             what: "a repository record that names no commit",
-            held_by: HarnessId::Claude,
-            installed_at: None,
-            wrote_copy: false,
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: None,
+                wrote: own,
+            }],
             copy_in: own,
             copy: edited_copy,
             kept: None,
         },
         Row {
             what: "a copy whose frontmatter names a key twice",
-            held_by: HarnessId::Claude,
-            installed_at: Some(one.clone()),
-            wrote_copy: false,
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some(one.clone()),
+                wrote: own,
+            }],
             copy_in: own,
             copy: "---\nname: gh\nname: gh\ndescription: about gh\n---\nmy edited bytes\n",
             kept: None,
@@ -329,7 +365,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
     ];
     for (n, row) in rows.into_iter().enumerate() {
         let what = row.what;
-        for dir in [own, shared] {
+        for dir in [own, shared, cursor] {
             let _ = fs::remove_dir_all(root.join(dir).join("gh"));
         }
         let tree = root.join(row.copy_in).join("gh");
@@ -339,20 +375,20 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
             version: crate::lock::LOCK_VERSION,
             ..crate::lock::Lock::default()
         };
-        let mut gh = entry(ItemKind::Skill, "gh", "cat", REPO);
-        gh.harness = row.held_by;
-        gh.source_commit = row.installed_at;
-        if row.wrote_copy {
+        for record in row.records {
+            let mut gh = entry(ItemKind::Skill, "gh", "cat", REPO);
+            gh.harness = record.held_by;
+            gh.source_commit = record.installed_at;
             gh.emitted = Some(crate::lock::EmittedArtifact {
                 kind: ItemKind::Skill,
                 name: "gh".to_owned(),
-                paths: vec![tree.clone()],
+                paths: vec![root.join(record.wrote).join("gh")],
             });
+            lock.entries.insert(
+                crate::lock::entry_key(ItemKind::Skill, "gh", record.held_by),
+                gh,
+            );
         }
-        lock.entries.insert(
-            crate::lock::entry_key(ItemKind::Skill, "gh", row.held_by),
-            gh,
-        );
         crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
 
         let scopes = [scope.clone()];
