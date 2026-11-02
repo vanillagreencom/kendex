@@ -1,18 +1,13 @@
 ---
 name: review-gate
 description: "Load to report the organization standard or adopt consumer refresh."
-summary: "Organization-standard report and consumer refresh."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [harness-ci]
-  optional: [orch]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review]
 ---
 
 <!-- kendex:project-instructions:start -->

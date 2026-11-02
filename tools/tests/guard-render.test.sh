@@ -364,6 +364,61 @@ for row in "${IDENTICAL_ROWS[@]}"; do
   git -C "$R" reset -q --hard HEAD~1
 done
 
+echo "=== a skill's SKILL.md edited only in its frontmatter ==="
+# The installed copy cuts some frontmatter keys and derives others, so a
+# frontmatter-only edit can leave the render byte-identical with nothing to
+# stage. It passes with a note naming the merge-group check that proves the
+# bytes; an edit reaching the body or the fences still owes its render.
+printf -- '---\nname: demo\ndescription: A demo skill.\nsummary: Short.\ntags:\n  - alpha\n---\n# Demo\n\nBody line.\n' >"$R/skills/demo/SKILL.md"
+printf -- '---\nname: demo\ndescription: A demo skill.\n---\n# Demo\n\nBody line.\n' >"$R/.agents/skills/demo/SKILL.md"
+git -C "$R" add skills/demo/SKILL.md .agents/skills/demo/SKILL.md
+git -C "$R" commit -q -m "chore: a skill with frontmatter"
+edit_skill() { # SED-EXPR — apply it to the seeded SKILL.md and stage the source alone; false when nothing changed
+  sed "$1" "$R/skills/demo/SKILL.md" >"$TMP/SKILL.md"
+  ! cmp -s "$TMP/SKILL.md" "$R/skills/demo/SKILL.md" || return 1
+  cp "$TMP/SKILL.md" "$R/skills/demo/SKILL.md"
+  git -C "$R" add skills/demo/SKILL.md
+}
+# edit | sed expression | owes the render at commit (1) or passes with the note (0)
+skill_frontmatter_rows=0
+while IFS='|' read -r edit expr owes; do
+  skill_frontmatter_rows=$((skill_frontmatter_rows + 1))
+  if ! edit_skill "$expr"; then
+    bad "$edit: the sed expression changed nothing"
+    continue
+  fi
+  run_guard
+  if [ "$owes" = 1 ]; then
+    [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/SKILL.md -> .agents/skills/demo/SKILL.md"* ]] \
+      && [[ "$OUT" != *"guard-note: render-frontmatter-only="* ]] \
+      && ok "$edit with the render unchanged reds, naming it" \
+      || bad "$edit with the render unchanged reds, naming it" "rc=$RC out=$OUT"
+  else
+    [ "$RC" -eq 0 ] && [[ "$OUT" == *"guard-note: render-frontmatter-only=skills/demo/SKILL.md "* ]] \
+      && ok "$edit with the render unchanged passes with the note" \
+      || bad "$edit with the render unchanged passes with the note" "rc=$RC out=$OUT"
+  fi
+  git -C "$R" reset -q --hard HEAD
+done <<'ROWS'
+a cut tags row changed|s/  - alpha/  - beta/|0
+the cut summary key removed|/^summary:/d|0
+a kept description changed|s/A demo skill\./A changed skill./|0
+a body line changed|s/Body line\./Changed body./|1
+a tags row and a body line changed|s/  - alpha/  - beta/;s/Body line\./Changed body./|1
+the closing fence removed|7d|1
+ROWS
+[ "$skill_frontmatter_rows" -eq 6 ] || bad "the skill frontmatter table ran $skill_frontmatter_rows rows, not 6"
+edit_skill 's/  - alpha/  - beta/' || bad "the control's tags edit changed nothing"
+if mutant_guard '/skill_frontmatter=1$/d'; then
+  run_mutant
+  [ "$RC" -ne 0 ] && [[ "$OUT" == *"skills/demo/SKILL.md -> .agents/skills/demo/SKILL.md"* ]] \
+    && ok "control: with the skill frontmatter arm deleted the cut tags edit reds" \
+    || bad "control: with the skill frontmatter arm deleted the cut tags edit reds" "rc=$RC out=$OUT"
+else
+  bad "control: the skill frontmatter arm could not be deleted from a guard copy"
+fi
+git -C "$R" reset -q --hard HEAD~1
+
 echo "=== a hook lands the renders it already has ==="
 # Hooks are judged per file: the two harness copies this hook already has
 # are owed, the third harness directory is not, and a hook test that renders

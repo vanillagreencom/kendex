@@ -18,9 +18,10 @@ use std::path::{Path, PathBuf};
 use kendex_core::apply;
 use kendex_core::engine::audit;
 use kendex_core::env::{Env, FakeOs};
-use kendex_core::model::{ItemKind, ObservedItem, Scope};
+use kendex_core::model::{HarnessId, ItemKind, ObservedItem, Scope};
 use kendex_core::source::browse;
 use kendex_core::source_read::SealedSource;
+use kendex_core::tags::Tag;
 
 /// A hook whose author wrote both lines: the constraint for the agent, and
 /// the sentence for the person.
@@ -561,6 +562,91 @@ fn a_row_reads_the_version_installed_not_the_one_upstream_moved_to() {
     );
 }
 
+/// Every tool reading one shared skill copy reads the words of the
+/// version the record that wrote the copy installed, the same record the
+/// row's origin comes from. A reader holding its own record of a copy
+/// elsewhere, at a newer commit, says nothing about these bytes: answered
+/// from it, one copy would read as two versions.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn every_reader_of_a_shared_copy_reads_the_version_its_writer_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let base = format!("file://{}", home.join("base").display());
+    let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let project = home.join("dev/app");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 7\n\n[sources.up]\nrepo = \"team/tools\"\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"up\"\n",
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let upstream = home.join("base/team/tools");
+    let write_version = |summary: &str, tag: &str| {
+        fs::create_dir_all(upstream.join("skills/gh")).unwrap();
+        fs::write(
+            upstream.join("skills/gh/SKILL.md"),
+            format!("---\nname: gh\ndescription: Use for GitHub work.\nsummary: {summary}\ntags: [{tag}]\n---\nBody.\n"),
+        )
+        .unwrap();
+    };
+    fs::create_dir_all(&upstream).unwrap();
+    fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    write_version("The version on disk.", "review");
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "one"]);
+    kendex_core::remote::sync(&env, "team/tools", None).unwrap();
+    apply::execute(&env, &audit(&env, &scope).unwrap().plan).unwrap();
+
+    write_version("A version nobody here installed.", "testing");
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "--quiet", "-m", "two"]);
+    let two = kendex_core::remote::sync(&env, "team/tools", None)
+        .unwrap()
+        .commit;
+    // Cursor reads the shared tree Codex wrote, and holds a record of its
+    // own copy in its own folder at the newer commit.
+    let lock_path = kendex_core::lock::lock_path(&env, &scope);
+    let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+    let mut own = lock.entries
+        [&kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Codex)]
+        .clone();
+    own.harness = HarnessId::Cursor;
+    own.source_commit = Some(two);
+    own.emitted = Some(kendex_core::lock::EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+        paths: vec![project.join(".cursor/skills/gh")],
+    });
+    lock.entries.insert(
+        kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Cursor),
+        own,
+    );
+    kendex_core::lock::save(&lock_path, &lock).unwrap();
+
+    let rows = kendex_core::library::provenance(&env, std::slice::from_ref(&scope)).unwrap();
+    let readers: Vec<_> = rows
+        .iter()
+        .filter(|row| row.package_ref().name == "gh" && row.at.is_some())
+        .collect();
+    assert!(
+        readers.iter().any(|row| row.harness == HarnessId::Cursor),
+        "{readers:?}"
+    );
+    for row in readers {
+        assert_eq!(
+            row.summary.as_deref(),
+            Some("The version on disk."),
+            "{row:?}"
+        );
+        assert_eq!(row.tags, Some(vec![Tag::Review]), "{row:?}");
+    }
+}
+
 /// The catalog's agent, at one version of its words.
 #[allow(clippy::unwrap_used)]
 fn write_notes(catalog: &Path, summary: &str) {
@@ -610,17 +696,24 @@ fn git(dir: &Path, args: &[&str]) {
 fn a_rebound_declaration_does_not_relabel_what_is_installed() {
     // Both rebinds, as a person writes them: the item pointed at another
     // declared source, and the source itself pointed at another folder.
+    //
+    // The record's source still reads for the first, so the row keeps its
+    // summary. For the second it does not, and the row reads the installed
+    // copy, which carries the description and no summary: the copy holds
+    // the installed key set alone. Neither borrows the other catalog's.
     let rebinds = [
         (
             "the item now names another source",
             "[sources.up]\n{up}\n\n[sources.other]\n{other}\n\n[skills.gh]\nsource = \"other\"\n",
+            "Reads the repositories you work in.",
         ),
         (
             "the source now reads another folder",
             "[sources.up]\n{other}\n\n[skills.gh]\nsource = \"up\"\n",
+            "Use for GitHub work.",
         ),
     ];
-    for (rebind, declarations) in rebinds {
+    for (rebind, declarations, expected) in rebinds {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = Env::fake(&home, FakeOs::Linux);
@@ -659,11 +752,7 @@ fn a_rebound_declaration_does_not_relabel_what_is_installed() {
             .iter()
             .find(|row| row.package_ref().name == "gh")
             .unwrap_or_else(|| panic!("{rebind}: the skill has no provenance row"));
-        assert_eq!(
-            row.summary.as_deref(),
-            Some("Reads the repositories you work in."),
-            "{rebind}"
-        );
+        assert_eq!(row.summary.as_deref(), Some(expected), "{rebind}");
     }
 }
 
@@ -734,4 +823,90 @@ fn a_row_escapes_author_text_the_way_a_catalog_row_does() {
         row.summary, catalog_row.summary,
         "one package version reads differently on its two surfaces"
     );
+}
+
+/// A Library row's tags are the ones the package declares, carried on
+/// its provenance row, whether the scan sees the installation or only the
+/// record holds it. An installed skill copy carries no `tags`, so the scan
+/// reads none off it. A declaration naming no tag is an empty list that
+/// stands as written, and no declaration at all is `None`, which leaves
+/// the observation's own tags to the reader.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_library_row_carries_the_tags_its_declaration_writes() {
+    for (tags, declared) in [
+        (
+            "tags: [review, testing]\n",
+            Some(vec![Tag::Review, Tag::Testing]),
+        ),
+        ("", Some(vec![])),
+    ] {
+        for seen in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = rooted(&tmp);
+            let env = Env::fake(&home, FakeOs::Linux);
+            let project = home.join("dev/app");
+            fs::create_dir_all(project.join(".claude")).unwrap();
+            let catalog = home.join("up");
+            fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+            fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+            fs::write(
+                catalog.join("skills/gh/SKILL.md"),
+                format!("---\nname: gh\ndescription: Use for GitHub work.\n{tags}---\nBody.\n"),
+            )
+            .unwrap();
+            fs::write(
+                project.join("kendex.toml"),
+                format!(
+                    "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.up]\n{}\n\n[skills.gh]\nsource = \"up\"\n",
+                    source_path(&catalog)
+                ),
+            )
+            .unwrap();
+            let scope = Scope::Project {
+                root: project.clone(),
+            };
+            apply::execute(&env, &audit(&env, &scope).unwrap().plan).unwrap();
+            let copies: Vec<_> = kendex_core::scan::scan_scopes(
+                &env,
+                &std::collections::BTreeMap::new(),
+                std::slice::from_ref(&scope),
+            )
+            .items
+            .into_iter()
+            .filter(|item| item.kind == ItemKind::Skill && item.name == "gh")
+            .collect();
+            assert!(!copies.is_empty(), "the scan sees the installed copy");
+            assert!(
+                copies.iter().all(|item| item.tags.is_empty()),
+                "the copy carries no tags"
+            );
+            if !seen {
+                for copy in &copies {
+                    let dir = if copy.path.is_dir() {
+                        copy.path.clone()
+                    } else {
+                        copy.path.parent().unwrap().to_path_buf()
+                    };
+                    fs::remove_dir_all(dir).unwrap();
+                }
+            }
+            let row = || {
+                kendex_core::library::provenance(&env, std::slice::from_ref(&scope))
+                    .unwrap()
+                    .into_iter()
+                    .find(|row| row.package_ref().name == "gh")
+                    .unwrap()
+            };
+            let answered = row();
+            assert_eq!(answered.at.is_some(), seen, "{tags:?} seen={seen}");
+            assert_eq!(answered.tags, declared, "{tags:?} seen={seen}");
+            fs::remove_dir_all(&catalog).unwrap();
+            assert_eq!(
+                row().tags,
+                None,
+                "{tags:?} seen={seen}: an unreachable source declares nothing"
+            );
+        }
+    }
 }

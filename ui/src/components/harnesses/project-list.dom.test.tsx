@@ -250,6 +250,7 @@ describe("package checks on a project's card", () => {
           source: "local",
         },
         summary: null,
+        tags: null,
         package: { kind: item.kind, name: item.name },
       })),
       loaded: true,
@@ -365,6 +366,7 @@ describe("package checks on a project's card", () => {
         at: item.at,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/c" },
         summary: null,
+        tags: null,
         package: { kind: item.kind, name: item.name },
       })),
       loaded: true,
@@ -684,6 +686,7 @@ describe("a place card's kind badge", () => {
         at: item.path,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
         summary: null,
+        tags: null,
         package: { kind: item.kind, name: item.name },
       })),
     );

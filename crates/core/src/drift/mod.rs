@@ -2,20 +2,23 @@
 //!
 //! Session start reads a snapshot; the background job earns it. The check
 //! ([`report`]) reads the lock, the manifest, the per-scope drift snapshot
-//! ([`snapshot`]) and the per-mirror fetch stamps ([`stamps`]) — nothing
-//! else: it materializes no source trees, hashes no catalogs, and fans out
-//! no per-package subprocesses. The deep work runs where time is free —
+//! ([`snapshot`]) and the per-mirror fetch stamps ([`stamps`]), fans out
+//! no per-package subprocesses, and makes two deep reads, each behind the
+//! session hook's budget. The deep work runs where time is free —
 //! `updates`, `refresh`, `apply`, and the detached background fetch all
 //! re-derive the snapshot — and the check renders snapshot plus age. A
 //! mirror that moved since its last evaluation reads as unevaluated, the
-//! honest "maybe", never a guessed verdict. The one deep read the check
-//! makes itself is for a declaration sitting on files no record accounts
-//! for: it plans the scope to compare them with the render, records the
+//! honest "maybe", never a guessed verdict. One deep read is for a
+//! declaration sitting on files no record accounts for: it plans the scope to compare them with the render, records the
 //! copies that match where the committed record may be written
 //! (`crate::lock::branch`) and reports the rest as stale — once per state,
 //! inside the session hook's budget, with the verdicts memoized
 //! ([`copies`]) and the background refresh finishing a pass the budget
-//! cut short.
+//! cut short. The other is an installed skill's command declarations,
+//! which its copy does not carry: read out of its catalog at the commit
+//! its record names, where opening the snapshot validates it and can
+//! publish it from the mirror, never fetching, inside the same budget, and
+//! named as not checked where the budget runs out first.
 
 pub mod copies;
 pub mod hook;

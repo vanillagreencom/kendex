@@ -1240,7 +1240,8 @@ export type CatalogSource = {
 	path: string,
 	/**
 	 *  Whether the rendering is the catalog's bytes unchanged, which is
-	 *  what makes a line read off the rendering a line of `path`.
+	 *  what makes a line read off the rendering a line of `path`. A skill
+	 *  tree's SKILL.md is left to `skill_lines`.
 	 */
 	verbatim: boolean,
 	/**
@@ -1251,6 +1252,12 @@ export type CatalogSource = {
 	 *  joining one on would name a path that does not exist.
 	 */
 	tree: boolean,
+	/**
+	 *  For a skill tree, which lines of the rendering's SKILL.md are lines
+	 *  of the catalog's; `verbatim` then speaks for every other file. `None`
+	 *  for any other item, where `verbatim` speaks for the whole rendering.
+	 */
+	skillLines: SkillLines | null,
 };
 
 export type CatalogSummary = {
@@ -4292,6 +4299,19 @@ export type ProvenanceRow = {
 	 */
 	summary: string | null,
 	/**
+	 *  The tags the package's own declaration writes, read where
+	 *  [`ProvenanceRow::summary`] is. An installed copy of a skill carries
+	 *  no `tags` of its own (the installed key set), so these are the
+	 *  row's tags wherever a declaration answers.
+	 * 
+	 *  `Some` with an empty list says the declaration answered and names
+	 *  no tag, which stands as written. `None` says no declaration could
+	 *  be reached — content nobody manages, an observation the records tie
+	 *  to no package, a source this machine cannot reach — and the
+	 *  observation's own tags are all there is.
+	 */
+	tags: Tag[] | null,
+	/**
 	 *  Which package this installation is, where the records establish
 	 *  one. `None` says they do not: the observation keeps its own
 	 *  identity and stays distinct from every other, because a name two
@@ -5210,6 +5230,27 @@ export type Side =
  *  no entry point can reach the capture with the answer left behind.
  */
 { side: "copy"; license: LicenseAnswer };
+
+/**
+ *  How the lines of a rendered SKILL.md stand in the catalog's SKILL.md. A
+ *  copy cuts the frontmatter to the installed key set and keeps the body,
+ *  so a body line sits at another number in each file.
+ */
+export type SkillLines = 
+/**
+ *  Line `from` of the rendering, and every line after it, is line
+ *  `to`, and the one as far after it, of the catalog's file. A line
+ *  before `from` is in a frontmatter block the copy rewrote.
+ */
+{ shifted: {
+	from: number,
+	to: number,
+} } | 
+/**
+ *  The rendering's body is not the catalog's — the project's own
+ *  instructions are in it — so none of its lines is the catalog's.
+ */
+"rewritten";
 
 export type SkillSettings = {
 	skill: string,

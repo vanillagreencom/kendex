@@ -28,15 +28,8 @@ pub(super) fn source_form(
     commit: Option<&str>,
     in_scope: &crate::engine::ScopeSkills,
 ) -> Result<(SourceFiles, Option<AgentCarry>)> {
-    let resolved = match crate::source::resolve_at(env, scope, &item.decl.source, manifest, commit)?
-    {
-        crate::source::SourceState::Ready(ready) => ready,
-        _ => {
-            return Err(CoreError::SourcePending {
-                name: item.decl.source.clone(),
-            });
-        }
-    };
+    let resolved =
+        crate::source::require_ready_at(env, scope, &item.decl.source, manifest, commit)?;
     let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
     let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
     let Some(path) = crate::source::find_item(&sealed, &config, item.kind, &item.name) else {

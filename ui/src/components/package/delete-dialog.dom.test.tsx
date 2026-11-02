@@ -72,6 +72,7 @@ const rowsFor = (origins: [Scope, Origin][]): ProvenanceRow[] =>
     at: null,
     origin,
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
   }));
 

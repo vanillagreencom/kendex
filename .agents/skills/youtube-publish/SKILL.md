@@ -1,17 +1,13 @@
 ---
 name: youtube-publish
 description: "Load to draft a YouTube upload, comment or reply, or send a draft after the user's recorded approval."
-summary: "YouTube Data API publishing with synthetic-content disclosure and an approval check on the sending path."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [linear]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [integration]
 ---
 
 <!-- kendex:project-instructions:start -->

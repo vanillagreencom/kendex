@@ -1,15 +1,13 @@
 ---
 name: price-handling
 description: "Load when comparing, rounding, formatting, or parsing prices, or designing price types."
-summary: "f64 price patterns for trading systems: comparing prices, rounding to tick size, formatting for display and broker APIs, parsing market feeds, designing price types."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [data]
 ---
 
 <!-- kendex:project-instructions:start -->

@@ -26,6 +26,7 @@ const ROWS: ProvenanceRow[] = [
     at: null,
     origin: { origin: "marketplace", source: "kendex", repo: "acme/kendex" },
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
   },
   {
@@ -36,6 +37,7 @@ const ROWS: ProvenanceRow[] = [
     at: null,
     origin: { origin: "own", forkedFrom: "kendex", source: "local" },
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
   },
   {
@@ -46,6 +48,7 @@ const ROWS: ProvenanceRow[] = [
     at: null,
     origin: { origin: "unmanaged" },
     summary: null,
+    tags: null,
     package: null,
   },
 ];
@@ -101,6 +104,7 @@ describe("the From column's join", () => {
         at: "/p/.claude/skills/gh",
         origin: { origin: "marketplace", source: "kendex", repo: "a/k" },
         summary: null,
+        tags: null,
         package: { kind: "skill", name: "gh" },
       },
       {
@@ -111,6 +115,7 @@ describe("the From column's join", () => {
         at: "/p/.cursor/skills/gh",
         origin: { origin: "unmanaged" },
         summary: null,
+        tags: null,
         package: null,
       },
     ];

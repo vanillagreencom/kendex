@@ -1,17 +1,13 @@
 ---
 name: harness-ci
 description: "Load to wire, tune, or debug a repo's changed-file CI skip."
-summary: "Classifies a CI diff as harness-only or docs-only, names its change class, and validates classifier-authorized skipped jobs in required-context aggregators."
 license: MIT
-dependencies:
-  required: [orch, commit-guards, review-gate, bot-instructions]
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation]
 ---
 
 <!-- kendex:project-instructions:start -->

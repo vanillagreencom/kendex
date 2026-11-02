@@ -1,17 +1,13 @@
 ---
 name: bot-instructions
 description: "Load to render, check, or adopt a repo's GitHub review-bot instruction files from the shared doctrine and its effective manifest."
-summary: "Renders every GitHub review bot's native instruction file from one doctrine source plus the [bot-instructions] manifest table, with validators for the surfaces that fail silently."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [reviewer]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review]
 repo-effects:
   configured-by: bot-instructions
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."

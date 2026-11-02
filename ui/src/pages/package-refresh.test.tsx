@@ -199,6 +199,7 @@ const answerJoin = () =>
       at: INSTALLED.path,
       origin: { origin: "marketplace", source: "cat", repo: "o/r" },
       summary: null,
+      tags: null,
       package: { kind: INSTALLED.kind, name: INSTALLED.name },
     },
   ]);

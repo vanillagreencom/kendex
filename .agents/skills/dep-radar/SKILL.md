@@ -1,18 +1,13 @@
 ---
 name: dep-radar
 description: "Load to run or tune a dependency sweep."
-summary: "Sweeps every pinned version in the repo (deps, SDKs, vendored forks, model weights), checks upstream, and lands upgrades with their fallout in one PR per surface."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [github]
-  optional: [worktree]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [release]
 ---
 
 <!-- kendex:project-instructions:start -->

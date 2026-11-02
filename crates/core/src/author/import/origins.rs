@@ -235,6 +235,16 @@ fn marketplace_origins(
             .and_then(|sealed| read_bytes(&sealed, row.kind, installed))
         && edited.hash() != source_hash
     {
+        // A copy's SKILL.md carries only the installed key set; the
+        // publisher's other keys come back around the edits, so importing
+        // the edited copy keeps what the package declares. Where they
+        // cannot, the copy is listed with the cause and selecting it
+        // refuses: offered as it stands, it would drop them.
+        let (edited, problem) =
+            match with_published_keys(env, row, &manifest, &package, installed, edited) {
+                Ok(edited) => (Some(edited), None),
+                Err(cause) => (None, Some(cause)),
+            };
         // An agent installs as the file its harness reads, so the edited
         // copy of a marketplace agent under Codex is the TOML rendering —
         // the same bytes a catalog cannot store, reaching `offered` by the
@@ -246,9 +256,9 @@ fn marketplace_origins(
                 license_recognized: license.as_deref().is_some_and(license_recognized),
                 license,
             },
-            bytes: Some(edited),
+            bytes: edited,
             location: crate::paths::slashed(installed),
-            problem: None,
+            problem,
             read_from: Some(installed.clone()),
         });
     }
@@ -284,11 +294,66 @@ pub(super) fn read_bytes(sealed: &SealedSource, kind: ItemKind, path: &Path) -> 
 }
 
 /// The hash of what an unedited install of the package at `path` holds
-/// ([`SealedSource::rendered_item`]), the side an installed copy is
-/// compared against to say whether someone edited it.
+/// ([`SealedSource::rendered_item`], a skill's SKILL.md as a copy carries
+/// it), the side an installed copy is compared against to say whether
+/// someone edited it.
 fn installed_hash(sealed: &SealedSource, kind: ItemKind, path: &Path) -> Option<String> {
     let path = package_path(sealed, kind, path)?;
-    Some(sealed.rendered_item(kind, &path).ok()?.hash())
+    let rendered = sealed.rendered_item(kind, &path).ok()?;
+    Some(match rendered {
+        ItemBytes::Tree(files) => {
+            crate::hash::hash_files(&crate::render::skill::installed_form(files))
+        }
+        ItemBytes::File(_) => rendered.hash(),
+    })
+}
+
+/// An edited skill copy with the keys its install cut put back
+/// ([`crate::render::skill::authored_form`]) from the package's SKILL.md
+/// as the record that wrote the copy at `copy` names it
+/// ([`crate::library::record_at`], the claim the Library credits the
+/// row's observation with; [`crate::source::header::published_text`]):
+/// the source and commit it was installed from, not whatever the source
+/// holds now, which may have changed what it declares since. Nothing is
+/// fetched. Any other kind's bytes are its own whole file and come back
+/// as they are.
+///
+/// The error is the cause, for the origin's `problem`: an unreadable
+/// lock, no record that claims the copy, a record of the package that
+/// names no installed path, a source or commit this machine cannot read,
+/// or a frontmatter on either side that does not read.
+fn with_published_keys(
+    env: &Env,
+    row: &crate::library::ProvenanceRow,
+    manifest: &Manifest,
+    package: &crate::library::PackageRef,
+    copy: &Path,
+    edited: ItemBytes,
+) -> std::result::Result<ItemBytes, String> {
+    let ItemBytes::Tree(files) = edited else {
+        return Ok(edited);
+    };
+    let unrestored =
+        |cause: String| format!("the keys its install cut cannot be put back: {cause}");
+    let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope))
+        .map_err(|error| unrestored(error.to_string()))?;
+    let installed =
+        crate::library::record_at(env, &row.scope, &lock, (package.kind, &package.name), copy)
+            .map(crate::source::header::InstalledFrom::of);
+    let published = match crate::source::header::published_text(
+        env,
+        &row.scope,
+        manifest,
+        (package.kind, &package.name),
+        installed.as_ref(),
+    ) {
+        Ok(Ok(published)) => published,
+        Ok(Err(cause)) => return Err(unrestored(cause)),
+        Err(error) => return Err(unrestored(error.to_string())),
+    };
+    crate::render::skill::authored_form(files, &published.text)
+        .map(ItemBytes::Tree)
+        .map_err(|cause| unrestored(cause.to_string()))
 }
 
 /// Where a package's bytes sit: a skill's directory, whichever file a

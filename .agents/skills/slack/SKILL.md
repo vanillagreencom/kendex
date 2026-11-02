@@ -1,18 +1,13 @@
 ---
 name: slack
 description: "Load to bind an overseer's mailbox to a private Slack channel, run or check the relay, or post an alert or a file to Slack."
-summary: "Relays one checkout's overseer mailbox to one private Slack channel and back, owner messages over Socket Mode, reads through the mailbox store and writes through lane-mail: setup, listen, post, compact and install."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [communication, mailbox, orch]
-  optional: [linear]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [orchestration]
 ---
 
 <!-- kendex:project-instructions:start -->

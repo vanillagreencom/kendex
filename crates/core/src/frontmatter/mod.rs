@@ -266,24 +266,63 @@ fn is_bounds_error(problem: &str) -> bool {
     problem.contains("nests deeper") || problem.contains("YAML nodes") || problem.contains("bytes")
 }
 
-/// Top-level frontmatter entries: an entry starts at a line whose first
-/// character is not whitespace (comments and blanks attach to the current
-/// entry, where YAML ignores them anyway).
-fn entry_blocks(yaml: &str) -> Vec<String> {
-    let mut blocks: Vec<String> = Vec::new();
-    for line in yaml.lines() {
-        let starts_entry = line
+/// The top-level entries of one frontmatter block as they are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Entry<'a> {
+    /// The key its first line opens, trimmed, or `None` for a line with no
+    /// colon, which [`parse_tolerant`] ignores with a warning.
+    pub(crate) key: Option<&'a str>,
+    /// Its lines with their own endings, the comments and blanks after it
+    /// included.
+    pub(crate) text: &'a str,
+}
+
+/// A block split into what precedes its first entry (comments and blank
+/// lines) and its entries. An entry starts at a line whose first character
+/// is not whitespace or `#`; comments and blanks attach to the current
+/// entry, where YAML ignores them anyway. The pieces concatenate back to
+/// `yaml` byte for byte, so a caller rewriting some entries keeps every
+/// other byte as written.
+pub(crate) fn entries(yaml: &str) -> (&str, Vec<Entry<'_>>) {
+    let mut lead = yaml.len();
+    let mut starts: Vec<usize> = Vec::new();
+    let mut at = 0;
+    for line in yaml.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let content = content.strip_suffix('\r').unwrap_or(content);
+        if content
             .chars()
             .next()
-            .is_some_and(|c| c != ' ' && c != '\t' && c != '#');
-        if starts_entry {
-            blocks.push(line.to_owned());
-        } else if let Some(last) = blocks.last_mut() {
-            last.push('\n');
-            last.push_str(line);
+            .is_some_and(|c| c != ' ' && c != '\t' && c != '#')
+        {
+            lead = lead.min(at);
+            starts.push(at);
         }
+        at += line.len();
     }
-    blocks
+    let entries = starts
+        .iter()
+        .enumerate()
+        .map(|(index, &start)| {
+            let text = &yaml[start..starts.get(index + 1).copied().unwrap_or(yaml.len())];
+            let first = text.lines().next().unwrap_or_default();
+            Entry {
+                key: first.split_once(':').map(|(key, _)| key.trim()),
+                text,
+            }
+        })
+        .collect();
+    (&yaml[..lead], entries)
+}
+
+/// Top-level frontmatter entries as [`parse_tolerant`] reads them: each
+/// entry's lines without their endings, joined by `\n`.
+fn entry_blocks(yaml: &str) -> Vec<String> {
+    entries(yaml)
+        .1
+        .iter()
+        .map(|entry| entry.text.lines().collect::<Vec<_>>().join("\n"))
+        .collect()
 }
 
 mod strict;

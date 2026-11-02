@@ -14,6 +14,7 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 mod identity;
 pub use identity::PackageRef;
+pub(crate) use identity::{Unclaimed, record_at};
 
 /// Where one installation came from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -83,6 +84,17 @@ pub struct ProvenanceRow {
     /// direction-flipping character is here as its escape, never as
     /// itself.
     pub summary: Option<String>,
+    /// The tags the package's own declaration writes, read where
+    /// [`ProvenanceRow::summary`] is. An installed copy of a skill carries
+    /// no `tags` of its own (the installed key set), so these are the
+    /// row's tags wherever a declaration answers.
+    ///
+    /// `Some` with an empty list says the declaration answered and names
+    /// no tag, which stands as written. `None` says no declaration could
+    /// be reached — content nobody manages, an observation the records tie
+    /// to no package, a source this machine cannot reach — and the
+    /// observation's own tags are all there is.
+    pub tags: Option<Vec<crate::tags::Tag>>,
     /// Which package this installation is, where the records establish
     /// one. `None` says they do not: the observation keeps its own
     /// identity and stays distinct from every other, because a name two
@@ -103,6 +115,7 @@ struct RowFacts {
     origin: Origin,
     package: Option<PackageRef>,
     summary: Option<String>,
+    tags: Option<Vec<crate::tags::Tag>>,
 }
 
 impl ProvenanceRow {
@@ -155,7 +168,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
         let claimed = index.of(&item);
         let package = claimed.as_ref().map(|(package, _)| package.clone());
         let origin = observed_origin(env, records, &item, claimed.as_ref());
-        let summary = observed_summary(env, &mut headers, records, &item, package.as_ref());
+        let (summary, tags) = observed_words(env, &mut headers, records, &item, claimed.as_ref());
         // Keyed by which observation it is as well: a tool reads more than
         // one root and one registry file holds every entry, so two things
         // it finds under one name are two installations rather than one
@@ -166,6 +179,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
                 origin,
                 package,
                 summary,
+                tags,
             });
     }
     // A record seeded a row for every installation it holds, so that one
@@ -224,6 +238,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
             // marketplace row, so one package version reads the same in
             // both places.
             summary: facts.summary.as_deref().map(crate::names::shown),
+            tags: facts.tags,
             package: facts.package,
         })
         .collect())
@@ -245,74 +260,81 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
 ///
 /// Asked of the package the records establish and never of the observed
 /// spelling — a name two packages share is no evidence that either wrote
-/// this one. Where nothing declared answers — content nobody manages, an
-/// observation the records tie to no package, a source this machine
-/// cannot reach — the observation's own words stand.
-fn observed_summary(
+/// this one — at the revision the record claiming the observation names,
+/// the same record [`observed_origin`] reads the origin from, so a row's
+/// words and its origin describe one installation. Where nothing declared
+/// answers — content nobody manages, an observation the records tie to no
+/// package, a source this machine cannot reach — the observation's own
+/// words stand.
+///
+/// The tags come from the same declaration, and only from it: `None`
+/// where none answers, so a reader tells "declares no tag" from "nothing
+/// declared could be read".
+fn observed_words(
     env: &Env,
     headers: &mut crate::source::header::DeclaredHeaders,
     records: &crate::ownership::Records,
     item: &crate::model::ObservedItem,
-    package: Option<&PackageRef>,
-) -> Option<String> {
-    match declared_header(env, headers, records, item, package) {
-        Some(header) => header.summary_or_description().map(str::to_owned),
-        None => item.summary.clone(),
+    claimed: Option<&identity::Claim>,
+) -> (Option<String>, Option<Vec<crate::tags::Tag>>) {
+    match declared_header(env, headers, records, item, claimed) {
+        Some(header) => (
+            header.summary_or_description().map(str::to_owned),
+            Some(header.tags),
+        ),
+        None => (item.summary.clone(), None),
     }
 }
 
 /// The header of the package one observation belongs to, out of the
-/// source its scope declared it from. `None` where no declaration of it
-/// can be reached, which is not the same as a declaration that says
-/// nothing: an author who wrote no words leaves a blank row, and nothing
-/// downstream may fill that blank from the file a tool reads.
+/// source and revision the record claiming the observation names — not
+/// the observing tool's own record, which a reader of a shared tree may
+/// hold for a copy of its own somewhere else, at another revision. `None`
+/// where no record claims it or its source cannot be reached, which is not
+/// the same as a declaration that says nothing: an author who wrote no
+/// words leaves a blank row, and nothing downstream may fill that blank
+/// from the file a tool reads.
 fn declared_header(
     env: &Env,
     headers: &mut crate::source::header::DeclaredHeaders,
     records: &crate::ownership::Records,
     item: &crate::model::ObservedItem,
-    package: Option<&PackageRef>,
+    claimed: Option<&identity::Claim>,
 ) -> Option<crate::scan::metadata::Metadata> {
-    let package = package?;
+    let (package, key) = claimed?;
     let manifest = records.manifest.as_deref()?;
-    let installed = installed_from(records, package.kind, &package.name, item.harness);
+    let installed = crate::source::header::InstalledFrom::of(records.lock.entries.get(key)?);
     headers.of(
         env,
         &item.scope,
         manifest,
         package.kind,
         &package.name,
-        installed.as_ref(),
+        Some(&installed),
     )
 }
 
-/// What one installation's own record says it came from. `None` where no
-/// record claims it — content nobody installed, or one this build wrote
-/// before the field existed — and the current declaration answers then,
-/// because it is all there is to go on.
+/// What a seeded row's own record says it came from: the row is that
+/// record's, so its key names it.
 fn installed_from(
     records: &crate::ownership::Records,
     kind: ItemKind,
     name: &str,
     harness: HarnessId,
 ) -> Option<crate::source::header::InstalledFrom> {
-    let entry = records
+    records
         .lock
         .entries
-        .get(&crate::lock::entry_key(kind, name, harness))?;
-    Some(crate::source::header::InstalledFrom {
-        source: entry.source.clone(),
-        repo: entry.source_repo.clone(),
-        commit: entry.source_commit.clone(),
-    })
+        .get(&crate::lock::entry_key(kind, name, harness))
+        .map(crate::source::header::InstalledFrom::of)
 }
 
-/// The words for every row the scan could not see.
+/// The words and tags for every row the scan could not see.
 ///
 /// Only a seeded row, whose name IS the declared one: an observed row is
 /// named however its tool stores the package, and looking a declaration up
 /// under that spelling is the mistake the identity join exists to stop —
-/// its own words were settled in [`observed_summary`], through the package
+/// its own words were settled in [`observed_words`], through the package
 /// the records established. Run after the sweep that drops the seeded rows
 /// the scan also saw, so a catalog is read only for a row that survived.
 fn seeded_summaries(
@@ -322,7 +344,7 @@ fn seeded_summaries(
     rows: &mut BTreeMap<RowKey, RowFacts>,
 ) {
     for ((scope, kind, name, harness, at), facts) in rows {
-        if at.is_some() || facts.summary.is_some() {
+        if at.is_some() || facts.summary.is_some() || facts.tags.is_some() {
             continue;
         }
         let Some(records) = records_by_scope.get(scope) else {
@@ -332,9 +354,11 @@ fn seeded_summaries(
             continue;
         };
         let installed = installed_from(records, *kind, name, *harness);
-        facts.summary = headers
-            .of(env, scope, manifest, *kind, name, installed.as_ref())
-            .and_then(|header| header.summary_or_description().map(str::to_owned));
+        let Some(header) = headers.of(env, scope, manifest, *kind, name, installed.as_ref()) else {
+            continue;
+        };
+        facts.summary = header.summary_or_description().map(str::to_owned);
+        facts.tags = Some(header.tags);
     }
 }
 
@@ -377,6 +401,7 @@ fn recorded(
                 // keeps one, and reading a catalog for the rest would pay
                 // for every row twice.
                 summary: None,
+                tags: None,
             },
         );
     }

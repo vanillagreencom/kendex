@@ -228,3 +228,82 @@ fn an_origin_does_not_cross_into_an_unmanaged_harness() {
         assert_eq!(codex.origin, Origin::Unmanaged);
     }
 }
+
+/// The record that answers for one copy is the one whose recorded position
+/// is the copy. Where none is, the refusal says why: a record of the
+/// package that names no installed position cannot say the copy is its
+/// own, which is a different cause from records that all name somewhere
+/// else. One row per answer.
+#[test]
+fn a_copy_is_answered_by_the_record_that_names_its_position() {
+    enum Answer {
+        Claimed,
+        NoRecord,
+        NamesNoPosition,
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let env = Env::fake(tmp.path(), FakeOs::Linux);
+    let project = tmp.path().join("app");
+    for copy in [
+        ".claude/skills/gh",
+        ".agents/skills/gh",
+        ".cursor/skills/gh",
+    ] {
+        fs::create_dir_all(project.join(copy)).unwrap();
+    }
+    let project = crate::paths::canonical(&project).unwrap();
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    let key = crate::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude);
+    // What the record says it wrote (`None`: it names no position), where
+    // the copy is, and the answer.
+    let rows = [
+        (
+            "the record's position is the copy",
+            Some(".claude/skills/gh"),
+            ".claude/skills/gh",
+            Answer::Claimed,
+        ),
+        (
+            "the record's position is another copy",
+            Some(".agents/skills/gh"),
+            ".cursor/skills/gh",
+            Answer::NoRecord,
+        ),
+        (
+            "the record names no position",
+            None,
+            ".claude/skills/gh",
+            Answer::NamesNoPosition,
+        ),
+    ];
+    for (what, wrote, copy, expected) in rows {
+        let mut gh = entry(ItemKind::Skill, "gh", "cat", "owner/repo");
+        gh.emitted = wrote.map(|wrote| crate::lock::EmittedArtifact {
+            kind: ItemKind::Skill,
+            name: "gh".to_owned(),
+            paths: vec![project.join(wrote)],
+        });
+        let lock = Lock {
+            version: crate::lock::LOCK_VERSION,
+            entries: std::collections::BTreeMap::from([(key.clone(), gh)]),
+            ..Lock::default()
+        };
+        let answer = record_at(
+            &env,
+            &scope,
+            &lock,
+            (ItemKind::Skill, "gh"),
+            &project.join(copy),
+        );
+        let held = match expected {
+            Answer::Claimed => {
+                matches!(answer, Ok(found) if std::ptr::eq(found, &lock.entries[&key]))
+            }
+            Answer::NoRecord => matches!(answer, Err(Unclaimed::NoRecord)),
+            Answer::NamesNoPosition => matches!(answer, Err(Unclaimed::NamesNoPosition)),
+        };
+        assert!(held, "{what}");
+    }
+}

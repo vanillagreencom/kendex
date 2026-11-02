@@ -1,4 +1,5 @@
 use kendex_core::apply::Plan;
+use kendex_core::engine::desired::SkillLines;
 use kendex_core::engine::{
     CatalogSource, DriftCause, DriftRow, DriftState, EngineReport, ExcludedHook, ItemSafety,
     SafetyTarget,
@@ -32,6 +33,7 @@ fn scored(name: &str, harness: HarnessId, findings: &[(Severity, &str)]) -> Item
             path: format!("skills/{name}"),
             verbatim: true,
             tree: true,
+            skill_lines: Some(SkillLines::Shifted { from: 1, to: 1 }),
         }),
         advisory: AuditResult {
             findings: findings

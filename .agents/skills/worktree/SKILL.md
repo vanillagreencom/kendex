@@ -1,18 +1,14 @@
 ---
 name: worktree
 description: "Load to create, list, remove, push, or repair a git worktree."
-summary: "Git worktree management: create, list, remove isolated working copies with env and config symlinks."
 license: MIT
 user-invocable: true
-dependencies:
-  optional: [github]
 argument-hint: "create <ID> [<branch>] [--base <branch>|--from <ref>|--pr <N>] [--reuse [--keep-on-conflict]|--restack] [--replay] [--hosted] | create <ID> --transfer <branch> (not with <branch>, --base, --from, --pr, --reuse, --restack, or --replay) | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [git]
 ---
 
 <!-- kendex:project-instructions:start -->

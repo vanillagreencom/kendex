@@ -1,18 +1,13 @@
 ---
 name: project-management
 description: "Load to plan a cycle, audit issues, build a roadmap, or decompose research into issues."
-summary: "TPM planning, audit, roadmap, and research-driven decomposition: the cycle-plan, audit-issues, roadmap and research wrappers and the TPM workflows under them."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [orch, linear, github, reviewer]
-  optional: [decider, second-opinion]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [planning]
 ---
 
 <!-- kendex:project-instructions:start -->

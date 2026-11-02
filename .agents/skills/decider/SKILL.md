@@ -1,15 +1,13 @@
 ---
 name: decider
 description: "Load to create, search, or supersede an architecture decision record."
-summary: "Architecture decision records: what warrants one, the short format, creation, search, supersession tracking, and INDEX maintenance."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [planning]
 ---
 
 <!-- kendex:project-instructions:start -->
