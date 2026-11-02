@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use kendex_core::engine::PlanOptions;
@@ -8,7 +7,7 @@ use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 use kendex_core::{manifest, pi_ext, settings};
 
-use super::{CliResult, out, resolve_scopes, say};
+use super::{CliResult, out, resolve_scopes_at, say};
 use crate::scope::ScopeFilter;
 
 /// What update-pi found for one declared or installed package.
@@ -84,10 +83,24 @@ struct ScopePlan {
 }
 
 /// Compare every installed Pi package against the source it came from and
-/// reinstall the ones that fell behind.
-pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
+/// reinstall the ones that fell behind, in the project `target` names
+/// where it names one. A named project is registered as `apply` and
+/// `refresh` register theirs: the refusal asked before the first write,
+/// the registration once the write got through
+/// (`project::register_target`), and, in a run that fails, for each scope
+/// a package landed in before it did.
+pub fn run(
+    env: &Env,
+    filter: ScopeFilter,
+    target: &crate::flags::ProjectTargetFlag,
+    check: bool,
+) -> CliResult {
     let settings = settings::load(env)?;
-    let scopes = resolve_scopes(env, filter)?;
+    let scopes = resolve_scopes_at(env, filter, target.path())?;
+    let registering = match check {
+        true => super::project::Registering::Nothing,
+        false => super::project::target_registrable(env, target, &scopes)?,
+    };
     for scope in &scopes {
         if let Err(error) =
             kendex_core::engine::check_catalog_compatibility(env, scope, &PlanOptions::current())
@@ -99,14 +112,7 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     let _guards = (!check)
         .then(|| kendex_core::apply::lock_scopes_for_write(env, &scopes))
         .transpose()?;
-    let mut plans = Vec::new();
-    for scope in scopes {
-        let (root, other_roots) = pi_ext::paired_roots(env, &settings, &scope);
-        if root.is_dir() || scope_declares_extensions(env, &scope) {
-            let (_, loaded_with) = pi_ext::session_roots(env, &settings, &scope);
-            plans.push(plan_scope(env, &scope, root, &other_roots, &loaded_with)?);
-        }
-    }
+    let mut plans = plan_scopes(env, &settings, &scopes)?;
 
     if plans.is_empty() {
         say("no place checked installs for Pi");
@@ -129,7 +135,42 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         }
         return Ok(());
     }
-    update(env, &plans)
+    let mut wrote = Vec::new();
+    if let Err(error) = update(env, &plans, &mut wrote) {
+        // The packages that landed are on disk whatever failed beside
+        // them, so their project is listed as `apply` lists one whose
+        // effects step failed after its write; a registry that refuses is
+        // said beside the failure it did not cause.
+        for scope in wrote {
+            if let Err(refused) = super::project::register_target(env, &registering, scope) {
+                super::fail_refusal("warning: ", refused.as_ref());
+            }
+        }
+        return Err(error);
+    }
+    for plan in &plans {
+        super::project::register_target(env, &registering, &plan.scope)?;
+    }
+    Ok(())
+}
+
+/// The plan of every scope the run reached that has a Pi root or declares
+/// a package, each install guard checking the run's other scopes too
+/// (`pi_ext::paired_roots`).
+fn plan_scopes(
+    env: &Env,
+    settings: &settings::AppSettings,
+    scopes: &[Scope],
+) -> Result<Vec<ScopePlan>, Box<dyn std::error::Error>> {
+    let mut plans = Vec::new();
+    for scope in scopes {
+        let (root, other_roots) = pi_ext::paired_roots(env, settings, scope, scopes);
+        if root.is_dir() || scope_declares_extensions(env, scope) {
+            let (_, loaded_with) = pi_ext::session_roots(env, settings, scope);
+            plans.push(plan_scope(env, scope, root, &other_roots, &loaded_with)?);
+        }
+    }
+    Ok(plans)
 }
 
 fn updatable(row: &&Row) -> bool {
@@ -140,14 +181,17 @@ fn updatable(row: &&Row) -> bool {
 /// the way it reads them and writing nothing: what a verb shows before it
 /// asks for the yes that lets the settle write, and the names it then
 /// hands the settle. `options` are the verb's plan options, so each
-/// package is read at the commit that plan reads it at.
+/// package is read at the commit that plan reads it at; `targeted` the
+/// scopes the verb writes, whose roots the install guard checks
+/// (`pi_ext::paired_roots`).
 pub(super) fn pending_settle(
     env: &Env,
     scope: &Scope,
     options: &PlanOptions,
+    targeted: &[Scope],
 ) -> Result<Vec<Pending>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
-    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
+    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope, targeted);
     Ok(settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter_map(|(name, settlement)| match settlement {
@@ -163,9 +207,10 @@ pub(super) fn deferred_settle(
     env: &Env,
     scope: &Scope,
     options: &PlanOptions,
+    targeted: &[Scope],
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
-    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
+    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope, targeted);
     Ok(settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter_map(|(name, settlement)| match settlement {
@@ -193,9 +238,10 @@ pub fn settle_scope(
     scope: &Scope,
     names: &[String],
     options: &PlanOptions,
+    targeted: &[Scope],
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
-    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
+    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope, targeted);
     let _guard = kendex_core::apply::lock_scopes_for_write(env, std::slice::from_ref(scope))?;
     let rows = settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
@@ -217,7 +263,9 @@ pub fn settle_scope(
         notes: Vec::new(),
         shadows: pi_ext::ShadowScan::default(),
     };
-    Ok(install_rows(env, &plan, options)?.count)
+    let mut installed = Installed::default();
+    install_rows(env, &plan, options, &mut installed)?;
+    Ok(installed.count)
 }
 
 /// What a settle may install, decided once and here: a declared package
@@ -228,7 +276,9 @@ pub fn settle_scope(
 /// carries, and its installed copy is absent or byte-equal to that source
 /// (`Missing`), or the record holds it from the same origin, its installed
 /// copy is still the bytes that record completed, and the source moved
-/// away from them (`Stale`). `pi_ext::install` runs `npm ci` with a package
+/// away from them (`Stale`), or the record does not hold it and the version
+/// 10 record a recovery moved aside proves the installed copy as it sits
+/// (`engine::version_10_pi_copy`), which is `Stale` the same way. `pi_ext::install` runs `npm ci` with a package
 /// lock, or `npm install` without one, for a
 /// package declaring dependencies, and with it that package's own
 /// lifecycle scripts; a refresh settles on the strength of a fetch it just
@@ -295,21 +345,31 @@ fn settleable(
         };
         let installed = pi_ext::declared_state(root, name, &package, existing, basis);
         let source_dir = package.source_dir.clone();
-        let status = match (existing, installed) {
+        // The source a `Stale` copy was installed from, as its record names it.
+        let (status, installed_from) = match (existing, installed) {
             (None, Ok(pi_ext::PackageState::Missing | pi_ext::PackageState::Current { .. })) => {
-                Status::Missing { source_dir }
+                (Status::Missing { source_dir }, None)
             }
             (None, Ok(pi_ext::PackageState::Different)) => {
-                let Ok(Some(source_hash)) = pi_ext::package_hash(&package.source_dir) else {
-                    continue;
-                };
-                if !matches!(
-                    pi_ext::installed_state(root, name, Some(&source_hash)),
-                    Ok(pi_ext::PackageState::Current { .. })
-                ) {
+                let unedited_source = matches!(
+                    pi_ext::package_hash(&package.source_dir),
+                    Ok(Some(source_hash)) if matches!(
+                        pi_ext::installed_state(root, name, Some(&source_hash)),
+                        Ok(pi_ext::PackageState::Current { .. })
+                    )
+                );
+                if unedited_source {
+                    (Status::Missing { source_dir }, None)
+                } else if let Ok(Some(copy)) =
+                    kendex_core::engine::version_10_pi_copy(env, scope, &lock, name)
+                {
+                    // An unedited copy a version 10 build installed, whose
+                    // source moved on: the recovery's record has no entry
+                    // for it, and that record's byte proof stands in.
+                    (Status::Stale { source_dir }, Some(copy.installed_from))
+                } else {
                     continue;
                 }
-                Status::Missing { source_dir }
             }
             (Some(entry), Ok(pi_ext::PackageState::Different))
                 if pi_ext::check_origin(name, &package, Some(entry)).is_ok()
@@ -318,22 +378,19 @@ fn settleable(
                         Ok(pi_ext::PackageState::Current { .. })
                     ) =>
             {
-                Status::Stale { source_dir }
+                let from = entry.source_commit.as_ref().unwrap_or(&entry.source_hash);
+                (Status::Stale { source_dir }, Some(from.clone()))
             }
             (Some(_), _) | (_, Err(_)) => continue,
         };
         let settlement = match pi_ext::declares_runtime_deps(&package.source_dir) {
             Ok(false) => {
-                let change = match existing {
+                let change = match installed_from {
                     None => PendingChange::Missing,
-                    Some(entry) => PendingChange::Stale {
+                    Some(from) => PendingChange::Stale {
                         from_version: installed_version(root, name),
                         to_version: pi_ext::read(&package.source_dir)?.version,
-                        from: entry
-                            .source_commit
-                            .as_ref()
-                            .unwrap_or(&entry.source_hash)
-                            .clone(),
+                        from,
                         to: match package.source_commit {
                             Some(commit) => commit,
                             None => pi_ext::package_hash(&package.source_dir)?
@@ -370,65 +427,62 @@ fn plan_scope(
     loaded_with: &[PathBuf],
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
-    let (declared, sources) = declared_sources(env, scope, &mut notes)?;
+    let (declared, resolved) = declared_sources(env, scope, &mut notes)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
-
-    let guard = |name: &str, status: Status| match pi_ext::duplicate_elsewhere(name, other_roots) {
-        Some((conflict, at)) => Status::Blocked {
-            reason: format!(
-                "blocked: {conflict} would register twice. Pi loads your user and project package lists together; loading this package twice prevents Pi from starting. Keep either copy and remove the other before updating. User packages: {}; project packages: {}",
-                match scope {
-                    Scope::Global => root.as_path(),
-                    Scope::Project { .. } => at.as_path(),
-                }
-                .display(),
-                match scope {
-                    Scope::Global => at.as_path(),
-                    Scope::Project { .. } => root.as_path(),
-                }
-                .display()
-            ),
-        },
-        None => status,
-    };
-
-    for (name, package) in &sources {
+    let mut sourced = std::collections::BTreeSet::new();
+    for (name, resolution) in resolved {
+        if matches!(resolution, Ok(pi_ext::Resolved::Ships(_))) {
+            sourced.insert(name.clone());
+        }
         let key = kendex_core::lock::entry_key(
             kendex_core::model::ItemKind::PiExtension,
-            name,
+            &name,
             kendex_core::model::HarnessId::Pi,
         );
-        let existing = lock.entries.get(&key);
-        pi_ext::check_origin(name, package, existing)?;
-        let status = match pi_ext::declared_state(
+        let status = match pi_ext::admit(
             &root,
-            name,
-            package,
-            existing,
+            other_roots,
+            &name,
+            resolution,
+            lock.entries.get(&key),
             pi_ext::RecordBasis::Recorded,
         ) {
-            Ok(pi_ext::PackageState::Current { .. }) => Status::Current,
-            Ok(pi_ext::PackageState::Different) => guard(
-                name,
-                Status::Stale {
-                    source_dir: package.source_dir.clone(),
+            // Nothing installs a retired package again.
+            pi_ext::Admission::Retired => continue,
+            pi_ext::Admission::Current { .. } => Status::Current,
+            pi_ext::Admission::Install { package, change } => match change {
+                pi_ext::Install::Missing => Status::Missing {
+                    source_dir: package.source_dir,
                 },
-            ),
-            Ok(pi_ext::PackageState::Missing) => guard(
-                name,
-                Status::Missing {
-                    source_dir: package.source_dir.clone(),
+                pi_ext::Install::Stale => Status::Stale {
+                    source_dir: package.source_dir,
                 },
-            ),
-            Err(error) => {
-                notes.push((name.clone(), error.to_string()));
+            },
+            pi_ext::Admission::LoadedElsewhere { installed, at } => Status::Blocked {
+                reason: format!(
+                    "blocked: {installed} would register twice. Pi loads your user and project package lists together; loading this package twice prevents Pi from starting. Keep either copy and remove the other before updating. User packages: {}; project packages: {}",
+                    match scope {
+                        Scope::Global => root.as_path(),
+                        Scope::Project { .. } => at.as_path(),
+                    }
+                    .display(),
+                    match scope {
+                        Scope::Global => at.as_path(),
+                        Scope::Project { .. } => root.as_path(),
+                    }
+                    .display()
+                ),
+            },
+            pi_ext::Admission::OriginRefused(error) => return Err(error.into()),
+            pi_ext::Admission::NotEvaluated(error) => {
+                notes.push((name, error.to_string()));
                 continue;
             }
         };
         rows.push(Row {
-            name: name.clone(),
-            version: installed_version(&root, name),
+            version: installed_version(&root, &name),
+            name,
             status,
         });
     }
@@ -436,7 +490,7 @@ fn plan_scope(
     // under `extensions/` runs whatever state the managed one is in.
     let shadows = pi_ext::shadows(&root, loaded_with, &declared);
     for name in pi_ext::list_installed(&root)? {
-        if !sources.contains_key(&name) {
+        if !sourced.contains(&name) {
             rows.push(Row {
                 version: installed_version(&root, &name),
                 name,
@@ -465,34 +519,34 @@ fn plan_scope(
     })
 }
 
-/// Every declared Pi extension by name, and each one whose source
-/// resolved. An unreadable source becomes a note so the rest of the scope
-/// still updates, except for a catalog compatibility refusal. The name list
-/// keeps it, for the checks that read what sits on disk whatever the source says.
+/// What a scope's catalogs answer for each declared Pi extension, by name.
+type Resolutions = Vec<(String, kendex_core::error::Result<pi_ext::Resolved>)>;
+
+/// Every declared Pi extension by name, and what its catalog answers for
+/// each, which `pi_ext::admit` judges: a source that would not resolve is
+/// a note there, so the rest of the scope still updates. A catalog
+/// compatibility refusal stops the scope here instead. The name list keeps
+/// every declaration, for the checks that read what sits on disk whatever
+/// the source says.
 fn declared_sources(
     env: &Env,
     scope: &Scope,
     notes: &mut Vec<(String, String)>,
-) -> kendex_core::error::Result<(Vec<String>, BTreeMap<String, pi_ext::DeclaredPackage>)> {
-    let mut found = BTreeMap::new();
+) -> kendex_core::error::Result<(Vec<String>, Resolutions)> {
     let path = manifest::manifest_path(env, scope);
     let manifest = match manifest::load(&path) {
         Ok(ManifestFile::Current(manifest)) => manifest,
-        Ok(_) => return Ok((Vec::new(), found)),
+        Ok(_) => return Ok((Vec::new(), Vec::new())),
         Err(error) => {
             notes.push(("manifest".to_owned(), error.to_string()));
-            return Ok((Vec::new(), found));
+            return Ok((Vec::new(), Vec::new()));
         }
     };
+    let mut found = Vec::new();
     for (name, decl) in &manifest.pi_extensions {
         match pi_ext::resolve_declared(env, scope, &manifest, name, decl) {
-            Ok(pi_ext::Resolved::Ships(package)) => {
-                found.insert(name.clone(), package);
-            }
-            // Nothing installs a retired package again.
-            Ok(pi_ext::Resolved::Retired { .. }) => {}
             Err(error) if error.is_catalog_compatibility() => return Err(error),
-            Err(error) => notes.push((name.clone(), error.to_string())),
+            resolution => found.push((name.clone(), resolution)),
         }
     }
     Ok((manifest.pi_extensions.keys().cloned().collect(), found))
@@ -597,7 +651,10 @@ fn describe(row: &Row) -> String {
     }
 }
 
-fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
+/// Install what each plan marks, and say how the run ended. `wrote` gains
+/// every scope a package landed in, whatever the run returns: a failure
+/// after a landed install still leaves that install on disk.
+fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> CliResult {
     let mut updated = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for plan in plans {
@@ -618,7 +675,12 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
         {
             continue;
         }
-        let installed = install_rows(env, plan, &PlanOptions::current())?;
+        let mut installed = Installed::default();
+        let pass = install_rows(env, plan, &PlanOptions::current(), &mut installed);
+        if installed.count > 0 {
+            wrote.push(&plan.scope);
+        }
+        pass?;
         updated += installed.count;
         failures.extend(
             installed
@@ -644,6 +706,7 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
 
 /// What one scope's install pass did: how many packages landed, and the
 /// names of the ones that did not, each already said with its cause.
+#[derive(Default)]
 struct Installed {
     count: usize,
     failed: Vec<String>,
@@ -655,15 +718,14 @@ struct Installed {
 /// and no completion, so the next pass finds it stale again. The record
 /// compares each package with its source read at the commit a plan under
 /// `options` reads it at, the commit the plan's rows were installed from.
+/// What landed is counted into `installed` as it lands, so a pass that
+/// stops on an error still says what it wrote.
 fn install_rows(
     env: &Env,
     plan: &ScopePlan,
     options: &PlanOptions,
-) -> Result<Installed, Box<dyn std::error::Error>> {
-    let mut installed = Installed {
-        count: 0,
-        failed: Vec::new(),
-    };
+    installed: &mut Installed,
+) -> CliResult {
     let declared = kendex_core::engine::ops::manifest_for_reading(env, &plan.scope)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
     let readings =
@@ -682,8 +744,8 @@ fn install_rows(
         pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
         match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
-                record_pi_installs(env, plan, &readings, Some(&row.name))?;
                 installed.count += 1;
+                record_pi_installs(env, plan, &readings, Some(&row.name))?;
                 out(&format!(
                     "  {verb} {} -> {}",
                     row.name,
@@ -705,7 +767,7 @@ fn install_rows(
     if installed.failed.is_empty() {
         record_pi_installs(env, plan, &readings, None)?;
     }
-    Ok(installed)
+    Ok(())
 }
 
 /// The commit offer, made here because this verb writes into a project's
@@ -808,6 +870,86 @@ mod tests {
         assert!(notes.is_empty());
     }
 
+    /// A project `--project-path` names is on no projects list and is not
+    /// the working directory: registration comes after the write, or never
+    /// for a declined write, a linked work tree or a `--throwaway` folder.
+    /// It already holds a package the personal scope also declares. Every
+    /// reading of the personal scope that the run's scopes reach blocks its
+    /// copy rather than install it, since Pi would load the package twice
+    /// and not start: update-pi's plan, and refresh's settle and the names
+    /// it asks about first.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_named_project_holding_a_package_blocks_its_personal_copy() {
+        type Blocked = fn(&Env, &[Scope]) -> bool;
+        let rows: [(&str, Blocked); 3] = [
+            ("update-pi plan", |env, targeted| {
+                let settings = settings::load(env).unwrap();
+                let plans = plan_scopes(env, &settings, targeted).unwrap();
+                let personal = plans
+                    .iter()
+                    .find(|plan| matches!(plan.scope, Scope::Global))
+                    .unwrap();
+                let row = personal
+                    .rows
+                    .iter()
+                    .find(|row| row.name == "pi-twice")
+                    .unwrap();
+                matches!(row.status, Status::Blocked { .. })
+            }),
+            ("refresh pending settle", |env, targeted| {
+                pending_settle(env, &Scope::Global, &PlanOptions::current(), targeted)
+                    .unwrap()
+                    .iter()
+                    .all(|pending| pending.name != "pi-twice")
+            }),
+            ("refresh settle", |env, targeted| {
+                let names = ["pi-twice".to_owned()];
+                let options = PlanOptions::current();
+                settle_scope(env, &Scope::Global, &names, &options, targeted).unwrap();
+                let settings = settings::load(env).unwrap();
+                let (root, _) = pi_ext::paired_roots(env, &settings, &Scope::Global, &[]);
+                !pi_ext::installed_under(&root, "pi-twice")
+            }),
+        ];
+        for (label, blocked) in rows {
+            let temp = tempfile::tempdir().unwrap();
+            let home = crate::test_util::rooted(&temp);
+            let env = Env::host_rooted(&home);
+            let catalog = home.join("catalog");
+            let source = catalog.join("pi-extensions/pi-twice");
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::write(
+                source.join("package.json"),
+                r#"{"name":"pi-twice","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,
+            )
+            .unwrap();
+            std::fs::write(source.join("index.js"), "export const value = 1;\n").unwrap();
+            let declared = format!(
+                "schema = 7\n[sources.cat]\n{}\n[pi-extensions.pi-twice]\nsource = 'cat'\n",
+                crate::test_util::source_path(&catalog)
+            );
+            let named = Scope::Project {
+                root: home.join("named"),
+            };
+            for scope in [&named, &Scope::Global] {
+                let path = manifest::manifest_path(&env, scope);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, &declared).unwrap();
+            }
+            let targeted = [named.clone(), Scope::Global];
+            let names = ["pi-twice".to_owned()];
+            settle_scope(&env, &named, &names, &PlanOptions::current(), &targeted).unwrap();
+            let settings = settings::load(&env).unwrap();
+            assert!(
+                settings.projects.is_empty(),
+                "{label}: the project is on no list"
+            );
+
+            assert!(blocked(&env, &targeted), "{label}");
+        }
+    }
+
     /// Catalog declarations produce missing, recorded stale, and current copies.
     #[test]
     #[allow(clippy::unwrap_used)]
@@ -839,7 +981,8 @@ mod tests {
             .unwrap();
             std::fs::write(source.join("index.js"), "export const value = 1;\n").unwrap();
             let options = PlanOptions::current();
-            let missing = pending_settle(&env, &scope, &options).unwrap();
+            let missing =
+                pending_settle(&env, &scope, &options, std::slice::from_ref(&scope)).unwrap();
             assert_eq!(
                 missing
                     .iter()
@@ -848,7 +991,14 @@ mod tests {
                 ["pi-consent"]
             );
             assert_eq!(missing[0].change, PendingChange::Missing);
-            settle_scope(&env, &scope, &["pi-consent".into()], &options).unwrap();
+            settle_scope(
+                &env,
+                &scope,
+                &["pi-consent".into()],
+                &options,
+                std::slice::from_ref(&scope),
+            )
+            .unwrap();
             let from = pi_ext::package_hash(&source).unwrap().unwrap();
             std::fs::write(
                 source.join("package.json"),
@@ -856,7 +1006,8 @@ mod tests {
             )
             .unwrap();
             let to = pi_ext::package_hash(&source).unwrap().unwrap();
-            let stale = pending_settle(&env, &scope, &options).unwrap();
+            let stale =
+                pending_settle(&env, &scope, &options, std::slice::from_ref(&scope)).unwrap();
             assert_eq!(
                 stale
                     .iter()
@@ -873,8 +1024,19 @@ mod tests {
                     to,
                 }
             );
-            settle_scope(&env, &scope, &["pi-consent".into()], &options).unwrap();
-            assert!(pending_settle(&env, &scope, &options).unwrap().is_empty());
+            settle_scope(
+                &env,
+                &scope,
+                &["pi-consent".into()],
+                &options,
+                std::slice::from_ref(&scope),
+            )
+            .unwrap();
+            assert!(
+                pending_settle(&env, &scope, &options, std::slice::from_ref(&scope))
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
 }

@@ -17,7 +17,9 @@ use super::{LOCK_FILE, LOCK_VERSION, Lock, MACHINE_FILE, MachineRecord, VERSION_
 
 /// What sits at a lock path. Only the shape this build writes loads: a
 /// record from an older generation is damaged as far as this build is
-/// concerned, and [`CoreError::LockCorrupt`] names the way out.
+/// concerned, and [`CoreError::LockCorrupt`] names the way out; a version 10
+/// project record is [`CoreError::LegacyProjectLock`], which a refresh or an
+/// apply recovers where `engine::planning_lock` does not refuse it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LockFile {
     Absent,

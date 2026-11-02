@@ -4,8 +4,8 @@ use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::Scope;
 
 use super::advisory::Listing;
-use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
-use super::ledger::{Folded, Wrote, say_ledger, say_preview};
+use super::engine_common::{confirm_and_apply, print_report_for, print_unmanaged};
+use super::ledger::{Folded, Wrote, say_ledger_with, say_preview};
 use super::{CliResult, fail_refusal, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui;
@@ -95,6 +95,9 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         removal_filter: None,
         overwrite_edited: args.discard_edits,
         replace_unmanaged: args.replace_unmanaged,
+        // A version 10 project record is recovered inside this apply's own
+        // write, the move listed with the rest of the plan.
+        recover_version_10: true,
         ..PlanOptions::locked()
     };
     let mut planned = plan_each(env, scopes, &args, &options)?;
@@ -112,7 +115,9 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         if combined && matches!(scope, Scope::Project { .. }) {
             report = plan_apply(env, &scope, &options)?;
         }
-        let blocked = print_report(env, &report, Listing::Attention);
+        let reached = super::offers::Reached::of(args.target.path());
+        let attention = print_report_for(env, &report, Listing::Attention, reached);
+        let blocked = attention.blocked;
         // Only here and in verify: a report is printed by add and pin too,
         // and an inventory of hand-made content is not what those were
         // asked for.
@@ -129,6 +134,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                     count: planned,
                 },
                 &blocked,
+                attention.pi_left,
                 &report.safety,
             );
             continue;
@@ -166,13 +172,14 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 // date, and one that wrote nothing because every write was
                 // refused is not.
                 let count = (!report.plan.is_empty()).then_some(applied);
-                say_ledger(
+                say_ledger_with(
                     &scope,
                     Wrote {
                         verb: "applied",
                         count,
                     },
                     &blocked,
+                    attention.pi_left,
                     &report.safety,
                     Folded::None,
                 );

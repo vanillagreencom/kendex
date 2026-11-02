@@ -803,6 +803,10 @@ struct Gap {
     /// own warnings, which name what it runs with and the fix: apply
     /// records nothing for it, so the record's remedy would do nothing.
     withheld: Option<(&'static str, Vec<kendex_core::engine::ItemWarning>)>,
+    /// Why `update-pi` leaves a declared Pi package, where the plan's row
+    /// for it says so (`DriftRow::pi_unsettled`): the record's remedy
+    /// would name a verb that records nothing.
+    pi_left: Option<String>,
 }
 
 /// Both directions the record can fall short of the scope, as rows and as
@@ -863,10 +867,21 @@ fn gap_rows(
             let problem = withheld.as_ref().map(|(said, _)| (*said).to_owned());
             rows.push(placer.row(kind.name(), name, None, State::Unrecorded, problem, &[]));
         }
+        let pi_left = report
+            .drift
+            .iter()
+            .find(|row| {
+                row.kind == *kind
+                    && row.kind == ItemKind::PiExtension
+                    && row.name == *name
+                    && row.pi_unsettled.is_some()
+            })
+            .map(|row| row.detail.clone());
         gap.push(Gap {
             kind: *kind,
             name: name.clone(),
             withheld,
+            pi_left,
         });
     }
     for installation in &unrecorded {
@@ -875,6 +890,7 @@ fn gap_rows(
                 kind: installation.kind,
                 name: installation.name.clone(),
                 withheld: None,
+                pi_left: None,
             });
         }
     }
@@ -1197,11 +1213,15 @@ fn print_gaps(style: &Style, scopes: &[(Scope, Vec<Gap>)]) {
             kind,
             name,
             withheld,
+            pi_left,
         } in items
         {
             let why = match (withheld, kind) {
                 (Some((said, _)), _) => said,
-                (None, ItemKind::PiExtension) => "kendex update-pi records it",
+                (None, ItemKind::PiExtension) => match pi_left {
+                    Some(reason) => reason.as_str(),
+                    None => "kendex update-pi records it",
+                },
                 (
                     None,
                     ItemKind::Agent
@@ -1381,6 +1401,9 @@ fn drift_problem(
                             "{}; its files were edited, which refresh holds — {removal}",
                             row.detail
                         ),
+                        // Only a Stale row carries it, which the arm above
+                        // reads; its detail names update-pi.
+                        RowRemedy::UpdatePi => row.detail.clone(),
                     }
                 }
                 None => row.detail.clone(),

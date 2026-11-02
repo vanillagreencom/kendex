@@ -11,7 +11,8 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// Current lock version, the number every write stamps, and the only one
 /// a read accepts. Nothing converts a record from another format: an older
 /// one is refused as damaged and a newer one as written by a newer build,
-/// and either way the way out is to move it aside and apply again.
+/// and the way out is to move it aside and apply again, except for the
+/// version 10 project record below, which refresh and apply recover.
 ///
 /// The floor is not ceremony. Every field a version introduced is a fact this
 /// build reads and an older record does not carry — which bytes are whose,
@@ -47,11 +48,19 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// [`MachineRecord`], in a file under the project's cache
 /// ([`machine_path`]). A version 10 record spells every
 /// position absolute, which read as a remainder is a claim outside the
-/// project; the version gate refuses it by name instead. For a project the
-/// way out is to move it to [`.kendex-lock.v10.json`](VERSION_10_LOCK_FILE)
-/// and run `kendex apply`. The old managed ignore rule enables that recovery,
-/// and the moved record proves ownership only where its `renderedHash`
-/// matches the destination. Every other destination remains a conflict.
+/// project; the version gate refuses it by name instead. A refresh or an
+/// apply recovers a project's record inside its own write
+/// (`engine::recovery::plan_version_10`): it plans the scope fresh, moves
+/// the record to [`.kendex-lock.v10.json`](VERSION_10_LOCK_FILE) in the
+/// same transaction, and the record proves ownership only where its
+/// `renderedHash` matches the destination. Every other destination remains
+/// a conflict. The old managed ignore rule keeps the moved record out of
+/// git, where it stays the proof for later partial recoveries. Where that
+/// file already holds this record, byte for byte, the recovery moves the
+/// record over it, bound to the same hash, so its bytes are unchanged; a
+/// link at the lock path, anything else at the aside, or a scope with no
+/// readable manifest to rebuild from refuses the recovery
+/// (`engine::planning_lock`).
 ///
 /// Version 11 gained [`Lock::shims`] without a bump, at two costs to a
 /// build that predates the field. That build drops the field when it

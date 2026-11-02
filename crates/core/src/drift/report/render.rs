@@ -250,7 +250,24 @@ fn outcome(page: &Page) -> String {
 /// technical detail. Every budget counts its own overflow line, and no line
 /// is cut mid-way: command arguments remain complete.
 pub fn render_plain(report: &CheckReport, verbosity: Verbosity) -> String {
-    let page = page(report, verbosity);
+    // An agent reads this report, and a repository effect runs package
+    // code in a checkout only once a person on this machine said so
+    // (docs/architecture/repo-effects.md): the take-over is named here
+    // without the permission the person-facing check carries.
+    let mut report = report.clone();
+    for line in report
+        .sections
+        .iter_mut()
+        .flat_map(|section| section.lines.iter_mut())
+    {
+        if let Some(Remedy::ReplaceUnmanaged {
+            allow_repo_effects, ..
+        }) = &mut line.remedy
+        {
+            *allow_repo_effects = false;
+        }
+    }
+    let page = page(&report, verbosity);
     if page.sections.is_empty() {
         return String::new();
     }

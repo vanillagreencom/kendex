@@ -6,7 +6,7 @@ use crate::test_util::{rooted, source_path};
 
 use std::fs;
 
-use super::{folder_at, kendex, link_at, offer, plan, project_with, said};
+use super::{finish_with, folder_at, kendex, link_at, offer, plan, project_with, said};
 
 /// The blocked shapes with no way to keep the files. Adoption reads a
 /// skill's position as a folder and works at a tool's own place, and
@@ -54,7 +54,10 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
                 None
             },
             "conflicts:\n  skill deploy",
-            Some(true),
+            // A file where a folder goes has no count to measure against
+            // the render, and the completion names no take-over over
+            // content nobody saw judged.
+            Some(false),
         ),
         (
             "a link no declared tool sits at",
@@ -184,7 +187,7 @@ fn a_shape_with_no_way_to_keep_the_files_is_told_to_move_them() {
         );
         if let Some(offered) = replacement_offered {
             assert_eq!(
-                planned.contains("--replace-unmanaged"),
+                !finish_with(&planned).is_empty(),
                 offered,
                 "{shape}: the scope-wide replacement: {planned}"
             );
@@ -237,8 +240,9 @@ fn an_exit_read_in_the_global_scope_says_so() {
         offer(&planned),
         "kendex adopt skill deploy --harness claude --global"
     );
-    assert!(
-        planned.contains("kendex apply --replace-unmanaged --global"),
+    assert_eq!(
+        finish_with(&planned),
+        ["apply replace-unmanaged global"],
         "the replacement runs against the current project without it: {planned}"
     );
 }
@@ -280,22 +284,21 @@ fn an_edit_is_never_told_to_move_files() {
     );
 }
 
-/// Whether the scope-wide flag is offered. It answers for every item it
-/// sweeps up or for none of them, so an item it takes and can only half
-/// settle withholds it (the per-item ways out still stand); an item the
-/// flag never reaches (a link kendex will not write over) is no reason to
-/// withhold it; and a person's own edit never takes the item's other exits
-/// away, which is the invariant `DriftCause::is_own_decision` exists to
-/// keep, held in the hardest shape the rows allow: one item carrying an
-/// edit at one tool and a stranger's files at another, beside an item
-/// wholly replaceable at two places. One row per shape.
+/// Whether the scope-wide completion is named. It names one action that
+/// settles the whole scope, so an item the take-over can only half settle
+/// withholds it, and so does an item it never reaches (a link kendex will
+/// not write over) or a person's own edit, since either still stands after
+/// the take-over runs. Each item's own way out stays, which the edit row
+/// holds in the hardest shape the rows allow: one item carrying an edit at
+/// one tool and a stranger's files at another, beside an item wholly
+/// replaceable at two places. One row per shape.
 #[test]
 #[allow(
     clippy::unwrap_used,
     clippy::too_many_lines,
     reason = "one table: three planted shapes judged by one plan call, each row a layout of its own"
 )]
-fn the_scope_wide_flag_is_withheld_only_by_a_row_the_sweep_would_refuse_on() {
+fn the_scope_wide_completion_is_named_only_where_it_settles_the_whole_scope() {
     type Plant = fn(&std::path::Path, &std::path::Path);
     type Row = (
         &'static str,
@@ -360,7 +363,7 @@ fn the_scope_wide_flag_is_withheld_only_by_a_row_the_sweep_would_refuse_on() {
                 link_at(&project.join(".claude/skills/lint"), &elsewhere);
             },
             &[],
-            true,
+            false,
         ),
         (
             "an edit at one tool and a stranger's files at another, beside a replaceable item",
@@ -422,7 +425,7 @@ fn the_scope_wide_flag_is_withheld_only_by_a_row_the_sweep_would_refuse_on() {
                 "  skill lint for Codex",
                 "already holds files kendex did not write",
             ],
-            true,
+            false,
         ),
     ];
     for (shape, harnesses, plant, halves, offered) in rows {
@@ -445,7 +448,7 @@ fn the_scope_wide_flag_is_withheld_only_by_a_row_the_sweep_would_refuse_on() {
             );
         }
         assert_eq!(
-            planned.contains("--replace-unmanaged"),
+            !finish_with(&planned).is_empty(),
             offered,
             "{shape}: {planned}"
         );
@@ -511,7 +514,7 @@ fn the_offer_is_printed_exactly_where_the_run_it_names_settles_the_scope() {
             link_at(&project.join(".agents/skills/lint"), &elsewhere);
         }
 
-        let offered = plan(home, &project).contains("--replace-unmanaged");
+        let offered = !finish_with(&plan(home, &project)).is_empty();
         let swept = said(&kendex(
             home,
             &project,

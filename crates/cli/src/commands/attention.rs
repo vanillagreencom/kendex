@@ -10,12 +10,15 @@
 //! the same consequence across many packages is one row naming each of
 //! them.
 
-use kendex_core::engine::{EngineReport, ExcludedHook};
+use kendex_core::engine::{DriftRow, EngineReport, ExcludedHook};
 use kendex_core::env::Env;
 
 use super::advisory::{Listing, safety_section};
 use super::blocked::{conflict_rows, conflicts, drift};
-use super::offers::{Blocked, blocked_items};
+use super::offers::{
+    Blocked, PiLeft, Reached, blocked_items, finish, left_for_update_pi, unsettled_pi,
+    update_pi_with,
+};
 use crate::ui::{self, Span, Status, Style};
 
 /// What the report drew, besides its lines.
@@ -29,13 +32,22 @@ pub struct Attention {
     /// it cannot miss a kind of line the verbose drawing adds. False on a
     /// verbose run, which draws it all.
     pub folded: bool,
+    /// The declared Pi packages the plan left, for `update-pi` or
+    /// unsettled, which the closing ledger counts, with the plan's
+    /// completion it names where there is one.
+    pub pi_left: Option<PiLeft>,
 }
 
 /// Draw the report on stderr, as much of it as `listing` asks for. A
 /// verbose run lists every drift row where the others list the conflicts,
 /// and the hook exclusions as one line.
-pub fn print_attention(env: &Env, report: &EngineReport, listing: Listing) -> Attention {
-    let (lines, attention) = attention(&ui::style(), env, report, listing);
+pub fn print_attention(
+    env: &Env,
+    report: &EngineReport,
+    listing: Listing,
+    reached: Reached,
+) -> Attention {
+    let (lines, attention) = attention(&ui::style(), env, report, listing, reached);
     for warning in &report.warnings {
         ui::report::run_model_warning(&warning.message);
     }
@@ -48,15 +60,21 @@ fn attention(
     env: &Env,
     report: &EngineReport,
     listing: Listing,
+    reached: Reached,
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
-    let blocked = blocked_items(env, &rows);
+    let finish = finish(report, reached);
+    let blocked = blocked_items(env, &rows, finish);
+    let left = left_for_update_pi(report);
+    let unsettled = unsettled_pi(report);
     let draw = |listing: Listing| {
         let verbose = listing == Listing::Verbose;
         let mut lines = match verbose {
             true => drift(style, report, &rows, &blocked),
-            false => conflicts(style, report, &rows, &blocked),
+            false => conflicts(style, &rows, &blocked),
         };
+        lines.extend(update_pi_section(style, &left, reached));
+        lines.extend(unsettled_section(style, &unsettled));
         lines.extend(safety_section(style, &report.safety, listing));
         lines.extend(super::engine_common::warning_lines(style, &report.warnings));
         lines.extend(notes_section(
@@ -69,7 +87,57 @@ fn attention(
     };
     let lines = draw(listing);
     let folded = listing == Listing::Attention && draw(Listing::Verbose) != lines;
-    (lines, Attention { blocked, folded })
+    let pi_left = (!left.is_empty() || !unsettled.is_empty()).then_some(PiLeft {
+        update_pi: left.len(),
+        unsettled: unsettled.len(),
+        finish,
+    });
+    (
+        lines,
+        Attention {
+            blocked,
+            folded,
+            pi_left,
+        },
+    )
+}
+
+/// The Pi packages no write of this plan installs, each with why, and the
+/// one action that settles them all, keyed as the take-over is. Drawn at
+/// every listing: without it a plan with nothing else to do closes as up
+/// to date over packages that are not.
+fn update_pi_section(style: &Style, left: &[&DriftRow], reached: Reached) -> Vec<String> {
+    let Some(first) = left.first() else {
+        return Vec::new();
+    };
+    let mut lines = style.section("left for update-pi", left.len(), Status::Decision);
+    for row in left {
+        let head = format!("{} {}: {}", row.kind.name(), row.name, row.detail);
+        lines.extend(style.row(Status::Decision, &[Span::Prose(&head)], None));
+    }
+    let keyed = update_pi_with("settle-with", &first.scope, reached);
+    lines.extend(style.row(
+        Status::Decision,
+        &[Span::Prose("to install them: "), Span::Command(&keyed)],
+        None,
+    ));
+    lines
+}
+
+/// The declared Pi packages neither this plan's write nor `update-pi`
+/// settles, each with why, and no action: none settles them until what
+/// the line names changes. Drawn at every listing, for the same reason as
+/// the packages left for `update-pi`.
+fn unsettled_section(style: &Style, unsettled: &[&DriftRow]) -> Vec<String> {
+    if unsettled.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = style.section("left unsettled", unsettled.len(), Status::Decision);
+    for row in unsettled {
+        let head = format!("{} {}: {}", row.kind.name(), row.name, row.detail);
+        lines.extend(style.row(Status::Decision, &[Span::Prose(&head)], None));
+    }
+    lines
 }
 
 /// What the plan wrote about itself. A note is its record line and the

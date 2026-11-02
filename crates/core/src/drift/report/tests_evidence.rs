@@ -268,22 +268,17 @@ fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
         source.enabled = enabled;
         write_manifest(&env, &scope, &manifest);
         let now = crate::clock::unix_now();
-        // Eval::standing emits both warnings when a Pi declaration is rebound
-        // but its recorded installation still names the original source.
+        // Eval::evaluated's warning for a skill whose source history would
+        // not read. A Pi package's notes are never read by check.
         let history = UnreadableSnapshot {
-            kind: crate::model::ItemKind::PiExtension,
+            kind: crate::model::ItemKind::Skill,
             name: "gh".into(),
             message: "its version history could not be read".into(),
             detail: Some("git log failed: fatal: bad object f7db7e89".into()),
             repo: "owner/repo".into(),
             refs_state: evaluated.map(str::to_owned),
         };
-        let origin = UnreadableSnapshot {
-            message: "the installed package could not be compared with its source".into(),
-            detail: Some("recorded source differs from the declared source".into()),
-            ..history.clone()
-        };
-        let notes = [history, origin];
+        let notes = [history];
         for package_state in [
             None,
             Some((false, false)),
@@ -299,7 +294,6 @@ fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
                     scope: scope.canonical().label(),
                     packages: if let Some((held, ignored)) = package_state {
                         vec![crate::drift::snapshot::PackageSnapshot {
-                            kind: crate::model::ItemKind::PiExtension,
                             refs_state: evaluated.map(str::to_owned),
                             held,
                             ignored,

@@ -122,10 +122,13 @@ pub enum CoreError {
     LockCorrupt { path: PathBuf, message: String },
 
     #[error(
-        "{}; {path}: this project lock is a version 10 record; move it to {aside}, then run `kendex apply` in this project. That apply replaces only renders whose current bytes match the version 10 record; other files remain conflicts. Keep it: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well",
+        "{}; {path}: this project lock is a version 10 record. A refresh or an apply in this project recovers it unless it says why it cannot: the record moves to {aside}, renders whose current bytes match it are replaced, and other files remain conflicts. Keep the moved record: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well",
         lock_version_refused(path, Some(10))
     )]
     LegacyProjectLock { path: PathBuf, aside: PathBuf },
+
+    #[error("{path}: this version 10 project lock was not recovered and is left as it is: {why}")]
+    Version10RecoveryRefused { path: PathBuf, why: Version10Stop },
 
     #[error("{path}: the existing install was not recorded — {reason}")]
     RecordExistingRefused { path: PathBuf, reason: String },
@@ -793,6 +796,38 @@ impl CoreError {
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
+
+/// Why a version 10 project record cannot be recovered where it sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Version10Stop {
+    /// An earlier recovery's record already sits where this one would
+    /// move: it is the proof later runs keep reading, and the move would
+    /// replace it.
+    AsideTaken { aside: PathBuf },
+    /// The lock path is a link. A recovery moves only kendex's own file.
+    LinkedRecord,
+    /// The scope's manifest is absent or would not read. The new record is
+    /// built from the declarations, so there is nothing to rebuild it from.
+    NoDeclarations,
+}
+
+impl std::fmt::Display for Version10Stop {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Version10Stop::AsideTaken { aside } => write!(
+                out,
+                "{} already holds a recovered record; move one of the two out of the project",
+                aside.display()
+            ),
+            Version10Stop::LinkedRecord => out.write_str(
+                "it is a link, and a recovery moves only the record file itself; put the file in its place",
+            ),
+            Version10Stop::NoDeclarations => out.write_str(
+                "this place's manifest is missing or does not read, and a recovery rebuilds the record from what the manifest lists; put back a readable manifest first",
+            ),
+        }
+    }
+}
 
 /// Fleet's lane lock migration reads this line instead of the English refusal.
 pub(crate) fn lock_version_refused(path: &std::path::Path, found: Option<i64>) -> String {

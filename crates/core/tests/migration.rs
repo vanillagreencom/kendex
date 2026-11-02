@@ -653,6 +653,188 @@ fn recovery_refuses_an_unresolved_required_dependency() {
     assert!(!f.scope_lock().exists());
 }
 
+/// An installed project whose record a version 10 build left, and that
+/// record's bytes. The planted record is the current one with its version
+/// lowered: the recovery reads only each entry's identity and rendered
+/// hash, which the two shapes spell alike.
+#[allow(clippy::unwrap_used)]
+fn version_10_project() -> (Fixture, String) {
+    let f = fixture(&MANIFEST_SCHEMA.to_string());
+    let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
+    apply::execute(&f.env, &install.plan).unwrap();
+    let current = fs::read_to_string(f.scope_lock()).unwrap();
+    let older = current.replace(
+        &format!("\"version\": {}", kendex_core::lock::LOCK_VERSION),
+        "\"version\": 10",
+    );
+    assert_ne!(older, current, "the fixture rewrites the version");
+    fs::write(f.scope_lock(), &older).unwrap();
+    (f, older)
+}
+
+fn recovering() -> PlanOptions {
+    PlanOptions {
+        recover_version_10: true,
+        ..PlanOptions::current()
+    }
+}
+
+/// The recovery's move and its record write are one transaction. A plan
+/// stopped by a later op puts the version 10 record back byte for byte
+/// with nothing left aside; the same plan run whole moves the record aside
+/// and writes a current one in its place.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_recovery_moves_the_record_in_its_own_transaction() {
+    let (f, older) = version_10_project();
+    let aside = f.project().join(kendex_core::lock::VERSION_10_LOCK_FILE);
+    let report = plan_apply(&f.env, &f.scope, &recovering()).unwrap();
+    assert_eq!(report.recovers.as_deref(), Some(aside.as_path()));
+
+    let mut stopped = report.plan.clone();
+    stopped
+        .insert(
+            stopped.ops.len(),
+            apply::PlannedOp {
+                description: "refuse".into(),
+                op: apply::Op::WriteFile {
+                    path: f.manifest_path.clone(),
+                    bytes: b"never written".to_vec(),
+                    pre: apply::Pre::Absent,
+                },
+            },
+        )
+        .unwrap();
+    let error = apply::execute(&f.env, &stopped).unwrap_err();
+    assert!(matches!(error, CoreError::RolledBack { .. }), "{error}");
+    assert_eq!(fs::read_to_string(f.scope_lock()).unwrap(), older);
+    assert!(!aside.exists(), "the rollback takes the moved record back");
+
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(&aside).unwrap(), older);
+    let recovered = load_lock(&f.scope_lock()).unwrap();
+    assert!(recovered.entries.contains_key("skill:gh:claude"));
+}
+
+/// An earlier recovery's record aside holding these same bytes is this
+/// record already moved, as a checkout back to a commit from before that
+/// recovery leaves it: the recovery goes on, the record aside stays byte
+/// for byte, and no version 10 record is left at the record path, so the
+/// next plan has nothing to recover. That holds where the plan records an
+/// entry and where a hand-made copy in the declared skill's place leaves
+/// the fresh plan nothing to record.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_record_already_aside_is_moved_over_its_copy() {
+    type Plant = fn(&Fixture);
+    let nothing: Plant = |_| {};
+    let hand_made: Plant = |f| {
+        let position = f.installed_skill();
+        fs::remove_file(&position).unwrap();
+        fs::create_dir_all(&position).unwrap();
+        fs::write(position.join("SKILL.md"), "---\nname: gh\n---\nMine.\n").unwrap();
+    };
+    let rows: [(&str, Plant, bool); 2] = [
+        ("the plan records an entry", nothing, true),
+        ("every declared item a hand-made copy", hand_made, false),
+    ];
+    for (label, plant, recorded) in rows {
+        let (f, older) = version_10_project();
+        plant(&f);
+        let aside = f.project().join(kendex_core::lock::VERSION_10_LOCK_FILE);
+        fs::write(&aside, &older).unwrap();
+        let report = plan_apply(&f.env, &f.scope, &recovering()).unwrap();
+        assert_eq!(report.recovers.as_deref(), Some(aside.as_path()), "{label}");
+
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(fs::read_to_string(&aside).unwrap(), older, "{label}");
+        let entries = match kendex_core::lock::load_file(&f.scope_lock()).unwrap() {
+            kendex_core::lock::LockFile::Current(lock) => lock.entries,
+            kendex_core::lock::LockFile::Absent => Default::default(),
+        };
+        assert_eq!(entries.contains_key("skill:gh:claude"), recorded, "{label}");
+        let replan = plan_apply(&f.env, &f.scope, &recovering()).unwrap();
+        assert_eq!(replan.recovers, None, "{label}");
+    }
+}
+
+/// A version 10 record is recovered only where the plan opted in, as the
+/// record file itself, and with no earlier recovery's record aside. Each
+/// other state refuses by its type before any write, with both files left
+/// byte for byte.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_record_that_cannot_be_recovered_refuses_by_type() {
+    type Plant = fn(&Fixture, &str);
+    type Refused = fn(&CoreError) -> bool;
+    let nothing: Plant = |_, _| {};
+    let aside_taken: Plant = |f, _| {
+        fs::write(
+            f.project().join(kendex_core::lock::VERSION_10_LOCK_FILE),
+            "an earlier recovery\n",
+        )
+        .unwrap();
+    };
+    let linked: Plant = |f, older| {
+        let elsewhere = f.project().join("elsewhere.json");
+        fs::write(&elsewhere, older).unwrap();
+        fs::remove_file(f.scope_lock()).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, f.scope_lock()).unwrap();
+    };
+    let rows: [(&str, Plant, PlanOptions, Refused); 3] = [
+        ("not opted in", nothing, PlanOptions::current(), |error| {
+            matches!(error, CoreError::LegacyProjectLock { .. })
+        }),
+        (
+            "an earlier record aside",
+            aside_taken,
+            recovering(),
+            |error| {
+                matches!(
+                    error,
+                    CoreError::Version10RecoveryRefused {
+                        why: kendex_core::error::Version10Stop::AsideTaken { .. },
+                        ..
+                    }
+                )
+            },
+        ),
+        ("a linked record", linked, recovering(), |error| {
+            matches!(
+                error,
+                CoreError::Version10RecoveryRefused {
+                    why: kendex_core::error::Version10Stop::LinkedRecord,
+                    ..
+                }
+            )
+        }),
+    ];
+    for (label, plant, options, refused) in rows {
+        let (f, older) = version_10_project();
+        plant(&f, &older);
+        let aside = f.project().join(kendex_core::lock::VERSION_10_LOCK_FILE);
+        let aside_before = fs::read(&aside).ok();
+        for (step, outcome) in [
+            ("plan", plan_apply(&f.env, &f.scope, &options).map(|_| ())),
+            (
+                "compatibility check",
+                kendex_core::engine::check_catalog_compatibility(&f.env, &f.scope, &options),
+            ),
+        ] {
+            let error = outcome
+                .err()
+                .unwrap_or_else(|| panic!("{label}: {step} planned"));
+            assert!(refused(&error), "{label}: {step}: {error}");
+        }
+        assert_eq!(
+            fs::read_to_string(f.scope_lock()).unwrap(),
+            older,
+            "{label}"
+        );
+        assert_eq!(fs::read(&aside).ok(), aside_before, "{label}");
+    }
+}
+
 impl Fixture {
     fn project(&self) -> &std::path::Path {
         match &self.scope {

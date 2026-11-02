@@ -259,6 +259,11 @@ enum Command {
         /// project | global | all (default all)
         #[arg(long)]
         scope: Option<String>,
+        // The project this run writes, named rather than walked up to. The
+        // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
+        // a doc comment here would reach no output.
+        #[command(flatten)]
+        target: crate::flags::ProjectTargetFlag,
         /// The commit offer's answer, without asking
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
@@ -631,9 +636,14 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
             commands::drift_hook::run(&env, filter, yes)?;
         }
-        Command::UpdatePi { check, scope, .. } => {
+        Command::UpdatePi {
+            check,
+            scope,
+            target,
+            ..
+        } => {
             let filter = ScopeFilter::resolve(scope.as_deref(), false, ScopeFilter::All)?;
-            commands::update_pi::run(&env, filter, check)?;
+            commands::update_pi::run(&env, filter, &target, check)?;
         }
         Command::Guard(guard_command) => return commands::guard_cmd::run(guard_command),
         Command::GeneratedPaths => generated_paths(&env)?,

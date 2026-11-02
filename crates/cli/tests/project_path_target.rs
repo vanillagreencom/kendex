@@ -715,6 +715,7 @@ fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
     for writing in [
         ["apply", "--project-path", path, "-y"],
         ["refresh", "--project-path", path, "-y"],
+        ["update-pi", "--project-path", path, "--leave"],
     ] {
         let refused = kendex(&home, &project, &writing);
         let text = said(&refused);
@@ -906,8 +907,61 @@ fn an_installer_that_fails_after_the_write_still_lists_the_named_project() {
     );
 }
 
-/// A named refresh whose catalog cannot be read writes nothing, exits
-/// nonzero, and leaves the projects list as it found it.
+/// An `update-pi` that installs one declared package and cannot evaluate
+/// another exits on that failure and still lists the named project the
+/// installed one landed in; one that lands nothing there lists nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_update_pi_that_fails_beside_a_landed_install_lists_the_named_project() {
+    let package = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
+    for (case, declared, lands) in [
+        ("one lands", &["pi-widgets", "pi-gone"][..], true),
+        ("none lands", &["pi-gone"][..], false),
+    ] {
+        let (_tmp, home, catalog, elsewhere) = world();
+        let project = home.join("dev/app");
+        write(
+            &catalog.join("pi-extensions/pi-widgets/package.json"),
+            package,
+        );
+        write(
+            &catalog.join("pi-extensions/pi-widgets/index.js"),
+            "export const version = 1;\n",
+        );
+        let mut manifest = manifest_head(&catalog);
+        for name in declared {
+            manifest.push_str(&format!("\n[pi-extensions.{name}]\nsource = \"cat\"\n"));
+        }
+        write(&project.join("kendex.toml"), &manifest);
+
+        let failed = kendex(
+            &home,
+            &elsewhere,
+            &["update-pi", "--project-path", project.to_str().unwrap()],
+        );
+        let text = said(&failed);
+
+        assert!(!failed.status.success(), "{case}: {text}");
+        assert_eq!(
+            project
+                .join(".pi/packages/pi-widgets/package.json")
+                .is_file(),
+            lands,
+            "{case}: {text}"
+        );
+        assert_eq!(
+            registered(&home).contains(&project),
+            lands,
+            "{case}: {text}"
+        );
+    }
+}
+
+/// A named refresh with a failure to report and nothing to write exits
+/// nonzero and leaves the projects list as it found it, whether the
+/// failure is a catalog that cannot be read or a declared Pi package
+/// neither the run nor `update-pi` settles, which the run still draws on
+/// its closing ledger.
 ///
 /// The inverse of the case above: registration follows a write the run
 /// got through, and a scope that came back with a failure to report wrote
@@ -916,40 +970,80 @@ fn an_installer_that_fails_after_the_write_still_lists_the_named_project() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_refresh_that_reports_a_failure_lists_nothing() {
-    let (_tmp, home, _catalog, elsewhere) = world();
-    let project = home.join("dev/app");
+    type Plant = fn(&Path, &Path, &Path);
     // The catalog the manifest names is not there, so the declared skill
     // is skipped and the note it leaves is a failure of the run.
-    declare(&project, &home.join("nowhere"));
+    let unreadable_catalog: Plant = |home, _catalog, project| {
+        declare(project, &home.join("nowhere"));
+    };
+    // The project's copy has no completed record and the personal scope
+    // holds the same package, so an install would register it twice. An
+    // `apply` typed inside the project, which registers nothing, writes
+    // the record the refresh then finds.
+    let loaded_twice: Plant = |home, catalog, project| {
+        let package = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
+        let env = kendex_core::env::Env::host_rooted(home);
+        let personal =
+            kendex_core::pi_ext::scope_root(&env, &kendex_core::model::Scope::Global).unwrap();
+        for root in [
+            catalog.join("pi-extensions"),
+            project.join(".pi/packages"),
+            personal.join("packages"),
+        ] {
+            write(&root.join("pi-widgets/package.json"), package);
+            write(
+                &root.join("pi-widgets/index.js"),
+                "export const version = 1;\n",
+            );
+        }
+        write(
+            &project.join(".pi/settings.json"),
+            "{\"packages\": [\"./packages/pi-widgets\"]}\n",
+        );
+        write(
+            &project.join("kendex.toml"),
+            &format!(
+                "{}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+                manifest_head(catalog)
+            ),
+        );
+        kendex(home, project, &["apply", "--yes"]);
+        assert!(project.join(".kendex-lock.json").is_file());
+    };
+    for (case, plant, says) in [
+        ("an unreadable catalog", unreadable_catalog, "missing at"),
+        ("a Pi package left unsettled", loaded_twice, "pi-widgets"),
+    ] {
+        let (_tmp, home, catalog, elsewhere) = world();
+        let project = home.join("dev/app");
+        plant(&home, &catalog, &project);
 
-    let refused = kendex(
-        &home,
-        &elsewhere,
-        &[
-            "refresh",
-            "--project-path",
-            project.to_str().unwrap(),
-            "--scope",
-            "project",
-            "-y",
-        ],
-    );
-    let text = said(&refused);
+        let refused = kendex(
+            &home,
+            &elsewhere,
+            &[
+                "refresh",
+                "--project-path",
+                project.to_str().unwrap(),
+                "--scope",
+                "project",
+                "-y",
+            ],
+        );
+        let text = said(&refused);
 
-    assert!(!refused.status.success(), "{text}");
-    assert!(
-        text.contains("missing at"),
-        "the unreadable catalog is what the run reports: {text}"
-    );
-    assert!(
-        !installed(&project).is_file(),
-        "and it wrote nothing: {text}"
-    );
-    assert!(
-        registered(&home).is_empty(),
-        "and listed nothing: {:?}",
-        registered(&home)
-    );
+        assert_eq!(refused.status.code(), Some(1), "{case}: {text}");
+        assert!(text.contains(says), "{case}: what the run reports: {text}");
+        assert!(
+            !installed(&project).is_file(),
+            "{case}: and it wrote nothing: {text}"
+        );
+        assert!(
+            registered(&home).is_empty(),
+            "{case}: and listed nothing: {:?}",
+            registered(&home)
+        );
+    }
 }
 
 /// A project root with no declaration of its own goes on no list, and the

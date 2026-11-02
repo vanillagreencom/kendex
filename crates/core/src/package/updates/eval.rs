@@ -98,33 +98,51 @@ impl Eval<'_> {
             rev: tip.map(str::to_owned).or_else(|| planned.decl.rev.clone()),
             ..planned.decl.clone()
         };
-        let compared = (|| {
-            let root = crate::pi_ext::scope_root(self.env, self.scope)?;
-            let package = match crate::pi_ext::resolve_declared(
+        // An update is on offer where `update-pi`, run on this scope
+        // alone, installs one (`pi_ext::admit`). A package Pi already
+        // loads from a root beside this one is no update, and not current
+        // either: it stands as a warning with the reason `update-pi`
+        // leaves it.
+        let admitted = crate::settings::load(self.env).map(|settings| {
+            let (root, other_roots) = crate::pi_ext::paired_roots(
                 self.env,
+                &settings,
                 self.scope,
-                self.manifest,
-                name,
-                &declaration,
-            )? {
-                crate::pi_ext::Resolved::Ships(package) => package,
-                // Nothing newer is on offer for what the catalog retired.
-                crate::pi_ext::Resolved::Retired { .. } => return Ok(None),
-            };
+                std::slice::from_ref(self.scope),
+            );
             let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
-            crate::pi_ext::check_origin(name, &package, self.lock.entries.get(&key))?;
-            crate::pi_ext::declared_state(
+            crate::pi_ext::admit(
                 &root,
+                &other_roots,
                 name,
-                &package,
+                crate::pi_ext::resolve_declared(
+                    self.env,
+                    self.scope,
+                    self.manifest,
+                    name,
+                    &declaration,
+                ),
                 self.lock.entries.get(&key),
                 crate::pi_ext::RecordBasis::Recorded,
             )
-            .map(Some)
-        })();
+        });
+        let (compared, left) = match admitted {
+            // Nothing newer is on offer for what the catalog retired.
+            Ok(crate::pi_ext::Admission::Retired) => (Ok(None), None),
+            Ok(crate::pi_ext::Admission::Install { .. }) => (Ok(Some(true)), None),
+            Ok(crate::pi_ext::Admission::Current { .. }) => (Ok(Some(false)), None),
+            Ok(left @ crate::pi_ext::Admission::LoadedElsewhere { .. }) => {
+                (Ok(Some(false)), left.unsettled().map(|(_, reason)| reason))
+            }
+            Ok(
+                crate::pi_ext::Admission::OriginRefused(error)
+                | crate::pi_ext::Admission::NotEvaluated(error),
+            )
+            | Err(error) => (Err(error), None),
+        };
         match compared {
             Ok(None) => {}
-            Ok(Some(state)) => {
+            Ok(Some(installs)) => {
                 let at = report
                     .rows
                     .iter()
@@ -144,8 +162,17 @@ impl Eval<'_> {
                 });
                 let row = &mut report.rows[at];
                 row.ignored = self.is_ignored(planned.kind, name, &row.repo);
-                row.update_available =
-                    !matches!(state, crate::pi_ext::PackageState::Current { .. });
+                row.update_available = installs;
+                if let Some(reason) = left {
+                    report.warnings.push(ItemWarning {
+                        kind: ItemKind::PiExtension,
+                        name: name.clone(),
+                        harness: Some(HarnessId::Pi),
+                        message: reason,
+                        remediation: None,
+                        detail: None,
+                    });
+                }
             }
             Err(error) => report.warnings.push(ItemWarning {
                 kind: ItemKind::PiExtension,

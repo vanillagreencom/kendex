@@ -77,11 +77,23 @@ pub fn print_report(
     report: &EngineReport,
     listing: Listing,
 ) -> Vec<super::offers::Blocked> {
-    let blocked = super::attention::print_attention(env, report, listing).blocked;
+    print_report_for(env, report, listing, super::offers::Reached::Here).blocked
+}
+
+/// [`print_report`] for a verb that may have named its project with
+/// `--project-path`, which the completion it prints then names, and that
+/// closes on what the attention report drew.
+pub fn print_report_for(
+    env: &Env,
+    report: &EngineReport,
+    listing: Listing,
+    reached: super::offers::Reached,
+) -> super::attention::Attention {
+    let attention = super::attention::print_attention(env, report, listing, reached);
     ui::report::print(Status::Notice, |style| {
-        report_lines(style, report, !blocked.is_empty())
+        report_lines(style, report, !attention.blocked.is_empty())
     });
-    blocked
+    attention
 }
 
 /// Whether a warning's message is a keyed line that opens with its own
@@ -234,7 +246,7 @@ pub fn confirm_and_apply(
     report: &EngineReport,
     yes: bool,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    match confirm_plan_and_apply(env, report, yes)? {
+    match confirm_plan_and_apply(env, report, yes, None)? {
         PlanApplication::Applied(applied) => Ok(applied),
         PlanApplication::Declined => Err("cancelled — these changes were not written".into()),
     }
@@ -246,10 +258,13 @@ pub(super) enum PlanApplication {
 }
 
 /// Plan consent shared by verbs that handle a decline as their own outcome.
+/// `before` is a reading an earlier write of the same run took, which the
+/// offer after this write covers from ([`apply_report_since`]).
 pub(super) fn confirm_plan_and_apply(
     env: &Env,
     report: &EngineReport,
     yes: bool,
+    before: Option<&kendex_core::commit_offer::Before>,
 ) -> Result<PlanApplication, Box<dyn std::error::Error>> {
     // The count is the consequence: an answer given to a bare "apply?" is
     // an answer to the verb's name rather than to what it writes. An empty
@@ -262,7 +277,7 @@ pub(super) fn confirm_plan_and_apply(
             return Ok(PlanApplication::Declined);
         }
     }
-    apply_report(env, report).map(PlanApplication::Applied)
+    apply_report_since(env, report, before).map(PlanApplication::Applied)
 }
 
 /// Execute a report's plan — the one way a CLI verb holding an
@@ -286,32 +301,25 @@ pub(super) fn confirm_plan_and_apply(
 /// an earlier run left uncommitted, and `run again with --commit` has to
 /// mean something. The empty plan itself writes nothing.
 pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn std::error::Error>> {
+    apply_report_since(env, report, None)
+}
+
+/// [`apply_report`] for the last write of a run whose earlier write made
+/// no offer: the offer covers what the whole run changed from `before`,
+/// the reading that earlier write took. `None` reads it here.
+pub(super) fn apply_report_since(
+    env: &Env,
+    report: &EngineReport,
+    before: Option<&kendex_core::commit_offer::Before>,
+) -> Result<usize, Box<dyn std::error::Error>> {
     for warning in &report.warnings {
         ui::report::run_model_warning(&warning.message);
     }
-    // Read before the write, the only time it can be: what the project held
-    // then, at every path this plan touches, decides which files it changes
-    // beside its renders the offer after it may commit.
-    let before = kendex_core::commit_offer::Before::read(
-        &report.plan.scope,
-        &report.generated,
-        report
-            .plan
-            .ops
-            .iter()
-            .flat_map(|planned| planned.op.touched()),
-    );
-    let applied = match report.plan.is_empty() {
-        true => 0,
-        false => {
-            super::repo_effects::undo(&report.plan.scope, report)?;
-            // The wait covers the write and nothing after it: the offer
-            // asks a question, and a spinner still ticking under it would
-            // draw over the answer.
-            let _writing = ui::spinner("writing");
-            kendex_core::apply::execute(env, &report.plan)?.applied
-        }
+    let before = match before {
+        Some(before) => before.clone(),
+        None => before_writing(report),
     };
+    let applied = write_report(env, report)?;
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
@@ -327,6 +335,38 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
     bot_instructions.add_to(&mut generated);
     super::commit_offer::after_writing(env, &report.plan.scope, &generated, &before)?;
     Ok(applied)
+}
+
+/// What the project held before `report` writes, read the only time it
+/// can be: at every path this plan touches, it decides which files the
+/// write changes beside its renders the offer after it may commit.
+pub(super) fn before_writing(report: &EngineReport) -> kendex_core::commit_offer::Before {
+    kendex_core::commit_offer::Before::read(
+        &report.plan.scope,
+        &report.generated,
+        report
+            .plan
+            .ops
+            .iter()
+            .flat_map(|planned| planned.op.touched()),
+    )
+}
+
+/// The write half of [`apply_report`], with no offer after it: a declared
+/// uninstaller runs first for a package the plan takes away, then the plan.
+pub(super) fn write_report(
+    env: &Env,
+    report: &EngineReport,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    if report.plan.is_empty() {
+        return Ok(0);
+    }
+    super::repo_effects::undo(&report.plan.scope, report)?;
+    // The wait covers the write and nothing after it: the offer asks a
+    // question, and a spinner still ticking under it would draw over the
+    // answer.
+    let _writing = ui::spinner("writing");
+    Ok(kendex_core::apply::execute(env, &report.plan)?.applied)
 }
 
 /// The answer every verb needs before it writes, asked one way. `--yes`
@@ -380,8 +420,11 @@ pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
 /// package, which refresh keeps and reports and `apply` or `remove` takes,
 /// a row whose cause says the plan simply writes it, which this run's plan
 /// settles, and a kept retired package gone or edited, which no refresh
-/// writes and verify fails, as it does a retired hook or skill.
-pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
+/// writes and verify fails, as it does a retired hook or skill. A package
+/// named in `deferred` is left for `update-pi` only because its install
+/// runs a process a refresh never starts: its row stays in the report for
+/// the attention and the completion to name, and is no failure here.
+pub fn refresh_failures(report: &EngineReport, deferred: &[String]) -> Vec<String> {
     report
         .notes
         .iter()
@@ -401,6 +444,8 @@ pub fn refresh_failures(report: &EngineReport) -> Vec<String> {
                         && row.state != DriftState::Orphaned
                         && row.cause.is_none_or(DriftCause::holds_the_write)
                         && row.cause != Some(DriftCause::Retired)
+                        && !(row.remedy == Some(kendex_core::engine::RowRemedy::UpdatePi)
+                            && deferred.contains(&row.name))
                 })
                 .map(|row| format!("{}: {}", row.name, row.detail)),
         )

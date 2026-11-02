@@ -174,8 +174,8 @@ impl ReportFlags {
 }
 
 /// The explicit project a whole-scope run works on, shared by `refresh`,
-/// `apply` and `updates` — written by the first two and by
-/// `updates --apply`, and read by the `updates` listing.
+/// `apply`, `updates` and `update-pi` — written by `refresh`, `apply`,
+/// `updates --apply` and `update-pi`, and read by the `updates` listing.
 ///
 /// Without it those verbs take the project the command was typed in,
 /// which is the behaviour every release before this one had. With it the

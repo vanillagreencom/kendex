@@ -29,6 +29,29 @@ struct Version10Entry {
     rendered_hash: Option<String>,
     #[serde(default)]
     registration: Option<HookRegistration>,
+    #[serde(default)]
+    source_hash: Option<String>,
+    #[serde(default)]
+    source_commit: Option<String>,
+}
+
+impl Version10Record {
+    /// The entry under `key` that states exactly the installation the key
+    /// names: an entry filed under another identity proves nothing.
+    fn entry(
+        &self,
+        key: &str,
+        kind: ItemKind,
+        name: &str,
+        harness: crate::model::HarnessId,
+    ) -> Option<&Version10Entry> {
+        self.entries.get(key).filter(|entry| {
+            entry.name == name
+                && entry.kind == kind
+                && entry.harness == harness
+                && crate::lock::entry_key(entry.kind, &entry.name, entry.harness) == key
+        })
+    }
 }
 
 #[derive(Default)]
@@ -37,29 +60,62 @@ pub(super) struct Version10Proof {
     pub(super) registrations: BTreeMap<String, HookRegistration>,
 }
 
-/// Render roots whose current bytes the moved version 10 record proves
-/// kendex wrote. This is an upgrade-only, read-only ownership proof. It stays
-/// available across partial applies and outside Git because the sidecar is
-/// the proof. It deliberately ignores that record's machine-specific
-/// positions and never loads it as the scope's working lock.
+/// A version 10 record's proof that kendex installed one declared Pi
+/// package exactly as it sits now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Version10PiCopy {
+    /// The source the record says the copy came from: its commit, else
+    /// its source hash, as a current entry names it.
+    pub installed_from: String,
+}
+
+/// The version 10 record at `path`, or `None` where none reads there.
+fn version_10_record(path: &std::path::Path) -> Result<Option<Version10Record>> {
+    let Some(text) = crate::fs::read_if_exists(path)? else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str::<Version10Record>(&text)
+        .ok()
+        .filter(|record| record.version == 10))
+}
+
+/// The installation keys a version 10 record at `path` names, each under
+/// the identity its own entry states: what the scope carried before the
+/// recovery that plans over no record.
+pub(super) fn version_10_keys(path: &std::path::Path) -> Result<BTreeSet<String>> {
+    Ok(version_10_record(path)?
+        .map(|record| {
+            record
+                .entries
+                .into_iter()
+                .filter(|(key, entry)| {
+                    crate::lock::entry_key(entry.kind, &entry.name, entry.harness) == *key
+                })
+                .map(|(key, _)| key)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Render roots whose current bytes a version 10 record proves kendex
+/// wrote. This is an upgrade-only, read-only ownership proof. It deliberately
+/// ignores that record's machine-specific positions and never loads it as
+/// the scope's working lock.
+///
+/// The record is the moved sidecar, which stays the proof across partial
+/// applies and outside Git. Before the move it is the lock path itself:
+/// a recovery plans over no record (`recovery::plan_version_10`) and moves
+/// the file in the same transaction, bound to the hash of the bytes it
+/// read, so a record changed since this read refuses the move and the
+/// whole plan with it.
 pub(super) fn version_10_proof(
     scope: &Scope,
     lock: &Lock,
     desired: &[Desired],
 ) -> Result<Version10Proof> {
-    let Scope::Project { root } = scope else {
+    let Some(record) = proving_record(scope, lock)? else {
         return Ok(Version10Proof::default());
     };
-    let sidecar = root.join(crate::lock::VERSION_10_LOCK_FILE);
-    let Some(text) = crate::fs::read_if_exists(&sidecar)? else {
-        return Ok(Version10Proof::default());
-    };
-    let Ok(record) = serde_json::from_str::<Version10Record>(&text) else {
-        return Ok(Version10Proof::default());
-    };
-    if record.version != 10 {
-        return Ok(Version10Proof::default());
-    }
 
     let mut proof = Version10Proof::default();
     for item in desired {
@@ -68,12 +124,7 @@ pub(super) fn version_10_proof(
         if lock.entries.contains_key(&item.key) {
             continue;
         }
-        let Some(entry) = record.entries.get(&item.key).filter(|entry| {
-            entry.name == item.name
-                && entry.kind == item.kind
-                && entry.harness == item.harness
-                && crate::lock::entry_key(entry.kind, &entry.name, entry.harness) == item.key
-        }) else {
+        let Some(entry) = record.entry(&item.key, item.kind, &item.name, item.harness) else {
             continue;
         };
         let Some(rendered_hash) = entry.rendered_hash.as_deref() else {
@@ -104,6 +155,64 @@ pub(super) fn version_10_proof(
         }
     }
     Ok(proof)
+}
+
+/// The version 10 record that proves ownership in a scope planned over
+/// `lock`: the moved sidecar, else, before the move, the record at the
+/// lock path where the plan reads no current entry.
+fn proving_record(scope: &Scope, lock: &Lock) -> Result<Option<Version10Record>> {
+    let Scope::Project { root } = scope else {
+        return Ok(None);
+    };
+    let sidecar = root.join(crate::lock::VERSION_10_LOCK_FILE);
+    match version_10_record(&sidecar)? {
+        Some(record) => Ok(Some(record)),
+        None if lock.entries.is_empty() && !sidecar.exists() => {
+            version_10_record(&root.join(crate::lock::LOCK_FILE))
+        }
+        None => Ok(None),
+    }
+}
+
+/// The version 10 proof for the declared Pi package `name`, the same
+/// proof `version_10_proof` gives a render: the record's entry filed under
+/// this package's own key, name, kind and harness, and the package at its
+/// declared position whose owned identity matches that entry's
+/// `renderedHash`. Matching bytes at another position, or under another
+/// entry, prove nothing. A package the current record holds is that
+/// record's to judge, and has no version 10 proof. `None` wherever any
+/// part is missing or does not read, including an entry with no source to
+/// say it was installed from.
+pub fn version_10_pi_copy(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    name: &str,
+) -> Result<Option<Version10PiCopy>> {
+    let (kind, harness) = (ItemKind::PiExtension, crate::model::HarnessId::Pi);
+    let key = crate::lock::entry_key(kind, name, harness);
+    if lock.entries.contains_key(&key) {
+        return Ok(None);
+    }
+    let Some(record) = proving_record(scope, lock)? else {
+        return Ok(None);
+    };
+    let Some(entry) = record.entry(&key, kind, name, harness) else {
+        return Ok(None);
+    };
+    let (Some(rendered_hash), Some(installed_from)) = (
+        entry.rendered_hash.as_deref(),
+        entry.source_commit.as_ref().or(entry.source_hash.as_ref()),
+    ) else {
+        return Ok(None);
+    };
+    let position = crate::pi_ext::package_path(&crate::pi_ext::scope_root(env, scope)?, name)?;
+    let Some(installed) = crate::pi_ext::owned_package_identity(&position)? else {
+        return Ok(None);
+    };
+    Ok(installed.matches(rendered_hash).then(|| Version10PiCopy {
+        installed_from: installed_from.clone(),
+    }))
 }
 
 /// What this scope holds that nothing here manages: the skills, agents and
@@ -182,6 +291,7 @@ pub(super) fn unmanaged_rows(
             compared: None,
             also_in_the_way: Vec::new(),
             remedy: None,
+            pi_unsettled: None,
         });
     }
     Ok(())

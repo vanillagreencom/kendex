@@ -61,9 +61,9 @@ pub enum ProjectCommand {
 /// The one answer to the temporary-path refusal, flattened into every
 /// verb that can put a folder on the projects list. Most of them register
 /// the destination they settle on, and the flag answers for that. On
-/// `refresh`, `apply` and `updates` it answers only for the project a
-/// `--project-path` names: those register nothing otherwise, so without
-/// that flag beside it the flag decides nothing.
+/// `refresh`, `apply`, `updates` and `update-pi` it answers only for the
+/// project a `--project-path` names: those register nothing otherwise, so
+/// without that flag beside it the flag decides nothing.
 #[derive(Args, Clone, Copy, Default)]
 pub struct ThrowawayFlag {
     /// Add a throwaway project to Projects: a folder under a temporary
@@ -392,7 +392,10 @@ pub enum Registering {
 /// run that exits nonzero; and a confirmation the reader declined —
 /// except in `refresh`,
 /// where a Pi settle before the final confirm has already written what
-/// this then registers.
+/// this then registers. A write that landed counts as got through
+/// whatever fails after or beside it: an `apply` whose effects step
+/// failed, an `update-pi` scope where one package installed and another
+/// did not.
 ///
 /// A named root inside a linked git worktree, a repository nested in one
 /// included, is never registered, and no flag changes that: a worktree is removed when its lane ends, and an
@@ -401,10 +404,11 @@ pub enum Registering {
 /// one listed names it to `project add`, the explicit door, which lists
 /// any folder it is given.
 ///
-/// Called by `refresh`, `apply` and `updates --apply` after the write, with
-/// the [`Registering`] their preflight settled, and registers only where
-/// the destination was named: a walked-up project is the one the command
-/// was typed in, which those verbs have never registered.
+/// Called by `refresh`, `apply`, `updates --apply` and `update-pi` after
+/// the write, with the [`Registering`] their preflight settled, and
+/// registers only where the destination was named: a walked-up project is
+/// the one the command was typed in, which those verbs have never
+/// registered.
 pub fn register_target(env: &Env, registering: &Registering, scope: &Scope) -> CliResult {
     let Registering::Named { worktrees } = registering else {
         return Ok(());

@@ -29,6 +29,16 @@ fn said(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// Every `finish-with=` value the run printed: the keyed completion a
+/// program reads.
+fn finish_with(printed: &str) -> Vec<&str> {
+    printed
+        .lines()
+        .filter_map(|line| line.split_once("finish-with=").map(|(_, rest)| rest))
+        .map(|rest| rest.split(" — ").next().unwrap_or(rest).trim())
+        .collect()
+}
+
 /// A project declaring skill `deploy` from a local catalog, with `deploy`
 /// already on disk, laid out by another tool.
 #[allow(clippy::unwrap_used)]
@@ -85,8 +95,9 @@ fn a_blocked_declaration_is_printed_with_both_exits_that_resolve_it() {
         planned.contains("to keep those files: kendex adopt skill deploy"),
         "the exit that keeps the files names the item it applies to: {planned}"
     );
-    assert!(
-        planned.contains("kendex apply --replace-unmanaged"),
+    assert_eq!(
+        finish_with(&planned),
+        ["apply replace-unmanaged"],
         "the exit that installs what was asked for: {planned}"
     );
     assert!(
@@ -317,8 +328,8 @@ fn the_shared_way_out_is_said_once_however_many_items_are_blocked() {
 
     let planned = said(&kendex(home, &project, &["apply", "--plan"]));
     assert_eq!(
-        planned.matches("--replace-unmanaged").count(),
-        1,
+        finish_with(&planned),
+        ["apply replace-unmanaged"],
         "{planned}"
     );
     for name in ["deploy", "lint", "ship"] {

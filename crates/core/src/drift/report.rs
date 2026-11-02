@@ -107,6 +107,11 @@ pub enum Remedy {
     /// prescribing the destructive exit for a state it never judged.
     ReplaceUnmanaged {
         global: bool,
+        /// The take-over installs a package whose repository effect needs
+        /// its own yes, which the command carries. The session report
+        /// leaves it out ([`render::render_plain`]).
+        #[serde(default)]
+        allow_repo_effects: bool,
     },
     /// Install or replace Pi packages through their carrier installer.
     UpdatePi {
@@ -215,7 +220,7 @@ impl Remedy {
     pub fn global(&self) -> bool {
         match self {
             Remedy::Apply { global }
-            | Remedy::ReplaceUnmanaged { global }
+            | Remedy::ReplaceUnmanaged { global, .. }
             | Remedy::UpdatePi { global }
             | Remedy::Refresh { global }
             | Remedy::Updates { global }
@@ -229,7 +234,7 @@ impl Remedy {
     }
 
     /// Whether this verb takes `--project-path`, the flag that puts the
-    /// project a write lands in into the command's own words. The four
+    /// project a write lands in into the command's own words. The
     /// whole-scope verbs have it; the rest reach a project only by being
     /// typed inside it.
     pub fn takes_project_path(&self) -> bool {
@@ -237,6 +242,7 @@ impl Remedy {
             self,
             Remedy::Apply { .. }
                 | Remedy::ReplaceUnmanaged { .. }
+                | Remedy::UpdatePi { .. }
                 | Remedy::Refresh { .. }
                 | Remedy::Updates { .. }
                 | Remedy::Plan { .. }
@@ -300,15 +306,21 @@ impl Remedy {
         };
         let command = match self {
             Remedy::Apply { .. } => format!("kendex apply{place}"),
-            Remedy::ReplaceUnmanaged { .. } => format!("kendex apply --replace-unmanaged{place}"),
-            // Its own scope spelling, so `place` says nothing here.
-            Remedy::UpdatePi { global } => format!(
-                "kendex update-pi --scope {}",
-                match global {
-                    true => "global",
-                    false => "project",
+            Remedy::ReplaceUnmanaged {
+                allow_repo_effects, ..
+            } => format!(
+                "kendex apply --replace-unmanaged{}{place}",
+                match allow_repo_effects {
+                    true => " --allow-repo-effects",
+                    false => "",
                 }
             ),
+            // Its own scope spelling: it has no `--global`, and its
+            // default scope is both, so `--scope` is always said.
+            Remedy::UpdatePi { global: true } => "kendex update-pi --scope global".to_owned(),
+            Remedy::UpdatePi { global: false } => {
+                format!("kendex update-pi --scope project{place}")
+            }
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
             Remedy::Updates { .. } => format!("kendex updates{place}"),
             Remedy::DriftHook { global } => format!(
