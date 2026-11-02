@@ -92,18 +92,7 @@ pub(super) fn run(
         if found.contains_key(&item.name) {
             continue;
         }
-        // The declaration at the package root, by its whole relative path.
-        // Matching the basename took whichever `SKILL.md` sorted first, so a
-        // nested one — a package that carries an example, a bundled skill —
-        // decided what this install disclosed: the root's effect dropped
-        // silently, or somebody authorized a different package's summary
-        // while the root's own installer is what would run.
-        let Some(text) = files.iter().find_map(|(path, bytes)| {
-            (path == std::path::Path::new("SKILL.md")).then(|| String::from_utf8_lossy(bytes))
-        }) else {
-            continue;
-        };
-        let Some(effects) = declared(&text) else {
+        let Some(effects) = rendered_effects(files) else {
             continue;
         };
         found.insert(
@@ -116,6 +105,65 @@ pub(super) fn run(
         );
     }
     found.into_values().collect()
+}
+
+/// The effects a package's rendered root `SKILL.md` declares.
+///
+/// The declaration at the package root, by its whole relative path.
+/// Matching the basename took whichever `SKILL.md` sorted first, so a
+/// nested one — a package that carries an example, a bundled skill —
+/// decided what this install disclosed: the root's effect dropped
+/// silently, or somebody authorized a different package's summary while
+/// the root's own installer is what would run.
+fn rendered_effects(
+    files: &[(std::path::PathBuf, Vec<u8>)],
+) -> Option<crate::repo_effects::RepoEffects> {
+    let text = files.iter().find_map(|(path, bytes)| {
+        (path == std::path::Path::new("SKILL.md")).then(|| String::from_utf8_lossy(bytes))
+    })?;
+    declared(&text)
+}
+
+/// The effect-declaring packages this plan holds back on conflicts the
+/// take-over replaces, and on nothing else: the packages `run` would
+/// offer once a take-over installs them, since the scope did not carry
+/// them before. A package held by any other cause, an edit or a link,
+/// is not installed by the take-over and has no effect to offer.
+pub(super) fn held(
+    state: &DesiredState,
+    drift: &[DriftRow],
+    before: &crate::lock::Lock,
+) -> Vec<String> {
+    let already_here = crate::lock::skill_names(before);
+    let mut held: BTreeSet<String> = BTreeSet::new();
+    for item in &state.items {
+        if item.kind != ItemKind::Skill
+            || !item.enabled
+            || already_here.contains(item.name.as_str())
+            || held.contains(&item.name)
+        {
+            continue;
+        }
+        let mut rows = drift
+            .iter()
+            .filter(|row| row.kind == ItemKind::Skill && row.name == item.name)
+            .filter(|row| row.dead_stop() || row.cause.is_some_and(DriftCause::holds_the_write))
+            .peekable();
+        let replaceable = rows.peek().is_some()
+            && rows.all(|row| {
+                row.state == super::DriftState::Conflict
+                    && row.cause.is_some_and(DriftCause::can_replace)
+            });
+        if !replaceable {
+            continue;
+        }
+        if let Artifact::Tree { files, .. } = &item.artifact
+            && rendered_effects(files).is_some()
+        {
+            held.insert(item.name.clone());
+        }
+    }
+    held.into_iter().collect()
 }
 
 /// Whether this plan leaves the package's tree as it found it.

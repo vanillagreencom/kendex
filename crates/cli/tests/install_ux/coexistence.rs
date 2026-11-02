@@ -162,6 +162,7 @@ fn removing_an_item_leaves_the_project_as_it_was() {
 
 /// A verb that needs the lock stops at its parse error. Reading it as an
 /// empty scope or skipping it would hide why the requested work did not run.
+/// A preview of the apply that recovers the record writes nothing either.
 #[test]
 fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
     let world = World::new(&["claude"]);
@@ -182,22 +183,23 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
     );
     super::write(&lock, &older);
 
-    for args in [&["remove", "deploy"][..], &["apply", "--plan"][..]] {
-        let out = world.try_run(args);
-        let said = super::said(&out);
-        assert!(
-            !out.status.success(),
-            "work that did not happen must not exit 0: {said}"
-        );
-        assert!(
-            said.contains(".kendex-lock.v10.json") && said.contains("kendex apply"),
-            "the parse error names the recovery path: {said}"
-        );
-        assert!(
-            !said.contains("skipped") && !said.contains("could not read"),
-            "the parse error must propagate directly: {said}"
-        );
-    }
+    let out = world.try_run(&["remove", "deploy"]);
+    let said = super::said(&out);
+    assert!(
+        !out.status.success(),
+        "work that did not happen must not exit 0: {said}"
+    );
+    assert_eq!(
+        refused_version_10_lines(&out),
+        1,
+        "fleet reads the refusal by its key: {said}"
+    );
+    assert!(
+        !said.contains("skipped") && !said.contains("could not read"),
+        "the parse error must propagate directly: {said}"
+    );
+    world.run(&["apply", "--plan"]);
+    assert!(!world.at(".kendex-lock.v10.json").exists());
     assert_eq!(
         read(&lock),
         older,
@@ -222,14 +224,33 @@ fn declares_two_sources(world: &World, waiting_source: &str) {
     );
 }
 
-/// The version 10 recovery is one complete sequence: the refusal names the
-/// sidecar name and command, a normal apply updates the render whose bytes
-/// match that record, removes the old managed ignore rule, and reports a
-/// clone-local rule that still hides the new record. Once that local rule is
-/// removed, check is clean.
+/// The `lock-version-refused` lines a run printed for a version 10 record:
+/// the key fleet's lane lock migration reads.
+fn refused_version_10_lines(output: &std::process::Output) -> usize {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter(|line| line.contains("lock-version-refused found=10"))
+        .count()
+}
+
+/// Every `finish-with=` value a run printed: the one completion a program
+/// reads, said in the conflicts section and the closing ledger alike.
+fn finish_with(output: &std::process::Output) -> Vec<String> {
+    super::said(output)
+        .lines()
+        .filter_map(|line| line.split_once("finish-with=").map(|(_, rest)| rest))
+        .map(|rest| rest.split(" — ").next().unwrap_or(rest).trim().to_owned())
+        .collect()
+}
+
+/// The owner's first project: a refresh recovers a version 10 record with
+/// no hand move. It updates the render whose bytes match that record,
+/// keeps the old record aside and ignored, removes the old managed ignore
+/// rule, and reports a clone-local rule that still hides the new record.
+/// Once that local rule is removed, check is clean.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn version_10_lock_recovery_completes_with_normal_apply() {
+fn version_10_lock_recovery_completes_with_one_refresh() {
     let world = World::new(&["claude"]);
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
@@ -239,21 +260,15 @@ fn version_10_lock_recovery_completes_with_normal_apply() {
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
     );
     plant_version_10_state(&world);
+    let older = read(&world.at(".kendex-lock.json"));
 
-    let refused = world.try_run(&["apply", "--plan"]);
-    let said = super::said(&refused);
-    assert!(!refused.status.success(), "{said}");
-    assert!(
-        said.contains(".kendex-lock.v10.json") && said.contains("kendex apply"),
-        "the refusal must name the complete recovery: {said}"
-    );
-
-    move_old_lock_aside(&world);
     let exclude = world.at(".git/info/exclude");
     let mut exclude_text = read(&exclude);
     exclude_text.push_str("/.kendex-lock.json\n");
     super::write(&exclude, &exclude_text);
-    let applied = world.run(&["apply", "-y"]);
+    let applied = world.run(&["refresh", "--yes"]);
+    kendex_core::lock::load(&world.at(".kendex-lock.json")).unwrap();
+    assert_eq!(read(&world.at(".kendex-lock.v10.json")), older);
     assert!(
         applied.contains(&exclude.display().to_string())
             && applied.contains("ignores .kendex-lock.json"),
@@ -394,11 +409,16 @@ fn version_10_recovery_keeps_a_hand_edited_render_as_a_conflict() {
         "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
     );
     plant_version_10_state(&world);
-    move_old_lock_aside(&world);
 
-    let planned = super::said(&world.try_run(&["apply", "--plan"]));
-    assert!(planned.contains("conflicts:\n  skill deploy"), "{planned}");
+    let refreshed = super::said(&world.try_run(&["refresh", "--yes"]));
+    assert!(
+        refreshed.contains("conflicts:\n  skill deploy"),
+        "{refreshed}"
+    );
     assert_eq!(read(&rendered), "person's edit\n");
+    kendex_core::lock::load(&world.at(".kendex-lock.json")).unwrap_or_else(|error| {
+        panic!("the rest of the scope recovers beside the conflict: {error}")
+    });
 }
 
 /// A saved script-backed registration names the exact old entry. Recovery
@@ -410,7 +430,6 @@ fn version_10_hook_recovery_retires_the_saved_registration() {
     declare_script_hook(&world, "PreToolUse", "Bash");
     world.run(&["apply", "-y"]);
     plant_version_10_state(&world);
-    move_old_lock_aside(&world);
     declare_script_hook(&world, "PostToolUse", "Edit");
 
     world.run(&["apply", "-y"]);
@@ -431,17 +450,255 @@ fn version_10_hook_recovery_keeps_an_edited_script_and_registration() {
     declare_script_hook(&world, "PreToolUse", "Bash");
     world.run(&["apply", "-y"]);
     plant_version_10_state(&world);
-    move_old_lock_aside(&world);
     let script = world.at(".claude/hooks/guard.sh");
     super::write(&script, "#!/bin/sh\necho person's edit\n");
+    let neighbour = world.at(".claude/skills/hand-made/SKILL.md");
+    super::write(
+        &neighbour,
+        "---\nname: hand-made\ndescription: mine\n---\nMine.\n",
+    );
     declare_script_hook(&world, "PostToolUse", "Edit");
 
-    let planned = super::said(&world.try_run(&["apply", "--plan"]));
+    let refreshed = super::said(&world.try_run(&["refresh", "--yes"]));
 
-    assert!(planned.contains("conflicts:\n  hook guard"), "{planned}");
+    assert!(
+        refreshed.contains("conflicts:\n  hook guard"),
+        "{refreshed}"
+    );
     assert_eq!(read(&script), "#!/bin/sh\necho person's edit\n");
+    assert_eq!(
+        read(&neighbour),
+        "---\nname: hand-made\ndescription: mine\n---\nMine.\n"
+    );
     let settings = read(&world.at(".claude/settings.json"));
     assert!(settings.contains("PreToolUse"), "{settings}");
     assert!(!settings.contains("PostToolUse"), "{settings}");
     assert_eq!(settings.matches("guard.sh").count(), 1, "{settings}");
+}
+
+/// The `replace-unmanaged` remedies `check --json` printed, each as its
+/// `allowRepoEffects` value: the remedy a program reads off the check.
+#[allow(clippy::unwrap_used)]
+fn replace_remedies(output: &std::process::Output) -> Vec<bool> {
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    report["sections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|section| section["lines"].as_array().into_iter().flatten())
+        .filter(|line| line["remedy"]["verb"] == "replace-unmanaged")
+        .map(|line| line["remedy"]["allowRepoEffects"] == true)
+        .collect()
+}
+
+/// The owner's second project: a version 10 record beside a render whose
+/// bytes no longer match it, and a package declaring a repository effect
+/// held behind that conflict. One refresh recovers the rest and names one
+/// completion, carrying the repository-effect permission; the conflicts
+/// section, the closing ledger and `check --json` name the same action,
+/// and nothing prints a pasteable take-over. The session report names the
+/// take-over without the permission a person gives. Running the named
+/// action leaves the check clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn version_10_recovery_names_one_completion_with_its_repository_effect() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    super::guarding::offer(&world, "commit-guards");
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+    world.run(&["add", "cat", "--skill", "commit-guards", "-y"]);
+    world.commit_all("version 10 install");
+    super::write(
+        &world.catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+    );
+    let held = world.at(".agents/skills/commit-guards/SKILL.md");
+    super::write(
+        &held,
+        &format!("{}\na drifted committed line\n", read(&held)),
+    );
+    plant_version_10_state(&world);
+
+    let refreshed = world.try_run(&["refresh", "--yes"]);
+    let said = super::said(&refreshed);
+    assert!(refreshed.status.success(), "{said}");
+    assert!(
+        read(&world.at(".agents/skills/deploy/SKILL.md")).contains("updated deploy"),
+        "the proven render is replaced: {said}"
+    );
+    assert!(read(&held).contains("a drifted committed line"), "{said}");
+    let named = finish_with(&refreshed);
+    assert!(named.len() >= 2, "the section and the ledger: {said}");
+    assert!(
+        named
+            .iter()
+            .all(|value| value == "apply replace-unmanaged allow-repo-effects"),
+        "{named:?}"
+    );
+    assert!(!said.contains("--replace-unmanaged"), "{said}");
+
+    // Named from elsewhere, the completion names the project too.
+    let project = world.project.display().to_string();
+    let named = super::kendex(
+        &world.home,
+        &world.home,
+        &[
+            "refresh",
+            "--yes",
+            "--throwaway",
+            "--project-path",
+            &project,
+        ],
+    );
+    let finish = finish_with(&named);
+    assert!(!finish.is_empty(), "{}", super::said(&named));
+    let want = format!("apply replace-unmanaged allow-repo-effects project={project}");
+    assert!(finish.iter().all(|value| *value == want), "{finish:?}");
+
+    let json = world.try_run(&["check", "--json"]);
+    assert_eq!(replace_remedies(&json), [true], "{}", super::said(&json));
+    let person = super::said(&world.try_run(&["check"]));
+    assert!(
+        person.contains("kendex apply --replace-unmanaged --allow-repo-effects"),
+        "{person}"
+    );
+    let session = super::said(&world.try_run(&["check", "--quiet"]));
+    assert!(
+        session.contains("kendex apply --replace-unmanaged"),
+        "{session}"
+    );
+    assert!(!session.contains("--allow-repo-effects"), "{session}");
+
+    world.run(&["apply", "--replace-unmanaged", "--allow-repo-effects", "-y"]);
+    assert!(world.at(".git/hooks/kendex-guards").is_file());
+    let clean = world.try_run(&["check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", super::said(&clean));
+}
+
+/// The recovery's move is a write like any other: a run with no terminal
+/// and no `--yes` refuses before it, leaving the record where it was.
+#[test]
+fn a_version_10_recovery_with_nobody_to_ask_writes_nothing() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+    plant_version_10_state(&world);
+    let older = read(&world.at(".kendex-lock.json"));
+
+    let refused = world.try_run(&["refresh"]);
+    assert!(!refused.status.success(), "{}", super::said(&refused));
+    assert_eq!(read(&world.at(".kendex-lock.json")), older);
+    assert!(!world.at(".kendex-lock.v10.json").exists());
+}
+
+/// A package the version 10 record already carried is no package the
+/// recovery installs: its repository effect is neither disclosed nor run
+/// again, even under `--allow-repo-effects`.
+#[test]
+fn a_version_10_recovery_runs_no_installer_for_a_carried_package() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    super::guarding::offer(&world, "commit-guards");
+    world.run(&["add", "cat", "--skill", "commit-guards", "-y"]);
+    world.commit_all("version 10 install");
+    plant_version_10_state(&world);
+
+    let applied = world.try_run(&["apply", "--yes", "--allow-repo-effects"]);
+    let said = super::said(&applied);
+    assert!(applied.status.success(), "{said}");
+    assert!(world.at(".kendex-lock.v10.json").is_file(), "{said}");
+    assert!(!world.at(".git/hooks/kendex-guards").exists(), "{said}");
+    assert!(
+        !said.contains("changes how this repository works"),
+        "{said}"
+    );
+}
+
+/// The check names a version 10 record's fix, the refresh, as drift with a
+/// remedy rather than a scope it could not check, and still hands fleet its
+/// keyed refusal. Every other verb that reads the record keeps refusing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_check_names_a_refresh_for_a_version_10_record() {
+    let world = World::new(&["claude"]);
+    world.declare_catalog();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+    plant_version_10_state(&world);
+
+    let checked = world.try_run(&["check"]);
+    assert_eq!(checked.status.code(), Some(1), "{}", super::said(&checked));
+    assert_eq!(refused_version_10_lines(&checked), 1);
+    let json = world.try_run(&["check", "--json"]);
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let verbs: Vec<&serde_json::Value> = report["sections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|section| section["lines"].as_array().into_iter().flatten())
+        .map(|line| &line["remedy"]["verb"])
+        .collect();
+    assert!(verbs.iter().any(|verb| *verb == "refresh"), "{verbs:?}");
+
+    let removed = world.try_run(&["remove", "deploy"]);
+    assert!(!removed.status.success());
+    assert_eq!(refused_version_10_lines(&removed), 1);
+}
+
+/// A recovering refresh writes twice in one scope: the recovery, then the
+/// Pi settlement the recovered record lets it read, which records the
+/// package the recovery could not. The run's one commit offer comes after
+/// the last of them, so a commit chosen up front carries everything the
+/// run changed and leaves the tree clean.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_version_10_recovery_commits_once_after_its_pi_settlement() {
+    let world = World::new(&["claude"]);
+    super::git(&world.project, &["config", "user.email", "t@t"]);
+    super::git(&world.project, &["config", "user.name", "t"]);
+    world.declare_catalog();
+    super::write(
+        &world.catalog.join("pi-extensions/pi-widgets/package.json"),
+        "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n",
+    );
+    super::write(
+        &world.catalog.join("pi-extensions/pi-widgets/index.js"),
+        "export const version = 1;\n",
+    );
+    std::fs::create_dir_all(world.at(".pi")).ok();
+    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+    super::write(
+        &world.at("kendex.toml"),
+        &format!(
+            "{}\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+            read(&world.at("kendex.toml"))
+        ),
+    );
+    world.run(&["refresh", "--yes", "--leave"]);
+    world.commit_all("version 10 install");
+    super::write(
+        &world.catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+    );
+    plant_version_10_state(&world);
+    world.commit_all("the record a version 10 build left");
+    let commits = super::git(&world.project, &["rev-list", "--count", "HEAD"]);
+
+    let refreshed = world.try_run(&["refresh", "--yes", "--commit"]);
+    let said = super::said(&refreshed);
+    assert!(refreshed.status.success(), "{said}");
+    let recovered = kendex_core::lock::load(&world.at(".kendex-lock.json")).unwrap();
+    assert!(
+        recovered.entries.contains_key("pi-extension:pi-widgets:pi"),
+        "the settlement ran after the recovery: {said}"
+    );
+    assert_eq!(
+        super::git(&world.project, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+    let after: u32 = super::git(&world.project, &["rev-list", "--count", "HEAD"])
+        .parse()
+        .unwrap_or_default();
+    let before: u32 = commits.parse().unwrap_or_default();
+    assert_eq!(after, before + 1, "{said}");
 }

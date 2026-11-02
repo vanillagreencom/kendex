@@ -4,7 +4,7 @@ use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::Scope;
 
 use super::advisory::Listing;
-use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
+use super::engine_common::{confirm_and_apply, print_report_for, print_unmanaged};
 use super::ledger::{Folded, Wrote, say_ledger, say_preview};
 use super::{CliResult, fail_refusal, resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
@@ -95,6 +95,9 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         removal_filter: None,
         overwrite_edited: args.discard_edits,
         replace_unmanaged: args.replace_unmanaged,
+        // A version 10 project record is recovered inside this apply's own
+        // write, the move listed with the rest of the plan.
+        recover_version_10: true,
         ..PlanOptions::locked()
     };
     let mut planned = plan_each(env, scopes, &args, &options)?;
@@ -112,7 +115,8 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         if combined && matches!(scope, Scope::Project { .. }) {
             report = plan_apply(env, &scope, &options)?;
         }
-        let blocked = print_report(env, &report, Listing::Attention);
+        let reached = super::offers::Reached::of(args.target.path());
+        let blocked = print_report_for(env, &report, Listing::Attention, reached);
         // Only here and in verify: a report is printed by add and pin too,
         // and an inventory of hand-made content is not what those were
         // asked for.

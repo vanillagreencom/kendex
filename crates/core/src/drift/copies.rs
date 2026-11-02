@@ -109,6 +109,8 @@ pub enum Verdict {
         files: u32,
         rendered_from: String,
         take_over_settles: bool,
+        /// The take-over's apply carries the repository-effect permission.
+        allow_repo_effects: bool,
     },
     /// What sits at the position would not read: the plan's own reason.
     Uncompared { reason: String },
@@ -585,10 +587,12 @@ fn resolve(
                     files,
                     rendered_from,
                     take_over_settles,
+                    allow_repo_effects,
                 } => Verdict::Differs {
                     files,
                     rendered_from,
                     take_over_settles,
+                    allow_repo_effects,
                 },
                 Measured::Uncompared { reason } => Verdict::Uncompared { reason },
                 Measured::Left => Verdict::Left,
@@ -744,6 +748,7 @@ mod tests {
                         files: 1,
                         rendered_from: "source 'cat'".into(),
                         take_over_settles: true,
+                        allow_repo_effects: false,
                     },
                 ),
             ]),

@@ -43,7 +43,10 @@ fn every_kind() -> CheckReport {
                 vec![line(
                     Class::Drift,
                     "unmanaged copy of skill 'commit-guards' at .claude/skills/commit-guards",
-                    Some(Remedy::ReplaceUnmanaged { global: false }),
+                    Some(Remedy::ReplaceUnmanaged {
+                        global: false,
+                        allow_repo_effects: false,
+                    }),
                 )],
             ),
             section(

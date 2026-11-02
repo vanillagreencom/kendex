@@ -1,4 +1,6 @@
-//! Recovery proves installed bytes and writes only their install record.
+//! Recovery proves installed bytes against what records them: a record
+//! rebuilt from matching renders, and a version 10 project record planned
+//! over as a fresh scope.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -129,6 +131,10 @@ pub enum Measured {
         files: u32,
         rendered_from: String,
         take_over_settles: bool,
+        /// The take-over installs a package whose repository effect then
+        /// needs its own yes (`EngineReport::repo_effects_held`).
+        #[serde(default)]
+        allow_repo_effects: bool,
     },
     /// What sits at the position would not read, so nothing was judged:
     /// the plan's own reason, naming the position and the read's error.
@@ -222,6 +228,7 @@ pub fn compare_unmanaged_copies(
     }
     proven.entries = kept;
     let take_over_settles = take_over_settles(&report.drift);
+    let allow_repo_effects = !report.repo_effects_held.is_empty();
     let mut measured = BTreeMap::new();
     for (key, install) in occupied {
         let refused = report.drift.iter().find(|row| {
@@ -245,6 +252,7 @@ pub fn compare_unmanaged_copies(
                             files,
                             rendered_from: rendered_from(manifest, &report, install),
                             take_over_settles,
+                            allow_repo_effects,
                         },
                         // A shape the plan could not read as content has
                         // no count, and nothing prescribes an exit for
@@ -266,6 +274,112 @@ pub fn compare_unmanaged_copies(
         measured,
         proven,
         registrations,
+    })
+}
+
+/// Plan a scope whose project record is version 10 as a fresh scope, with
+/// the old record moved aside as the plan's first op.
+///
+/// No read converts the record (rule 15): the new one is built from the
+/// declarations and their sources over no record, and the old one
+/// contributes only the existing byte proof of which renders kendex wrote
+/// (`unmanaged::version_10_proof`). Every other file stays what the plan
+/// makes of a stranger's file, a conflict.
+///
+/// The move and the record write land in one transaction: the move is
+/// bound to the hash of the bytes the caller read (`hash`), and the record
+/// write to the path standing empty once the move has run. A refusal at
+/// any op rolls back to the version 10 record where it was.
+///
+/// What the old record carried is not news to the person: its packages
+/// are no addition the consent claims, and their repository effects are
+/// not offered again, since the scope carried them before the record lost
+/// its readable form.
+pub(super) fn plan_version_10(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    hash: String,
+    options: &PlanOptions,
+) -> Result<EngineReport> {
+    use crate::apply::{Description, PlannedOp, Pre};
+    let path = lock_path(env, scope);
+    let aside = path.with_file_name(crate::lock::VERSION_10_LOCK_FILE);
+    let carried = super::unmanaged::version_10_keys(&path)?;
+    let fresh = Lock {
+        version: crate::lock::LOCK_VERSION,
+        ..Lock::default()
+    };
+    let mut report = super::plan_scope(env, scope, manifest, &fresh, options)?;
+    for planned in &mut report.plan.ops {
+        if let Op::WriteLock { pre, .. } = &mut planned.op {
+            *pre = Pre::Absent;
+        }
+    }
+    report.plan.insert(
+        0,
+        PlannedOp {
+            description: Description::around(
+                "Move the version 10 install record ",
+                format!(
+                    " to {}, where it keeps proving which renders kendex wrote",
+                    crate::lock::VERSION_10_LOCK_FILE
+                ),
+            ),
+            op: Op::Rename {
+                from: path,
+                to: aside.clone(),
+                from_pre: Pre::HashIs { hash },
+                to_pre: Pre::Absent,
+            },
+        },
+    )?;
+    report.set_changes.retain(|change| {
+        change.direction != super::SetDirection::Add
+            || !carried.contains(&crate::lock::entry_key(
+                change.kind,
+                &change.name,
+                change.harness,
+            ))
+    });
+    let carried_skills: BTreeSet<String> = carried
+        .iter()
+        .filter_map(|key| crate::lock::parse_entry_key(key))
+        .filter(|(kind, _, _)| *kind == crate::model::ItemKind::Skill)
+        .map(|(_, name, _)| name.to_owned())
+        .collect();
+    report
+        .repo_effects
+        .retain(|effects| !carried_skills.contains(&effects.name));
+    report.recovers = Some(aside);
+    Ok(report)
+}
+
+/// The one action that settles every conflict a plan left, where one
+/// command does: an apply that replaces the files in the way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Completion {
+    /// The take-over installs a package whose repository effect then needs
+    /// its own yes, so the action carries that permission as a parameter.
+    pub allow_repo_effects: bool,
+}
+
+/// The completion for a plan's conflicts, or `None` where no single
+/// action settles all of them: a conflict the take-over cannot replace
+/// (an edit, a link, a revision clash), or a take-over that does not
+/// answer for the whole scope (`take_over_settles`). `apply`, `refresh`
+/// and `check` name what this returns and nothing of their own.
+pub fn completion(report: &EngineReport) -> Option<Completion> {
+    let mut conflicts = report
+        .drift
+        .iter()
+        .filter(|row| row.state == DriftState::Conflict)
+        .peekable();
+    conflicts.peek()?;
+    let replaceable = conflicts.all(|row| row.cause.is_some_and(DriftCause::can_replace));
+    (replaceable && take_over_settles(&report.drift)).then_some(Completion {
+        allow_repo_effects: !report.repo_effects_held.is_empty(),
     })
 }
 

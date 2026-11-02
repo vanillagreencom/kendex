@@ -3,7 +3,7 @@
 //! name and the scope it was read in, and it is only produced where
 //! following it would actually settle the item.
 
-use kendex_core::engine::{DriftCause, DriftRow};
+use kendex_core::engine::{Completion, DriftCause, DriftRow, EngineReport};
 use kendex_core::env::Env;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 
@@ -24,8 +24,36 @@ pub struct Blocked {
     pub name: String,
     /// The line printed under this item's rows, when it has one.
     pub offer: Option<Offer>,
-    /// The scope-wide take-over settles this item whole.
-    pub replace: bool,
+    /// The one action that settles every conflict of the plan this item
+    /// came from, the same for each of its items: the engine's answer
+    /// (`engine::completion`), so the conflicts section and the closing
+    /// ledger name one action and never a reading of their own.
+    pub finish: Option<Finish>,
+}
+
+/// How a run reached the project it plans: typed inside it, or named with
+/// `--project-path`, where the completion has to name the project too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reached {
+    Here,
+    Named,
+}
+
+impl Reached {
+    /// The answer for a run given `--project-path` or not.
+    pub fn of(named: Option<&std::path::Path>) -> Reached {
+        match named {
+            Some(_) => Reached::Named,
+            None => Reached::Here,
+        }
+    }
+}
+
+/// A plan's completion and how the run reached the scope it is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Finish {
+    pub completion: Completion,
+    pub reached: Reached,
 }
 
 impl Blocked {
@@ -42,7 +70,16 @@ fn same_item(row: &DriftRow, other: &DriftRow) -> bool {
 /// Every item these rows block, each asked once. One derivation per item:
 /// the line printed under a row and the sentence that closes the run come
 /// from the same answer, so they cannot disagree about what was offered.
-pub fn blocked_items(env: &Env, rows: &[&DriftRow]) -> Vec<Blocked> {
+pub fn blocked_items(
+    env: &Env,
+    report: &EngineReport,
+    rows: &[&DriftRow],
+    reached: Reached,
+) -> Vec<Blocked> {
+    let finish = kendex_core::engine::completion(report).map(|completion| Finish {
+        completion,
+        reached,
+    });
     let mut items: Vec<Blocked> = Vec::new();
     for row in rows {
         if items.iter().any(|item| item.is(row)) {
@@ -61,7 +98,7 @@ pub fn blocked_items(env: &Env, rows: &[&DriftRow]) -> Vec<Blocked> {
             kind: row.kind,
             name: row.name.clone(),
             offer: offer_for(env, &item),
-            replace: item_replaceable(&item),
+            finish,
         });
     }
     items
@@ -86,18 +123,6 @@ fn offer_for(env: &Env, item: &[&DriftRow]) -> Option<Offer> {
             adopt: false,
         },
     })
-}
-
-/// Whether the flag can take this row's place.
-fn can_replace(row: &&DriftRow) -> bool {
-    row.cause.is_some_and(DriftCause::can_replace)
-}
-
-/// Whether the scope-wide take-over settles this one item whole. It
-/// answers for every item it sweeps up or for none of them, so a single
-/// row it cannot take stops the item.
-fn item_replaceable(item: &[&DriftRow]) -> bool {
-    item.iter().any(can_replace) && item.iter().all(can_replace)
 }
 
 /// Whether the offer belongs under this row: the last of the item's rows
@@ -173,6 +198,28 @@ pub fn adopt_command(env: &Env, item: &[&DriftRow]) -> Option<String> {
 /// project needs none — it is what every command defaults to — but a
 /// remedy printed while looking at the global scope runs against the
 /// current project without it.
+/// A plan's one completion as keyed data a program reads: the verb and
+/// its parameters, never a command line (engine.md rule 18). The
+/// repository-effect permission rides as a parameter because the
+/// take-over installs a package whose effect needs that yes. A project
+/// the run named is the last field, escaped and read to the end of the
+/// data, since a path may hold a space.
+pub fn finish_with(finish: Finish, scope: &Scope) -> String {
+    let mut line = "finish-with=apply replace-unmanaged".to_owned();
+    if finish.completion.allow_repo_effects {
+        line.push_str(" allow-repo-effects");
+    }
+    match (scope, finish.reached) {
+        (Scope::Global, _) => line.push_str(" global"),
+        (Scope::Project { root }, Reached::Named) => {
+            line.push_str(" project=");
+            line.push_str(&kendex_core::names::shown(&root.display().to_string()));
+        }
+        (Scope::Project { .. }, Reached::Here) => {}
+    }
+    line
+}
+
 pub fn scope_flag(scope: &Scope) -> &'static str {
     match scope {
         Scope::Global => " --global",

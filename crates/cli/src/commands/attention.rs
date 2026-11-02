@@ -15,7 +15,7 @@ use kendex_core::env::Env;
 
 use super::advisory::{Listing, safety_section};
 use super::blocked::{conflict_rows, conflicts, drift};
-use super::offers::{Blocked, blocked_items};
+use super::offers::{Blocked, Reached, blocked_items};
 use crate::ui::{self, Span, Status, Style};
 
 /// What the report drew, besides its lines.
@@ -34,8 +34,13 @@ pub struct Attention {
 /// Draw the report on stderr, as much of it as `listing` asks for. A
 /// verbose run lists every drift row where the others list the conflicts,
 /// and the hook exclusions as one line.
-pub fn print_attention(env: &Env, report: &EngineReport, listing: Listing) -> Attention {
-    let (lines, attention) = attention(&ui::style(), env, report, listing);
+pub fn print_attention(
+    env: &Env,
+    report: &EngineReport,
+    listing: Listing,
+    reached: Reached,
+) -> Attention {
+    let (lines, attention) = attention(&ui::style(), env, report, listing, reached);
     for warning in &report.warnings {
         ui::report::run_model_warning(&warning.message);
     }
@@ -48,14 +53,15 @@ fn attention(
     env: &Env,
     report: &EngineReport,
     listing: Listing,
+    reached: Reached,
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
-    let blocked = blocked_items(env, &rows);
+    let blocked = blocked_items(env, report, &rows, reached);
     let draw = |listing: Listing| {
         let verbose = listing == Listing::Verbose;
         let mut lines = match verbose {
             true => drift(style, report, &rows, &blocked),
-            false => conflicts(style, report, &rows, &blocked),
+            false => conflicts(style, &rows, &blocked),
         };
         lines.extend(safety_section(style, &report.safety, listing));
         lines.extend(super::engine_common::warning_lines(style, &report.warnings));

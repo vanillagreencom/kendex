@@ -37,11 +37,45 @@ pub(super) struct Version10Proof {
     pub(super) registrations: BTreeMap<String, HookRegistration>,
 }
 
-/// Render roots whose current bytes the moved version 10 record proves
-/// kendex wrote. This is an upgrade-only, read-only ownership proof. It stays
-/// available across partial applies and outside Git because the sidecar is
-/// the proof. It deliberately ignores that record's machine-specific
-/// positions and never loads it as the scope's working lock.
+/// The version 10 record at `path`, or `None` where none reads there.
+fn version_10_record(path: &std::path::Path) -> Result<Option<Version10Record>> {
+    let Some(text) = crate::fs::read_if_exists(path)? else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str::<Version10Record>(&text)
+        .ok()
+        .filter(|record| record.version == 10))
+}
+
+/// The installation keys a version 10 record at `path` names, each under
+/// the identity its own entry states: what the scope carried before the
+/// recovery that plans over no record.
+pub(super) fn version_10_keys(path: &std::path::Path) -> Result<BTreeSet<String>> {
+    Ok(version_10_record(path)?
+        .map(|record| {
+            record
+                .entries
+                .into_iter()
+                .filter(|(key, entry)| {
+                    crate::lock::entry_key(entry.kind, &entry.name, entry.harness) == *key
+                })
+                .map(|(key, _)| key)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Render roots whose current bytes a version 10 record proves kendex
+/// wrote. This is an upgrade-only, read-only ownership proof. It deliberately
+/// ignores that record's machine-specific positions and never loads it as
+/// the scope's working lock.
+///
+/// The record is the moved sidecar, which stays the proof across partial
+/// applies and outside Git. Before the move it is the lock path itself:
+/// a recovery plans over no record (`recovery::plan_version_10`) and moves
+/// the file in the same transaction, bound to the hash of the bytes it
+/// read, so a record changed since this read refuses the move and the
+/// whole plan with it.
 pub(super) fn version_10_proof(
     scope: &Scope,
     lock: &Lock,
@@ -51,15 +85,16 @@ pub(super) fn version_10_proof(
         return Ok(Version10Proof::default());
     };
     let sidecar = root.join(crate::lock::VERSION_10_LOCK_FILE);
-    let Some(text) = crate::fs::read_if_exists(&sidecar)? else {
+    let record = match version_10_record(&sidecar)? {
+        Some(record) => Some(record),
+        None if lock.entries.is_empty() && !sidecar.exists() => {
+            version_10_record(&root.join(crate::lock::LOCK_FILE))?
+        }
+        None => None,
+    };
+    let Some(record) = record else {
         return Ok(Version10Proof::default());
     };
-    let Ok(record) = serde_json::from_str::<Version10Record>(&text) else {
-        return Ok(Version10Proof::default());
-    };
-    if record.version != 10 {
-        return Ok(Version10Proof::default());
-    }
 
     let mut proof = Version10Proof::default();
     for item in desired {

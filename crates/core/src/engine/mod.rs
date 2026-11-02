@@ -37,8 +37,8 @@ mod holds;
 mod installed;
 mod recovery;
 pub use recovery::{
-    Measured, RecordlessAudit, UnmanagedCopies, audit_without_record, claim_plan,
-    compare_unmanaged_copies, plan_record_existing,
+    Completion, Measured, RecordlessAudit, UnmanagedCopies, audit_without_record, claim_plan,
+    compare_unmanaged_copies, completion, plan_record_existing,
 };
 mod instruction_shims;
 pub use instruction_shims::{
@@ -461,6 +461,8 @@ fn report(
         // moves in: an effect belongs to a package this pass adds to what
         // the scope carries, and to no other.
         repo_effects: repo_effects::run(&state, &drift, &set_changes, lock),
+        repo_effects_held: repo_effects::held(&state, &drift, lock),
+        recovers: None,
         registrations: registrations(&state),
         repo_effects_leaving,
         refused: state.refused,
@@ -896,19 +898,15 @@ pub fn audit(env: &Env, scope: &Scope) -> Result<EngineReport> {
 pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<EngineReport> {
     let scope = &scope.canonical();
     let (manifest_file, base) = manifest::read_for_mutation(&manifest::manifest_path(env, scope))?;
-    // Absent reads as an empty lock — a fresh scope — so a first-ever
-    // install still plans through the normal path.
-    let lock = match crate::lock::load_file(&lock_path(env, scope))? {
-        LockFile::Current(lock) => lock,
-        LockFile::Absent => Lock {
-            version: crate::lock::LOCK_VERSION,
-            ..Lock::default()
-        },
-    };
     if let Some(manifest) = &manifest_file {
         let mut options = options.clone();
         options.manifest_base.get_or_insert(base.clone());
-        let mut report = plan_scope(env, scope, manifest, &lock, &options)?;
+        let mut report = match planning_lock(env, scope, &options)? {
+            PlanningLock::Read(lock) => plan_scope(env, scope, manifest, &lock, &options)?,
+            PlanningLock::Version10 { hash } => {
+                recovery::plan_version_10(env, scope, manifest, hash, &options)?
+            }
+        };
         if !manifest.migration_notes.is_empty() && !persists_manifest(&report.plan.ops) {
             ops::insert_manifest_save(env, scope, &mut report.plan, manifest.clone(), Some(&base))?;
         }
@@ -917,10 +915,69 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
 
     // Nothing is declared here: the scope reads as observation-only rather
     // than failing the whole audit, so a stranger's files still get a row.
+    // Recovery rebuilds a record from declarations, and a scope with none
+    // has nothing to rebuild it from: its record is read, and refused, as
+    // every other reader reads it.
+    let lock = crate::lock::load(&lock_path(env, scope))?;
     let mut report = EngineReport::observed(Plan::landed(scope.clone(), Vec::new())?);
     let empty = Manifest::default();
     unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;
     Ok(report)
+}
+
+/// The record a scope plans against.
+enum PlanningLock {
+    /// The current record, or an empty one where no file sits at the
+    /// path: a fresh scope plans through the normal path.
+    Read(Lock),
+    /// A version 10 project record this plan recovers: the scope plans
+    /// fresh, and the record moves aside bound to the hash of these bytes.
+    Version10 { hash: String },
+}
+
+/// Which record a scope plans against, decided once for the plan and for
+/// the compatibility check that precedes it, so the two cannot disagree
+/// about whether a version 10 record stops the run. Without
+/// [`PlanOptions::recover_version_10`] such a record refuses as every
+/// other reader refuses it. With it, the record is recoverable only as
+/// kendex's own file, at the lock path itself rather than through a
+/// link, and only where no earlier recovery left its record aside: that
+/// file is the proof partial recoveries keep reading, and a second record
+/// moved onto it would replace the first.
+fn planning_lock(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<PlanningLock> {
+    let path = lock_path(env, scope);
+    let refused = match crate::lock::load_file(&path) {
+        Ok(LockFile::Current(lock)) => return Ok(PlanningLock::Read(lock)),
+        Ok(LockFile::Absent) => {
+            return Ok(PlanningLock::Read(Lock {
+                version: crate::lock::LOCK_VERSION,
+                ..Lock::default()
+            }));
+        }
+        Err(refused) => refused,
+    };
+    let crate::error::CoreError::LegacyProjectLock { aside, .. } = &refused else {
+        return Err(refused);
+    };
+    if !options.recover_version_10 {
+        return Err(refused);
+    }
+    if path.is_symlink() {
+        return Err(crate::error::CoreError::Version10RecoveryRefused {
+            path,
+            why: crate::error::Version10Stop::LinkedRecord,
+        });
+    }
+    if aside.exists() || aside.is_symlink() {
+        return Err(crate::error::CoreError::Version10RecoveryRefused {
+            path,
+            why: crate::error::Version10Stop::AsideTaken {
+                aside: aside.clone(),
+            },
+        });
+    }
+    let hash = crate::hash::hash_tree(&path)?;
+    Ok(PlanningLock::Version10 { hash })
 }
 
 /// Check this scope's selected readings before planning. The held-manifest
@@ -941,7 +998,15 @@ pub fn check_catalog_compatibility_for(
     options: &PlanOptions,
 ) -> Result<()> {
     crate::source::check_catalog_compatibility(env, scope, manifest)?;
-    let lock = crate::lock::load(&lock_path(env, scope))?;
+    let lock = match planning_lock(env, scope, options)? {
+        PlanningLock::Read(lock) => lock,
+        // A recovery holds nothing at a recorded commit: it plans over no
+        // record, as `plan_apply` does.
+        PlanningLock::Version10 { .. } => Lock {
+            version: crate::lock::LOCK_VERSION,
+            ..Lock::default()
+        },
+    };
     desired::hold::held_planning(env, scope, manifest, &lock, options)?;
     Ok(())
 }

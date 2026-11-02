@@ -580,6 +580,18 @@ impl ScopeCheck<'_> {
                     );
                 }
             }
+            // A record refresh recovers is not a scope the check could not
+            // read: it is one whose fix is known, the refresh that moves the
+            // record aside and installs from the declarations. The refusal
+            // itself still reaches the caller's error channel, keyed.
+            Err(crate::error::CoreError::LegacyProjectLock { .. }) => {
+                sections.record_cleanup.push(drift(
+                    format!("{prefix}lock: a version 10 record, which a refresh recovers"),
+                    Some(Remedy::Refresh {
+                        global: self.global,
+                    }),
+                ))
+            }
             Err(error) => sections.unknown.push(unknown(format!(
                 "{prefix}lock: {}",
                 shown(&error.to_string())
@@ -981,7 +993,16 @@ impl ScopeCheck<'_> {
                     files,
                     rendered_from,
                     take_over_settles,
-                }) => self.stale_line(install, *files, rendered_from, *take_over_settles, sections),
+                    allow_repo_effects,
+                }) => self.stale_line(
+                    install,
+                    *files,
+                    rendered_from,
+                    take_over_settles.then_some(crate::engine::Completion {
+                        allow_repo_effects: *allow_repo_effects,
+                    }),
+                    sections,
+                ),
                 Some(crate::drift::copies::Verdict::Uncompared { reason }) => {
                     sections.unknown.push(unknown(format!(
                         "{}{} '{}' for {}: {}",
@@ -1004,13 +1025,14 @@ impl ScopeCheck<'_> {
 
     /// The line for a copy the plan measured as not the render: the count,
     /// what it was measured against, and the take-over as its fix where
-    /// the pass answered for the whole scope, the plan otherwise.
+    /// the pass answered for the whole scope (`take_over`), the plan
+    /// otherwise.
     fn stale_line(
         &self,
         install: &crate::engine::Occupied,
         files: u32,
         rendered_from: &str,
-        take_over_settles: bool,
+        take_over: Option<crate::engine::Completion>,
         sections: &mut Sections,
     ) {
         let mut text = format!(
@@ -1024,7 +1046,7 @@ impl ScopeCheck<'_> {
             if files == 1 { "s" } else { "" },
             shown(rendered_from)
         );
-        if take_over_settles {
+        if take_over.is_some() {
             text.push_str(&format!(
                 "; take-over moves the existing content to the trash at {}",
                 shown(&crate::paths::slashed(&self.env.trash_dir()))
@@ -1032,11 +1054,12 @@ impl ScopeCheck<'_> {
         }
         sections.stale.push(drift(
             text,
-            Some(match take_over_settles {
-                true => Remedy::ReplaceUnmanaged {
+            Some(match take_over {
+                Some(take_over) => Remedy::ReplaceUnmanaged {
                     global: self.global,
+                    allow_repo_effects: take_over.allow_repo_effects,
                 },
-                false => Remedy::Plan {
+                None => Remedy::Plan {
                     global: self.global,
                 },
             }),
