@@ -304,6 +304,52 @@ else
   bad 'control changes the settings seed'
 fi
 
+# A tree with no run-all.sh runs each suite through guard's direct loop, whose
+# stdin holds the rest of the list. skills/jarvis is such a tree, and a child
+# of its session.test.sh reads stdin. Here the first suite reads stdin and
+# every suite names the changed script.
+mkdir -p "$R/skills/stdin/scripts" "$R/skills/stdin/tests"
+printf '#!/usr/bin/env bash\n:\n' > "$R/skills/stdin/scripts/tool"
+printf '"$PWD/skills/stdin/scripts/tool"\ncat >/dev/null\nprintf "a-reader\\n" >> "$SUITE_LOG"\n' > "$R/skills/stdin/tests/a-reader.sh"
+for name in b-later c-later; do
+  printf '"$PWD/skills/stdin/scripts/tool"\nprintf "%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/stdin/tests/$name.sh"
+done
+git -C "$R" add -A
+entry_points_executable
+git -C "$R" commit -qm stdin
+BASE="$(git -C "$R" rev-parse HEAD)"
+LATER_SUITES='skills/stdin/tests/b-later.sh skills/stdin/tests/c-later.sh '
+stdin_run() { # GUARD: the normal range over a changed tool; sets RC, OUT, SELECTED, UNSTARTED
+  printf '# changed\n' >> "$R/skills/stdin/scripts/tool"
+  : > "$SUITE_LOG"
+  RC=0
+  OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$1" --range "$BASE" 2>&1)" || RC=$?
+  SELECTED="$(sort "$SUITE_LOG" | tr '\n' ' ')"
+  UNSTARTED="$(sed -n 's/^guard: unstarted-suite=//p' <<<"$OUT" | tr '\n' ' ')"
+  git -C "$R" checkout -q -- skills/stdin/scripts/tool
+}
+stdin_run "$GUARD"
+[ "$RC" -eq 0 ] && [ "$SELECTED" = 'a-reader b-later c-later ' ] && [ -z "$UNSTARTED" ] \
+  && ok 'direct loop: a suite reading stdin leaves every later suite to run' \
+  || bad 'direct loop: a suite reading stdin leaves every later suite to run' "rc=$RC selected=$SELECTED out=$OUT"
+# Without the redirect the reader takes the list; the guard names what it left.
+if mutant_guard 's#--local --suite "\$t" </dev/null ||#--local --suite "$t" ||#'; then
+  stdin_run "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 1 ] && [ "$SELECTED" = 'a-reader ' ] && [ "$UNSTARTED" = "$LATER_SUITES" ] \
+    && ok 'control: an inherited stdin ends the loop and the guard fails naming the suites it left' \
+    || bad 'control: an inherited stdin ends the loop and the guard fails naming the suites it left' "rc=$RC selected=$SELECTED unstarted=$UNSTARTED out=$OUT"
+else
+  bad 'control removes the direct-suite stdin redirect'
+fi
+if mutant_guard '/--local --suite "\$t" <\/dev\/null ||/s#</dev/null ##; /^    # The loop removes each entry as it starts it/,/^    done <<<"\${suite_runs\[suite_index\]}"$/d'; then
+  stdin_run "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ "$SELECTED" = 'a-reader ' ] && [ -z "$UNSTARTED" ] \
+    && ok 'control: without the leftover check an early loop end passes' \
+    || bad 'control: without the leftover check an early loop end passes' "rc=$RC selected=$SELECTED out=$OUT"
+else
+  bad 'control removes the direct-suite leftover check'
+fi
+
 # A real cancellation must also name suites in batteries not yet entered.
 # Each phase holds on its FIFO; the parent sends TERM only once its
 # non-blocking writer open proves a holder is there, then releases the hold.

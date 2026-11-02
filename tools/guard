@@ -182,6 +182,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
     suite)
       echo "that suite failed; its own output above names the case." ;;
+    unstarted-suite)
+      echo "this run selected that suite, but the direct-suite loop ended before it started, so it did not run." ;;
     kendex-unread)
       echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex. The parts of a --part run split one list, so this part ran none of that package's suites; its cause is above." ;;
     mapped-suites)
@@ -2585,12 +2587,19 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       active_runner=0
       continue
     fi
+    # The suite list is this loop's stdin, so a suite started with it can read
+    # the rest of the list and end the loop: the child gets no stdin.
     while IFS= read -r t; do
       suite_runs[suite_index]=${suite_runs[suite_index]#*"$t"}
       [ -f "$t" ] || continue
       echo "=== $t"
-      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" || say suite "$t"
+      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" </dev/null || say suite "$t"
     done <<<"$run"
+    # The loop removes each entry as it starts it; one left was never run.
+    while IFS= read -r t; do
+      [ -n "$t" ] || continue
+      say unstarted-suite "$t"
+    done <<<"${suite_runs[suite_index]}"
   done
   trap - TERM INT HUP
 fi
