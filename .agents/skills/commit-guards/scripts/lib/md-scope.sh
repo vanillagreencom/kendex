@@ -9,8 +9,8 @@
 # either policy and reads it only to name a moved file's source.
 #
 # Four scopes, one setting:
-#   --staged   every markdown file the staged diff adds, modifies or
-#              type-changes, judged in full from the index
+#   --staged   every markdown file the staged diff changes, renames as
+#              GG_MD_RENAMES selects them, judged in full from the index
 #   --base REF the same files over a commit range, three dots: what the
 #              branch ADDS over the ancestor it and REF share
 #              (the scopes are exclusive: naming two is exit 2 scope-flags,
@@ -42,12 +42,9 @@
 GG_MD_SCOPE_DEFAULT="touched"
 GG_MD_EXCLUDES_DEFAULT="tools/md-excludes"
 
-# The lane's rename policy, configured-paths.sh's GG_WALK_RENAMES values, set
-# by the lane before gg_md_scope. `exact`, the default, holds renames to exact
-# content as byte-ceiling does: a pure move adds no content, and a move with
-# changed bytes is an addition. `detect` is md-type's: its verdict depends on
-# the path and compares a file with its earlier self, so every detected move
-# is selected, an unchanged one included, with the path it moved from. The
+# The lane's rename policy, one of the GG_WALK_RENAMES modes that
+# configured-paths.sh states, set by the lane before gg_md_scope; `exact`
+# unless the lane sets another. md-type sets `detect` and states why. The
 # staged trigger, the diff walks and the --all sweep all read this one value,
 # so no scope can select or measure a file without its rename source.
 GG_MD_RENAMES=exact

@@ -265,16 +265,21 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
   done <"$GG_TMP/files.z"
 }
 
-# The diff walks share selection and blob classification across lanes. A pure
-# rename adds no content. A rename with changed bytes is an addition.
+# The diff walks share selection and blob classification across lanes.
 #
-# A lane whose verdict depends on the path, or compares a file with its
-# earlier self, sets GG_WALK_RENAMES=detect before walking: renames are then
-# found at git's default similarity and every one is selected, an exact move
-# included, with its earlier path in GG_WALK_SRC for the callback. md-type
-# is that lane, through lib/md-scope.sh's GG_MD_RENAMES: a move can change a
-# document's type, and an edit carried across a move keeps its earlier
-# findings. Every other walk leaves GG_WALK_SRC empty.
+# GG_WALK_RENAMES is the one statement of the walks' rename policy; a lane
+# sets it before walking, and gg_walk_diff_flags turns it into diff flags.
+#   exact    the default. Renames are found at exact content only and the
+#            filter keeps A, M and T: a pure move adds no content and is
+#            dropped, and a move with changed bytes arrives as an addition,
+#            read whole. At any lower similarity a renamed file that also
+#            changed would be one R record the filter drops, and the change
+#            would arrive unjudged. GG_WALK_SRC stays empty.
+#   detect   renames are found at git's default similarity and every one is
+#            selected, an exact move included, with its earlier path in
+#            GG_WALK_SRC for the callback: for a lane whose verdict depends on
+#            the path or compares a file with its earlier self. md-type sets
+#            it through lib/md-scope.sh's GG_MD_RENAMES.
 GG_WALK_RENAMES=exact
 GG_WALK_SRC=""
 
@@ -327,6 +332,7 @@ gg_walk_raw_records() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
   done <"$GG_TMP/raw.z"
 }
 
+# The staged changes, renames as GG_WALK_RENAMES selects them.
 gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
   local noun="$1" on_file="$2"
   GG_WALK_SKIPPED=0
@@ -363,10 +369,8 @@ gg_diff_range() { # VAR KIND REF — VAR gets the diff range
 # The same walk over a commit range instead of the index, for a caller that
 # stages nothing: a push, where the branch's own state is what a replay left
 # and no index diff describes it. RANGE is gg_diff_range's answer, so the
-# dots and the ref's validity are settled before this runs. Rename detection
-# is held to exact content for the staged walk's reason: at any lower
-# similarity a renamed file that also changed is one R record the filter
-# drops, and the change arrives unjudged.
+# dots and the ref's validity are settled before this runs. Renames are
+# selected as GG_WALK_RENAMES says, as in the staged walk.
 gg_walk_range_paths() { # RANGE NOUN ON_FILE — callback receives PATH BLOBFILE SHA
   local range="$1" noun="$2" on_file="$3"
   GG_WALK_SKIPPED=0
