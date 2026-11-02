@@ -32,7 +32,8 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 
 ## Evidence and costs
 
-- Use a number only when you saw it in this session's output. Otherwise name the thing without the number. Never estimate or run an extra command only to fill that gap.
+- Use a number only when you saw it in this session's output, or as a labelled time estimate under the next rule. Otherwise name the thing without the number. Never guess a number or run an extra command only to fill that gap.
+- Give a time estimate for agent work in worker-hours, the item's lane runtime, and calendar days from its creation to Done, counting the age it already has. Name the team's last finished comparable items of the same kind and size, and give their middle and worst. With no usable comparable, say so and label the estimate a judgment. Keep an unread time unknown, and never present an estimate as a measurement. A size point is a relative class, never a time.
 - Give every number its yardstick and verdict in the same bullet: the earlier value, target or normal range; good, bad or not known; and what is done about it. If the yardstick is unread, say so and name the reading that settles it.
 - Give a measure that depends on load with that load: session length beside the work handled, or machine use beside what ran. Length or use alone never claims an improvement.
 - Before posting, read each topic as the person and ask "so what for me?". Add that answer or cut the topic.

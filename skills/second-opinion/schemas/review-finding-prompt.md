@@ -43,7 +43,7 @@ Rules:
 - Suggestions may exist even when verdict is "pass"
 - location: file path with function/struct names in backticks — NO line numbers (they go stale)
 - priority: 1=Urgent, 2=High, 3=Normal, 4=Low
-- estimate: 1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+
+- estimate: relative size of the work, 1=smallest through 5=largest; not a unit of time
 - category: "fix" (this PR's concern) or "issue" (track separately)
 - impact: REQUIRED when category is "issue" — one line naming who hits this, on what real path. An impact that needs "could", "might", or "in theory" means the item is a decline, not an issue: put it in the summary instead.
 - Only report genuine issues you are confident about. No speculative warnings. If the code is clean, return verdict "pass" with empty arrays.
