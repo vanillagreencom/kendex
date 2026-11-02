@@ -455,8 +455,10 @@ fn a_package_whose_source_is_gone_still_has_its_second_copy_named() {
         "{}",
         said(&preview)
     );
+    // Exit 2: the package itself could not be compared with a source
+    // that no longer ships it, beside the second copy it still names.
     let check = kendex(&home, &project, &["check", "--scope", "project"]);
-    assert_eq!(check.status.code(), Some(1), "{}", said(&check));
+    assert_eq!(check.status.code(), Some(2), "{}", said(&check));
     assert!(
         said(&check).contains("pi-shadow-package=pi-widgets"),
         "{}",

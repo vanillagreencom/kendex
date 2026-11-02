@@ -172,30 +172,78 @@ fn keyed(output: &str, key: &str) -> Vec<String> {
         .collect()
 }
 
-/// The Pi packages `check --json` names `update-pi` for, read from the
-/// typed remedy a program acts on, each once.
+/// What `check --json --scope project` says of the Pi packages, read from
+/// the typed remedy a program acts on: the packages a line names
+/// `update-pi` for, the packages a line names with no fix at all, each
+/// once, and whether the check came out clean.
+struct Checked {
+    update_pi: Vec<String>,
+    no_fix: Vec<String>,
+    clean: bool,
+}
+
 #[allow(clippy::unwrap_used)]
-fn check_names_update_pi(home: &Path, project: &Path) -> Vec<String> {
+fn checked(home: &Path, project: &Path) -> Checked {
     let json = kendex(home, project, &["check", "--json", "--scope", "project"]);
     let report: serde_json::Value = serde_json::from_slice(&json.stdout)
         .unwrap_or_else(|error| panic!("check --json is JSON: {error}: {}", said(&json)));
-    let mut named: Vec<String> = report["sections"]
+    let lines: Vec<&serde_json::Value> = report["sections"]
         .as_array()
         .unwrap()
         .iter()
         .flat_map(|section| section["lines"].as_array().unwrap())
-        .filter(|line| line["remedy"]["verb"] == "update-pi")
-        .map(|line| {
-            let text = line["text"].as_str().unwrap();
-            let (_, rest) = text
-                .split_once("pi-extension '")
-                .unwrap_or_else(|| panic!("an update-pi line names no package: {text}"));
-            rest.split('\'').next().unwrap().to_owned()
-        })
         .collect();
-    named.sort();
-    named.dedup();
-    named
+    let named = |keep: &dyn Fn(&serde_json::Value) -> bool| {
+        let mut named: Vec<String> = lines
+            .iter()
+            .filter(|line| keep(line))
+            .filter_map(|line| {
+                let (_, rest) = line["text"]
+                    .as_str()
+                    .unwrap()
+                    .split_once("pi-extension '")?;
+                Some(rest.split('\'').next().unwrap().to_owned())
+            })
+            .collect();
+        named.sort();
+        named.dedup();
+        named
+    };
+    Checked {
+        update_pi: named(&|line| line["remedy"]["verb"] == "update-pi"),
+        no_fix: named(&|line| line.get("remedy").is_none()),
+        clean: json.status.success(),
+    }
+}
+
+/// The Pi packages the scope's update standing offers as an update, and
+/// those it carries a warning for, from the report the snapshot and the
+/// `updates` listing are built from.
+#[allow(clippy::unwrap_used)]
+fn standing(home: &Path, project: &Path) -> (Vec<String>, Vec<String>) {
+    let env = kendex_core::env::Env::host_rooted(home);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.to_path_buf(),
+    };
+    let report = kendex_core::package::updates::updates(&env, &scope).unwrap();
+    let pi = kendex_core::model::ItemKind::PiExtension;
+    let mut offered: Vec<String> = report
+        .rows
+        .iter()
+        .filter(|row| row.kind == pi && row.update_available)
+        .map(|row| row.name.clone())
+        .collect();
+    let mut warned: Vec<String> = report
+        .warnings
+        .iter()
+        .filter(|warning| warning.kind == pi)
+        .map(|warning| warning.name.clone())
+        .collect();
+    for names in [&mut offered, &mut warned] {
+        names.sort();
+        names.dedup();
+    }
+    (offered, warned)
 }
 
 /// The personal Pi root holding its own copy of `pi-widgets`.
@@ -229,10 +277,17 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         plant: Plant,
         finish: &'static [&'static str],
         settle_with: &'static [&'static str],
+        /// What changes after the run and before `check`, which no run
+        /// of kendex's sees.
+        after: Option<Plant>,
         /// The package the run names though nothing settles it.
         unsettled: Option<&'static str>,
-        /// The packages `check` names `update-pi` for afterwards.
+        /// The packages `check` names `update-pi` for afterwards, and the
+        /// update standing offers as an update.
         check_update_pi: &'static [&'static str],
+        /// The packages `check` names with their reason and no fix, which
+        /// the update standing carries a warning for.
+        check_left: &'static [&'static str],
     }
     fn settled_once(home: &Path, project: &Path) {
         kendex(home, project, &["apply", "--yes"]);
@@ -298,6 +353,18 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             ),
         );
     };
+    let moved_on_and_loaded_twice: Plant = |home, project| {
+        settled_once(home, project);
+        let installed = kendex(home, project, &["update-pi", "--scope", "project"]);
+        assert!(installed.status.success(), "{}", said(&installed));
+        settled_once(home, project);
+        loaded_from_the_personal_scope(home);
+        write(
+            &project.join("catalog/pi-extensions/pi-widgets/index.js"),
+            "export const version = 2;\n",
+        );
+    };
+    let loaded_from_the_personal_scope_now: Plant = |home, _| loaded_from_the_personal_scope(home);
     const UPDATE_PI: &str = "update-pi scope=project";
     let rows = [
         Row {
@@ -305,40 +372,70 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             plant: gone,
             finish: &[],
             settle_with: &[UPDATE_PI],
+            after: None,
             unsettled: Some("pi-gone"),
             check_update_pi: &["pi-widgets"],
+            check_left: &["pi-gone"],
         },
         Row {
             case: "a copy Pi already loads from the personal scope",
             plant: loaded_twice,
             finish: &[],
             settle_with: &[],
+            after: None,
             unsettled: Some("pi-widgets"),
             check_update_pi: &[],
+            check_left: &["pi-widgets"],
         },
         Row {
             case: "a filter the run writes beside a package left for update-pi",
             plant: toggled_beside_a_left_package,
             finish: &[UPDATE_PI],
             settle_with: &[UPDATE_PI],
+            after: None,
             unsettled: None,
             check_update_pi: &["pi-other"],
+            check_left: &[],
         },
         Row {
             case: "a copy Pi loads twice beside a conflict the take-over replaces",
             plant: loaded_twice_beside_a_replaceable_conflict,
             finish: &[],
             settle_with: &[],
+            after: None,
             unsettled: Some("pi-widgets"),
             check_update_pi: &[],
+            check_left: &["pi-widgets"],
         },
         Row {
             case: "a record naming another source than the declaration",
             plant: recorded_from_another_source,
             finish: &[],
             settle_with: &[],
+            after: None,
             unsettled: Some("pi-widgets"),
             check_update_pi: &[],
+            check_left: &["pi-widgets"],
+        },
+        Row {
+            case: "a recorded copy whose source moved on, loaded from the personal scope too",
+            plant: moved_on_and_loaded_twice,
+            finish: &[],
+            settle_with: &[],
+            after: None,
+            unsettled: Some("pi-widgets"),
+            check_update_pi: &[],
+            check_left: &["pi-widgets"],
+        },
+        Row {
+            case: "a copy Pi loads from the personal scope since the run's snapshot",
+            plant: |_, _| {},
+            finish: &[UPDATE_PI],
+            settle_with: &[UPDATE_PI],
+            after: Some(loaded_from_the_personal_scope_now),
+            unsettled: None,
+            check_update_pi: &[],
+            check_left: &["pi-widgets"],
         },
     ];
     for row in rows {
@@ -354,11 +451,25 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             assert!(run.contains(name), "{case}: {run}");
             assert!(!run.contains("up to date"), "{case}: {run}");
         }
+        if let Some(after) = row.after {
+            after(&home, &project);
+        }
+        let check = checked(&home, &project);
+        assert_eq!(check.update_pi, row.check_update_pi, "{case}: check");
+        assert_eq!(check.no_fix, row.check_left, "{case}: check");
         assert_eq!(
-            check_names_update_pi(&home, &project),
-            row.check_update_pi,
-            "{case}"
+            check.clean,
+            row.check_update_pi.is_empty() && row.check_left.is_empty(),
+            "{case}: check"
         );
+        let (offered, warned) = standing(&home, &project);
+        assert_eq!(offered, row.check_update_pi, "{case}: update standing");
+        for name in row.check_left {
+            assert!(
+                warned.iter().any(|warned| warned == name),
+                "{case}: {warned:?}"
+            );
+        }
         if let Some(name) = row.unsettled {
             let verified = said(&kendex(&home, &project, &["verify"]));
             assert!(

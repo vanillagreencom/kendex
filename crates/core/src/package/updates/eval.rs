@@ -99,8 +99,10 @@ impl Eval<'_> {
             ..planned.decl.clone()
         };
         // An update is on offer where `update-pi`, run on this scope
-        // alone, installs one (`pi_ext::admit`): a package Pi already
-        // loads from a root beside this one is not, whatever its bytes.
+        // alone, installs one (`pi_ext::admit`). A package Pi already
+        // loads from a root beside this one is no update, and not current
+        // either: it stands as a warning with the reason `update-pi`
+        // leaves it.
         let admitted = crate::settings::load(self.env).map(|settings| {
             let (root, other_roots) = crate::pi_ext::paired_roots(
                 self.env,
@@ -124,6 +126,12 @@ impl Eval<'_> {
                 crate::pi_ext::RecordBasis::Recorded,
             )
         });
+        let left = match &admitted {
+            Ok(admission @ crate::pi_ext::Admission::LoadedElsewhere { .. }) => {
+                admission.unsettled().map(|(_, reason)| reason)
+            }
+            _ => None,
+        };
         let compared = match admitted {
             // Nothing newer is on offer for what the catalog retired.
             Ok(crate::pi_ext::Admission::Retired) => Ok(None),
@@ -161,6 +169,16 @@ impl Eval<'_> {
                 let row = &mut report.rows[at];
                 row.ignored = self.is_ignored(planned.kind, name, &row.repo);
                 row.update_available = installs;
+                if let Some(reason) = left {
+                    report.warnings.push(ItemWarning {
+                        kind: ItemKind::PiExtension,
+                        name: name.clone(),
+                        harness: Some(HarnessId::Pi),
+                        message: reason,
+                        remediation: None,
+                        detail: None,
+                    });
+                }
             }
             Err(error) => report.warnings.push(ItemWarning {
                 kind: ItemKind::PiExtension,
