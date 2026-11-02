@@ -4,12 +4,14 @@ The public events and drain commands own the output contract. Their per-poll
 process starts exceed the relay's polling contract, so reads call that same
 mailbox owner's parser and receipt rules inside this process.
 
-The relay keys every delivery it makes with `--delivery-id channel:ts`. Its
-journal skips a stamp it already carried; for any stamp the journal lost,
-the crash between the append and the mark, the mailbox's locked
-check-and-append is the judge: a repeat of a key that landed is answered
-with the envelope it landed as, and the relay records that id exactly as it
-records a first landing.
+The relay keys every owner message it delivers with `--delivery-id
+channel:ts`. Its journal skips a stamp it already carried; for any stamp
+the journal lost, the crash between the append and the mark, the mailbox's
+locked check-and-append is the judge: a repeat of a key that landed is
+answered with the envelope it landed as, and the relay records that id
+exactly as it records a first landing. A /report directive is keyed
+`command:<trigger_id>` and has no journal line, so that check alone judges
+its repeat.
 """
 
 from __future__ import annotations
@@ -54,39 +56,10 @@ class LaneMail:
             raise Refusal("orch-missing", str(root))
 
     def _run(self, *args: str) -> Tuple[int, str, str]:
-        proc = subprocess.Popen(
-            [str(self.script), *args],
-            cwd=str(self.root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
         try:
-            out, err = proc.communicate(timeout=LANE_MAIL_TIMEOUT_SECONDS)
+            return run_bounded([str(self.script), *args], self.root, LANE_MAIL_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired as err:
-            # lane-mail owns the directory mutex. TERM must reach its waiting
-            # guard too, so the shell can run the lock owner's release handler.
-            try:
-                for sig in (signal.SIGTERM, signal.SIGKILL):
-                    try:
-                        os.killpg(proc.pid, sig)
-                    except ProcessLookupError:
-                        # The group can finish between the timeout and signal.
-                        if proc.poll() is None:
-                            raise
-                    try:
-                        proc.communicate(timeout=LANE_MAIL_CLEANUP_SECONDS)
-                        break
-                    except subprocess.TimeoutExpired:
-                        if sig == signal.SIGKILL:
-                            # Do not wait for pipes held outside the owned group.
-                            proc.wait(timeout=LANE_MAIL_CLEANUP_SECONDS)
-            finally:
-                proc.stdout.close()
-                proc.stderr.close()
             raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command={args[0]}") from err
-        return proc.returncode, out, err
 
     def _read_events(self, receipts: bool = False) -> Tuple[List[Dict], Optional[Tuple[int, Set[str]]]]:
         deadline = time.monotonic() + LANE_MAIL_TIMEOUT_SECONDS
@@ -198,7 +171,20 @@ class LaneMail:
 
     def send_directive(self, text: str, delivery_id: str, parent: Optional[Dict] = None) -> str:
         """Append an owner directive with its optional thread pointer.
-        Returns the envelope id, including on a repeated delivery."""
+        Returns the envelope id, including on a repeated delivery; a root
+        with no recorded overseer refuses as any other lane-mail refusal."""
+        outcome, value = self.directive(text, delivery_id, parent)
+        if outcome == "absent":
+            raise Refusal("lane-mail-failed", value)
+        return value
+
+    def directive(self, text: str, delivery_id: str, parent: Optional[Dict] = None) -> Tuple[str, str]:
+        """lane-mail's answer to one directive, classified once: `landed`
+        with the envelope id, a repeated delivery's earlier id included, or
+        `absent` with lane-mail's refusal where no overseer is recorded at
+        the root, which lane-mail refuses before it appends anything. Any
+        other refusal raises. The owner form of `send` judges no reader
+        pane; only `peer send` prints `no-reader=`."""
         path = self._text_file(text)
         context = None
         try:
@@ -212,10 +198,12 @@ class LaneMail:
             if context is not None:
                 os.unlink(context)
         if code == 0:
-            return _field(out, "id=")
+            return "landed", _field(out, "id=")
         first = _first(err)
         if first.startswith(f"lane-mail: delivery-repeated={delivery_id} id="):
-            return first.rsplit("id=", 1)[1].strip()
+            return "landed", first.rsplit("id=", 1)[1].strip()
+        if first.startswith("lane-mail: overseer-absent="):
+            return "absent", err.strip()
         raise Refusal("lane-mail-failed", err.strip() or first)
 
     def read_receipts(self) -> Tuple[int, Set[str]]:
@@ -244,6 +232,61 @@ class LaneMail:
         if first.startswith(f"lane-mail: resolved-already={ask_id} id="):
             return "resolved-already", first.rsplit("id=", 1)[1].strip()
         raise Refusal("lane-mail-failed", err.strip() or first)
+
+
+def run_bounded(argv: List[str], cwd: Path, timeout: float, env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
+    """One child in a process group of its own, stdin closed and its output
+    captured whole: its exit status, stdout and stderr, decoded as UTF-8 with
+    each invalid byte sequence replaced, so no output the child prints can raise.
+    Past `timeout`, TERM and then KILL reach the whole group, each followed
+    by up to LANE_MAIL_CLEANUP_SECONDS for the group to end, then up to that
+    again for the child alone, and TimeoutExpired is raised: the call holds
+    its caller for at most `timeout` plus three times
+    LANE_MAIL_CLEANUP_SECONDS. The raised exception's `output` and `stderr`
+    are decoded the same way: everything the group printed once it ended,
+    or what was read before the deadline when it never ended."""
+    proc = subprocess.Popen(
+        argv,
+        cwd=str(cwd),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        errors="replace",
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        # communicate's TimeoutExpired carries the raw bytes it had read,
+        # whatever the Popen's encoding.
+        exc.output, exc.stderr = (
+            part.decode("utf-8", "replace") if isinstance(part, bytes) else part or ""
+            for part in (exc.output, exc.stderr))
+        # TERM before KILL, and to the group: lane-mail owns a directory
+        # mutex, and TERM must reach its waiting guard too, so the shell can
+        # run the lock owner's release handler.
+        try:
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(proc.pid, sig)
+                except ProcessLookupError:
+                    # The group can finish between the timeout and signal.
+                    if proc.poll() is None:
+                        raise
+                try:
+                    exc.output, exc.stderr = proc.communicate(timeout=LANE_MAIL_CLEANUP_SECONDS)
+                    break
+                except subprocess.TimeoutExpired:
+                    if sig == signal.SIGKILL:
+                        # Do not wait for pipes held outside the owned group.
+                        proc.wait(timeout=LANE_MAIL_CLEANUP_SECONDS)
+        finally:
+            proc.stdout.close()
+            proc.stderr.close()
+        raise
+    return proc.returncode, out, err
 
 
 def _first(text: str) -> str:

@@ -456,6 +456,40 @@ reserved-later real yes after
 reserved-overdue-control overdue yes after
 ROWS
 
+# --- a resume posts a reply to an owner message the Jarvis session read ------------
+# The owner's message lands on a held poll; its reply and an unrelated notice
+# follow, the session reads both, and the hold ends before another held poll.
+# The control puts the seen rule back ahead of the reply rule.
+while read -r name control; do
+  R="$(sk_new_root "seen-reply-$name")"
+  sk_bind "$R"
+  sk_poll "$R" "$HOLD"
+  fresh
+  CH_R="$(sk_channel "$R")"
+  TS="$(sk_inject "$CH_R" U001 "Owner message in $name.")"
+  sk_poll "$R" "$HOLD"
+  DIRECTIVE="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$R")/to-lane.jsonl")"
+  sk_lm "$R" notice --item overseer --to owner --ref "$DIRECTIVE" --file "$(sk_text "$name-reply" "Read reply in $name.")" >/dev/null
+  notice "$R" "$name-unrelated" "Read unrelated in $name."
+  UNRELATED="$(last_id "$R")"
+  sk_jarvis_read "$R" "$(wc -l < "$(sk_box "$R")/to-overseer.jsonl")"
+  stale
+  [ "$control" = real ] || sk_mutant seen-before-reply relay.py ' and not reply\n' '\n'
+  sk_poll "$R" "$HOLD"
+  ROW="$RC=$(count "$CH_R" "Read reply in $name.")=$(sk_state "[.messages.${CH_R}[] | select(.text | contains(\"Read reply in $name.\")) | .thread_ts] | join(\",\")")=$(count "$CH_R" "Read unrelated in $name.")=$(jq -r 'select(.t == "resume") | .skipped | join(",")' "$(sk_journal "$R")")"
+  if [ "$control" = real ]; then
+    assert_eq "$ROW" "0=1=$TS=0=$UNRELATED" "$name: a resume posts a read reply in the owner's thread and still skips a read unrelated notice"
+    sk_poll "$R" "$HOLD"
+    assert_eq "$(count "$CH_R" "Read reply in $name.")=$(count "$CH_R" "Read unrelated in $name.")" "1=0" "$name: a restart repeats neither the posted reply nor the skipped notice"
+  else
+    sk_assert_red "$ROW" "0=1=$TS=0=$UNRELATED" "$name: the seen rule ahead of the reply rule drops the read reply"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+real real
+old-order-control old-order
+ROWS
+
 # --- root-local settings through the real launcher and one two-root poll ----------
 # The installed unit runs in the first root. The control replaces the caller
 # snapshot with the loaded process environment, recreating the launch-root leak.

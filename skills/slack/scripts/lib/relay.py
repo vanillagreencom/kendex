@@ -11,6 +11,15 @@ message, or an owner reply in any thread. One reader owns socket sends and
 queues acknowledged envelopes. The worker owns journal, API and mailbox
 calls, so their waits cannot block acknowledgements or pong replies.
 
+The worker also answers the optional slash commands, through the one
+COMMANDS table, and the Home tab: /status and /asks with the output of the
+command line their setting names, /report with one directive to
+SLACK_REPORT_ROOT's mailbox, each as one ephemeral reply to the payload's
+response_url; an app_home_opened event publishes SLACK_HOME_COMMAND's
+output as the opener's Home tab. SLACK_OWNERS gates both. Neither has a
+catch-up: a command acknowledged and then lost to a stop is gone, and the
+owner types it again.
+
 An event moves no position. It writes no `seen` or `thread` line; the
 catch-up writes both, and a start with no seeds writes the `seen` line of
 the binding moment. The catch-up runs on the first poll after every connect
@@ -57,7 +66,11 @@ Each root checks its presence pair at every poll through the settings reader
 when its settings files change. Other settings need slack setup or a restart.
 While SLACK_JARVIS_SESSION_FILE is younger than SLACK_JARVIS_SESSION_MAX_AGE a Jarvis session
 answers the overseer, and the relay holds mailbox posts except replies to
-messages the owner typed in the channel, which still post in their threads.
+messages the owner typed in the channel, which still post in their threads,
+and a notice whose --ref names a /report directive, which posts as a new
+message. oversee-report's report notice carries no --ref, so it is an
+ordinary owner notice under the hold, and oversee-report sends none during
+ORCH_REPORT_QUIET_HOURS.
 Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
 is dropped once the new one is fresh or the replaced one stale. An emptied
@@ -65,7 +78,8 @@ setting ends the hold. When the file goes stale or
 absent the relay resumes. The Jarvis session's watch writes its last mailbox read
 count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
 skips notices and asks, including closed asks, on lines at or below that count, with no post and
-no mention, and journals their ids; later ones post. A missing or unreadable
+no mention, and journals their ids; later ones post, and so does a reply to
+a Slack-origin directive at any line. A missing or unreadable
 seen file skips nothing. The count is clamped to the lines listed. Held answers
 still post; closure records update thread state independently of post age.
 `slack post --mention` checks the root's OS hold lock, including a renamed
@@ -100,7 +114,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
 from api import RETRIES, Slack, markdown_checked
-from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail
+from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail, run_bounded
 from markup import Verbatim, continuations, outbound, plain
 from refusals import LockRefusal, Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
@@ -148,6 +162,32 @@ RETRY_MAX_SECONDS = 60
 RECONNECT_BOUND_SECONDS = 2 * RETRY_MAX_SECONDS
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
 NO_TEXT = "Only text and files are routed; this message has neither."
+NOT_OWNER_COMMAND = "Only the relay's owners run its commands; nothing ran."
+REPORT_TEXT = "The owner typed /report in Slack: send a progress report now."
+# Slack wants a slash command acknowledged within 3 seconds, which the
+# reader's acknowledgement meets; the worker answers through the payload's
+# response_url (https://docs.slack.dev/interactivity/implementing-slash-commands).
+# A configured command runs this many seconds before TERM and then KILL reach
+# its process group; `run_bounded` states the stop's further bound, and the
+# whole hold stays far inside the stall bound.
+COMMAND_SECONDS = 10
+# chat.postMessage's recommended bound on a message's `text`, which a
+# response_url reply carries (https://docs.slack.dev/reference/methods/chat.postMessage).
+REPLY_CHARS = 4000
+# A home view holds at most 100 blocks
+# (https://docs.slack.dev/reference/views/home-tab-views) and a section's
+# text at most 3000 characters
+# (https://docs.slack.dev/reference/block-kit/blocks/section-block).
+HOME_BLOCKS = 100
+SECTION_CHARS = 3000
+# A trigger_id keys /report's delivery. Slack documents no stability across
+# a redelivery; one with whitespace or none at all is no key.
+TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
+# The delivery id of a /report directive is its trigger_id under this
+# prefix. `report` writes it and `RootRelay.routes` reads it as typed in
+# Slack, so a notice whose --ref names the directive posts, held or not.
+# oversee-report's report notice names no directive: an ordinary notice.
+COMMAND_KEY = "command:"
 
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
@@ -275,6 +315,27 @@ def fingerprint() -> str:
     except OSError as err:
         raise Refusal("code-unreadable", f"{path} ({err.strerror})") from err
     return digest.hexdigest()[:12]
+
+
+def bounded(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters, the cut marked where one was made."""
+    if len(text) <= limit:
+        return text
+    marker = f"\n[cut at {limit} characters]"
+    return text[: limit - len(marker)] + marker
+
+
+def withheld(name: str, cause: str) -> str:
+    """What a reply or the Home tab shows in place of a failed command's output."""
+    return f"{name} failed ({cause}); its output is not shown."
+
+
+def home_blocks(text: str) -> List[Dict]:
+    """`text` as the mrkdwn sections of a home view, within Slack's block and
+    section limits."""
+    text = bounded(text, HOME_BLOCKS * SECTION_CHARS)
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": text[i : i + SECTION_CHARS]}}
+            for i in range(0, len(text), SECTION_CHARS)]
 
 
 def overdue_id(ask_id: str) -> str:
@@ -852,7 +913,7 @@ class RootRelay:
 
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
-        `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume,
+        `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume, never a reply,
         `overdue` for a reserved ask with a posted thread or unresolved post
         open past its deadline, or `skip`
         for another that never posts; answers carry their ask's record."""
@@ -889,26 +950,36 @@ class RootRelay:
             box = envelope.get("box")
             kind = envelope.get("kind")
             owner = box == "to-overseer" and envelope.get("to") == "owner"
+            ref = envelope.get("ref")
+            reference = by_id.get(ref, {})
+            # A notice whose ref is a directive the owner typed in Slack:
+            # send_directive writes a message's thread pointer and channel:ts,
+            # `report` a /report's COMMAND_KEY. It is a reply, posted while
+            # held, and the Jarvis session reading it is no reason to skip it
+            # on resume, since only Slack shows it to the owner who typed there.
+            # post_notice threads it under the message, and a /report, which
+            # has no thread, gets a new message.
+            delivery_id = str(reference.get("delivery_id", ""))
+            reply = owner and kind == "notice" and bool(
+                reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
+                or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
+            if (owner and kind in ("notice", "ask") and not reply
+                    and envelope["line"] is not None and envelope["line"] <= seen):
+                route = "seen"
             # `store.compact` drops an `out` line by this same age, so an
             # envelope whose line it may drop must never post again.
-            if owner and kind in ("notice", "ask") and envelope["line"] is not None and envelope["line"] <= seen:
-                route = "seen"
             elif at < horizon:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in closed else "ask"
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
+            elif reply:
+                route = "reply"
             elif owner and kind == "notice":
-                ref = envelope.get("ref")
-                reference = by_id.get(ref, {})
-                # send_directive writes Slack's channel:ts and thread pointer.
-                # Owner asks originate here, so their rulings still post.
-                slack_reply = reference.get("thread_ts") or re.fullmatch(
-                    r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", str(reference.get("delivery_id", ""))
-                )
+                # Owner asks originate here too, so their rulings still post.
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
-                route = "reply" if slack_reply else "notice" if not ref or owner_ask else "skip"
+                route = "notice" if not ref or owner_ask else "skip"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:
@@ -1193,6 +1264,11 @@ class Relay:
         self.sleep = sleep
         self.progress: Callable = lambda stage, done=False: None
         self.paths = roots
+        self.report_root = self.served("SLACK_REPORT_ROOT", settings.report_root)
+        # SLACK_OWNERS as Slack ids for commands and the Home tab, resolved
+        # on first use; a root's binding can hold an owner since removed.
+        self.owner_set: Optional[Set[str]] = None
+        self.home_off = False
         self.roots: List[RootRelay] = []
         self.by_channel: Dict[str, RootRelay] = {}
         self.root_errors: Dict[Path, str] = {}
@@ -1217,6 +1293,17 @@ class Relay:
         self.reader: Optional[threading.Thread] = None
         for path in self.paths:
             self.start_root(path)
+
+    def served(self, name: str, path: Optional[Path]) -> Optional[Path]:
+        """A setting's checkout as the root this relay serves under that
+        path, refused at start when it is none of them: an overseer the
+        relay does not serve would answer into a channel no relay posts."""
+        if path is None:
+            return None
+        real = Path(os.path.realpath(path))
+        if real not in self.paths:
+            raise Refusal("setting-invalid", f"{name}={path} fix=name a checkout this relay's --root serves")
+        return real
 
     def claim_channel(self, path: Path, channel: str) -> None:
         for other, bound in self.channels.items():
@@ -1505,11 +1592,12 @@ class Relay:
 
     def envelope(self, socket: WebSocket, text: str) -> None:
         """One envelope: acknowledged by its envelope_id before anything
-        else, since the catch-up covers a stop after the acknowledgement
-        within its lookback, and the journal skips an envelope Slack
-        sent again. A `disconnect` drops the connection for a
-        new one; other envelopes enter the worker queue without any API,
-        journal or mailbox call."""
+        else. For a message event, the catch-up covers a stop after the
+        acknowledgement within its lookback, and the journal skips an
+        envelope Slack sent again; a slash command or Home event lost after
+        its acknowledgement is not recovered. A `disconnect` drops the
+        connection for a new one; other envelopes enter the worker queue
+        without any API, journal or mailbox call."""
         try:
             envelope = json.loads(text)
         except ValueError as err:
@@ -1523,10 +1611,19 @@ class Relay:
         self.incoming.put(envelope)
 
     def deliver(self, envelope: Dict) -> None:
-        """Route an acknowledged envelope on the worker."""
+        """Route an acknowledged envelope on the worker: a slash command, an
+        opened Home tab, or a message event by its channel."""
+        payload = envelope.get("payload") or {}
+        if envelope.get("type") == "slash_commands":
+            self.command(payload)
+            return
         if envelope.get("type") != "events_api":
             return
-        event = (envelope.get("payload") or {}).get("event") or {}
+        event = payload.get("event") or {}
+        if event.get("type") == "app_home_opened":
+            if event.get("tab") == "home":
+                self.home(str(event.get("user") or ""))
+            return
         root = self.by_channel.get(str(event.get("channel", "")))
         if event.get("type") != "message" or root is None:
             return
@@ -1535,3 +1632,145 @@ class Relay:
         except Refusal as err:
             self.root_failed(root, err)
             root.due = set()
+
+    # -- slash commands and the Home tab --------------------------------------
+
+    def owner_ids(self) -> Set[str]:
+        """The one owner gate of commands and the Home tab: SLACK_OWNERS,
+        which a running relay never rereads, resolved once it resolves."""
+        if self.owner_set is None:
+            self.owner_set = set(resolve_owner_ids(self.api, self.settings.owners).values())
+        return self.owner_set
+
+    def command(self, payload: Dict) -> None:
+        """One slash command, answered by one ephemeral reply to its
+        response_url. A dead token stops the relay; any other refusal is
+        printed and the relay goes on."""
+        name = str(payload.get("command") or "")
+        url = str(payload.get("response_url") or "")
+        if not url:
+            print(keyed("command-unanswerable", name or "-"), file=sys.stderr, flush=True)
+            return
+        try:
+            text = self.command_reply(name, payload)
+            self.api.respond(url, {"response_type": "ephemeral", "text": text})
+        except Refusal as err:
+            if err.key == "slack-auth-failed":
+                raise
+            print_refusal(err)
+
+    def command_reply(self, name: str, payload: Dict) -> str:
+        handler = COMMANDS.get(name)
+        if handler is None:
+            return f"{name} is not a command this relay answers."
+        try:
+            if str(payload.get("user_id") or "") not in self.owner_ids():
+                return NOT_OWNER_COMMAND
+            return handler(self, payload)
+        except Refusal as err:
+            if err.key == "slack-auth-failed":
+                raise
+            print_refusal(err)
+            return f"{name} failed ({err.key}); nothing more is shown here."
+
+    def command_output(self, setting: str, argv: Tuple[str, ...]) -> Tuple[str, str]:
+        """A configured command's stdout and an empty cause, or no text and
+        the cause it failed by: `start`, `timeout`, `exit-N` or `empty`,
+        printed as `command-failed`, or the refusal key of the secret-value
+        check, printed as that refusal. No payload field reaches its argv,
+        environment or stdin. It runs in the directory the relay started
+        in, with the caller's own environment, which holds no setting the
+        launcher loaded from the checkout's files, and its stderr goes to
+        the relay's stderr, never to Slack."""
+        self.progress("command:" + setting)
+        out, err = "", ""
+        try:
+            code, out, err = run_bounded(list(argv), Path.cwd(), COMMAND_SECONDS, env=CALLER_ENV)
+            cause = "" if code == 0 else f"exit-{code}"
+        except subprocess.TimeoutExpired as exc:
+            err = exc.stderr
+            cause = "timeout"
+        except OSError:
+            cause = "start"
+        finally:
+            self.progress("command:" + setting, True)
+        if err:
+            sys.stderr.write(err)
+        out = out.strip()
+        if not cause and not out:
+            cause = "empty"
+        if cause:
+            print(keyed("command-failed", f"{setting} cause={cause}"), file=sys.stderr, flush=True)
+            return "", cause
+        try:
+            secret_check(out.encode(), f"command={setting}")
+        except Refusal as refusal:
+            print_refusal(refusal)
+            return "", refusal.key
+        return out, ""
+
+    def answer_with(self, name: str, setting: str, argv: Tuple[str, ...]) -> str:
+        """The reply of a command that shows a configured command's output."""
+        if not argv:
+            return f"{name} is not enabled on this relay; {setting} turns it on."
+        text, cause = self.command_output(setting, argv)
+        if cause:
+            return withheld(name, cause)
+        return bounded(text, REPLY_CHARS)
+
+    def report(self, payload: Dict) -> str:
+        """/report: one directive to SLACK_REPORT_ROOT's overseer, keyed by
+        the command's trigger_id, so a payload Slack sends again lands
+        nothing twice. lane-mail judges whether an overseer is recorded."""
+        root = self.report_root
+        if root is None:
+            return "/report is not enabled on this relay; SLACK_REPORT_ROOT turns it on."
+        trigger = payload.get("trigger_id")
+        if not isinstance(trigger, str) or not TRIGGER.fullmatch(trigger):
+            return "/report carried no usable trigger_id; nothing was sent."
+        outcome, value = LaneMail(root).directive(REPORT_TEXT, f"{COMMAND_KEY}{trigger}")
+        if outcome == "absent":
+            return f"No overseer is recorded at {root}; nothing was sent."
+        return f"Report requested from the overseer at {root} (id={value})."
+
+    def home(self, user: str) -> None:
+        """The Home tab of an owner who opened it: SLACK_HOME_COMMAND's
+        output, published by views.publish on each app_home_opened, and
+        nothing polls to keep it fresh. A failed command publishes its
+        cause in place of the output, since Slack keeps showing the last
+        view published. An unset setting and Slack's not_enabled are one
+        outcome, Home off for this process, printed once."""
+        if self.home_off:
+            return
+        if not self.settings.home_command:
+            self.home_disabled("setting")
+            return
+        try:
+            if user not in self.owner_ids():
+                return
+            text, cause = self.command_output("SLACK_HOME_COMMAND", self.settings.home_command)
+            if cause:
+                text = withheld("SLACK_HOME_COMMAND", cause)
+            # views.publish takes `view` as a JSON-encoded string
+            # (https://docs.slack.dev/reference/methods/views.publish).
+            self.api.post("views.publish", user_id=user, view=json.dumps({"type": "home", "blocks": home_blocks(text)}))
+        except Refusal as err:
+            if err.key == "slack-auth-failed":
+                raise
+            if err.error == "not_enabled":
+                self.home_disabled("slack")
+                return
+            print_refusal(err)
+
+    def home_disabled(self, cause: str) -> None:
+        self.home_off = True
+        print(keyed("home-not-enabled", cause), file=sys.stderr, flush=True)
+
+
+# The one command dispatch table: each slash command the relay answers and
+# the reply its worker builds.
+COMMANDS: Dict[str, Callable[[Relay, Dict], str]] = {
+    "/status": lambda relay, payload: relay.answer_with("/status", "SLACK_STATUS_COMMAND", relay.settings.status_command),
+    "/asks": lambda relay, payload: relay.answer_with("/asks", "SLACK_ASKS_COMMAND", relay.settings.asks_command),
+    "/report": lambda relay, payload: relay.report(payload),
+}

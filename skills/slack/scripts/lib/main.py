@@ -108,6 +108,12 @@ files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (
 --once), SLACK_OWNERS (default KENDEX_USER_EMAIL), KENDEX_USER_HANDLE (setup's
 channel name; default KENDEX_USER_EMAIL's local part), SLACK_POLL_SECONDS (15),
 SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
+The optional slash commands and Home tab, each off while empty:
+SLACK_STATUS_COMMAND and SLACK_ASKS_COMMAND, the command lines /status and
+/asks reply with the output of; SLACK_REPORT_ROOT, the --root checkout whose
+overseer mailbox /report writes one directive to; SLACK_HOME_COMMAND, the
+command line whose output the Home tab shows. A command line runs with no
+shell; after 10 seconds TERM and then KILL stop its process group.
 SLACK_JARVIS_SESSION_FILE (empty) and SLACK_JARVIS_SESSION_MAX_AGE (600) are read per root
 at every poll, using the settings reader when that root's files change,
 with the original caller exports taking precedence. Other settings need
@@ -120,7 +126,8 @@ Stalled-worker diagnostic on stderr, exit 2:
   worker-stalled=STAGE age=SECONDS bound=SECONDS
     STAGE names the worker operation that stopped making progress.
     age is seconds since startup or the last completed poll, connect
-    attempt, API operation or copied download chunk.
+    attempt, API operation, copied download chunk or configured command
+    run.
     bound is SLACK_POLL_SECONDS plus
     RECONNECT_BOUND_SECONDS. The failed exit lets a service configured
     with Restart=on-failure restart the relay.
@@ -138,6 +145,15 @@ Non-fatal diagnostics on stderr:
     KENDEX_USER_HANDLE is unset; setup names the channel after LOCAL.
   purpose-unset=CHANNEL error=ERROR
     Slack refused the channel purpose. setup still binds.
+  command-failed=SETTING cause=start|timeout|exit-N|empty
+    The command line SETTING names failed or printed nothing. The reply
+    or Home tab names the cause and carries none of the command's output.
+  command-unanswerable=COMMAND
+    A slash command arrived with no response_url; nothing ran.
+  home-not-enabled=setting|slack
+    SLACK_HOME_COMMAND is unset, or Slack answered views.publish with
+    not_enabled. Printed once per process; Home stays off until a restart
+    and the relay keeps running.
 
 """ + textwrap.fill(
     "Keyed lines, `slack: <key>=<value>` first: bound, posted, uploaded, updated,"

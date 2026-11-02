@@ -36,6 +36,16 @@ used on a method of the other answers `not_allowed_token_type`, as Slack
 does. /_test/state carries `sent`, each envelope's `envelope_id` with the
 `channel` and `ts` of the message it carried, the `acks` and `withheld`
 envelope ids, and the count of connections `opened`.
+
+Slash commands and the Home tab: POST /_test/command sends a `slash_commands`
+envelope whose payload is the body, with a `response_url` on this port unless
+the body names one, and answers that envelope's id and the url's `response`
+number; POST /_test/home with `user` and an optional `tab` (default home)
+sends an `app_home_opened` event. Both go to the newest open connection, as
+Slack sends a payload to one of an app's connections. A POST to a
+response_url needs no token and answers 200; /_test/state carries each body
+in `responses` under its number, and each views.publish call, its `view`
+decoded, in `views`.
 """
 
 from __future__ import annotations
@@ -117,6 +127,8 @@ class Workspace:
         self.acks: list = []
         self.pongs: list = []
         self.withheld: list = []
+        self.responses: dict = {}  # response_url number -> [body]
+        self.views: list = []
         self.users = users  # email -> id
         self.page = page
         self.channels: dict = {}  # id -> {id, name, members, is_private}
@@ -183,6 +195,18 @@ class Workspace:
         self.sent.append({"envelope_id": env_id, "channel": channel, "ts": message["ts"]})
         live[-1].send(json.dumps(envelope))
 
+
+    def send_envelope(self, kind: str, payload: dict) -> str:
+        """One envelope of `kind` to the newest open connection; its id, or
+        empty with no connection open."""
+        live = [conn for conn in self.sockets if conn.open]
+        if not live:
+            return ""
+        self.counter += 1
+        env_id = f"E{self.counter:04d}"
+        live[-1].send(json.dumps({"envelope_id": env_id, "type": kind, "payload": payload,
+                                  "accepts_response_payload": kind == "slash_commands"}))
+        return env_id
 
     def top_level(self, channel: str):
         """conversations.history: parents and unthreaded messages, and a reply
@@ -319,6 +343,10 @@ class Handler(BaseHTTPRequestHandler):
         with self.ws.lock:
             if path.startswith("/_test/"):
                 return self.control(path, raw)
+            if path.startswith("/_respond/"):
+                self.ws.responses.setdefault(path[len("/_respond/") :], []).append(json.loads(raw))
+                self.ws.calls.append("response_url")
+                return self.send_bytes(b"ok", "text/plain")
             if path.startswith("/_upload/"):
                 self.ws.uploads[path[len("/_upload/") :]] = raw
                 self.ws.calls.append("upload")
@@ -385,6 +413,8 @@ class Handler(BaseHTTPRequestHandler):
                     "pongs": ws.pongs,
                     "withheld": ws.withheld,
                     "opened": len(ws.sockets),
+                    "responses": ws.responses,
+                    "views": ws.views,
                 }
             )
         body = json.loads(raw or b"{}")
@@ -393,6 +423,16 @@ class Handler(BaseHTTPRequestHandler):
             ws.channels.setdefault(channel, {"id": channel, "name": channel, "members": [BOT], "is_private": True})
             message = ws.add_message(channel, body)
             return self.send_json({"ok": True, "ts": message["ts"]})
+        if path == "/_test/command":
+            number = str(len(ws.responses) + 1)
+            ws.responses.setdefault(number, [])
+            body.setdefault("response_url", f"http://{self.headers.get('Host')}/_respond/{number}")
+            return self.send_json({"ok": True, "envelope_id": ws.send_envelope("slash_commands", body), "response": number})
+        if path == "/_test/home":
+            event = {"type": "app_home_opened", "user": body["user"], "channel": "D001",
+                     "tab": body.get("tab", "home"), "event_ts": ws.next_ts()}
+            envelope_id = ws.send_envelope("events_api", {"type": "event_callback", "event": event})
+            return self.send_json({"ok": True, "envelope_id": envelope_id})
         if path == "/_test/delete":
             ws.messages[body["channel"]] = [m for m in ws.messages[body["channel"]]
                                              if m["ts"] != body["ts"] and m.get("thread_ts") != body["ts"]]
@@ -571,6 +611,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": False, "error": "no_reaction"})
         message["reactions"] = [r for r in message["reactions"] if r["name"] != params["name"]]
         self.send_json({"ok": True})
+
+    def m_views_publish(self, params):
+        """views.publish takes `view` as a JSON-encoded string."""
+        view = json.loads(params["view"])
+        self.ws.views.append({"user_id": params.get("user_id"), "view": view})
+        self.send_json({"ok": True, "view": dict(view, id=f"V{len(self.ws.views):03d}")})
 
     def m_files_getUploadURLExternal(self, params):
         file_id = f"F{len(self.ws.uploads) + 1:03d}"

@@ -20,7 +20,7 @@ for variant in normal hard-kill no-timeout; do
   if [ "$variant" = hard-kill ]; then
     sk_mutant mail-hard-kill mailbox.py '\(signal.SIGTERM, signal.SIGKILL\)' '(signal.SIGKILL,)'
   elif [ "$variant" = no-timeout ]; then
-    sk_mutant mail-timeout mailbox.py 'timeout=LANE_MAIL_TIMEOUT_SECONDS\)' 'timeout=None)'
+    sk_mutant mail-timeout mailbox.py 'self\.root, LANE_MAIL_TIMEOUT_SECONDS\)' 'self.root, None)'
   fi
   sk_poll "$LOCKED" # Real wait: timeout after the shipped send holds its mutex.
   if [ "$variant" = no-timeout ]; then
