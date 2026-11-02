@@ -303,6 +303,37 @@ test("model discovery that stalls gives no models and a keyed notice instead of 
 	assert.equal(stalled.killed?.message, "codex-discovery-timeout after_ms=50");
 });
 
+// A session that never selects a pi-codex model holds no Codex child once
+// discovery returns.
+test("model discovery stops its child before it returns, and the first stream opens a fresh one", { timeout: 5000 }, async () => {
+	const clients = [];
+	const stopped = new Set();
+	const bridge = new CodexBridge({ codexHome, cwd: "/workspace", connect: async () => {
+		const client = new FakeClient({
+			"model/list": () => ({ data: [], nextCursor: null }),
+			"turn/start": () => { client.complete(); return { turn: { id: TURN } }; },
+		});
+		// A stop that settles only after the child exits.
+		const kill = client.kill.bind(client);
+		client.kill = async (reason) => {
+			await kill(reason);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			stopped.add(client);
+		};
+		clients.push(client);
+		return client;
+	} });
+	assert.deepEqual(await bridge.discoverModels(), { models: [] });
+	assert.equal(clients.length, 1);
+	assert.equal(stopped.has(clients[0]), true, "discovery returned while its child still ran");
+	const end = await finish(bridge.streamSimple(model, { messages: [system(), user("Hello")] }));
+	assert.equal(end.reason, "stop", end.error?.errorMessage);
+	assert.equal(clients.length, 2);
+	assert.equal(stopped.has(clients[1]), false);
+	await bridge.close();
+	assert.equal(stopped.has(clients[1]), true);
+});
+
 // Each server request the bridge does not serve: the exact answer Codex gets,
 // the key the stream fails with, and the turn interrupted.
 for (const row of [

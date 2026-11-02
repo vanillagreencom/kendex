@@ -3,7 +3,7 @@
 // provider on 127.0.0.1. The rows come from the manifest's supported list, so
 // a listed release runs each row or fails.
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { supportedCodexVersions } from "../src/codex-policy.ts";
@@ -24,6 +24,31 @@ function captureStderr() {
 		return write(chunk, ...rest);
 	};
 	return { text: () => lines.join(""), restore: () => (process.stderr.write = write) };
+}
+
+/** Every `rollout-*.jsonl` below `dir`. */
+function rolloutFiles(dir) {
+	if (!existsSync(dir)) return [];
+	return readdirSync(dir, { recursive: true }).filter((name) => /(^|\/)rollout-[^/]*\.jsonl$/.test(name)).map((name) => join(dir, name));
+}
+
+/** README § Usage records applied to one rollout: the sum of the increases in
+ * `info.total_token_usage`, skipping events with no `info` and events whose
+ * total did not change, and the writer's `originator`. */
+function rolloutUsage(path) {
+	let originator;
+	let last = 0;
+	let totalTokens = 0;
+	for (const line of readFileSync(path, "utf8").split("\n")) {
+		if (line === "") continue;
+		const entry = JSON.parse(line);
+		if (entry.type === "session_meta") originator = entry.payload.originator;
+		if (entry.type !== "event_msg" || entry.payload.type !== "token_count" || entry.payload.info == null) continue;
+		const total = entry.payload.info.total_token_usage.total_tokens;
+		if (total > last) totalTokens += total - last;
+		last = total;
+	}
+	return { originator, totalTokens };
 }
 
 for (const version of supportedCodexVersions()) {
@@ -85,6 +110,42 @@ for (const version of supportedCodexVersions()) {
 			assert.equal(seen.includes(sentinel), false, `${sentinel} reached the bridge's output, events or child argv`);
 			assert.deepEqual(filesHolding(world.root, sentinel, [world.homeConfig, world.projectConfig]), [], `${sentinel} reached a file outside the config that declares it`);
 		}
+	});
+
+	// README § Usage records: the rollout holds a bridged turn's usage, and
+	// Pi's copy, the latest model request's context with cost 0, is derived. A
+	// tool-call turn, a cold resume and a second turn are three model requests
+	// of 8 tokens each, so the rule reads 24 where Pi's copies read 0, 8 and 8.
+	test(`codex ${version}: the bridge's rollout counts each model request once across a tool call and a cold resume`, { timeout: FIXTURE_TIMEOUT }, async (t) => {
+		const world = await worldFor("usage", {
+			script: [
+				[functionCall("read", { path: "fixture.txt" }, "call-1", "pi")],
+				[message("first answer")],
+				[message("second answer")],
+			],
+		});
+		t.after(() => world.close());
+		const model = piModel(world.model);
+		const transcript = [system([readTool]), user("Read the fixture")];
+		const first = world.newBridge();
+		const toolUse = await finish(first.streamSimple(model, { messages: transcript }));
+		assert.equal(toolUse.reason, "toolUse", toolUse.error?.errorMessage);
+		transcript.push(toolUse.message, toolResult("call-1"));
+		const answer = await finish(first.streamSimple(model, { messages: transcript }));
+		assert.equal(answer.reason, "stop", answer.error?.errorMessage);
+		await first.close();
+		transcript.push(answer.message, user("And again", 9));
+		const second = world.newBridge();
+		const resumed = await finish(second.streamSimple(model, { messages: transcript }));
+		assert.equal(resumed.reason, "stop", resumed.error?.errorMessage);
+		await second.close();
+
+		assert.equal(world.sentMethods().filter((method) => method === "thread/resume").length, 1);
+		assert.deepEqual([toolUse, answer, resumed].map((end) => end.message.usage.totalTokens), [0, 8, 8]);
+		const rollouts = rolloutFiles(join(world.home, "sessions"));
+		assert.equal(rollouts.length, 1, `one thread writes one rollout: ${rollouts}`);
+		const usage = rolloutUsage(rollouts[0]);
+		assert.deepEqual(usage, { originator: "pi_codex_bridge", totalTokens: 24 });
 	});
 
 	// The late server keeps running after stdin closes, so only the bridge's

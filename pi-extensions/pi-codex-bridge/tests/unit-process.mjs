@@ -212,12 +212,16 @@ for (const row of [
 	});
 }
 
+// A stream's failed thread setup leaves the connected child with the bridge,
+// as the stub answers config/read with no config.
 test("close stops a connected child and the processes it started", { timeout: 10_000 }, async (t) => {
 	const dir = scratchDir(t, "close");
 	const bridge = new CodexBridge({ codexHome: dir, cwd: dir, executable: writeStubCodex(dir, { helper: true }), env: { PATH: process.env.PATH } });
-	assert.deepEqual(await bridge.discoverModels(5000), { models: [] });
+	const end = await finish(bridge.streamSimple(model, { messages: [system(), user("Hello")] }));
+	assert.equal(end.reason, "error");
 	const [server] = await recordedPids(dir, "app-server.pid");
 	const [helper] = await recordedPids(dir, "helper.pid");
+	assert.equal(alive(server), true, "the failed stream stopped the child");
 	await bridge.close();
 	assert.equal(await goneWithin(server, 2000), true);
 	assert.equal(await goneWithin(helper, 2000), true);
@@ -230,19 +234,22 @@ test("the handshake deadline also covers a version check that never ends", { tim
 	assert.equal(existsSync(join(dir, "app-server.pid")), false);
 });
 
-// close waits for a child still in its handshake, one that ignores SIGTERM
-// for the whole grace here: an open close aborts itself, and one the
-// discovery deadline aborted before.
+// A child still in its handshake, one that ignores SIGTERM for the whole grace
+// here, is waited for: by close, which aborts the open itself, and by the
+// discovery the deadline ended, which returns only after the child exits.
 for (const row of [
-	{ name: "while discovery waits on it", deadlineMs: 10_000, awaitDiscovery: false },
-	{ name: "after the discovery deadline gave up on it", deadlineMs: 1000, awaitDiscovery: true },
+	{ name: "close, while discovery waits on it", deadlineMs: 10_000, awaitDiscovery: false },
+	{ name: "discovery, after its deadline gave up on it", deadlineMs: 1000, awaitDiscovery: true },
 ]) {
-	test(`close waits for a child still in its handshake: ${row.name}`, { timeout: 15_000 }, async (t) => {
+	test(`a child still in its handshake is waited for by ${row.name}`, { timeout: 15_000 }, async (t) => {
 		const dir = scratchDir(t, "stall");
 		const bridge = new CodexBridge({ codexHome: dir, cwd: dir, executable: writeStubCodex(dir, { answer: false, ignoreTerm: true }), env: { PATH: process.env.PATH }, handshakeDeadlineMs: 10_000 });
 		const discovered = bridge.discoverModels(row.deadlineMs);
 		const [pid] = await recordedPids(dir, "app-server.pid");
-		if (row.awaitDiscovery) assert.deepEqual(await discovered, { models: [], notice: `codex-discovery-timeout after_ms=${row.deadlineMs}` });
+		if (row.awaitDiscovery) {
+			assert.deepEqual(await discovered, { models: [], notice: `codex-discovery-timeout after_ms=${row.deadlineMs}` });
+			assert.equal(alive(pid), false, "discovery returned while the child still ran");
+		}
 		await bridge.close();
 		assert.equal(alive(pid), false, "close returned while the child still ran");
 		if (!row.awaitDiscovery) assert.deepEqual(await discovered, { models: [], notice: "codex-bridge-closed" });

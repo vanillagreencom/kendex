@@ -3,6 +3,9 @@ set -euo pipefail
 
 package_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 
+# The live run and its credential snapshot both use the CODEX_HOME login.
+unset PI_CODEX_BRIDGE_HOME
+
 if [[ "${PI_CODEX_BRIDGE_LIVE:-0}" != "1" ]]; then
 	printf '%s\n' "pi-codex-live skipped=PI_CODEX_BRIDGE_LIVE"
 	exit 0

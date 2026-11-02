@@ -1,6 +1,6 @@
 import * as piAi from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { hasCodexLogin, LOGIN_MISSING_KEY, resolveCodexHome } from "./auth-presence.js";
+import { hasCodexLogin, loginMissingMessage, resolveCodexHome } from "./auth-presence.js";
 import { CodexBridge } from "./bridge.js";
 import { API_ID, buildPiModels, PROVIDER_ID } from "./models.js";
 import {
@@ -48,7 +48,7 @@ export default async function piCodexBridge(pi: ExtensionAPI): Promise<void> {
 			models = buildPiModels(discovered.models);
 			if (discovered.notice !== undefined) notice = `${discovered.notice}\nPi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
 		} else {
-			notice = `${LOGIN_MISSING_KEY} home=${codexHome}\nPi Codex offers no models until the Codex CLI is signed in: codex login`;
+			notice = loginMissingMessage(codexHome);
 		}
 		pi.registerProvider(piAi.createProvider({
 			id: PROVIDER_ID,
