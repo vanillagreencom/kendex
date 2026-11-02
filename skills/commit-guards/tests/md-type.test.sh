@@ -73,7 +73,7 @@ commit() { git -C "$R" commit -qm "${1:-seed}"; }
 # signal lines are dropped unless KEEP names them.
 keyed() { # RC OUTPUT [KEEP-ERE]
   local out
-  out="$(printf '%s\n' "$2" | LC_ALL=C grep -E '^md-type: [a-z-]+=' | LC_ALL=C grep -Ev "^md-type: (summary|signal)=" || true)"
+  out="$(printf '%s\n' "$2" | LC_ALL=C grep -E '^md-type: [a-z-]+=' | LC_ALL=C grep -Ev "^md-type: (summary|signal|judged)=" || true)"
   if [ -n "${3-}" ]; then
     out="$(printf '%s\n' "$2" | LC_ALL=C grep -E "$3" || true)"
   fi
@@ -81,7 +81,7 @@ keyed() { # RC OUTPUT [KEEP-ERE]
 }
 as_run() { # PATH CONTENT [KEEP-ERE] — md-type --as over CONTENT in the current fixture
   local rc=0 out=""
-  out="$(printf '%b' "$2" | "$MDT" --as "$1" --root "$R" - 2>&1)" || rc=$?
+  out="$(printf '%b' "$2" | "$MDT" --root "$R" --as "$1" - 2>&1)" || rc=$?
   keyed "$rc" "$out" "${3-}"
 }
 lane_run() { # ARGS [KEEP-ERE] — md-type in the current fixture
@@ -122,6 +122,9 @@ as_rows \
   "a README with nothing between its title and first section has no description|README.md|# Tool\n\n## Features\n\n- One.\n|rc=1 ${F}description-missing path=README.md type=readme line=3 rule=$DESCRIPTION_ITEM count=1 baseline=none introduced=yes section=top" \
   "a heading the list does not name is not ordered|README.md|# Tool\n\nA tool.\n\n## Licence\n\n## Troubleshooting\n|rc=0" \
   "a README titled with an H2 keeps its description under that title|README.md|## Tool\n\nA tool.\n\n## Features\n\n- One.\n|rc=0" \
+  "a Setext title is a heading, never its own description|README.md|Tool\n====\n\n## Features\n|rc=1 ${F}description-missing path=README.md type=readme line=4 rule=$DESCRIPTION_ITEM count=1 baseline=none introduced=yes section=top" \
+  "a Setext first section's text is that section, never the description|README.md|# Tool\n\nFeatures\n--------\n\n- One.\n|rc=1 ${F}description-missing path=README.md type=readme line=4 rule=$DESCRIPTION_ITEM count=1 baseline=none introduced=yes section=top" \
+  "a Setext-titled README keeps its description under that title|README.md|Tool\n====\n\nA tool.\n\n## Features\n|rc=0" \
   "an architecture doc's value table cites its route row|docs/architecture/plugins.md|# Plugins\n\n## Rules\n\n$TABLE|rc=1 ${F}value-table path=docs/architecture/plugins.md type=architecture line=5 rule=$ARCH_ROW count=1 baseline=none introduced=yes section=Rules" \
   "a reference doc may hold a value table|skills/x/references/keys.md|# Keys\n\n$TABLE|rc=0" \
   "an unclassified file is parsed and judged for nothing more|notes/plan.md|# Plan\n\n$TABLE|rc=0" \
@@ -144,6 +147,17 @@ assert_eq "the example document's words are the size signal's yardstick" \
   "words=example_words" \
   "$(as_run README.md "$CONFORMING" '^md-type: signal=' | LC_ALL=C sed -E 's/.* words=([0-9]+) example_words=([0-9]+) .*/\1=\2/; s/^([0-9]+)=\1$/words=example_words/')"
 
+assert_eq "a decision record's size is measured against the decision example" \
+  "type=decision-records example=$DWR/examples/decision.md" \
+  "$(as_run docs/decisions/D001-one.md '# D001: One\n\nText.\n' '^md-type: signal=' | LC_ALL=C sed -E 's/.* (type=[^ ]+) .* (example=[^ ]+)$/\1 \2/')"
+
+printf '# Plugins\n\n## Rules\n\n| Key | Default |\n|---|---|\n| a | 1 |\n' >"$TMP/arch.md"
+rc=0
+out="$(printf '# Tool\n\n## Features\n' | "$MDT" --root "$R" --as README.md - --as docs/architecture/x.md "$TMP/arch.md" 2>&1)" || rc=$?
+assert_eq "one run judges each --as pair in order, each closed by its judged line" \
+  "rc=1 ${F}description-missing path=README.md type=readme line=3 rule=$DESCRIPTION_ITEM count=1 baseline=none introduced=yes section=top;md-type: judged=1;${F}value-table path=docs/architecture/x.md type=architecture line=5 rule=$ARCH_ROW count=1 baseline=none introduced=yes section=Rules;md-type: judged=2" \
+  "$(keyed "$rc" "$out" '^md-type: (finding|judged)=')"
+
 echo "=== the lane: a finding blocks only where the change raised its count ==="
 lane_rows() { # label | fixture | args | expect
   local row label fx args expect words
@@ -161,12 +175,22 @@ fx_edited() { repo "$1"; put README.md "$README_WITH"; commit; put README.md "${
 fx_renamed() { repo "$1"; put README.md "$README_WITH"; commit; put README.md "${README_WITH/Settings/Configuration}"; }
 fx_grown() { repo "$1"; put README.md "$README_WITH"; commit; put README.md "$README_WITH\n## Budgets\n\n| Budget | Limit |\n|---|---|\n| a | 1 |\n"; }
 fx_unended() { repo "$1"; put docs/plan.md '```\nopen\n'; }
+# A README moved with an edit, which git records as a rename below exact
+# content, carrying its inherited table.
+fx_moved() { repo "$1"; put a/README.md "$README_WITH"; commit; mkdir -p "$R/b"; git -C "$R" mv a/README.md b/README.md; printf 'More.\n' >>"$R/b/README.md"; git -C "$R" add b/README.md; }
+# A reference holding a defaults table, moved unchanged to a README: the
+# table was allowed where it was and is not where it lands.
+fx_retyped() { repo "$1"; put skills/x/references/settings.md "$README_WITH"; commit; git -C "$R" mv skills/x/references/settings.md skills/x/README.md; }
+fx_retyped_pushed() { fx_retyped "$1"; commit move; }
 lane_rows \
   "a new README's value table is introduced and blocks|fx_new new|--staged|rc=1 ${F}value-table path=README.md type=readme line=7 rule=$README_ROW count=1 baseline=none introduced=yes section=Settings" \
   "an edit beside an inherited table warns and passes|fx_edited edited|--staged|rc=0 ${F}value-table path=README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings" \
   "renaming the heading over an inherited table keeps the count and passes|fx_renamed renamed|--staged|rc=0 ${F}value-table path=README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Configuration" \
   "a second table raises the count and blocks|fx_grown grown|--staged|rc=1 ${F}value-table path=README.md type=readme line=7 rule=$README_ROW count=2 baseline=1 introduced=yes section=Settings;${F}value-table path=README.md type=readme line=13 rule=$README_ROW count=2 baseline=1 introduced=yes section=Budgets" \
-  "a staged file the parser cannot end fails|fx_unended unended|--staged|rc=1 md-type: fence-unclosed=docs/plan.md:1"
+  "a staged file the parser cannot end fails|fx_unended unended|--staged|rc=1 md-type: fence-unclosed=docs/plan.md:1" \
+  "a README moved with an edit keeps its inherited table's count and passes|fx_moved moved|--staged|rc=0 ${F}value-table path=b/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings" \
+  "a reference moved unchanged into a README brings a table its new type refuses|fx_retyped retyped|--staged|rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings" \
+  "and the same move pushed is judged over the range|fx_retyped_pushed retyped-pushed|--against HEAD~1|rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings"
 
 echo "=== a docs-writing md-type cannot read is a gap, never a pass ==="
 # A copy of the scripts with no docs-writing beside it, so the fixture's own
@@ -224,7 +248,15 @@ route_rows \
   "a README routes to its reference and example, even before the file exists|skills/new/README.md|rc=0 md-type: type=readme;md-type: reference=$RP/$DWR/references/readme.md;md-type: example=$RP/$DWR/examples/readme.md" \
   "a git-ignored path is not routed|tmp/plan.md|rc=0 md-type: route=ignored" \
   "a path outside every repository is not routed|$TMP/loose.md|rc=0 md-type: route=outside-repo" \
-  "an unclassified path is sent to the route table|CHANGELOG.md|rc=0 md-type: route=unclassified;md-type: skill=$RP/$DWR/SKILL.md"
+  "an unclassified path is sent to the route table|CHANGELOG.md|rc=0 md-type: route=unclassified;md-type: skill=$RP/$DWR/SKILL.md" \
+  "a decision record, whose row has no reference file, routes to SKILL.md and its example|docs/decisions/D001-one.md|rc=0 md-type: type=decision-records;md-type: reference=$RP/$DWR/SKILL.md;md-type: example=$RP/$DWR/examples/decision.md"
+route_refused() { # MDT — a route in a repository git refuses to read
+  local rc=0 out
+  out="$(cd "$R" && GIT_TEST_ASSUME_DIFFERENT_OWNER=1 "$1" --route README.md 2>&1)" || rc=$?
+  keyed "$rc" "$out"
+}
+assert_eq "a repository git refuses to read fails the route, never reads as outside one" \
+  "rc=2 md-type: route-repo=$RP" "$(route_refused "$MDT")"
 repo route-none none
 MDT="$LONE/md-type" route_rows "with no docs-writing the route fails for the hook to name|README.md|rc=2 md-type: gap=docs-writing-missing"
 
@@ -242,6 +274,27 @@ repo control-floor "$TMP/no-readme-row"
 put README.md "$README_WITH"
 assert_eq "must-fail: with no discovery floor a route table classifying no README reads clean" \
   "rc=0" "$(MDT="$NO_FLOOR" lane_run --staged '^md-type: (gap|rules)=')"
+
+gg_mutant NO_SOURCE md-type 'local earlier="${2:-$1}"' 'local earlier="$1"'
+fx_moved control-moved
+assert_eq "must-fail: measured at its new path alone, a moved README's inherited table blocks" \
+  "rc=1" "$(MDT="$NO_SOURCE" lane_run --staged '^$')"
+gg_mutant NO_MOVES md-type 'gg_md_select markdown detect' 'gg_md_select markdown'
+fx_retyped control-retyped
+assert_eq "must-fail: with exact renames dropped, a reference moved into a README is never opened" \
+  "rc=0 md-type: no-match=staged:*.md" "$(MDT="$NO_MOVES" lane_run --staged)"
+gg_mutant NO_DASH lib/md-type.awk 'function dash(s) { return (s == "") ? "-" : s }' 'function dash(s) { return s }'
+repo control-dash
+assert_eq "must-fail: with empty cells written empty, the decision row's example shifts into its reference" \
+  "rc=0 md-type: type=decision-records;md-type: reference=$(cd "$R" && pwd -P)/$DWR/examples/decision.md" \
+  "$(rc=0; out="$(cd "$R" && "${NO_DASH%/lib/md-type.awk}/md-type" --route docs/decisions/D001-one.md 2>&1)" || rc=$?; keyed "$rc" "$out")"
+gg_mutant NO_SETEXT lib/md-type.awk 'if (run_start) start = run_start' 'if (0) start = run_start'
+repo control-setext
+assert_eq "must-fail: with a Setext heading's text kept as content, its section supplies the description" \
+  "rc=0" "$(MDT="${NO_SETEXT%/lib/md-type.awk}/md-type" as_run README.md '# Tool\n\nFeatures\n--------\n\n- One.\n')"
+gg_mutant NO_REPO md-type '[ ! -e "$at/.git" ] || gg_fail_cause route-repo' ': || gg_fail_cause route-repo'
+assert_eq "must-fail: with no .git walk, a repository git refuses reads as outside every repository" \
+  "rc=0 md-type: route=outside-repo" "$(route_refused "$NO_REPO")"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

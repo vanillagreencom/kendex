@@ -310,7 +310,7 @@ strict_unjudged() { # — returns only when --strict is off or nothing went unju
 # every reference into it.
 : >"$GG_TMP/refs.tsv"
 : >"$GG_TMP/unread"
-while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+while IFS= read -r -d '' sha && IFS= read -r -d '' f && IFS= read -r -d '' _source; do
   gg_read_blob "$sha" "$f" "markdown file"
   if ! lines_of "$GG_TMP/blob" "$f"; then
     gg_note_skip "$f" malformed "the Markdown parser cannot read it to its end"

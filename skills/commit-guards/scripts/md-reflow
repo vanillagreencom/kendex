@@ -117,7 +117,7 @@ else
   GG_MD_MODE=staged
   [ "$ALL" -eq 0 ] || GG_MD_MODE=all
   gg_md_select markdown
-  while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+  while IFS= read -r -d '' sha && IFS= read -r -d '' f && IFS= read -r -d '' _source; do
     printf '%s\0' "$f" >>"$GG_TMP/targets.z"
   done <"$GG_TMP/md-files.z"
 fi

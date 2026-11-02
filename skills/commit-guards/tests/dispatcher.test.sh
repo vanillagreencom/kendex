@@ -134,6 +134,19 @@ fx_committed_md() { # NAME
   put doc.md "$UNENDED"
   commit
 }
+# A committed dead reference md-refs judges, and nothing staged.
+fx_committed_refs() { # NAME
+  clean "$1"
+  put AGENTS.md '# Agents\n\nSee [the guide](missing.md).\n'
+  commit
+}
+# A committed README holding a value table, and nothing staged: md-type's
+# bare run measures it against HEAD, the commit that added it.
+fx_committed_table() { # NAME
+  clean "$1"
+  put README.md '# Tool\n\nA tool.\n\n## Setup\n\n\174 Key \174 Default \174\n\174---\174---\174\n\174 a \174 1 \174\n'
+  commit
+}
 full_scope() { repo "$1"; put big.txt "\0$(head -c 2047 /dev/zero | tr '\0' a)"; commit 'feat: seed'; git -C "$R" tag base; } # NAME — a committed 2 KB file, tagged base
 # An unended document committed BEFORE the base tag, then one commit that
 # touches no markdown: the range since base excludes the document entirely.
@@ -171,6 +184,7 @@ echo "=== a scope that stages nothing withholds the checks that read only that =
 # The lanes are named rather than counted clean, and which lanes those are is
 # read off their own scripts, so this row moves if the library does.
 MD_ONLY=COMMIT_GUARDS_CHECKS=md-type
+REFS_ONLY=COMMIT_GUARDS_CHECKS=md-refs
 MD_AND_MARKERS='COMMIT_GUARDS_CHECKS=todo-ban md-type'
 SECRETS_ONLY=COMMIT_GUARDS_CHECKS=secrets
 SECRETS_WITHHELD="rc=0 commit-guards: unscoped=secrets;commit-guards: withheld-all=secrets"
@@ -180,7 +194,8 @@ run_rows \
   "with the flag the lane is named as unscoped, and every enabled check being one is said outright|fx_committed_md md-withheld|$MD_ONLY|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
   "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_MARKERS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: step=todo-ban;$(ok todo-ban)" \
   "--skip-unscoped under --staged is a contradiction, since that is the scope those checks read|fx_committed_md md-contradiction|$MD_ONLY|all --staged --skip-unscoped|rc=2 ${ERR}scope-contradiction=--staged,--skip-unscoped" \
-  "a project that configured the lane to sweep the tree gets it run, since that scope stages nothing either|fx_committed_md md-scope-all|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=1 commit-guards: step=md-type;$VIOLATIONS" \
+  "a project that configured the lane to sweep the tree gets it run, since that scope stages nothing either|fx_committed_refs md-scope-all|$REFS_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=1 commit-guards: step=md-refs;$VIOLATIONS" \
+  "a change-scoped lane handed no range is withheld under the sweep setting too, never a clean run against HEAD|fx_committed_table md-type-all|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
   "an unusable scope setting is the configuration error it is, not a lane quietly withheld|fx_committed_md md-scope-bogus|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=bogus|all --skip-unscoped|rc=2 ${ERR}scope=bogus" \
   "secrets takes no range from a caller that stages nothing, the push hook, and is withheld|grown secrets-range|$SECRETS_ONLY|all --skip-unscoped --base base|$SECRETS_WITHHELD" \
   "nor the whole tree|grown secrets-all|$SECRETS_ONLY|all --skip-unscoped|$SECRETS_WITHHELD"
@@ -190,10 +205,15 @@ run_rows \
 # from the library rather than from the configured scope comes to. The project
 # asked for the sweep and the copy withholds it anyway.
 gg_mutant INFERRED_GG commit-guards '[ "$MD_BARE_SCOPE" = touched ] && defers_to_md_selector "$1"' 'defers_to_md_selector "$1"'
-fx_committed_md md-scope-all-inferred
+fx_committed_refs md-scope-all-inferred
 assert_eq "must-fail: deciding from the library withholds the sweep the project asked for" \
-  "rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
-  "$(GG="$INFERRED_GG" batch "$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all" "all --skip-unscoped")"
+  "rc=0 commit-guards: unscoped=md-refs;commit-guards: withheld-all=md-refs" \
+  "$(GG="$INFERRED_GG" batch "$REFS_ONLY,COMMIT_GUARDS_MD_SCOPE=all" "all --skip-unscoped")"
+gg_mutant UNWITHHELD_GG commit-guards 'case " $CHANGE_SCOPED_CHECKS " in *" $1 "*) return 0 ;; esac' ':'
+fx_committed_table md-type-all-unwithheld
+assert_eq "must-fail: without withholding a change-scoped lane its sweep against HEAD counts clean" \
+  "rc=0 commit-guards: step=md-type;$(ok md-type)" \
+  "$(GG="$UNWITHHELD_GG" batch "$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all" "all --skip-unscoped")"
 gg_mutant PUSHED_GG commit-guards 'PUSH_WITHHELD_CHECKS="secrets"' 'PUSH_WITHHELD_CHECKS=""'
 grown secrets-pushed
 assert_eq "must-fail: a batch that withholds nothing from the push hook hands secrets the range" \

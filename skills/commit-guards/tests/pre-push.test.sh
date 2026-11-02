@@ -761,12 +761,13 @@ assert_eq "must-fail: folded back in, the same push reports that document clean"
   "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-type: staged-count=0;pre-push: result=0" \
   "$(push_url "$FOLDED_REPO" topic)"
 
-# A project that configured those lanes to sweep the tree asked for the check
-# and gets it there too: that scope stages nothing either.
+# md-type is change-scoped: its bare run measures the pushed tree against
+# HEAD, which is that tree, so even under the sweep setting the whole-tree
+# scope, with no range to hand it, names it withheld rather than clean.
 SWEEPING=""
 wrapped SWEEPING sweeping "" 'COMMIT_GUARDS_MD_SCOPE = "all"\n'
-assert_eq "a lane configured to sweep the tree runs under the whole-tree scope, and refuses the replayed document" \
-  "rc=1 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-type: summary=findings=0 introduced=0 unended=1 files=1 scope=all skipped=0;pre-push: result=1" \
+assert_eq "under the sweep setting the whole-tree scope still withholds md-type by name" \
+  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
   "$(push_url "$SWEEPING" topic)"
 
 # md-type asks what a change introduced, so it takes the range a push hands

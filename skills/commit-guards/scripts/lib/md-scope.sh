@@ -7,7 +7,8 @@
 # Four scopes, one setting:
 #   --staged   every markdown file the staged diff adds, modifies or
 #              type-changes, renames held to exact content as byte-ceiling
-#              holds them, judged in full from the index
+#              holds them unless the lane asks gg_md_select to detect them,
+#              judged in full from the index
 #   --base REF the same files over a commit range, three dots: what the
 #              branch ADDS over the ancestor it and REF share
 #              (the scopes are exclusive: naming two is exit 2 scope-flags,
@@ -178,11 +179,14 @@ gg_md_load_paths() { # LANE KEY DEFAULT [EXTRA-KEY]
   gg_load_excludes "$excludes"
 }
 
-# The selected files, as alternating "sha NUL path NUL" records in
-# $GG_TMP/md-files.z, every one a text blob the lane may read. Sets
-# GG_MD_COUNT; the skips are counted in GG_WALK_SKIPPED.
-gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
+# The selected files, as "sha NUL path NUL source NUL" records in
+# $GG_TMP/md-files.z, every one a text blob the lane may read; source is the
+# path a detected rename moved it from, else empty. RENAMES is exact or
+# detect, configured-paths.sh's GG_WALK_RENAMES. Sets GG_MD_COUNT; the skips
+# are counted in GG_WALK_SKIPPED.
+gg_md_select() { # NOUN [RENAMES] — what the lane calls its content, for the skip lines
   local noun="$1"
+  GG_WALK_RENAMES="${2:-exact}"
   GG_MD_COUNT=0
   : >"$GG_TMP/md-files.z"
   case "$GG_MD_MODE" in
@@ -200,9 +204,9 @@ gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
 }
 
 # One selected file: the walk and the staged loop both hand the path, the
-# blob file and the sha.
+# blob file and the sha, and the walk sets GG_WALK_SRC.
 gg_md_take() { # PATH BLOBFILE SHA
-  printf '%s\0%s\0' "$3" "$1" >>"$GG_TMP/md-files.z"
+  printf '%s\0%s\0%s\0' "$3" "$1" "$GG_WALK_SRC" >>"$GG_TMP/md-files.z"
   GG_MD_COUNT=$((GG_MD_COUNT + 1))
 }
 

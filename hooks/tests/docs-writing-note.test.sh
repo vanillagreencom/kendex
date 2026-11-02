@@ -45,13 +45,27 @@ scope() { # NAME HARNESS PARTS — the hook's path on stdout
   printf '%s\n' "$hooks/docs-writing-note.sh"
 }
 
+# An install laid out under $TMP_ROOT/layouts/NAME: the hook in HOOKS and the
+# skills PARTS names in SKILLS, both relative to that directory.
+layout() { # NAME HOOKS SKILLS PARTS — the hook's path on stdout
+  local dir="$TMP_ROOT/layouts/$1" part
+  mkdir -p "$dir/$2" "$dir/$3"
+  cp -- "$HOOK" "$dir/$2/docs-writing-note.sh"
+  for part in $4; do cp -R -- "$CATALOG/skills/$part" "$dir/$3/$part"; done
+  printf '%s\n' "$dir/$2/docs-writing-note.sh"
+}
+
 STATE="$TMP_ROOT/state"
+# The home a run sees: empty unless a row names one, so no skill the host
+# installed globally answers for a scope.
+FIRE_HOME="$TMP_ROOT/home"
+mkdir -p "$FIRE_HOME"
 # One run: the hook over PAYLOAD from the repository, under PATH and the
 # state home given. Sets STATUS, CONTEXT, FIRST and ERR.
 fire() { # HOOK-PATH PAYLOAD [PATH] [STATE-HOME]
   STATUS=0
   printf '%s' "$2" >"$TMP_ROOT/input"
-  (cd -- "$REPO" && PATH="${3:-$PATH}" XDG_STATE_HOME="${4:-$STATE}" "$BASH_BIN" "$1" <"$TMP_ROOT/input") \
+  (cd -- "$REPO" && HOME="$FIRE_HOME" PATH="${3:-$PATH}" XDG_STATE_HOME="${4:-$STATE}" "$BASH_BIN" "$1" <"$TMP_ROOT/input") \
     >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr" || STATUS=$?
   CONTEXT=""
   if [ -s "$TMP_ROOT/stdout" ]; then
@@ -102,6 +116,24 @@ delivery_rows() {
 }
 delivery_rows
 
+# Global installs whose skills sit outside the hook's own harness root: a
+# Codex copy delivery, and harness roots moved out of the home.
+global_rows() {
+  local hook home rf=$REPO/README.md at=$TMP_ROOT/layouts
+  hook=$(layout codex-copy home/.codex/hooks home/.codex/skills "commit-guards docs-writing")
+  FIRE_HOME="$at/codex-copy/home" check "codex copy delivery" "$hook" "$(edit Write "$rf" g1)" \
+    "docs-writing-note: path=$rf type=readme" g1 "harness=codex session=g1 path=$rf"
+  hook=$(layout codex-moved opt/codex/hooks home/.agents/skills "commit-guards docs-writing")
+  home="$at/codex-moved/home"
+  FIRE_HOME="$home" CODEX_HOME="$at/codex-moved/opt/codex" check "relocated CODEX_HOME" "$hook" "$(edit Write "$rf" g2)" \
+    "docs-writing-note: path=$rf type=readme" g2 "harness=codex session=g2 path=$rf"
+  assert_eq "$(has "$CONTEXT" "$home/.agents/skills/docs-writing/references/readme.md")" present "relocated CODEX_HOME: the home's shared tree"
+  hook=$(layout pi-moved opt/pi/kendex/hooks home/.agents/skills "commit-guards docs-writing")
+  FIRE_HOME="$at/pi-moved/home" PI_CODING_AGENT_DIR="$at/pi-moved/opt/pi" check "relocated PI_CODING_AGENT_DIR" "$hook" "$(edit Write "$rf" g3)" \
+    "docs-writing-note: path=$rf type=readme" g3 "harness=pi session=g3 path=$rf"
+}
+global_rows
+
 failure_rows() {
   local claude bare nodocs rf=$REPO/README.md
   rm -rf -- "$STATE" "$TMP_ROOT/sentinel"
@@ -123,6 +155,9 @@ failure_rows() {
   assert_eq "$([ -e "$TMP_ROOT/sentinel" ] && echo ran || echo not-run)" not-run "judge outside the hook's scope: the edited repository's md-type never runs"
   check "no docs-writing for the route" "$nodocs" "$(edit Edit "$rf" r1)" "docs-writing-note: route=failed" r1 "harness=claude session=r1 path=$rf"
   assert_eq "$(has "$CONTEXT" "md-type: gap=docs-writing-missing")" present "no docs-writing for the route: cause below"
+  GIT_TEST_ASSUME_DIFFERENT_OWNER=1 check "a repository git refuses to read" "$claude" "$(edit Edit "$rf" r2)" \
+    "docs-writing-note: route=failed" r2 "harness=claude session=r2 path=$rf"
+  assert_eq "$(has "$CONTEXT" "md-type: route-repo=$REPO")" present "a repository git refuses to read: cause below"
 }
 failure_rows
 
@@ -142,5 +177,9 @@ skill_load_control marker "$HOOK" 'MARKER_NOTE=""' 'STATE_DIR=/dev/null/unwritab
   'second edit: keyed first line'
 skill_load_control judge-scope "$HOOK" 'JUDGE=""' 'in_scope() { printf "%s\n" "$(git -C "${TARGET%/*}" rev-parse --show-toplevel)/.agents/skills/$1"; }' HOOK failure_rows \
   "judge outside the hook's scope: the edited repository's md-type never runs"
+# The scope a hook took from its own harness directory alone, as it once did:
+# a Codex copy delivery and a relocated root find no judge.
+skill_load_control global-scope "$HOOK" 'JUDGE=""' 'in_scope() { local s=${HOOK_DIR%/*}; s=${s%/*}; [ -d "$s/.agents/skills/$1" ] && printf "%s\n" "$s/.agents/skills/$1"; }' HOOK global_rows \
+  'codex copy delivery: keyed first line' 'relocated CODEX_HOME: keyed first line'
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

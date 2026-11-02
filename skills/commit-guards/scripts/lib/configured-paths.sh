@@ -231,6 +231,7 @@ gg_read_blob() { # SHA PATH NOUN — the blob's bytes into $GG_TMP/blob
 gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
   local noun="$1" unread="$2" on_file="$3" rec f mode rest sha
   GG_WALK_SKIPPED=0
+  GG_WALK_SRC=""
   : >"$GG_TMP/skipped.z"
   # `ls-files -s` emits one record per STAGE for an unmerged path, so the walk
   # would read rival blobs as separate files.
@@ -267,13 +268,41 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
 # The diff walks share selection and blob classification across lanes. A pure
 # rename adds no content. A rename with changed bytes is an addition.
 #
+# A lane whose verdict depends on the path, or compares a file with its
+# earlier self, sets GG_WALK_RENAMES=detect before walking: renames are then
+# found at git's default similarity and every one is selected, an exact move
+# included, with its earlier path in GG_WALK_SRC for the callback. md-type
+# is that lane: a move can change a document's type, and an edit carried
+# across a move keeps its earlier findings. Every other walk leaves
+# GG_WALK_SRC empty.
+GG_WALK_RENAMES=exact
+GG_WALK_SRC=""
+
+# The diff flags the walk mode selects, into GG_WALK_DIFF.
+gg_walk_diff_flags() {
+  case "$GG_WALK_RENAMES" in
+    exact) GG_WALK_DIFF=(--find-renames=100% --diff-filter=AMT) ;;
+    detect) GG_WALK_DIFF=(--find-renames --diff-filter=AMTR) ;;
+    *) gg_fail walk-renames "$GG_WALK_RENAMES" "GG_WALK_RENAMES is exact or detect." ;;
+  esac
+}
+
 # The records in $GG_TMP/raw.z, whichever diff produced them: --raw -z
 # alternates "meta NUL path NUL", meta being
-# ":srcmode dstmode srcsha dstsha status". One reader, so a range scope and
-# the staged scope cannot classify the same record two ways.
+# ":srcmode dstmode srcsha dstsha status"; a rename's record carries its
+# source path before its destination. One reader, so a range scope and the
+# staged scope cannot classify the same record two ways.
 gg_walk_raw_records() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
-  local noun="$1" on_file="$2" meta f dstmode dstsha
+  local noun="$1" on_file="$2" meta f src dstmode dstsha
   while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    src=""
+    case "$meta" in
+      *" R"[0-9]*)
+        src="$f"
+        IFS= read -r -d '' f || gg_fail walk-record "$src" "A rename record carries no destination path."
+        ;;
+    esac
+    GG_WALK_SRC="$src"
     gg_matches_path_glob "$f" || continue
     gg_is_excluded "$f" && continue
     set -- $meta
@@ -303,7 +332,8 @@ gg_walk_staged_paths() { # NOUN ON_FILE — callback receives PATH BLOBFILE SHA
   GG_WALK_SKIPPED=0
   : >"$GG_TMP/skipped.z"
   gg_require_merged_index
-  git -c diff.renames=true diff --cached --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT >"$GG_TMP/raw.z" \
+  gg_walk_diff_flags
+  git -c diff.renames=true diff --cached --raw --no-abbrev -z "${GG_WALK_DIFF[@]}" >"$GG_TMP/raw.z" \
     || gg_fail staged-collect "$?" "could not collect the staged changes (git diff --cached --raw failed)"
   gg_walk_raw_records "$noun" "$on_file"
 }
@@ -341,7 +371,8 @@ gg_walk_range_paths() { # RANGE NOUN ON_FILE — callback receives PATH BLOBFILE
   local range="$1" noun="$2" on_file="$3"
   GG_WALK_SKIPPED=0
   : >"$GG_TMP/skipped.z"
-  git -c diff.renames=true diff --raw --no-abbrev -z --find-renames=100% --diff-filter=AMT "$range" >"$GG_TMP/raw.z" \
+  gg_walk_diff_flags
+  git -c diff.renames=true diff --raw --no-abbrev -z "${GG_WALK_DIFF[@]}" "$range" >"$GG_TMP/raw.z" \
     || gg_fail range-collect "$range:$?" "could not collect the changes over $range (git diff --raw failed)"
   gg_walk_raw_records "$noun" "$on_file"
 }

@@ -5,7 +5,7 @@
 # matcher: Edit|MultiEdit|Write
 # description: On the first Markdown edit of a session, hands the session the edited file's docs-writing type and the paths of that type's reference and example, as the commit-guards md-type lane installed in this hook's own scope routes them, once per session. The first line is `docs-writing-note: path=<file> type=<type>`, or `type=unclassified` naming the route table in docs-writing's SKILL.md. Later Markdown edits of the session, any other edit, a git-ignored file and a file outside a repository get nothing. A Claude Code subagent counts as its own session. Codex reports the edit as apply_patch, and the hook reads the patch's Add, Update and Move headers for the edited files; a Codex subagent shares its lead's session. Not run on copilot: preToolUse has no measured additionalContext delivery to the model. Not run on gemini: the BeforeTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it reads hooks as advisory prose and executes no edit event. Not run on antigravity: its toolCall.args payload has no tool_input.file_path reader here.
 # summary: Points the assistant at the docs-writing rules and example for the first Markdown file it edits in a session. Every edit remains allowed.
-# safety: Advisory reader. Reads the tool payload. Runs only the commit-guards md-type installed in this hook's own scope, never one found from the edited path; md-type reads the edited repository's installed docs-writing files as data and runs `git rev-parse` and `git check-ignore` there. Writes one marker file per session under the XDG state directory, and prunes markers older than 30 days. Missing tools, an unreadable payload, a missing judge or an unwritable marker produce a keyed notice at exit 0. Uses additionalContext on stdout because successful stderr does not reach the Claude Code model.
+# safety: Advisory reader. Reads the tool payload. Runs `git rev-parse` in the session's directory to bound its install walk. Runs only the commit-guards md-type installed with this hook, never one found from the edited path; md-type reads the edited repository's installed docs-writing files as data and runs `git rev-parse` and `git check-ignore` there. Writes one marker file per session under the XDG state directory, and prunes markers older than 30 days. Missing tools, an unreadable payload, a missing judge or an unwritable marker produce a keyed notice at exit 0. Uses additionalContext on stdout because successful stderr does not reach the Claude Code model.
 # timeout: 10
 # harnesses: [claude, codex, pi]
 # requires-skills: [docs-writing]
@@ -45,7 +45,8 @@ TOOL=$(jq -r '.tool_name | strings | select(length > 0)' 2>&1 <<<"$INPUT") ||
 [ -n "$TOOL" ] || { notice payload invalid-json; exit 0; }
 
 # The edited files, one per line. apply_patch names them in its patch
-# headers, relative to the session's directory.
+# headers: Codex writes absolute paths there, and a relative one is read
+# against the session's directory.
 case "$TOOL" in
   Edit | MultiEdit | Write)
     TARGETS=$(jq -r '.tool_input.file_path | strings | select(length > 0)' 2>&1 <<<"$INPUT") ||
@@ -85,27 +86,55 @@ esac
 STATE_DIR="${XDG_STATE_HOME:-${HOME:-}/.local/state}/kendex/docs-writing-note"
 if [ "$KEY_STATE" = ok ] && [ -e "$STATE_DIR/$KEY" ]; then exit 0; fi
 
-# The harness and the scope this copy was installed for, from where kendex
-# renders it. The judge comes only from that scope's skills, never from the
-# edited path, which a clone or another project controls.
+# The harness this copy was installed for, from where kendex renders it,
+# for the marker.
 HOOK_DIR=$(cd -- "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd -P) || HOOK_DIR=""
 case "$HOOK_DIR" in
-  */.claude/hooks) HARNESS=claude SCOPE=${HOOK_DIR%/.claude/hooks} ;;
-  */.codex/hooks) HARNESS=codex SCOPE=${HOOK_DIR%/.codex/hooks} ;;
-  */.pi/agent/kendex/hooks) HARNESS=pi SCOPE=${HOOK_DIR%/.pi/agent/kendex/hooks} ;;
-  */.pi/kendex/hooks) HARNESS=pi SCOPE=${HOOK_DIR%/.pi/kendex/hooks} ;;
-  */hooks) HARNESS=source SCOPE=${HOOK_DIR%/hooks} ;;
-  *) HARNESS=unknown SCOPE="" ;;
+  */.claude/hooks) HARNESS=claude ;;
+  */.codex/hooks | "${CODEX_HOME:-/nonexistent}/hooks") HARNESS=codex ;;
+  */.pi/agent/kendex/hooks | */.pi/kendex/hooks | "${PI_CODING_AGENT_DIR:-/nonexistent}/kendex/hooks") HARNESS=pi ;;
+  "") HARNESS=unknown ;;
+  *) HARNESS=source ;;
 esac
-in_scope() { # SKILL — the skill's directory in this hook's scope; 1 when none
-  local root
-  [ -n "$SCOPE" ] || return 1
-  for root in .agents/skills .claude/skills .pi/agent/skills skills; do
-    if [ -d "$SCOPE/$root/$1" ]; then
-      printf '%s\n' "$SCOPE/$root/$1"
-      return 0
-    fi
+# The skills come from this hook's own install, never from the edited path,
+# which a clone or another project controls. The walk is the one
+# hooks/lane-mail-check.sh owns for its reader, copied here since each hook is
+# installed as one file: from the hook's physical directory up five levels,
+# stopping at the open repository's root and after the home directory, each
+# level's `skills/` and shared `.agents/skills/` tree, which reaches a
+# harness's own copy delivery such as ~/.codex/skills; then the home's shared
+# tree, for a harness root CODEX_HOME or PI_CODING_AGENT_DIR moved out of the
+# home; then the repository's own copy, only where this hook is installed in
+# that repository.
+HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
+ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
+in_scope() { # SKILL — the skill's directory in this hook's install; 1 when none
+  local at="$HOOK_DIR" levels=0 candidate
+  [ -n "$at" ] || return 1
+  while [ "$levels" -lt 5 ] && [ "$at" != "$ROOT" ] && [ "$at" != / ]; do
+    for candidate in "$at/skills/$1" "$at/.agents/skills/$1"; do
+      if [ -d "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+    [ "$at" != "$HOME_DIR" ] || break
+    at=${at%/*}
+    [ -n "$at" ] || at=/
+    levels=$((levels + 1))
   done
+  if [ -n "$HOME_DIR" ] && [ "$HOME_DIR" != "$ROOT" ] && [ -d "$HOME_DIR/.agents/skills/$1" ]; then
+    printf '%s\n' "$HOME_DIR/.agents/skills/$1"
+    return 0
+  fi
+  if [ -n "$ROOT" ] && [ -d "$ROOT/.agents/skills/$1" ]; then
+    case "$HOOK_DIR" in
+      "$ROOT"/*)
+        printf '%s\n' "$ROOT/.agents/skills/$1"
+        return 0
+        ;;
+    esac
+  fi
   return 1
 }
 
