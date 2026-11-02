@@ -136,6 +136,7 @@ fn accept(
         }),
         authorization: None,
         summary_file: None,
+        attachments: Vec::new(),
         summary_comment: None,
     })
 }
@@ -1604,6 +1605,7 @@ fn accept_as(round: &str, authorization: Option<Authorization>) -> Request {
         end: None,
         authorization,
         summary_file: None,
+        attachments: Vec::new(),
         summary_comment: None,
     })
 }
@@ -1765,25 +1767,32 @@ fn a_directed_items_acceptance_names_its_directive_or_refuses_authorization_miss
     assert_eq!(doc["stages"][2].get("authorization"), None);
 }
 
-/// An acceptance of `round` naming the summary file, through the
-/// `linear-comments` fixture as the tracker CLI with `fixture_env` planted
-/// (`LINEAR_COMMENTS`, `LINEAR_LIST_STATUS`, `LINEAR_STATUS`,
-/// `LINEAR_SNAPSHOT`), its calls appended to `log`.
+/// An acceptance of `round` naming the summary file and `attachments`,
+/// its request written beside the item's `path`, through the
+/// `linear-comments` fixture as the tracker CLI with
+/// `fixture_env` planted (`LINEAR_COMMENTS`, `LINEAR_COMMENTS_MORE`,
+/// `LINEAR_LIST_STATUS`, `LINEAR_STATUS`, `LINEAR_SNAPSHOT`, `LINEAR_KILL`),
+/// its calls appended to `log`.
 fn accept_posting(
-    dir: &Path,
     path: &Path,
     log: &Path,
     summary: &Path,
+    attachments: &[&Path],
     round: &str,
     name: &str,
     fixture_env: &[(&str, &str)],
 ) -> Output {
+    let attachments: Vec<String> = attachments
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
     let request = write(
-        dir,
+        path.parent().unwrap(),
         name,
         &format!(
-            r#"{{"op": "accept-result", "round_id": "{round}", "outcome": "pass", "authorization": {{"by": "overseer", "id": "sess-1"}}, "summary_file": "{}"}}"#,
-            summary.display()
+            r#"{{"op": "accept-result", "round_id": "{round}", "outcome": "pass", "authorization": {{"by": "overseer", "id": "sess-1"}}, "summary_file": "{}", "attachments": {}}}"#,
+            summary.display(),
+            json!(attachments)
         ),
     );
     let mut cmd = support::isolated();
@@ -1825,15 +1834,24 @@ fn listed(id: &str, body: &str, at: &str) -> Value {
     json!({"id": id, "body": body, "user": "", "user_email": "", "created_at": at, "updated_at": at})
 }
 
-/// Decisions 174 (3), 182 Q6, 188 (e), 190: one Completion Summary per
+/// The link line the fixture appends under a created comment's body for
+/// one `--attach`, and the record it reads back as.
+fn fixture_link(name: &str) -> (String, Value) {
+    let url = format!("https://uploads.linear.app/fixture/{name}");
+    (
+        format!("![{name}]({url})"),
+        json!({"name": name, "url": url, "image": true}),
+    )
+}
+
+/// Decisions 174 (3), 182 Q6, 188 (e), 192 Q11: one Completion Summary per
 /// item, posted by the acceptance after its close committed, created on
 /// the item's first acceptance where the item's comment list names none,
-/// recorded `created`, and updated in place by the recorded id on every
-/// later one, with no list once an id is recorded; a refused post is in
-/// the reply and the acceptance stands. The defect: a comment per
-/// acceptance (round 9 item 3), a post before the close, a create with no
-/// list before it, a created comment not updated in place, or a refused
-/// post failing the acceptance.
+/// and updated in place by the recorded id on every later one, with no
+/// list once an id is recorded; a refused post is in the reply and the
+/// acceptance stands. The defect: a comment per acceptance (round 9 item
+/// 3), a post before the close, a create with no list before it, a created
+/// comment not updated in place, or a refused post failing the acceptance.
 #[test]
 fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_the_recorded_id() {
     let dir = tempfile::tempdir().unwrap();
@@ -1846,10 +1864,10 @@ fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_
         "## Completion Summary\n\nround one\n",
     );
     let out = accept_posting(
-        dir.path(),
         &path,
         &log,
         &summary,
+        &[],
         ROUND,
         "first.json",
         &[("LINEAR_SNAPSHOT", snapshot.to_str().unwrap())],
@@ -1865,7 +1883,7 @@ fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_
     assert_eq!(report["summary_comment"]["id"], "cmt-1");
     let state = record_of(&path);
     assert_eq!(state["summary_comment"]["id"], "cmt-1");
-    assert_eq!(state["summary_comment"]["origin"], "created");
+    assert_eq!(state["summary_comment"].get("attachments"), None);
     assert!(
         state["summary_comment"]["at"]
             .as_str()
@@ -1886,18 +1904,10 @@ fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_
         ]
     );
     // The next round's acceptance updates the one comment by its id, with
-    // no list.
+    // no list; with no attachment recorded the summary file is the body.
     let second = next_round(dir.path(), &path);
     fs::write(&summary, "## Completion Summary\n\nround two\n").unwrap();
-    let out = accept_posting(
-        dir.path(),
-        &path,
-        &log,
-        &summary,
-        &second,
-        "second.json",
-        &[],
-    );
+    let out = accept_posting(&path, &log, &summary, &[], &second, "second.json", &[]);
     let report = accepted_report(&out);
     assert_eq!(report["closed_now"], true);
     assert_eq!(report["summary"]["posted"], "updated");
@@ -1915,10 +1925,10 @@ fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_
     // record keeps its comment.
     let third = next_round(dir.path(), &path);
     let out = accept_posting(
-        dir.path(),
         &path,
         &log,
         &summary,
+        &[],
         &third,
         "third.json",
         &[("LINEAR_STATUS", "3")],
@@ -1934,133 +1944,93 @@ fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_
     assert_eq!(lines(&log).len(), 7);
 }
 
-/// Decisions 186 (4), 188 (e), 190: the item's one summary is the comment
-/// headed `## Completion Summary`, whoever created it. With no
-/// `summary_comment` recorded, the acceptance lists the item's comments,
-/// records the newest so headed as `found`, the dev agent's own § 9 post
-/// until step 7 retires it, and sends nothing: on Linear that comment's
-/// attachments are the `![name](assetUrl)` links in its body, which an
-/// update from the summary file would replace. A newer comment headed
-/// otherwise, or one that only quotes the heading, is not the summary. The
-/// defect: the first acceptance doubling the summary beside the dev
-/// agent's (R-U6-2 M1), rewriting the dev agent's comment with a body
-/// that names no screenshot (R-U6-3 M1), or recording a comment that is
-/// not the item's summary.
+/// Decision 192 Q10: the round's screenshots reach the item through the
+/// acceptance's own post. The request's `attachments` are each an
+/// `--attach` on the create; the links the CLI appended under the body
+/// are read back from its answer and recorded beside the id; and every
+/// later update renders them under the summary in a body file beside the
+/// summary file, since the CLI's update replaces the body whole and takes
+/// no `--attach`. A later request's attachments are not attached: the
+/// create is the one upload. The defect: a captured screenshot never
+/// reaching the item once the dev agent's own post is retired, or an
+/// update dropping the links the create carried (R-U6-3 M1).
 #[test]
-fn a_first_acceptance_records_the_dev_agents_summary_comment_as_found_and_never_rewrites_it() {
+fn an_acceptance_with_attachments_creates_the_comment_with_each_and_every_update_keeps_their_links()
+{
     let dir = tempfile::tempdir().unwrap();
     let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
     let log = dir.path().join("linear.log");
     let written = "## Completion Summary\n\n### Screenshots\n- `tmp/ui-shots/a.png` - Settings, after, dark\n";
     let summary = write(dir.path(), "completion-summary-KEN-4687.md", written);
-    // The agent's post, as the CLI stored it: the file plus the asset link
-    // `--attach` appended.
-    let posted = format!("{written}\n\n![a.png](https://uploads.linear.app/org/asset-a)");
-    let comments = json!([
-        listed(
-            "cmt-old",
-            "## Completion Summary\n\nan earlier round's",
-            "2026-11-01T09:00:00.000Z"
-        ),
-        listed(
-            "cmt-blocked",
-            "Blocked on KEN-1: see the Completion Summary of KEN-1",
-            "2026-11-01T11:00:00.000Z"
-        ),
-        listed("cmt-dev", &posted, "2026-11-01T10:00:00.000Z"),
-        listed(
-            "cmt-quote",
-            "> ## Completion Summary\n\nquoted",
-            "2026-11-01T12:00:00.000Z"
-        ),
-    ]);
-    let out = accept_posting(
-        dir.path(),
-        &path,
-        &log,
-        &summary,
-        ROUND,
-        "first.json",
-        &[("LINEAR_COMMENTS", &comments.to_string())],
-    );
+    let a = write(dir.path(), "a.png", "PNG");
+    let b = write(dir.path(), "b.png", "PNG");
+    let (link_a, record_a) = fixture_link("a.png");
+    let (link_b, record_b) = fixture_link("b.png");
+    let out = accept_posting(&path, &log, &summary, &[&a, &b], ROUND, "first.json", &[]);
     let report = accepted_report(&out);
-    assert_eq!(lines(&log), ["comments list KEN-4687"]);
-    assert_eq!(report["closed_now"], true);
-    assert_eq!(report["summary"]["posted"], "found");
-    assert_eq!(report["summary"]["id"], "cmt-dev");
-    assert_eq!(report["summary_comment"]["id"], "cmt-dev");
-    assert_eq!(report["summary_comment"]["origin"], "found");
-    let state = record_of(&path);
-    assert_eq!(state["summary_comment"]["id"], "cmt-dev");
-    assert_eq!(state["summary_comment"]["origin"], "found");
-    assert_eq!(state["summary_comment"]["at"], report["summary"]["at"]);
-    assert_eq!(state["stages"][0]["outcome"], "pass");
-}
-
-/// Decision 190: an acceptance whose recorded comment is `found` sends
-/// nothing to the tracker, since the comment is not the acceptance's to
-/// rewrite, and reports `kept` with the cause; the record stands as it was.
-/// The dev agent's own § 9 post carries each round's summary. The defect:
-/// a later round's acceptance rewriting the found comment by its recorded
-/// id (R-U6-3 M1, the case left for the fix to decide).
-#[test]
-fn a_later_acceptance_keeps_a_found_summary_comment_and_sends_nothing() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
-    let log = dir.path().join("linear.log");
-    let summary = write(
-        dir.path(),
-        "completion-summary-KEN-4687.md",
-        "## Completion Summary\n\nround two\n",
-    );
-    let found = json!({"id": "cmt-dev", "at": "2026-11-01T10:05:00Z", "origin": "found"});
-    let mut state = record_of(&path);
-    state["summary_comment"] = found.clone();
-    fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
-    let out = accept_posting(
-        dir.path(),
-        &path,
-        &log,
-        &summary,
-        ROUND,
-        "first.json",
-        &[("LINEAR_COMMENTS", "not a list")],
-    );
-    let report = accepted_report(&out);
-    assert_eq!(report["closed_now"], true);
+    assert_eq!(report["summary"]["posted"], "created");
+    assert_eq!(report["summary"]["id"], "cmt-1");
     assert_eq!(
-        report["summary"],
-        json!({"posted": "kept", "id": "cmt-dev", "cause": "found-comment"})
+        report["summary_comment"]["attachments"],
+        json!([record_a, record_b])
     );
-    assert_eq!(report["summary_comment"], found);
-    assert!(!log.exists(), "{:?}", lines(&log));
     let state = record_of(&path);
-    assert_eq!(state["summary_comment"], found);
-    assert_eq!(state["stages"][0]["outcome"], "pass");
-    // The next round's acceptance: the same, with no list and no post.
-    let second = next_round(dir.path(), &path);
-    let out = accept_posting(
-        dir.path(),
-        &path,
-        &log,
-        &summary,
-        &second,
-        "second.json",
-        &[],
+    assert_eq!(
+        state["summary_comment"]["attachments"],
+        json!([record_a, record_b])
     );
+    assert_eq!(
+        lines(&log),
+        [
+            "comments list KEN-4687".to_owned(),
+            format!(
+                "comments create KEN-4687 --body-file {} --attach {} --attach {}",
+                summary.display(),
+                a.display(),
+                b.display()
+            ),
+            "body ## Completion Summary".to_owned(),
+        ]
+    );
+    // The next round's acceptance: the update's body is the summary with
+    // the recorded links under it; the round's own attachment is not sent.
+    let second = next_round(dir.path(), &path);
+    let c = write(dir.path(), "c.png", "PNG");
+    let rewritten = "## Completion Summary\n\nround two\n";
+    fs::write(&summary, rewritten).unwrap();
+    let out = accept_posting(&path, &log, &summary, &[&c], &second, "second.json", &[]);
     let report = accepted_report(&out);
-    assert_eq!(report["summary"]["posted"], "kept");
-    assert!(!log.exists(), "{:?}", lines(&log));
-    assert_eq!(record_of(&path)["summary_comment"], found);
+    assert_eq!(report["summary"]["posted"], "updated");
+    assert_eq!(report["summary"]["id"], "cmt-1");
+    let body = summary.with_extension("linear.md");
+    assert_eq!(
+        lines(&log)[3..],
+        [
+            format!("comments update cmt-1 --body-file {}", body.display()),
+            "body ## Completion Summary".to_owned(),
+            format!("link {link_a}"),
+            format!("link {link_b}"),
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(&body).unwrap(),
+        format!("{}\n\n{link_a}\n\n{link_b}\n", rewritten.trim_end())
+    );
+    let state = record_of(&path);
+    assert_eq!(
+        state["summary_comment"]["attachments"],
+        json!([record_a, record_b])
+    );
+    assert_eq!(state["summary_comment"]["at"], report["summary"]["at"]);
+    assert_eq!(state["stages"][1]["outcome"], "pass");
 }
 
-/// Decision 190: a record written before `origin` existed names the
-/// comment the acceptance was then updating, so it reads `created` and the
-/// acceptance keeps updating that comment in place, recording the word.
-/// The defect: an item accepted at the index losing its in-place update,
-/// or refusing its own record.
+/// Decisions 34, 192 Q11: a record written with an `origin` word names the
+/// comment the acceptance updates in place; the word is read past and the
+/// record after carries none. The defect: an item accepted under the
+/// earlier record shape refused, or its comment no longer updated.
 #[test]
-fn a_summary_comment_recorded_without_origin_reads_created_and_is_updated_in_place() {
+fn a_summary_comment_recorded_with_an_origin_word_reads_without_it_and_is_updated_in_place() {
     let dir = tempfile::tempdir().unwrap();
     let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
     let log = dir.path().join("linear.log");
@@ -2070,9 +2040,10 @@ fn a_summary_comment_recorded_without_origin_reads_created_and_is_updated_in_pla
         "## Completion Summary\n\nround two\n",
     );
     let mut state = record_of(&path);
-    state["summary_comment"] = json!({"id": "cmt-1", "at": "2026-11-01T10:05:00Z"});
+    state["summary_comment"] =
+        json!({"id": "cmt-1", "at": "2026-11-01T10:05:00Z", "origin": "found"});
     fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
-    let out = accept_posting(dir.path(), &path, &log, &summary, ROUND, "first.json", &[]);
+    let out = accept_posting(&path, &log, &summary, &[], ROUND, "first.json", &[]);
     let report = accepted_report(&out);
     assert_eq!(report["closed_now"], true);
     assert_eq!(report["summary"]["posted"], "updated");
@@ -2086,58 +2057,93 @@ fn a_summary_comment_recorded_without_origin_reads_created_and_is_updated_in_pla
     );
     let state = record_of(&path);
     assert_eq!(state["summary_comment"]["id"], "cmt-1");
-    assert_eq!(state["summary_comment"]["origin"], "created");
+    assert_eq!(state["summary_comment"].get("origin"), None);
     assert_eq!(state["summary_comment"]["at"], report["summary"]["at"]);
 }
 
-/// Decisions 187 (3), 188 (e), 190: a process that ended after the CLI
-/// created the comment and before the id's record leaves the comment with
-/// no `summary_comment`; the next acceptance's list names it, records it
-/// `found` and creates no second one. With its id lost the acceptance
-/// cannot tell its own comment from another writer's, so it is not
-/// rewritten either. The defect: the crash replay creating a second
-/// summary (R-U6-2 § B, Copilot § Constructed crash limits), or rewriting
-/// a comment the record does not name as the acceptance's.
+/// Decisions 187 (3), 188 (e), 191, 192 Q11: a runtime that ended after
+/// the CLI created the comment and before the id's record (the fixture
+/// kills it inside the create) leaves the comment on the item with no
+/// `summary_comment`. The next acceptance's list names it, the newest
+/// headed `## Completion Summary` on any page of the list, not an older
+/// headed comment, a comment mentioning the words or one quoting the
+/// heading; records it with the links its body carries; and updates it in
+/// place with those links kept: one comment, one create. The defect: the
+/// crash replay creating a second summary (R-U6-2 § B), recording a
+/// comment that is not the item's summary, a summary past the list's
+/// first page re-created, or the found comment's links lost by the update
+/// (R-U6-3 M1).
 #[test]
-fn an_acceptance_after_a_crash_between_the_create_and_the_ids_record_finds_the_created_comment() {
+fn an_acceptance_after_a_crash_inside_the_create_finds_the_comment_on_any_page_and_updates_it() {
     let dir = tempfile::tempdir().unwrap();
     let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
     let log = dir.path().join("linear.log");
-    let summary = write(
-        dir.path(),
-        "completion-summary-KEN-4687.md",
-        "## Completion Summary\n\nround one\n",
-    );
-    let out = accept_posting(dir.path(), &path, &log, &summary, ROUND, "first.json", &[]);
-    let report = accepted_report(&out);
-    assert_eq!(report["summary"]["posted"], "created");
-    // The crash's leavings: the comment exists, the record holds no id.
-    let mut state = record_of(&path);
-    assert_eq!(state["summary_comment"]["id"], "cmt-1");
-    state.as_object_mut().unwrap().remove("summary_comment");
-    fs::write(&path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
-    let second = next_round(dir.path(), &path);
-    let comments = json!([listed(
-        "cmt-1",
-        "## Completion Summary\n\nround one",
-        "2026-11-01T10:00:00.000Z"
-    )]);
+    let written = "## Completion Summary\n\nround one\n";
+    let summary = write(dir.path(), "completion-summary-KEN-4687.md", written);
+    let a = write(dir.path(), "a.png", "PNG");
+    let (link_a, record_a) = fixture_link("a.png");
     let out = accept_posting(
-        dir.path(),
         &path,
         &log,
         &summary,
+        &[&a],
+        ROUND,
+        "first.json",
+        &[("LINEAR_KILL", "create")],
+    );
+    assert!(!out.status.success(), "the runtime survived the kill");
+    // The crash's leavings: the close committed, the create went out, the
+    // record holds no id.
+    let state = record_of(&path);
+    assert_eq!(state["stages"][0]["outcome"], "pass");
+    assert_eq!(state.get("summary_comment"), None);
+    assert_eq!(lines(&log).len(), 3, "{:?}", lines(&log));
+    let second = next_round(dir.path(), &path);
+    let page_one = json!([
+        listed(
+            "cmt-old",
+            "## Completion Summary\n\nan earlier round's",
+            "2026-11-01T09:00:00.000Z"
+        ),
+        listed(
+            "cmt-blocked",
+            "Blocked on KEN-1: see the Completion Summary of KEN-1",
+            "2026-11-01T11:00:00.000Z"
+        ),
+    ]);
+    let page_two = json!([
+        listed(
+            "cmt-1",
+            &format!("{}\n\n{link_a}\n", written.trim_end()),
+            "2026-11-01T10:00:00.000Z"
+        ),
+        listed(
+            "cmt-quote",
+            "> ## Completion Summary\n\nquoted",
+            "2026-11-01T12:00:00.000Z"
+        ),
+    ]);
+    let rewritten = "## Completion Summary\n\nround two\n";
+    fs::write(&summary, rewritten).unwrap();
+    let out = accept_posting(
+        &path,
+        &log,
+        &summary,
+        &[],
         &second,
         "second.json",
-        &[("LINEAR_COMMENTS", &comments.to_string())],
+        &[
+            ("LINEAR_COMMENTS", &page_one.to_string()),
+            ("LINEAR_COMMENTS_MORE", &page_two.to_string()),
+        ],
     );
     let report = accepted_report(&out);
     assert_eq!(report["closed_now"], true);
-    assert_eq!(report["summary"]["posted"], "found");
+    assert_eq!(report["summary"]["posted"], "updated");
     assert_eq!(report["summary"]["id"], "cmt-1");
     let state = record_of(&path);
     assert_eq!(state["summary_comment"]["id"], "cmt-1");
-    assert_eq!(state["summary_comment"]["origin"], "found");
+    assert_eq!(state["summary_comment"]["attachments"], json!([record_a]));
     let posts = lines(&log);
     assert_eq!(
         posts
@@ -2147,8 +2153,20 @@ fn an_acceptance_after_a_crash_between_the_create_and_the_ids_record_finds_the_c
         1,
         "{posts:?}"
     );
-    assert_eq!(posts[3], "comments list KEN-4687");
-    assert_eq!(posts.len(), 4, "{posts:?}");
+    let body = summary.with_extension("linear.md");
+    assert_eq!(
+        posts[3..],
+        [
+            "comments list KEN-4687".to_owned(),
+            format!("comments update cmt-1 --body-file {}", body.display()),
+            "body ## Completion Summary".to_owned(),
+            format!("link {link_a}"),
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(&body).unwrap(),
+        format!("{}\n\n{link_a}\n", rewritten.trim_end())
+    );
 }
 
 /// Decision 188 (e): a list that fails (the CLI refused, could not run, or
@@ -2167,10 +2185,10 @@ fn a_failed_comment_list_creates_no_summary_and_the_acceptance_stands() {
         "## Completion Summary\n\nround one\n",
     );
     let out = accept_posting(
-        dir.path(),
         &path,
         &log,
         &summary,
+        &[],
         ROUND,
         "first.json",
         &[("LINEAR_LIST_STATUS", "5")],
@@ -2186,10 +2204,10 @@ fn a_failed_comment_list_creates_no_summary_and_the_acceptance_stands() {
     assert_eq!(lines(&log), ["comments list KEN-4687"]);
     // A list that is not a list: the same, with its cause.
     let out = accept_posting(
-        dir.path(),
         &path,
         &log,
         &summary,
+        &[],
         ROUND,
         "repeat.json",
         &[("LINEAR_COMMENTS", "not a list")],
@@ -2201,7 +2219,7 @@ fn a_failed_comment_list_creates_no_summary_and_the_acceptance_stands() {
     assert!(cause.starts_with("summary-list: answer:"), "{cause}");
     assert_eq!(lines(&log).len(), 2);
     // The next acceptance's list answers: none, so the comment is created.
-    let out = accept_posting(dir.path(), &path, &log, &summary, ROUND, "again.json", &[]);
+    let out = accept_posting(&path, &log, &summary, &[], ROUND, "again.json", &[]);
     let report = accepted_report(&out);
     assert_eq!(report["summary"]["posted"], "created");
     assert_eq!(record_of(&path)["summary_comment"]["id"], "cmt-1");

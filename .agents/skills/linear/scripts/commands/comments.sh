@@ -21,6 +21,8 @@ Actions:
 
 List:
   comments.sh list <issue-id>
+                        Every comment of the issue: a list past one page
+                        takes further requests.
 
 Bulk List:
   comments.sh bulk-list <ID1> <ID2> ... [--stdin] [--format=safe|raw]

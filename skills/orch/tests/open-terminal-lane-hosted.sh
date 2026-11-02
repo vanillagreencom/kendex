@@ -131,8 +131,8 @@ cat > "$RM_PROBE_BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 route=fresh
 for arg in "$@"; do [[ "$arg" != --continue ]] || route=resume; done
-printf '%s|%s|%s\n' "$route" "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-unset}" \
-  "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-unset}" >> "$RM_PROBE_LOG"
+printf '%s|%s|%s|%s\n' "$route" "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-unset}" \
+  "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-unset}" "${CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS-unset}" >> "$RM_PROBE_LOG"
 [[ "$route" != resume ]] || exit "$RM_RESUME_STATUS"
 STUB
 chmod +x "$RM_PROBE_BIN/claude"
@@ -156,14 +156,14 @@ hosted_rm_env() { # HARNESS FLAGS ROUTE RESUME_STATUS; sets HOSTED_RM_ENV
   HOSTED_RM_ENV="$(paste -sd';' "$RUN/rm-env")"
 }
 printf '%s\n' \
-  'claude|--model opus --effort high --dangerously-skip-permissions|fresh|0|fresh|1|1' \
-  'claude|--model opus --effort high --dangerously-skip-permissions|compound|0|fresh|1|1' \
-  'claude|--model opus --effort high --permission-mode bypassPermissions|relaunch|0|resume|1|1' \
-  'claude|--model opus --effort high --dangerously-skip-permissions|relaunch|1|resume|1|1;fresh|1|1' \
-  'claude|--model opus --effort high --permission-mode dontAsk|fresh|0|fresh|unset|unset' \
-  'claude|--model opus --effort high --permission-mode dontAsk|compound|0|fresh|unset|unset' \
-  'claude|--model opus --effort high --permission-mode dontAsk|relaunch|1|resume|unset|unset;fresh|unset|unset' \
-  'codex|-m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox|fresh|0|fresh|unset|unset' \
+  'claude|--model opus --effort high --dangerously-skip-permissions|fresh|0|fresh|1|1|1' \
+  'claude|--model opus --effort high --dangerously-skip-permissions|compound|0|fresh|1|1|1' \
+  'claude|--model opus --effort high --permission-mode bypassPermissions|relaunch|0|resume|1|1|1' \
+  'claude|--model opus --effort high --dangerously-skip-permissions|relaunch|1|resume|1|1|1;fresh|1|1|1' \
+  'claude|--model opus --effort high --permission-mode dontAsk|fresh|0|fresh|unset|unset|unset' \
+  'claude|--model opus --effort high --permission-mode dontAsk|compound|0|fresh|unset|unset|unset' \
+  'claude|--model opus --effort high --permission-mode dontAsk|relaunch|1|resume|unset|unset|unset;fresh|unset|unset|unset' \
+  'codex|-m gpt-6-astra -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox|fresh|0|fresh|unset|unset|unset' \
   > "$TMP_ROOT/hosted-rm-rows"
 while IFS='|' read -r harness flags route resume_status expected; do
   hosted_rm_env "$harness" "$flags" "$route" "$resume_status"
@@ -176,17 +176,17 @@ orch_fixture_shared_libs "$TMP_ROOT/hosted-rm-env-removed/orch"
 rm -- "${OPEN_TERMINAL%/*}/lib/lane-launch.sh"
 cp -- "$SCRIPTS_DIR/lib/lane-launch.sh" "${OPEN_TERMINAL%/*}/lib/lane-launch.sh"
 mutate_file "${OPEN_TERMINAL%/*}/lib/lane-launch.sh" \
-  "printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'" \
-  ": 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'"
+  "printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1'" \
+  ": 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1'"
 SAVED_FAIL="$FAIL"
 FAIL=0
 hosted_rm_env claude '--model opus --effort high --dangerously-skip-permissions' relaunch 1
-assert_eq "$HOSTED_RM_ENV" 'resume|1|1;fresh|1|1' \
+assert_eq "$HOSTED_RM_ENV" 'resume|1|1|1;fresh|1|1|1' \
   'control: dropping the hosted environment words loses the switches in both processes' > "$TMP_ROOT/hosted-rm-control.out"
 RM_CONTROL="$FAIL"
 FAIL="$SAVED_FAIL"
-assert_eq "$HOSTED_RM_ENV" 'resume|unset|unset;fresh|unset|unset' \
-  'control: the hosted mutant reaches both Claude processes with neither switch'
+assert_eq "$HOSTED_RM_ENV" 'resume|unset|unset|unset;fresh|unset|unset|unset' \
+  'control: the hosted mutant reaches both Claude processes with no switch'
 assert_eq "$RM_CONTROL" 1 'control: the hosted resume and fallback children detect the missing environment words'
 OPEN_TERMINAL="$RM_OT_SHIPPED"
 

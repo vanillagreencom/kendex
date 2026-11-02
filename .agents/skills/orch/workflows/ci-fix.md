@@ -174,13 +174,20 @@ For a merge-group failure, first run the failing job's command locally on the fi
 
 The pull-request wait below proves nothing about the fix under the harness-ci queue-only default, where the pull-request run reports `CI` with no lane. The caller re-arms only under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle's re-queue rule.
 
-The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](../references/waiter-launch.md) and repeated while `result.status` is `pending` or `unreadable`, as [submit-pr.md § 5](submit-pr.md#5-verify-ci) runs it; `[OWNER/REPO]` is the repository as `gh repo view --json nameWithOwner --jq .nameWithOwner` answers it from the checkout. A `pr-not-open` refusal says the pull request is closed or merged: report its `state` and stop.
+The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](../references/waiter-launch.md) and repeated while `result.status` is `pending` or `unreadable`, as [submit-pr.md § 5](submit-pr.md#5-verify-ci) runs it, its merge-state read first; `[OWNER/REPO]` is the repository as `gh repo view --json nameWithOwner --jq .nameWithOwner` answers it from the checkout. A `pr-not-open` refusal says the pull request is closed or merged: report its `state` and stop.
 
 ```bash
 jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
   '{op: "verify-pr", repo: $repo, pr: $pr, required_only: true}' \
   > "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"
 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"
+```
+
+On `status=complete` with `verdict=fail`, a transient runner failure is rerun once per head before the result goes anywhere, as [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and repeat the wait after the interval submit-pr.md § 5 keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [STATE_KEY] ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
 ```
 
 A passing or unconfigured CI result, `status=complete` with `verdict=pass` or `verdict=none`, clears the head-bound standalone budget:

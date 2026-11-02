@@ -543,7 +543,7 @@ assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=
 # the entry beside the launcher, the fleet state, `--since` this launch's
 # time (no lane record stands), the harness, the checkout's repository and
 # the launch flags after `--`.
-LAUNCH_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'"
+LAUNCH_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'"
 assert_eq "$(requested_argv)|$(requested '.op')|$(requested '.controller | [.harness, .account, .home, .model, .effort, .cwd, .class, .permission] | join("|")')|$(requested '.controller.launch_line')|$(requested_brief)" \
   "op --fleet --request|start-controller|claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|top|bypass|$LAUNCH_LINE|$BRIEF" \
   "the request carries the walk's pick and identity, the line, the bypass posture and the takeover brief"

@@ -29,7 +29,12 @@
 #     [--validate-run-dir RUN_DIR | --validate-record FILE] [--qa-label LABEL]... \
 #     [--near-ceiling-base REF] [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
 #     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
-#     [--item N DECISION REASONING]...
+#     [--screenshot PATH]... [--item N DECISION REASONING]...
+#
+# screenshots carries the round's captures, one --screenshot each, as the
+# absolute paths the acceptance attaches to the item's summary comment; the
+# key is absent where none was named, and a path that is not a readable file
+# refuses before the write, as the tracker CLI's --attach refuses it.
 #
 # near_ceiling carries one byte-ceiling near-ceiling line per binary blob within
 # reach of the byte ceiling, as that lane reports the branch at artifact time,
@@ -143,6 +148,7 @@
 #                                             // for the branch at this moment; [];
 #                                             // null when the probe did not answer
 #     "near_ceiling_error": "…" | null,       // why near_ceiling is null
+#     "screenshots": ["/abs/path.png"],       // one --screenshot each; absent when none
 #     "summary_posted": true,                 // false with --no-summary
 #     "summary": "…" | null,                  // --summary text or --summary-file content
 #     "recovered_from": "transcript" | null,  // --recovered-text
@@ -253,6 +259,7 @@ die() {
       empty-text) printf 'The text must contain a non-whitespace character.\n' ;;
       summary-conflict) printf 'Supply one summary source.\n' ;;
       missing-file) printf 'The summary or recovered-text file does not exist.\n' ;;
+      screenshot-unreadable) printf 'A --screenshot path must be a readable file; the acceptance attaches it to the summary comment.\n' ;;
       missing-items) printf 'A fix or bundled receipt must contain an item.\n' ;;
       baseline-read) printf '%s\n' "$BRANCH_GROWTH_ERROR" ;;
       scratch-failed) printf 'mktemp could not create the file the Apple gate lists changed paths in.\n' ;;
@@ -273,7 +280,7 @@ Usage:
     [--validate-run-dir RUN_DIR | --validate-record FILE] [--qa-label LABEL]... \
     [--near-ceiling-base REF] [--label LABEL... | --no-labels] [--bundled] [--no-summary] \
     [--summary TEXT | --summary-file PATH | --recovered-text PATH] \
-    [--item N DECISION REASONING]...
+    [--screenshot PATH]... [--item N DECISION REASONING]...
 
 Writes PATH/tmp/dev-return-ID-RID-RUNID.json (atomically), RUNID the id of the
 run directory --validate-run-dir names, and prints its absolute path; a
@@ -340,6 +347,10 @@ as a run directory's do.
 content. --recovered-text PATH embeds the report round-recover read from a
 stalled agent's transcript and records recovered_from: transcript. The three
 are mutually exclusive (one summary source, no silent precedence).
+--screenshot PATH names one capture of the round (repeatable), recorded as
+screenshots, the absolute paths the acceptance attaches to the item's summary
+comment; a path that is not a readable file refuses before the write, and the
+key is absent where none is named.
 --near-ceiling-base REF runs the worktree's
 .agents/skills/commit-guards/scripts/byte-ceiling --base REF and records one
 near-ceiling line per binary blob within reach of the byte ceiling on exit
@@ -352,7 +363,7 @@ orchestrator keeps the list it carries.
 declares that line reads none; the Apple gate below reads them, and neither is
 recorded.
 Every single-valued flag may be supplied at most once
-(no silent last-wins); only --qa-label, --label and --item repeat.
+(no silent last-wins); only --qa-label, --label, --screenshot and --item repeat.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 Exit 0 on success; every usage/validation error exits 2.
@@ -381,7 +392,7 @@ is_own_flag() {
   case "$1" in
     --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
     --validate-note|--validate-run-dir|--validate-record|--summary|--summary-file|--recovered-text|--qa-label|\
-    --near-ceiling-base|--label|--no-labels|--bundled|\
+    --near-ceiling-base|--label|--no-labels|--bundled|--screenshot|\
     --no-summary|--item|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
@@ -449,6 +460,7 @@ summary_posted=true
 qa_labels=()
 labels=()
 no_labels=false
+screenshots=()
 near_ceiling=()
 item_n=()
 item_decision=()
@@ -485,6 +497,7 @@ while (( $# > 0 )); do
     --recovered-text) need "$1" $# "${2:-}"; no_dup "$1" "$recovered_given"; recovered_given=true; recovered_text="$2"; shift 2 ;;
     --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
     --label)        need "$1" $# "${2:-}"; labels+=("$2"); shift 2 ;;
+    --screenshot)   need "$1" $# "${2:-}"; screenshots+=("$2"); shift 2 ;;
     --no-labels)    no_dup "$1" "$no_labels"; no_labels=true; shift ;;
     --near-ceiling-base) need "$1" $# "${2:-}"; no_dup "$1" "$near_ceiling_base_given"; near_ceiling_base_given=true; near_ceiling_base="$2"; shift 2 ;;
     --bundled)      bundled=true; shift ;;
@@ -679,6 +692,15 @@ fi
 if [[ "$recovered_given" == "true" ]]; then
   [[ -f "$recovered_text" ]] || die missing-file "path=$recovered_text"
 fi
+# A screenshot the acceptance cannot attach is refused here, before the
+# write, where the dev agent can still capture it; recorded absolute, so the
+# acceptance reads it from any working directory.
+screenshot_paths=()
+for shot in ${screenshots[@]+"${screenshots[@]}"}; do
+  [[ -n "$shot" && -f "$shot" && -r "$shot" ]] || die screenshot-unreadable "path=$shot"
+  shot_dir="$(cd -- "$(dirname -- "$shot")" && pwd -P)" || die screenshot-unreadable "path=$shot"
+  screenshot_paths+=("$shot_dir/$(basename -- "$shot")")
+done
 
 if [[ "$near_ceiling_base_given" == "true" ]]; then
   [[ -n "$near_ceiling_base" ]] || die required option=--near-ceiling-base
@@ -962,6 +984,12 @@ else
   near_json='[]'
 fi
 
+if (( ${#screenshot_paths[@]} > 0 )); then
+  screenshots_json="$(jq -n '$ARGS.positional' --args "${screenshot_paths[@]}")"
+else
+  screenshots_json='[]'
+fi
+
 if (( ${#item_n[@]} > 0 )); then
   items_json="$(
     for i in "${!item_n[@]}"; do
@@ -1042,6 +1070,7 @@ jq -n \
   --argjson recovered_from "$recovered_from" \
   --argjson bundled "$bundled" \
   --argjson items "$items_json" \
+  --argjson screenshots "$screenshots_json" \
   '({
      schema_version: $schema_version,
      round_id: $round_id,
@@ -1065,6 +1094,7 @@ jq -n \
    } + (if $validate_selection == "" then {} else {validate_selection: $validate_selection} end)
      + (if $validate_lanes == "" then {} else {validate_lanes: $validate_lanes} end)
      + (if $validate_class_base == "" then {} else {validate_class_base: $validate_class_base} end)
+     + (if $screenshots == [] then {} else {screenshots: $screenshots} end)
      + if $kind == "implement" then {baseline_lines: $baseline_lines} else {} end)' > "$tmp"
 
 mv "$tmp" "$out"

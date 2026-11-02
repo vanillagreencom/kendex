@@ -48,6 +48,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. Mode semantics and exit codes: `label-add --help`. |
 | `label-remove <PR-or-issue> <label> [--issue]` | Remove a label through the sanitized router. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
+| `ci-rerun <N> [--required-only] [--repo OWNER/REPO]` | Rerun the PR's current failed run once when its failed log names a transient runner failure; prints `rerun run=ID pattern=P` or `no-rerun cause=...`, the caller keeping the once-per-head rule: `ci-rerun --help`. |
 | `bot-token [--format=safe\|text]` | Check if bot token is configured, naming the selected variable as `source` |
 | `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review. The exit status reports whether the dismissals landed: `dismiss-review --help`. |
 | `resolve-thread <PRRT_...>` | Mark thread(s) resolved. Works on threads the UI cannot render. The exit status reports whether the mutations landed: `resolve-thread --help`. See *PR blocked with no visible conversations*. |

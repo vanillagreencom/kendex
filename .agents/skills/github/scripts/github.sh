@@ -47,6 +47,8 @@ Commands:
   label-add          Add a PR/issue label
   label-remove       Remove a PR/issue label
   ci-logs            Get CI failure logs for a PR
+  ci-rerun           Rerun a PR's current failed run once when its log names
+                     a transient runner failure
   bot-token          Check bot token configuration
   dismiss-review     Dismiss a PR review (bot or specific user)
   resolve-thread     Resolve a review thread
@@ -186,6 +188,7 @@ esac
 _takes_value() {
     case "$command:$1" in
         ci-logs:--lines) return 0 ;;
+        ci-rerun:--repo) return 0 ;;
         dismiss-review:--message | dismiss-review:--user) return 0 ;;
         edit-comment:--body | edit-comment:--body-file) return 0 ;;
         find-comment:--author | find-comment:--pattern) return 0 ;;
@@ -261,7 +264,7 @@ unset _help_route
 
 
 case "$command" in
-    pr-data|pr-view|pr-threads|pr-timeline|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|ci-classify-refusal|check-review-replies|pr-cross-check|pr-issue|label-add|label-remove|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
+    pr-data|pr-view|pr-threads|pr-timeline|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|ci-classify-refusal|check-review-replies|pr-cross-check|pr-issue|label-add|label-remove|ci-logs|ci-rerun|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
         script="$SCRIPT_DIR/commands/${command}.sh"
         if [ -f "$script" ]; then
             if [ -n "$WORK_DIR" ]; then

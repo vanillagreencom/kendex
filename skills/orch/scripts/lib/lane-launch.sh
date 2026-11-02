@@ -1447,14 +1447,20 @@ lane_launch_compaction_env() { # CMD HARNESS [LITERAL_BRIEF]
 # Claude's critical-path prompts survive bypassPermissions. The provider's
 # https://code.claude.com/docs/en/permission-modes#critical-paths and
 # https://code.claude.com/docs/en/env-vars require these switches in the
-# launching environment, not a settings env block. The inline switch needs
-# v2.1.288. Subagents inherit them from the launched session.
+# launching environment, not a settings env block: the substitution switch
+# (v2.1.281), the inline switch (v2.1.288) and, from v2.1.311, the one that
+# turns the whole critical-path removal prompt off in bypassPermissions mode
+# (permission-modes#turn-off-the-critical-path-removal-prompt-in-bypasspermissions-mode),
+# which the provider leaves without effect while a PermissionRequest hook,
+# a Bash deny or ask rule, or a nested session stands. Subagents inherit
+# them from the launched session. They are environment, not flags, so the
+# LAUNCH SETTINGS column above does not carry them.
 lane_launch_rm_prompt_env() { # CMD HARNESS
   local rc=0
   [[ "$2" == claude ]] || return 0
   lane_copilot_allows_all "$1" "$2" || rc=$?
   case "$rc" in
-    0) printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1' ;;
+    0) printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1' ;;
     1) return 0 ;;
     *) return 1 ;;
   esac

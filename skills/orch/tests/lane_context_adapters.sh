@@ -119,7 +119,7 @@ if section reads; then
 claude-last|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-partial|claude||rc=0 1000|1000000|claude-opus-5-5
 claude-synthetic|claude||rc=0 700000|1000000|claude-fable-5-1
-claude-sonnet|claude||rc=0 400000|200000|claude-sonnet-5
+claude-sonnet|claude||rc=0 400000|1000000|claude-sonnet-5
 claude-haiku|claude||rc=0 150000|200000|claude-haiku-4-5-20251001
 claude-unknown|claude||rc=0 150000|200000|MyProviderModel
 claude-unread|claude||rc=0 unread
@@ -178,8 +178,10 @@ MyProviderModel||MyProviderModel|launch
 fable-5-1[1m]||claude-fable-5-1|launch
 ROWS
   # `model|window|id`: a model, its window, and the id a launch writes for it.
-  # Version fields do not change a family's handoff budget. Claude receives
-  # native aliases and applies its own family overrides.
+  # An id with a measured window reads it ahead of its family; every other
+  # spelling of the family, alias and version alike, reads the family's
+  # budget. Claude receives native aliases and applies its own family
+  # overrides.
   while IFS='|' read -r model want id; do
     assert_eq "$(bash -c 'set -euo pipefail; source "$1"; lane_adapter_claude_window "$2"; lane_adapter_claude_model_id "$2"' _ "$LIB" "$model" | tr '\n' '|')" \
       "${want:+$want|}${id:-$model}|" "claude window of $model: ${want:-none}, written as ${id:-$model}"
@@ -189,8 +191,9 @@ opus[1m]|1000000
 claude-opus-5-5|1000000
 sonnet|200000
 Sonnet|200000|sonnet
-claude-sonnet-5|200000
-claude-sonnet-5-5|200000
+claude-sonnet-5|1000000
+claude-sonnet-5-5|1000000
+Claude-Sonnet-5-5|1000000|claude-sonnet-5-5
 haiku|200000
 claude-haiku-4-5|200000
 claude-haiku-4-5-20251001|200000
@@ -200,6 +203,7 @@ claude-sonnet-4-6|200000
 claude-sonnet-4-5|200000
 claude-sonnet-5-1|200000
 sonnet[1m]|200000
+claude-sonnet-5-5[1m]|200000
 haiku[1m]|200000
 MyProviderModel|200000|myprovidermodel
 |200000

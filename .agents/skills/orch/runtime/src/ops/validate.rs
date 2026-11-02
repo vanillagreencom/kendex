@@ -408,6 +408,7 @@ fn end(path: &Path, doc: &mut Document, r: &RecordEnd, env: &Env) -> Result<Ende
             end: None,
             authorization: None,
             summary_file: None,
+            attachments: Vec::new(),
             summary_comment: None,
         },
         r.end.filter(|t| (stage.start..=env.now_secs).contains(t)),

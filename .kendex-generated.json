@@ -179,6 +179,7 @@
   ".agents/skills/github/scripts/commands/check-review-replies.sh",
   ".agents/skills/github/scripts/commands/ci-classify-refusal.sh",
   ".agents/skills/github/scripts/commands/ci-logs.sh",
+  ".agents/skills/github/scripts/commands/ci-rerun.sh",
   ".agents/skills/github/scripts/commands/dismiss-review.sh",
   ".agents/skills/github/scripts/commands/edit-comment.sh",
   ".agents/skills/github/scripts/commands/find-comment.sh",

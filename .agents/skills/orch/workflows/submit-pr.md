@@ -447,7 +447,15 @@ After any fix-up push: push → the Restart check, and on a restart wait for a N
 
 ## 5. Verify CI
 
-The pull request's CI verdict is the runtime's `verify-pr` operation: one call reads the pull request's current head, base and state, judges that head as § 2.1's `verify-head` judges a pinned head, and records the verdict itself with `source: verify-pr`. Run the call through [Waiter launch](../references/waiter-launch.md), repeated no more often than every 180 seconds (the GitHub API budget is shared by every lane) while `result.status` is `pending` or `unreadable`, within the lane's CI budget `CI_WAIT_MAX_SECS`:
+Read the pull request's merge state before the first call. A conflicting pull request registers no check, so its wait would run out the whole budget:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh pr-merge [PR_NUMBER] --check
+```
+
+Its JSON's `mergeable` routes first: `CONFLICTING` takes the `conflict` row of the table below; `MERGEABLE` and `UNKNOWN`, which GitHub answers while it still computes mergeability, go on to the first call.
+
+The pull request's CI verdict is the runtime's `verify-pr` operation: one call reads the pull request's current head, base and state, judges that head as § 2.1's `verify-head` judges a pinned head, and records the verdict itself with `source: verify-pr`. Run the call through [Waiter launch](../references/waiter-launch.md), repeated no more often than every 180 seconds (the GitHub API budget is shared by every lane) while `result.status` is `pending` or `unreadable`, within the lane's CI budget `CI_WAIT_MAX_SECS`; `[OWNER/REPO]` is the repository as `gh repo view --json nameWithOwner --jq .nameWithOwner` answers it from `[WORKTREE_PATH]`:
 
 ```bash
 jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
@@ -458,6 +466,7 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
 
 | Result | Action |
 |--------|--------|
+| `conflict` | `mergeable` read `CONFLICTING` before the first call. The base, not CI, is the blocker: run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3, which unarm the PR where one exists, restack, validate the restacked head where the project sets `DEV_VALIDATE_RANGE_CMD`, and push through `worktree-push`; a red run there hands back. That push is a fix-up push: take the § 4 Restart check, then re-enter § 5 at its merge-state read. Never route a conflict into § 5.1 or the budget row |
 | `status=complete`, `verdict=pass` | → § 6 |
 | `status=complete`, `verdict=none` | Run the coverage check below. Only exit 0 permits recording `ci: none` in workflow state and → § 6 |
 | `status=complete`, `verdict=fail` | → § 5.1 |
@@ -482,6 +491,27 @@ fi
 ```
 
 The printed value is `MAX_CYCLES`. Reruns-in-place are for flakes and re-gating on unchanged workflows only; a PR that changes gate or CI workflow behavior exhibits it only on a fresh head.
+
+**One rerun per head.** A transient runner failure, a runner lost or a dependency install that timed out, is rerun once per head before any fix round. Read the recorded rerun:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.ci_rerun.head // ""'
+```
+
+When it prints the verdict's `result.head`, this head had its rerun: go to Run Workflow. Otherwise record the rerun for this head, then ask for it. The github skill reruns the current failed required run only where its failed log names a transient runner failure (`ci-rerun --help`); the record is written before the ask, never after:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
+```
+
+`[HEAD]` is the verdict's `result.head`; `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`. A `rerun run=[RUN_ID]` line records the run, then returns to the § 5 call after the interval § 5 keeps between calls, never at once: GitHub registers the new attempt after the verb answers, and a call before that reads the old red as a second failure of this head. The call reads the rerun attempt as the current run:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] ci_rerun.run [RUN_ID]
+```
+
+A `no-rerun` line, or exit `1`, goes to Run Workflow.
 
 **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`. ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. ci-fix resolves the mode itself at the new head. Record its mode as `GATE_MODE` and its gate re-confirmation as the § 4 result. Mode `off` has no re-confirmation to record. A returned `comments`, `changes_requested` or `copilot-error` routes through the § 4 step-1 table first, then re-enters § 5 after the approval gate is met. Route a returned final CI result through the § 5 table above.
 
@@ -516,7 +546,7 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 
 Empty `json_paths` means no internal review is recorded: report the unmet gate and recommend `orch review-pr [PR_NUMBER]`.
 
-**Gate 2** is the recorded § 5 result. Do not re-run ci-wait. Raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]` and report its `cause:` line with its printed detail. Read `ci-classify-refusal --help` for the output contract.
+**Gate 2** is the recorded § 5 result. Do not re-run `verify-pr`. Raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]` and report its `cause:` line with its printed detail. Read `ci-classify-refusal --help` for the output contract.
 
 **Gate 3** — final live check. Replying to every bot comment stays § 3.1's hygiene rule, which is not a gate in any mode.
 

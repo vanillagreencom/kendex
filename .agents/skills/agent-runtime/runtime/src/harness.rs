@@ -325,23 +325,20 @@ impl Harness {
     /// The context capacity a harness declares for a model, in tokens: the
     /// one table of orch's context judge, read where a reading names no
     /// window of its own (a provider row's or an adapter's measured
-    /// `window` wins where one is carried). Claude Code's is per model
-    /// family, matched on the lowercased model word as orch's
-    /// `lib/adapters/claude.sh` matched it (`LANE_ADAPTER_CLAUDE_WINDOWS`,
-    /// `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`): a family word anywhere in the
-    /// model, the first row that matches, the default for a model naming
-    /// none. Codex, Copilot and Pi declare no capacity here: each names
-    /// its window in its own session record, which the adapter reads. A
-    /// harness update re-reads this table beside the launch words.
-    ///
-    /// ```text
-    /// harness  model word  capacity
-    /// claude   fable       1000000
-    ///          opus        1000000
-    ///          sonnet       200000
-    ///          haiku        200000
-    ///          (other)      200000
-    /// ```
+    /// `window` wins where one is carried). Claude Code's is
+    /// `CLAUDE_CONTEXT_CAPACITY`, walked in order on the lowercased model,
+    /// the first row that matches, the default for a model matching none:
+    /// an exact id first, so a model with a measured window is read at it,
+    /// then the family word anywhere in the model, so an alias or an
+    /// undeclared id of that family reads the family's budget. Orch's
+    /// `lib/adapters/claude.sh` carries the same rows in glob form
+    /// (`LANE_ADAPTER_CLAUDE_WINDOWS`, `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`)
+    /// for the turn-end hook and the launcher, which judge before this
+    /// runtime is built; the test row
+    /// `the_adapters_capacity_line_spells_this_table_row_for_row` holds the
+    /// two together. Codex, Copilot and Pi declare no capacity here: each
+    /// names its window in its own session record, which the adapter reads.
+    /// A harness update re-reads this table beside the launch words.
     pub fn context_capacity(self, model: &str) -> Option<u64> {
         match self {
             Harness::Claude => {
@@ -349,7 +346,7 @@ impl Harness {
                 Some(
                     CLAUDE_CONTEXT_CAPACITY
                         .iter()
-                        .find(|(word, _)| model.contains(word))
+                        .find(|(row, _)| row.matches(&model))
                         .map_or(CLAUDE_CONTEXT_DEFAULT, |(_, capacity)| *capacity),
                 )
             }
@@ -358,15 +355,38 @@ impl Harness {
     }
 }
 
-/// Claude Code's declared capacity per model family, in row order.
-const CLAUDE_CONTEXT_CAPACITY: [(&str, u64); 4] = [
-    ("fable", 1_000_000),
-    ("opus", 1_000_000),
-    ("sonnet", 200_000),
-    ("haiku", 200_000),
+/// What a row of Claude Code's capacity table matches a lowercased model
+/// on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelMatch {
+    /// The whole model id.
+    Id(&'static str),
+    /// A family word anywhere in the model.
+    Family(&'static str),
+}
+
+impl ModelMatch {
+    fn matches(self, model: &str) -> bool {
+        match self {
+            ModelMatch::Id(id) => model == id,
+            ModelMatch::Family(word) => model.contains(word),
+        }
+    }
+}
+
+/// Claude Code's declared capacity per model, in the order the walk reads
+/// them: the ids with a measured 1,000,000-token window (KEN-4599) before
+/// the family that would read them at 200,000.
+const CLAUDE_CONTEXT_CAPACITY: [(ModelMatch, u64); 6] = [
+    (ModelMatch::Id("claude-sonnet-5-5"), 1_000_000),
+    (ModelMatch::Id("claude-sonnet-5"), 1_000_000),
+    (ModelMatch::Family("fable"), 1_000_000),
+    (ModelMatch::Family("opus"), 1_000_000),
+    (ModelMatch::Family("sonnet"), 200_000),
+    (ModelMatch::Family("haiku"), 200_000),
 ];
 
-/// Claude Code's capacity for a model naming no family in the table.
+/// Claude Code's capacity for a model matching no row of the table.
 const CLAUDE_CONTEXT_DEFAULT: u64 = 200_000;
 
 impl fmt::Display for Harness {
@@ -438,20 +458,28 @@ const COMM_LEN: usize = 15;
 mod tests {
     use super::*;
 
-    /// Defect: a model's declared capacity read from another family's row
-    /// (the judge then reads a 1,000,000-token model as 200,000, or the
-    /// reverse), or a harness whose window the adapter measures answered a
-    /// figure here. The rows are `lib/adapters/claude.sh`'s patterns on the
-    /// spellings orch records: a family word inside a full id or a class
-    /// alias, case ignored, the default for a model naming no family, and
-    /// `None` for every other harness.
+    /// Defect: a model's declared capacity read from another row (the judge
+    /// then reads a 1,000,000-token model as 200,000, or the reverse): an
+    /// exact id read at its family's budget, or an alias of that family
+    /// read at the exact id's; or a harness whose window the adapter
+    /// measures answered a figure here. The rows are the spellings orch
+    /// records: a measured id, a family word inside a full id or a class
+    /// alias, a measured id with the `[1m]` suffix (an alias, which an id
+    /// matched by containment would read at the measured figure), case
+    /// ignored, the default for a model naming no family, and `None` for
+    /// every other harness.
     #[test]
-    fn the_declared_capacity_follows_the_model_family_and_only_claude_declares_one() {
+    fn the_declared_capacity_follows_the_model_id_then_its_family_and_only_claude_declares_one() {
         let rows = [
             ("claude-fable-5-1", Some(1_000_000)),
             ("Fable", Some(1_000_000)),
             ("opus[1m]", Some(1_000_000)),
-            ("claude-sonnet-5-5", Some(200_000)),
+            ("claude-sonnet-5-5", Some(1_000_000)),
+            ("Claude-Sonnet-5-5", Some(1_000_000)),
+            ("claude-sonnet-5", Some(1_000_000)),
+            ("sonnet", Some(200_000)),
+            ("claude-sonnet-4-5", Some(200_000)),
+            ("claude-sonnet-5-5[1m]", Some(200_000)),
             ("haiku", Some(200_000)),
             ("", Some(200_000)),
             ("some-other-model", Some(200_000)),
@@ -466,6 +494,61 @@ mod tests {
                 "{harness}"
             );
         }
+    }
+
+    /// Defect: orch's copy of the table, `lib/adapters/claude.sh`'s
+    /// `LANE_ADAPTER_CLAUDE_WINDOWS` and `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`,
+    /// which the turn-end hook and the launcher judge on before this
+    /// runtime is built, drifting from this one: a figure moved in either
+    /// file alone, and the overseer judged on two capacities. The shipped
+    /// adapter beside this crate is read and its two assignment lines
+    /// parsed; every row, in order and in the adapter's glob spelling, and
+    /// the default must be this table's.
+    #[test]
+    fn the_adapters_capacity_line_spells_this_table_row_for_row() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../orch/scripts/lib/adapters/claude.sh"
+        );
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let assigned = |name: &str| -> String {
+            let prefix = format!("{name}=");
+            let line = text
+                .lines()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("{path}: no `{name}=` line"));
+            line[prefix.len()..].trim_matches('\'').to_owned()
+        };
+        let rows: Vec<(String, u64)> = assigned("LANE_ADAPTER_CLAUDE_WINDOWS")
+            .split_whitespace()
+            .map(|pair| {
+                let (pattern, figure) = pair
+                    .split_once('=')
+                    .unwrap_or_else(|| panic!("{path}: row `{pair}` has no `=`"));
+                let figure = figure
+                    .parse()
+                    .unwrap_or_else(|e| panic!("{path}: row `{pair}`: {e}"));
+                (pattern.to_owned(), figure)
+            })
+            .collect();
+        let spelled: Vec<(String, u64)> = CLAUDE_CONTEXT_CAPACITY
+            .iter()
+            .map(|(row, capacity)| {
+                let pattern = match row {
+                    ModelMatch::Id(id) => (*id).to_owned(),
+                    ModelMatch::Family(word) => format!("*{word}*"),
+                };
+                (pattern, *capacity)
+            })
+            .collect();
+        assert_eq!(rows, spelled, "{path}: LANE_ADAPTER_CLAUDE_WINDOWS");
+        assert_eq!(
+            assigned("LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW")
+                .parse::<u64>()
+                .ok(),
+            Some(CLAUDE_CONTEXT_DEFAULT),
+            "{path}: LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW"
+        );
     }
 
     /// A probe of a stand-in harness is one counted start under `probe`

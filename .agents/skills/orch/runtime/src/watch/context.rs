@@ -327,7 +327,7 @@ mod tests {
             Some(false)
         );
         assert_eq!(
-            record(200_000, None, Some("claude-sonnet-5-5")).window_full(Harness::Claude),
+            record(200_000, None, Some("claude-haiku-5-5")).window_full(Harness::Claude),
             Some(true)
         );
         assert_eq!(

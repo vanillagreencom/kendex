@@ -389,31 +389,30 @@ pub enum AuthorizedBy {
     OwnerDirective,
 }
 
-/// U6c, U6j2: the item's Completion Summary comment on the tracker, the
-/// item's `summary_comment` (step6-map § A8, decision 190): the comment's
-/// id, the stamp of the acceptance's last post or, for a found comment, of
-/// its record, and whose comment it is. The acceptance rewrites in place
-/// only a comment it created: a found one keeps the body its writer gave
-/// it, on Linear the body links that are its attachments.
+/// U6c, U7e: the item's Completion Summary comment on the tracker, the
+/// item's `summary_comment` (step6-map § A8, decision 192 Q10): the
+/// comment's id, the stamp of the acceptance's last post, and the
+/// attachments its body carries. The acceptance updates the comment in
+/// place by its id; on Linear a comment's attachments are links in its
+/// body, so the record keeps them for every update's body to render. A
+/// record written with an `origin` word reads without it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryComment {
     pub id: String,
     pub at: String,
-    #[serde(default)]
-    pub origin: SummaryOrigin,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
 }
 
-/// Who wrote the item's summary comment: the acceptance (`created`, updated
-/// in place on every later acceptance) or another writer, the dev agent's
-/// own post, that the acceptance's list found (`found`, never rewritten).
-/// A record written before the word existed names the comment the
-/// acceptance was then updating, so an absent field reads `created`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SummaryOrigin {
-    #[default]
-    Created,
-    Found,
+/// One attachment of the summary comment: the link line the tracker CLI
+/// appended under the body, as `![name](url)` for an image and
+/// `[name](url)` otherwise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub image: bool,
 }
 
 /// The validation mode a run records: the project's whole battery, its

@@ -706,7 +706,7 @@ assert_eq "$RC|$(judged)|$(grep -c "^oversee-succeed: record-unread pane=$CALLER
 # alone on stdout, which is all the watch start records.
 run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS"
 assert_eq "$RC|$OUT|$(sed -n 1p <<<"$ERR")" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $LEAD $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $LEAD $BYPASS '$BRIEF'|oversee-succeed: record-unread pane=$CALLER_PANE" \
   "--print-launch-line on an unreadable state: the notice on stderr, the line alone on stdout"
 
 # The control for the pending rule: a reader that takes the pending successor
@@ -874,7 +874,7 @@ assert_eq "$RC|$(sed -n 1p <<<"$ERR")" "1|oversee-succeed: harness-unnamed pane=
 # The same pane with a record: the harness, account, model and effort are the
 # record's, the permission word the caller's own flags, and the pending
 # successor changes none of it.
-RECORD_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS '$BRIEF'"
+RECORD_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer --model fable --effort high $LEAD $BYPASS '$BRIEF'"
 for pending in '{}' "$PENDING"; do
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$pending")"
   run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
@@ -889,7 +889,7 @@ PAIRCTL="$(mutant_scripts pairctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PAIRCTL/lib/overseer-launch.sh" '  if [[ -z "$model" && -z "$effort" ]]; then' '  if true; then'
 state "$(record "$CALLER_PANE" "$H/.eclaude" fable)"
 SUCCEED_BIN="$PAIRCTL/oversee-succeed" run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --print-launch-line -- "$BYPASS" --model opus --effort low
-assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
+assert_eq "$RC|$OUT" "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer --model fable --effort high $LEAD $BYPASS --model opus --effort low '$BRIEF'" \
   "control: a caller entry that keeps its flags beside the record's pair names two models" "$TMP_ROOT/err"
 
 # A pi overseer's line: its model and level words, its question-tool words and
@@ -1123,7 +1123,7 @@ reading "Fable 5.1"
   state "$(record "$CALLER_PANE" "$H/.eclaude" fable "$(jq -cn --arg cwd "$RECORDED_CWD" '{cwd: $cwd}')")"
   SUCCEED_BIN="$dir/oversee-succeed" PREFERENCE=claude:fable-next:low run_succeed "CLAUDE_CONFIG_DIR=$H/.claude" --wait-secs 20 -- "$BYPASS"
 }
-SUCC_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable-next --effort low $LEAD $BYPASS '$BRIEF'"
+SUCC_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer --model fable-next --effort low $LEAD $BYPASS '$BRIEF'"
 pending_run "$(mutant_scripts pendingrun)"
 assert_eq "$RC|$(jq -r '.successor | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' "$TMP_ROOT/runtime.request")" \
   "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \
@@ -1278,7 +1278,7 @@ if (( RUNTIME_READY )); then
 
   # A codex predecessor's bypass line succeeded by claude (round-2 item 1):
   # the walk writes the bypass posture for another harness, and the builder
-  # spells claude's bypass word once with both prompt-suppression values.
+  # spells claude's bypass word once with its prompt-suppression values.
   new_caller
   reading "Fable 5.1"
   state "$(record "$CALLER_PANE" "$H/.codex" gpt-5 "$(jq -cn --arg cwd "$RECORDED_CWD" '{harness: "codex", cwd: $cwd, launch_line: "codex --dangerously-bypass-approvals-and-sandbox -m gpt-5"}')")"
@@ -1287,9 +1287,9 @@ if (( RUNTIME_READY )); then
     "0|claude|$H/.claude|bypass|[]" \
     "a claude successor to a codex bypass predecessor runs the bypass posture with no replayed codex word" "$TMP_ROOT/err"
   replay_request "$RECORDED_CWD"
-  assert_eq "$(launched '[([.argv[] | select(. == "--dangerously-skip-permissions")] | length), .env.CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT, .env.CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT, .env.CLAUDE_CONFIG_DIR] | map(tostring) | join("|")')" \
-    "1|1|1|$H/.claude" \
-    "and the real builder launches claude with its bypass word once and both prompt-suppression values set" "$TMP_ROOT/replay.err"
+  assert_eq "$(launched '[([.argv[] | select(. == "--dangerously-skip-permissions")] | length), .env.CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT, .env.CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT, .env.CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS, .env.CLAUDE_CONFIG_DIR] | map(tostring) | join("|")')" \
+    "1|1|1|1|$H/.claude" \
+    "and the real builder launches claude with its bypass word once and its prompt-suppression values set" "$TMP_ROOT/replay.err"
 fi
 
 model_switch_rows || fail 'overseer model-switch behavior'

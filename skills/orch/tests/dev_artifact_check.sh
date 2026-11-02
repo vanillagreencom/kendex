@@ -107,7 +107,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 # observe EXPECT — prints the run's value of every `name=` field EXPECT names,
 # in EXPECT's order. Plain names are JSON result fields; a
 # key the result does not carry reads ABSENT, so `null` means a real null.
-# `files` and `near_ceiling` read compact.
+# `files`, `near_ceiling` and `screenshots` read compact.
 #   rc              exit status
 #   stderr~<text>   whether stderr carries <text> (`+` reads as a space)
 #   stderr_first~<text>  whether stderr's FIRST line is exactly <text> (`+`
@@ -130,6 +130,7 @@ observe() {
       rc) value="$RC" ;;
       files) value="$(json '.files | tojson')" ;;
       near_ceiling) value="$(json '.near_ceiling | tojson')" ;;
+      screenshots) value="$(json '.screenshots | tojson')" ;;
       validate_time) value="$(json '.validate_time | tojson')" ;;
       help_sections)
         value=""
@@ -856,6 +857,17 @@ receipt_table \
   "a receipt with no near_ceiling key echoes an empty list^impl^^$FILE_ARGS^reason=valid near_ceiling=[]" \
   "a non-array near_ceiling echoes an empty list rather than the wrong shape^impl^.near_ceiling=\"one\"^$FILE_ARGS^reason=valid near_ceiling=[]" \
   "a null near_ceiling, a probe that did not answer, echoes null and its cause rather than an empty list^impl^.near_ceiling=null | .near_ceiling_error=\"byte-ceiling-exit-2\"^$FILE_ARGS^reason=valid near_ceiling=null near_ceiling_error=byte-ceiling-exit-2"
+
+echo "=== the recorded screenshots reach the orchestrator ==="
+# The acceptance attaches each to the item's summary comment, so a capture
+# recorded in the artifact and never echoed would never reach the item; a
+# receipt that carries none, or the key in a shape the writer never
+# produces, reads as an empty list.
+receipt_table \
+  "two screenshots are echoed in order^impl^.screenshots=[\"/s/a.png\",\"/s/b.png\"]^$FILE_ARGS^reason=valid screenshots=[\"/s/a.png\",\"/s/b.png\"]" \
+  "a receipt with no screenshots key echoes an empty list^impl^^$FILE_ARGS^reason=valid screenshots=[]" \
+  "a non-array screenshots echoes an empty list rather than the wrong shape^impl^.screenshots=\"one\"^$FILE_ARGS^reason=valid screenshots=[]" \
+  "a missing file echoes an empty screenshots list^none^^--file $WT/tmp/nope.json^rc=1 reason=missing screenshots=[]"
 
 echo "=== --wait blocks until an artifact lands or the deadline ==="
 # An (invalid) receipt landing after about two seconds ends a 20-second wait

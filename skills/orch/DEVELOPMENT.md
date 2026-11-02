@@ -130,3 +130,21 @@ The managed lifecycle relies on committed branch diffs, so `dev-start.md`, `revi
 `branch_size_classified` lives in change-scope's `scripts/lib/branch-growth.sh`, which `item-tier` and `dev-return-write` source from the sibling package. Harness CI reads its production, test and render counts and test paths to select CI checks and the review skip for a trivial change. `dev-validate-run` and submit reuse read that classifier for validation coverage. Review-gate consumer refresh also reads it to report the class and select checks. These uses do not gate an orch workflow on an issue allowance.
 
 `dev-return-write` reads `branch_baseline_lines` to record additions plus deletions in an implement receipt, with paired renders counted once. The receipt reports churn; it does not authorize a round or a cut. `branch_size_numstat`, base resolution and render-root settings remain for these callers. Fix-round stamping and cut acceptance read no branch size. The review watcher reads GitHub review state only.
+
+## Harness update
+
+A harness release can change what orch transcribed from the harness. Before a fleet runs on the release, re-check each transcription at its one home:
+
+- The permission table: the launch-choice table in `scripts/lib/lane-launch.sh`, one row per harness naming its model, effort, permission and launch-only words, with the harness documentation each row cites in the comment above it. A permission word the release renamed or dropped leaves a launch attended.
+- The Claude capacity table: `Harness::context_capacity` in `skills/agent-runtime/runtime/src/harness.rs`, which `LANE_ADAPTER_CLAUDE_WINDOWS` in `scripts/lib/adapters/claude.sh` spells in glob form for the turn-end hook and the launcher. A figure changes in both files in one commit; the runtime's test row `the_adapters_capacity_line_spells_this_table_row_for_row` refuses one that moved alone. A model id with a measured window is an exact-id row ahead of its family word, and an alias keeps the family's budget.
+- The native thin path on each of the four harnesses: `skills/agent-runtime/tests/native/thin-path.sh --harness [HARNESS]`, run by a person on a real account ([agent-runtime's DEVELOPMENT.md § Native probe](../agent-runtime/DEVELOPMENT.md#native-probe)), proves the start identity, the first turn, the idle read, the later deliveries and the exact stop on the release.
+- The Codex rollout shape: `lane_adapter_codex_transcript_owned` in `scripts/lib/adapters/codex.sh` admits `<home>/sessions/<year>/<month>/<day>/rollout-<time>-<session id>.jsonl` and nothing else, `lane_adapter_codex_reading` reads the `token_count` event's `last_token_usage.total_tokens` and `model_context_window` with the model the last `turn_context` names, and the runtime binds a Codex session by the same path in `skills/agent-runtime/runtime/src/session.rs`. A release that moves the rollout or renames the event leaves every Codex overseer's context a gap, which the watch reports as `overseer-context-unmeasured`.
+- The session row shapes the overseer's hooks write: § Overseer session names the release each follows.
+
+Per-harness facts the skill text relies on, with their standing:
+
+| Fact | Claude Code | Codex | Copilot CLI | Pi |
+|---|---|---|---|---|
+| A harness child a lane's tool starts inherits the lane's sign-in | not proven | not proven | not proven | not proven |
+
+While a column reads not proven, the dev skill's § Long-Running Validation has a lane plan without such a child and take the harness's own subagent route for a second agent. A measured answer replaces the cell and that sentence together.

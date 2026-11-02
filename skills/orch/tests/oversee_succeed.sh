@@ -801,7 +801,7 @@ assert_eq "generation=$(orec generation) pending=$(orec pending) harness_pid=$(o
 # The successor's line the runtime is handed is the one a later dead-overseer
 # relaunch replays once the runtime publishes it.
 assert_eq "$(req successor.launch_line)" \
-  "$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
+  "$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer --model fable --effort high $CLAUDE_COMPACT_LINE --dangerously-skip-permissions --verbose '$BRIEF'" \
   "the request carries the line the successor is launched with"
 # The succession's context arm, run from outside the caller's pane on the
 # reading the turn-end hook hands it: a caller past the context mark on an
@@ -2284,13 +2284,13 @@ echo "=== an overseer that DIED, which reaches none of the marks above ==="
 new_caller "$UNDER_MARK"
 run_succeed printline '' --print-launch-line -- --verbose
 assert_eq "$RC|$OUT|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS '$BRIEF'|yes|0|none" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS '$BRIEF'|yes|0|none" \
   "--print-launch-line prints the caller's own line, judges no mark and launches nothing"
 
 new_caller "$UNDER_MARK"
 WALL_MINUTES=bad SUCCESSOR_ACCOUNTS=bad run_succeed printbadmarks '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|0" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|0" \
   "malformed trigger settings do not block a non-judging launch-line print"
 
 # The preference names where a LATER successor goes; the printed line records
@@ -2299,7 +2299,7 @@ assert_eq "$RC|$OUT|$(overseers)" \
 new_caller "$UNDER_MARK"
 run_succeed printpref 'codex:gpt-6-astra:high' --print-launch-line
 assert_eq "$RC|$OUT|$(recorded codex)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|none" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|none" \
   "--print-launch-line walks the caller entry whatever the preference names"
 
 # The account the printed line opens its successor on is the one the fleet
@@ -2318,13 +2318,13 @@ new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 run_succeed printrecord '' --print-launch-line --harness claude
 assert_eq "$RC|$OUT" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
   "the printed line opens on the account the fleet state records for this pane"
 new_caller "$UNDER_MARK"
 record_account '%999' "$H/.eclaude"
 run_succeed printother '' --print-launch-line --harness claude -- "$BYPASS"
 assert_eq "$RC|$OUT" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
   "a record naming another pane is another session's: the environment's account stands"
 # The control on the record fallback: a copy that never reads the recorded
 # account prints the environment's for the pane the record names.
@@ -2334,7 +2334,7 @@ new_caller "$UNDER_MARK"
 record_account "$CALLER_PANE" "$H/.eclaude"
 SUCCEED_BIN="$PRINTREC/oversee-succeed" run_succeed printrecctl '' --print-launch-line --harness claude
 assert_eq "$RC|$OUT" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'" \
   "control: a print that ignores the record names the environment's account for the recorded pane"
 fleet_state
 
@@ -2656,7 +2656,7 @@ while IFS='|' read -r harness expected; do
     assert_eq "$assertion_rc" "$want_rc" "$harness prompt assertion rejects lost text or option interpretation: $brief_text" "$TMP_ROOT/brief-assertion.out"
   done
 done <<ROWS
-claude|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS -- '$brief_text'
+claude|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS -- '$brief_text'
 codex|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 --dangerously-bypass-approvals-and-sandbox -- '$brief_text'
 copilot|$COPILOT_ENV COPILOT_HOME='$H/.1copilot' copilot --autopilot --max-autopilot-continues 3 --context long_context --no-auto-update --allow-all --interactive='$brief_text'
 ROWS
@@ -2787,7 +2787,7 @@ assert_eq "$RC|$(keyed --summary context-below-mark "$OUT")|$(caller_open)|$(ove
 new_caller "$UNDER_MARK"
 SUCCESSION=off run_succeed printoff '' --print-launch-line
 assert_eq "$RC|$OUT|$(overseers)" \
-  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|0" \
+  "0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|0" \
   "succession off still prints the line: printing launches nothing"
 
 # A successor overseer carries the words that take its harness question tool
@@ -2796,11 +2796,11 @@ assert_eq "$RC|$OUT|$(overseers)" \
 # the words is dropped under overseer and carried once under off. A value
 # that is neither refuses before a line is built.
 for row in \
-  "claude|unset||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode $BYPASS '$BRIEF'|unset takes the claude question tool away" \
-  "claude|off||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode $BYPASS '$BRIEF'|off takes the claude question tool away" \
-  "claude|overseer||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|overseer keeps the claude question tool" \
-  "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS '$BRIEF'|overseer drops the caller's own question-tool words" \
-  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose $BYPASS '$BRIEF'|off carries a caller's own copy of the words once" \
+  "claude|unset||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode $BYPASS '$BRIEF'|unset takes the claude question tool away" \
+  "claude|off||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode $BYPASS '$BRIEF'|off takes the claude question tool away" \
+  "claude|overseer||0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'|overseer keeps the claude question tool" \
+  "claude|overseer|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE --verbose $BYPASS '$BRIEF'|overseer drops the caller's own question-tool words" \
+  "claude|off|--disallowedTools=AskUserQuestion,EnterPlanMode --verbose|0|$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE --disallowedTools=AskUserQuestion\\,EnterPlanMode --verbose $BYPASS '$BRIEF'|off carries a caller's own copy of the words once" \
   "codex|off||0|$SCRUB_ENV CODEX_HOME='$PRINT_HOME' ORCH_COMPACTION_OVERRIDES='$CODEX_COMPACTION' codex -c check_for_update_on_startup=false -c features.daemon_auto_start=false -c notice.hide_rate_limit_model_nudge=true --dangerously-bypass-hook-trust -c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0 -c features.default_mode_request_user_input=false --dangerously-bypass-approvals-and-sandbox '$BRIEF'|off takes the codex question tool away" \
   "claude|on||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=on|on is not a value: refused before a line is built" \
   "claude|sometimes||1|oversee-succeed: invalid-question-tool ORCH_QUESTION_TOOL=sometimes|a value that is neither off nor overseer refuses" \
@@ -3776,7 +3776,7 @@ walled_world_reset() { claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"; 
 new_caller "$MARK"
 walled_world
 run_succeed walledpane '' --walled-pane "$CALLER_PANE"
-WALLED_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'"
+WALLED_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.eclaude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer $CLAUDE_COMPACT_LINE $BYPASS '$BRIEF'"
 assert_eq "$RC|$(overseers)|$(caller_open)|$(recorded claude)" \
   "0|0|yes|lane=$H/.eclaude;-n;overseer;$CLAUDE_COMPACT;$BYPASS;$BRIEF;" \
   "--walled-pane opens the successor on the lane the pick named, never on the caller's own"

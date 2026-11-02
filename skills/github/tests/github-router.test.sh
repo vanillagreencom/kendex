@@ -130,6 +130,8 @@ pr-list-ready refuses the --json alias|pr-list-ready --json|1|-|unknown-option=-
 pr-list-failing too|pr-list-failing --json|1|-|unknown-option=--json
 pr-issue too|pr-issue 42 --json|1|-|unknown-option=--json
 ci-logs too|ci-logs 42 --json|1|-|unknown-option=--json
+ci-rerun routes, an unstaged rollup answering its own cause|ci-rerun 42|0|no-rerun cause=checks-unread|-
+ci-rerun refuses the --json alias too|ci-rerun 42 --json|2|-|unknown-option=--json
 bot-token too|bot-token --json|1|-|unknown-option=--json
 pr-edit-body refuses --body-file with no operand instead of failing its shift|pr-edit-body 42 --body-file|2|-|pr-edit-body: --body-file is required
 "

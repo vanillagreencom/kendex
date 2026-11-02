@@ -212,10 +212,15 @@ scope_current_run() {
 # scope_current_run orders runs by it. gh exits 8 while checks are pending
 # but still prints usable JSON, so any valid array is authoritative
 # regardless of the exit status; a non-array answer returns 1 and prints
-# nothing.
+# nothing. Arg 2, when given, is the owner/name the PR lives in, as
+# required_contexts takes it; without it gh resolves the repository from
+# the working directory.
 fetch_checks_rollup() {
-  local out
-  out=$(gh pr checks "$1" --json name,state,bucket,link,startedAt,workflow 2>&1) || true
+  local out repo="${2:-}" repo_arg=()
+  if [ -n "$repo" ]; then
+    repo_arg=(--repo "$repo")
+  fi
+  out=$(gh pr checks "$1" ${repo_arg[@]+"${repo_arg[@]}"} --json name,state,bucket,link,startedAt,workflow 2>&1) || true
   jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || return 1
   printf '%s\n' "$out"
 }

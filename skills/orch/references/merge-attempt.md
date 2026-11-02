@@ -4,7 +4,15 @@ Load from [merge-pr.md § 5 step 1](../workflows/merge-pr.md#5-execute-the-merge
 
 ## Direct attempt
 
-**The direct attempt** follows a CI wait on the PR, on every entry to it, since the immediate merge refuses a pending check. The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](waiter-launch.md) and repeated no more often than every 180 seconds while `result.status` is `pending` or `unreadable`, within the lane's CI budget `CI_WAIT_MAX_SECS`; `[OWNER/REPO]` is the repository as merge-pr.md § 5 step 1's `gh repo view --json nameWithOwner` answers it:
+**The direct attempt** follows a CI wait on the PR, on every entry to it, since the immediate merge refuses a pending check. Read the pull request's merge state before the wait, since a conflicting pull request registers no check:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --check
+```
+
+Its JSON's `mergeable` routes first. `CONFLICTING` ends the attempt before any wait: put `[PREPARED_HEAD]` and the word `conflict` in `## Merge decision` by § Record the merge decision, with no route line, then take merge-pr.md § 5 step 1's Restack cycle; a conflict never takes the pending budget below and never ci-fix. `MERGEABLE` and `UNKNOWN`, which GitHub answers while it still computes mergeability, go on to the wait.
+
+The wait is the runtime's `verify-pr` operation over the pull request's current head, run through [Waiter launch](waiter-launch.md) and repeated no more often than every 180 seconds while `result.status` is `pending` or `unreadable`, within the lane's CI budget `CI_WAIT_MAX_SECS`; `[OWNER/REPO]` is the repository as merge-pr.md § 5 step 1's `gh repo view --json nameWithOwner` answers it:
 
 ```bash
 jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
@@ -17,7 +25,14 @@ The lane owns this approved-head wait. Read its completion file. `status=complet
 
 Start `[CI_PENDING_COUNT]=0` and `[MERGE_RETRY_COUNT]=0` for `[PREPARED_HEAD]`; a re-entry on that same head keeps both counts. On `status=pending` or `status=unreadable` at the budget, re-read the head with merge-pr.md § 5 step 1's endpoint command. A moved head returns to § 3 for fresh readiness and approval. Otherwise increase `[CI_PENDING_COUNT]` and relaunch through Waiter launch while below `[CI_PENDING_LIMIT]=3`. At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, pending checks and wait logs. Unarm by § 1 before handing back. Never attempt the merge on that pending budget.
 
-Other results take the attempt. `--expected-head` refuses a moved head.
+On `status=complete` with `verdict=fail`, a transient runner failure is rerun once per head before the attempt, as [submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and relaunch the wait through Waiter launch after the interval the wait keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
+
+```bash
+[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/workflow-state set [STATE_KEY] ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-rerun [PR_NUMBER] --required-only
+```
+
+Every other result, a `no-rerun` line and the verb's exit `1` included, takes the attempt. `--expected-head` refuses a moved head.
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --expected-head [PREPARED_HEAD]

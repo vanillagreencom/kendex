@@ -134,6 +134,20 @@ pub struct LaunchCommand {
 /// open windows on the person's desktop.
 pub const DISPLAY_SCRUB: [&str; 3] = ["WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"];
 
+/// Claude's prompt switches a full-bypass launch sets to `1` in the
+/// environment, which the provider reads from the launch environment only
+/// (its permission-modes and env-vars pages): the inline-shell and
+/// substitution critical-path prompts and, from Claude Code v2.1.311, the
+/// whole critical-path removal prompt in bypassPermissions mode. The legacy
+/// launcher renders the same list for the lines open-terminal lanes execute
+/// (`lane_launch_rm_prompt_env` in `skills/orch/scripts/lib/lane-launch.sh`);
+/// a row below holds the two equal.
+pub const CLAUDE_BYPASS_ENV: [&str; 3] = [
+    "CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT",
+    "CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT",
+    "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS",
+];
+
 /// Spell the command for an intent. Refuses an intent the harness cannot
 /// honour: compaction off where it has no word, a model-free lane launch is
 /// the caller's to refuse.
@@ -225,14 +239,9 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
                 env.insert("COPILOT_ALLOW_ALL".to_owned(), "true".to_owned());
             }
             if h == Harness::Claude {
-                env.insert(
-                    "CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT".to_owned(),
-                    "1".to_owned(),
-                );
-                env.insert(
-                    "CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT".to_owned(),
-                    "1".to_owned(),
-                );
+                for name in CLAUDE_BYPASS_ENV {
+                    env.insert(name.to_owned(), "1".to_owned());
+                }
             }
         }
     }
@@ -469,11 +478,52 @@ mod tests {
                 .contains(&"--disallowedTools=AskUserQuestion,EnterPlanMode".to_owned())
         );
         assert_eq!(cmd.args.last().unwrap(), "{brief}");
+        // The critical-path removal prompt switch, by name: a typed bypass
+        // launch without it walls an unattended lane at the first flagged rm.
+        assert_eq!(
+            cmd.env
+                .get("CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS")
+                .unwrap(),
+            "1"
+        );
         let line = cmd.shell_line();
         assert!(line.starts_with(
             "cd /work/tree && exec env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE"
         ));
         assert!(line.ends_with("\"$(cat /work/tree/tmp/brief.md)\""));
+    }
+
+    /// The legacy launcher spells Claude's prompt switches for the lines
+    /// open-terminal lanes execute from a list of its own; two copies of one
+    /// list drift (a switch added to one and not the other), so the shipped
+    /// `printf` is read row for row against `CLAUDE_BYPASS_ENV`: a name changes
+    /// in one commit or this row refuses. A consistency check, not a second
+    /// implementation (decision 202).
+    #[test]
+    fn the_launchers_prompt_switch_line_spells_this_list_row_for_row() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../orch/scripts/lib/lane-launch.sh"
+        );
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let body = text
+            .split_once("\nlane_launch_rm_prompt_env() {")
+            .map(|(_, rest)| rest.split_once("\n}\n").map_or(rest, |(body, _)| body))
+            .unwrap_or_else(|| panic!("{path}: no `lane_launch_rm_prompt_env` function"));
+        let words = body
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix("0) printf '"))
+            .and_then(|rest| rest.split_once('\''))
+            .map(|(words, _)| words)
+            .unwrap_or_else(|| panic!("{path}: no `0) printf '...'` line in the function"));
+        let spelled: Vec<&str> = words
+            .split_whitespace()
+            .map(|word| {
+                word.strip_suffix("=1")
+                    .unwrap_or_else(|| panic!("{path}: `{word}` is not `NAME=1`"))
+            })
+            .collect();
+        assert_eq!(spelled, CLAUDE_BYPASS_ENV, "{path}");
     }
 
     /// Decision 120, M3: under the bypass posture the canonical bypass word is

@@ -123,6 +123,12 @@ pub struct AcceptResult {
     /// (step6-map § A8), by `ops::accept`.
     #[serde(default)]
     pub summary_file: Option<PathBuf>,
+    /// U7e: the files to attach to the summary comment where this
+    /// acceptance creates it (decision 192 Q10), the round's screenshots
+    /// as the dev return artifact names them; an update keeps the links
+    /// the record carries instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<PathBuf>,
     /// U6c: the comment the post earned, recorded as the item's
     /// `summary_comment` by the acceptance's own repeat of its request. A
     /// caller names the file, never the comment.
@@ -742,11 +748,11 @@ pub(super) fn accept_result_at(
 /// The key the item's Completion Summary comment is recorded under.
 const SUMMARY_COMMENT_KEY: &str = "summary_comment";
 
-/// U6c, U6j2: record the comment the acceptance's post earned or its list
+/// U6c, U7e: record the comment the acceptance's post earned or its list
 /// found, and answer the item's recorded comment after it. The id alone is
 /// the comment's identity: a given id that differs refuses, so no comment
 /// is orphaned by a second record, and a given naming the recorded id
-/// writes its stamp and origin over the record's.
+/// writes its stamp and attachments over the record's.
 fn record_summary_comment(
     path: &Path,
     doc: &mut Document,

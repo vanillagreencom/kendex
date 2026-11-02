@@ -95,6 +95,9 @@ VRUN_FIX_CLASS="$(round_run_dir "$TMP_ROOT/validate-run-fix-class" "$FW" issue-7
 printf 'class-base=%s\n' "$FIX_HEAD" >> "$VRUN_FIX_CLASS/start"
 printf '## Completion Summary\n- did the thing\n' > "$TMP_ROOT/summary.md"
 SUMMARY_FILE="$TMP_ROOT/summary.md"
+mkdir -p "$TMP_ROOT/shots"
+printf 'PNG' > "$TMP_ROOT/shots/a.png"
+printf 'PNG' > "$TMP_ROOT/shots/b.png"
 
 # run ARGS... — one writer run; OUT is the printed path, RC the exit, ERR the
 # stderr file. In ARGS `+` reads as a space, EMPTY as an empty argument, SPACES
@@ -198,6 +201,8 @@ table \
   "a --validate-note is recorded verbatim beside a strictly enumerated pass|--worktree $WT --kind implement --issue issue-note --round-id $RID --branch b --commit %H --validate pass --validate-run-dir $VRUN --validate-note 80/80+on+re-run;+first+run+flaked|rc=0 .validate=pass .validate_note=80/80+on+re-run;+first+run+flaked" \
   "a FAILING verdict carries a note too|--worktree $WT --kind implement --issue issue-failnote --round-id $RID --branch b --commit %H --validate FAILING:+lint --validate-note lint+fails+only+under+--release|rc=0 .validate=FAILING:+lint .validate_note=lint+fails+only+under+--release" \
   "a CI receipt expands a seven-character commit and round-trips|--worktree %FW --kind fix --issue issue-776 --round-id 41-41 --branch b --commit ${FIX_HEAD:0:7} --validate pass --validate-run-dir $VRUN_FIX_CI --item 1 Applied fixed|rc=0 .commit=$FIX_HEAD .commit|length=40 .validate_mode=ci roundtrip=valid" \
+  "--screenshot records each capture, in order, as its resolved absolute path|--worktree $WT --kind implement --issue issue-shots --round-id 16-16 --branch b --commit %H --validate pass --validate-run-dir $VRUN --screenshot $TMP_ROOT/shots/a.png --screenshot $TMP_ROOT/shots/../shots/b.png|rc=0 .screenshots|tojson=[\"$TMP_ROOT/shots/a.png\",\"$TMP_ROOT/shots/b.png\"] roundtrip=valid" \
+  "no --screenshot leaves the key absent|--worktree $WT --kind implement --issue issue-noshots --round-id 16-17 --branch b --commit %H --validate pass --validate-run-dir $VRUN|rc=0 has:screenshots=false roundtrip=valid" \
   "a range validation is recorded as the mode that ran|--worktree %FW --kind fix --issue issue-776 --round-id 17-17 --branch b --commit c --validate pass --validate-run-dir $VRUN_FIX_RANGE --item 1 Applied fixed|rc=0 .validate_mode=range" \
   "a FAILING result beside a run that passed, another gate failing, records the run's mode and wall time|--worktree $WT --kind implement --issue issue-gatefail --round-id 20-20 --branch b --commit %H --validate FAILING:+doc-limits --validate-run-dir $VRUN|rc=0 .validate=FAILING:+doc-limits .validate_mode=full .validate_time.seconds=3300" \
   "a FAILING result beside an unfinished run records the run's mode and no wall time|--worktree $WT --kind implement --issue issue-lost --round-id 21-21 --branch b --commit %H --validate FAILING:+lost --validate-run-dir $VRUN_UNFINISHED|rc=0 .validate=FAILING:+lost .validate_mode=full has:validate_time=true .validate_time|tojson=null roundtrip=valid" \
@@ -961,6 +966,9 @@ table \
   "a path-unsafe --issue|--worktree $WT --kind implement --issue a/b --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-id+option=--issue+value=a/b=true" \
   "a path-traversal --round-id|--worktree $WT --kind implement --issue i --round-id .. --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-id+option=--round-id+value=..=true" \
   "a missing --summary-file|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --summary-file $TMP_ROOT/nope.md|rc=2 stderr~dev-return-write:+missing-file+path=$TMP_ROOT/nope.md=true" \
+  "a missing --screenshot refuses before the write|--worktree $WT --kind implement --issue issue-shots --round-id $RID --branch b --commit %H --validate pass --validate-run-dir $VRUN --screenshot $TMP_ROOT/shots/a.png --screenshot $TMP_ROOT/shots/nope.png|rc=2 written=no stderr~dev-return-write:+screenshot-unreadable+path=$TMP_ROOT/shots/nope.png=true" \
+  "a --screenshot naming a directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --screenshot $TMP_ROOT/shots|rc=2 stderr~dev-return-write:+screenshot-unreadable+path=$TMP_ROOT/shots=true" \
+  "--screenshot followed by another flag|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --screenshot --no-summary|rc=2 stderr~dev-return-write:+flag-value+option=--screenshot+value=--no-summary=true" \
   "a bad --item DECISION|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --item 1 Fixed x|rc=2 stderr~dev-return-write:+item-decision+value=Fixed=true" \
   "an empty --item REASONING|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --item 1 Applied EMPTY|rc=2 stderr~dev-return-write:+item-empty+item=1=true" \
   "a non-numeric --item N|--worktree $WT --kind fix --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN --item x Applied x|rc=2 stderr~dev-return-write:+item-number+value=x=true" \

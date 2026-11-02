@@ -2697,6 +2697,13 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
         launched_var(&launched, "CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT"),
         "1"
     );
+    assert_eq!(
+        launched_var(
+            &launched,
+            "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS"
+        ),
+        "1"
+    );
 
     // Copilot under bypass with its replayed `--allow-all`: the word once and
     // `COPILOT_ALLOW_ALL=true`.

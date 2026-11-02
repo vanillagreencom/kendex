@@ -432,8 +432,8 @@ if wait_capture; then
   cat > "$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$OT_ARGV_CAPTURE"
-printf '%s|%s\n' "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-unset}" \
-  "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-unset}" > "$OT_ENV_CAPTURE"
+printf '%s|%s|%s\n' "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-unset}" \
+  "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-unset}" "${CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS-unset}" > "$OT_ENV_CAPTURE"
 printf '%s\n' "${CLAUDE_CONFIG_DIR-unset}" > "$OT_ENV_CAPTURE.account"
 STUB
   chmod +x "$BIN/claude"
@@ -445,12 +445,12 @@ STUB
   # login PATH would answer instead of the stub. The launcher still runs the
   # rendered line through a login shell, which is the shape under test.
   (cd "$globbait" && env -u CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT \
-    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
+    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT -u CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
     OT_ENV_CAPTURE="$TMP_ROOT/child-env" "$BASH" -lc "PATH=\"$BIN:\$PATH\"; ${cmd##*&& }") >/dev/null 2>&1 || true
   assert_eq "$(tr '\n' ' ' < "$TMP_ROOT/argv" 2>/dev/null || echo unrun)" "-n CC-737 --settings={\"env\":{\"DISABLE_AUTO_COMPACT\":\"1\"}} --disallowedTools=AskUserQuestion,EnterPlanMode --model opus[1m] --dangerously-skip-permissions $PROMPT " \
     "the argv claude receives is the flags as given: a same-named file cannot rewrite the model id"
-  assert_eq "$(cat "$TMP_ROOT/child-env")" '1|1' \
-    'the no-account bypass launch gives both removal switches to Claude'
+  assert_eq "$(cat "$TMP_ROOT/child-env")" '1|1|1' \
+    'the no-account bypass launch gives the three removal switches to Claude'
 else
   fail "the bracketed model id row never invoked the terminal stub, so its argv cannot be read"
 fi
@@ -465,25 +465,26 @@ local_rm_env() { # MODE FLAGS; sets LOCAL_RM_ENV and LOCAL_RM_ACCOUNT
   cmd="$(cat "$CAP")"
   rm -f "$TMP_ROOT/child-env" "$TMP_ROOT/child-env.account"
   env -u CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT \
-    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT -u CLAUDE_CONFIG_DIR OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
+    -u CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT -u CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS \
+    -u CLAUDE_CONFIG_DIR OT_ARGV_CAPTURE="$TMP_ROOT/argv" \
     OT_ENV_CAPTURE="$TMP_ROOT/child-env" "$BASH" -lc "PATH=\"$BIN:\$PATH\"; $cmd" \
     > "$RUN/child.out" 2> "$RUN/child.err" || true
   LOCAL_RM_ENV="$(cat "$TMP_ROOT/child-env" 2>/dev/null || printf 'unrun\n')"
   LOCAL_RM_ACCOUNT="$(cat "$TMP_ROOT/child-env.account" 2>/dev/null || printf 'unrun\n')"
 }
 printf '%s\n' \
-  'gui|--model opus --permission-mode bypassPermissions|1|1|unset' \
-  'gui|--model opus --permission-mode dontAsk|unset|unset|unset' \
-  'gui-codex|-m gpt-6-astra --dangerously-bypass-approvals-and-sandbox|unset|unset|unset' \
-  'compound|--dangerously-skip-permissions|1|1|unset' \
-  'compound-bash|--dangerously-skip-permissions|1|1|unset' \
-  "compound-account|--dangerously-skip-permissions|1|1|$CODEX_LANE" \
-  'compound|--permission-mode dontAsk|unset|unset|unset' \
-  "compound-account|--permission-mode dontAsk|unset|unset|$CODEX_LANE" \
+  'gui|--model opus --permission-mode bypassPermissions|1|1|1|unset' \
+  'gui|--model opus --permission-mode dontAsk|unset|unset|unset|unset' \
+  'gui-codex|-m gpt-6-astra --dangerously-bypass-approvals-and-sandbox|unset|unset|unset|unset' \
+  'compound|--dangerously-skip-permissions|1|1|1|unset' \
+  'compound-bash|--dangerously-skip-permissions|1|1|1|unset' \
+  "compound-account|--dangerously-skip-permissions|1|1|1|$CODEX_LANE" \
+  'compound|--permission-mode dontAsk|unset|unset|unset|unset' \
+  "compound-account|--permission-mode dontAsk|unset|unset|unset|$CODEX_LANE" \
   > "$TMP_ROOT/local-rm-rows"
-while IFS='|' read -r mode flags inline substitution account; do
+while IFS='|' read -r mode flags inline substitution critical account; do
   local_rm_env "$mode" "$flags"
-  assert_eq "$LOCAL_RM_ENV" "$inline|$substitution" \
+  assert_eq "$LOCAL_RM_ENV" "$inline|$substitution|$critical" \
     "the local $mode child receives removal switches only for Claude bypass: $flags"
   assert_eq "$LOCAL_RM_ACCOUNT" "$account" "the local $mode child keeps its selected account"
 done < "$TMP_ROOT/local-rm-rows"
@@ -493,17 +494,17 @@ orch_fixture_shared_libs "$TMP_ROOT/local-rm-env-removed"
 rm -- "${RM_OT%/*}/lib/lane-launch.sh"
 cp -- "$SCRIPTS_DIR/lib/lane-launch.sh" "${RM_OT%/*}/lib/lane-launch.sh"
 mutate_file "${RM_OT%/*}/lib/lane-launch.sh" \
-  "printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'" \
-  ": 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1'"
+  "printf 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1'" \
+  ": 'CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1'"
 OT_UNDER_TEST="$RM_OT"
 SAVED_FAIL="$FAIL"
 FAIL=0
 local_rm_env gui '--model opus --dangerously-skip-permissions'
-assert_eq "$LOCAL_RM_ENV" '1|1' \
-  'control: dropping the local environment words loses both removal switches' > "$TMP_ROOT/local-rm-control.out"
+assert_eq "$LOCAL_RM_ENV" '1|1|1' \
+  'control: dropping the local environment words loses the removal switches' > "$TMP_ROOT/local-rm-control.out"
 RM_CONTROL="$FAIL"
 FAIL="$SAVED_FAIL"
-assert_eq "$LOCAL_RM_ENV" 'unset|unset' 'control: the local mutant reaches Claude with neither switch'
+assert_eq "$LOCAL_RM_ENV" 'unset|unset|unset' 'control: the local mutant reaches Claude with no switch'
 assert_eq "$RM_CONTROL" 1 'control: the actual local child detects the missing environment words'
 OT_UNDER_TEST="$OT"
 COMPOUND_OT="$(mutant_scripts local-rm-first-command open-terminal)/open-terminal" || exit 1
@@ -519,11 +520,11 @@ for mode in compound compound-account; do
   SAVED_FAIL="$FAIL"
   FAIL=0
   local_rm_env "$mode" '--dangerously-skip-permissions'
-  assert_eq "$LOCAL_RM_ENV" '1|1' \
+  assert_eq "$LOCAL_RM_ENV" '1|1|1' \
     "control: the $mode child detects settings scoped to the first command" > "$TMP_ROOT/compound-control-$mode.out"
   RM_CONTROL="$FAIL"
   FAIL="$SAVED_FAIL"
-  assert_eq "$LOCAL_RM_ENV" 'unset|unset' "control: the $mode mutant loses both child settings"
+  assert_eq "$LOCAL_RM_ENV" 'unset|unset|unset' "control: the $mode mutant loses the child settings"
   assert_eq "$RM_CONTROL" 1 "control: the $mode child rejects the first-command wrapper"
 done
 OT_UNDER_TEST="$OT"
