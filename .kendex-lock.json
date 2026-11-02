@@ -4226,6 +4226,120 @@
         }
       ]
     },
+    "hook:docs-writing-note:claude": {
+      "name": "docs-writing-note",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4e2287105685b1f29926c128639b88d67f299574c93a93e6b7c4df1f23ca892c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "31c76e5eec37eab77348e309a92af49236afbb6cd6fe795321bc0c0b7d1d71f5",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "docs-writing-note",
+        "paths": [
+          ".claude/hooks/docs-writing-note.sh"
+        ]
+      },
+      "registration": {
+        "event": "PreToolUse",
+        "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/docs-writing-note.sh\"",
+        "matcher": "Edit|MultiEdit|Write"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:docs-writing-note:codex": {
+      "name": "docs-writing-note",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4e2287105685b1f29926c128639b88d67f299574c93a93e6b7c4df1f23ca892c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "31c76e5eec37eab77348e309a92af49236afbb6cd6fe795321bc0c0b7d1d71f5",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "docs-writing-note",
+        "paths": [
+          ".codex/hooks/docs-writing-note.sh"
+        ]
+      },
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/docs-writing-note.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Edit|MultiEdit|Write"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:docs-writing-note:pi": {
+      "name": "docs-writing-note",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4e2287105685b1f29926c128639b88d67f299574c93a93e6b7c4df1f23ca892c",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "31c76e5eec37eab77348e309a92af49236afbb6cd6fe795321bc0c0b7d1d71f5",
+      "enabled": true,
+      "emitted": {
+        "kind": "hook",
+        "name": "docs-writing-note",
+        "paths": [
+          ".pi/kendex/hooks/docs-writing-note.sh"
+        ]
+      },
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/docs-writing-note.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Edit|MultiEdit|Write"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
     "hook:jarvis-memory-note:claude": {
       "name": "jarvis-memory-note",
       "kind": "hook",
@@ -6474,12 +6588,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b3de5bd07f3c034e8f72bb205d2e3a86da9ed93c44e69830e847f774a7111019",
+      "sourceHash": "2119ce4662847fed0c332230ecebe545c63390ae6c8f74d0f305ff4a49603143",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "c22cd22021f662e65690c1284988864c97ca875f740ea396ffe15a0040ac463d",
+      "renderedHash": "9de4359a46b45cd9aea57a9c1ddce5f5993d070532d69c5b405acf47b3654ee6",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6508,6 +6622,15 @@
             "source": ".",
             "kind": "skill",
             "name": "harness-ci",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "jarvis",
             "harness": "claude"
           }
         },
@@ -6551,12 +6674,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b3de5bd07f3c034e8f72bb205d2e3a86da9ed93c44e69830e847f774a7111019",
+      "sourceHash": "2119ce4662847fed0c332230ecebe545c63390ae6c8f74d0f305ff4a49603143",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "c22cd22021f662e65690c1284988864c97ca875f740ea396ffe15a0040ac463d",
+      "renderedHash": "9de4359a46b45cd9aea57a9c1ddce5f5993d070532d69c5b405acf47b3654ee6",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6584,6 +6707,15 @@
             "source": ".",
             "kind": "skill",
             "name": "harness-ci",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "jarvis",
             "harness": "codex"
           }
         },
@@ -6618,12 +6750,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b3de5bd07f3c034e8f72bb205d2e3a86da9ed93c44e69830e847f774a7111019",
+      "sourceHash": "2119ce4662847fed0c332230ecebe545c63390ae6c8f74d0f305ff4a49603143",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "c22cd22021f662e65690c1284988864c97ca875f740ea396ffe15a0040ac463d",
+      "renderedHash": "9de4359a46b45cd9aea57a9c1ddce5f5993d070532d69c5b405acf47b3654ee6",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6651,6 +6783,15 @@
             "source": ".",
             "kind": "skill",
             "name": "harness-ci",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "jarvis",
             "harness": "copilot"
           }
         },
@@ -6685,12 +6826,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "b3de5bd07f3c034e8f72bb205d2e3a86da9ed93c44e69830e847f774a7111019",
+      "sourceHash": "2119ce4662847fed0c332230ecebe545c63390ae6c8f74d0f305ff4a49603143",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "c22cd22021f662e65690c1284988864c97ca875f740ea396ffe15a0040ac463d",
+      "renderedHash": "9de4359a46b45cd9aea57a9c1ddce5f5993d070532d69c5b405acf47b3654ee6",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6718,6 +6859,15 @@
             "source": ".",
             "kind": "skill",
             "name": "harness-ci",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "jarvis",
             "harness": "pi"
           }
         },
@@ -7650,12 +7800,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "24c8e5707e13980485bf30073c16a56ce4b1e61b4f1ac069ae8afdbfad3bbfa1",
+      "sourceHash": "46f9036e9e6194d9808f833e5deaeee77d4b548e2e3aa1a7548aa22a3af7ec32",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "1b30d235b0ae1e7343631bee06e12af5f683698c9a1fcfcf4b07096dea46e57a",
+      "renderedHash": "486bf7da7b7d1dfd3405ebe8d602901bf965f16eaf8282d6e518524ff9757210",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7683,8 +7833,33 @@
           "by": {
             "source": ".",
             "kind": "skill",
+            "name": "jarvis",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
             "name": "reviewer",
             "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "docs-writing-note",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
           }
         }
       ]
@@ -7695,12 +7870,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "24c8e5707e13980485bf30073c16a56ce4b1e61b4f1ac069ae8afdbfad3bbfa1",
+      "sourceHash": "46f9036e9e6194d9808f833e5deaeee77d4b548e2e3aa1a7548aa22a3af7ec32",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "1b30d235b0ae1e7343631bee06e12af5f683698c9a1fcfcf4b07096dea46e57a",
+      "renderedHash": "486bf7da7b7d1dfd3405ebe8d602901bf965f16eaf8282d6e518524ff9757210",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7727,8 +7902,33 @@
           "by": {
             "source": ".",
             "kind": "skill",
+            "name": "jarvis",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
             "name": "reviewer",
             "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "docs-writing-note",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
           }
         }
       ]
@@ -7739,12 +7939,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "24c8e5707e13980485bf30073c16a56ce4b1e61b4f1ac069ae8afdbfad3bbfa1",
+      "sourceHash": "46f9036e9e6194d9808f833e5deaeee77d4b548e2e3aa1a7548aa22a3af7ec32",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "1b30d235b0ae1e7343631bee06e12af5f683698c9a1fcfcf4b07096dea46e57a",
+      "renderedHash": "486bf7da7b7d1dfd3405ebe8d602901bf965f16eaf8282d6e518524ff9757210",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7771,8 +7971,24 @@
           "by": {
             "source": ".",
             "kind": "skill",
+            "name": "jarvis",
+            "harness": "copilot"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
             "name": "reviewer",
             "harness": "copilot"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
           }
         }
       ]
@@ -7783,12 +7999,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "24c8e5707e13980485bf30073c16a56ce4b1e61b4f1ac069ae8afdbfad3bbfa1",
+      "sourceHash": "46f9036e9e6194d9808f833e5deaeee77d4b548e2e3aa1a7548aa22a3af7ec32",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "1b30d235b0ae1e7343631bee06e12af5f683698c9a1fcfcf4b07096dea46e57a",
+      "renderedHash": "486bf7da7b7d1dfd3405ebe8d602901bf965f16eaf8282d6e518524ff9757210",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7815,8 +8031,33 @@
           "by": {
             "source": ".",
             "kind": "skill",
+            "name": "jarvis",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
             "name": "reviewer",
             "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "docs-writing-note",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
           }
         }
       ]
@@ -8523,12 +8764,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "966fbd64f9bc815776009cd6ce7ee5926294c7d79f1556f185134fdee2d0b6ef",
+      "sourceHash": "f2f32d4d404690fcc0c5e5fba6f5b2b865ea197e145bc3ebeaad91fdc093a30c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "af50b02587ef7327e6249e98a8c8050b9e9e0ceab3bc592a5146e544f725e1ce",
+      "renderedHash": "7c88936643fe14760db38ef0857dcd82a4218a0e46a8f26a1b7f64484e38a767",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -8559,12 +8800,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "966fbd64f9bc815776009cd6ce7ee5926294c7d79f1556f185134fdee2d0b6ef",
+      "sourceHash": "f2f32d4d404690fcc0c5e5fba6f5b2b865ea197e145bc3ebeaad91fdc093a30c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "af50b02587ef7327e6249e98a8c8050b9e9e0ceab3bc592a5146e544f725e1ce",
+      "renderedHash": "7c88936643fe14760db38ef0857dcd82a4218a0e46a8f26a1b7f64484e38a767",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -8585,12 +8826,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "966fbd64f9bc815776009cd6ce7ee5926294c7d79f1556f185134fdee2d0b6ef",
+      "sourceHash": "f2f32d4d404690fcc0c5e5fba6f5b2b865ea197e145bc3ebeaad91fdc093a30c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "af50b02587ef7327e6249e98a8c8050b9e9e0ceab3bc592a5146e544f725e1ce",
+      "renderedHash": "7c88936643fe14760db38ef0857dcd82a4218a0e46a8f26a1b7f64484e38a767",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -8611,12 +8852,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "966fbd64f9bc815776009cd6ce7ee5926294c7d79f1556f185134fdee2d0b6ef",
+      "sourceHash": "f2f32d4d404690fcc0c5e5fba6f5b2b865ea197e145bc3ebeaad91fdc093a30c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "af50b02587ef7327e6249e98a8c8050b9e9e0ceab3bc592a5146e544f725e1ce",
+      "renderedHash": "7c88936643fe14760db38ef0857dcd82a4218a0e46a8f26a1b7f64484e38a767",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -9944,12 +10185,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5f58f4322e50210f7510cdd2543d34e9062a0ce8b7ae05ac1a60f680b3b56600",
+      "sourceHash": "1c403f971dfc6a5c21344bf235ae189eb12eaf6f3c637a728d2d894a1b77bacd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "879bb4f5c426db76f2980ec33b9273848345e650bebaf958b83ac0a0d2ad69a8",
+      "renderedHash": "9760fa340a8e9930173db5305dfbfb7ce611c07972bf325bb9d4bbc80cb37441",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -9998,12 +10239,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5f58f4322e50210f7510cdd2543d34e9062a0ce8b7ae05ac1a60f680b3b56600",
+      "sourceHash": "1c403f971dfc6a5c21344bf235ae189eb12eaf6f3c637a728d2d894a1b77bacd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "879bb4f5c426db76f2980ec33b9273848345e650bebaf958b83ac0a0d2ad69a8",
+      "renderedHash": "9760fa340a8e9930173db5305dfbfb7ce611c07972bf325bb9d4bbc80cb37441",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -10051,12 +10292,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5f58f4322e50210f7510cdd2543d34e9062a0ce8b7ae05ac1a60f680b3b56600",
+      "sourceHash": "1c403f971dfc6a5c21344bf235ae189eb12eaf6f3c637a728d2d894a1b77bacd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "879bb4f5c426db76f2980ec33b9273848345e650bebaf958b83ac0a0d2ad69a8",
+      "renderedHash": "9760fa340a8e9930173db5305dfbfb7ce611c07972bf325bb9d4bbc80cb37441",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -10104,12 +10345,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "5f58f4322e50210f7510cdd2543d34e9062a0ce8b7ae05ac1a60f680b3b56600",
+      "sourceHash": "1c403f971dfc6a5c21344bf235ae189eb12eaf6f3c637a728d2d894a1b77bacd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "879bb4f5c426db76f2980ec33b9273848345e650bebaf958b83ac0a0d2ad69a8",
+      "renderedHash": "9760fa340a8e9930173db5305dfbfb7ce611c07972bf325bb9d4bbc80cb37441",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -11142,7 +11383,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "97cb08f6bfcf6d9b5cecd3101bfb8f19066748ba"
+      "commit": "66a0c041730c09434473913263c0b7ba114f7e76"
     }
   },
   "claudeProjectDefault": "released"
