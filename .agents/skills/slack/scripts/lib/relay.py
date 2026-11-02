@@ -67,9 +67,11 @@ when its settings files change. Other settings need slack setup or a restart.
 While SLACK_JARVIS_SESSION_FILE is younger than SLACK_JARVIS_SESSION_MAX_AGE a Jarvis session
 answers the overseer, and the relay holds mailbox posts except replies to
 messages the owner typed in the channel, which still post in their threads,
-and a notice whose --ref names a /report directive, which posts as a new
-message. oversee-report's report notice carries no --ref, so it is an
-ordinary owner notice under the hold, and oversee-report sends none during
+a notice whose --ref names a /report directive, which posts as a new
+message, and a notice whose --ref names a directive a satellite forwarded,
+which posts under a root that quotes the request. oversee-report's report
+notice carries no --ref, so it is an ordinary owner notice under the hold,
+and oversee-report sends none during
 ORCH_REPORT_QUIET_HOURS.
 Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
@@ -79,7 +81,7 @@ absent the relay resumes. The Jarvis session's watch writes its last mailbox rea
 count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
 skips notices and asks, including closed asks, on lines at or below that count, with no post and
 no mention, and journals their ids; later ones post, and so does a reply to
-a Slack-origin directive at any line. A missing or unreadable
+a Slack-origin or forwarded directive at any line. A missing or unreadable
 seen file skips nothing. The count is clamped to the lines listed. Held answers
 still post; closure records update thread state independently of post age.
 `slack post --mention` checks the root's OS hold lock, including a renamed
@@ -188,6 +190,17 @@ TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 # Slack, so a notice whose --ref names the directive posts, held or not.
 # oversee-report's report notice names no directive: an ordinary notice.
 COMMAND_KEY = "command:"
+# A forwarded owner directive: a satellite Jarvis's `jarvis-session forward`
+# sends the request under this delivery key, its text ending in one
+# provenance line of these fields in this order. The relay judges this shape,
+# the key and the words string alone: the citation's forms and the word rule
+# are the satellite's `forward` and the main session's to judge.
+FORWARD_KEY = re.compile(r"forward-[0-9a-f]{64}")
+FORWARD_LINE = re.compile(
+    r"forwarded-request: satellite=(?P<satellite>\S+) request-ref=(?P<request_ref>\S+)"
+    r" request-at=(?P<request_at>\S+) confirmation-ref=(?P<confirmation_ref>\S+)"
+    r" confirmed-at=(?P<confirmed_at>\S+) key=(?P<key>forward-[0-9a-f]{64})"
+    r" confirmation-method=(?P<method>words|voice|physical) confirmation-text=(?P<words>\".*\"|null)")
 
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
@@ -367,6 +380,35 @@ def jarvis_session_held(root: Path, presence: Presence, now: float) -> bool:
     if RelayLock(root, JARVIS_LOCK).held():
         return True
     return presence_fresh(touched_at(presence.jarvis_session_file), presence, now)
+
+
+def forwarded(envelope: Dict) -> Optional[Dict[str, str]]:
+    """The citation of a forwarded owner directive, FORWARD_LINE's fields
+    and `request`, its text without that line; None for any other envelope.
+    `words` stays the JSON string as the line spells it."""
+    text = str(envelope.get("text", ""))
+    head, _, last = text.rstrip("\n").rpartition("\n")
+    line = FORWARD_LINE.fullmatch(last)
+    delivery_id = str(envelope.get("delivery_id", ""))
+    if (envelope.get("box") != "to-lane" or envelope.get("kind") != "directive"
+            or not FORWARD_KEY.fullmatch(delivery_id) or line is None or line["key"] != delivery_id):
+        return None
+    try:
+        words = json.loads(line["words"])
+    except ValueError:
+        return None
+    if (line["method"] == "words") != isinstance(words, str):
+        return None
+    return dict(line.groupdict(), request=head.rstrip("\n"))
+
+
+def forward_root(citation: Dict[str, str]) -> str:
+    """The top-level post a forwarded directive's answers thread under: the
+    request and the confirmation it cites, so the owner can catch a wrong one."""
+    confirmed = {"words": citation["words"], "voice": "by voice", "physical": "physically"}[citation["method"]]
+    return (f"Forwarded from {citation['satellite']}:\n\n{citation['request']}\n\n"
+            f"Confirmed {confirmed} at {citation['confirmed_at']} ({citation['confirmation_ref']}); "
+            f"request {citation['request_ref']} at {citation['request_at']}.")
 
 
 def mention(binding: Binding) -> str:
@@ -916,7 +958,8 @@ class RootRelay:
         `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume, never a reply,
         `overdue` for a reserved ask with a posted thread or unresolved post
         open past its deadline, or `skip`
-        for another that never posts; answers carry their ask's record."""
+        for another that never posts; answers carry their ask's record, and a
+        reply to a forwarded directive carries that directive with its `citation`."""
         closures = {str(e["id"]): e for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "close"}
         closed = {e.get("re") for e in closures.values()}
@@ -958,10 +1001,13 @@ class RootRelay:
             # held, and the Jarvis session reading it is no reason to skip it
             # on resume, since only Slack shows it to the owner who typed there.
             # post_notice threads it under the message, and a /report, which
-            # has no thread, gets a new message.
+            # has no thread, gets a new message. A forwarded owner directive
+            # has no other Slack surface either: post_notice threads it under
+            # a root that quotes the request, posted with its first answer.
             delivery_id = str(reference.get("delivery_id", ""))
+            citation = forwarded(reference) if owner and kind == "notice" else None
             reply = owner and kind == "notice" and bool(
-                reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
+                citation is not None or reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
                 or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
             if (owner and kind in ("notice", "ask") and not reply
                     and envelope["line"] is not None and envelope["line"] <= seen):
@@ -984,8 +1030,13 @@ class RootRelay:
                 route = "answer"
             else:
                 route = "skip"
-            ask = by_id.get(str(envelope.get("re", "")), {}) if route == "answer" else {}
-            routed.append((envelope, route, ask))
+            if route == "answer":
+                record = by_id.get(str(envelope.get("re", "")), {})
+            elif route == "reply" and citation is not None:
+                record = dict(reference, citation=citation)
+            else:
+                record = {}
+            routed.append((envelope, route, record))
         return routed
 
     def post_events(
@@ -993,16 +1044,16 @@ class RootRelay:
     ) -> None:
         """Posts what `routes` gives each envelope; `landed`, when given,
         collects the ids of the asks whose post landed."""
-        for envelope, route, ask in routed:
+        for envelope, route, record in routed:
             if route == "ask":
                 if self.post_ask(envelope) and landed is not None:
                     landed.append(str(envelope["id"]))
             elif route == "overdue":
                 self.post_overdue(envelope)
             elif route in ("notice", "reply"):
-                self.post_notice(envelope)
+                self.post_notice(envelope, record)
             elif route == "answer":
-                self.post_answer(envelope, ask)
+                self.post_answer(envelope, record)
             elif route == "resolution":
                 self.journal.append(t="resolved", id=str(envelope["re"]), source=str(envelope["id"]))
             elif route in ("skip", "seen"):
@@ -1166,7 +1217,14 @@ class RootRelay:
                       parent=self.parent_of({"ts": landed, "text": excerpt}, "bot", ask_id))
         self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
 
-    def post_notice(self, envelope: Dict) -> None:
+    def post_notice(self, envelope: Dict, record: Optional[Dict] = None) -> None:
+        """A notice, in its reference's thread when it has one. A forwarded
+        directive's root is posted first: a root Slack refused leaves both for
+        the next poll, and one refused before sending or whose response was
+        lost leaves the notice top-level."""
+        if (record and "citation" in record and str(record["id"]) not in self.state.carried
+                and not self.post_root(record)):
+            return
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
         attach = str(envelope.get("attach") or "")
@@ -1179,6 +1237,17 @@ class RootRelay:
             fields = {} if thread_ts else {"parent": self.parent_of(
                 {"ts": landed, "text": envelope.get("text", "")}, "bot", str(envelope["id"]))}
             self._out(envelope, "notice", "resolved", thread=thread_ts or landed, **fields)
+
+    def post_root(self, directive: Dict) -> bool:
+        """Post a forwarded directive's root top-level and journal it under
+        the directive's id, so its answers thread there across restarts.
+        False when Slack refused it and the directive stays uncarried."""
+        text = forward_root(directive["citation"])
+        ts = self._send(directive, "notice", text, None)
+        if ts is not None:
+            self._out(directive, "notice", "resolved", thread=ts,
+                      parent=self.parent_of({"ts": ts, "text": text}, "bot", str(directive["id"])))
+        return str(directive["id"]) in self.state.carried
 
     def post_answer(self, envelope: Dict, ask: Dict) -> None:
         ask_id = str(envelope.get("re", ""))
