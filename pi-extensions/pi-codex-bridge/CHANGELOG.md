@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 1.1.0
 
 - Model discovery stops its `codex app-server` child before startup ends. A session that never selects a `pi-codex` model holds no Codex process; the first `pi-codex` turn starts one.
 - The bridge reads its Codex home from `PI_CODEX_BRIDGE_HOME` when set, else `CODEX_HOME`, else `~/.codex`, so the bridge and a `codex` in Pi's tool shell can use different homes.
