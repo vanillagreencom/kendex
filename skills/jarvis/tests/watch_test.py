@@ -1027,7 +1027,7 @@ class Producer(unittest.TestCase):
                 self.names.append(work.__name__)
                 return Future()
 
-        block = "EVENT forward-failed request=vgs-audit:r cause=send-failed\n"
+        block = "EVENT forward-failed request=vgs-audit:r key=forward-r cause=send-failed\n"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
             watch.tick(0, watch.acquire(0))

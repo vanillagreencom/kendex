@@ -104,7 +104,7 @@ The record is one JSON object of at most 65 536 bytes:
 - Each `at` is a UTC time in the form `YYYY-MM-DDTHH:MM:SSZ`, with an optional fraction of up to nine digits before `Z`. A console turn's `at` is its envelope's own `at`.
 - `confirmation` holds `words`, the owner's words, or `method`, `voice` or `physical`, for a caller that records how the owner confirmed. One row may hold both turns, so the two references may be equal.
 - The words confirm when a line is `forward`, or the whole text is `yes`, each compared after trimming, case folding and dropping one trailing `.` or `!`. Words over 300 characters do not confirm. A `method` confirms on its own.
-- The delivery key comes from the home, the request reference and the request time. The same request run again, after a crash too, gets the same key and lands once.
+- The delivery key comes from the home, the request reference and the request time. The same request run again, after a crash too, gets the same key, and the main lands it once while it keeps the first copy. Once the main's compaction drops that copy, a send whose receipt was lost can land a second time.
 
 | Key | Meaning | Next step |
 |---|---|---|

@@ -345,6 +345,7 @@ class Forwarder:
             try:
                 receipts = watch.mailbox_receipts(lines)
             except watch.Failure:
+                # An unreadable receipts block leaves receipts None: the read is read-failed and no entry moves.
                 pass
             if not (header and receipts):
                 outcome = "read-failed"
@@ -396,14 +397,15 @@ class Forwarder:
 
         The watch's pass cursor appends a printed block once, so a closed
         block prints on every drain until its keep ends, and a failed pass
-        loses none.
+        loses none. The header names the forward's key: a reused reference's
+        later request is another forward, and its block another event.
         """
         state = self.outbox.read()
         now = watch.epoch()
         blocks = []
         for entry in state["entries"]:
             if kept(entry, now) and entry.get("cause") in TERMINAL:
-                fields = {"request": entry["request"], "cause": entry["cause"]}
+                fields = {"request": entry["request"], "key": entry["key"], "cause": entry["cause"]}
                 if entry.get("detail"):
                     fields["detail"] = entry["detail"]
                 blocks.append(watch.event("forward-failed", **fields))

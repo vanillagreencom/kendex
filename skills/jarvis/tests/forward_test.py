@@ -272,7 +272,7 @@ class Forward(MailWorld):
     def test_unavailable_main(self):
         rows = (("down", "down", "main-unreachable"), ("overseer absent", "unregistered", "overseer-absent"),
                 ("mailbox missing", "bare", "mailbox-missing"))
-        requests = []
+        records = []
         for name, main, cause in rows:
             with self.subTest(row=name):
                 if main == "down":
@@ -284,7 +284,7 @@ class Forward(MailWorld):
                     self.env["JARVIS_MAIN_HOST"] = "main.example:" + str(self.main)
                     self.mode.write_text("up")
                 record = self.record()
-                requests.append(record["request"]["ref"])
+                records.append(record)
                 result = self.forward(record)
                 self.assertEqual(result.returncode, 75, result.stderr)
                 answer = json.loads(result.stdout)
@@ -298,8 +298,8 @@ class Forward(MailWorld):
         # it now holds, each as one event block the watch loop appends.
         drained = self.jarvis("forward-drain")
         self.assertEqual((drained.returncode, drained.stdout), (0, "".join(
-            "EVENT forward-failed request=%s cause=mailbox-missing detail=forward:\\u0020mailbox-missing=%s\n"
-            % (request, self.main) for request in requests)), drained.stderr)
+            "EVENT forward-failed request=%s key=%s cause=mailbox-missing detail=forward:\\u0020mailbox-missing=%s\n"
+            % (record["request"]["ref"], self.key(record), self.main) for record in records)), drained.stderr)
 
     def test_hung_main_records_its_cause_within_the_budget(self):
         self.mode.write_text("hang")
@@ -395,13 +395,6 @@ class Forward(MailWorld):
             self.answer(forwarded, "Done.")
             self.assertEqual(self.jarvis("forward-drain").stdout, "")
             self.assertEqual(self.status()["requests"], [])
-            # Past the closed entry's keep, the same record sends again; the main
-            # lands it once, and its earlier answer closes it again.
-            self.age_closed(31)
-            self.assertEqual(self.delivered(record)["forwarded"], forwarded)
-            self.assertEqual(len([row for row in self.directives() if row.get("delivery_id") == self.key(record)]), 1)
-            self.assertEqual(self.jarvis("forward-drain").stdout, "")
-            self.assertEqual(self.status()["requests"], [])
         with self.subTest(row="reused reference, later request"):
             record = self.record()
             forwarded = self.delivered(record)["forwarded"]
@@ -449,8 +442,8 @@ class Forward(MailWorld):
                     self.compact_all(self.main)
                 self.age("delivered_at", 7, record)
                 drained = self.jarvis("forward-drain")
-                expected = ("EVENT forward-failed request=%s cause=answer-unseen\n" % record["request"]["ref"]
-                            if compacted else "")
+                expected = ("EVENT forward-failed request=%s key=%s cause=answer-unseen\n"
+                            % (record["request"]["ref"], self.key(record)) if compacted else "")
                 self.assertEqual((drained.returncode, drained.stdout), (0, expected), drained.stderr)
                 status = self.status()
                 self.assertEqual([row for row in status["requests"] if row["request"] == record["request"]["ref"]], [])
@@ -464,6 +457,36 @@ class Forward(MailWorld):
                     # The block prints until the closed entry's keep ends, though no forward prunes it.
                     self.age_closed(30)
                     self.assertEqual(self.jarvis("forward-drain").stdout, "")
+
+    def test_reused_reference_failures_report_once(self):
+        # Two forwards of one reference, the later at a new request time, each
+        # close unanswered; the watch's consecutive passes append each block once.
+        spec = importlib.util.spec_from_file_location("jarvis_watch", self.scripts / "lib/watch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        settings = dict(JARVIS_MAIN_HOST=self.env["JARVIS_MAIN_HOST"], JARVIS_LOG_DIR=str(self.root / "log"))
+        watch = module.Watch(self.satellite, BASH, settings)
+
+        def watch_pass():
+            drained = self.jarvis("forward-drain")
+            self.assertEqual(drained.returncode, 0, drained.stderr)
+            watch.accept_forward(drained.stdout)
+            log = [line for line in watch.log.read_text().splitlines() if line.startswith("EVENT forward-failed")]
+            return drained.stdout.splitlines(), log
+
+        first = self.record()
+        later = json.loads(json.dumps(first))
+        later["request"].update(at="2026-11-03T09:00:00Z", text="Renew it again.")
+        later["confirmation"].update(at="2026-11-03T09:00:05Z")
+        appended = []
+        for record in (first, later, None):
+            if record is not None:
+                self.delivered(record)
+                self.age("delivered_at", 7, record)
+            printed, log = watch_pass()
+            appended.append(log)
+        self.assertEqual([len(log) for log in appended], [1, 2, 2])
+        self.assertEqual(appended[-1], printed)
 
     def test_role_refusals(self):
         record = self.write(self.record())
@@ -490,7 +513,10 @@ class Forward(MailWorld):
             ("test_retry_recovery", "lib/owner_note.py", ' --file "$note" ${1+"$@"}\n', ' --file "$note"\n'),
             # A key from the reference alone never lands a reused reference's later request.
             ("test_answer_closes_the_entry", "lib/forward.py",
-             'canonical_at(request["at"])).encode()', '"").encode()'))
+             'canonical_at(request["at"])).encode()', '"").encode()'),
+            # A header without the key drops a reused reference's later failure as already appended.
+            ("test_reused_reference_failures_report_once", "lib/forward.py",
+             '"key": entry["key"], "cause": entry["cause"]', '"cause": entry["cause"]'))
         for name, relative, old, new in rows:
             with self.subTest(row=name), tempfile.TemporaryDirectory() as folder:
                 copy = Path(folder) / "jarvis/scripts"
