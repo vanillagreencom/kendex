@@ -338,9 +338,10 @@ scope_for() { # CHECK
   # A range is NARROWER than the whole-tree sweep. A lane whose CONFIGURED
   # scope is that sweep must therefore never be handed one: the project chose
   # an absolute scope, and answering a smaller question under its name is a
-  # refusal turning into a pass — a document already over the format rules,
-  # untouched by the range, reads clean. The sweep is handed over explicitly
-  # rather than left for the lane's own default to rediscover, so the batch's
+  # refusal turning into a pass — md-refs judges a range only when it
+  # carries a change, so over an empty range a dead reference the range never
+  # touched reads clean. The sweep is handed over explicitly rather than left
+  # for the lane's own default to rediscover, so the batch's
   # step line names the scope the lane actually read and this function stays
   # an honest answer to what the run gives a check.
   #

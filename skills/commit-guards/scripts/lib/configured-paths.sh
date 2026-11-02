@@ -272,9 +272,9 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
 # earlier self, sets GG_WALK_RENAMES=detect before walking: renames are then
 # found at git's default similarity and every one is selected, an exact move
 # included, with its earlier path in GG_WALK_SRC for the callback. md-type
-# is that lane: a move can change a document's type, and an edit carried
-# across a move keeps its earlier findings. Every other walk leaves
-# GG_WALK_SRC empty.
+# is that lane, through lib/md-scope.sh's GG_MD_RENAMES: a move can change a
+# document's type, and an edit carried across a move keeps its earlier
+# findings. Every other walk leaves GG_WALK_SRC empty.
 GG_WALK_RENAMES=exact
 GG_WALK_SRC=""
 

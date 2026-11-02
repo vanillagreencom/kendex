@@ -190,7 +190,9 @@ lane_rows \
   "a staged file the parser cannot end fails|fx_unended unended|--staged|rc=1 md-type: fence-unclosed=docs/plan.md:1" \
   "a README moved with an edit keeps its inherited table's count and passes|fx_moved moved|--staged|rc=0 ${F}value-table path=b/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings" \
   "a reference moved unchanged into a README brings a table its new type refuses|fx_retyped retyped|--staged|rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings" \
-  "and the same move pushed is judged over the range|fx_retyped_pushed retyped-pushed|--against HEAD~1|rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings"
+  "and the same move pushed is judged over the range|fx_retyped_pushed retyped-pushed|--against HEAD~1|rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings" \
+  "and the same move staged is judged by a bare run under touched|fx_retyped retyped-bare||rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings" \
+  "a sweep measures a staged move against the path it left|fx_moved moved-all|--all|rc=0 ${F}value-table path=b/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings"
 
 echo "=== a docs-writing md-type cannot read is a gap, never a pass ==="
 # A copy of the scripts with no docs-writing beside it, so the fixture's own
@@ -279,10 +281,18 @@ gg_mutant NO_SOURCE md-type 'local earlier="${2:-$1}"' 'local earlier="$1"'
 fx_moved control-moved
 assert_eq "must-fail: measured at its new path alone, a moved README's inherited table blocks" \
   "rc=1" "$(MDT="$NO_SOURCE" lane_run --staged '^$')"
-gg_mutant NO_MOVES md-type 'gg_md_select markdown detect' 'gg_md_select markdown'
+gg_mutant NO_MOVES md-type 'GG_MD_RENAMES=detect' 'GG_MD_RENAMES=exact'
 fx_retyped control-retyped
 assert_eq "must-fail: with exact renames dropped, a reference moved into a README is never opened" \
   "rc=0 md-type: no-match=staged:*.md" "$(MDT="$NO_MOVES" lane_run --staged)"
+gg_mutant AMT_TRIGGER lib/md-scope.sh 'git diff --cached --quiet "${GG_WALK_DIFF[@]}"' 'git diff --cached --quiet --diff-filter=AMT'
+fx_retyped control-trigger
+assert_eq "must-fail: with the trigger blind to renames, a bare run finds nothing staged" \
+  "rc=0 md-type: staged-count=0" "$(MDT="${AMT_TRIGGER%/lib/md-scope.sh}/md-type" lane_run "")"
+gg_mutant NO_SWEEP_MOVES lib/md-scope.sh '[ "$GG_MD_RENAMES" = detect ] || return 0' 'return 0'
+fx_moved control-sweep
+assert_eq "must-fail: with no staged moves read, a sweep measures a moved README at its new path alone" \
+  "rc=1" "$(MDT="${NO_SWEEP_MOVES%/lib/md-scope.sh}/md-type" lane_run --all '^$')"
 gg_mutant NO_DASH lib/md-type.awk 'function dash(s) { return (s == "") ? "-" : s }' 'function dash(s) { return s }'
 repo control-dash
 assert_eq "must-fail: with empty cells written empty, the decision row's example shifts into its reference" \

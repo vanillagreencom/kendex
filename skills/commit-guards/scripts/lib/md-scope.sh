@@ -1,14 +1,15 @@
 # shellcheck shell=bash
-# The scope the markdown lanes share: which files a run judges, and where it
+# The scopes the markdown lanes share: which files a run judges, and where it
 # reads them. Sourced by md-type, md-refs and md-reflow after lib/common.sh
 # and lib/settings.sh; the caller runs under `set -f`, has cd'd to the
 # repository root, and calls gg_tmpdir before selecting.
 #
+# Each lane keeps its own rename policy, GG_MD_RENAMES below, and every scope
+# applies it.
+#
 # Four scopes, one setting:
 #   --staged   every markdown file the staged diff adds, modifies or
-#              type-changes, renames held to exact content as byte-ceiling
-#              holds them unless the lane asks gg_md_select to detect them,
-#              judged in full from the index
+#              type-changes, judged in full from the index
 #   --base REF the same files over a commit range, three dots: what the
 #              branch ADDS over the ancestor it and REF share
 #              (the scopes are exclusive: naming two is exit 2 scope-flags,
@@ -20,8 +21,9 @@
 #              a flag name is two answers behind one word
 #   --all      every tracked markdown file matching the lane's path globs
 #   neither    COMMIT_GUARDS_MD_SCOPE decides: `touched` (the default) is
-#              --staged, and with nothing staged the lane judges nothing
-#              and says so; `all` is --all. gg_md_bare_scope reports which,
+#              --staged, and with no staged change under the lane's rename
+#              policy the lane judges nothing and says so; `all` is --all.
+#              gg_md_bare_scope reports which,
 #              for a caller that has to know before running the lane
 #
 # The range scopes are what the pre-push lane hands these lanes: nothing is
@@ -38,6 +40,16 @@
 
 GG_MD_SCOPE_DEFAULT="touched"
 GG_MD_EXCLUDES_DEFAULT="tools/md-excludes"
+
+# The lane's rename policy, configured-paths.sh's GG_WALK_RENAMES values, set
+# by the lane before gg_md_scope. `exact`, the default, holds renames to exact
+# content as byte-ceiling does: a pure move adds no content, and a move with
+# changed bytes is an addition. `detect` is md-type's: its verdict depends on
+# the path and compares a file with its earlier self, so every detected move
+# is selected, an unchanged one included, with the path it moved from. The
+# staged trigger, the diff walks and the --all sweep all read this one value,
+# so no scope can select or measure a file without its rename source.
+GG_MD_RENAMES=exact
 
 # What a run with no scope flag resolves to, without resolving it.
 #
@@ -130,7 +142,7 @@ gg_md_scope_exclusive() {
 # scope with nothing staged, already announced on stdout. A range scope also
 # sets GG_MD_RANGE to the diff range, which gg_md_select hands the walk.
 gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
-  local lane="$1" staged="$2" all="$3" setting
+  local lane="$1" staged="$2" all="$3" setting status
   GG_MD_RANGE=""
   gg_md_scope_exclusive
   if [ -n "$GG_MD_RANGE_KIND" ]; then
@@ -156,12 +168,21 @@ gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
       ;;
   esac
   gg_require_merged_index
-  if git diff --cached --quiet --diff-filter=AMT 2>/dev/null; then
-    GG_MD_MODE=none
-    gg_message staged-count 0 "Nothing is staged for $lane. Use --all to check the configured files."
-    return 0
-  fi
-  GG_MD_MODE=staged
+  # The staged walk's own diff, so the trigger and the walk cannot disagree
+  # about a move: a bare --diff-filter=AMT under git's default rename
+  # detection drops every R record, an unchanged move and an edited one alike.
+  GG_WALK_RENAMES="$GG_MD_RENAMES"
+  gg_walk_diff_flags
+  status=0
+  git diff --cached --quiet "${GG_WALK_DIFF[@]}" || status=$?
+  case "$status" in
+    0)
+      GG_MD_MODE=none
+      gg_message staged-count 0 "Nothing is staged for $lane. Use --all to check the configured files."
+      ;;
+    1) GG_MD_MODE=staged ;;
+    *) gg_fail staged-read "$status" "Git could not read the staged changes." ;;
+  esac
 }
 
 # Load the lane's path globs and the shared excludes list. EXTRA-KEY names a
@@ -181,16 +202,16 @@ gg_md_load_paths() { # LANE KEY DEFAULT [EXTRA-KEY]
 
 # The selected files, as "sha NUL path NUL source NUL" records in
 # $GG_TMP/md-files.z, every one a text blob the lane may read; source is the
-# path a detected rename moved it from, else empty. RENAMES is exact or
-# detect, configured-paths.sh's GG_WALK_RENAMES. Sets GG_MD_COUNT; the skips
-# are counted in GG_WALK_SKIPPED.
-gg_md_select() { # NOUN [RENAMES] — what the lane calls its content, for the skip lines
+# path a detected rename moved it from, else empty. Sets GG_MD_COUNT; the
+# skips are counted in GG_WALK_SKIPPED.
+gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
   local noun="$1"
-  GG_WALK_RENAMES="${2:-exact}"
+  GG_WALK_RENAMES="$GG_MD_RENAMES"
   GG_MD_COUNT=0
   : >"$GG_TMP/md-files.z"
   case "$GG_MD_MODE" in
     all)
+      gg_md_staged_moves
       gg_walk_configured_paths "$noun" file gg_md_take
       ;;
     staged)
@@ -203,10 +224,41 @@ gg_md_select() { # NOUN [RENAMES] — what the lane calls its content, for the s
   esac
 }
 
-# One selected file: the walk and the staged loop both hand the path, the
-# blob file and the sha, and the walk sets GG_WALK_SRC.
+# The sweep reads index entries, which carry no rename, while its baseline is
+# HEAD: under `detect` a file the index holds at a path it moved to is still
+# measured against the path it left. The staged moves, at the detect walk's
+# similarity, destination and source in parallel arrays (Bash 3.2 has no map),
+# read once per sweep. Under `exact` the sweep names no source, as the exact
+# walks name none.
+GG_MD_MOVED_TO=()
+GG_MD_MOVED_FROM=()
+gg_md_staged_moves() {
+  local src dst
+  GG_MD_MOVED_TO=()
+  GG_MD_MOVED_FROM=()
+  [ "$GG_MD_RENAMES" = detect ] || return 0
+  gg_require_merged_index
+  git diff --cached --raw --no-abbrev -z --find-renames --diff-filter=R >"$GG_TMP/moves.z" \
+    || gg_fail staged-collect "$?" "could not collect the staged renames (git diff --cached --raw failed)"
+  # Every record is a rename: "meta NUL source NUL destination NUL".
+  while IFS= read -r -d '' _ && IFS= read -r -d '' src && IFS= read -r -d '' dst; do
+    GG_MD_MOVED_FROM+=("$src")
+    GG_MD_MOVED_TO+=("$dst")
+  done <"$GG_TMP/moves.z"
+}
+
+# One selected file: every walk hands the path, the blob file and the sha;
+# the diff walks set GG_WALK_SRC, and the sweep's source is its staged move.
 gg_md_take() { # PATH BLOBFILE SHA
-  printf '%s\0%s\0%s\0' "$3" "$1" "$GG_WALK_SRC" >>"$GG_TMP/md-files.z"
+  local src="$GG_WALK_SRC" i=0
+  while [ "$i" -lt "${#GG_MD_MOVED_TO[@]}" ]; do
+    if [ "${GG_MD_MOVED_TO[i]}" = "$1" ]; then
+      src="${GG_MD_MOVED_FROM[i]}"
+      break
+    fi
+    i=$((i + 1))
+  done
+  printf '%s\0%s\0%s\0' "$3" "$1" "$src" >>"$GG_TMP/md-files.z"
   GG_MD_COUNT=$((GG_MD_COUNT + 1))
 }
 

@@ -100,25 +100,25 @@ esac
 # which a clone or another project controls. The walk is the one
 # hooks/lane-mail-check.sh owns for its reader, copied here since each hook is
 # installed as one file: from the hook's physical directory up five levels,
-# stopping at the open repository's root and after the home directory, each
-# level's `skills/` and shared `.agents/skills/` tree, which reaches a
-# harness's own copy delivery such as ~/.codex/skills; then the home's shared
-# tree, for a harness root CODEX_HOME or PI_CODING_AGENT_DIR moved out of the
-# home; then the repository's own copy, only where this hook is installed in
-# that repository.
+# each level's `skills/` and shared `.agents/skills/` tree, which reaches a
+# harness's own copy delivery such as ~/.codex/skills, stopping after the open
+# repository's root and after the home directory. A hook installed in the
+# repository therefore takes the repository's own copy before any global one,
+# while a global hook never reaches that root. Then the home's shared tree,
+# for a harness root CODEX_HOME or PI_CODING_AGENT_DIR moved out of the home.
 HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
 ROOT=$(git -C "$BASE" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
 in_scope() { # SKILL — the skill's directory in this hook's install; 1 when none
   local at="$HOOK_DIR" levels=0 candidate
   [ -n "$at" ] || return 1
-  while [ "$levels" -lt 5 ] && [ "$at" != "$ROOT" ] && [ "$at" != / ]; do
+  while [ "$levels" -lt 5 ] && [ "$at" != / ]; do
     for candidate in "$at/skills/$1" "$at/.agents/skills/$1"; do
       if [ -d "$candidate" ]; then
         printf '%s\n' "$candidate"
         return 0
       fi
     done
-    [ "$at" != "$HOME_DIR" ] || break
+    [ "$at" != "$ROOT" ] && [ "$at" != "$HOME_DIR" ] || break
     at=${at%/*}
     [ -n "$at" ] || at=/
     levels=$((levels + 1))
@@ -126,14 +126,6 @@ in_scope() { # SKILL — the skill's directory in this hook's install; 1 when no
   if [ -n "$HOME_DIR" ] && [ "$HOME_DIR" != "$ROOT" ] && [ -d "$HOME_DIR/.agents/skills/$1" ]; then
     printf '%s\n' "$HOME_DIR/.agents/skills/$1"
     return 0
-  fi
-  if [ -n "$ROOT" ] && [ -d "$ROOT/.agents/skills/$1" ]; then
-    case "$HOOK_DIR" in
-      "$ROOT"/*)
-        printf '%s\n' "$ROOT/.agents/skills/$1"
-        return 0
-        ;;
-    esac
   fi
   return 1
 }

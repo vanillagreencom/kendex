@@ -134,6 +134,40 @@ global_rows() {
 }
 global_rows
 
+# Hooks installed inside the edited repository beside its own skills, on a
+# host whose home holds a commit-guards that writes a sentinel if anything
+# runs it: the repository's copy is the one installed with the hook.
+project_rows() {
+  local REPO="$TMP_ROOT/project" home="$TMP_ROOT/project-home" rf hook harness hooks
+  rf="$REPO/README.md"
+  rm -rf -- "$STATE" "${TMP_ROOT:?}/project" "${TMP_ROOT:?}/project-home" "${TMP_ROOT:?}/home-sentinel"
+  mkdir -p "$REPO/.agents/skills" "$home/.agents/skills/commit-guards/scripts"
+  git -C "$REPO" -c init.defaultBranch=main init -q
+  cp -R -- "$CATALOG/skills/commit-guards" "$CATALOG/skills/docs-writing" "$REPO/.agents/skills/"
+  printf '#!/bin/sh\n: >"%s/home-sentinel"\n' "$TMP_ROOT" >"$home/.agents/skills/commit-guards/scripts/md-type"
+  chmod +x "$home/.agents/skills/commit-guards/scripts/md-type"
+  for harness in codex pi claude; do
+    case "$harness" in
+      codex) hooks="$REPO/.codex/hooks" ;;
+      pi) hooks="$REPO/.pi/kendex/hooks" ;;
+      claude) hooks="$REPO/.claude/hooks" ;;
+    esac
+    mkdir -p "$hooks"
+    cp -- "$HOOK" "$hooks/docs-writing-note.sh"
+    hook="$hooks/docs-writing-note.sh"
+    if [ "$harness" = claude ]; then
+      check "project claude hook with an empty home" "$hook" "$(edit Write "$rf" "pj-$harness")" \
+        "docs-writing-note: path=$rf type=readme" "pj-$harness" "harness=$harness session=pj-$harness path=$rf"
+    else
+      FIRE_HOME="$home" check "project $harness hook beside a global commit-guards" "$hook" "$(edit Write "$rf" "pj-$harness")" \
+        "docs-writing-note: path=$rf type=readme" "pj-$harness" "harness=$harness session=pj-$harness path=$rf"
+      assert_eq "$(has "$CONTEXT" "$REPO/.agents/skills/docs-writing/references/readme.md")" present "project $harness hook: the repository's docs-writing"
+    fi
+  done
+  assert_eq "$([ -e "$TMP_ROOT/home-sentinel" ] && echo ran || echo not-run)" not-run "project hooks: the home's md-type never runs"
+}
+project_rows
+
 failure_rows() {
   local claude bare nodocs rf=$REPO/README.md
   rm -rf -- "$STATE" "$TMP_ROOT/sentinel"
@@ -181,5 +215,13 @@ skill_load_control judge-scope "$HOOK" 'JUDGE=""' 'in_scope() { printf "%s\n" "$
 # a Codex copy delivery and a relocated root find no judge.
 skill_load_control global-scope "$HOOK" 'JUDGE=""' 'in_scope() { local s=${HOOK_DIR%/*}; s=${s%/*}; [ -d "$s/.agents/skills/$1" ] && printf "%s\n" "$s/.agents/skills/$1"; }' HOOK global_rows \
   'codex copy delivery: keyed first line' 'relocated CODEX_HOME: keyed first line'
+# The order this walk once had: the home's tree before the repository's,
+# whose root the walk never looked at.
+skill_load_control home-first "$HOOK" 'JUDGE=""' 'in_scope() { local at=$HOOK_DIR n=0 c; while [ $n -lt 5 ] && [ "$at" != "$ROOT" ] && [ "$at" != / ]; do for c in "$at/skills/$1" "$at/.agents/skills/$1"; do if [ -d "$c" ]; then printf "%s\n" "$c"; return 0; fi; done; [ "$at" != "$HOME_DIR" ] || break; at=${at%/*}; n=$((n + 1)); done; if [ "$HOME_DIR" != "$ROOT" ] && [ -d "$HOME_DIR/.agents/skills/$1" ]; then printf "%s\n" "$HOME_DIR/.agents/skills/$1"; return 0; fi; case "$HOOK_DIR" in "$ROOT"/*) if [ -d "$ROOT/.agents/skills/$1" ]; then printf "%s\n" "$ROOT/.agents/skills/$1"; return 0; fi ;; esac; return 1; }' HOOK project_rows \
+  'project codex hook beside a global commit-guards: keyed first line' 'project pi hook beside a global commit-guards: keyed first line' "project hooks: the home's md-type never runs"
+# A walk that never reaches the repository: a hook installed there finds no
+# judge of its own.
+skill_load_control no-project "$HOOK" 'local at="$HOOK_DIR" levels=0 candidate' 'case "$HOOK_DIR" in "$ROOT"/*) at=/ ;; esac' HOOK project_rows \
+  'project claude hook with an empty home: keyed first line' 'project codex hook beside a global commit-guards: keyed first line'
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

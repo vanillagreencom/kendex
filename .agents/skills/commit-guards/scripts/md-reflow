@@ -51,8 +51,9 @@ file is untouched; a CRLF file is refused rather than converted.
 PATH... names work-tree files. --staged takes the work-tree copy of every
 markdown file the staged diff adds or changes, --all every tracked markdown
 file COMMIT_GUARDS_MD_PATHS names minus COMMIT_GUARDS_MD_EXCLUDES; both
-resolve against the index the way md-type does. --check writes nothing
-and exits 1 naming each file a reflow would change.
+select from the index with renames held to exact content, so an unchanged
+move is not taken. --check writes nothing and exits 1 naming each file a
+reflow would change.
 
 Exit codes: 0 clean or rewritten; 1 --check found work; 2 usage, config or
 collection error.

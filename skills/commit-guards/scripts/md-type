@@ -560,6 +560,10 @@ fi
 # --- the lane -----------------------------------------------------------------
 gg_repo_root_cd
 gg_md_load_paths md-type COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
+# Renames are detected and every one selected, in every scope: a move can
+# change a file's type, and a file carried across a move is measured against
+# its earlier self.
+GG_MD_RENAMES=detect
 gg_md_scope md-type "$STAGED" "$ALL"
 [ "$GG_MD_MODE" != none ] || exit 0
 
@@ -567,10 +571,7 @@ gg_md_scope md-type "$STAGED" "$ALL"
 # overwritten. The inventory is read at the first path a walk selects.
 GG_RENDER_INVENTORY=deferred
 gg_tmpdir
-# Renames are detected and every one selected: a move can change a file's
-# type, and a file carried across a move is measured against its earlier
-# self.
-gg_md_select markdown detect
+gg_md_select markdown
 skipped="$GG_WALK_SKIPPED"
 
 if [ "$GG_MD_COUNT" -eq 0 ]; then
