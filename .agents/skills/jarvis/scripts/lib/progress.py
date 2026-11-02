@@ -30,7 +30,8 @@ SLACK_KEY = re.compile(r"([A-Za-z0-9]+):(\d+\.\d+)")
 _MAILBOX_ID = r"\d{10,}-\d+-\d+"
 # Narrower than Linear's own identifier shape, which a mailbox id's first two
 # parts would match; the alternation order reads a mailbox id whole first.
-_TRACKER_ID = r"[A-Z][A-Z0-9]*-\d+"
+# Linear numbers issues from 1 unpadded, so HYPRLAND-0 or PP-06 is no id.
+_TRACKER_ID = r"[A-Z][A-Z0-9]*-[1-9]\d*"
 _ID = re.compile(r"(?<![\w-])(?:(?P<mailbox>%s)|(?P<slack>%s)|(?P<tracker>%s))(?![\w-])"
                  % (_MAILBOX_ID, SLACK_KEY.pattern, _TRACKER_ID))
 # The Linear package's closed states: formatters.sh issue_is_open.

@@ -25,6 +25,7 @@ FIELDS = {"--operation": "Reply to 1791680510", "--result": "sent, receipt id=1"
 # A row takes lib/formatters.sh format_issues_list_compact's shape; a ref
 # Linear has no issue for refuses the whole read with lib/common.sh
 # linear_issue_refs_read's `missing` line, after the lookup's own error line.
+# A ref numbered 0 or 0N fails Linear's argument validation for the whole read.
 LINEAR = """#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -35,6 +36,9 @@ with (home / "linear-calls").open("a") as calls:
     calls.write(json.dumps([sys.argv[1:], refs]) + "\\n")
 if world.get("fail"):
     print(json.dumps({"error": "HTTP 503"}), file=sys.stderr)
+    sys.exit(1)
+if any(ref.rsplit("-", 1)[-1].startswith("0") for ref in refs):
+    print(json.dumps({"error": "Argument Validation Error"}), file=sys.stderr)
     sys.exit(1)
 missing = [ref for ref in refs if ref in world.get("missing", ())]
 if missing:
@@ -286,6 +290,9 @@ class ProgressLog(MailWorld):
             ("not an issue", "- UTF-8 names\n- KEN-1 shipped\n", {"issues": issues, "missing": ["UTF-8"]},
              ["not-issue line=5 ids=UTF-8", "unbound line=5", "closed line=6 ids=KEN-1:Done"], (2, 1, 1, 0, 1), 0, None,
              [["UTF-8", "KEN-1"], ["KEN-1"]]),
+            ("zero-numbered tokens bind nothing", "- KEN-4849 read HYPRLAND-0.57-FALLBACK-FACTS-2026-11-02.md and PP-06\n",
+             {"issues": dict(issues, **{"KEN-4849": DONE})}, ["closed line=5 ids=KEN-4849:Done"], (1, 1, 0, 0, 0), 0,
+             None, [["KEN-4849"]]),
             ("tracker failure", "- KEN-1 shipped\n- Call the vendor\n", {"issues": issues, "fail": True},
              ["unread line=5 ids=KEN-1", "unbound line=6"], (2, 0, 1, 1, 0), 1, "tracker-unavailable=exit-1",
              [["KEN-1"]]),
@@ -338,23 +345,25 @@ class ProgressLog(MailWorld):
                 self.assertEqual(calls, [[BULK_GET, ["KEN-3", "KEN-1"]]])
 
     def test_check_state_control(self):
-        # A closed rule that drops Canceled must fail the table's canceled row.
-        with tempfile.TemporaryDirectory() as folder:
-            copy = Path(folder) / "jarvis/scripts"
-            shutil.copytree(SCRIPTS, copy)
-            library = copy / "lib/progress.py"
-            source = library.read_text()
-            old = 'CLOSED_TYPES = ("completed", "canceled")'
-            self.assertEqual(source.count(old), 1)
-            library.write_text(source.replace(old, 'CLOSED_TYPES = ("completed",)'))
-            case = ProgressLog(methodName="test_check_state")
-            case.scripts = copy
-            case.setUp()
-            try:
-                with self.assertRaises(AssertionError):
-                    case.test_check_state()
-            finally:
-                case.doCleanups()
+        # A closed rule that drops Canceled must fail the canceled row; the
+        # earlier tracker pattern must fail the zero-numbered row.
+        for old, new in (('CLOSED_TYPES = ("completed", "canceled")', 'CLOSED_TYPES = ("completed",)'),
+                         ('_TRACKER_ID = r"[A-Z][A-Z0-9]*-[1-9]\\d*"', '_TRACKER_ID = r"[A-Z][A-Z0-9]*-\\d+"')):
+            with self.subTest(mutation=new), tempfile.TemporaryDirectory() as folder:
+                copy = Path(folder) / "jarvis/scripts"
+                shutil.copytree(SCRIPTS, copy)
+                library = copy / "lib/progress.py"
+                source = library.read_text()
+                self.assertEqual(source.count(old), 1)
+                library.write_text(source.replace(old, new))
+                case = ProgressLog(methodName="test_check_state")
+                case.scripts = copy
+                case.setUp()
+                try:
+                    with self.assertRaises(AssertionError):
+                        case.test_check_state()
+                finally:
+                    case.doCleanups()
 
     def test_instrument_control(self):
         # A typed-in time, not the clock read, must fail the record row.
