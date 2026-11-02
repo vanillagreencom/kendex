@@ -121,13 +121,15 @@ for (const version of supportedCodexVersions()) {
 		await bridge.close();
 	});
 
-	// A native tool may be offered only where it cannot run (DEVELOPMENT.md §
-	// Native tools): `apply_patch`, which Codex answers itself on a turn with no
-	// environment. The contrast drops `environments` from thread/start and
+	// A native tool may be offered only where it fails closed (DEVELOPMENT.md §
+	// Native tools). For this row's model, the default mock model, the one such
+	// tool is `apply_patch`, which Codex answers itself on a turn with no
+	// environment; the code-mode and sub-agent rows hold `exec` and
+	// `spawn_agent` on models that are offered them. The contrast drops `environments` from thread/start and
 	// turn/start, and there the same call starts a fileChange item, which the
 	// bridge refuses. So the row fails when the empty environment stops keeping
 	// the call from a patch, and when it stops seeing a started patch.
-	test(`codex ${version}: Codex offers the model no native tool but apply_patch, native calls start no item, write nothing and fail no turn, and without the empty environment the patch starts`, { timeout: FIXTURE_TIMEOUT }, async (t) => {
+	test(`codex ${version}: Codex offers the default model no native tool but apply_patch, native calls start no item, write nothing and fail no turn, and without the empty environment the patch starts`, { timeout: FIXTURE_TIMEOUT }, async (t) => {
 		const script = [];
 		const world = await worldFor("native", { script });
 		t.after(() => world.close());
@@ -138,6 +140,7 @@ for (const version of supportedCodexVersions()) {
 				functionCall("exec_command", { cmd: `touch ${ran}` }, "native-1"),
 				functionCall("shell", { command: ["touch", ran] }, "native-2"),
 				customToolCall("apply_patch", patch, "native-3"),
+				functionCall("apply_patch", { input: patch }, "native-4"),
 				functionCall("request_user_input", { questions: [{ id: "q", header: "Ask", question: "Which file?", options: [] }] }, "ask-1"),
 			],
 			[message("after native")],
