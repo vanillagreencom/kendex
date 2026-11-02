@@ -32,8 +32,9 @@ Use the reader mode the caller supplies. The default prose is for a CEO with mod
 
 ## Evidence and costs
 
-- Use a number only when you saw it in this session's output. Otherwise name the thing without the number. Never estimate or run an extra command only to fill that gap.
-- Give every number its yardstick and verdict in the same bullet: the earlier value, target or normal range; good, bad or not known; and what is done about it. If the yardstick is unread, say so and name the reading that settles it.
+- Use a number only when you saw it in this session's output, or as a labelled time estimate under the next rule. Otherwise name the thing without the number. Never guess a number or run an extra command only to fill that gap.
+- Give a time estimate for agent work as one approximate number of hours from a lane starting the work, running nonstop, through merge, review rounds included. It is not a sum of concurrent worker-hours and not a calendar forecast. Derive it from the runtime of finished comparable items; with no usable comparable, label it a judgment. Leave calendar days and the list of comparables out of the message. Keep an unread time unknown, never substitute `updated_at` for a lifecycle time, and never present an estimate as a measurement. A size point is a relative class, never a time.
+- Give every measured number its yardstick and verdict in the same bullet: the earlier value, target or normal range; good, bad or not known; and what is done about it. If the yardstick is unread, say so and name the reading that settles it. A time estimate takes its derived-or-judgment label in place of a yardstick.
 - Give a measure that depends on load with that load: session length beside the work handled, or machine use beside what ran. Length or use alone never claims an improvement.
 - Before posting, read each topic as the person and ask "so what for me?". Add that answer or cut the topic.
 - State a cost as its figure and source. Compare added CI time against the plan's included monthly allowance.

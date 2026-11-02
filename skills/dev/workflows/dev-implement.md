@@ -78,7 +78,7 @@ Blocked → **§ 3**, then STOP. Clear → § 2.4.
 
 ### 2.4 Plan Approach
 
-- Linear only, when scope differs from the estimate: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N` (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+).
+- Linear only, when scope differs from the estimate: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N`, a relative size class from 1, smallest, through 5, largest (project-management SKILL.md § Disposition).
 - **If bundled**: order sub-issues by dependency and overlap.
 - A required command written as `VAR=value cmd args` is normalized here into an ambient-environment precondition plus the bare `cmd args` (orch SKILL.md § Harness-Safe Shell). An unsatisfiable precondition is a blocker to report, never a license to run under the wrong environment.
 

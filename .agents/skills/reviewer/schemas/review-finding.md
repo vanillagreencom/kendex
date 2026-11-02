@@ -76,7 +76,7 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 | `description` | Yes | Problem statement |
 | `recommendation` | Yes | Actionable fix/improvement steps |
 | `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low). There is no P5 — a finding below P4 is not worth reporting |
-| `estimate` | Yes | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
+| `estimate` | Yes | 1-5 points, a relative size class from 1, smallest, through 5, largest ([project-management § Disposition](../../project-management/SKILL.md#disposition)) |
 | `category` | Suggestions only | `fix` (this PR's concern) or `issue` (track separately) — the orchestrator routes on this field; orch [review-pr.md § 4](../../orch/workflows/review-pr.md#4-handle-review-items) says what reaches a fix round |
 
 `category: "issue"` items become tracked issue candidates: `description` 2-3 sentences; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is not an issue — note it in the review summary instead.
