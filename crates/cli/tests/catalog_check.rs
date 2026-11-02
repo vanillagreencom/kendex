@@ -174,8 +174,9 @@ fn declared_hook_events_must_reach_each_named_harness() {
 }
 
 /// The workflow's advisory option changes only the strict check. Safety
-/// findings never fail either mode. The missing-description fixture also
-/// reaches marketplace_check_exits_exactly_like_the_strict_catalog_check.
+/// findings never fail either mode, and a pass prints them: catalog CI runs
+/// no other check step. The missing-description fixture also reaches
+/// marketplace_check_exits_exactly_like_the_strict_catalog_check.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_release_wrapper_honors_the_callers_advisory_policy() {
@@ -205,6 +206,10 @@ fn the_release_wrapper_honors_the_callers_advisory_policy() {
                 .output()
                 .unwrap()
         };
+        // The finding's location, a structured field of the check's report.
+        let finding = "skills/review/SKILL.md:5";
+        let reports_finding =
+            |output: &Output| String::from_utf8_lossy(&output.stdout).contains(finding);
         for (flags, exit) in [(vec![], strict_exit), (vec!["--allow-advisories"], 0)] {
             let output = run(&tool, &flags);
             assert_eq!(
@@ -212,6 +217,23 @@ fn the_release_wrapper_honors_the_callers_advisory_policy() {
                 Some(exit),
                 "{name} {flags:?}: {output:?}"
             );
+            if name == "safety" {
+                assert!(reports_finding(&output), "{flags:?}: {output:?}");
+            }
+        }
+        if name == "safety" {
+            // Keep the pass, but drop the check's report from it. The
+            // finding then reaches no reader.
+            let original = std::fs::read_to_string(&tool).unwrap();
+            let target = "            print(report)\n";
+            assert_eq!(original.matches(target).count(), 1);
+            let mutant = original.replace(target, "            pass\n");
+            assert_ne!(mutant, original);
+            let path = home.join("mutant-silent.py");
+            std::fs::write(&path, mutant).unwrap();
+            let control = run(&path, &[]);
+            assert_eq!(control.status.code(), Some(0), "{control:?}");
+            assert!(!reports_finding(&control), "{control:?}");
         }
         if name == "structural" {
             // Keep the check, but omit its strict flag. The default then

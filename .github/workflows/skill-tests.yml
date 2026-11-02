@@ -1386,16 +1386,13 @@ jobs:
         working-directory: pi-extensions/pi-background-tasks
         run: npm test
 
-      # The package value-imports pi-tui with no mock standing in for it. No
-      # module the suite loads reaches that import today, so the install is
-      # what keeps a test file that does reach it failing as a test rather
-      # than as an unresolved module.
+      # The suite mocks pi-coding-agent and pi-tui with bun's mock.module or
+      # loads the isolated host stubs in its fixtures, so like
+      # pi-session-manager it needs no install.
       - name: pi-extension-manager suite
         if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-extension-manager
-        run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1
-          npm test
+        run: npm test
 
       # Mocks its Pi imports the way pi-background-tasks does, so no install.
       # Two of its three files are node:test and one is bun:test; bun's runner

@@ -11,8 +11,9 @@ Rendered kendex.toml files also pass their schema declaration through the
 released manifest reader, independently of their install declarations.
 Report protocol: catalog-release: version=JSON leg=NAME feature=JSON then
 catalog-release: remedy=KEY on failure, catalog-release: version=JSON
-result=pass legs=NAMES on success, and catalog-release: upgrade=skip
-cause=prior-uninstallable feature=JSON before a pass on the fresh leg alone.
+result=pass legs=NAMES followed by the catalog check's report on success, and
+catalog-release: upgrade=skip cause=prior-uninstallable feature=JSON before a
+pass on the fresh leg alone.
 An engine without bundle names reports bundles=unavailable
 cause=engine-missing-bundles and keeps the package upgrade checks.
 The feature value is the engine's diagnostic, not a second feature classifier.
@@ -147,12 +148,16 @@ def main():
             print(f"catalog-release: remedy={key}\n{remedy}")
             return 1
 
+        diagnostics = []
         diagnostic = settle(fresh, [
             ["check", "--catalog", str(catalog), *strict],
             install(catalog), REFRESH, VERIFY,
-        ], [])
+        ], diagnostics)
         if diagnostic is not None:
             return failed("fresh", diagnostic)
+        # The catalog check's report, printed once on a pass: its safety
+        # findings fail nothing, and no other step prints them.
+        report = diagnostics[0]
         diagnostic = shipped_manifests(binary, root / "fresh/project", root / "manifests", ceilings)
         if diagnostic is not None:
             return failed("fresh", diagnostic)
@@ -190,6 +195,8 @@ def main():
                     return failed("upgrade", diagnostic)
                 legs.append("upgrade")
         print(f"catalog-release: version={json.dumps(version)} result=pass legs={','.join(legs)}")
+        if report:
+            print(report)
         return 0
 
 

@@ -21,11 +21,11 @@
 #           path: .          # the catalog directory inside the repo
 #           strict: false    # true also fails on advisories
 #
-# `kendex check --catalog` exits non-zero on anything that would not
-# install: a name a harness's loader will not accept, a SKILL.md that
-# disagrees with its own directory. With `strict`, structural advisories
-# fail it too. Safety findings print with their fix and fail nothing,
-# under either setting.
+# The render step's first command, `kendex check --catalog`, exits non-zero
+# on anything that would not install: a name a harness's loader will not
+# accept, a SKILL.md that disagrees with its own directory. With `strict`,
+# structural advisories fail it too. Safety findings print with their fix
+# and fail nothing, under either setting.
 #
 # The render step installs the catalog with the latest released engine
 # twice: into a fresh project, and over the catalog as the caller's base
@@ -117,17 +117,6 @@ jobs:
             PRIOR_PATH=
           fi
           python3 kendex/tools/catalog-release-check "$HOME/.local/bin/kendex" "$CATALOG_PATH" ${{ !inputs.strict && '--allow-advisories' || '' }} ${PRIOR_PATH:+--prior "$PRIOR_PATH"}
-      # The caller's own answer, honoured as given. This repository asks
-      # for `strict: true` from skill-tests.yml: the default marketplace
-      # carries no structural advisories either. Safety findings print
-      # here and fail nothing.
-      - name: Validate the catalog
-        env:
-          CATALOG_PATH: catalog/${{ inputs.path || '.' }}
-        run: |
-          "$HOME/.local/bin/kendex" check \
-            --catalog "$CATALOG_PATH" \
-            ${{ inputs.strict && '--strict' || '' }}
       - name: Package suites with released kendex
         if: inputs.suite-command != ''
         working-directory: catalog
