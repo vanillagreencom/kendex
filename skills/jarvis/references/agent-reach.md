@@ -34,7 +34,7 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 
 - A practice or design finding Jarvis meets in a repository, whose cause lies in a kendex-owned package, goes to the kendex repository through [Instruct](#instruct), as an item or a note.
 - Judge it under the code-quality skill's SKILL.md § Finding Evaluation, and send that section's evaluation line with the finding. That section decides which findings qualify; the line by itself does not justify a new item.
-- [decisions.md § Authority](decisions.md#authority) holds the standing grant that sends this note without approval of its text.
+- The note is a send in the user's name: [Instruct](#instruct) step 3's approval of the exact text applies unless the user's responsibility map holds a standing grant for these finding notes, under [decisions.md § Authority](decisions.md#authority). This package records no such grant.
 
 ## One voice
 
