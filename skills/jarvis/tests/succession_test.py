@@ -66,12 +66,16 @@ print(json.dumps({"config_dir": row["account"]}))
         # Real tmux and the native hook carrier; CLI behaviour is a fixture.
         # One table covers every launch shape, including deferred kickoff.
         # Every harness is named unattended, so each successor launch line
-        # carries its own harness's permission words.
+        # carries its own harness's permission words. A briefed row removes
+        # the consumer's brief file once Start runs; an unbriefed row starts
+        # without one on a home whose last Start had one.
         (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_UNATTENDED_HARNESSES = "claude,codex,copilot,pi"\n')
-        for harness in ("claude", "codex", "copilot", "pi"):
+        for harness, briefed in (("claude", True), ("codex", False), ("copilot", True), ("pi", False)):
             with self.subTest(harness=harness):
-                self.call("start", harness=harness, mode="new")
+                brief, start_brief, private = self.private_brief()
+                self.call("start", harness=harness, mode="new", brief=brief if briefed else None)
                 self.wait()
+                brief.unlink()
                 predecessor = json.loads(self.record.read_text())
                 self.assertIsInstance(predecessor.get("report_started_at"), int)
                 predecessor["report_started_at"] = 1000
@@ -94,6 +98,13 @@ print(json.dumps({"config_dir": row["account"]}))
                 self.assertEqual((self.home / "state/handoff.md").read_text(), contents)
                 self.assertEqual(len(self.started()), native_count + 1)
                 self.assertEqual(set(self.started()[-1]["argv"]) & ANY_PERMISSION_WORD, PERMISSION_WORDS[harness])
+                expected = private if briefed else start_brief
+                self.assertEqual(self.prompts(successor["pending"]["native_session_id"]), [expected])
+                self.handoff()
+                self.call("succeed")
+                self.wait()
+                second = json.loads(self.record.read_text())
+                self.assertEqual(self.prompts(second["pending"]["native_session_id"]), [expected])
                 pid = predecessor["process"]["pid"]
                 result = subprocess.run([self.env["JARVIS_TEST_BASH"], str(SKILLS / "jarvis/scripts/lib/session-backend.sh"),
                                          "worker-live", str(pid), predecessor["process"]["started_at"]],
@@ -132,7 +143,8 @@ print(json.dumps({"config_dir": row["account"]}))
         # room above the trigger, 5%, and below the work-item reserve, 50%,
         # that an overseer reading does not take. unattended is the home's
         # setting: a successor carries its own harness's permission words only
-        # when the setting names it.
+        # when the setting names it, and every successor Start's brief file.
+        brief, _, private = self.private_brief()
         for state, start, headroom, target, unattended in (
                 ("walled", "claude", 0, "claude", ""), ("walled", "claude", 0, "codex", "codex"),
                 ("low", "claude", 4, "codex", "claude"), ("walled", "claude", 0, "copilot", "copilot"),
@@ -140,7 +152,7 @@ print(json.dumps({"config_dir": row["account"]}))
                 ("room-no-entry", "copilot", 20, "none", ""), ("walled-no-entry", "claude", 0, "none", ""),
                 ("pick-fails", "claude", 20, "fail", ""), ("app-missing", "claude", 0, "codex", "")):
             with self.subTest(state=state, start=start, target=target):
-                self.call("start", harness=start, mode="new")
+                self.call("start", harness=start, mode="new", brief=brief)
                 previous = self.wait()
                 before = json.loads(self.record.read_text())
                 native_count = len(self.started())
@@ -257,6 +269,7 @@ print(json.dumps({"config_dir": row["account"]}))
                         self.assertTrue(set(argv).isdisjoint({"--autopilot", "--max-autopilot-continues", "--context", "--no-auto-update"}))
                 self.assertEqual(after["transfer"]["phase"], "complete")
                 self.assertNotEqual(after["pending"]["native_session_id"], before["pending"]["native_session_id"])
+                self.assertEqual(self.prompts(after["pending"]["native_session_id"]), [private])
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
                 (self.home / ".lane-fixture.json").unlink()
@@ -679,7 +692,9 @@ print(json.dumps({"config_dir": row["account"]}))
         # The transition writes are one code path for every harness. One
         # harness per launch shape, without and with a kickoff turn before
         # the brief, reaches each write; test_succession_contract launches
-        # every harness.
+        # every harness. Each successor, a retry's included, takes Start's
+        # brief file.
+        brief, _, private = self.private_brief()
         with patch.object(session_test, "SCRIPT", script):
             for harness in ("claude", "codex"):
                 for phase in phases:
@@ -687,7 +702,7 @@ print(json.dumps({"config_dir": row["account"]}))
                         with self.subTest(harness=harness, phase=phase, edge=edge):
                             print("succession-row: harness=" + harness + " phase=" + phase + " edge=" + edge, flush=True)
                             self.handoff()
-                            self.call("start", harness=harness, mode="new")
+                            self.call("start", harness=harness, mode="new", brief=brief)
                             self.wait()
                             previous = json.loads(self.record.read_text())
                             native_count = len(self.started())
@@ -734,6 +749,7 @@ print(json.dumps({"config_dir": row["account"]}))
                             recovered = json.loads(self.record.read_text())
                             self.assertNotEqual(recovered["pending"]["native_session_id"], previous["pending"]["native_session_id"])
                             self.assertIn("TASK-ref", Path(recovered["transfer"]["handoff"]).read_text())
+                            self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
                             self.call("stop")
                             self.wait("stopped", persisted_stop=True)
 

@@ -44,12 +44,11 @@ def main():
                     (('action = "kill-pane" if adopted', 'action = "kill-session" if adopted'),),
                     "test_adoption_contract"),
                    ("adoption brief", session,
-                    (('        brief = self.start_brief(args)\n        if stated and stated["warning"]:',
-                      '        brief = START_BRIEF\n        if stated and stated["warning"]:'),),
+                    (('if record else None, "private_brief": private}', 'if record else None, "private_brief": None}'),),
                     "test_adoption_contract"),
                    ("Start's harness", session,
-                    (("self._hand_over(base, choice, predecessor, None, brief)",
-                      'self._hand_over(base, dict(choice, harness=predecessor["harness"]), predecessor, None, brief)'),),
+                    (("self._hand_over(base, choice, predecessor, None)",
+                      'self._hand_over(base, dict(choice, harness=predecessor["harness"]), predecessor, None)'),),
                     "test_adoption_contract"),
                    ("task session", session,
                     (("                elif adopted:\n                    self.end_task_session()\n", ""),),
@@ -65,10 +64,11 @@ def main():
                     (('        [[ "$pid" == "$5" ]] || exit 1 ;;', '        [[ "$pid" == "$5" && "$window" == "$6" ]] || exit 1 ;;'),),
                     "test_adoption_recovery"),
                    ("retry brief", session,
-                    (('brief = (record.get("launch") or {}).get("brief", START_BRIEF)', "brief = START_BRIEF"),),
+                    (('                saved_handoff = record["transfer"]["handoff"]\n',
+                      '                saved_handoff = record["transfer"]["handoff"]\n                record = dict(record, private_brief=None)\n'),),
                     "test_adoption_recovery"))
         # The rows the latest change added, which its pre-change revision fails.
-        cases = ("test_adoption_contract",)
+        cases = ("test_succession_contract",)
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
 
