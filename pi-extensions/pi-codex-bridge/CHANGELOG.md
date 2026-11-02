@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 1.0.2
 
 - Codex CLI 0.166.0 is supported beside 0.163.0. Codex 0.166.0 offers the model its own `apply_patch` file-edit tool, and no setting removes it. On a bridge turn Codex answers that call itself, because the turn has no execution environment, so the call changes no file; the model edits files through Pi's tools. The bridge also turns off 0.166.0's plugin-directory prefetch at start.
 

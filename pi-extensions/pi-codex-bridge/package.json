@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-codex-bridge",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Pi provider bridge that runs Codex models through the Codex CLI and its existing login.",
   "type": "module",
   "keywords": [
