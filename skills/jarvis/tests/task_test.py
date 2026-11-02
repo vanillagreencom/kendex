@@ -859,8 +859,8 @@ while True: signal.pause()
 
     def test_stop_process_result_control(self):
         self.regression_controls((("stop-result-collapsed", "session.py", ((
-            '                    sys.stderr.write(stopped.stderr)\n',
-            '                    str(stopped.stderr)\n'),),
+            '            sys.stderr.write(stopped.stderr)\n',
+            '            str(stopped.stderr)\n'),),
             "test_stop_process_result_reaches_owned_diagnostic"),))
 
     def test_retry_succession_process_states_controls(self):
@@ -871,8 +871,8 @@ while True: signal.pause()
             ("reused-pid-cleanup", "session.py", ((condition, 'if stopped.returncode != 3:'),),
              "test_retry_succession_process_states"),
             ("dead-pane-needs-pid", "session.py", ((
-              'process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(identity["pid"]) + "}}"',
-              'process_binding = "#{==:#{pane_pid}," + str(identity["pid"]) + "}"'),),
+              'process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(record["process"]["pid"]) + "}}"',
+              'process_binding = "#{==:#{pane_pid}," + str(record["process"]["pid"]) + "}"'),),
              "test_retry_succession_process_states"),
             ("live-process-ended", "session-backend.sh", (('[[ -z "$state" || "$state" == Z ]] ;;',
               '[[ -z "$state" || "$state" == Z ]] || true ;;'),), "test_process_ended_states"),

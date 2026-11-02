@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import signal
 import subprocess
@@ -341,7 +342,274 @@ print(json.dumps({"config_dir": row["account"]}))
         self.assertEqual(windows.stdout.splitlines(), [foreign])
         self.assertEqual(len(self.started()), count)
 
-    def test_succession_recovery(self):
+    def launched(self):
+        # Native launches so far; the fixture creates its row file at the first.
+        return len(self.started()) if self.rows.exists() else 0
+
+    def unmanaged(self, harness, bridge=False):
+        # A Jarvis session started outside the package: the native fixture
+        # binary under the consumer's shell, on the consumer's own tmux
+        # server. The shell keeps the pane open after the harness ends. A
+        # harness of None leaves the shell alone in its pane. A bridge runs a
+        # process named codex below the harness, as pi-codex-bridge runs
+        # `codex app-server` below pi. The consumer's other shells, one beside
+        # the pane and one in another window, are no part of the session.
+        self.consumers = getattr(self, "consumers", 0) + 1
+        folder = self.root / ("unmanaged-" + str(self.consumers))
+        folder.mkdir()
+        script = "import sys\nsys.stdin.read()\n"
+        if bridge:
+            shutil.copyfile(shutil.which("sleep"), folder / "codex")
+            (folder / "codex").chmod(0o755)
+            # Hangup and terminate end the bridge child with its parent.
+            script = ("import signal, subprocess, sys\n"
+                      "child = subprocess.Popen([" + repr(str(folder / "codex")) + ", '120'], stdin=subprocess.DEVNULL)\n"
+                      "for number in (signal.SIGHUP, signal.SIGTERM):\n"
+                      "    signal.signal(number, lambda *_: sys.exit(0))\n"
+                      "try:\n    sys.stdin.read()\nfinally:\n    child.terminate()\n    child.wait()\n")
+        (folder / ".fixture-harness.py").write_text(script)
+        command = ":"
+        if harness:
+            shutil.copyfile(session_test.HARNESS, folder / harness)
+            (folder / harness).chmod(0o755)
+            command = "./" + harness
+        label = "consumer-" + self.label[-12:] + "-" + str(self.consumers)
+        self.addCleanup(subprocess.run, ["tmux", "-L", label, "kill-server"], capture_output=True, env=self.env)
+        created = subprocess.run(["tmux", "-L", label, "-f", os.devnull, "new-session", "-d", "-s", "consumer", "-c", str(folder),
+                                  "-P", "-F", "#{socket_path}\t#{pid}\t#{pane_id}\t#{pane_pid}",
+                                  self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc", "-c", command + "; read -r _"],
+                                 capture_output=True, text=True, env=self.env, timeout=10, check=True)
+        socket, server, pane, pid = created.stdout.strip().split("\t")
+        shell = [self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"]
+        siblings = [subprocess.run(["tmux", "-L", label, *opening, "-d", "-P", "-F", "#{pane_id}", *shell],
+                                   capture_output=True, text=True, env=self.env, timeout=10, check=True).stdout.strip()
+                    for opening in (["split-window", "-t", pane], ["new-window", "-t", "=consumer"])]
+        consumer = {"label": label, "socket": socket, "pane": pane, "siblings": siblings,
+                    "env": self.env | {"TMUX": socket + "," + server + ",0"}, "process": self.identity(pid), "harness": None}
+        deadline = time.monotonic() + 10
+        while harness and consumer["harness"] is None:
+            self.assertLess(time.monotonic(), deadline, "the unmanaged harness did not start")
+            table = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "comm="], capture_output=True, text=True, check=True).stdout
+            for row in table.splitlines():
+                child, parent, name = row.split(None, 2)
+                if parent == pid and Path(name).name == harness:
+                    consumer["harness"] = self.identity(child)
+            time.sleep(0.05)
+        return consumer
+
+    def identity(self, pid):
+        result = subprocess.run([self.env["JARVIS_TEST_BASH"], str(SKILLS / "jarvis/scripts/lib/session-backend.sh"), "process", str(pid)],
+                                capture_output=True, text=True, env=self.env, timeout=10, check=True)
+        return json.loads(result.stdout)
+
+    def consumer_panes(self, consumer):
+        result = subprocess.run(["tmux", "-L", consumer["label"], "list-panes", "-a", "-F", "#{pane_id}"],
+                                capture_output=True, text=True, env=self.env, timeout=10)
+        return result.stdout.split() if result.returncode == 0 else []
+
+    def adopt(self, consumer, harness="claude", pid=None, brief=None):
+        return self.call("start", harness=harness, mode="new", env=consumer["env"], brief=brief,
+                         adopt=(consumer["pane"], pid or consumer["process"]["pid"]))
+
+    def adoption_ended(self, consumer):
+        # One controller remains: the unmanaged harness, its shell and its
+        # pane ended, and the consumer's other shells left as they were.
+        self.assertFalse(self.process_live(consumer["harness"]))
+        self.assertFalse(self.process_live(consumer["process"]))
+        panes = self.consumer_panes(consumer)
+        self.assertNotIn(consumer["pane"], panes)
+        for sibling in consumer["siblings"]:
+            self.assertIn(sibling, panes)
+
+    def private_brief(self):
+        path = self.root / "private-brief.txt"
+        path.write_text("Consumer private line.\n")
+        with patch.dict(os.environ, {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}):
+            start_brief = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))["START_BRIEF"]
+        return path, start_brief, start_brief + " Consumer private line."
+
+    def prompts(self, native_id):
+        rows = [json.loads(line) for line in self.rows.read_text().splitlines()]
+        return [row["prompt"] for row in rows if "prompt" in row and row["id"] == native_id]
+
+    def test_adoption_contract(self):
+        # The unmanaged session's harness is detected at the call; Start's own
+        # arguments choose the successor, which launches in the home's
+        # session. Each row's Start names another harness than the adopted.
+        brief, start_brief, private = self.private_brief()
+        rows = (
+            # unmanaged, bridge child, Start's harness, brief file, task window left in jarvis
+            ("claude", False, "codex", False, False),
+            ("codex", False, "copilot", True, False),
+            ("copilot", False, "pi", False, True),
+            ("pi", False, "claude", False, False),
+            ("pi", True, "codex", False, False),
+        )
+        for harness, bridge, successor, briefed, task in rows:
+            with self.subTest(harness=harness, bridge=bridge, successor=successor):
+                contents = self.handoff()
+                consumer = self.unmanaged(harness, bridge)
+                if task:
+                    # A task window task.py left, remain-on-exit, after a
+                    # managed controller ended on its own.
+                    left = subprocess.run(["tmux", "-L", self.label, "-f", os.devnull, "new-session", "-d", "-s", "jarvis",
+                                           "-P", "-F", "#{pane_id}", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                          capture_output=True, text=True, env=self.env, timeout=10, check=True).stdout.strip()
+                    subprocess.run(["tmux", "-L", self.label, "set-option", "-p", "-t", left, "@jarvis-task", "task-1"],
+                                   capture_output=True, env=self.env, timeout=10, check=True)
+                native_count = self.launched()
+                answer, code = self.adopt(consumer, successor, brief=brief if briefed else None)
+                self.assertEqual(code, 0)
+                # Start answers from the predecessor, whose harness is the
+                # one detected at the call and the one its stop is keyed to.
+                self.assertEqual((answer["state"], answer["harness"]), ("handing-over", harness))
+                current = self.wait()
+                record = json.loads(self.record.read_text())
+                self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), successor, str(self.account)))
+                self.assertEqual(current["terminal"]["session"], "jarvis")
+                self.assertNotEqual(current["terminal"]["server"], consumer["socket"])
+                self.assertEqual(record["transfer"]["phase"], "complete")
+                self.assertEqual(Path(record["transfer"]["handoff"]).read_text(), contents)
+                self.assertTrue(record["identity_verified"])
+                self.assertEqual(self.launched(), native_count + 1)
+                self.assertEqual(self.started()[-1]["harness"], successor)
+                self.assertEqual(self.prompts(record["pending"]["native_session_id"]), [private if briefed else start_brief])
+                self.adoption_ended(consumer)
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
+    def test_adoption_refusals(self):
+        # Each refusal precedes any save or stop: the record, the handoff
+        # archive and the unmanaged session stay as they were.
+        self.handoff()
+        # The keyed cause each selection refusal names; the others are Start's own.
+        causes = {"other-pid": "pid-mismatch", "no-harness": "no-harness", "missing-pane": "pane-missing"}
+        for row in ("other-pid", "no-harness", "missing-pane", "running", "starting"):
+            with self.subTest(row=row):
+                consumer = self.unmanaged(None if row == "no-harness" else "claude")
+                pid = worker = None
+                named = consumer
+                if row == "missing-pane":
+                    # A pane id the consumer's server does not hold.
+                    named = dict(consumer, pane="%" + str(10 ** 6))
+                    self.assertNotIn(named["pane"], self.consumer_panes(consumer))
+                elif row == "other-pid":
+                    # A live harness session, but not the named pane's.
+                    pid = self.unmanaged("claude")["process"]["pid"]
+                elif row == "running":
+                    self.call("start", mode="new")
+                    self.wait()
+                elif row == "starting":
+                    # A Start whose worker has not yet recorded its pane:
+                    # only that live worker answers for the controller.
+                    worker = subprocess.Popen(["sleep", "60"])
+                    self.addCleanup(worker.wait)
+                    self.addCleanup(worker.kill)
+                    self.record.parent.mkdir(parents=True, exist_ok=True)
+                    self.record.write_text(json.dumps({
+                        "v": 1, "home": str(self.home), "harness": "claude", "account": str(self.account), "origin": "manual",
+                        "boot": None, "generation": 1, "intent": "start", "state": "starting", "reason": "launching", "detail": "",
+                        "terminal": None, "worker": self.identity(worker.pid)}))
+                    self.assertEqual(self.call("status")[0]["state"], "starting")
+                saved = self.record.read_bytes() if self.record.exists() else None
+                native_count = self.launched()
+                answer, code = self.adopt(named, pid=pid)
+                expected = "selection-conflict" if row in causes else "name-conflict"
+                self.assertEqual((answer["state"], answer["reason"], code), ("blocked", expected, 1))
+                if row in causes:
+                    # The keyed refusal line operators read names the binding.
+                    self.assertIn("jarvis-session: adopt=refused cause=" + causes[row] + " ", self.stderr)
+                self.assertEqual(self.record.read_bytes() if self.record.exists() else None, saved)
+                self.assertFalse((self.home / "state/archive").exists())
+                self.assertEqual(self.launched(), native_count)
+                self.assertTrue(self.process_live(consumer["process"]))
+                if consumer["harness"]:
+                    self.assertTrue(self.process_live(consumer["harness"]))
+                self.assertIn(consumer["pane"], self.consumer_panes(consumer))
+                if row in ("running", "starting"):
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+
+    def test_adoption_recovery(self):
+        # Before the unmanaged process ends, an interruption leaves it the
+        # only controller; after its end, the transfer fails and succeed
+        # completes it. The transition writes are succession's, one code path
+        # for every harness, so one launch shape reaches each. A retry after a
+        # refusal before the end follows the consumer's pane when the consumer
+        # moves it, and a retry after the end keeps the brief Start named.
+        brief, _, private = self.private_brief()
+        skills = self.instrumented()
+        script = skills / "jarvis/scripts/jarvis-session"
+        pause = self.home / ".succession-pause.json"
+        phases = ("saved", "waiting", "predecessor-ended", "confirmed", "brief-delivered", "complete")
+        with patch.object(session_test, "SCRIPT", script):
+            for phase in phases:
+                for edge in ("before", "after"):
+                    with self.subTest(phase=phase, edge=edge):
+                        print("adoption-row: phase=" + phase + " edge=" + edge, flush=True)
+                        contents = self.handoff()
+                        consumer = self.unmanaged("claude")
+                        native_count = self.launched()
+                        argv = [str(script), "start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
+                                "--mode", "new", "--origin", "manual", "--adopt-pane", consumer["pane"], "--adopt-pid", str(consumer["process"]["pid"])]
+                        briefed = (phase, edge) == ("predecessor-ended", "after")
+                        if briefed:
+                            argv += ["--brief-file", str(brief)]
+                        identity, request = self.paused(argv, pause, phase, edge, consumer["env"])
+                        with request:
+                            persisted = json.loads(self.record.read_text()) if self.record.exists() else None
+                            during, _ = self.call("status")
+                            unrecorded = (phase, edge) == ("saved", "before")
+                            completed = (phase, edge) == ("complete", "after")
+                            before_end = phase in ("saved", "waiting")
+                            self.assertEqual(during["state"], "stopped" if unrecorded else "running" if completed else "handing-over")
+                            self.assertEqual(self.process_live(consumer["harness"]), before_end)
+                            self.assertEqual(self.launched() - native_count,
+                                             1 if phase in ("confirmed", "brief-delivered", "complete") else 0)
+                            self.assertTrue(self.process_live(identity))
+                            os.kill(identity["pid"], signal.SIGKILL)
+                            request.communicate(timeout=10)
+                        pause.unlink()
+                        if unrecorded:
+                            self.assertEqual(self.call("status")[0]["state"], "stopped")
+                            self.assertTrue(self.process_live(consumer["harness"]))
+                            self.adopt(consumer)
+                        elif before_end:
+                            settled = self.wait("running")
+                            self.assertEqual(settled["terminal"]["pane"], consumer["pane"])
+                            self.assertTrue(self.process_live(consumer["harness"]))
+                            # The waiting successor's pane follows its worker.
+                            deadline = time.monotonic() + 10
+                            while subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"], capture_output=True,
+                                                 env=self.env).returncode == 0:
+                                self.assertLess(time.monotonic(), deadline, "a managed controller outlived its worker")
+                                time.sleep(0.05)
+                            if edge == "after":
+                                # A move keeps the pane and its process but gives it another window.
+                                subprocess.run(["tmux", "-L", consumer["label"], "break-pane", "-d", "-s", consumer["pane"]],
+                                               capture_output=True, env=self.env, timeout=10, check=True)
+                                self.assertEqual((self.call("status")[0]["terminal"] or {}).get("pane"), consumer["pane"])
+                            self.call("succeed")
+                        elif completed:
+                            self.assertEqual(self.wait("running")["terminal"], persisted["terminal"])
+                        else:
+                            settled = self.wait("failed", "handover-failed")
+                            self.assertTrue(settled["detail"])
+                            failed = json.loads(self.record.read_text())
+                            self.assertEqual(failed["transfer"]["handoff"], persisted["transfer"]["handoff"])
+                            self.assertEqual(Path(failed["transfer"]["handoff"]).read_text(), contents)
+                            self.call("succeed")
+                        if not completed:
+                            self.wait()
+                        recovered = json.loads(self.record.read_text())
+                        self.assertEqual(recovered["transfer"]["phase"], "complete")
+                        self.adoption_ended(consumer)
+                        if briefed:
+                            self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
+                        self.call("stop")
+                        self.wait("stopped", persisted_stop=True)
+
+    def instrumented(self):
         # Interrupt the real writer before/after each transition write. Only
         # the disposable script copy gains barriers; operations stay production.
         skills = self.root / "instrumented/skills"
@@ -373,10 +641,40 @@ print(json.dumps({"config_dir": row["account"]}))
         instrumented = instrumented.replace("    def write(self, record):", method + "    def write(self, record):")
         self.assertNotEqual(original, instrumented)
         source.write_text(instrumented)
+        return skills
+
+    def paused(self, argv, pause, phase, edge, env):
+        # Start the request and return the identity of the process its
+        # checkpoint holds, with the running request.
+        event = self.root / "checkpoint.json"
+        event.unlink(missing_ok=True)
+        pause.write_text(json.dumps({"phase": phase, "edge": edge, "event": str(event), "release": str(self.root / "release")}))
+        request = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if event.exists():
+                try:
+                    return json.loads(event.read_text()), request
+                except json.JSONDecodeError:
+                    pass
+            if request.poll() is not None and request.returncode:
+                self.fail("succession request refused: " + str(request.communicate()))
+            time.sleep(0.05)
+        request.kill()
+        request.communicate()
+        self.fail("no checkpoint was reached\n" + self.session_log())
+
+    def process_live(self, identity):
+        result = subprocess.run([self.env["JARVIS_TEST_BASH"], str(SKILLS / "jarvis/scripts/lib/session-backend.sh"),
+                                 "worker-live", str(identity["pid"]), identity["started_at"]],
+                                capture_output=True, env=self.env, timeout=10)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        return result.returncode == 0
+
+    def test_succession_recovery(self):
+        skills = self.instrumented()
         script = skills / "jarvis/scripts/jarvis-session"
         pause = self.home / ".succession-pause.json"
-        event = self.root / "checkpoint.json"
-        release = self.root / "release"
         phases = ("saved", "waiting", "predecessor-ended", "confirmed", "brief-delivered", "complete")
         # The transition writes are one code path for every harness. One
         # harness per launch shape, without and with a kickoff turn before
@@ -393,23 +691,8 @@ print(json.dumps({"config_dir": row["account"]}))
                             self.wait()
                             previous = json.loads(self.record.read_text())
                             native_count = len(self.started())
-                            event.unlink(missing_ok=True)
-                            pause.write_text(json.dumps({"phase": phase, "edge": edge, "event": str(event), "release": str(release)}))
-                            with subprocess.Popen([str(script), "succeed", "--home", str(self.home)],
-                                                  env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as request:
-                                deadline = time.monotonic() + 15
-                                identity = None
-                                while time.monotonic() < deadline:
-                                    if event.exists():
-                                        try:
-                                            identity = json.loads(event.read_text())
-                                            break
-                                        except json.JSONDecodeError:
-                                            pass
-                                    if request.poll() is not None and request.returncode:
-                                        self.fail("succession request refused: " + str(request.communicate()))
-                                    time.sleep(0.05)
-                                self.assertIsNotNone(identity, self.session_log())
+                            identity, request = self.paused([str(script), "succeed", "--home", str(self.home)], pause, phase, edge, self.env)
+                            with request:
                                 persisted = json.loads(self.record.read_text())
                                 during, _ = self.call("status")
                                 expected = "running" if (phase, edge) in (("saved", "before"), ("complete", "after")) else "handing-over"
@@ -458,4 +741,5 @@ print(json.dumps({"config_dir": row["account"]}))
 if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
-        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor"])
+        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
+                                   "SuccessionContract.test_adoption_contract", "SuccessionContract.test_adoption_refusals", "SuccessionContract.test_adoption_recovery"])
