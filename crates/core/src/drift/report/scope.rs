@@ -706,8 +706,11 @@ impl ScopeCheck<'_> {
     /// whose native switch differs, and a package `update-pi` leaves
     /// carries its reason and no fix. With no answer, where the
     /// declaration would not read, the line names nothing. A copy that
-    /// matches its record while its source moved on is the snapshot's
-    /// line ([`Self::package_line`]), with its holds and mutes.
+    /// matches its record, its switch as declared, draws no line here:
+    /// while its source moved on, [`Self::package_line`] draws it, with
+    /// its holds and mutes, only where `update-pi` installs it, so one
+    /// `update-pi` leaves because Pi loads it from the other scope is not
+    /// drawn.
     fn pi_installation_line(
         &self,
         name: &str,
@@ -1486,9 +1489,11 @@ impl ScopeCheck<'_> {
     /// blocked by the edit, so the edit is the line; the others follow the
     /// same "what must be decided first" order. A Pi package's standing is
     /// from the last deep pass, so whether `update-pi` installs it now is
-    /// its admission's answer ([`pi_admissions`]): where it does not, the
-    /// line is left to [`Self::pi_installation_line`], which carries the
-    /// reason where the copy is not its record.
+    /// its admission's answer ([`pi_admissions`]): where it does not, this
+    /// draws no line. [`Self::pi_installation_line`] carries the reason
+    /// only where the copy is not its record, so a copy that matches it,
+    /// left because Pi loads the package from the other scope, is not
+    /// drawn.
     fn package_line(
         &self,
         package: &crate::drift::snapshot::PackageSnapshot,
