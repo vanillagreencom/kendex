@@ -97,3 +97,19 @@ Markdown follows [docs-writing](../docs-writing/SKILL.md). Commit bodies explain
 ## Cleanup
 
 Remove unused code rather than leaving renamed variables, commented blocks, removal markers or re-exports without callers; a supported external API is a caller. Follow the repository's declared compatibility policy for removals; absent such a policy, remove the dead path and document a breaking change instead of inventing a compatibility layer. A compatibility probe or shim states the minimum upstream version it serves and the condition that removes it; one with no exit is a workaround under § Correctness.
+
+## Finding Evaluation
+
+A finding of bad code or test practice, bloat, unnecessary machinery or scope, patchwork or non-holistic design carries one evaluation line. These classes are examples for judgement, not a checklist: a finding qualifies when its cost comes from how the code or test was decided. Other findings carry no line.
+
+```text
+code-quality: [misled|missing|not followed]: [reason]; owner: [guidance or route]
+```
+
+Judge the outcome and its real cost under § Core Principle first, then name the cause:
+
+- `misled`: written guidance steered the decision to the result. The owner is the section whose wording to correct, as `file § Section`.
+- `missing`: no guidance covers the case. The owner is the guidance that should hold the rule: a section here, a stack reference or the repository's project instructions.
+- `not followed`: the guidance is right, and the route that should apply it failed, such as a workflow that never loaded it or a review that passed the defect. The owner is that route; the guidance takes no new prose.
+
+The reason states what in the guidance or route produced the finding, not the finding again. The line travels with the finding through its existing item or note route. It adds no review round, scanner, gate or field, does not by itself justify a new work item and does not change the filing bar.
