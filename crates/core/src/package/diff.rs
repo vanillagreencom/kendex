@@ -136,8 +136,10 @@ fn side(
 
 /// The package's source subtree at one commit with the files an install
 /// holds ([`SealedSource::rendered_item`]). `as_installed` reads a skill's
-/// SKILL.md as a copy carries it ([`crate::render::skill::installed_form`]),
-/// so an unedited install diffs empty against the commit it came from.
+/// SKILL.md with the description bound and key set a copy carries
+/// ([`crate::render::skill::installed_form`]), so the keys a copy leaves
+/// out show no difference. Nothing else a render writes into a copy, such
+/// as the project's instructions block, is applied here.
 /// Read through the sealed reader — a historical commit of a catalog is
 /// still a catalog, budgets and symlink refusals included.
 fn commit_tree(

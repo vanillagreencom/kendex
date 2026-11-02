@@ -72,7 +72,7 @@ pub fn fork(
     }
     let (edited, captured) = capture_rendering(env, scope, kind, name, harness, &manifest, &decl)?;
     let mut ops = capture_ops(env, scope, kind, name, &edited, captured.files)?;
-    let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
+    let provenance = provenance(&manifest, &decl, captured.read_at);
     // The catalog's mapping tables shaped the rendering and the fork stops
     // reading them, so their effective values move into the manifest or the
     // very next apply renders a different agent under the same name.
@@ -191,9 +191,8 @@ struct Captured {
     /// tree with no SKILL.md text is refused by the capture itself.
     rendering: (String, String),
     carry: Option<crate::engine::agent_carry::AgentCarry>,
-    /// The catalog revision an agent's bytes were read at, `None` for a
-    /// skill: a skill's tree is one capture no per-tool rendering derives
-    /// from, so no tool can be at odds with it.
+    /// The catalog revision the publisher's file was read at, which the
+    /// fork records as the commit its edits were made on.
     read_at: Option<String>,
 }
 
@@ -220,10 +219,13 @@ struct PublishedItem {
     commit: Option<String>,
 }
 
-/// The published item behind this fork. Nothing is fetched: a source this
-/// machine holds no copy of at that commit refuses with the cause
-/// [`crate::source::require_ready_at`] gives, because a capture without
-/// the publisher's file would drop what only that file declares.
+/// The published agent behind this fork, read through the declaration at
+/// the commit [`installed_commit`] picks. A skill's capture reads its
+/// install record instead ([`crate::source::header::published_text`]).
+/// Nothing is fetched: a source this machine holds no copy of at that
+/// commit refuses with the cause [`crate::source::require_ready_at`]
+/// gives, because a capture without the publisher's file would drop what
+/// only that file declares.
 fn published_item(of: &ForkOf) -> Result<PublishedItem> {
     let ForkOf {
         env,
@@ -258,20 +260,25 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
     Ok(match of.kind {
         ItemKind::Skill => {
             let files = source_form(crate::capture::read_tree(edited)?);
+            let unrestored = |cause: String| CoreError::ForkWidensAccess {
+                name: crate::names::shown(of.name),
+                problem: format!("the publisher's keys, because {cause}"),
+            };
             // The copy carries only the installed key set; the
             // publisher's other keys come back from the file it was
             // rendered from, around the person's edits.
-            let published = published_item(of)?;
-            let authored = published
-                .sealed
-                .read_to_string(&published.path.join(crate::render::skill::SKILL_FILE))?;
+            let published = crate::source::header::published_text(
+                of.env,
+                of.scope,
+                of.manifest,
+                (of.kind, of.name),
+                of.harness,
+                edited,
+            )?
+            .map_err(unrestored)?;
             let on_disk = skill_text(&files);
-            let files = crate::render::skill::authored_form(files, &authored).map_err(|cause| {
-                CoreError::ForkWidensAccess {
-                    name: crate::names::shown(of.name),
-                    problem: format!("the publisher's keys, because {cause}"),
-                }
-            })?;
+            let files = crate::render::skill::authored_form(files, &published.text)
+                .map_err(|cause| unrestored(cause.to_string()))?;
             let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
                 unreachable!("authored_form refuses a tree with no SKILL.md text")
             };
@@ -279,7 +286,7 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 rendering: skill_round_trip(of, &captured, on_disk),
                 files: Capture::Tree(files),
                 carry: None,
-                read_at: None,
+                read_at: published.commit,
             }
         }
         // Every other kind is turned away by `edited_rendering` first, so

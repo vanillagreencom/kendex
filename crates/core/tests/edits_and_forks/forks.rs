@@ -1235,10 +1235,13 @@ fn a_fork_keeps_the_publishers_keys_from_the_installed_commit() {
 
 /// A fork whose capture cannot put the publisher's keys back refuses
 /// before anything is written, with the cause: a source this machine
-/// cannot read at the installed commit, for its own reason, or a
-/// frontmatter on either side that does not read. Taken anyway, the
-/// capture would drop every key the install cut. One row per cause; a
-/// path source stands in where the catalog itself has to move.
+/// cannot read at the installed commit, for its own reason, no install
+/// record of the copy, a repository record naming no commit, a source
+/// that now reads another catalog than the record names, or a frontmatter
+/// on either side that does not read. Taken anyway, the capture would
+/// drop every key the install cut, or take back keys from a revision the
+/// copy never was. One row per cause; a path source stands in where the
+/// catalog itself has to move.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_that_cannot_restore_the_publishers_keys_writes_nothing() {
@@ -1249,7 +1252,54 @@ fn a_fork_that_cannot_restore_the_publishers_keys_writes_nothing() {
         let edited = installed.replacen("name: gh\n", "name: gh\nname: gh\n", 1);
         fs::write(skill_file(w), edited.replace("Upstream.", "Mine.")).unwrap();
     };
-    let rows: [(&str, bool, Setup, Refused); 5] = [
+    let rows: [(&str, bool, Setup, Refused); 8] = [
+        (
+            "no install record names the copy",
+            false,
+            |w| {
+                let path = kendex_core::lock::lock_path(&w.env, &w.scope);
+                let mut lock = kendex_core::lock::load(&path).unwrap();
+                let before = lock.entries.len();
+                lock.entries.retain(|_, entry| entry.name != "gh");
+                assert!(lock.entries.len() < before);
+                kendex_core::lock::save(&path, &lock).unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+        (
+            "the repository record names no commit",
+            false,
+            |w| {
+                let path = kendex_core::lock::lock_path(&w.env, &w.scope);
+                let mut lock = kendex_core::lock::load(&path).unwrap();
+                let mut cleared = 0;
+                for entry in lock.entries.values_mut().filter(|entry| entry.name == "gh") {
+                    assert!(entry.source_commit.take().is_some());
+                    cleared += 1;
+                }
+                assert!(cleared > 0);
+                kendex_core::lock::save(&path, &lock).unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+        (
+            "the folder source now reads another folder",
+            true,
+            |w| {
+                let elsewhere = w.home.join("catalog-two");
+                write_skill(&elsewhere, "gh", "Elsewhere.");
+                let path = manifest::manifest_path(&w.env, &w.scope);
+                let text = fs::read_to_string(&path).unwrap();
+                let moved = text.replacen(
+                    &crate::test_util::source_path(&w.home.join("catalog")),
+                    &crate::test_util::source_path(&elsewhere),
+                    1,
+                );
+                assert_ne!(moved, text);
+                fs::write(&path, moved).unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
         (
             "the source's snapshot is gone",
             false,

@@ -185,11 +185,16 @@ fn an_installed_copy_is_read_against_the_installed_key_set() {
 }
 
 /// An edited copy takes back the keys the commit it was installed from
-/// declares, not what its source declares since. Where those keys cannot
-/// be put back — a recorded commit this machine does not hold, or a copy
-/// whose own frontmatter does not read — the edited copy is listed with
-/// the cause and nothing to select: offered as it stands, it would import
-/// without them. One row per installation.
+/// declares, not what its source declares since, read from the record that
+/// installed that copy. A shared tree's readers hold no record of their
+/// own, so they are answered from the record that wrote the tree, and
+/// every reader of one copy restores the same keys. Where those keys
+/// cannot be put back — a recorded commit this machine does not hold, a
+/// repository record naming no commit, no record that wrote the copy, or
+/// a copy whose own frontmatter does not read — the edited copy is listed
+/// with the cause and nothing to select: offered as it stands, it would
+/// import without them, and read at the source's current revision it
+/// would import keys these bytes never carried. One row per installation.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
@@ -236,10 +241,14 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
     let env =
         crate::env::Env::fake(&home, crate::env::FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
     let root = home.join("app");
-    fs::create_dir_all(root.join(".claude/skills/gh")).unwrap();
+    fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("kendex.toml"),
-        format!("schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[skills.gh]\nsource = \"cat\"\n"),
+        // Declared for a tool that reads the shared tree, so a copy there
+        // no record wrote still reads as this package's.
+        format!(
+            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"codex\"]\n[skills.gh]\nsource = \"cat\"\n"
+        ),
     )
     .unwrap();
     let scope = Scope::Project { root: root.clone() };
@@ -249,59 +258,128 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
     crate::remote::sync(&env, REPO, None).unwrap();
 
     let edited_copy = "---\nname: gh\ndescription: about gh\n---\nmy edited bytes\n";
-    let rows: [(&str, String, &str, Option<&str>); 3] = [
-        (
-            "the commit it was installed from",
-            one.clone(),
-            edited_copy,
-            Some("tags: [one]"),
-        ),
-        (
-            "a commit this machine does not hold",
-            "0".repeat(40),
-            edited_copy,
-            None,
-        ),
-        (
-            "a copy whose frontmatter names a key twice",
-            one.clone(),
-            "---\nname: gh\nname: gh\ndescription: about gh\n---\nmy edited bytes\n",
-            None,
-        ),
+    let own = ".claude/skills";
+    let shared = ".agents/skills";
+    // What the copy's record says: the tool it is held for, the commit it
+    // names, and whether it records writing the copy's tree.
+    struct Row<'a> {
+        what: &'a str,
+        held_by: HarnessId,
+        installed_at: Option<String>,
+        wrote_copy: bool,
+        copy_in: &'a str,
+        copy: &'a str,
+        kept: Option<&'a str>,
+    }
+    let rows = [
+        Row {
+            what: "the record of the tool that reads the copy",
+            held_by: HarnessId::Claude,
+            installed_at: Some(one.clone()),
+            wrote_copy: false,
+            copy_in: own,
+            copy: edited_copy,
+            kept: Some("tags: [one]"),
+        },
+        Row {
+            what: "a shared tree read by tools that hold no record of their own",
+            held_by: HarnessId::Codex,
+            installed_at: Some(one.clone()),
+            wrote_copy: true,
+            copy_in: shared,
+            copy: edited_copy,
+            kept: Some("tags: [one]"),
+        },
+        Row {
+            what: "a shared tree a declaration claims and no record wrote",
+            held_by: HarnessId::Claude,
+            installed_at: Some(one.clone()),
+            wrote_copy: false,
+            copy_in: shared,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a commit this machine does not hold",
+            held_by: HarnessId::Claude,
+            installed_at: Some("0".repeat(40)),
+            wrote_copy: false,
+            copy_in: own,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a repository record that names no commit",
+            held_by: HarnessId::Claude,
+            installed_at: None,
+            wrote_copy: false,
+            copy_in: own,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a copy whose frontmatter names a key twice",
+            held_by: HarnessId::Claude,
+            installed_at: Some(one.clone()),
+            wrote_copy: false,
+            copy_in: own,
+            copy: "---\nname: gh\nname: gh\ndescription: about gh\n---\nmy edited bytes\n",
+            kept: None,
+        },
     ];
-    for (n, (what, installed_at, copy, kept)) in rows.into_iter().enumerate() {
+    for (n, row) in rows.into_iter().enumerate() {
+        let what = row.what;
+        for dir in [own, shared] {
+            let _ = fs::remove_dir_all(root.join(dir).join("gh"));
+        }
+        let tree = root.join(row.copy_in).join("gh");
+        fs::create_dir_all(&tree).unwrap();
+        fs::write(tree.join("SKILL.md"), row.copy).unwrap();
         let mut lock = crate::lock::Lock {
             version: crate::lock::LOCK_VERSION,
             ..crate::lock::Lock::default()
         };
         let mut gh = entry(ItemKind::Skill, "gh", "cat", REPO);
-        gh.source_commit = Some(installed_at);
+        gh.harness = row.held_by;
+        gh.source_commit = row.installed_at;
+        if row.wrote_copy {
+            gh.emitted = Some(crate::lock::EmittedArtifact {
+                kind: ItemKind::Skill,
+                name: "gh".to_owned(),
+                paths: vec![tree.clone()],
+            });
+        }
         lock.entries.insert(
-            crate::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
+            crate::lock::entry_key(ItemKind::Skill, "gh", row.held_by),
             gh,
         );
         crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
-        fs::write(root.join(".claude/skills/gh/SKILL.md"), copy).unwrap();
 
         let scopes = [scope.clone()];
         let candidates = inventory(&env, &scopes).unwrap();
         let gh = find(&candidates, "gh");
-        let edited = gh
+        let edited: Vec<_> = gh
             .origins
             .iter()
-            .find(|origin| matches!(origin.group, CandidateGroup::Edited { .. }))
-            .unwrap_or_else(|| panic!("{what}: {:?}", gh.origins));
-        let Some(kept) = kept else {
-            assert!(edited.hash.is_empty(), "{what}: {edited:?}");
-            assert!(edited.problem.is_some(), "{what}: {edited:?}");
+            .filter(|origin| matches!(origin.group, CandidateGroup::Edited { .. }))
+            .collect();
+        assert!(!edited.is_empty(), "{what}: {:?}", gh.origins);
+        let Some(kept) = row.kept else {
+            for origin in edited {
+                assert!(origin.hash.is_empty(), "{what}: {origin:?}");
+                assert!(origin.problem.is_some(), "{what}: {origin:?}");
+            }
             continue;
         };
+        // Every reader of the copy restores the same bytes, so they are
+        // one origin.
+        assert_eq!(edited.len(), 1, "{what}: {edited:?}");
         let target = target(&env, &tmp, &format!("mine-{n}"));
         let chosen = ImportSelection {
             kind: ItemKind::Skill,
             name: "gh".to_owned(),
             destination: "gh".to_owned(),
-            hash: edited.hash.clone(),
+            hash: edited[0].hash.clone(),
             license_confirmed: true,
             license_basis: None,
         };
@@ -309,6 +387,7 @@ fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
         let copied = fs::read_to_string(target.join("skills/gh/SKILL.md")).unwrap();
         assert!(copied.contains("my edited bytes"), "{what}: {copied}");
         assert!(copied.contains(kept), "{what}: {copied}");
+        assert!(!copied.contains("tags: [two]"), "{what}: {copied}");
     }
 }
 
