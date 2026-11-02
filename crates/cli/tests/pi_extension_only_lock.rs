@@ -126,8 +126,15 @@ fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {
     assert!(!first.contains("up to date"), "{first}");
     assert_record_landed(&project.join(".kendex-lock.json"));
 
+    // Nothing left to write but the package itself, which only update-pi
+    // installs: the closing line names that action as its finish.
     let second = said(&kendex(&home, &project, &["apply", "--yes"]));
-    assert!(second.contains("up to date"), "{second}");
+    assert!(
+        second
+            .lines()
+            .any(|line| line.trim() == "finish-with=update-pi"),
+        "{second}"
+    );
     assert!(!second.contains("Update the install record"), "{second}");
 
     let recorded = kendex(&home, &project, &["update-pi", "--scope", "project"]);

@@ -37,7 +37,8 @@ fn check_project_writes_in(
         lane_target,
     } = writing_scopes(cli, env)?;
     // The explicit refresh-lane override applies to both project-write
-    // restrictions on the three whole-scope commands that accept it.
+    // restrictions on the whole-scope commands that accept it: refresh,
+    // apply, updates --apply and update-pi.
     if lane_target.is_some_and(|target| target.lane_refresh) {
         return Ok(None);
     }
