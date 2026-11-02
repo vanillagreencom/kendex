@@ -14,15 +14,16 @@
 # with nothing written, a second fixture whose destination is the other root,
 # SLACK_REPORT_ROOT outside the relay's roots or relative refused at start,
 # off commands answered as off, a failed, unstartable or secret-matching
-# command replying without its output, the Home tab published for an owner on
+# command replying without its output, a timed-out command's stderr, what it
+# printed before the bound and on TERM, reaching the relay's stderr, the Home tab published for an owner on
 # app_home_opened and not for anyone else or another tab, a failed or
 # secret-matching Home command published as its cause in place of an earlier
 # view, and Home off, by an empty setting or Slack's not_enabled, printed once
 # while the relay keeps routing. The controls: the owner gate read from the
 # roots' bindings, the destination taken from the first root, a delivery id
 # that changes on a resend, the answer to a /report skipped or routed as a
-# notice a hold keeps back, the Home
-# command's output sent unchecked, an unstartable command raised out of the
+# notice a hold keeps back, a timed-out command's stderr after TERM dropped,
+# the Home command's output sent unchecked, an unstartable command raised out of the
 # worker, and Slack's not_enabled raised out of the worker. One worker answers
 # envelopes in order, so a row that expects nothing waits for a later reply
 # instead of a fixed time.
@@ -93,6 +94,15 @@ printf '#!/usr/bin/env bash\nprintf "leaked-output\\n"\nexit 3\n' > "$CMD/fail"
 printf '#!/usr/bin/env bash\nprintf "token xo%%sb-%%s\\n" x 123456789012\n' > "$CMD/secret"
 printf '#!/usr/bin/env bash\nprintf "*Fleet* home-fixture\\n<https://example.test/pr/1|PR 1>\\n"\n' > "$CMD/home"
 printf '#!/usr/bin/env bash\nprintf "caf\\351 status\\n"\n' > "$CMD/latin1"
+# hang: a stderr line, then a wait past the command bound that TERM ends
+# after one more stderr line.
+cat > "$CMD/hang" <<'EOF'
+#!/usr/bin/env bash
+trap 'printf "hang-on-term\n" >&2; exit 0' TERM
+printf 'hang-before\n' >&2
+sleep 60 &
+wait
+EOF
 # home-seq: the Home fixture on its first run, then output and exit 4, then a secret.
 cat > "$CMD/home-seq" <<EOF
 #!/usr/bin/env bash
@@ -298,6 +308,21 @@ assert_eq "${VIEWS[2]}" "$HOME_SECRET" "a secret-matching Home command's output 
 assert_has "$(cat "$SK_TMP/relay.err")" "slack: secret-value=command=SLACK_HOME_COMMAND" "the Home refusal is one keyed line on stderr"
 assert_eq "$MISSING" "$MISSING_REPLY" "a command line that cannot start replies with the cause"
 
+# --- a timed-out command ------------------------------------------------------------
+# timed_out: /status whose command outlasts the bound; its reply, and how many
+# of the relay's stderr lines carry each of the command's two stderr lines and
+# the timeout's keyed line.
+timed_out() {
+  relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/hang"
+  RESULT="$(reply "$(slash /status U001)")"
+  RESULT="$RESULT|$(grep -c '^hang-before$' "$SK_TMP/relay.err")|$(grep -c '^hang-on-term$' "$SK_TMP/relay.err")"
+  RESULT="$RESULT|$(grep -c '^slack: command-failed=SLACK_STATUS_COMMAND cause=timeout$' "$SK_TMP/relay.err")"
+  sk_relay_stop
+}
+TIMED_OUT="ephemeral|/status failed (timeout); its output is not shown.|1|1|1"
+timed_out
+assert_eq "$RESULT" "$TIMED_OUT" "a timed-out command replies timeout, and its stderr before the bound and on TERM reaches the relay's stderr"
+
 # --- controls ----------------------------------------------------------------------
 sk_mutant owner-gate relay.py 'self\.owner_set = set\(resolve_owner_ids\(self\.api, self\.settings\.owners\)\.values\(\)\)' \
   'self.owner_set = set().union(*(set(r.binding.owner_ids.values()) for r in self.roots))'
@@ -316,6 +341,9 @@ sk_assert_red "$RESULT" "1|1" "control: the notice answering a /report, skipped 
 sk_mutant report-notice relay.py 'elif reply:\n                route = "reply"' 'elif reply:\n                route = "notice" if delivery_id.startswith(COMMAND_KEY) else "reply"'
 held_report
 sk_assert_red "$RESULT" "jarvis|1|" "control: a notice naming the /report directive, routed as a notice, stays held"
+sk_mutant term-stderr mailbox.py 'exc\.output, exc\.stderr = proc\.communicate' 'proc.communicate'
+timed_out
+sk_assert_red "$RESULT" "$TIMED_OUT" "control: the stderr read after TERM dropped, the relay's stderr lacks the command's TERM line"
 sk_mutant home-unchecked relay.py '        try:\n            secret_check\(out\.encode\(\), f"command=\{setting\}"\)\n        except Refusal as refusal:\n            print_refusal\(refusal\)\n            return "", refusal\.key\n' ''
 withheld
 sk_assert_red "${VIEWS[2]}" "$HOME_SECRET" "control: a Home command's output sent unchecked publishes the secret"

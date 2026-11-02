@@ -242,7 +242,9 @@ def run_bounded(argv: List[str], cwd: Path, timeout: float, env: Optional[Dict[s
     by up to LANE_MAIL_CLEANUP_SECONDS for the group to end, then up to that
     again for the child alone, and TimeoutExpired is raised: the call holds
     its caller for at most `timeout` plus three times
-    LANE_MAIL_CLEANUP_SECONDS."""
+    LANE_MAIL_CLEANUP_SECONDS. The raised exception's `output` and `stderr`
+    are decoded the same way: everything the group printed once it ended,
+    or what was read before the deadline when it never ended."""
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd),
@@ -256,7 +258,12 @@ def run_bounded(argv: List[str], cwd: Path, timeout: float, env: Optional[Dict[s
     )
     try:
         out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        # communicate's TimeoutExpired carries the raw bytes it had read,
+        # whatever the Popen's encoding.
+        exc.output, exc.stderr = (
+            part.decode("utf-8", "replace") if isinstance(part, bytes) else part or ""
+            for part in (exc.output, exc.stderr))
         # TERM before KILL, and to the group: lane-mail owns a directory
         # mutex, and TERM must reach its waiting guard too, so the shell can
         # run the lock owner's release handler.
@@ -269,7 +276,7 @@ def run_bounded(argv: List[str], cwd: Path, timeout: float, env: Optional[Dict[s
                     if proc.poll() is None:
                         raise
                 try:
-                    proc.communicate(timeout=LANE_MAIL_CLEANUP_SECONDS)
+                    exc.output, exc.stderr = proc.communicate(timeout=LANE_MAIL_CLEANUP_SECONDS)
                     break
                 except subprocess.TimeoutExpired:
                     if sig == signal.SIGKILL:

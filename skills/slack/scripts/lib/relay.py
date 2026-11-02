@@ -1687,7 +1687,8 @@ class Relay:
         try:
             code, out, err = run_bounded(list(argv), Path.cwd(), COMMAND_SECONDS, env=CALLER_ENV)
             cause = "" if code == 0 else f"exit-{code}"
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            err = exc.stderr
             cause = "timeout"
         except OSError:
             cause = "start"
