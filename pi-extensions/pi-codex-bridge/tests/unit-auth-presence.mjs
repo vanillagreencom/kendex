@@ -8,12 +8,23 @@ import { codexChildEnvironment } from "../src/codex-environment.ts";
 const scratchRoot = join(process.cwd(), "tmp");
 mkdirSync(scratchRoot, { recursive: true });
 
-test("login presence checks only the resolved CODEX_HOME auth file", () => {
+test("the bridge home is PI_CODEX_BRIDGE_HOME, else CODEX_HOME, else ~/.codex, a blank value counting as unset", () => {
+	const userHome = "/home/lane";
+	for (const row of [
+		{ env: { PI_CODEX_BRIDGE_HOME: " /bridge home ", CODEX_HOME: "/shell" }, home: "/bridge home" },
+		{ env: { PI_CODEX_BRIDGE_HOME: "  ", CODEX_HOME: " /shell " }, home: "/shell" },
+		{ env: { CODEX_HOME: "/shell" }, home: "/shell" },
+		{ env: { PI_CODEX_BRIDGE_HOME: "", CODEX_HOME: "  " }, home: join(userHome, ".codex") },
+		{ env: {}, home: join(userHome, ".codex") },
+	]) {
+		assert.equal(resolveCodexHome(row.env, userHome), row.home, JSON.stringify(row.env));
+	}
+});
+
+test("login presence checks only the resolved home's auth file", () => {
 	const root = mkdtempSync(join(scratchRoot, "auth-presence-"));
 	const seededHome = join(root, "seeded home");
 	mkdirSync(seededHome);
-	assert.equal(resolveCodexHome({ CODEX_HOME: ` ${seededHome} ` }, join(root, "other")), seededHome);
-	assert.equal(resolveCodexHome({ CODEX_HOME: "  " }, join(root, "user")), join(root, "user", ".codex"));
 	assert.equal(hasCodexLogin(seededHome), false);
 	assert.throws(() => requireCodexLogin(seededHome), (error) => error.message.split("\n")[0] === `codex-login-missing home=${seededHome}`);
 	writeFileSync(join(seededHome, "auth.json"), "credential-bytes-never-read");

@@ -42,8 +42,9 @@ for (const enabled of [false, true]) {
 		const settings = join(project, ".pi", "settings.json");
 		writeFileSync(settings, "{}");
 		const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, refreshOnCreate: false });
-		const saved = { CODEX_HOME: process.env.CODEX_HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH };
+		const saved = { PI_CODEX_BRIDGE_HOME: process.env.PI_CODEX_BRIDGE_HOME, CODEX_HOME: process.env.CODEX_HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH };
 		const savedCwd = process.cwd();
+		delete process.env.PI_CODEX_BRIDGE_HOME;
 		process.env.CODEX_HOME = home;
 		process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(scratch, "reload-pi-"));
 		process.env.PATH = `${bin}:${process.env.PATH}`;
@@ -61,7 +62,14 @@ for (const enabled of [false, true]) {
 			const previous = runtime.getProvider("pi-codex");
 			assert.ok(previous);
 			assert.equal((await runtime.checkAuth("pi-codex"))?.type, "api_key");
-			const [first] = await recordedPids(bin, "app-server.pid");
+			const [discovery] = await recordedPids(bin, "app-server.pid");
+			assert.equal(alive(discovery), false, "activation left the discovery child running");
+			// A stream opens the session's child; the process stub stops it at config/read.
+			const opened = await finish(runtime.streamSimple(model, { messages: [system(), user("Original")] }));
+			assert.match(opened.error.errorMessage, /^codex-protocol-invalid method=config\/read /);
+			const started = await recordedPids(bin, "app-server.pid");
+			assert.equal(started.length, 2);
+			const first = started[1];
 			assert.equal(alive(first), true);
 			writeFileSync(settings, JSON.stringify(enabled ? {} : disabled));
 			await shutdown();
@@ -72,7 +80,7 @@ for (const enabled of [false, true]) {
 			for (const callback of [previous.stream, previous.streamSimple]) {
 				assert.throws(() => callback(model, { messages: [system(), user("Stale selection")] }), { message: "codex-provider-retired" });
 			}
-			assert.deepEqual(await recordedPids(bin, "app-server.pid"), [first], "a retired callback launched another child");
+			assert.deepEqual(await recordedPids(bin, "app-server.pid"), started, "a retired callback launched another child");
 			pi = fakePi(runtime);
 			await factory(pi);
 			for (const handler of pi.handlers.get("session_start") ?? []) await handler({ reason: "reload" }, ctx);
@@ -89,7 +97,7 @@ for (const enabled of [false, true]) {
 				assert.equal(await runtime.checkAuth("pi-codex"), undefined);
 			}
 			const children = await recordedPids(bin, "app-server.pid");
-			assert.equal(children.length, enabled ? 2 : 1);
+			assert.equal(children.length, enabled ? 4 : 2);
 			await shutdown();
 			assert.equal(runtime.getProvider("pi-codex"), undefined);
 			assert.ok(children.every((pid) => !alive(pid)), "final shutdown left a child running");
@@ -127,8 +135,9 @@ for (const row of [
 		const project = mkdtempSync(join(scratch, "factory-project-"));
 		mkdirSync(join(project, ".pi"));
 		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify(row.project));
-		const saved = { CODEX_HOME: process.env.CODEX_HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH };
+		const saved = { PI_CODEX_BRIDGE_HOME: process.env.PI_CODEX_BRIDGE_HOME, CODEX_HOME: process.env.CODEX_HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PATH: process.env.PATH };
 		const savedCwd = process.cwd();
+		delete process.env.PI_CODEX_BRIDGE_HOME;
 		process.env.CODEX_HOME = home;
 		process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(scratch, "factory-pi-"));
 		process.env.PATH = `${bin}:${process.env.PATH}`;

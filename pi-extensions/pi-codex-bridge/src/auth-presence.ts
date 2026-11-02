@@ -4,10 +4,13 @@ import { join } from "node:path";
 
 export const LOGIN_MISSING_KEY = "codex-login-missing";
 
-/** Resolve the one Codex home whose CLI login this bridge may use. A blank
- * `CODEX_HOME` counts as unset, as Codex itself treats it. */
+/** Resolve the one Codex home whose CLI login this bridge may use:
+ * `PI_CODEX_BRIDGE_HOME`, else `CODEX_HOME`, else `~/.codex`. The bridge's own
+ * variable lets a fleet give the bridge a home apart from the one a `codex` in
+ * Pi's tool shell reads. A blank value counts as unset, as Codex itself treats
+ * a blank `CODEX_HOME`. */
 export function resolveCodexHome(env: NodeJS.ProcessEnv = process.env, userHome = homedir()): string {
-	const configured = env.CODEX_HOME?.trim();
+	const configured = env.PI_CODEX_BRIDGE_HOME?.trim() || env.CODEX_HOME?.trim();
 	return configured ? configured : join(userHome, ".codex");
 }
 

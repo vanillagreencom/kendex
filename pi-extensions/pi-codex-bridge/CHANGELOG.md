@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Model discovery stops its `codex app-server` child before startup ends. A session that never selects a `pi-codex` model holds no Codex process; the first `pi-codex` turn starts one.
+- The bridge reads its Codex home from `PI_CODEX_BRIDGE_HOME` when set, else `CODEX_HOME`, else `~/.codex`, so the bridge and a `codex` in Pi's tool shell can use different homes.
+- The README names the Codex rollout as the store of record for a bridged turn's token usage, states that Pi's `pi-codex` message usage is a derived copy, and gives the rule a usage reader follows to count each turn once.
+
 ### 1.0.2
 
 - Codex CLI 0.166.0 is supported beside 0.163.0. Codex 0.166.0 offers the model its own `apply_patch` file-edit tool, and no setting removes it. On a bridge turn Codex answers that call itself, because the turn has no execution environment, so the call changes no file; the model edits files through Pi's tools. The bridge also turns off 0.166.0's plugin-directory prefetch at start.

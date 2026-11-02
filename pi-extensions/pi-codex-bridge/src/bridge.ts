@@ -187,27 +187,39 @@ export class CodexBridge {
 	};
 
 	/** The account's models through this bridge's own client, bounded by a
-	 * deadline so a stalled Codex cannot hold Pi's startup. */
+	 * deadline so a stalled Codex cannot hold Pi's startup. The client is
+	 * stopped before this returns, on success and on failure, so a session that
+	 * never selects a pi-codex model holds no app-server; the first stream opens
+	 * a fresh one. Stopping the shared client is safe because the provider is
+	 * registered only after discovery returns, so no stream is on it yet. */
 	async discoverModels(deadlineMs = DISCOVERY_DEADLINE_MS): Promise<{ models: CodexModel[]; notice?: string }> {
 		let timer: NodeJS.Timeout | undefined;
 		const deadline = new Promise<never>((_, reject) => {
 			timer = setTimeout(() => reject(new Error(`codex-discovery-timeout after_ms=${deadlineMs}`)), deadlineMs);
 		});
+		let stopReason = new Error("codex-discovery-done");
 		try {
 			const client = await Promise.race([this.#client(), deadline]);
 			return { models: await Promise.race([listCodexModels(client), deadline]) };
 		} catch (error) {
-			void this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
+			stopReason = error instanceof Error ? error : new Error("codex-discovery-failed");
 			return { models: [], notice: firstLine(error) };
 		} finally {
 			clearTimeout(timer);
+			await this.#stopAll(stopReason);
 		}
 	}
 
 	/** Stop the child, and every stream on it, and wait for the child to exit,
 	 * a child still in its handshake included. */
 	async close(): Promise<void> {
-		void this.#closeClient(new Error("codex-bridge-closed"));
+		await this.#stopAll(new Error("codex-bridge-closed"));
+	}
+
+	/** Release the current client and wait for every child the bridge is
+	 * stopping, one an earlier release started included. */
+	async #stopAll(reason: Error): Promise<void> {
+		void this.#closeClient(reason);
 		await Promise.all(this.#stopping);
 	}
 
@@ -722,10 +734,12 @@ export class CodexBridge {
 					break;
 				}
 				case "tokenUsage":
-					// Pi reads a message's usage as the context of its latest model
-					// request, so each request's usage replaces the last. Codex counts
-					// cached and cache-written tokens inside its input count; Pi keeps
-					// them apart, as its own Responses adapter does.
+					// A derived copy: the thread's Codex rollout is the store of record
+					// for a bridged turn's usage (README § Usage records), so the cost
+					// stays 0. Pi reads a message's usage as the context of its latest
+					// model request, so each request's usage replaces the last. Codex
+					// counts cached and cache-written tokens inside its input count; Pi
+					// keeps them apart, as its own Responses adapter does.
 					output.usage = {
 						input: Math.max(0, event.usage.input - event.usage.cacheRead - event.usage.cacheWrite),
 						output: event.usage.output,

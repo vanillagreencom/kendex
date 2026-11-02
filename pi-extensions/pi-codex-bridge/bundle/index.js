@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 var LOGIN_MISSING_KEY = "codex-login-missing";
 function resolveCodexHome(env = process.env, userHome = homedir()) {
-  const configured = env.CODEX_HOME?.trim();
+  const configured = env.PI_CODEX_BRIDGE_HOME?.trim() || env.CODEX_HOME?.trim();
   return configured ? configured : join(userHome, ".codex");
 }
 function hasCodexLogin(codexHome) {
@@ -964,26 +964,37 @@ var CodexBridge = class {
     return stream;
   };
   /** The account's models through this bridge's own client, bounded by a
-   * deadline so a stalled Codex cannot hold Pi's startup. */
+   * deadline so a stalled Codex cannot hold Pi's startup. The client is
+   * stopped before this returns, on success and on failure, so a session that
+   * never selects a pi-codex model holds no app-server; the first stream opens
+   * a fresh one. Stopping the shared client is safe because the provider is
+   * registered only after discovery returns, so no stream is on it yet. */
   async discoverModels(deadlineMs = DISCOVERY_DEADLINE_MS) {
     let timer;
     const deadline = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(`codex-discovery-timeout after_ms=${deadlineMs}`)), deadlineMs);
     });
+    let stopReason = new Error("codex-discovery-done");
     try {
       const client = await Promise.race([this.#client(), deadline]);
       return { models: await Promise.race([listCodexModels(client), deadline]) };
     } catch (error) {
-      void this.#closeClient(error instanceof Error ? error : new Error("codex-discovery-failed"));
+      stopReason = error instanceof Error ? error : new Error("codex-discovery-failed");
       return { models: [], notice: firstLine(error) };
     } finally {
       clearTimeout(timer);
+      await this.#stopAll(stopReason);
     }
   }
   /** Stop the child, and every stream on it, and wait for the child to exit,
    * a child still in its handshake included. */
   async close() {
-    void this.#closeClient(new Error("codex-bridge-closed"));
+    await this.#stopAll(new Error("codex-bridge-closed"));
+  }
+  /** Release the current client and wait for every child the bridge is
+   * stopping, one an earlier release started included. */
+  async #stopAll(reason) {
+    void this.#closeClient(reason);
     await Promise.all(this.#stopping);
   }
   #track(stopped) {
