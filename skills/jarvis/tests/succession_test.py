@@ -460,6 +460,9 @@ print(json.dumps({"config_dir": row["account"]}))
                 native_count = self.launched()
                 answer, code = self.adopt(consumer, successor, brief=brief if briefed else None)
                 self.assertEqual(code, 0)
+                # Start answers from the predecessor, whose harness is the
+                # one detected at the call and the one its stop is keyed to.
+                self.assertEqual((answer["state"], answer["harness"]), ("handing-over", harness))
                 current = self.wait()
                 record = json.loads(self.record.read_text())
                 self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), successor, str(self.account)))
@@ -479,11 +482,18 @@ print(json.dumps({"config_dir": row["account"]}))
         # Each refusal precedes any save or stop: the record, the handoff
         # archive and the unmanaged session stay as they were.
         self.handoff()
-        for row in ("other-pid", "no-harness", "running", "starting"):
+        # The keyed cause each selection refusal names; the others are Start's own.
+        causes = {"other-pid": "pid-mismatch", "no-harness": "no-harness", "missing-pane": "pane-missing"}
+        for row in ("other-pid", "no-harness", "missing-pane", "running", "starting"):
             with self.subTest(row=row):
                 consumer = self.unmanaged(None if row == "no-harness" else "claude")
                 pid = worker = None
-                if row == "other-pid":
+                named = consumer
+                if row == "missing-pane":
+                    # A pane id the consumer's server does not hold.
+                    named = dict(consumer, pane="%" + str(10 ** 6))
+                    self.assertNotIn(named["pane"], self.consumer_panes(consumer))
+                elif row == "other-pid":
                     # A live harness session, but not the named pane's.
                     pid = self.unmanaged("claude")["process"]["pid"]
                 elif row == "running":
@@ -503,13 +513,12 @@ print(json.dumps({"config_dir": row["account"]}))
                     self.assertEqual(self.call("status")[0]["state"], "starting")
                 saved = self.record.read_bytes() if self.record.exists() else None
                 native_count = self.launched()
-                answer, code = self.adopt(consumer, pid=pid)
-                expected = "name-conflict" if row in ("running", "starting") else "selection-conflict"
+                answer, code = self.adopt(named, pid=pid)
+                expected = "selection-conflict" if row in causes else "name-conflict"
                 self.assertEqual((answer["state"], answer["reason"], code), ("blocked", expected, 1))
-                if expected == "selection-conflict":
+                if row in causes:
                     # The keyed refusal line operators read names the binding.
-                    cause = "pid-mismatch" if row == "other-pid" else "no-harness"
-                    self.assertIn("jarvis-session: adopt=refused cause=" + cause + " ", self.stderr)
+                    self.assertIn("jarvis-session: adopt=refused cause=" + causes[row] + " ", self.stderr)
                 self.assertEqual(self.record.read_bytes() if self.record.exists() else None, saved)
                 self.assertFalse((self.home / "state/archive").exists())
                 self.assertEqual(self.launched(), native_count)

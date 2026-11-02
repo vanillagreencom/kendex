@@ -208,9 +208,9 @@ case "$verb" in
     # nearest PID at or below it, from the process table stop-process signals
     # by. A Pi session on a codex-bridge model runs codex below pi, so only
     # the outermost harness names the session. Status 3 refuses with one
-    # keyed line, its cause pid-ended, pane-unread, pane-dead, pid-mismatch,
-    # no-harness or harnesses (two at that nearest depth); 2 is an unread
-    # process table.
+    # keyed line, its cause pid-ended, pane-unread (tmux unreachable),
+    # pane-missing, pane-dead, pid-mismatch, no-harness or harnesses (two at
+    # that nearest depth); 2 is an unread process table.
     pane="$1" pid="$2"
     refuse() {
       printf 'jarvis-session: adopt=refused cause=%s pane=%s pid=%s%s\n' "$1" "$pane" "$pid" "${2:+ harnesses=$2}" >&2
@@ -220,6 +220,9 @@ case "$verb" in
     [[ -n "$at" ]] || refuse pid-ended
     line="$(tmux display-message -p -t "$pane" '#{socket_path}	#{pid}	#{start_time}	#{session_name}	#{window_id}	#{pane_id}	#{pane_dead}	#{pane_pid}')" || refuse pane-unread
     IFS=$'\t' read -r socket server started session window id dead pane_pid <<<"$line"
+    # display-message answers a target it cannot find with success and empty
+    # pane fields, so the pane id read back is what proves the pane exists.
+    [[ -n "$id" ]] || refuse pane-missing
     [[ "$dead" != 1 ]] || refuse pane-dead
     [[ "$pane_pid" == "$pid" ]] || refuse pid-mismatch
     table="$(lane_process_table)" || exit 2
@@ -257,7 +260,7 @@ case "$verb" in
     rc=0
     lane_stop_identity "$1" "$2" "$3" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
-      # Session.end_owned forwards this result to the caller's diagnostics.
+      # Session._stop_process forwards this result to the caller's diagnostics.
       printf 'jarvis-session: operation=stop-process exit=%s cause=%s pid=%s\n' "$rc" "$LANE_STOP_CAUSE" "$LANE_STOP_PID" >&2
     fi
     exit "$rc" ;;

@@ -641,14 +641,13 @@ class Session:
             self.failure_log("task-session-end-failed", failure)
 
     def _stop_process(self, record):
+        # Stops the recorded process by its start-time identity, so a reused
+        # PID is never signalled. A stale identity is a stop only once that
+        # PID has ended: the process may have exited before this call.
         identity = record["process"]
-        # The start-time check and pane binding both belong to this
-        # controller. A reused PID grants no right to close its pane.
         stopped = self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"], check=False)
         if stopped.returncode:
             sys.stderr.write(stopped.stderr)
-            # An abandoned successor can end itself after the pane
-            # check. A stale identity alone also covers a reused PID.
             if stopped.returncode != 3 or self.backend("process-ended", identity["pid"], check=False).returncode != 0:
                 raise Refusal("handover-failed", "The owned process could not be stopped. Check the stop-process diagnostic before retrying.", "failed")
 
@@ -666,6 +665,9 @@ class Session:
             # server command, before another client can reuse that pane id.
             condition = "#{&&:" + ownership.binding + ",#{==:#{pid}," + str(record["server_pid"]) + "}}"
             if window and not adopted and record.get("process"):
+                # The start-time check and pane binding both belong to this
+                # controller. A reused PID grants no right to close its pane,
+                # and an abandoned successor can end itself after the pane check.
                 self._stop_process(record)
                 if not self.terminal(record):
                     return

@@ -28,7 +28,7 @@ def main():
         # pane does not run. The adoption rows each reject the defect their
         # guarantee names: a starting Start's worker, the consumer's other
         # panes, Start's brief and harness, the home's task session, the
-        # outermost harness and a moved pane.
+        # harness detected at the call and nearest PID, and a moved pane.
         backend, session = "jarvis/scripts/lib/session-backend.sh", "jarvis/scripts/lib/session.py"
         defects = (("process identity", backend,
                     (('    lane_stop_identity "$1" "$2" "$3" || rc=$?',
@@ -54,9 +54,12 @@ def main():
                    ("task session", session,
                     (("                elif adopted:\n                    self.end_task_session()\n", ""),),
                     "test_adoption_contract"),
-                   ("outermost harness", backend,
-                    (('      if [[ -z "$nearest" ]] || (( hops < nearest )); then', '      if [[ -z "$nearest" ]]; then'),
-                     ("      elif (( hops == nearest )); then", "      else")),
+                   ("detected harness", backend,
+                    (('    jq -cn --arg harness "$harness" --arg socket', '    jq -cn --arg harness pi --arg socket'),),
+                    "test_adoption_contract"),
+                   ("nearest harness", backend,
+                    (('      if [[ -z "$nearest" ]] || (( hops < nearest )); then',
+                      '      if [[ -z "$nearest" ]] || (( hops > nearest )); then'),),
                     "test_adoption_contract"),
                    ("moved pane", backend,
                     (('      adopted) [[ "$pid" == "$5" ]] || exit 1 ;;', '      adopted) [[ "$pid" == "$5" && "$window" == "$6" ]] || exit 1 ;;'),),
