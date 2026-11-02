@@ -158,3 +158,4 @@ Read the linked workflow or reference for the task before acting.
 | Connect Slack, Linear, GitHub or a fleet machine | [Slack](workflows/setup-slack.md), [Linear](workflows/setup-linear.md), [GitHub](workflows/setup-github.md), [Fleet machine](workflows/setup-fleet-machine.md) |
 | Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |
+| Run Jarvis on a second machine, or forward a request to the main Jarvis | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |

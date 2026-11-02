@@ -7,7 +7,7 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 - The repository mailbox is the one route to another repository's agent, with a fleet or without one. A repository is reachable when the [mailbox](../../mailbox/SKILL.md) package is installed there; [SKILL.md § Reachable repositories](../SKILL.md#reachable-repositories) judges which are.
 - `[LANE_MAIL]` below is the repository's own `.agents/skills/mailbox/scripts/lane-mail`, run with the repository's main checkout as the working directory. Do not use the Jarvis home's `lane-mail` or its `peer send`: a peer send reaches the agent as another repository's note, not as the user's.
 - Take repositories only from `kendex project list`. Each line is a folder, then optional notes in parentheses: `(folder not found)`, `(not a folder)`, `(folder could not be read)` or `(worktree of [MAIN])`. A worktree line stands for `[MAIN]`, where its mailbox sits.
-- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one. The one exception is a directive to a repository on the control host through `.agents/skills/jarvis/scripts/owner-note REPO FILE`, which makes the send below on that host; `owner-note --help` lists its refusal keys. The host reaches that repository only after [Control host setup](#control-host-setup).
+- A fleet changes nothing here: Jarvis reads the repository's overseer mailbox, and a hosted lane's own mailbox stays the overseer's to read. A repository on another machine is unreachable from this one. The one exception is a directive to a repository on the control host through `.agents/skills/jarvis/scripts/owner-note REPO FILE`, which makes the send below on that host; `owner-note --help` lists its refusal keys. The host reaches that repository only after [Control host setup](#control-host-setup). A satellite reaches no repository: it forwards to the main under [Main and satellites](#main-and-satellites).
 - `lane-mail --help` defines every verb, envelope, receipt and refusal key used here.
 
 ## Read
@@ -67,6 +67,74 @@ Offer one of these commands, run with the repository's main checkout as the work
 - Do not run `kendex project discover --register` over a parent folder. It adds every project it finds, and two rows whose last segment is `REPO` make `owner-note` refuse `repo-ambiguous`. With the user's yes, remove the extra row with `kendex project remove [PATH]` on that side.
 - Check the result: `ssh [HOST] kendex project list` prints the row, and the next `owner-note` receipt reads `sent side=host`.
 - Record the host and the repositories it lists in the consumer's own repository or tracker. This package names neither.
+
+## Main and satellites
+
+One machine runs the main Jarvis. Every other machine that runs Jarvis for the same owner is a satellite.
+
+- `JARVIS_MAIN_HOST` selects the role. Empty makes this machine the main. A satellite sets it to `DEST:HOME`: `DEST` is what `ssh DEST` takes, with no whitespace, `:` or `/`, and `HOME` is the main home's absolute path on that host. A value that does not parse still makes a satellite, which reports `setting-invalid`.
+- Set a satellite's value in its home's private env file, never in the committed `kendex.settings.toml`. A cloned home carries committed settings, and the main would read that value on its next pull and become a satellite.
+- Only one machine leaves the setting empty. The package cannot detect a second main: two machines with an empty setting are two mains, each the fleet contact. Keep this rule in the consumer's own setup records.
+
+### Satellite
+
+- A satellite handles local voice, windows, apps, files, screen and sign-ins.
+- It is no fleet contact. Its `watch-loop` reads its own home alone, renews no Slack hold, runs no control-host pass and schedules no progress checkpoint. `owner-note` refuses `role-satellite`.
+- Do not run [Read](#read), [Answer an ask](#answer-an-ask) or [Instruct](#instruct) on a satellite. Tell the owner that the main handles that request. The package does not enforce this: a repository's own `lane-mail` reads no Jarvis role.
+- Do not commit to or push the home repository from a satellite. The package cannot see a clone's commits, so this rule is held here.
+
+### Forward
+
+A request needs the main when it acts on an account, the fleet, the home repository or anything outside this machine.
+
+1. Ask the owner in the conversation the request came from, with no mailbox ask. Quote the text that will be sent, name the main, say that the request and its answer will appear in the owner's Slack channel, and ask for `forward` or `yes`; otherwise the request stays on this machine. The forward sends the request as the owner's directive, so [decisions.md § Authority](decisions.md#authority) applies. Ask this question last and alone: `forward` cannot tell which question a yes answered. A console request is asked with `lane-mail notice --item overseer --to owner --ref R --file PATH`, `R` being its envelope id.
+2. Write one record file under the home's `tmp/`, then run `.agents/skills/jarvis/scripts/jarvis-session forward --home HOME --record PATH`. Remove the file after exit 0 or 75.
+3. The command prints one JSON line with the request reference, its delivery key, `state`, the main's directive id as `forwarded` and `cause`. Exit 0 means `delivered`. Exit 75 means the request is `queued` in the local outbox with its cause, and the watch loop retries it. Tell the owner which, and that the answer will be in the Slack thread. Answer a console confirmation with `notice --ref` on its envelope id.
+4. A refusal prints `jarvis-session: forward=refused cause=KEY` on stderr, with ` field=PATH` after it for `record-invalid`, and exits 2. It enqueued and sent nothing.
+
+The record is one JSON object of at most 65 536 bytes:
+
+```json
+{"v":1,
+ "request":{"ref":"lane-mail:<id>","at":"2026-11-02T14:03:07Z","text":"<the request, verbatim>"},
+ "confirmation":{"ref":"lane-mail:<id>","at":"2026-11-02T14:03:21Z","words":"Yes."}}
+```
+
+- Each `ref` cites where the turn is recorded: `lane-mail:<envelope id>` for a console message, `transcript:<session id>#<turn id>` for words typed into the session's own pane, or `vgs-audit:<id>` for a VGS conversation turn. The id is 1 to 200 characters of `A-Z a-z 0-9 . _ : @ # + / = -`. `forward` reads no row: the record is the caller's word.
+- Each `at` is a UTC time in the form `YYYY-MM-DDTHH:MM:SSZ`, with an optional fraction of up to nine digits before `Z`. A console turn's `at` is its envelope's own `at`.
+- `confirmation` holds `words`, the owner's words, or `method`, `voice` or `physical`, for a caller that records how the owner confirmed. One row may hold both turns, so the two references may be equal.
+- The words confirm when a line is `forward`, or the whole text is `yes`, each compared after trimming, case folding and dropping one trailing `.` or `!`. Words over 300 characters do not confirm. A `method` confirms on its own.
+- The delivery key comes from the home, the request reference and the request time. The same request run again, after a crash too, gets the same key, and the main lands it once while it keeps the first copy. Once the main's compaction drops that copy, a send whose receipt was lost can land a second time.
+
+| Key | Meaning | Next step |
+|---|---|---|
+| `role-main` | This machine is the main. | Act on the request here. |
+| `setting-invalid` | `JARVIS_MAIN_HOST` does not parse. | Fix the setting. |
+| `record-unreadable` | The file is missing, too large, not UTF-8 or not one JSON object. | Fix the record; do not ask the owner again. |
+| `record-invalid` | The field `field=` names breaks the shape above. | Fix the record; do not ask the owner again. |
+| `confirmation-early` | The confirmation's time is before the request's. | Ask the owner again and cite the next answer. |
+| `confirmation-unclear` | The words are not `forward` or a plain `yes`. | Ask the owner again and cite the next answer. |
+| `answered-already` | The main answered this request within the last 30 days. | Tell the owner the main already answered it in Slack. `status --main` shows only the most recent answer, under `last_answer.request`. |
+| `answer-unseen` | The main received this request within the last 30 days, and no answer was read within 7 days of its delivery. | Tell the owner to look for the answer in the request's Slack thread. Do not forward it again. |
+| `request-conflict` | An open forward cites this request reference with another text or time. | Wait for it, or cite the request's own reference. |
+| `outbox-unreadable` | The outbox file cannot be read; it is never reset. | Report the cause. |
+
+### On the main
+
+The main receives the request text, a blank line, then one line:
+
+`forwarded-request: satellite=NAME request-ref=REF request-at=TIME confirmation-ref=REF confirmed-at=TIME key=KEY confirmation-method=words|voice|physical confirmation-text=WORDS`
+
+`WORDS` is the owner's words as one JSON string, or `null` for a `voice` or `physical` method.
+
+- Handle it as an owner directive and answer it with the reply form in [Instruct](#instruct) step 2. The answer reaches the owner on the main; no answer goes back to the satellite's call.
+- Apply the word rule above to a `words` confirmation. A forwarded directive whose line does not parse, or whose words do not confirm, confirms nothing: ask the owner with an ordinary owner ask that quotes the request.
+- A `confirmation-method=voice` forward follows orch's [communication-modes.md § Voice requests](../../orch/references/communication-modes.md#voice-requests), whose caller is the `caller=` value of a `voice-request:` first line. The record carries no caller of its own. A voice forward whose text does not open with `voice-request: caller=owner` approves no step only the owner may approve: ask the owner with an ordinary owner ask that quotes the request.
+- The line cites the satellite's records; the main cannot check them. The owner or a reviewer looks a reference up on the satellite.
+
+### Status
+
+`jarvis-session status --home HOME --main` reports the role, whether the main was reachable at the last call, the last answer, and every open forward with its state and cause. The [session workflow](../workflows/session.md#session-command) lists them. An answered forward closes; its answer shows as `last_answer`, the answer the main wrote last. A forward with no answer read within 7 days of its delivery closes as `answer-unseen`: the main's compaction dropped the answer by age before the satellite read it, or the main answered without `--ref`. The drain prints it as `EVENT forward-failed` for 30 days after the close, and the satellite reads the main for it no more.
 
 ## Transcript fallback
 

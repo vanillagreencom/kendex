@@ -81,15 +81,20 @@ def environment(harness=None):
             if key in keys or key.startswith(("XDG_", "LC_"))}
 
 
+def home_state(home):
+    """The private state directory of the resolved HOME: its session record and its forward outbox."""
+    key = hashlib.sha256(os.fsencode(home)).hexdigest()
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "kendex/jarvis" / key
+
+
 class Session:
     def __init__(self, home):
         self.home = str(Path(home).resolve(strict=True))
-        key = hashlib.sha256(os.fsencode(self.home)).hexdigest()
-        state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-        self.path = state / "kendex/jarvis" / key / "jarvis-session.json"
+        state = home_state(self.home)
+        self.path = state / "jarvis-session.json"
         # tmux places its socket in its own runtime root, whose pathname fits
         # Unix socket limits even when XDG_STATE_HOME is a deep directory.
-        self.label = "jarvis-" + key[:32]
+        self.label = "jarvis-" + state.name[:32]
         self.deadline = time.monotonic() + CALL_SECONDS
         self.env = environment()
         self.emitted = False
@@ -901,9 +906,15 @@ class Arguments(argparse.ArgumentParser):
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed", "report-due"):
+    for verb in ("start", "status", "stop", "succeed", "report-due", "forward", "forward-drain"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
+        if verb == "status":
+            # The default answer's key set is the VGS-1439 contract; --main is a separate shape.
+            command.add_argument("--main", action="store_true")
+        elif verb == "forward":
+            # Text crosses this file, never argv.
+            command.add_argument("--record", required=True)
         if verb == "start":
             command.add_argument("--harness", choices=("claude", "codex", "copilot", "pi"), required=True)
             command.add_argument("--account", required=True)
@@ -929,6 +940,12 @@ def main():
             clean(args.adopt_pane) and args.adopt_pane and args.adopt_pid > 0 and args.origin == "manual" and args.mode == "new"):
         # Adoption replaces a running session with a new one, at a person's request.
         parser.error("adopt")
+    if args.verb == "forward" and not (clean(args.record) and args.record):
+        parser.error("record")
+    if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import forward
+        return forward.main(args, home_state)
     try:
         session = Session(args.home)
     except OSError:

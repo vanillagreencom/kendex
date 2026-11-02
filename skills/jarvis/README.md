@@ -68,6 +68,7 @@ Start the event source through the [session workflow](workflows/session.md#contr
 Set the keys shown in [kendex.settings.toml.example](kendex.settings.toml.example) under `[env]` in the assistant home's `kendex.settings.toml`. The process environment takes precedence over the private env file, which takes precedence over shared settings.
 
 - `JARVIS_CONTROL_HOST` selects the SSH destination. Empty runs local mail only.
+- `JARVIS_MAIN_HOST` makes this machine a satellite of the main Jarvis at `DEST:/abs/main/home`. Empty makes it the main. Set it in the machine's private env file, never in shared settings; see [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites).
 - `JARVIS_LOG_DIR` selects durable logs and batch state. The default is `${XDG_STATE_HOME:-$HOME/.local/state}/jarvis`. Give simultaneous homes separate directories.
 - `JARVIS_WAKE_SETTLE_SECS` defaults to 15 seconds. Zero sends immediately.
 - `SLACK_JARVIS_SESSION_FILE` reuses the Slack relay's hold. Set it in each local or host root whose relay the session must hold. An empty value creates no hold.

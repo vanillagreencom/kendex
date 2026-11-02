@@ -20,14 +20,18 @@ FOOTER = ("Before you act on this note or delegate it: check its facts against t
           "(the system's own interface, platform first, no over-engineering). Where it is wrong, or a simpler "
           "or better route exists, adjust it, and state in your reply what you changed and why.")
 # lane-mail reads --file on the machine that runs it, so the host copy is a
-# mktemp file this same ssh call removes on exit, sent or refused.
+# mktemp file this same ssh call removes on exit, sent or refused. Arguments
+# after ROOT join the send: a forward passes its --delivery-id there. The
+# ${1+"$@"} form keeps an empty list legal under set -u on a Bash 3.2 host.
 HOST_SEND = """set -euo pipefail
-cd -- "$1"
-[ -f %(mail)s ] || { printf 'owner-note: mailbox-missing=%%s\\n' "$1" >&2; exit 2; }
+root="$1"
+shift
+cd -- "$root"
+[ -f %(mail)s ] || { printf 'owner-note: mailbox-missing=%%s\\n' "$root" >&2; exit 2; }
 note="$(mktemp)"
 trap 'rm -f -- "$note"' EXIT
 cat >"$note"
-"$BASH" %(mail)s send --item overseer --directive --file "$note"
+"$BASH" %(mail)s send --item overseer --directive --file "$note" ${1+"$@"}
 """ % {"mail": LANE_MAIL}
 
 
@@ -84,7 +88,8 @@ def main():
         "A refusal prints `owner-note: KEY=VALUE` and its cause on stderr and exits 2. Keys: file-unreadable, "
         "settings-unreadable, project-list-failed (VALUE is the side), repo-ambiguous, mailbox-missing "
         "(VALUE is the root), send-failed (VALUE is the side), no-overseer (no side lists a root named REPO whose "
-        "lane-mail has an overseer)."))
+        "lane-mail has an overseer), role-satellite (VALUE is JARVIS_MAIN_HOST: a satellite instructs no "
+        "overseer, so forward the request to the main instead)."))
     parser.add_argument("--bash", required=True, help=argparse.SUPPRESS)
     parser.add_argument("repo")
     parser.add_argument("file", type=Path)
@@ -95,9 +100,12 @@ def main():
         except (OSError, UnicodeError) as error:
             raise Refusal("file-unreadable", args.file, str(error)) from error
         try:
-            host = watch.config(args.bash, watch.home_root(Path.cwd()))["JARVIS_CONTROL_HOST"]
+            settings = watch.config(args.bash, watch.home_root(Path.cwd()))
+            host = settings["JARVIS_CONTROL_HOST"]
         except (OSError, ValueError, RuntimeError) as error:
             raise Refusal("settings-unreadable", "JARVIS_CONTROL_HOST", str(error)) from error
+        if watch.role(settings).kind != "main":
+            raise Refusal("role-satellite", settings["JARVIS_MAIN_HOST"])
         note = text.rstrip("\n") + "\n\n" + FOOTER + "\n"
         side, root = deliver(args.bash, args.repo, note, host)
     except Refusal as refusal:

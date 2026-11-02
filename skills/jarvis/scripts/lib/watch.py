@@ -1,6 +1,7 @@
 """Jarvis mail acquisition and the single durable event-batch owner."""
 import argparse
 import base64
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 import fcntl
@@ -24,6 +25,10 @@ BATCH_KEY = "jarvis-"
 # The owner's note fixes both numbers; no consumer has asked to tune them.
 OWNER_WAIT_SECS = 600
 UNANSWERED_EVERY_SECS = 300
+FORWARD_EVERY_SECS = 60
+# A machine's role from JARVIS_MAIN_HOST: kind main, satellite or invalid. An
+# invalid value is still a satellite, so a typo never makes a second main.
+Role = namedtuple("Role", "kind dest home")
 
 
 class Failure(RuntimeError):
@@ -48,23 +53,24 @@ def child_failure(operation, result):
     if first.startswith("jarvis: failure="):
         record = json.loads(first[len("jarvis: failure="):])
         return Failure(*record["key"], record["detail"])
-    keyed = re.match(r"^(?:lane-mail|kendex|jarvis): ([a-z][a-z0-9-]*)=", first)
+    # owner-note and forward prefix the refusals their host scripts print.
+    keyed = re.match(r"^(?:lane-mail|kendex|jarvis|owner-note|forward): ([a-z][a-z0-9-]*)=", first)
     return Failure(operation, "refusal" if keyed else "exit",
                    keyed[1] if keyed else result.returncode, detail)
 
 
-def run(args, cwd=None, data=None, operation=None):
+def run(args, cwd=None, data=None, operation=None, timeout=60):
     try:
         return subprocess.run(list(map(str, args)), cwd=cwd, input=data,
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              timeout=60)
+                              timeout=timeout)
     except (OSError, subprocess.SubprocessError) as error:
         raise failure(operation or Path(args[0]).name, error) from error
 
 
-def checked(args, cwd=None, data=None, operation=None):
+def checked(args, cwd=None, data=None, operation=None, timeout=60):
     operation = operation or Path(args[0]).name
-    result = run(args, cwd, data, operation)
+    result = run(args, cwd, data, operation, timeout)
     if result.returncode:
         raise child_failure(operation, result)
     return result.stdout
@@ -97,6 +103,17 @@ def owner_row(envelope):
 
 def config(bash, root):
     return json.loads(checked([bash, LIB / "jarvis-env.sh", "config", root]))
+
+
+def role(settings):
+    """JARVIS_MAIN_HOST, empty or DEST:/abs/home, as this machine's Role."""
+    value = settings["JARVIS_MAIN_HOST"]
+    if not value:
+        return Role("main", None, None)
+    match = re.fullmatch(r"([^\s:/-][^\s:/]*):(/.*)", value)
+    if not match or not match[2].isprintable():
+        return Role("invalid", None, None)
+    return Role("satellite", match[1], match[2])
 
 
 def line_value(value, token=False, limit=None):
@@ -238,6 +255,45 @@ def lane_mail():
     return LIB.parents[2] / "mailbox/scripts/lane-mail"
 
 
+def mailbox_header(line):
+    """The `count=N first=ID` header lane-mail's drain and events print, as (count, first), or None."""
+    match = re.fullmatch(r"count=(\d+) first=(\S*)", line)
+    return (int(match[1]), match[2]) if match else None
+
+
+def mailbox_receipts(lines):
+    """`drain --receipts` output as (index, cursor, count, rows).
+
+    index is the receipts line's, cursor its value or None where it reads
+    `missed`, count to-lane's logical line count, and rows each listed
+    directive as (line, id, epoch), epoch None where its `at` did not parse.
+    """
+    index = next((i for i, row in enumerate(lines) if row.startswith("receipts ")), None)
+    match = re.fullmatch(r"receipts cursor=(\d+|missed) count=(\d+) first=\S*", lines[index]) if index is not None else None
+    if not match:
+        raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
+    rows = []
+    for row in lines[index + 1:]:
+        parts = row.split(" ")
+        if len(parts) == 3 and parts[0].isdigit() and (parts[2].isdigit() or not parts[2]):
+            rows.append((int(parts[0]), parts[1], int(parts[2]) if parts[2] else None))
+    return index, None if match[1] == "missed" else int(match[1]), int(match[2]), rows
+
+
+def send_receipt(result, key):
+    """A `lane-mail send --delivery-id KEY` result as (id, repeated), or None with no receipt.
+
+    A new append prints `sent` and exits 0; a key the mailbox already holds
+    refuses `delivery-repeated`, naming the envelope that landed.
+    """
+    if result.returncode == 0:
+        match = re.search(r"^lane-mail: sent item=overseer id=([^\s]+)(?:\s|$)", result.stdout, re.M)
+    else:
+        match = re.search(r"^lane-mail: delivery-repeated=" + re.escape(key) + r" id=([^\s]+)(?:\s|$)",
+                          result.stderr, re.M)
+    return (match[1], result.returncode != 0) if match else None
+
+
 def mailbox_events(bash, root, box, after=0, mark_read=False):
     """One `lane-mail events --item overseer --box` read in root, as (count, rows)."""
     operation = "mailbox-events-" + box
@@ -245,10 +301,10 @@ def mailbox_events(bash, root, box, after=0, mark_read=False):
     if mark_read:
         args.append("--mark-read")
     lines = checked(args, root, operation=operation).split("\n")
-    header = re.fullmatch(r"count=(\d+) first=.*", lines[0])
+    header = mailbox_header(lines[0])
     if not header:
         raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
-    return int(header[1]), [json.loads(row) for row in lines[1:] if row]
+    return header[0], [json.loads(row) for row in lines[1:] if row]
 
 
 def owner_unread(bash, root, cursor, count, now, reported, events):
@@ -262,12 +318,16 @@ def owner_unread(bash, root, cursor, count, now, reported, events):
     return [row["id"] for row in owned]
 
 
-def mail_pass(bash, home, side, cursor, delivered=None):
-    """One pass over every root. A local home read adds each owner row it reads to delivered."""
+def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
+    """One pass over every root. A local home read adds each owner row it reads to delivered.
+
+    A satellite is no fleet contact: it reads its own home alone, as a
+    registered home, so its session gets its own mail and owner-unread.
+    """
     state = json.loads(json.dumps(cursor))
     events = []
     now = epoch()
-    roots = project_roots()
+    roots = [home] if satellite else project_roots()
     # A home the project list omits (unregistered, removed, or a noted
     # worktree row) still receives owner mail. Its to-lane alone is read for
     # those rows: no mail event, no to-overseer mark-read, no receipts.
@@ -315,20 +375,13 @@ def mail_pass(bash, home, side, cursor, delivered=None):
                     root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
             if len(boxes) > 1:
                 receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
-                index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
-                if index is None:
-                    raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
-                receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
-                if not receipt:
+                _, cursor_read, lane_count, listed = mailbox_receipts(receipts)
+                if cursor_read is None:
                     raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
-                unread = []
-                for row in receipts[index + 1:]:
-                    parts = row.split()
-                    if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
-                        unread.append(parts)
+                unread = [row for row in listed if row[2] is not None and row[0] > cursor_read]
                 if side == "local" and root == home:
                     # Only the home inbox's receipts say whether owner mail was read.
-                    owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
+                    owned = owner_unread(bash, root, cursor_read, lane_count, now,
                                          prior.get("owner_unread", []), root_events)
                     if owned:
                         next_root["owner_unread"] = owned
@@ -422,6 +475,9 @@ class Watch:
         self.unanswered_pending = None
         self.report_pending = None
         self.next_report = 0
+        self.satellite = role(settings).kind != "main"
+        self.forward_pending = None
+        self.next_forward = 0
 
     def save(self):
         if self.state != self._saved:
@@ -511,16 +567,13 @@ class Watch:
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 print("watch-loop: send=pending " + str(error), file=sys.stderr)
                 return
-        sent = re.search(r"^lane-mail: sent item=overseer id=([^\s]+)(?:\s|$)", result.stdout, re.M)
-        repeated = re.search(r"^lane-mail: delivery-repeated=" + re.escape(pending["key"]) +
-                             r" id=([^\s]+)(?:\s|$)", result.stderr, re.M)
-        receipt = sent if result.returncode == 0 else repeated
+        receipt = send_receipt(result, pending["key"])
         if not receipt:
             print("watch-loop: send=pending " + result.stderr.strip(), file=sys.stderr)
             return
         self.state.update(spans=pending["retained"], pending=None, due=None)
         self.save()
-        print("watch-loop: batch=" + pending["key"] + " id=" + receipt[1] + " inbox=overseer", flush=True)
+        print("watch-loop: batch=" + pending["key"] + " id=" + receipt[0] + " inbox=overseer", flush=True)
 
     def live(self, now=None):
         try:
@@ -630,12 +683,13 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         outputs = []
         try:
             delivered = []
-            output = mail_pass(self.bash, self.home, "local", self.cursors.get("local", {}), delivered)
+            output = mail_pass(self.bash, self.home, "local", self.cursors.get("local", {}), delivered,
+                               self.satellite)
             outputs.append(("local", output, None, delivered))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             outputs.append(("local", None, failure("local-pass", error).record, []))
         host = self.settings["JARVIS_CONTROL_HOST"]
-        if host:
+        if host and not self.satellite:
             try:
                 result = self.remote(host)
                 outputs.append(("host", result.stdout,
@@ -665,6 +719,30 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             # so restart reads only the uncheckpointed tail, never a due row.
             if result and report_key(result) != self.cursors.get("report", {}).get("event"):
                 self.append(pass_output("report", {"event": report_key(result)}, [(None, result)]))
+
+    def forward(self):
+        try:
+            return checked([self.bash, LIB.parent / "jarvis-session", "forward-drain", "--home", self.home],
+                           self.home, operation="forward-drain")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return failure("forward-drain", error)
+
+    def accept_forward(self, result):
+        if isinstance(result, Failure):
+            self.failed_pass("forward", result.record)
+            return
+        self.state.pop("forward_failure", None)
+        blocks = [block for block in re.split(r"(?m)^(?=EVENT )", result) if block]
+        if not all(block.startswith("EVENT ") and block.endswith("\n") for block in blocks):
+            self.failed_pass("forward", Failure("forward-drain", "protocol", "output-unread", result[:200]).record)
+            return
+        headers = [block.split("\n", 1)[0] for block in blocks]
+        # The drain prints every open block on each run; the pass cursor keeps
+        # the headers already appended, so a restart appends none twice.
+        emitted = set(self.cursors.get("forward", {}).get("emitted", []))
+        self.append(pass_output("forward", {"emitted": headers},
+                                [(None, block) for block, header in zip(blocks, headers) if header not in emitted]))
+        self.save()
 
     def accept(self, outputs):
         for side, output, failure, delivered in outputs:
@@ -742,14 +820,27 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         if self.unanswered_pending is None and waiting and now >= self.next_unanswered:
             self.next_unanswered = now + UNANSWERED_EVERY_SECS
             self.unanswered_pending = passes.submit(self.unanswered, list(waiting))
-        report = self.report_pending
-        if report is not None and report.done():
-            self.accept_report(report.result())
-            self.report_pending = None
-        if self.report_pending is None and now >= self.next_report:
-            self.next_report = now + 30
-            self.report_pending = passes.submit(self.report)
-        for side in ("local", "host") if self.settings["JARVIS_CONTROL_HOST"] else ("local",):
+        if self.satellite:
+            # A satellite renews no fleet presence and owes no checkpoint;
+            # it drains its forward outbox on the same executor instead.
+            work = self.forward_pending
+            if work is not None and work.done():
+                self.accept_forward(work.result())
+                self.forward_pending = None
+            if self.forward_pending is None and now >= self.next_forward:
+                self.next_forward = now + FORWARD_EVERY_SECS
+                self.forward_pending = passes.submit(self.forward)
+            sides = ()
+        else:
+            report = self.report_pending
+            if report is not None and report.done():
+                self.accept_report(report.result())
+                self.report_pending = None
+            if self.report_pending is None and now >= self.next_report:
+                self.next_report = now + 30
+                self.report_pending = passes.submit(self.report)
+            sides = ("local", "host") if self.settings["JARVIS_CONTROL_HOST"] else ("local",)
+        for side in sides:
             work = self.presence_pending.get(side)
             if work is not None and work.done():
                 self.accept_presence(side, work.result())
