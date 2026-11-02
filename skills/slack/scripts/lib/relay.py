@@ -162,8 +162,9 @@ REPORT_TEXT = "The owner typed /report in Slack: send a progress report now."
 # Slack wants a slash command acknowledged within 3 seconds, which the
 # reader's acknowledgement meets; the worker answers through the payload's
 # response_url (https://docs.slack.dev/interactivity/implementing-slash-commands).
-# A configured command holds the worker for at most this many seconds, far
-# inside the stall bound, before its process group is stopped.
+# A configured command runs this many seconds before TERM and then KILL reach
+# its process group; `run_bounded` states the stop's further bound, and the
+# whole hold stays far inside the stall bound.
 COMMAND_SECONDS = 10
 # chat.postMessage's recommended bound on a message's `text`, which a
 # response_url reply carries (https://docs.slack.dev/reference/methods/chat.postMessage).
@@ -177,6 +178,10 @@ SECTION_CHARS = 3000
 # A trigger_id keys /report's delivery. Slack documents no stability across
 # a redelivery; one with whitespace or none at all is no key.
 TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
+# The delivery id of a /report directive is its trigger_id under this
+# prefix. `report` writes it and `RootRelay.routes` reads it as typed in
+# Slack, so the overseer's notice answering the directive posts.
+COMMAND_KEY = "command:"
 
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
@@ -312,6 +317,11 @@ def bounded(text: str, limit: int) -> str:
         return text
     marker = f"\n[cut at {limit} characters]"
     return text[: limit - len(marker)] + marker
+
+
+def withheld(name: str, cause: str) -> str:
+    """What a reply or the Home tab shows in place of a failed command's output."""
+    return f"{name} failed ({cause}); its output is not shown."
 
 
 def home_blocks(text: str) -> List[Dict]:
@@ -948,12 +958,13 @@ class RootRelay:
                 ref = envelope.get("ref")
                 reference = by_id.get(ref, {})
                 # send_directive writes Slack's channel:ts and thread pointer.
-                # Owner asks originate here, so their rulings still post.
-                slack_reply = reference.get("thread_ts") or re.fullmatch(
-                    r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", str(reference.get("delivery_id", ""))
-                )
+                # Owner asks originate here, so their rulings still post, and
+                # so does the answer to a /report, which has no thread.
+                delivery_id = str(reference.get("delivery_id", ""))
+                slack_reply = reference.get("thread_ts") or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id)
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
-                route = "reply" if slack_reply else "notice" if not ref or owner_ask else "skip"
+                command = delivery_id.startswith(COMMAND_KEY)
+                route = "reply" if slack_reply else "notice" if not ref or owner_ask or command else "skip"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:
@@ -1566,11 +1577,12 @@ class Relay:
 
     def envelope(self, socket: WebSocket, text: str) -> None:
         """One envelope: acknowledged by its envelope_id before anything
-        else, since the catch-up covers a stop after the acknowledgement
-        within its lookback, and the journal skips an envelope Slack
-        sent again. A `disconnect` drops the connection for a
-        new one; other envelopes enter the worker queue without any API,
-        journal or mailbox call."""
+        else. For a message event, the catch-up covers a stop after the
+        acknowledgement within its lookback, and the journal skips an
+        envelope Slack sent again; a slash command or Home event lost after
+        its acknowledgement is not recovered. A `disconnect` drops the
+        connection for a new one; other envelopes enter the worker queue
+        without any API, journal or mailbox call."""
         try:
             envelope = json.loads(text)
         except ValueError as err:
@@ -1648,11 +1660,13 @@ class Relay:
 
     def command_output(self, setting: str, argv: Tuple[str, ...]) -> Tuple[str, str]:
         """A configured command's stdout and an empty cause, or no text and
-        the cause it failed by, printed as `command-failed`. No payload field
-        reaches its argv, environment or stdin. It runs in the launch
-        directory with the caller's own environment, which holds no setting
-        the launcher loaded from the checkout's files, and its stderr goes
-        to the relay's stderr, never to Slack."""
+        the cause it failed by: `start`, `timeout`, `exit-N` or `empty`,
+        printed as `command-failed`, or the refusal key of the secret-value
+        check, printed as that refusal. No payload field reaches its argv,
+        environment or stdin. It runs in the directory the relay started
+        in, with the caller's own environment, which holds no setting the
+        launcher loaded from the checkout's files, and its stderr goes to
+        the relay's stderr, never to Slack."""
         self.progress("command:" + setting)
         out, err = "", ""
         try:
@@ -1672,6 +1686,11 @@ class Relay:
         if cause:
             print(keyed("command-failed", f"{setting} cause={cause}"), file=sys.stderr, flush=True)
             return "", cause
+        try:
+            secret_check(out.encode(), f"command={setting}")
+        except Refusal as refusal:
+            print_refusal(refusal)
+            return "", refusal.key
         return out, ""
 
     def answer_with(self, name: str, setting: str, argv: Tuple[str, ...]) -> str:
@@ -1680,8 +1699,7 @@ class Relay:
             return f"{name} is not enabled on this relay; {setting} turns it on."
         text, cause = self.command_output(setting, argv)
         if cause:
-            return f"{name} failed ({cause}); its output is not shown."
-        secret_check(text.encode(), f"command={setting}")
+            return withheld(name, cause)
         return bounded(text, REPLY_CHARS)
 
     def report(self, payload: Dict) -> str:
@@ -1694,7 +1712,7 @@ class Relay:
         trigger = payload.get("trigger_id")
         if not isinstance(trigger, str) or not TRIGGER.fullmatch(trigger):
             return "/report carried no usable trigger_id; nothing was sent."
-        outcome, value = LaneMail(root).directive(REPORT_TEXT, f"command:{trigger}")
+        outcome, value = LaneMail(root).directive(REPORT_TEXT, f"{COMMAND_KEY}{trigger}")
         if outcome == "absent":
             return f"No overseer is recorded at {root}; nothing was sent."
         return f"Report requested from the overseer at {root} (id={value})."
@@ -1702,8 +1720,10 @@ class Relay:
     def home(self, user: str) -> None:
         """The Home tab of an owner who opened it: SLACK_HOME_COMMAND's
         output, published by views.publish on each app_home_opened, and
-        nothing polls to keep it fresh. An unset setting and Slack's
-        not_enabled are one outcome, Home off for this process, printed once."""
+        nothing polls to keep it fresh. A failed command publishes its
+        cause in place of the output, since Slack keeps showing the last
+        view published. An unset setting and Slack's not_enabled are one
+        outcome, Home off for this process, printed once."""
         if self.home_off:
             return
         if not self.settings.home_command:
@@ -1714,8 +1734,7 @@ class Relay:
                 return
             text, cause = self.command_output("SLACK_HOME_COMMAND", self.settings.home_command)
             if cause:
-                return
-            secret_check(text.encode(), "command=SLACK_HOME_COMMAND")
+                text = withheld("SLACK_HOME_COMMAND", cause)
             # views.publish takes `view` as a JSON-encoded string
             # (https://docs.slack.dev/reference/methods/views.publish).
             self.api.post("views.publish", user_id=user, view=json.dumps({"type": "home", "blocks": home_blocks(text)}))

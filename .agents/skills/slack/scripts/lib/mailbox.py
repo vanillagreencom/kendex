@@ -4,12 +4,14 @@ The public events and drain commands own the output contract. Their per-poll
 process starts exceed the relay's polling contract, so reads call that same
 mailbox owner's parser and receipt rules inside this process.
 
-The relay keys every delivery it makes with `--delivery-id channel:ts`. Its
-journal skips a stamp it already carried; for any stamp the journal lost,
-the crash between the append and the mark, the mailbox's locked
-check-and-append is the judge: a repeat of a key that landed is answered
-with the envelope it landed as, and the relay records that id exactly as it
-records a first landing.
+The relay keys every owner message it delivers with `--delivery-id
+channel:ts`. Its journal skips a stamp it already carried; for any stamp
+the journal lost, the crash between the append and the mark, the mailbox's
+locked check-and-append is the judge: a repeat of a key that landed is
+answered with the envelope it landed as, and the relay records that id
+exactly as it records a first landing. A /report directive is keyed
+`command:<trigger_id>` and has no journal line, so that check alone judges
+its repeat.
 """
 
 from __future__ import annotations
@@ -234,8 +236,13 @@ class LaneMail:
 
 def run_bounded(argv: List[str], cwd: Path, timeout: float, env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
     """One child in a process group of its own, stdin closed and its output
-    captured whole: its exit status, stdout and stderr. Past `timeout`, TERM
-    and then KILL reach the whole group, and TimeoutExpired is raised."""
+    captured whole: its exit status, stdout and stderr, decoded as UTF-8 with
+    each invalid byte replaced, so no output the child prints can raise.
+    Past `timeout`, TERM and then KILL reach the whole group, each followed
+    by up to LANE_MAIL_CLEANUP_SECONDS for the group to end, then up to that
+    again for the child alone, and TimeoutExpired is raised: the call holds
+    its caller for at most `timeout` plus three times
+    LANE_MAIL_CLEANUP_SECONDS."""
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd),
@@ -243,7 +250,8 @@ def run_bounded(argv: List[str], cwd: Path, timeout: float, env: Optional[Dict[s
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         start_new_session=True,
     )
     try:

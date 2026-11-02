@@ -36,9 +36,10 @@ SLACK_JARVIS_SESSION_MAX_AGE = "600"
 # The optional slash commands and Home tab. Each is off while empty, and an
 # owner who types an off command is told so. Register a command in the Slack
 # app before setting its key: README.md § Slash commands and the Home tab.
-# A command line runs with no shell, in the relay's launch checkout, for at
-# most 10 seconds; nothing from Slack reaches it, and only its stdout is
-# sent, after the secret-value check.
+# A command line runs with no shell, in the directory the relay started in;
+# after 10 seconds TERM and then KILL stop its process group. Nothing from
+# Slack reaches it, and only its stdout is sent, after the secret-value
+# check.
 
 # The command line whose output /status replies with, for example
 # "scripts/fleet-status --slack".
