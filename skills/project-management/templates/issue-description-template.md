@@ -24,6 +24,8 @@
 
 **Symptom**: [SYMPTOM]
 
+**Code-quality evaluation**: [EVALUATION_LINE]
+
 **Expected delta**: [N] lines
 
 **Regressed-by**: [REGRESSED_BY]
@@ -50,6 +52,7 @@
 | `[N]` in **Expected delta** | Caller: estimated production lines for the planned change | `item-tier` reads it with the launch estimate and Location paths to choose a tier. Drop the line when no estimate is useful. It places no limit on the committed diff |
 | `[REGRESSED_BY]` | `create_fields.regressed_by`, else the caller: the pull request that caused the defect, as `#N`, several comma-separated | Only when that pull request is known; drop the line otherwise. A review-born item that names its source PR in `[ORIGIN_CONTEXT]` leaves it empty. `oversee-report`'s Escapes count reads this line and no other `#N` |
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
+| `[EVALUATION_LINE]` | The filed finding's code-quality evaluation line, as the finding carries it | Only when the finding carries one; drop the line otherwise. Its form is code-quality's `SKILL.md` § Finding Evaluation |
 | `[OWNER]` | Caller: the person or request that authorizes the work | Omit when absent |
 | Story / Why this matters | `items[].description`, or `create_fields.description` in analyzed mode | Story has three or four plain sentences about the person, today, the change and its consequence. Why this matters states the cost and benefit without retelling the sequence. Authors and reviewers judge the prose |
 | `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | List observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition. A box is a one-line `Post-merge:` box, in the form that section gives with `Deadline: +Nh`, only when it needs a deployment or installation, live use over time, or a person's screen or hands. Branch proof comes first. Each checked box keeps its immediately following indented plain `Evidence:` line |
