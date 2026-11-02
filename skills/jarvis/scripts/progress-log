@@ -163,9 +163,15 @@ def read_state(handoff):
 def missing(stderr, refs):
     """The refs a bulk read refused as no issue, or None when it failed another way.
 
-    skills/linear lib/common.sh linear_issue_refs_read ends a read with
-    `{"error": ..., "missing": [REF, ...]}` on stderr only for refs Linear
-    answered it has no issue for; `--help` does not document the key.
+    This reads undocumented output. skills/linear lib/common.sh
+    linear_issue_refs_read ends a read with `{"error": ..., "missing": [REF, ...]}`
+    on stderr only for refs Linear answered it has no issue for; `bulk-get --help`
+    and skills/linear SKILL.md do not document the key. The documented
+    interfaces cannot serve. bulk-get's documented nonzero exit refuses the whole
+    read and names no ref, so it cannot separate a ref Linear has no issue for
+    from a quota, 5xx or transport failure. A per-ref `issues get <id>` documents
+    no not-found outcome either, and costs one request per ref. A changed key
+    fails closed: this returns None, and the read is unavailable evidence.
     """
     for line in reversed(stderr.splitlines()):
         try:
@@ -190,6 +196,10 @@ def bulk_get(home, refs):
     reads = {}
     try:
         # skills/linear lib/formatters.sh format_issues_list_compact: one row per issue.
+        # `compact` is a documented --format value, but its fields are not; its
+        # `id`, `state` and `state_type` are the names skills/linear SKILL.md
+        # documents for the default `safe` rows. `safe` is not read because each
+        # row also carries the issue's full description, which this check does not use.
         for row in json.loads(result.stdout):
             fields = (row["id"], row["state"], row["state_type"])
             if not all(isinstance(field, str) for field in fields):
