@@ -32,6 +32,7 @@ import {
   README_TAG,
   SCAN_AGAIN_LABEL,
   SCAN_FAILED_TITLE,
+  TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
@@ -59,7 +60,7 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
-import { SEVERITY_LABELS } from "@/lib/labels";
+import { SEVERITY_LABELS, TAG_LABELS } from "@/lib/labels";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -574,6 +575,27 @@ describe("the words the package page shows", () => {
 
     expect(header(host)).toContain("What this project installed.");
     expect(header(host)).not.toContain("What the other project installed.");
+  });
+
+  /** An installed skill copy carries no tags in its frontmatter, so the
+   *  package's declaration, read through the join, is the only place its
+   *  tags come from. */
+  it("shows the tags the package declares where its installed copy has none", async () => {
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    act(() => {
+      useProvenanceStore.setState({
+        rows: useProvenanceStore
+          .getState()
+          .rows.map((row) => ({ ...row, tags: ["review", "testing"] })),
+      });
+    });
+
+    const label = [...host.querySelectorAll("dt")].find(
+      (dt) => dt.textContent === TAGS_ROW_LABEL,
+    );
+    expect(label?.nextElementSibling?.textContent).toBe(
+      `${TAG_LABELS.review}${TAG_LABELS.testing}`,
+    );
   });
 
   // libraryProvenance seeds rows with no position for missing copies.
