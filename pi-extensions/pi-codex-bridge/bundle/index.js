@@ -101,10 +101,10 @@ var DISABLED_FEATURES = [
 var REVIEWED_ENABLED_FEATURES = /* @__PURE__ */ new Map([
   // `--disable unified_exec`, `-c features.unified_exec=false` and
   // `experimental_use_unified_exec_tool=false` all leave it reported on in
-  // 0.163.0. Its exec_command and write_stdin tools are not offered while
-  // shell_tool is off and the thread has no environment; the fixture suite
-  // reads the tools Codex offers the model to hold that.
-  ["unified_exec", "tools not offered: shell_tool off, environments []"],
+  // every supported release. Its exec_command and write_stdin tools are not
+  // offered while shell_tool is off; the fixture suite reads the tools Codex
+  // offers the model to hold that.
+  ["unified_exec", "tools not offered: shell_tool off"],
   ["api_key_cyber_access_programs", "API-key access programs; no tool"],
   ["api_key_model_discovery", "API-key model listing; no tool"],
   ["cli_daybreak", "access-program selection; no tool"],
@@ -119,6 +119,13 @@ var REVIEWED_ENABLED_FEATURES = /* @__PURE__ */ new Map([
   ["plugin_sharing", "plugin sharing; plugins are off"],
   ["system_proxy_fallback", "proxy transport; no tool"],
   ["unbounded_connection_retries", "transport retries; no tool"],
+  ["bedrock_setup_wizard", "TUI sign-in onboarding; no tool"],
+  ["incremental_tools", "tool-definition context updates; no tool"],
+  ["mcp_oauth_refresh_coordination", "MCP OAuth refresh; MCP servers stay off"],
+  ["prediction_preserve_parent_tools", "prediction forks keep tool declarations; no tool"],
+  ["reasoning_effort_override", "response config items on effort change; no tool"],
+  ["realtime_conversation", "flag removed in 0.166.0; realtime starts only on a client thread/realtime/start, which the bridge never sends"],
+  ["worktrees", "flag removed in 0.166.0; no runtime path in core or app-server"],
   ["collaboration_modes", "stage removed in 0.163.0"],
   ["item_ids", "stage removed in 0.163.0"],
   ["resize_all_images", "stage removed in 0.163.0"],
@@ -150,7 +157,12 @@ var LAUNCH_CONFIG = [
   // top-level tools, and only through direct calls; any other tool sits
   // inside `exec`, which fails closed while code_mode_host is off. A setting
   // under the code_mode table that enables no feature.
-  `features.code_mode.direct_only_tool_namespaces=["${PI_TOOL_NAMESPACE}"]`
+  `features.code_mode.direct_only_tool_namespaces=["${PI_TOOL_NAMESPACE}"]`,
+  // 0.166.0 reads the plugin directory over the network at app-server start.
+  // A `-c` setting, not `--disable`, because 0.163.0 lacks the name and
+  // refuses `--disable` of it; it moves to DISABLED_FEATURES once 0.163.0
+  // leaves the supported list.
+  "features.plugin_discovery_prefetch=false"
 ];
 function appServerArgs(configOverrides) {
   return [

@@ -149,7 +149,7 @@ test("marker assertions reject zombie and foreign-world cleanup regressions", as
 const unsupported = (version) => new RegExp(`^codex-version-unsupported found=${version.replaceAll(".", "\\.")} supported=(?:\\S+,)?0\\.163\\.0(?:,\\S+)?$`);
 
 for (const row of [
-	{ name: "the unproved 0.166.0 release", write: (dir) => writeStubCodex(dir, { version: "0.166.0" }), error: unsupported("0.166.0") },
+	{ name: "the unlisted 0.165.0 release", write: (dir) => writeStubCodex(dir, { version: "0.165.0" }), error: unsupported("0.165.0") },
 	{ name: "a prerelease of a listed release", write: (dir) => writeStubCodex(dir, { version: "0.163.0-alpha.1" }), error: /^codex-version-unsupported found=0\.163\.0-alpha\.1 / },
 	{ name: "unreadable output", write: (dir) => { const path = join(dir, "codex"); writeFileSync(path, `#!${process.execPath}\nconsole.log("not a version");\n`, { mode: 0o755 }); return path; }, error: /^codex-protocol-invalid method=--version field=stdout$/ },
 	{ name: "no executable", write: (dir) => join(dir, "missing-codex"), error: /^codex-version-unreadable / },

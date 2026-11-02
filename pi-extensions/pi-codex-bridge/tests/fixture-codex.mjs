@@ -10,7 +10,7 @@ import { supportedCodexVersions } from "../src/codex-policy.ts";
 import { ARG_SENTINEL, ENV_SENTINEL, assertFixtureRelease, codeModeOnlyModel, filesHolding, fixtureCodex, fixtureWorld, piModel } from "./lib/codex-fixture.mjs";
 import { goneWithin } from "./lib/stub-codex.mjs";
 import { finish, readTool, system, toolResult, user } from "./lib/fake-client.mjs";
-import { functionCall, message, offeredTools } from "./lib/mock-responses.mjs";
+import { customToolCall, functionCall, message, offeredTools } from "./lib/mock-responses.mjs";
 
 // Each row stops its world from t.after, which runs even when the row times
 // out, and `--test-force-exit` ends the file once every row has reported.
@@ -121,30 +121,51 @@ for (const version of supportedCodexVersions()) {
 		await bridge.close();
 	});
 
-	test(`codex ${version}: Codex offers the model no native tool or user-input tool, and such calls run nothing and fail no turn`, { timeout: FIXTURE_TIMEOUT }, async (t) => {
+	// No native tool Codex offers can change a file or run a command, and each
+	// group of offered tools has its guard: ../DEVELOPMENT.md § Native tools
+	// This row holds the environment tools on the default mock model, which
+	// Codex offers no native tool but `apply_patch`: Codex answers the call
+	// itself on a turn with no environment. Of the other groups, the code-mode
+	// row holds only that exec lists no Pi tool and the sub-agent row only the
+	// refused spawn. The contrast drops `environments` from thread/start
+	// and turn/start, and there the same call starts a fileChange item, which the
+	// bridge refuses. So the row fails when the empty environment stops keeping
+	// the call from a patch, and when it stops seeing a started patch.
+	test(`codex ${version}: Codex offers the default model no native tool but apply_patch, native calls start no item, write nothing and fail no turn, and without the empty environment the patch starts`, { timeout: FIXTURE_TIMEOUT }, async (t) => {
 		const script = [];
 		const world = await worldFor("native", { script });
 		t.after(() => world.close());
-		const ran = join(world.root, "NATIVE-RAN");
+		const ran = join(world.project, "NATIVE-RAN");
+		const patch = `*** Begin Patch\n*** Add File: ${ran}\n+x\n*** End Patch\n`;
 		script.push(
 			[
 				functionCall("exec_command", { cmd: `touch ${ran}` }, "native-1"),
 				functionCall("shell", { command: ["touch", ran] }, "native-2"),
-				functionCall("apply_patch", { input: `*** Begin Patch\n*** Add File: ${ran}\n+x\n*** End Patch` }, "native-3"),
+				customToolCall("apply_patch", patch, "native-3"),
+				functionCall("apply_patch", { input: patch }, "native-4"),
 				functionCall("request_user_input", { questions: [{ id: "q", header: "Ask", question: "Which file?", options: [] }] }, "ask-1"),
 			],
 			[message("after native")],
 		);
 		const bridge = world.newBridge();
 		const end = await finish(bridge.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Run a command")] }));
+		await bridge.close();
 		const offered = world.mock.requests.flatMap((request) => offeredTools(request.body));
 		assert.ok(offered.includes("pi.read"), `Pi's tool is offered: ${offered}`);
-		for (const native of ["exec_command", "write_stdin", "shell", "apply_patch", "view_image", "web_search", "image_generation", "spawn_agent", "request_user_input", "request_user_input_async"]) {
-			assert.equal(offered.some((name) => name.split(".").at(-1) === native), false, `${native} is offered: ${offered}`);
-		}
+		const native = offered.filter((name) => name !== "pi" && !name.startsWith("pi.") && name !== "apply_patch");
+		assert.deepEqual(native, [], `Codex offers a native tool other than apply_patch: ${native}`);
+		const answered = world.mock.requests[1]?.body.input.find((item) => item.type === "custom_tool_call_output" && item.call_id === "native-3");
+		assert.ok(answered !== undefined, "Codex did not answer the apply_patch call to the model");
+		const started = world.startedItemTypes();
+		assert.equal(started.includes("fileChange") || started.includes("commandExecution"), false, `a native item started: ${started}`);
 		assert.equal(existsSync(ran), false);
 		assert.equal(end.reason, "stop", end.error?.errorMessage);
-		await bridge.close();
+
+		script.push([customToolCall("apply_patch", patch, "native-contrast")]);
+		const contrast = world.newBridge({ withoutEnvironments: true });
+		const refused = await finish(contrast.streamSimple(piModel(world.model), { messages: [system([readTool]), user("Patch a file")] }));
+		await contrast.close();
+		assert.equal(refused.error?.errorMessage, "codex-native-item type=fileChange");
 	});
 
 	// The second launch drops the direct-namespace setting and is the contrast:

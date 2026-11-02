@@ -19,7 +19,7 @@ source = "kendex"
 
 - Pi 0.86 or later.
 - Node 22.19 or later.
-- Codex CLI 0.163.0 on `PATH`. The bridge refuses any other release and offers no model. `package.json` lists the supported releases as its optional `@openai/codex` peer range.
+- Codex CLI 0.163.0 or 0.166.0 on `PATH`. The bridge refuses any other release and offers no model. `package.json` lists the supported releases as its optional `@openai/codex` peer range.
 - A Codex login under the active `CODEX_HOME` (default `~/.codex`), stored in `CODEX_HOME/auth.json`.
 
 A login kept in the system keyring (`cli_auth_credentials_store = "keyring"`) has no `auth.json`, so the bridge treats it as absent. Sign in with file storage to use the bridge.
