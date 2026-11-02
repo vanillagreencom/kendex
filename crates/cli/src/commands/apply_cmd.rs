@@ -134,7 +134,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                     count: planned,
                 },
                 &blocked,
-                attention.update_pi,
+                attention.pi_left,
                 &report.safety,
             );
             continue;
@@ -179,7 +179,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                         count,
                     },
                     &blocked,
-                    attention.update_pi,
+                    attention.pi_left,
                     &report.safety,
                     Folded::None,
                 );

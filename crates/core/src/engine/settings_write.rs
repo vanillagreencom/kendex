@@ -36,6 +36,7 @@ fn cannot_write(scope: &Scope, file: String, detail: String) -> DriftRow {
         compared: None,
         also_in_the_way: Vec::new(),
         remedy: None,
+        pi_unsettled: None,
     }
 }
 

@@ -72,6 +72,7 @@ fn in_the_way(name: &str) -> DriftRow {
         compared: None,
         also_in_the_way: Vec::new(),
         remedy: None,
+        pi_unsettled: None,
     }
 }
 

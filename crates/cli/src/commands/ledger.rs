@@ -18,7 +18,7 @@ use std::io::IsTerminal;
 use kendex_core::engine::ItemSafety;
 use kendex_core::model::{ItemKind, Scope};
 
-use super::offers::{Blocked, UpdatePiLeft, finish_with};
+use super::offers::{Blocked, PiLeft, finish_with};
 use super::scope_label;
 use crate::ui;
 
@@ -97,17 +97,17 @@ pub fn say_ledger(
     say_ledger_with(scope, wrote, blocked, None, scored, folded);
 }
 
-/// [`say_ledger`] for a verb whose plan can leave Pi packages for
-/// `update-pi`, which its own write never installs: `apply` and `refresh`.
+/// [`say_ledger`] for a verb whose plan can leave declared Pi packages,
+/// which its own write never installs: `apply` and `refresh`.
 pub fn say_ledger_with(
     scope: &Scope,
     wrote: Wrote<'_>,
     blocked: &[Blocked],
-    update_pi: Option<UpdatePiLeft>,
+    pi_left: Option<PiLeft>,
     scored: &[ItemSafety],
     folded: Folded,
 ) {
-    let (line, steps) = ledger(scope, wrote, blocked, update_pi, scored, folded);
+    let (line, steps) = ledger(scope, wrote, blocked, pi_left, scored, folded);
     ui::ledger(&line, &steps);
 }
 
@@ -119,10 +119,10 @@ pub fn say_preview(
     scope: &Scope,
     wrote: Wrote<'_>,
     blocked: &[Blocked],
-    update_pi: Option<UpdatePiLeft>,
+    pi_left: Option<PiLeft>,
     scored: &[ItemSafety],
 ) {
-    let (line, _) = ledger(scope, wrote, blocked, update_pi, scored, Folded::None);
+    let (line, _) = ledger(scope, wrote, blocked, pi_left, scored, Folded::None);
     ui::ledger(&line, &[]);
 }
 
@@ -130,15 +130,15 @@ fn ledger(
     scope: &Scope,
     said: Wrote<'_>,
     blocked: &[Blocked],
-    update_pi: Option<UpdatePiLeft>,
+    pi_left: Option<PiLeft>,
     scored: &[ItemSafety],
     folded: Folded,
 ) -> (String, Vec<ui::Step>) {
     let skipped = blocked.len();
-    let left = update_pi.map_or(0, |left| left.count);
+    let (left, unsettled) = pi_left.map_or((0, 0), |pi| (pi.update_pi, pi.unsettled));
     let flagged = flagged(scored);
     let unread = unread(scored);
-    let mut parts = vec![wrote(said.verb, said.count, skipped + left)];
+    let mut parts = vec![wrote(said.verb, said.count, skipped + left + unsettled)];
     let mut steps: Vec<ui::Step> = Vec::new();
     // What this run's commit offer did in this project, read back off the
     // run's own record rather than passed down by each verb: the part has
@@ -154,15 +154,28 @@ fn ledger(
     // The plan's one completion where it has one, which beside packages
     // left for update-pi is never the take-over (`engine::completion`), so
     // one finish is said; the settle-with line above otherwise.
-    if let Some(update_pi) = update_pi {
+    if let Some(pi) = pi_left
+        && left > 0
+    {
         parts.push(format!(
             "left {left} Pi package{} for update-pi",
             plural(left)
         ));
-        steps.push(ui::Step::Decision(match update_pi.finish {
+        steps.push(ui::Step::Decision(match pi.finish {
             Some(finish) => finish_with(finish, scope),
             None => "left for update-pi — see the settle-with line above".to_owned(),
         }));
+    }
+    // A package no named action settles still leaves the scope short of
+    // up to date, and the lines above say why for each.
+    if unsettled > 0 {
+        parts.push(format!(
+            "left {unsettled} Pi package{} unsettled",
+            plural(unsettled)
+        ));
+        steps.push(ui::Step::Decision(
+            "unsettled — the lines above say why".to_owned(),
+        ));
     }
     // A scored run says what safety found either way: a clean scan and
     // a scan nobody ran would otherwise close on the same line. Clean is

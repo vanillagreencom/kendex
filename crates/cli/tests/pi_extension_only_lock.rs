@@ -162,51 +162,140 @@ fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {
     assert_record_landed(&env.global_lock_file());
 }
 
+/// Every value a run printed under `key=`: the keyed lines a program reads.
+fn keyed(output: &str, key: &str) -> Vec<String> {
+    let key = format!("{key}=");
+    output
+        .lines()
+        .filter_map(|line| line.split_once(key.as_str()).map(|(_, rest)| rest))
+        .map(|rest| rest.trim().to_owned())
+        .collect()
+}
+
+/// The personal Pi root holding its own copy of `pi-widgets`.
+#[allow(clippy::unwrap_used)]
+fn loaded_from_the_personal_scope(home: &Path) {
+    let env = kendex_core::env::Env::host_rooted(home);
+    let personal =
+        kendex_core::pi_ext::scope_root(&env, &kendex_core::model::Scope::Global).unwrap();
+    write(&personal.join("packages/pi-widgets/package.json"), PACKAGE);
+    write(&personal.join("packages/pi-widgets/index.js"), INDEX);
+}
+
 /// The closing line names `update-pi` as the finish only where running it
-/// finishes the scope. Beside a declared package whose source no longer
-/// ships it, update-pi notes that one as not evaluated and fails; for a
-/// package Pi already loads from the personal scope, it leaves the copy
-/// blocked and exits clean, so the action is not named for that package
-/// either. Either way the run names no finish.
+/// finishes the scope, and a declared package neither the run's write nor
+/// `update-pi` settles is named and counted, so the run never closes as up
+/// to date over it. Beside a package whose source no longer ships it,
+/// update-pi notes that one as not evaluated and fails; for a copy Pi
+/// already loads from the personal scope, it leaves the copy blocked, so
+/// neither finish is named beside it, the take-over included, which
+/// installs no Pi package. A native filter the run itself writes holds
+/// nothing back: the package left beside it names update-pi as the finish.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
     type Plant = fn(&Path, &Path);
-    let gone: Plant = |_, project| {
+    struct Row {
+        case: &'static str,
+        /// Everything before the run the row asserts on.
+        plant: Plant,
+        finish: &'static [&'static str],
+        settle_with: &'static [&'static str],
+        /// The package the run names though nothing settles it.
+        unsettled: Option<&'static str>,
+    }
+    fn settled_once(home: &Path, project: &Path) {
+        kendex(home, project, &["apply", "--yes"]);
+    }
+    let gone: Plant = |home, project| {
         write(
             &project.join("kendex.toml"),
             &format!("{MANIFEST}\n[pi-extensions.pi-gone]\nsource = \"cat\"\n"),
         );
+        kendex(home, project, &["apply", "--yes"]);
     };
-    let loaded_twice: Plant = |home, _| {
-        let env = kendex_core::env::Env::host_rooted(home);
-        let personal =
-            kendex_core::pi_ext::scope_root(&env, &kendex_core::model::Scope::Global).unwrap();
-        write(&personal.join("packages/pi-widgets/package.json"), PACKAGE);
-        write(&personal.join("packages/pi-widgets/index.js"), INDEX);
+    let loaded_twice: Plant = |home, project| {
+        loaded_from_the_personal_scope(home);
+        kendex(home, project, &["apply", "--yes"]);
     };
-    let rows: [(&str, Plant, bool); 2] = [
-        ("a declared package its source no longer ships", gone, true),
-        (
-            "a copy Pi already loads from the personal scope",
-            loaded_twice,
-            false,
-        ),
+    let toggled_beside_a_left_package: Plant = |home, project| {
+        settled_once(home, project);
+        let installed = kendex(home, project, &["update-pi", "--scope", "project"]);
+        assert!(installed.status.success(), "{}", said(&installed));
+        settled_once(home, project);
+        let other = project.join("catalog/pi-extensions/pi-other");
+        write(
+            &other.join("package.json"),
+            &PACKAGE.replace("pi-widgets", "pi-other"),
+        );
+        write(&other.join("index.js"), INDEX);
+        write(
+            &project.join("kendex.toml"),
+            &format!("{MANIFEST}enabled = false\n\n[pi-extensions.pi-other]\nsource = \"cat\"\n"),
+        );
+    };
+    let loaded_twice_beside_a_replaceable_conflict: Plant = |home, project| {
+        loaded_from_the_personal_scope(home);
+        write(
+            &project.join("catalog/skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
+        );
+        write(
+            &project.join(".agents/skills/deploy/SKILL.md"),
+            "my own deploy notes\n",
+        );
+        write(
+            &project.join("kendex.toml"),
+            &format!(
+                "{MANIFEST}\n[skills.deploy]\nsource = \"cat\"\n\n[install]\nharnesses = [\"claude\"]\n"
+            ),
+        );
+        kendex(home, project, &["apply", "--yes"]);
+    };
+    const UPDATE_PI: &str = "update-pi scope=project";
+    let rows = [
+        Row {
+            case: "a declared package its source no longer ships",
+            plant: gone,
+            finish: &[],
+            settle_with: &[UPDATE_PI],
+            unsettled: Some("pi-gone"),
+        },
+        Row {
+            case: "a copy Pi already loads from the personal scope",
+            plant: loaded_twice,
+            finish: &[],
+            settle_with: &[],
+            unsettled: Some("pi-widgets"),
+        },
+        Row {
+            case: "a filter the run writes beside a package left for update-pi",
+            plant: toggled_beside_a_left_package,
+            finish: &[UPDATE_PI],
+            settle_with: &[UPDATE_PI],
+            unsettled: None,
+        },
+        Row {
+            case: "a copy Pi loads twice beside a conflict the take-over replaces",
+            plant: loaded_twice_beside_a_replaceable_conflict,
+            finish: &[],
+            settle_with: &[],
+            unsettled: Some("pi-widgets"),
+        },
     ];
-    for (case, plant, settled_beside) in rows {
+    for row in rows {
         let (_tmp, home) = fixture();
         let project = home.join("dev/app");
-        plant(&home, &project);
-        kendex(&home, &project, &["apply", "--yes"]);
+        (row.plant)(&home, &project);
 
-        let second = said(&kendex(&home, &project, &["apply", "--yes"]));
-        let keyed = |key: &str| {
-            second
-                .lines()
-                .any(|line| line.contains(&format!("{key}=update-pi")))
-        };
-        assert!(!keyed("finish-with"), "{case}: {second}");
-        assert_eq!(keyed("settle-with"), settled_beside, "{case}: {second}");
+        let run = said(&kendex(&home, &project, &["apply", "--yes"]));
+        let case = row.case;
+        assert_eq!(keyed(&run, "finish-with"), row.finish, "{case}: {run}");
+        assert_eq!(keyed(&run, "settle-with"), row.settle_with, "{case}: {run}");
+        if let Some(name) = row.unsettled {
+            assert!(run.contains(name), "{case}: {run}");
+            assert!(!run.contains("up to date"), "{case}: {run}");
+        }
     }
 }
 

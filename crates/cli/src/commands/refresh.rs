@@ -225,7 +225,7 @@ fn finish_scopes(env: &Env, reached: &[kendex_core::model::Scope], closing: Vec<
             &scope.scope,
             refreshed(scope.count),
             &scope.attention.blocked,
-            scope.attention.update_pi,
+            scope.attention.pi_left,
             &scope.scored,
             match scope.attention.folded {
                 true => Folded::BehindVerbose,
@@ -942,7 +942,7 @@ fn write_ready(
             && load_lock(&lock_path(env, scope))?.entries.is_empty()
             && report.plan.is_empty()
             && attention.blocked.is_empty()
-            && attention.update_pi.is_none()
+            && attention.pi_left.is_none()
         {
             // Nothing left to write is not a reason to leave the named
             // project off the projects list: the run got through this

@@ -378,15 +378,21 @@ pub enum Completion {
 }
 
 /// The completion for what a plan leaves, or `None` where no single
-/// action finishes it. With a conflict, the take-over, where it can
-/// replace every one and answers for the whole scope
-/// (`take_over_settles`); never one beside a conflict an edit, a link or a
-/// revision clash holds. With none, `update-pi`, where it installs every
-/// Pi package left (`update_pi_settles`). `apply` and `refresh` name what
-/// this returns, and `check` reads it off the plan that judged its
-/// unmanaged copies ([`UnmanagedCopies::completion`]); none of them has a
-/// reading of its own.
+/// action finishes it. Never one beside a declared Pi package neither
+/// action settles (`DriftRow::pi_unsettled`): the take-over installs no Pi
+/// package, and `update-pi` leaves that one where it stands. With a
+/// conflict, the take-over, where it can replace every one and answers
+/// for the whole scope (`take_over_settles`); never one beside a conflict
+/// an edit, a link or a revision clash holds. With none, `update-pi`,
+/// where it installs every Pi package left (`update_pi_settles`). `apply`
+/// and `refresh` name what this returns, and `check` reads it off the
+/// plan that judged its unmanaged copies
+/// ([`UnmanagedCopies::completion`]); none of them has a reading of its
+/// own.
 pub fn completion(report: &EngineReport) -> Option<Completion> {
+    if report.drift.iter().any(|row| row.pi_unsettled.is_some()) {
+        return None;
+    }
     let mut conflicts = report
         .drift
         .iter()
@@ -425,13 +431,9 @@ fn take_over_settles(drift: &[DriftRow]) -> bool {
 }
 
 /// Whether `update-pi` finishes the declared Pi packages a plan with no
-/// conflict leaves: at least one is left for it, and every other one is a
-/// row whose cause this plan's own write settles. A row with neither —
-/// a source that would not resolve, an origin that differs from the
-/// record, a comparison that failed, a copy Pi already loads from another
-/// root (`pi_ext::record_matching`) — is one `update-pi` notes as not
-/// evaluated, fails the scope on, or will not install, so naming it as
-/// the finish hands over a command that leaves the scope where it is.
+/// conflict leaves: at least one is left for it (`pi_ext::admit` admitted
+/// it), and every other one is a row whose cause this plan's own write
+/// settles. Any other row is one no verb named here settles.
 fn update_pi_settles(drift: &[DriftRow]) -> bool {
     let mut left = false;
     for row in drift

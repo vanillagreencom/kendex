@@ -291,6 +291,7 @@ pub(super) fn unmanaged_rows(
             compared: None,
             also_in_the_way: Vec::new(),
             remedy: None,
+            pi_unsettled: None,
         });
     }
     Ok(())

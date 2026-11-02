@@ -244,13 +244,29 @@ pub fn left_for_update_pi(report: &EngineReport) -> Vec<&DriftRow> {
         .collect()
 }
 
-/// What a plan left for `update-pi` in one scope, and the plan's one
-/// completion, which is `update-pi` where it finishes the scope and `None`
-/// where it does not: a take-over never settles a scope that leaves a
-/// package for `update-pi` (`engine::completion`).
+/// The declared Pi packages a plan leaves that neither its write nor
+/// `update-pi` settles, read off the engine's typed reason
+/// (`DriftRow::pi_unsettled`), never off their wording or a missing
+/// remedy.
+pub fn unsettled_pi(report: &EngineReport) -> Vec<&DriftRow> {
+    report
+        .drift
+        .iter()
+        .filter(|row| row.pi_unsettled.is_some())
+        .collect()
+}
+
+/// What a plan left of its declared Pi packages in one scope, and the
+/// plan's one completion, which is `update-pi` where it finishes the scope
+/// and `None` where it does not: a take-over never settles a scope that
+/// leaves a package for `update-pi`, and neither action is named beside a
+/// package neither settles (`engine::completion`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UpdatePiLeft {
-    pub count: usize,
+pub struct PiLeft {
+    /// The packages `update-pi` installs ([`left_for_update_pi`]).
+    pub update_pi: usize,
+    /// The packages neither settles ([`unsettled_pi`]).
+    pub unsettled: usize,
     pub finish: Option<Finish>,
 }
 

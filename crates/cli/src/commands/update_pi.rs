@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use kendex_core::engine::PlanOptions;
@@ -428,65 +427,62 @@ fn plan_scope(
     loaded_with: &[PathBuf],
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
-    let (declared, sources) = declared_sources(env, scope, &mut notes)?;
+    let (declared, resolved) = declared_sources(env, scope, &mut notes)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
-
-    let guard = |name: &str, status: Status| match pi_ext::duplicate_elsewhere(name, other_roots) {
-        Some((conflict, at)) => Status::Blocked {
-            reason: format!(
-                "blocked: {conflict} would register twice. Pi loads your user and project package lists together; loading this package twice prevents Pi from starting. Keep either copy and remove the other before updating. User packages: {}; project packages: {}",
-                match scope {
-                    Scope::Global => root.as_path(),
-                    Scope::Project { .. } => at.as_path(),
-                }
-                .display(),
-                match scope {
-                    Scope::Global => at.as_path(),
-                    Scope::Project { .. } => root.as_path(),
-                }
-                .display()
-            ),
-        },
-        None => status,
-    };
-
-    for (name, package) in &sources {
+    let mut sourced = std::collections::BTreeSet::new();
+    for (name, resolution) in resolved {
+        if matches!(resolution, Ok(pi_ext::Resolved::Ships(_))) {
+            sourced.insert(name.clone());
+        }
         let key = kendex_core::lock::entry_key(
             kendex_core::model::ItemKind::PiExtension,
-            name,
+            &name,
             kendex_core::model::HarnessId::Pi,
         );
-        let existing = lock.entries.get(&key);
-        pi_ext::check_origin(name, package, existing)?;
-        let status = match pi_ext::declared_state(
+        let status = match pi_ext::admit(
             &root,
-            name,
-            package,
-            existing,
+            other_roots,
+            &name,
+            resolution,
+            lock.entries.get(&key),
             pi_ext::RecordBasis::Recorded,
         ) {
-            Ok(pi_ext::PackageState::Current { .. }) => Status::Current,
-            Ok(pi_ext::PackageState::Different) => guard(
-                name,
-                Status::Stale {
-                    source_dir: package.source_dir.clone(),
+            // Nothing installs a retired package again.
+            pi_ext::Admission::Retired => continue,
+            pi_ext::Admission::Current { .. } => Status::Current,
+            pi_ext::Admission::Install { package, change } => match change {
+                pi_ext::Install::Missing => Status::Missing {
+                    source_dir: package.source_dir,
                 },
-            ),
-            Ok(pi_ext::PackageState::Missing) => guard(
-                name,
-                Status::Missing {
-                    source_dir: package.source_dir.clone(),
+                pi_ext::Install::Stale => Status::Stale {
+                    source_dir: package.source_dir,
                 },
-            ),
-            Err(error) => {
-                notes.push((name.clone(), error.to_string()));
+            },
+            pi_ext::Admission::LoadedElsewhere { installed, at } => Status::Blocked {
+                reason: format!(
+                    "blocked: {installed} would register twice. Pi loads your user and project package lists together; loading this package twice prevents Pi from starting. Keep either copy and remove the other before updating. User packages: {}; project packages: {}",
+                    match scope {
+                        Scope::Global => root.as_path(),
+                        Scope::Project { .. } => at.as_path(),
+                    }
+                    .display(),
+                    match scope {
+                        Scope::Global => at.as_path(),
+                        Scope::Project { .. } => root.as_path(),
+                    }
+                    .display()
+                ),
+            },
+            pi_ext::Admission::OriginRefused(error) => return Err(error.into()),
+            pi_ext::Admission::NotEvaluated(error) => {
+                notes.push((name, error.to_string()));
                 continue;
             }
         };
         rows.push(Row {
-            name: name.clone(),
-            version: installed_version(&root, name),
+            version: installed_version(&root, &name),
+            name,
             status,
         });
     }
@@ -494,7 +490,7 @@ fn plan_scope(
     // under `extensions/` runs whatever state the managed one is in.
     let shadows = pi_ext::shadows(&root, loaded_with, &declared);
     for name in pi_ext::list_installed(&root)? {
-        if !sources.contains_key(&name) {
+        if !sourced.contains(&name) {
             rows.push(Row {
                 version: installed_version(&root, &name),
                 name,
@@ -523,34 +519,34 @@ fn plan_scope(
     })
 }
 
-/// Every declared Pi extension by name, and each one whose source
-/// resolved. An unreadable source becomes a note so the rest of the scope
-/// still updates, except for a catalog compatibility refusal. The name list
-/// keeps it, for the checks that read what sits on disk whatever the source says.
+/// What a scope's catalogs answer for each declared Pi extension, by name.
+type Resolutions = Vec<(String, kendex_core::error::Result<pi_ext::Resolved>)>;
+
+/// Every declared Pi extension by name, and what its catalog answers for
+/// each, which `pi_ext::admit` judges: a source that would not resolve is
+/// a note there, so the rest of the scope still updates. A catalog
+/// compatibility refusal stops the scope here instead. The name list keeps
+/// every declaration, for the checks that read what sits on disk whatever
+/// the source says.
 fn declared_sources(
     env: &Env,
     scope: &Scope,
     notes: &mut Vec<(String, String)>,
-) -> kendex_core::error::Result<(Vec<String>, BTreeMap<String, pi_ext::DeclaredPackage>)> {
-    let mut found = BTreeMap::new();
+) -> kendex_core::error::Result<(Vec<String>, Resolutions)> {
     let path = manifest::manifest_path(env, scope);
     let manifest = match manifest::load(&path) {
         Ok(ManifestFile::Current(manifest)) => manifest,
-        Ok(_) => return Ok((Vec::new(), found)),
+        Ok(_) => return Ok((Vec::new(), Vec::new())),
         Err(error) => {
             notes.push(("manifest".to_owned(), error.to_string()));
-            return Ok((Vec::new(), found));
+            return Ok((Vec::new(), Vec::new()));
         }
     };
+    let mut found = Vec::new();
     for (name, decl) in &manifest.pi_extensions {
         match pi_ext::resolve_declared(env, scope, &manifest, name, decl) {
-            Ok(pi_ext::Resolved::Ships(package)) => {
-                found.insert(name.clone(), package);
-            }
-            // Nothing installs a retired package again.
-            Ok(pi_ext::Resolved::Retired { .. }) => {}
             Err(error) if error.is_catalog_compatibility() => return Err(error),
-            Err(error) => notes.push((name.clone(), error.to_string())),
+            resolution => found.push((name.clone(), resolution)),
         }
     }
     Ok((manifest.pi_extensions.keys().cloned().collect(), found))

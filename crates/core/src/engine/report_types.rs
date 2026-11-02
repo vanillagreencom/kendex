@@ -152,6 +152,30 @@ pub struct DriftRow {
     /// The verb that settles this row, where one does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remedy: Option<RowRemedy>,
+    /// Why a declared Pi package's row is one neither this plan's write
+    /// nor `update-pi` settles, as `pi_ext::admit` decided it: what holds
+    /// the scope's one completion (`engine::completion`) and what the run's
+    /// report draws beside the packages left for `update-pi`. A row with
+    /// no remedy is not on that account settled. Read in process by the
+    /// planning verbs; no serialized reader takes it.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub pi_unsettled: Option<PiUnsettled>,
+}
+
+/// Why `update-pi` leaves a declared Pi package where it stands
+/// (`pi_ext::Admission`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PiUnsettled {
+    /// Pi already loads the package, under this name or an earlier one,
+    /// from a root it loads with this scope's, and will not start with it
+    /// registered twice.
+    LoadedElsewhere,
+    /// The record names another source than the declaration.
+    OriginRefused,
+    /// Its source would not resolve, or its copy or record would not
+    /// compare.
+    NotEvaluated,
 }
 
 /// A verb that settles a drift row, acting on the row's own kind and name:
