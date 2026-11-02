@@ -181,10 +181,11 @@ gate_pairs() { # WORKFLOW
   done | LC_ALL=C sort -u
 }
 
-# Every lane a gate reads: the job conditions and the platform matrix.
+# Every lane a gate reads: the job conditions and the platform, shard and
+# suite-scope matrix keys.
 lanes_read() { # WORKFLOW
   { gate_pairs "$1" | sed 's/:.*//'
-    { matrix_expr "$1" os; matrix_expr "$1" shard; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
+    { matrix_expr "$1" os; matrix_expr "$1" shard; matrix_expr "$1" scope; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
   } | LC_ALL=C sort -u
 }
 

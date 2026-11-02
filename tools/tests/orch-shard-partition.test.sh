@@ -254,6 +254,8 @@ mkdir -p "$SHIM"
 printf '#!%s\n' "$BASH" > "$SHIM/bash"
 cat >> "$SHIM/bash" <<'SH'
 set -euo pipefail
+# A step's suite list query runs as itself: it starts no suite.
+[ "${1-}:${2-}" != tools/ci-job-set:--suite-list ] || exec "$BASH" "$@"
 [ -z "${TOOLS_PREP_RECORD:-}" ] || printf 'suite\n' >> "$TOOLS_PREP_RECORD"
 case "$1:${2-}" in
   tools/tests/run-all.sh:*) battery=tools/tests ;;

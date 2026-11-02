@@ -90,10 +90,10 @@ QUEUE_ALL="$(macos_shards "$ROSTER")"
 # The runner lists the shell shards expand on, as ci-job-set spells them.
 LINUX='["ubuntu-latest"]'
 BOTH='["ubuntu-latest","macos-latest"]'
-ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[]"
-ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL"
+ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] suites=all"
+ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL suites=all"
 # `render` and `trivial` run the one verify job.
-VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[]"
+VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] suites=all"
 # Every measured class runs cargo_linux and bot_instructions. The shell
 # shards run per package, on the runners LEGS names: none, linux or both;
 # the platform lanes stand down only on an all-prose diff, the macOS legs
@@ -111,7 +111,7 @@ lanes() { # LEGS UI PLATFORM BUILD [CATALOG] — a measured row's lanes
     "$shell" "$os" "$2" "$3" "$4" "$3" "$4" "${5:-$4}" "${5:-$4}"
 }
 measured() { # LEGS UI PLATFORM BUILD SHARDS QUEUE [CATALOG] — one measured row
-  printf '%s shards=%s queue_macos_shards=%s' "$(lanes "$1" "$2" "$3" "$4" "${7:-$4}")" "$5" "$6"
+  printf '%s shards=%s queue_macos_shards=%s suites=all' "$(lanes "$1" "$2" "$3" "$4" "${7:-$4}")" "$5" "$6"
 }
 # The selections tools/tests/ci-aggregate.test.sh evaluates the workflow
 # against.
