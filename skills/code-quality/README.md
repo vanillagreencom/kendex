@@ -10,6 +10,7 @@ Code-writing rules for AI coding agents. Repository owners use this skill to sup
 - Judge tests by their protection against run time and upkeep. Prove a new or changed instrument can fail once.
 - Set test rules for defect controls, typed results, progress evidence and checks selected from what a change affects.
 - Load Rust, Bash and TypeScript rules only for the stack being changed, and the UI polish bar and screenshot set only for a changed view.
+- Give each practice or design finding one evaluation line: whether this guidance misled the decision, missed the case or was not followed, and which guidance or route owns the cause.
 - Direct markdown work to the docs-writing skill.
 
 ## Install
