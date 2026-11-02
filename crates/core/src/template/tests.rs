@@ -33,15 +33,21 @@ pub(super) fn file_item(dir: &Path, file: &str, text: &str) {
 }
 
 /// A lock entry, so a declared item reads as installed rather than as
-/// content nothing manages.
+/// content nothing manages. `repo` is the provenance an install records for
+/// `source`, which a read of the installed package is held to.
 #[allow(clippy::unwrap_used)]
-pub(super) fn lock_entry(kind: ItemKind, name: &str, source: &str) -> crate::lock::LockEntry {
+pub(super) fn lock_entry(
+    kind: ItemKind,
+    name: &str,
+    source: &str,
+    repo: &str,
+) -> crate::lock::LockEntry {
     crate::lock::LockEntry {
         name: name.to_owned(),
         kind,
         harness: HarnessId::Claude,
         source: source.to_owned(),
-        source_repo: source.to_owned(),
+        source_repo: repo.to_owned(),
         machine: Some(crate::lock::MachineRecord {
             method: crate::manifest::Method::Symlink,
             installed_at: "2026-01-01T00:00:00Z".to_owned(),

@@ -90,15 +90,17 @@ pub(super) fn seeded() -> Project {
         version: crate::lock::LOCK_VERSION,
         ..crate::lock::Lock::default()
     };
-    for (kind, name, source) in [
-        (ItemKind::Skill, "gh", "cat"),
-        (ItemKind::Skill, "house-style", "local"),
-        (ItemKind::Command, "preview", "local"),
-        (ItemKind::Command, "note", "cat"),
+    // What an install records as a folder source's provenance.
+    let cat = crate::source::declared_path_identity(&catalog.display().to_string());
+    for (kind, name, source, repo) in [
+        (ItemKind::Skill, "gh", "cat", cat.as_str()),
+        (ItemKind::Skill, "house-style", "local", "local"),
+        (ItemKind::Command, "preview", "local", "local"),
+        (ItemKind::Command, "note", "cat", cat.as_str()),
     ] {
         lock.entries.insert(
             crate::lock::entry_key(kind, name, HarnessId::Claude),
-            lock_entry(kind, name, source),
+            lock_entry(kind, name, source, repo),
         );
     }
     crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
@@ -843,7 +845,12 @@ fn under_a_second_alias(project: &Project) {
     };
     lock.entries.insert(
         crate::lock::entry_key(ItemKind::Skill, "hound", HarnessId::Claude),
-        lock_entry(ItemKind::Skill, "hound", "feline"),
+        lock_entry(
+            ItemKind::Skill,
+            "hound",
+            "feline",
+            &crate::source::declared_path_identity(&project.catalog.display().to_string()),
+        ),
     );
     crate::lock::save(&lock_path, &lock).unwrap();
     skill(&project.root.join(".claude/skills"), "gh", "edited gh here");
