@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const LOGIN_MISSING_KEY = "codex-login-missing";
+const LOGIN_MISSING_KEY = "codex-login-missing";
 
 /** Resolve the one Codex home whose CLI login this bridge may use:
  * `PI_CODEX_BRIDGE_HOME`, else `CODEX_HOME`, else `~/.codex`. The bridge's own
@@ -24,7 +24,17 @@ export function hasCodexLogin(codexHome: string): boolean {
 }
 
 export function requireCodexLogin(codexHome: string): void {
-	if (!hasCodexLogin(codexHome)) {
-		throw new Error(`${LOGIN_MISSING_KEY} home=${codexHome}\nSign in with the Codex CLI first: codex login`);
-	}
+	if (!hasCodexLogin(codexHome)) throw new Error(loginMissingMessage(codexHome));
+}
+
+/** The missing-login diagnostic: the keyed first line, then the command that
+ * signs in to the bridge home. The Codex CLI reads only `CODEX_HOME`, so the
+ * command sets it to the bridge home, which `PI_CODEX_BRIDGE_HOME` may have
+ * chosen. */
+export function loginMissingMessage(codexHome: string): string {
+	return `${LOGIN_MISSING_KEY} home=${codexHome}\nPi Codex needs a Codex CLI login in this home. Sign in: CODEX_HOME=${shellQuote(codexHome)} codex login`;
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replaceAll("'", `'\\''`)}'`;
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { hasCodexLogin, requireCodexLogin, resolveCodexHome } from "../src/auth-presence.ts";
@@ -21,14 +22,24 @@ test("the bridge home is PI_CODEX_BRIDGE_HOME, else CODEX_HOME, else ~/.codex, a
 	}
 });
 
-test("login presence checks only the resolved home's auth file", () => {
+// The remedy's command runs in a person's shell, so the row runs it through
+// sh, with a stand-in codex that signs in where CODEX_HOME points, as the
+// Codex CLI does. The shell's own CODEX_HOME names another home.
+test("a missing login names the bridge home, and its sign-in command writes the login there", () => {
 	const root = mkdtempSync(join(scratchRoot, "auth-presence-"));
-	const seededHome = join(root, "seeded home");
-	mkdirSync(seededHome);
-	assert.equal(hasCodexLogin(seededHome), false);
-	assert.throws(() => requireCodexLogin(seededHome), (error) => error.message.split("\n")[0] === `codex-login-missing home=${seededHome}`);
-	writeFileSync(join(seededHome, "auth.json"), "credential-bytes-never-read");
-	assert.equal(hasCodexLogin(seededHome), true);
+	const bridgeHome = resolveCodexHome({ PI_CODEX_BRIDGE_HOME: join(root, "bridge's home"), CODEX_HOME: join(root, "shell") });
+	const shellHome = join(root, "shell");
+	const bin = join(root, "bin");
+	for (const dir of [bridgeHome, shellHome, bin]) mkdirSync(dir);
+	writeFileSync(join(bin, "codex"), '#!/bin/sh\n[ "$1" = login ] && printf x > "$CODEX_HOME/auth.json"\n');
+	chmodSync(join(bin, "codex"), 0o755);
+	assert.equal(hasCodexLogin(bridgeHome), false);
+	let message = "";
+	assert.throws(() => requireCodexLogin(bridgeHome), (error) => (message = error.message).split("\n")[0] === `codex-login-missing home=${bridgeHome}`);
+	const remedy = message.split("\n").at(-1);
+	execFileSync("sh", ["-c", remedy.slice(remedy.lastIndexOf(": ") + 2)], { env: { PATH: `${bin}:${process.env.PATH}`, CODEX_HOME: shellHome } });
+	assert.equal(hasCodexLogin(bridgeHome), true);
+	assert.equal(hasCodexLogin(shellHome), false);
 });
 
 // Every name outside the allowlist is dropped, whatever it is called: the

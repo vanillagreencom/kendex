@@ -14,10 +14,14 @@ function hasCodexLogin(codexHome) {
   return existsSync(join(codexHome, "auth.json"));
 }
 function requireCodexLogin(codexHome) {
-  if (!hasCodexLogin(codexHome)) {
-    throw new Error(`${LOGIN_MISSING_KEY} home=${codexHome}
-Sign in with the Codex CLI first: codex login`);
-  }
+  if (!hasCodexLogin(codexHome)) throw new Error(loginMissingMessage(codexHome));
+}
+function loginMissingMessage(codexHome) {
+  return `${LOGIN_MISSING_KEY} home=${codexHome}
+Pi Codex needs a Codex CLI login in this home. Sign in: CODEX_HOME=${shellQuote(codexHome)} codex login`;
+}
+function shellQuote(value) {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 // src/bridge.ts
@@ -1763,8 +1767,7 @@ async function piCodexBridge(pi) {
       if (discovered.notice !== void 0) notice = `${discovered.notice}
 Pi Codex could not list Codex models, so none are offered. Run /reload to try again.`;
     } else {
-      notice = `${LOGIN_MISSING_KEY} home=${codexHome}
-Pi Codex offers no models until the Codex CLI is signed in: codex login`;
+      notice = loginMissingMessage(codexHome);
     }
     pi.registerProvider(piAi.createProvider({
       id: PROVIDER_ID,
