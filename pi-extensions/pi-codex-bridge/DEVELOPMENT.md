@@ -103,11 +103,11 @@ In hosted lanes the platform also guarantees an empty configured set: FLT-1396 o
 
 ## Native tools
 
-No native Codex tool may change a file or run a command. Codex may offer the model a native tool only where it fails closed. Three such tools exist, each with the guard that stops it, set out below:
+No native tool Codex offers the model can change a file or run a command. Which native tools Codex offers depends on the release and on the model's catalog entry, so the contract holds per group of tools, each behind one guard from the list below. On both listed releases, a fixture-world call to each tool of each group wrote no file.
 
-- `apply_patch`: the turn has no environment. Codex 0.166.0 offers it whenever the model's catalog entry declares it, and no thread parameter, config key or feature removes it.
-- `exec`, for a `code_mode_only` model: `code_mode_host` is disabled.
-- `spawn_agent`, for a model with a multi-agent runtime: `features.multi_agent_v2.max_concurrent_threads_per_session=1`.
+- Environment tools, such as `apply_patch`: every bridge turn has no environment, so Codex answers the call that no execution environment is available. Codex 0.166.0 offers `apply_patch` whenever the model's catalog entry declares it, and no thread parameter, config key or feature removes it. The native-tool row holds this group.
+- Code-mode tools, such as `exec` and `wait`, offered at top level to a `code_mode_only` model and in the `functions` namespace to a model with a multi-agent runtime: `code_mode_host` is disabled, so Codex answers each call that the code-mode host is disabled. The code-mode row holds that `exec` lists no Pi tool for such a model.
+- Collaboration tools, the `collaboration` namespace, offered to a model with a multi-agent runtime: `features.multi_agent_v2.max_concurrent_threads_per_session=1` refuses every spawn, so no sub-agent exists. `list_agents` answers with the root thread alone, and `send_message`, `followup_task` and `interrupt_agent` answer that the target is not found. `wait_agent` instead starts a `collabAgentToolCall` item, which the item audit refuses, so that turn ends with `codex-native-item type=collabAgentToolCall`. The sub-agent row holds the refused spawn.
 
 These guards hold the contract:
 
@@ -119,7 +119,7 @@ These guards hold the contract:
 
 `unified_exec` cannot be disabled in a listed release: `--disable unified_exec`, `-c features.unified_exec=false` and `experimental_use_unified_exec_tool=false` all leave it reported enabled. It is in `REVIEWED_ENABLED_FEATURES` because its `exec_command` and `write_stdin` tools are not offered while `shell_tool` is off; the fixture suite asserts that from the tools Codex sends the model. If Codex ran one anyway, the item audit (`commandExecution` is not an allowed item type) stops it after it starts, and a command outside the known-safe set and the allow rules also meets a declined approval request first.
 
-The native-tool row of the fixture suite proves the contract for its model, the default mock model, on every listed release. Every tool Codex offers that model is the `pi` namespace, a `pi.*` tool or `apply_patch`. The code-mode row holds `exec` and the sub-agent row holds `spawn_agent`, each on a model that is offered it. A scripted `apply_patch` call in the freeform shape Codex declares gets Codex's answer in the next model request. The row also sends one in the function shape, which Codex answers on another path. Neither call starts a `fileChange` or `commandExecution` item or writes a file, and the turn ends `stop`. Its contrast sends the same call through a bridge whose `thread/start` and `turn/start` carry no `environments`; there Codex starts a `fileChange` item, and the item audit refuses it with `codex-native-item type=fileChange`. A release that offers another native tool, or starts a patch on a bridge turn, fails the row.
+The native-tool row of the fixture suite proves the contract for its model, the default mock model, on every listed release. Every tool Codex offers that model is the `pi` namespace, a `pi.*` tool or `apply_patch`. The code-mode and sub-agent rows hold the code-mode and collaboration groups on models Codex offers them to. A scripted `apply_patch` call in the freeform shape Codex declares gets Codex's answer in the next model request. The row also sends one in the function shape, which Codex answers on another path. Neither call starts a `fileChange` or `commandExecution` item or writes a file, and the turn ends `stop`. Its contrast sends the same call through a bridge whose `thread/start` and `turn/start` carry no `environments`; there Codex starts a `fileChange` item, and the item audit refuses it with `codex-native-item type=fileChange`. A release that offers another native tool, or starts a patch on a bridge turn, fails the row.
 
 ## Model discovery
 
