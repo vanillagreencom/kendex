@@ -38,6 +38,10 @@
 
 **Location**: `[FILE_PATH]`
 
+## Owner directive (verbatim)
+
+[OWNER_DIRECTIVE]
+
 ## Evidence
 
 - [One fact and the link that shows it]
@@ -57,6 +61,7 @@
 | Story / Why this matters | `items[].description`, or `create_fields.description` in analyzed mode | Story has three or four plain sentences about the person, today, the change and its consequence. Why this matters states the cost and benefit without retelling the sequence. Authors and reviewers judge the prose |
 | `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | List observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition. A box is a one-line `Post-merge:` box, in the form that section gives with `Deadline: +Nh`, only when it needs a deployment or installation, live use over time, or a person's screen or hands. Branch proof comes first. Each checked box keeps its immediately following indented plain `Evidence:` line |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
+| `[OWNER_DIRECTIVE]` | The marked block in `items[].description` | Include this section after Context when present, copied unchanged. The Requirements row's Disposition cuts never apply to it; omit the section when absent |
 | `[FILE_PATH]` | `items[].location` | Backticked path. **Never line numbers**; name the function or struct |
 | `--project` (create flag, not body text) | `project.recommended` in the audit output, or the caller | Under a declared project map, the map project [project-map.md § Routing](../references/project-map.md#routing) routes the item to, a child included, or none: the item is `project_needed` and is not created |
 | `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description | Filing record; omit the line when absent. Decision references use decider's `schemas/decision-format.md` § Cross-references |
@@ -69,4 +74,4 @@
 4. Every create passes the validated final `labels[]` from the label preflight.
 5. Under a declared project map, every create passes `--project` with the map project [project-map.md § Routing](../references/project-map.md#routing) routes the item to, a child included; an item it routes to none is held as `project_needed`.
 6. Keep the quoted Story and Why this matters blocks before every heading, with an unquoted blank line between them and before the first heading. Keep the section order shown above. Requirements constrain the solution without repeating acceptance checks.
-7. Keep each `**Key**:` header at line start, with a blank line between every filing-record field and around every section heading. Each prose header value is one sentence with links. Keep Expected delta in the numeric form its reader accepts. A run, log or pull request is its URL and the one fact it shows. Keep published Artifacts links under Context. Move longer filing evidence and owner quotations to short Evidence list items. Omit Evidence when empty. Paste no log lines. Mailbox and Slack ids appear only in Source.
+7. Keep each `**Key**:` header at line start, with a blank line between every filing-record field and around every section heading. Each prose header value is one sentence with links. Keep Expected delta in the numeric form its reader accepts. A run, log or pull request is its URL and the one fact it shows. Keep published Artifacts links under Context. Move longer filing evidence and owner quotations outside the marked directive to short Evidence list items. Omit Evidence when empty. Paste no log lines. Mailbox and Slack ids outside the marked directive appear only in Source.
