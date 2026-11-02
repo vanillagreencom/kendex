@@ -8,7 +8,8 @@
 # with nothing run, an unknown command answered, /report landing one directive
 # in the configured root and none in another, a resent payload landing
 # nothing more and a distinct trigger_id a second directive, the overseer's
-# notice answering a /report posted in the channel, a payload with no
+# notice answering a /report posted in the channel, also once as a new
+# message while a Jarvis session hold stands, a payload with no
 # trigger_id and a root with no recorded overseer each answered unavailable
 # with nothing written, a second fixture whose destination is the other root,
 # SLACK_REPORT_ROOT outside the relay's roots or relative refused at start,
@@ -19,7 +20,8 @@
 # view, and Home off, by an empty setting or Slack's not_enabled, printed once
 # while the relay keeps routing. The controls: the owner gate read from the
 # roots' bindings, the destination taken from the first root, a delivery id
-# that changes on a resend, the answer to a /report skipped, the Home
+# that changes on a resend, the answer to a /report skipped or routed as a
+# notice a hold keeps back, the Home
 # command's output sent unchecked, an unstartable command raised out of the
 # worker, and Slack's not_enabled raised out of the worker. One worker answers
 # envelopes in order, so a row that expects nothing waits for a later reply
@@ -162,6 +164,24 @@ report_trip() {
   RESULT="$(printf '%s\n' "$keyed" | grep -c .)|$(posts "$ALPHA_CH" "$answer")"
   sk_relay_stop
 }
+# held_report: /report to alpha while the Jarvis session presence file is
+# fresh, then an unrelated owner notice and the overseer's notice answering
+# the directive; the hold as status shows it once the answer posted, the
+# answer's top-level posts and the unrelated notice's posts.
+held_report() {
+  local key answer
+  touch -- "$SK_TMP/jarvis-session-live"
+  relay "$ALPHA" "SLACK_REPORT_ROOT=$ALPHA" "SLACK_JARVIS_SESSION_FILE=$SK_TMP/jarvis-session-live"
+  key="T-held-$RANDOM"
+  answer="Held progress report $key."
+  reply "$(slash /report U001 "$key")" >/dev/null
+  sk_lm "$ALPHA" notice --item overseer --to owner --file "$(sk_text held-unrelated "Unrelated $key.")" >/dev/null
+  sk_lm "$ALPHA" notice --item overseer --to owner --ref "$(directive_id "$ALPHA" "command:$key")" \
+    --file "$(sk_text held-answer "$answer")" >/dev/null
+  awaited posts "$ALPHA_CH" "$answer" >/dev/null
+  RESULT="$(jq -r .held_by "$ALPHA/tmp/slack/status.json")|$(posts "$ALPHA_CH" "$answer")|$(posts "$ALPHA_CH" "Unrelated $key.")"
+  sk_relay_stop
+}
 
 relay "$ALPHA" --root "$BETA" "SLACK_REPORT_ROOT=$ALPHA" "${CONFIGURED[@]}"
 assert_eq "$(reply "$(slash /status U001 "" "; touch $SK_TMP/pwned")")" "ephemeral|status-fixture argc=0 stdin=0" \
@@ -204,6 +224,8 @@ assert_eq "$RESULT" "0|1" "with beta configured, /report lands in beta and not i
 # --- the overseer's answer to /report -------------------------------------------------
 report_trip
 assert_eq "$RESULT" "1|1" "a resent /report lands one directive, and the overseer's notice answering it posts once in the channel"
+held_report
+assert_eq "$RESULT" "jarvis|1|" "while a Jarvis session hold stands, the answer to a /report posts once as a new message and an unrelated notice stays held"
 
 # --- unavailable destination, off commands and Home off -------------------------------
 relay "$GAMMA" "SLACK_REPORT_ROOT=$GAMMA" "SLACK_ASKS_COMMAND=$CMD/secret"
@@ -288,9 +310,12 @@ sk_assert_red "$RESULT" "0|1" "control: a destination taken from the first root 
 sk_mutant resend relay.py 'f"\{COMMAND_KEY\}\{trigger\}"' 'f"{COMMAND_KEY}{trigger}:{time.time()}"'
 report_trip
 sk_assert_red "$RESULT" "1|1" "control: a delivery id that changes on a resend lands twice"
-sk_mutant report-skip relay.py 'or owner_ask or command else' 'or owner_ask else'
+sk_mutant report-skip relay.py 'reference\.get\("thread_ts"\) or delivery_id\.startswith\(COMMAND_KEY\)' 'reference.get("thread_ts")'
 report_trip
 sk_assert_red "$RESULT" "1|1" "control: the notice answering a /report, skipped as another medium's reply, posts nothing"
+sk_mutant report-notice relay.py 'route = "reply" if slack_origin else' 'route = "notice" if delivery_id.startswith(COMMAND_KEY) else "reply" if slack_origin else'
+held_report
+sk_assert_red "$RESULT" "jarvis|1|" "control: the answer to a /report routed as a notice stays held"
 sk_mutant home-unchecked relay.py '        try:\n            secret_check\(out\.encode\(\), f"command=\{setting\}"\)\n        except Refusal as refusal:\n            print_refusal\(refusal\)\n            return "", refusal\.key\n' ''
 withheld
 sk_assert_red "${VIEWS[2]}" "$HOME_SECRET" "control: a Home command's output sent unchecked publishes the secret"

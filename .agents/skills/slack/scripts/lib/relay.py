@@ -66,7 +66,8 @@ Each root checks its presence pair at every poll through the settings reader
 when its settings files change. Other settings need slack setup or a restart.
 While SLACK_JARVIS_SESSION_FILE is younger than SLACK_JARVIS_SESSION_MAX_AGE a Jarvis session
 answers the overseer, and the relay holds mailbox posts except replies to
-messages the owner typed in the channel, which still post in their threads.
+messages the owner typed in the channel, which still post in their threads,
+and the answer to a /report, which posts as a new message.
 Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
 is dropped once the new one is fresh or the replaced one stale. An emptied
@@ -180,7 +181,7 @@ SECTION_CHARS = 3000
 TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 # The delivery id of a /report directive is its trigger_id under this
 # prefix. `report` writes it and `RootRelay.routes` reads it as typed in
-# Slack, so the overseer's notice answering the directive posts.
+# Slack, so the overseer's notice answering the directive posts, held or not.
 COMMAND_KEY = "command:"
 
 # Slack's answer when the reaction is already as the call would leave it, or
@@ -957,14 +958,17 @@ class RootRelay:
             elif owner and kind == "notice":
                 ref = envelope.get("ref")
                 reference = by_id.get(ref, {})
-                # send_directive writes Slack's channel:ts and thread pointer.
-                # Owner asks originate here, so their rulings still post, and
-                # so does the answer to a /report, which has no thread.
+                # A directive the owner typed in Slack: send_directive writes
+                # a message's thread pointer and channel:ts, `report` a
+                # /report's COMMAND_KEY. Its answer is a reply, posted even
+                # while held; post_notice threads it under the message, and a
+                # /report, which has no thread, gets a new message. Owner asks
+                # originate here too, so their rulings still post.
                 delivery_id = str(reference.get("delivery_id", ""))
-                slack_reply = reference.get("thread_ts") or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id)
+                slack_origin = (reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
+                                or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
-                command = delivery_id.startswith(COMMAND_KEY)
-                route = "reply" if slack_reply else "notice" if not ref or owner_ask or command else "skip"
+                route = "reply" if slack_origin else "notice" if not ref or owner_ask else "skip"
             elif box == "to-lane" and kind == "answer":
                 route = "answer"
             else:

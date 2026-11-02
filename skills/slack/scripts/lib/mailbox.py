@@ -237,7 +237,7 @@ class LaneMail:
 def run_bounded(argv: List[str], cwd: Path, timeout: float, env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
     """One child in a process group of its own, stdin closed and its output
     captured whole: its exit status, stdout and stderr, decoded as UTF-8 with
-    each invalid byte replaced, so no output the child prints can raise.
+    each invalid byte sequence replaced, so no output the child prints can raise.
     Past `timeout`, TERM and then KILL reach the whole group, each followed
     by up to LANE_MAIL_CLEANUP_SECONDS for the group to end, then up to that
     again for the child alone, and TimeoutExpired is raised: the call holds
