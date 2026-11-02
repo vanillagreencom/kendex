@@ -6,8 +6,6 @@ The bridge drives `codex app-server --stdio`, the JSON-RPC interface the Codex C
 
 The bridge does not use `codex exec --json`. That command writes JSON Lines to standard output and reads nothing back, so a tool result has no way to reach a pending call. Codex 0.163.0 also refuses dynamic tools in exec mode (`dynamic tool calls are not supported in exec mode`).
 
-The bridge supports exactly Codex CLI 0.163.0. It reads `codex --version` before each launch and refuses another version with `codex-version-unsupported found=<v> expected=0.163.0`. The app-server protocol is experimental, and each list in `src/codex-policy.ts` was read from that release, so a new release needs a review and a package release.
-
 The bridge calls these 0.163.0 methods:
 
 | Method | Use |
@@ -21,6 +19,32 @@ The bridge calls these 0.163.0 methods:
 | `turn/start`, `turn/steer`, `turn/interrupt` | Turns, user input during a tool batch, and aborts. |
 
 `src/protocol.ts` narrows every value read from Codex. Other modules consume its typed results.
+
+## Supported Codex releases
+
+The app-server protocol is experimental, so the bridge runs only the Codex releases it lists. The list is the optional `@openai/codex` peer range in `package.json`: exact stable versions joined by ` || `, in ascending order. It lists 0.163.0. A listed release means the required merge-group CI run of the commit that listed it passed the fixture suite on that release.
+
+Before each launch, `codex-policy.ts::supportedCodexVersions` reads the range from the `package.json` beside `src/` or `bundle/`, the copy Pi runs, and `app-server.ts::assertSupportedCodex` reads `codex --version`. Each refusal below comes before any app-server starts:
+
+| Key | Cause |
+|---|---|
+| `codex-version-unsupported found=<v> supported=<list>` | The installed Codex is not a listed release. |
+| `codex-version-unreadable executable=<path> code=<code>` | `codex --version` did not run. |
+| `codex-support-unreadable path=<path> code=<code>` | The manifest is missing or is not JSON. |
+| `codex-support-malformed range=<range>` | The range is absent, open, or names a prerelease. |
+
+Model discovery runs the same check, so the provider offers no model and the session-start notice carries the key. A stream or cold resume on a saved model selection refuses with the same key.
+
+To list a release:
+
+1. Add the dev dependency `"codex-<version>": "npm:@openai/codex@<version>"`. Each listed release keeps its own; never bump one in place.
+2. Add the version to the peer range.
+3. Review the release's default-on features (`codex features list`) in `src/codex-policy.ts`. A name in `DISABLED_FEATURES` must exist in every listed release, because 0.163.0 refuses to start on `--disable` of an unknown feature.
+4. Run `npm run test:fixture`. It must pass on every listed release.
+
+Removing a listed release is a breaking change under the [release-version rule](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/CHECKS.md#release-versions).
+
+0.166.0 is not listed. It offers the model Codex's `apply_patch` tool on a thread with `environments: []`, no setting removes that tool, and the native-tool row requires that Codex offer none.
 
 ## Threads
 
@@ -102,7 +126,7 @@ The client owns its child from the spawn. One 15-second deadline covers the vers
 `npm run test:ci` builds the published bundle, checks TypeScript and runs two login-free suites:
 
 - `tests/unit-*.mjs` run against `tests/lib/fake-client.mjs`, which stands in for one app-server connection, so the bridge's router, planner and streams run unchanged. `tests/unit-process.mjs` runs the version gate, the handshake deadline and the child stop against `tests/lib/stub-codex.mjs`, a stand-in `codex` executable written into the test's scratch directory, with real processes.
-- `tests/fixture-*.mjs` run the real Codex CLI 0.163.0 from the `@openai/codex` dev dependency through the bridge's own start path. `tests/lib/codex-fixture.mjs` builds a scratch `CODEX_HOME` with a user marker MCP server and a trusted project that declares another, and `tests/lib/mock-responses.mjs` serves scripted model responses on 127.0.0.1 as a Codex model provider. The bridge receives that provider through its `configOverrides` test seam, which the extension factory never sets.
+- `tests/fixture-*.mjs` run every row once per listed release, each against that release's real Codex CLI from its `codex-<version>` dev dependency, through the bridge's own start path. A first row per release checks that the CLI reports that version; a listed release without its CLI fails every row. `tests/lib/codex-fixture.mjs` builds a scratch `CODEX_HOME` with a user marker MCP server and a trusted project that declares another, and `tests/lib/mock-responses.mjs` serves scripted model responses on 127.0.0.1 as a Codex model provider. The bridge receives that provider through its `configOverrides` test seam, which the extension factory never sets.
 
 The fixture suites hold the MCP guards at thread start and cold resume, the startup abort, the feature audit, and the native-tool guards. A scratch `model_catalog_json` marks the mock model `code_mode_only` for the row that holds Pi's direct namespace; the bridge itself writes no model metadata. Their marker MCP server outlives stdin EOF, so the late-server row shows the stop ends a server Codex started. Each row stops its world from `t.after`, which runs when the row times out, and both suites run with `--test-force-exit`, so a stalled row fails after its 30-second deadline instead of holding the CI job. They also scan the bridge's stderr, stream events, child argv and environment, and every file Codex or the bridge wrote, for the env and argument sentinels of the configured servers.
 

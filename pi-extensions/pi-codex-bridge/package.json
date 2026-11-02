@@ -34,7 +34,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.86.0",
-    "@earendil-works/pi-coding-agent": ">=0.86.0"
+    "@earendil-works/pi-coding-agent": ">=0.86.0",
+    "@openai/codex": "0.163.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
@@ -42,13 +43,16 @@
     },
     "@earendil-works/pi-coding-agent": {
       "optional": true
+    },
+    "@openai/codex": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "1.0.0",
     "@earendil-works/pi-coding-agent": "1.0.0",
-    "@openai/codex": "0.163.0",
     "@types/node": "^24.3.0",
+    "codex-0.163.0": "npm:@openai/codex@0.163.0",
     "esbuild": "^0.28.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"

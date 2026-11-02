@@ -33,7 +33,31 @@ import { execFile, spawn as nodeSpawn } from "node:child_process";
 import { promisify } from "node:util";
 
 // src/codex-policy.ts
-var SUPPORTED_CODEX_VERSION = "0.163.0";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+var PACKAGE_MANIFEST = new URL("../package.json", import.meta.url);
+function supportedCodexVersions(manifest = PACKAGE_MANIFEST) {
+  let text2;
+  try {
+    text2 = readFileSync(manifest, "utf8");
+  } catch (error) {
+    throw new Error(`codex-support-unreadable path=${fileURLToPath(manifest)} code=${error.code ?? "unknown"}`);
+  }
+  let manifestJson;
+  try {
+    manifestJson = JSON.parse(text2);
+  } catch {
+    throw new Error(`codex-support-unreadable path=${fileURLToPath(manifest)} code=invalid-json`);
+  }
+  return parseCodexSupport(manifestJson?.peerDependencies?.["@openai/codex"]);
+}
+function parseCodexSupport(range) {
+  const versions = typeof range === "string" ? range.trim().split(/\s*\|\|\s*/) : [];
+  if (versions.length === 0 || !versions.every((version) => /^\d+\.\d+\.\d+$/.test(version))) {
+    throw new Error(`codex-support-malformed range=${typeof range === "string" ? JSON.stringify(range) : "absent"}`);
+  }
+  return versions;
+}
 var PI_TOOL_NAMESPACE = "pi";
 var DISABLED_FEATURES = [
   "shell_tool",
@@ -185,7 +209,7 @@ import { createInterface } from "node:readline";
 
 // src/process-tree.ts
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync as readFileSync2 } from "node:fs";
 function parseProcStat(pid, stat) {
   const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
   const ppid = Number(fields[1]);
@@ -205,7 +229,7 @@ function processTable() {
     return readdirSync("/proc").flatMap((name) => {
       if (!/^\d+$/.test(name)) return [];
       try {
-        const row = parseProcStat(Number(name), readFileSync(`/proc/${name}/stat`, "utf8"));
+        const row = parseProcStat(Number(name), readFileSync2(`/proc/${name}/stat`, "utf8"));
         return row ? [row] : [];
       } catch {
         return [];
@@ -614,6 +638,7 @@ var INITIALIZE_PARAMS = {
   }
 };
 async function assertSupportedCodex(launch, signal) {
+  const supported = supportedCodexVersions();
   let stdout;
   try {
     ({ stdout } = await execFileAsync(launch.executable, ["--version"], {
@@ -627,8 +652,8 @@ async function assertSupportedCodex(launch, signal) {
     throw new Error(`codex-version-unreadable executable=${launch.executable} code=${error.code ?? "unknown"}`);
   }
   const found = decodeVersion(stdout);
-  if (found !== SUPPORTED_CODEX_VERSION) {
-    throw new Error(`codex-version-unsupported found=${found} expected=${SUPPORTED_CODEX_VERSION}`);
+  if (!supported.includes(found)) {
+    throw new Error(`codex-version-unsupported found=${found} supported=${supported.join(",")}`);
   }
 }
 async function startAppServer(launch, signal, spawn = nodeSpawn) {
@@ -1449,7 +1474,7 @@ ${event.error.split("\n", 1)[0]}` : ""}`);
 };
 
 // src/package-config.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname, join as join2, resolve } from "node:path";
 var SETTINGS_CHANGED_EVENT = "kendex:extension-settings-changed";
@@ -1574,7 +1599,7 @@ function deepFreeze(value) {
 }
 function readText(path) {
   try {
-    return { kind: "text", text: readFileSync2(path, "utf8") };
+    return { kind: "text", text: readFileSync3(path, "utf8") };
   } catch (error) {
     const code = error?.code;
     if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
