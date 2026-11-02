@@ -31,8 +31,8 @@ CLOSED_KEEP_DAYS = 30
 # How long a delivered forward waits for its answer. Past it, an answer the
 # main's compaction dropped unread, or one sent without --ref, cannot be told
 # from none, so the forward closes as answer-unseen and is read no more. The
-# main keeps a read answer max(ORCH_RECORD_RETENTION_DAYS, SLACK_THREAD_DAYS)
-# days, seven by default, a setting the satellite cannot read.
+# main keeps an answer row max(ORCH_RECORD_RETENTION_DAYS, SLACK_THREAD_DAYS)
+# days, read or not, seven by default, a setting the satellite cannot read.
 ANSWER_WAIT_DAYS = 7
 RECORD_BYTES = 65536
 WORDS_LIMIT = 300
@@ -179,6 +179,11 @@ def entry_state(entry):
     if entry.get("forwarded") is None:
         return "queued"
     return "read" if entry.get("read") else "delivered"
+
+
+def kept(entry, now):
+    """True for an open entry, or a closed one inside CLOSED_KEEP_DAYS, which still refuses and reports."""
+    return entry_state(entry) != "closed" or now - entry["closed_at"] < CLOSED_KEEP_DAYS * 86400
 
 
 def find(state, key):
@@ -387,11 +392,17 @@ class Forwarder:
                 state["last_answer"] = latest[1]
 
     def events(self):
-        """One forward-failed block per entry whose cause no retry clears, a closed answer-unseen one included."""
+        """One forward-failed block per kept entry whose cause no retry clears, a closed answer-unseen one included.
+
+        The watch's pass cursor appends a printed block once, so a closed
+        block prints on every drain until its keep ends, and a failed pass
+        loses none.
+        """
         state = self.outbox.read()
+        now = watch.epoch()
         blocks = []
         for entry in state["entries"]:
-            if entry.get("cause") in TERMINAL:
+            if kept(entry, now) and entry.get("cause") in TERMINAL:
                 fields = {"request": entry["request"], "cause": entry["cause"]}
                 if entry.get("detail"):
                     fields["detail"] = entry["detail"]
@@ -435,8 +446,7 @@ class Forwarder:
             ("confirmation-text", json.dumps(confirmation.get("words"), ensure_ascii=True))))
         now = watch.epoch()
         with self.outbox.locked() as state:
-            state["entries"] = [entry for entry in state["entries"] if entry_state(entry) != "closed"
-                                or now - entry["closed_at"] < CLOSED_KEEP_DAYS * 86400]
+            state["entries"] = [entry for entry in state["entries"] if kept(entry, now)]
             entry = find(state, key)
             if entry is not None and entry_state(entry) == "closed":
                 raise Refusal(entry.get("cause") or "answered-already", request["ref"])

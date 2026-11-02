@@ -461,6 +461,9 @@ class Forward(MailWorld):
                     again = self.forward(record)
                     self.assertEqual(again.stderr.split("\n")[0], "jarvis-session: forward=refused cause=answer-unseen")
                     self.assertEqual(self.ssh_calls(), calls)
+                    # The block prints until the closed entry's keep ends, though no forward prunes it.
+                    self.age_closed(30)
+                    self.assertEqual(self.jarvis("forward-drain").stdout, "")
 
     def test_role_refusals(self):
         record = self.write(self.record())

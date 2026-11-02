@@ -134,7 +134,7 @@ The main receives the request text, a blank line, then one line:
 
 ### Status
 
-`jarvis-session status --home HOME --main` reports the role, whether the main was reachable at the last call, the last answer, and every open forward with its state and cause. The [session workflow](../workflows/session.md#session-command) lists them. An answered forward closes; its answer shows as `last_answer`, the answer the main wrote last. A forward with no answer read within 7 days of its delivery closes as `answer-unseen`: the main dropped a read answer before the satellite read it, or answered without `--ref`. The drain reports it as `EVENT forward-failed`, and the satellite reads the main for it no more.
+`jarvis-session status --home HOME --main` reports the role, whether the main was reachable at the last call, the last answer, and every open forward with its state and cause. The [session workflow](../workflows/session.md#session-command) lists them. An answered forward closes; its answer shows as `last_answer`, the answer the main wrote last. A forward with no answer read within 7 days of its delivery closes as `answer-unseen`: the main's compaction dropped the answer by age before the satellite read it, or the main answered without `--ref`. The drain prints it as `EVENT forward-failed` for 30 days after the close, and the satellite reads the main for it no more.
 
 ## Transcript fallback
 
