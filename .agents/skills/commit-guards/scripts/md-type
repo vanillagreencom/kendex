@@ -9,7 +9,8 @@
 #                        limit, ceiling or threshold, where the type takes it
 #   section-order        an H2 named by the numbered list, out of its order
 #   description-missing  no content between the title and the first H2,
-#                        where the numbered list's first item asks for one
+#                        where the type is ordered: the numbered list's first
+#                        item is the description slot, whatever it names
 #
 # A finding is (finding, type) in one file with a count; it is introduced,
 # and blocks, when the count exceeds the baseline's: the file's earlier self
@@ -69,9 +70,10 @@ fails; one the baseline already had warns. Word count beside the type's
 example is printed as a signal. Every selected file is parsed, and one the
 block parser cannot end fails.
 
---staged, --base REF, --against REF and --all select files the way md-refs
-and md-reflow do; with none of them COMMIT_GUARDS_MD_SCOPE decides. An absent
-or unreadable docs-writing is a gap notice at exit 0 in these modes.
+--staged, --base REF, --against REF and --all select the files in
+COMMIT_GUARDS_MD_PATHS minus COMMIT_GUARDS_MD_EXCLUDES; with none of them
+COMMIT_GUARDS_MD_SCOPE decides. An absent or unreadable docs-writing is a gap
+notice at exit 0 in these modes.
 A renamed file is judged at its new path against the path it moved from.
 --route PATH prints the type, reference and example for PATH, or
 route=ignored, route=outside-repo or route=unclassified.

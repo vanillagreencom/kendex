@@ -351,9 +351,10 @@ COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = ""
 # subject is the escape for a change none of them notices.
 COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"
 
-# The markdown lanes judge every tracked markdown file, not only the files a
-# commit touches: the tree is reflowed, and tools/md-excludes names the
-# vendored text they leave alone.
+# md-refs checks every configured document at every push, even one whose
+# range carries no change; under "touched" it checks them only when the
+# commit or range changes something. md-type reads the changed files under
+# either value.
 COMMIT_GUARDS_MD_SCOPE = "all"
 
 # Catalog scripts include extensionless files; judge their citations here.
