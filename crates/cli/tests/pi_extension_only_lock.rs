@@ -182,17 +182,25 @@ struct Checked {
     exit: Option<i32>,
 }
 
+/// Every line `check --json --scope project` drew, in report order, and
+/// its exit code.
 #[allow(clippy::unwrap_used)]
-fn checked(home: &Path, project: &Path) -> Checked {
+fn check_lines(home: &Path, project: &Path) -> (Vec<serde_json::Value>, Option<i32>) {
     let json = kendex(home, project, &["check", "--json", "--scope", "project"]);
     let report: serde_json::Value = serde_json::from_slice(&json.stdout)
         .unwrap_or_else(|error| panic!("check --json is JSON: {error}: {}", said(&json)));
-    let lines: Vec<&serde_json::Value> = report["sections"]
+    let lines = report["sections"]
         .as_array()
         .unwrap()
         .iter()
-        .flat_map(|section| section["lines"].as_array().unwrap())
+        .flat_map(|section| section["lines"].as_array().unwrap().iter().cloned())
         .collect();
+    (lines, json.status.code())
+}
+
+#[allow(clippy::unwrap_used)]
+fn checked(home: &Path, project: &Path) -> Checked {
+    let (lines, exit) = check_lines(home, project);
     let named = |keep: &dyn Fn(&serde_json::Value) -> bool| {
         let mut named: Vec<String> = lines
             .iter()
@@ -211,7 +219,104 @@ fn checked(home: &Path, project: &Path) -> Checked {
     Checked {
         update_pi: named(&|line| line["remedy"]["verb"] == "update-pi"),
         no_fix: named(&|line| line.get("remedy").is_none()),
-        exit: json.status.code(),
+        exit,
+    }
+}
+
+/// The scope as it stands.
+fn project_scope(project: &Path) -> kendex_core::model::Scope {
+    kendex_core::model::Scope::Project {
+        root: project.to_path_buf(),
+    }
+}
+
+/// What apply's plan leaves of the declared Pi packages on the scope as it
+/// stands, from the typed rows the run's own lists are read off
+/// (`commands::offers`): the packages it leaves for `update-pi`, and those
+/// neither its write nor `update-pi` settles, one per row. A plan that
+/// will not read leaves neither.
+fn applied(home: &Path, project: &Path) -> (Vec<String>, Vec<String>) {
+    let env = kendex_core::env::Env::host_rooted(home);
+    let Ok(report) = kendex_core::engine::plan_apply(
+        &env,
+        &project_scope(project),
+        &kendex_core::engine::PlanOptions::current(),
+    ) else {
+        return (Vec::new(), Vec::new());
+    };
+    let named = |keep: &dyn Fn(&kendex_core::engine::DriftRow) -> bool| {
+        let mut named: Vec<String> = report
+            .drift
+            .iter()
+            .filter(|row| row.kind == kendex_core::model::ItemKind::PiExtension && keep(row))
+            .map(|row| row.name.clone())
+            .collect();
+        named.sort();
+        named
+    };
+    (
+        named(&|row| row.remedy == Some(kendex_core::engine::RowRemedy::UpdatePi)),
+        named(&|row| row.pi_unsettled.is_some()),
+    )
+}
+
+/// The scope's snapshot as the last deep pass stored it.
+#[allow(clippy::unwrap_used)]
+fn snapshot(home: &Path, project: &Path) -> kendex_core::drift::snapshot::ScopeSnapshot {
+    let env = kendex_core::env::Env::host_rooted(home);
+    match kendex_core::drift::snapshot::load(&env, &project_scope(project)) {
+        kendex_core::drift::snapshot::SnapshotFile::Current(snapshot) => snapshot,
+        kendex_core::drift::snapshot::SnapshotFile::Absent
+        | kendex_core::drift::snapshot::SnapshotFile::Unreadable(_) => {
+            panic!("the run stored no readable snapshot")
+        }
+    }
+}
+
+/// Store `planted` as the scope's snapshot, and read it back, so a case
+/// never checks against a snapshot it only meant to write.
+#[allow(clippy::unwrap_used)]
+fn plant_snapshot(
+    home: &Path,
+    project: &Path,
+    planted: &kendex_core::drift::snapshot::ScopeSnapshot,
+) {
+    let env = kendex_core::env::Env::host_rooted(home);
+    kendex_core::drift::snapshot::store(&env, &project_scope(project), planted).unwrap();
+    assert_eq!(
+        &snapshot(home, project),
+        planted,
+        "the planted snapshot reads back"
+    );
+}
+
+/// A Pi row of the snapshot, every flag cleared.
+fn pi_row(name: &str) -> kendex_core::drift::snapshot::PackageSnapshot {
+    kendex_core::drift::snapshot::PackageSnapshot {
+        kind: kendex_core::model::ItemKind::PiExtension,
+        name: name.to_owned(),
+        source: "cat".to_owned(),
+        repo: String::new(),
+        refs_state: None,
+        update_available: false,
+        removed_upstream: false,
+        held: false,
+        ignored: false,
+        edited: false,
+        mixed: false,
+        forked: false,
+    }
+}
+
+/// A Pi note of the snapshot, as a compare that failed writes it.
+fn pi_note(name: &str) -> kendex_core::drift::snapshot::UnreadableSnapshot {
+    kendex_core::drift::snapshot::UnreadableSnapshot {
+        kind: kendex_core::model::ItemKind::PiExtension,
+        name: name.to_owned(),
+        message: "kendex could not compare the installed Pi package with its source".to_owned(),
+        detail: Some("declared package directory is missing".to_owned()),
+        repo: String::new(),
+        refs_state: None,
     }
 }
 
@@ -221,10 +326,10 @@ fn checked(home: &Path, project: &Path) -> Checked {
 #[allow(clippy::unwrap_used)]
 fn standing(home: &Path, project: &Path) -> (Vec<String>, Vec<String>) {
     let env = kendex_core::env::Env::host_rooted(home);
-    let scope = kendex_core::model::Scope::Project {
-        root: project.to_path_buf(),
+    // A manifest that will not read has no standing to offer or warn.
+    let Ok(report) = kendex_core::package::updates::updates(&env, &project_scope(project)) else {
+        return (Vec::new(), Vec::new());
     };
-    let report = kendex_core::package::updates::updates(&env, &scope).unwrap();
     let pi = kendex_core::model::ItemKind::PiExtension;
     let mut offered: Vec<String> = report
         .rows
@@ -258,11 +363,13 @@ fn loaded_from_the_personal_scope(home: &Path) {
 /// The closing line names `update-pi` as the finish only where running it
 /// finishes the scope, and a declared package neither the run's write nor
 /// `update-pi` settles is named and counted, so the run never closes as up
-/// to date over it. `check` names `update-pi` for the packages it installs
-/// and for no other, once each, reading that from the scope as it stands
-/// and not from the run's snapshot, and `verify` does not offer it as the
-/// record's remedy for a package it leaves. Beside a package whose source no longer ships it,
-/// update-pi notes that one as not evaluated and fails; for a copy Pi
+/// to date over it. On the scope as it stands, `check` names `update-pi`
+/// for exactly the packages apply's plan leaves for it and gives exactly
+/// the packages the plan leaves unsettled their reason with no fix, one
+/// line each, and exits clean only where the plan leaves no Pi package; a
+/// mute does not silence that line. `verify` does not offer `update-pi` as
+/// the record's remedy for a package it leaves. Beside a package whose
+/// source no longer ships it, update-pi notes that one as not evaluated and fails; for a copy Pi
 /// already loads from the personal scope, it leaves the copy blocked, so
 /// neither finish is named beside it, the take-over included, which
 /// installs no Pi package. A native filter the run itself writes holds
@@ -355,16 +462,65 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             ),
         );
     };
-    let moved_on_and_loaded_twice: Plant = |home, project| {
+    fn installed_and_recorded(home: &Path, project: &Path) {
         settled_once(home, project);
         let installed = kendex(home, project, &["update-pi", "--scope", "project"]);
         assert!(installed.status.success(), "{}", said(&installed));
         settled_once(home, project);
-        loaded_from_the_personal_scope(home);
+    }
+    fn moved_on(home: &Path, project: &Path) {
+        installed_and_recorded(home, project);
         write(
             &project.join("catalog/pi-extensions/pi-widgets/index.js"),
             "export const version = 2;\n",
         );
+    }
+    let moved_on_and_loaded_twice: Plant = |home, project| {
+        moved_on(home, project);
+        loaded_from_the_personal_scope(home);
+    };
+    let moved_on_and_muted: Plant = |home, project| {
+        moved_on(home, project);
+        kendex_core::package::updates::set_ignored(
+            &kendex_core::env::Env::host_rooted(home),
+            &project_scope(project),
+            kendex_core::model::ItemKind::PiExtension,
+            "pi-widgets",
+            "",
+            true,
+        )
+        .unwrap();
+    };
+    let the_mute_reached_the_snapshot: Plant = |home, project| {
+        assert!(
+            snapshot(home, project)
+                .packages
+                .iter()
+                .any(|row| row.name == "pi-widgets" && row.ignored),
+            "the run's snapshot carries the mute"
+        );
+    };
+    // Every Pi row class the snapshot can hold, for a package declared
+    // in a manifest that no longer reads and for one never declared.
+    let manifest_unreadable: Plant = |home, project| {
+        let mut planted = snapshot(home, project);
+        for name in ["pi-widgets", "pi-stray"] {
+            planted
+                .packages
+                .push(kendex_core::drift::snapshot::PackageSnapshot {
+                    update_available: true,
+                    ..pi_row(name)
+                });
+            planted
+                .packages
+                .push(kendex_core::drift::snapshot::PackageSnapshot {
+                    removed_upstream: true,
+                    ..pi_row(name)
+                });
+            planted.unreadable.push(pi_note(name));
+        }
+        plant_snapshot(home, project, &planted);
+        write(&project.join("kendex.toml"), "schema = [\n");
     };
     let loaded_from_the_personal_scope_now: Plant = |home, _| loaded_from_the_personal_scope(home);
     let personal_copy_removed: Plant = |home, project| {
@@ -478,6 +634,39 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             check_left: &[],
             check_exit: 1,
         },
+        Row {
+            case: "a recorded copy whose source moved on",
+            plant: moved_on,
+            finish: &[UPDATE_PI],
+            settle_with: &[UPDATE_PI],
+            after: None,
+            unsettled: None,
+            check_update_pi: &["pi-widgets"],
+            check_left: &[],
+            check_exit: 1,
+        },
+        Row {
+            case: "a recorded copy whose source moved on, its update muted",
+            plant: moved_on_and_muted,
+            finish: &[UPDATE_PI],
+            settle_with: &[UPDATE_PI],
+            after: Some(the_mute_reached_the_snapshot),
+            unsettled: None,
+            check_update_pi: &["pi-widgets"],
+            check_left: &[],
+            check_exit: 1,
+        },
+        Row {
+            case: "a manifest that no longer reads over a snapshot holding every Pi row class",
+            plant: installed_and_recorded,
+            finish: &[],
+            settle_with: &[],
+            after: Some(manifest_unreadable),
+            unsettled: None,
+            check_update_pi: &[],
+            check_left: &[],
+            check_exit: 2,
+        },
     ];
     for row in rows {
         let (_tmp, home) = fixture();
@@ -499,6 +688,18 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         assert_eq!(check.update_pi, row.check_update_pi, "{case}: check");
         assert_eq!(check.no_fix, row.check_left, "{case}: check");
         assert_eq!(check.exit, Some(row.check_exit), "{case}: check");
+        let (plan_update_pi, plan_unsettled) = applied(&home, &project);
+        assert_eq!(
+            check.update_pi, plan_update_pi,
+            "{case}: check against apply"
+        );
+        assert_eq!(check.no_fix, plan_unsettled, "{case}: check against apply");
+        if check.exit == Some(0) {
+            assert!(
+                plan_update_pi.is_empty() && plan_unsettled.is_empty(),
+                "{case}: check clean where apply leaves a Pi package"
+            );
+        }
         let (offered, warned) = standing(&home, &project);
         assert_eq!(offered, row.check_update_pi, "{case}: update standing");
         for name in row.check_left {
@@ -514,6 +715,143 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
                 "{case}: {verified}"
             );
         }
+    }
+}
+
+/// `check` draws no Pi line from the snapshot: whatever Pi rows and notes
+/// the last deep pass left, the scope's lines and exit code are the ones
+/// its recorded snapshot gives. Each class is planted after the run, over
+/// a recorded copy whose source moved on, which `check` names `update-pi`
+/// for: no snapshot, a compare that failed and wrote only a note, a held
+/// row, a muted row, a row whose source stopped offering it, an edited
+/// row, and every flag and note at once beside a package never declared.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_snapshot_never_changes_a_pi_line() {
+    use kendex_core::drift::snapshot::PackageSnapshot;
+    let (_tmp, home) = fixture();
+    let project = home.join("dev/app");
+    kendex(&home, &project, &["apply", "--yes"]);
+    let installed = kendex(&home, &project, &["update-pi", "--scope", "project"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    write(
+        &project.join("catalog/pi-extensions/pi-widgets/index.js"),
+        "export const version = 2;\n",
+    );
+    let run = kendex(&home, &project, &["apply", "--yes"]);
+    assert!(run.status.success(), "{}", said(&run));
+    let recorded = snapshot(&home, &project);
+    let baseline = check_lines(&home, &project);
+    assert_eq!(
+        checked(&home, &project).update_pi,
+        ["pi-widgets"],
+        "the recorded snapshot's check names update-pi"
+    );
+    let without_pi = || {
+        let mut snapshot = recorded.clone();
+        snapshot
+            .packages
+            .retain(|row| row.kind != kendex_core::model::ItemKind::PiExtension);
+        snapshot
+            .unreadable
+            .retain(|note| note.kind != kendex_core::model::ItemKind::PiExtension);
+        snapshot
+    };
+    let with = |rows: Vec<PackageSnapshot>, notes: Vec<&str>| {
+        let mut snapshot = without_pi();
+        snapshot.packages.extend(rows);
+        snapshot.unreadable.extend(notes.into_iter().map(pi_note));
+        Some(snapshot)
+    };
+    let flagged = |name: &str| PackageSnapshot {
+        update_available: true,
+        removed_upstream: true,
+        held: true,
+        ignored: true,
+        edited: true,
+        mixed: true,
+        ..pi_row(name)
+    };
+    let one = |row: PackageSnapshot| with(vec![row], vec![]);
+    let every_class: Vec<PackageSnapshot> = ["pi-widgets", "pi-stray"]
+        .into_iter()
+        .flat_map(|name| {
+            [
+                flagged(name),
+                PackageSnapshot {
+                    update_available: true,
+                    ..pi_row(name)
+                },
+                PackageSnapshot {
+                    removed_upstream: true,
+                    ..pi_row(name)
+                },
+                PackageSnapshot {
+                    edited: true,
+                    ..pi_row(name)
+                },
+                PackageSnapshot {
+                    mixed: true,
+                    ..pi_row(name)
+                },
+            ]
+        })
+        .collect();
+    let classes: [(&str, Option<_>); 8] = [
+        ("no snapshot", None),
+        (
+            "a failed compare's note and no row",
+            with(vec![], vec!["pi-widgets"]),
+        ),
+        (
+            "a held row",
+            one(PackageSnapshot {
+                update_available: true,
+                held: true,
+                ..pi_row("pi-widgets")
+            }),
+        ),
+        (
+            "a muted row",
+            one(PackageSnapshot {
+                update_available: true,
+                ignored: true,
+                ..pi_row("pi-widgets")
+            }),
+        ),
+        (
+            "a row no longer offered by its source",
+            one(PackageSnapshot {
+                removed_upstream: true,
+                ..pi_row("pi-widgets")
+            }),
+        ),
+        (
+            "an edited row",
+            one(PackageSnapshot {
+                edited: true,
+                ..pi_row("pi-widgets")
+            }),
+        ),
+        ("a row with no update", one(pi_row("pi-widgets"))),
+        (
+            "every row class and note, beside an undeclared package",
+            with(every_class, vec!["pi-widgets", "pi-stray"]),
+        ),
+    ];
+    let env = kendex_core::env::Env::host_rooted(&home);
+    for (class, planted) in classes {
+        match &planted {
+            Some(planted) => plant_snapshot(&home, &project, planted),
+            None => {
+                kendex_core::drift::snapshot::invalidate(&env, &project_scope(&project)).unwrap();
+                assert!(matches!(
+                    kendex_core::drift::snapshot::load(&env, &project_scope(&project)),
+                    kendex_core::drift::snapshot::SnapshotFile::Absent
+                ));
+            }
+        }
+        assert_eq!(check_lines(&home, &project), baseline, "{class}");
     }
 }
 
