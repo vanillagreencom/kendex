@@ -200,8 +200,8 @@ gg_md_load_paths() { # LANE KEY DEFAULT [EXTRA-KEY]
 
 # The selected files, as "sha NUL path NUL source NUL" records in
 # $GG_TMP/md-files.z, every one a text blob the lane may read; source is the
-# path a detected rename moved it from, else empty. Sets GG_MD_COUNT; the
-# skips are counted in GG_WALK_SKIPPED.
+# path the walk paired it with under GG_WALK_RENAMES, else empty. Sets
+# GG_MD_COUNT; the skips are counted in GG_WALK_SKIPPED.
 gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
   local noun="$1"
   GG_WALK_RENAMES="$GG_MD_RENAMES"
@@ -223,10 +223,10 @@ gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
 }
 
 # The sweep reads index entries, which carry no rename, while its baseline is
-# HEAD: under `detect` a file the index holds at a path it moved to is still
-# measured against the path it left. The staged moves are the staged walk's
-# own records and pairing, destination and source in parallel arrays (Bash
-# 3.2 has no map), read once per sweep. Under `exact` the sweep names no
+# HEAD: under `detect` a file the index holds at a new path is still measured
+# against the source the staged walk pairs it with. The staged moves are that
+# walk's own records and pairing, destination and source in parallel arrays
+# (Bash 3.2 has no map), read once per sweep. Under `exact` the sweep names no
 # source, as the exact walks name none.
 GG_MD_MOVED_TO=()
 GG_MD_MOVED_FROM=()

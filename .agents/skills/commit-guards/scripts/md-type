@@ -15,10 +15,10 @@
 # A finding is (finding, type) in one file with a count; it is introduced,
 # and blocks, when the count exceeds the baseline's: the file's earlier self
 # in the HEAD commit under --staged and --all, on the range's base side under
-# --base and --against. A renamed file's earlier self is the path it moved
-# from, also where the change writes a new file at that path; one that moved
-# from another type, or a new file, has a count of 0 or none, and --as has no
-# baseline. Word count beside the type's example
+# --base and --against. The earlier self is the path the lane's walk pairs
+# the file with: GG_MD_RENAMES selects GG_WALK_RENAMES' detect mode, whose
+# statement in lib/configured-paths.sh is the pairing rule, and --help tells
+# it to the user. --as has no baseline. Word count beside the type's example
 # document is a signal and never changes the exit status.
 #
 #   md-type [--staged | --base REF | --against REF | --all]   the lane
@@ -610,8 +610,8 @@ case "$GG_MD_MODE" in
     ;;
 esac
 
-# The judged findings of PATH's earlier self at BASELINE_REV, into BASE: the
-# path a rename moved it from, else the same path. Empty when the baseline
+# The judged findings of PATH's earlier self at BASELINE_REV, into BASE:
+# SOURCE, the path the walk paired it with, else PATH. Empty when the baseline
 # holds no earlier self or the parser cannot end it, which leaves every
 # finding measured as new. An earlier self of another type holds none of this
 # type's findings: BASE is then an empty findings file, so a move into a
