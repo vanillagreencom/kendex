@@ -182,6 +182,11 @@ fx_moved() { repo "$1"; put a/README.md "$README_WITH"; commit; mkdir -p "$R/b";
 # table was allowed where it was and is not where it lands.
 fx_retyped() { repo "$1"; put skills/x/references/settings.md "$README_WITH"; commit; git -C "$R" mv skills/x/references/settings.md skills/x/README.md; }
 fx_retyped_pushed() { fx_retyped "$1"; commit move; }
+# A README moved unchanged with a new README written at the path it left,
+# which git records as a modification and an addition: only copy detection
+# from the modified path pairs the moved file with its source.
+fx_replaced() { repo "$1"; put README.md "$README_WITH"; commit; mkdir -p "$R/docs"; git -C "$R" mv README.md docs/README.md; put README.md '# Tool\n\nA tool.\n'; }
+fx_replaced_pushed() { fx_replaced "$1"; commit move; }
 lane_rows \
   "a new README's value table is introduced and blocks|fx_new new|--staged|rc=1 ${F}value-table path=README.md type=readme line=7 rule=$README_ROW count=1 baseline=none introduced=yes section=Settings" \
   "an edit beside an inherited table warns and passes|fx_edited edited|--staged|rc=0 ${F}value-table path=README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings" \
@@ -192,7 +197,10 @@ lane_rows \
   "a reference moved unchanged into a README brings a table its new type refuses|fx_retyped retyped|--staged|rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings" \
   "and the same move pushed is judged over the range|fx_retyped_pushed retyped-pushed|--against HEAD~1|rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings" \
   "and the same move staged is judged by a bare run under touched|fx_retyped retyped-bare||rc=1 ${F}value-table path=skills/x/README.md type=readme line=7 rule=$README_ROW count=1 baseline=0 introduced=yes section=Settings" \
-  "a sweep measures a staged move against the path it left|fx_moved moved-all|--all|rc=0 ${F}value-table path=b/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings"
+  "a sweep measures a staged move against the path it left|fx_moved moved-all|--all|rc=0 ${F}value-table path=b/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings" \
+  "a README moved from a path the change refills keeps its inherited table's count|fx_replaced replaced|--staged|rc=0 ${F}value-table path=docs/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings" \
+  "and the same move pushed keeps it over the range|fx_replaced_pushed replaced-pushed|--against HEAD~1|rc=0 ${F}value-table path=docs/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings" \
+  "and a sweep measures it against the path it left|fx_replaced replaced-all|--all|rc=0 ${F}value-table path=docs/README.md type=readme line=7 rule=$README_ROW count=1 baseline=1 introduced=no section=Settings"
 
 echo "=== a docs-writing md-type cannot read is a gap, never a pass ==="
 # A copy of the scripts with no docs-writing beside it, so the fixture's own
@@ -293,6 +301,14 @@ gg_mutant NO_SWEEP_MOVES lib/md-scope.sh '[ "$GG_MD_RENAMES" = detect ] || retur
 fx_moved control-sweep
 assert_eq "must-fail: with no staged moves read, a sweep measures a moved README at its new path alone" \
   "rc=1" "$(MDT="${NO_SWEEP_MOVES%/lib/md-scope.sh}/md-type" lane_run --all '^$')"
+gg_mutant NO_COPIES lib/configured-paths.sh 'detect) GG_WALK_DIFF=(--find-copies --diff-filter=AMTRC) ;;' 'detect) GG_WALK_DIFF=(--find-renames --diff-filter=AMTR) ;;'
+for row in "fx_replaced|--staged" "fx_replaced_pushed|--against HEAD~1" "fx_replaced|--all"; do
+  IFS='|' read -r fx args <<<"$row"
+  "$fx" "control-${fx#fx_}${args%% *}"
+  assert_eq "must-fail: with no copy pairing, $args measures a README moved from a refilled path at its new path alone" \
+    "rc=1 ${F}value-table path=docs/README.md type=readme line=7 rule=$README_ROW count=1 baseline=none introduced=yes section=Settings" \
+    "$(MDT="${NO_COPIES%/lib/configured-paths.sh}/md-type" lane_run "$args")"
+done
 gg_mutant NO_DASH lib/md-type.awk 'function dash(s) { return (s == "") ? "-" : s }' 'function dash(s) { return s }'
 repo control-dash
 assert_eq "must-fail: with empty cells written empty, the decision row's example shifts into its reference" \

@@ -224,25 +224,22 @@ gg_md_select() { # NOUN — what the lane calls its content, for the skip lines
 
 # The sweep reads index entries, which carry no rename, while its baseline is
 # HEAD: under `detect` a file the index holds at a path it moved to is still
-# measured against the path it left. The staged moves, at the detect walk's
-# similarity, destination and source in parallel arrays (Bash 3.2 has no map),
-# read once per sweep. Under `exact` the sweep names no source, as the exact
-# walks name none.
+# measured against the path it left. The staged moves are the staged walk's
+# own records and pairing, destination and source in parallel arrays (Bash
+# 3.2 has no map), read once per sweep. Under `exact` the sweep names no
+# source, as the exact walks name none.
 GG_MD_MOVED_TO=()
 GG_MD_MOVED_FROM=()
 gg_md_staged_moves() {
-  local src dst
   GG_MD_MOVED_TO=()
   GG_MD_MOVED_FROM=()
   [ "$GG_MD_RENAMES" = detect ] || return 0
-  gg_require_merged_index
-  git diff --cached --raw --no-abbrev -z --find-renames --diff-filter=R >"$GG_TMP/moves.z" \
-    || gg_fail staged-collect "$?" "could not collect the staged renames (git diff --cached --raw failed)"
-  # Every record is a rename: "meta NUL source NUL destination NUL".
-  while IFS= read -r -d '' _ && IFS= read -r -d '' src && IFS= read -r -d '' dst; do
-    GG_MD_MOVED_FROM+=("$src")
-    GG_MD_MOVED_TO+=("$dst")
-  done <"$GG_TMP/moves.z"
+  gg_walk_staged_raw
+  while gg_walk_read_record; do
+    [ -n "$GG_WALK_SRC" ] || continue
+    GG_MD_MOVED_FROM+=("$GG_WALK_SRC")
+    GG_MD_MOVED_TO+=("$GG_WALK_PATH")
+  done <"$GG_TMP/raw.z"
 }
 
 # One selected file: every walk hands the path, the blob file and the sha;

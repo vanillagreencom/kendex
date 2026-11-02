@@ -16,8 +16,9 @@
 # and blocks, when the count exceeds the baseline's: the file's earlier self
 # in the HEAD commit under --staged and --all, on the range's base side under
 # --base and --against. A renamed file's earlier self is the path it moved
-# from; one that moved from another type, or a new file, has a count of 0 or
-# none, and --as has no baseline. Word count beside the type's example
+# from, also where the change writes a new file at that path; one that moved
+# from another type, or a new file, has a count of 0 or none, and --as has no
+# baseline. Word count beside the type's example
 # document is a signal and never changes the exit status.
 #
 #   md-type [--staged | --base REF | --against REF | --all]   the lane
@@ -74,7 +75,11 @@ block parser cannot end fails.
 COMMIT_GUARDS_MD_PATHS minus COMMIT_GUARDS_MD_EXCLUDES; with none of them
 COMMIT_GUARDS_MD_SCOPE decides. An absent or unreadable docs-writing is a gap
 notice at exit 0 in these modes.
-A renamed file is judged at its new path against the path it moved from.
+A renamed file is judged at its new path against the path it moved from,
+also where the change writes a new file at that path. A new file copied from
+a file the change also edits is judged against that file, since git records
+it as it records that move; a copy of a file the change leaves alone is a new
+file.
 --route PATH prints the type, reference and example for PATH, or
 route=ignored, route=outside-repo or route=unclassified.
 --as PATH FILE judges FILE, - for stdin, as repository path PATH with no
