@@ -303,7 +303,7 @@ gg_mutant NO_MOVES md-type 'GG_MD_RENAMES=detect' 'GG_MD_RENAMES=exact'
 fx_retyped control-retyped
 assert_eq "must-fail: with exact renames dropped, a reference moved into a README is never opened" \
   "rc=0 md-type: no-match=staged:*.md" "$(MDT="$NO_MOVES" lane_run --staged)"
-gg_mutant AMT_TRIGGER lib/md-scope.sh 'git diff --cached --quiet "${GG_WALK_DIFF[@]}"' 'git diff --cached --quiet --diff-filter=AMT'
+gg_mutant AMT_TRIGGER lib/md-scope.sh 'git diff --cached --exit-code --name-only "${GG_WALK_DIFF[@]}"' 'git diff --cached --exit-code --name-only --diff-filter=AMT'
 fx_retyped control-trigger
 assert_eq "must-fail: with the trigger blind to renames, a bare run finds nothing staged" \
   "rc=0 md-type: staged-count=0" "$(MDT="${AMT_TRIGGER%/lib/md-scope.sh}/md-type" lane_run "")"

@@ -169,10 +169,13 @@ gg_md_scope() { # LANE STAGED-FLAG ALL-FLAG
   # The staged walk's own diff, so the trigger and the walk cannot disagree
   # about a move: a bare --diff-filter=AMT under git's default rename
   # detection drops every R record, an unchanged move and an edited one alike.
+  # --exit-code with the names discarded, never --quiet: git 2.54's --quiet
+  # stops before rename pairing, so a move reaches the filter as an addition
+  # and a deletion, never as the walk's pair.
   GG_WALK_RENAMES="$GG_MD_RENAMES"
   gg_walk_diff_flags
   status=0
-  git diff --cached --quiet "${GG_WALK_DIFF[@]}" || status=$?
+  git diff --cached --exit-code --name-only "${GG_WALK_DIFF[@]}" >/dev/null || status=$?
   case "$status" in
     0)
       GG_MD_MODE=none
