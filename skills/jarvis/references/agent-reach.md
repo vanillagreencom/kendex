@@ -30,6 +30,12 @@ Read when the user asks about, or wants to instruct, the agent working in one of
 4. Run `[LANE_MAIL] send --item overseer --directive --file [PATH]`.
 5. The send is made only when stdout printed `lane-mail: sent item=overseer id=[DIRECTIVE_ID]`. Without that receipt nothing was sent. The receipt says the directive landed, not that the agent read it; the agent's notice with `ref` `[DIRECTIVE_ID]` is its answer.
 
+## Findings
+
+- A practice or design finding Jarvis meets in a repository, whose cause lies in a kendex-owned package, goes to the kendex repository through [Instruct](#instruct), as an item or a note.
+- Judge it under the code-quality skill's SKILL.md § Finding Evaluation, and send that section's evaluation line with the finding. That section decides which findings qualify; the line by itself does not justify a new item.
+- The note is a send in the user's name: [Instruct](#instruct) step 3's approval of the exact text applies unless the user's responsibility map holds a standing grant for these finding notes, under [decisions.md § Authority](decisions.md#authority). This package records no such grant.
+
 ## One voice
 
 The agent's notice reaches Jarvis, and Jarvis decides what the user hears. Set no per-agent speech or reply setting.
