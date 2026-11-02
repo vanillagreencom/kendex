@@ -9,7 +9,7 @@ Read when setting up an assistant home, choosing a home path or starting a conti
 | `AGENTS.md` | Committed | Your standing instructions travel with you. |
 | `skills/own/` | Committed | You are the source. kendex installs your skills from here. |
 | `memory/` | Committed | Durable facts and rulings travel with you under [Memory](memory.md). |
-| `state/handoff.md` | Committed | Default current handoff; a consumer's home contract may select another path under [Handoff](long-session.md#handoff). |
+| `state/handoff.md` | Committed | Default current handoff. `jarvis-session succeed` saves and hands over this file only; `progress-log` and `owner-unanswered` select another through `--handoff PATH` under [Handoff](long-session.md#handoff). |
 | `state/archive/` | Committed | The session model writes archived handoffs and progress logs under [Handoff](long-session.md#handoff). `jarvis-session succeed` saves its own copy of the handoff as `handoff-<generation>-<id>.md`. |
 | `state/archive/INDEX.md` | Committed | `progress-log --archived` adds one dated line for each file the session's handoff replacement step archives, under [Handoff](long-session.md#handoff). `owner-unanswered` reads any file it does not list, such as the copy `jarvis-session succeed` saves. |
 | Other files under `state/` | Committed | A consumer's file and shell tools write its work here. An app-managed home limits model file and shell writes to this folder. |

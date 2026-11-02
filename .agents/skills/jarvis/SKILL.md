@@ -6,6 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [communication, mailbox, orch, slack]
+  optional: [linear]
   agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch, publicist]
   commands:
     - command: agent-browser

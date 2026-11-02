@@ -42,6 +42,7 @@ The current handoff defaults to `state/handoff.md` in the [home layout](home-lay
 - On each `EVENT owner-unanswered` the watch loop adds, answer the message it names, or record what was done about it in the progress log. The [README](../README.md#control-host-events) states when the loop adds it.
 - Keep a line only if its absence would cause the successor to act wrongly or repeat work.
 - Remove a tracker id from State when its item closes. Keep the completion evidence on the item.
+- Before each scheduled-report write and before succession, run `.agents/skills/jarvis/scripts/progress-log --check-state`, adding the `--handoff PATH` that selects the current handoff when it is not the default. In that same write, remove or correct each `closed` entry, and bind, remove or correct each `unbound` entry that carries a task. Keep the session lines the State row requires. Keep an `unread` entry as an unresolved next action. A `not-issue` ref binds no entry.
 - Keep standing rules in one home. Link that home rather than repeating its text in the handoff.
 - Remove a temporary instruction when its end event occurs. Remove its copied text when the instruction's standing home now states it.
 - Apply [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer) to handoff contents.

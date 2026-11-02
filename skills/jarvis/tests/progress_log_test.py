@@ -1,4 +1,8 @@
-"""progress-log writes one clock-stamped record into the home handoff, or refuses and writes nothing."""
+"""progress-log writes one clock-stamped record into the home handoff, or refuses and writes nothing.
+
+--check-state lists the State entries to correct from live tracker reads.
+"""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +21,37 @@ HANDOFF = ("# Handoff\n\n## State\n\nwork: KEN-1\n\n## Sub-agents\n\nnone\n\n## 
            "  - Observed result and source: seen\n  - Decision: kept\n  - State change: none\n\n## Notes\n\nlast\n")
 FIELDS = {"--operation": "Reply to 1791680510", "--result": "sent, receipt id=1",
           "--decision": "answer now", "--state-change": "none"}
+# The tracker boundary: skills/linear `issues bulk-get --stdin --format=compact`.
+# A row takes lib/formatters.sh format_issues_list_compact's shape; a ref
+# Linear has no issue for refuses the whole read with lib/common.sh
+# linear_issue_refs_read's `missing` line, after the lookup's own error line.
+LINEAR = """#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+home = Path(os.environ["HOME"])
+world = json.loads((home / "linear-world.json").read_text())
+refs = sys.stdin.read().split()
+with (home / "linear-calls").open("a") as calls:
+    calls.write(json.dumps([sys.argv[1:], refs]) + "\\n")
+if world.get("fail"):
+    print(json.dumps({"error": "HTTP 503"}), file=sys.stderr)
+    sys.exit(1)
+missing = [ref for ref in refs if ref in world.get("missing", ())]
+if missing:
+    print(json.dumps({"error": "Entity not found: Issue"}), file=sys.stderr)
+    print(json.dumps({"error": "Issues not read: " + ", ".join(missing), "missing": missing}), file=sys.stderr)
+    sys.exit(1)
+rows = [world["issues"][ref] for ref in refs if ref in world["issues"]]
+print(json.dumps([{"id": row[0], "title": "", "state": row[1], "state_type": row[2]} for row in rows]))
+"""
+DONE, CANCELED, OPEN = ("Done", "completed"), ("Canceled", "canceled"), ("In Progress", "started")
+BULK_GET = ["issues", "bulk-get", "--stdin", "--format=compact"]
+
+
+def state_handoff(state):
+    """A handoff whose State section holds state from line 5."""
+    return ("# Handoff\n\n## State\n\n" + state + "\n## Sub-agents\n\nnone\n\n## Instructions in force\n\nnone\n\n"
+            "## Progress log\n\n")
 
 
 class ProgressLog(MailWorld):
@@ -210,6 +245,116 @@ class ProgressLog(MailWorld):
                                "state/archive/h.md"], self.home)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: index-unwritable")
+
+    def check(self, world, handoff=None):
+        """Run --check-state from the installed copy of self.scripts beside a linear stub reading world."""
+        packages = self.root / "packages"
+        shutil.rmtree(packages, ignore_errors=True)
+        shutil.copytree(self.scripts, packages / "jarvis/scripts")
+        (self.root / "linear-calls").unlink(missing_ok=True)
+        if world is not None:
+            stub = packages / "linear/scripts/linear.sh"
+            stub.parent.mkdir(parents=True)
+            stub.write_text(LINEAR)
+            stub.chmod(0o755)
+            (self.root / "linear-world.json").write_text(json.dumps(
+                {"issues": {ref: [row[0] if len(row) == 3 else ref, *row[-2:]] for ref, row in world.get("issues", {}).items()},
+                 "missing": world.get("missing", []), "fail": world.get("fail", False)}))
+        args = ["--check-state"] + (["--handoff", str(handoff)] if handoff else [])
+        result = self.command([sys.executable, "-B", packages / "jarvis/scripts/progress-log", *args], self.home)
+        calls = self.root / "linear-calls"
+        return result, [json.loads(row) for row in calls.read_text().splitlines()] if calls.exists() else []
+
+    def test_check_state(self):
+        # Each row: State text, the tracker world (None: no linear package),
+        # then the listed lines, the summary counts, the exit, the stderr key
+        # and each bulk read's refs. The writer corrects what is listed.
+        issues = {"KEN-1": DONE, "KEN-3": OPEN, "KEN-4": CANCELED}
+        rows = (
+            ("closed and id-less listed", "- KEN-1 shipped\n- Call the vendor\n- KEN-3 in review\n", {"issues": issues},
+             ["closed line=5 ids=KEN-1:Done", "unbound line=6"], (3, 1, 1, 0, 0), 0, None, [["KEN-1", "KEN-3"]]),
+            ("both removed", "- KEN-3 in review\n", {"issues": issues}, [], (1, 0, 0, 0, 0), 0, None, [["KEN-3"]]),
+            ("canceled", "- KEN-4 dropped\n", {"issues": issues}, ["closed line=5 ids=KEN-4:Canceled"],
+             (1, 1, 0, 0, 0), 0, None, [["KEN-4"]]),
+            ("mixed kept", "- KEN-1 and KEN-3\n", {"issues": issues}, [], (1, 0, 0, 0, 0), 0, None, [["KEN-1", "KEN-3"]]),
+            ("open child keeps its parent, State ends at its heading", "- KEN-1 parent\n  - KEN-3 child\n\n## Notes\n- KEN-1 again\n",
+             {"issues": issues}, [], (1, 0, 0, 0, 0), 0, None, [["KEN-1", "KEN-3"]]),
+            ("mailbox and Slack ids bind", "- Reply to 1793515834-3208082-27491\n- Thread C0123ABC:1793515695.587049\n",
+             {"issues": issues}, [], (2, 0, 0, 0, 0), 0, None, []),
+            ("a date binds nothing", "- Checked 2026-11-02 at P-20261102T080000Z\n", {"issues": issues},
+             ["unbound line=5"], (1, 0, 1, 0, 0), 0, None, []),
+            ("not an issue", "- UTF-8 names\n- KEN-1 shipped\n", {"issues": issues, "missing": ["UTF-8"]},
+             ["not-issue line=5 ids=UTF-8", "unbound line=5", "closed line=6 ids=KEN-1:Done"], (2, 1, 1, 0, 1), 0, None,
+             [["UTF-8", "KEN-1"], ["KEN-1"]]),
+            ("tracker failure", "- KEN-1 shipped\n- Call the vendor\n", {"issues": issues, "fail": True},
+             ["unread line=5 ids=KEN-1", "unbound line=6"], (2, 0, 1, 1, 0), 1, "tracker-unavailable=exit-1",
+             [["KEN-1"]]),
+            ("no linear package", "- KEN-1 shipped\n- Call the vendor\n", None,
+             ["unread line=5 ids=KEN-1", "unbound line=6"], (2, 0, 1, 1, 0), 1, "tracker-unavailable=linear-missing", []),
+            ("moved issue", "- KEN-7 shipped\n", {"issues": {"KEN-7": ("KEN-9",) + DONE}},
+             ["unread line=5 ids=KEN-7"], (1, 0, 0, 1, 0), 1, "tracker-unmatched=KEN-7", [["KEN-7"]]),
+            ("no section", "# Handoff\n\n## Progress log\n", {"issues": issues}, "section-missing=State", None, 2, None, []),
+            ("ambiguous section", state_handoff("- KEN-1\n") + "## State\n", {"issues": issues},
+             "section-ambiguous=State", None, 2, None, []),
+            ("no handoff", None, {"issues": issues}, "handoff-missing", None, 2, None, []),
+        )
+        for name, state, world, listed, counts, code, key, reads in rows:
+            with self.subTest(row=name):
+                self.handoff.unlink(missing_ok=True)
+                if state is not None:
+                    self.handoff.write_text(state if state.startswith("#") else state_handoff(state))
+                before = self.handoff.read_bytes() if state is not None else None
+                result, calls = self.check(world)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(calls, [[BULK_GET, refs] for refs in reads])
+                self.assertEqual(self.handoff.read_bytes() if state is not None else None, before)
+                if counts is None:
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(result.stderr.split(" fix=", 1)[0].split("=", 1)[0],
+                                     "progress-log: " + listed.split("=", 1)[0])
+                    self.assertTrue(result.stderr.startswith("progress-log: " + listed), result.stderr)
+                    self.assertTrue(result.stderr.strip().endswith("long-session.md#handoff"), result.stderr)
+                    continue
+                summary = "checked entries=%d closed=%d unbound=%d unread=%d not-issue=%d" % counts
+                self.assertEqual(result.stdout.splitlines(), ["progress-log: " + line for line in listed + [summary]])
+                if key is None:
+                    self.assertEqual(result.stderr, "")
+                else:
+                    self.assertTrue(result.stderr.startswith("progress-log: " + key + (" " if "unavailable" in key else "\n")),
+                                    result.stderr)
+
+    def test_check_selected_handoff(self):
+        self.handoff.write_text(state_handoff("- Call the vendor\n"))
+        selected = self.home / "state/delegate/handoff.md"
+        selected.parent.mkdir()
+        selected.write_text(state_handoff("- KEN-3 in review\n- KEN-1 shipped\n"))
+        for target in ("state/delegate/handoff.md", selected):
+            with self.subTest(target=target):
+                result, calls = self.check({"issues": {"KEN-1": DONE, "KEN-3": OPEN}}, handoff=target)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [
+                    "progress-log: closed line=6 ids=KEN-1:Done",
+                    "progress-log: checked entries=2 closed=1 unbound=0 unread=0 not-issue=0"])
+                self.assertEqual(calls, [[BULK_GET, ["KEN-3", "KEN-1"]]])
+
+    def test_check_state_control(self):
+        # A closed rule that drops Canceled must fail the table's canceled row.
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / "jarvis/scripts"
+            shutil.copytree(SCRIPTS, copy)
+            library = copy / "lib/progress.py"
+            source = library.read_text()
+            old = 'CLOSED_TYPES = ("completed", "canceled")'
+            self.assertEqual(source.count(old), 1)
+            library.write_text(source.replace(old, 'CLOSED_TYPES = ("completed",)'))
+            case = ProgressLog(methodName="test_check_state")
+            case.scripts = copy
+            case.setUp()
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_check_state()
+            finally:
+                case.doCleanups()
 
     def test_instrument_control(self):
         # A typed-in time, not the clock read, must fail the record row.
