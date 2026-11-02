@@ -125,8 +125,9 @@ for (const version of supportedCodexVersions()) {
 	// group of offered tools has its guard: ../DEVELOPMENT.md § Native tools
 	// This row holds the environment tools on the default mock model, which
 	// Codex offers no native tool but `apply_patch`: Codex answers the call
-	// itself on a turn with no environment. The code-mode and sub-agent rows hold the code-mode and
-	// collaboration groups. The contrast drops `environments` from thread/start
+	// itself on a turn with no environment. Of the other groups, the code-mode
+	// row holds only that exec lists no Pi tool and the sub-agent row only the
+	// refused spawn. The contrast drops `environments` from thread/start
 	// and turn/start, and there the same call starts a fileChange item, which the
 	// bridge refuses. So the row fails when the empty environment stops keeping
 	// the call from a patch, and when it stops seeing a started patch.
