@@ -1,6 +1,6 @@
 # Review gate and waiter reference
 
-Cross-script routing behind the gate-mode summary and the `approval-wait` / `ci-wait` / `queue-wait` rows in [../SKILL.md](../SKILL.md). Each script's `--help` is its authoritative contract — arguments, modes, settings, JSON fields, exit codes; nothing here restates one.
+Cross-script routing behind the gate-mode summary and the waiter rows, `approval-wait`, `queue-wait` and the CI wait, in [../SKILL.md](../SKILL.md). Each script's `--help` is its authoritative contract: arguments, modes, settings, JSON fields, exit codes. Nothing here restates one.
 
 ## Gate-mode routing
 
@@ -34,11 +34,11 @@ A wait receives `--base-checkout [REVIEW_BASE_CHECKOUT]` for the error-review re
 | Waiting on | Tool |
 |------------|------|
 | Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`changes_requested`/`comments`/`timeout`/`proceeded`/`unreviewable`/`copilot-error`/`error` |
-| CI on one PR | `verify-pr` (`orch-runtime op`) — `status` `complete` with verdict `pass`/`fail`/`none`; `pending` or `unreadable` repeated through [Waiter launch](waiter-launch.md) |
+| CI on one PR | `verify-pr` (`orch-runtime op`) — `status` `complete` with verdict `pass`/`fail`/`none`; `pending` or `unreadable` repeated through [Waiter launch](waiter-launch.md); a `fail` verdict is rerun once per head through `github.sh ci-rerun --required-only` before ci-fix, the item's `ci_rerun` record written first ([submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery)); the merge state is read through `pr-merge --check` before the first call, and `CONFLICTING` takes the workflow's `conflict` route and never the wait |
 | Merge-queue / auto-merge outcome | `queue-wait` — the growing verdict set documented in its § Verdicts table |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |
 
-Per-verdict routing lives in the workflows (`submit-pr.md` § 4, `merge-pr.md` § 5); each verdict's semantics live in that script's `--help`.
+Per-verdict routing lives in the workflows (`submit-pr.md` § 4 and § 5, `merge-pr.md` § 5, [merge-attempt.md](merge-attempt.md)); each verdict's semantics live in that script's `--help`, and `verify-pr`'s reply fields in `submit-pr.md` § 5's result table.
 
 `queue-wait` names three states on an armed head. `queued` has a merge-queue entry, and progress is read from the entry's merge-group head; `cause: progress_unobservable` means that head could not be read. `queued` has one other shape, which is no armed head at all: `cause: exit_unconfirmed` is a PR the last poll saw out of the queue and unarmed, its ejection or disarm short of its confirmation count, so nothing is armed to fire on its own. `armed_awaiting_checks` is armed, not enqueued, with no failed check in the PR's own check rollup: `merge-pr.md` § 5 step 1 waits again on the same head, spending no recovery cycle, until `QUEUE_WAIT_ARMED_MINUTES` (default 90) of wall clock hands it back. `armed_blocked` is armed and never to be enqueued: a failed check takes the recovery cycle, which `CI_FIX_MAX_CYCLES` bounds; every check passed with no entry returns to a fresh readiness check instead, since ci-fix has no failure to work.
 
@@ -63,8 +63,8 @@ Work the chain in this order:
 
 ## Waiter auth ladder
 
-All three waiters share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's helpers: env-first, each candidate source probed at most once (an env token check killed at its bound is asked again once), exit `3` on hard auth failure. Summary in each `--help`; full ladder in [DEVELOPMENT.md § GitHub auth ladder](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md#github-auth-ladder).
+`approval-wait`, `queue-wait` and `ci-wait`, the failed-check probe `queue-wait` runs, share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's helpers: env-first, each candidate source probed at most once (an env token check killed at its bound is asked again once), exit `3` on hard auth failure. Summary in each `--help`; full ladder in [DEVELOPMENT.md § GitHub auth ladder](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md#github-auth-ladder).
 
 ## Multi-PR watching
 
-The waiters above are single-PR blocking waits. For many PRs across a long horizon, the github skill ships `scripts/pr-watch.sh`, a needs-attention reducer — contract in `pr-watch.sh --help`. Orch consumes it through `oversee-watch` when the script is installed. Each pass reads GitHub's review state for every open PR, its unresolved threads, `reviewDecision`, auto-merge arm and merge-queue entry, and writes nothing. The fallback without it is per-PR `approval-wait`/`queue-wait`. `queue-wait` watches only the one PR it is given and only while it runs, so the fallback gives no standing view across PRs and no `awaiting-stale` report. A PR that no waiter watches warrants a manual read of `gh pr view [N] --json reviewDecision,autoMergeRequest` and its queue entry.
+The waiters above are single-PR blocking waits. For many PRs across a long horizon, the github skill ships `scripts/pr-watch.sh`, a needs-attention reducer; its contract is `pr-watch.sh --help`. The fleet watch (`oversee-watch`) runs it once per repository per long pass when the script is installed. Each pass reads GitHub's review state for every open PR, its unresolved threads, `reviewDecision`, auto-merge arm and merge-queue entry, and writes nothing. The fallback without it is per-PR `approval-wait`/`queue-wait`. `queue-wait` watches only the one PR it is given and only while it runs, so the fallback gives no standing view across PRs and no `awaiting-stale` report. A PR that no waiter watches warrants a manual read of `gh pr view [N] --json reviewDecision,autoMergeRequest` and its queue entry.

@@ -17,7 +17,7 @@ tags: [automation]
 
 # Dev Workflows
 
-orch is the caller and runtime: it owns delegation format, round acceptance, and every shell-shape rule.
+orch is the caller and runtime: it owns the delegation format, round acceptance and every shell-shape rule.
 
 | Workflow | Purpose |
 |----------|---------|
@@ -77,11 +77,11 @@ A session keeps the rule text it loaded, and a push, `worktree create --reuse` o
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle. Once the artifact is written, start no validation, test, lint or build run except the admitted stopped-round recovery in [dev-implement.md § 5](workflows/dev-implement.md#5-validate); otherwise the orchestrator validates there next.
 
-Under push-first, queue-only work can close its local round before a pull request exists when `dev-validate-run` proves that the resolved base requires the merge queue and the configured validation context. Its CI record names `ci-event=merge_group` and remains pending. The orchestrator's existing queue route proves that required run.
+Under push-first, queue-only work can close its local round before a pull request exists when the runtime's CI admission records that the resolved base requires the merge queue and the configured validation context. Its CI record names `ci-event=merge_group` and remains pending; a refused admission runs the range command instead and names its cause on the `ci-fallback=` line of the run's `start` record, which `dev-validate-run --record` reports. The orchestrator's existing queue route proves that required run.
 
 The Codex caller follows [orch codex-runtime.md § Delegated round wait](../orch/references/codex-runtime.md#delegated-round-wait) while this agent works.
 
-- The channel is Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. Copilot CLI's channel is not yet measured, so this contract names none for it.
+- The channel is Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. Copilot CLI's channel is unmeasured, so this contract names none for it.
 - In a Pi persistent pane, follow the return with `complete_subagent`; background agents must not call it.
 - On Codex the `send_input` MESSAGE is the durable return, and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
 
@@ -95,7 +95,7 @@ A test or sandbox run outside that gate, such as a nested-session smoke run or o
 
 **Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success. Re-check its real outcome and resume the tail.
 
-On a host whose agent warden reaps orphan scopes, a foreground project entry-point run or an `--attached` run does not survive its agent's scope. A context handoff with either run in flight holds the stop until the verdict. If the session must stop first, its handoff `traps` record the interruption, the runner identity, the log and exit-receipt paths, and one recovery route. The successor confirms the old run has stopped, preserves its log and any exit receipt, and reruns only those interrupted checks once. Use the orch job runner or `dev-validate-run` according to this section's command routes, with a runner that survives the successor's agent scope. Never wait on an orphan queued run whose parent is gone.
+A session at its context mark hands over at once, whatever step is open: the handoff record names the open step and the run in flight, with the runner identity, the log and exit-receipt paths and one recovery route, under `traps`. A verdict, a review or any other step is never a precondition of that record. On a host whose agent warden reaps orphan scopes, a foreground project entry-point run or an `--attached` run does not survive its agent's scope. The successor confirms the old run has stopped, preserves its log and any exit receipt, and reruns only those interrupted checks once. Use the orch job runner or `dev-validate-run` according to this section's command routes, with a runner that survives the successor's agent scope. Never wait on an orphan queued run whose parent is gone.
 
 A command that can outlast the harness's tool-call limit never runs as one blocking foreground tool call, with two exceptions: the `dev-validate-run` start below, whose detached run and on-disk verdict survive a cut-off call and whose `--wait --run-dir` poll resumes it, and a project validation entry point on the foreground route [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate) gives a project whose own policy forbids `dev-validate-run`, run under the harness's maximum command timeout. Run only `DEV_VALIDATE_CMD` and `DEV_VALIDATE_RANGE_CMD` through `dev-validate-run`, outside that route; never override these settings per run. Run every other long command, including standalone preflight, doc-limits and mutation-control sweeps, through the orch job runner per [waiter-launch.md](../orch/references/waiter-launch.md). Read each completion file, preserve nonzero exit codes, and report an interruption without a verdict as failure.
 

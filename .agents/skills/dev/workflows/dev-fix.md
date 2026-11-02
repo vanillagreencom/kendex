@@ -4,7 +4,7 @@ The caller applies [orch § Delegation](../../orch/references/skill-rules.md#del
 
 Read [code-quality](../../code-quality/SKILL.md) before writing or modifying code, including for ad-hoc requests.
 
-The workflow for a dev agent receiving a review-fix delegation. Every path is worktree-scoped.
+The workflow for a dev agent receiving a review-fix delegation. Run it first line to last for one round. Every path is worktree-scoped.
 
 ---
 
@@ -32,15 +32,15 @@ An optional `Adds:` line is the complete blank-separated list of protected addit
 An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` record the previous round produced: the path, its bytes, the ceiling in bytes and the percent reached. Plan or perform a move to Git LFS, an asset store or generation before the blob grows further. If that remedy cannot be applied here, state why in the return. With no line, no binary blob is known to be within reach of the ceiling.
 
 - **Apply** when the item relates to the parent issue and adds no new risk. Unrelated changes are Skipped with the reason; the orchestrator files.
-- **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions. Before applying anything, search the decisions governing the affected area — `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue — and read the full file for any match. An item contradicting an active decision is skipped citing it, e.g. "Skipped — contradicts [DECISION_ID]".
+- **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions. Before applying anything, search the decisions governing the affected area, `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue, and read the full file for any match. An item contradicting an active decision is skipped citing it, e.g. "Skipped — contradicts [DECISION_ID]".
 - **Decline** an item that cannot affect real usage, with one line of reasoning, and do not file it. Disposition rules are reviewer's [references/finding-disposition.md](../../reviewer/references/finding-disposition.md).
-- **Blocked** when the same fix fails three times — report rather than loop.
+- **Blocked** when the same fix fails three times: report rather than loop.
 
 Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
 An item asking for a test takes the fix-round rule there.
 
-Update a principle doc or a decision record when a fix makes a claim in it false; the `docs-writing` skill says what each holds. For **UI lifecycle or cache fixes** — cached or mirrored UI state, changed window or event handling — trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
+Update a principle doc or a decision record when a fix makes a claim in it false; the `docs-writing` skill says what each holds. For **UI lifecycle or cache fixes**, cached or mirrored UI state, changed window or event handling, trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
 
 Before a fix returns, name the finding's defect class: the assumption that failed, not the cited line. Grep for the verb or pattern to find every other site, input form or copy that makes that assumption. Fix each one, or close the class at its generator. Also grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one. Name the class and the sites swept in the item reasoning. A fix at one site with its sibling untouched comes back as the next round.
 
@@ -62,7 +62,7 @@ Follow that section from the worktree root, with two changes. Its `DEV_VALIDATE_
 
 The run records the mode that ran, on the round's admitted `validate` entry where the runtime started it and in the run directory on either route, from which § 5's `dev-return-write` reads it: `range`, `full` in a project that sets no `DEV_VALIDATE_RANGE_CMD`, or `ci`, a run that records required CI on the published head as pending. Where the project sets `DEV_VALIDATE_SELECTION_CMD`, a `ci` run first runs that selector's changed-file suites once, scoped, and a red scoped run fails the round, as [dev-implement.md § 5. Validate](./dev-implement.md#5-validate) states; with no selector it runs no command. The receipt accepts those edits before the combined push. Submit's existing exact-head wait supplies CI proof. `dev-validate-run --help` states when a `ci` request leaves the round to that CI, and what it runs and hands the command anywhere else.
 
-**Visual QA** — **skip if** the issue has no `design` label or the fix touches no UI code. Otherwise confirm what the fix changes renders correctly, not the full checklist.
+**Visual QA**, **skip if** the issue has no `design` label or the fix touches no UI code. Otherwise confirm what the fix changes renders correctly, not the full checklist.
 
 ```bash
 git -C [WORKTREE_PATH] add -A
@@ -104,7 +104,7 @@ Write `tmp/fix-summary-[ISSUE_ID].md` with this round's `### Validation Routes` 
 
 One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`; the Apple gate in `dev-return-write --help` reads them, and [dev-implement.md § 5. Validate](./dev-implement.md#5-validate) names the `mac run test` it holds an Apple item to.
 
-One `--item N DECISION REASONING` per **delegated** item — Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed. `[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed in this round's § 3; the writer refuses a run from an earlier round, one that started at a HEAD without the round's `base_sha`, unless the run records that base as the one a rebase left off the branch, or one that started before the round was delegated. A `pass` needs that run to have passed, a `no-verdict` a run that recorded that result; omit the flag when validation failed before any run started or when § 3's foreground route has no completed record after interruption. A project whose own policy forbids `dev-validate-run` and runs its validation entry point in the foreground passes `--validate-record [FILE]` in place of `--validate-run-dir`, `[FILE]` being the record § 3's foreground route wrote.
+One `--item N DECISION REASONING` per **delegated** item, Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `dev-return-write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed. `[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed in this round's § 3; the writer refuses a run from an earlier round, one that started at a HEAD without the round's `base_sha`, unless the run records that base as the one a rebase left off the branch, or one that started before the round was delegated. A `pass` needs that run to have passed, a `no-verdict` a run that recorded that result; omit the flag when validation failed before any run started or when § 3's foreground route has no completed record after interruption. A project whose own policy forbids `dev-validate-run` and runs its validation entry point in the foreground passes `--validate-record [FILE]` in place of `--validate-run-dir`, `[FILE]` being the record § 3's foreground route wrote.
 
 **Respawned mid-round without the `Review items:` list?** Do not reconstruct it from the raw review JSONs and do not guess. Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n`, the item's full text, and the `reach` the orchestrator recorded, and write one `--item` per entry. If that file is missing too, report the gap and write no artifact.
 

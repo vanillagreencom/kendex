@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
-# item-tier — the cycle a work item runs: micro, small or standard.
+# item-tier — the tier a work item runs at: micro, small or standard.
 #
 # Usage:
 #   item-tier [--production N] [--body FILE] [--floor CLASS] [--path PATH]...
 #             [--base REF --head REF] [--repo DIR]
 #
-# Every input names a class, and the widest one wins, in the order
-# micro < small < standard:
+# A tier is a class of the change's size and paths. Every input names a
+# class, and the widest one wins, in the order micro < small < standard:
 #
 #   --production N   the overseer's launch-time estimate of the item's added
 #                    production lines, against the micro_max_production and
-#                    small_max_production ceilings in
+#                    small_max_production ceilings in change-scope's
 #                    references/narrow-change.conf.
-#   --floor CLASS    a class the item already holds: the tier a lane runs at,
-#                    or the class above the one a run escaped from.
+#   --floor CLASS    a class the item already holds: the tier the admission
+#                    read at launch, which a running lane keeps, or the class
+#                    above the one a run escaped from.
 #   --path PATH      a file the item's **Location** names, classified through
-#                    harness-ci's shared path rules. No render is proved at
-#                    launch. A matched rule supplies its class and cause;
+#                    change-scope's shared path rules, the `path` and
+#                    `instruction` lines of that list. No render is proved
+#                    at launch. A matched rule supplies its class and cause;
 #                    an unmatched path leaves the other inputs unchanged.
-#   --base, --head   the item's changed paths. The shared path rules apply;
-#                    measured branch line counts never select a tier.
+#   --base, --head   the item's changed paths, read from the range. The same
+#                    path rules apply; measured branch line counts never
+#                    select a tier, so a change inside admitted paths keeps
+#                    its class.
 #
 # --body reads Expected delta through lib/branch-growth.sh and floors the
 # launch estimate with a valid production count. The accepted forms are
@@ -30,11 +34,16 @@
 # so the item goes back to filing for a per-subsystem split. A body with a
 # Location but no estimate or valid delta launches standard, even with paths.
 # At least one of --production, --body, --floor and --base is required.
-# --repo (default .) is the judged checkout. HARNESS_CI_STANDARD_PATHS comes
-# from its main checkout's settings and floors matching paths at standard.
+# --repo (default .) is the judged checkout. HARNESS_CI_STANDARD_PATHS, the
+# repository's own refusals, comes from its main checkout's settings and
+# floors matching paths at standard.
 #
 # A ceiling list or a classifier this script cannot read answers standard,
 # naming the cause, never a narrower class.
+#
+# Which host makes a change and what checks it are no input here: the
+# workflows state those rules (../workflows/micro.md § Items), and a class this
+# script answers says nothing about either.
 #
 # stdout is one line, `tier=CLASS brief=VERB cause=CAUSE[ DETAIL] estimate=N delta=N paths=N`.
 # open-terminal records these inputs from the launch brief. Missing counts

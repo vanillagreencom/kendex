@@ -8,7 +8,7 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 - `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, new Linear issues and GitHub security alerts as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps through the repository's declared refresh owner.
 - `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
 - `oversee launch` opens a fleet's first overseer and `oversee register` records one opened by hand. `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires, or once it has ended or walled.
-- `lanes` reads the usage of each Claude Code, Codex and Copilot CLI account it discovers or is configured with. It picks on projected room weighted by time to reset. It returns overseer seats last under their window reserve rule. The watch reports account usage limits and their resets.
+- `lanes` reads the usage of each Claude Code, Codex and Copilot CLI account it discovers or is configured with. The orch runtime picks a launch's account on projected room weighted by time to reset, overseer seats last under their window reserve rule. The watch reports account usage limits and their resets.
 - `lane-host` runs lanes on another machine through a provider script, with the same mailbox and watch; `lane-host-ssh` is the included provider for SSH hosts. What runs where, which credential each part spends and how mail and handoff move on a hosted fleet: [docs/hosted-oversight.html](docs/hosted-oversight.html).
 - `oversee-report` writes the overseer's status reports; `oversee-cycle` times each merge against its class target.
 - `open-terminal --relaunch` resumes a stopped lane's own agent session, on the same account or another, and workflow state and handoff files let a lane or overseer continue where it stopped.
@@ -38,16 +38,14 @@ For Linear, add the started states `In Review` and `Verifying` in the team setti
 
 Set defaults in `kendex.settings.toml` `[env]` and secrets in `.env.local`; installation adds no settings ([guide](kendex.settings.toml.example)).
 
-Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` and prints one warning per run.
-
 | Variable | Purpose | Default |
 |---------|---------|---------|
 | `ORCH_STATE_DIR` | Workflow state directory; the `--state-dir` flag wins where both are set | `tmp` |
 | `ORCH_ARCHIVE_ROOT` | Archive folder for state pruning, item close-out, mailbox compaction and SSH lane close. Set an absolute path outside linked worktrees and state or mailbox folders. A configured value requires Python and a readable Git worktree list. Relative paths and `~` are refused | `${FLEET_DIR:-$HOME/.fleet}/archive` |
 | `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims, the weekly walls recorded from lane banners and cached account usage, shared by `oversee-watch`, `lanes` and `open-terminal` | `tmp/oversee-watch` under the project root |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names, matched case-insensitively and canonicalized | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
-| `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait` keeps polling when no CI checks have registered before it fails | `600` |
-| `CI_WAIT_MAX_SECS` | Default CI wait budget in seconds. Set it above the longest required job's run time. A positional budget overrides it | `600` |
+| `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait`, the failed-check probe `queue-wait` runs, keeps polling when no CI check has registered before it fails | `600` |
+| `CI_WAIT_MAX_SECS` | Budget in seconds of a workflow's CI wait, the repeated `verify-pr` call, and the default budget of the `ci-wait` probe. Set it above the longest required job's run time | `600` |
 | `CI_FIX_MAX_CYCLES` | Automatic ci-fix cycles for one PR, counted across the heads they push; a passing CI run clears the count | `6` |
 | `REVIEW_MAX_CYCLES` | Re-review cycles per issue. `0`: one blockers-only fix round, accepted on its validation without re-review; `1`: one fix round and one re-review of its diff | `1` |
 | `REVIEW_MAX_EXTERNAL_ROUNDS` | External comment-triage passes and automatic review-wait restarts on one PR head | `4` |
@@ -61,8 +59,8 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES` | Fleet lane cap: `open-terminal --help` | `4` |
 | `ORCH_OVERSEER_CLOUD_LANES` | Separate Claude cloud session cap per overseer: `open-terminal --help` | `10` |
-| `ORCH_CONNECTED_REPOS` | Blank-separated `OWNER/REPO` list of repositories the overseer may launch lanes in beside its own. `open-terminal` reads it in the overseer's checkout without the launcher's own value or `KENDEX_ENV_FILE`, which can be the launch checkout's, and matches it to a launch checkout's origin remote: `open-terminal --help`. `oversee-watch` and `oversee-report` run in the overseer's checkout, honor both, and read each one after their `--repo` values: `oversee-watch --help`, `oversee-report --help` | empty |
-| `ORCH_MAIN_WORKFLOWS` | Blank-separated `OWNER/REPO:FILE` list of workflow files whose red push or nightly run on `main` `oversee-watch` reports for that repository, beside `skill-tests.yml` and `ci.yml`, which every repository reads; an entry whose file the repository lacks, or whose repository the watch does not read, is reported: `oversee-watch --help` | empty |
+| `ORCH_CONNECTED_REPOS` | Blank-separated `OWNER/REPO` list of repositories the overseer may launch lanes in beside its own. `open-terminal` reads it in the overseer's checkout without the launcher's own value or `KENDEX_ENV_FILE`, which can be the launch checkout's, and matches it to a launch checkout's origin remote: `open-terminal --help`. The watch and `oversee-report` run in the overseer's checkout, honor both, and read each one beside their `--repo` values: `oversee-report --help` | empty |
+| `ORCH_MAIN_WORKFLOWS` | Blank-separated `OWNER/REPO:FILE` list of workflow files whose red push or nightly run on `main` the watch reports for that repository, beside `skill-tests.yml` and `ci.yml`, which every repository reads; an entry whose file the repository lacks, or whose repository the watch does not read, is reported | empty |
 | `ORCH_WAKE_PROCESS` | `pgrep -f` wake pattern for `lane-mail-check`. Empty disables the check with no watch record | empty |
 | `ORCH_WAKE_START` | Wake start command printed by the turn-end refusal. Empty disables the check with no watch record | empty |
 | `ORCH_LANE_OUTPUT` | Lane pane output: [skill-rules.md](references/skill-rules.md) § Lane Output | `quiet` |
@@ -70,14 +68,14 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `ORCH_HANDOFF_CONTEXT_PCT` | Earlier handoff percentage (1 to 100, capped at 90); strict for lane handoff and overseer succession alike: [context rule](references/oversee-events.md#judgement-rules) | `90` |
 | `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` | Nonnegative whole token reserve for attached agent returns: [pre-panel launch admission](workflows/review-pr.md#2-prepare-reviewers) and the [native launch refusal](references/oversee-events.md#judgement-rules). Ordinary checkpoints and succession use the plain mark. | `150000` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff and `lane-mail-check` refuses its turn end; which lanes it marks: `lanes --help` (context) | `3` |
-| `ORCH_WALL_RELAUNCH` | `auto` has `oversee-watch` relaunch a walled lane on an account `lanes pick` qualifies for its model, as `lane-relaunched`; `ask` reports `usage-limit` with the pick's answer: [oversee-events.md](references/oversee-events.md#event-kinds) | `auto` |
+| `ORCH_WALL_RELAUNCH` | `auto` has the watch relaunch a walled lane on an account the orch runtime's account judge qualifies for its model, as `lane-relaunched`; `ask` reports `usage-limit` with the judge's answer: [oversee-events.md](references/oversee-events.md#event-kinds) | `auto` |
 | `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries `oversee launch` and `oversee-succeed` try in order. With the setting unset, context-mark succession keeps the caller's harness and model; other marks and first launch use the default. `kendex tier-model` classifies each model at launch: a Claude class runs the family alias selected by `model-classes`; another provider's override stops the preference walk. Codex uses its native default until its model list reaches the launch; grammar: [guide](kendex.settings.toml.example) § Fleet. An empty setting names none | `claude:standard:high,codex:standard:high` |
 | `ORCH_PR_ORDER` | Publication order: `review-first`, `open-first` or `push-first`. A set value overrides visibility. [`pr-order --help`](scripts/pr-order) owns the defaults, validation and draft rules | unset |
 | `ORCH_DELIVERY` | `pr` uses pull requests. `push-base` keeps the tier's local checks and review, then fast-forward pushes the resolved base branch. The lane reports the pushed commit for the existing direct-push cycle record. An item with an open post-merge box stops for the PR route: [submit-pr.md § 2.1](workflows/submit-pr.md#21-base-publication) | `pr`, also when unset |
 | `ORCH_LANE_PREFERENCE` | `harness[@host]:model:effort` entries in default-model order. Each named host applies to its entry; an omitted host keeps the caller's route. A `:last` after the final entry marks it a last choice the walk holds back under the rule in [Lane preference](references/lane-directive.md#lane-preference). Explicit models keep that route. [Lane preference](references/lane-directive.md#lane-preference) | unset |
 | Owner-ask settings | `ORCH_QUESTION_TOOL`, `ORCH_ASK_WAIT_MINUTES`, `ORCH_OWNER_EMAIL` (defaults to `KENDEX_USER_EMAIL`), `ORCH_OWNER_ASK_LABEL` (unset by default): [guide](kendex.settings.toml.example) § Talking to you | |
-| `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one: `oversee-watch --help` | `on` |
-| `ORCH_OVERSEER_DEAD_PASSES` | Watch passes that read the overseer exited or walled before it is reported: `oversee-watch --help` | `2` |
+| `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one: [guide](kendex.settings.toml.example) | `on` |
+| `ORCH_OVERSEER_DEAD_PASSES` | Watch passes that read the overseer exited or walled before it is reported: [guide](kendex.settings.toml.example) | `2` |
 | `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which the overseer succeeds onto an account above it and `lane-mail-check` refuses its turn end; which credit is exempt: `lanes --help` (pick) | `5` |
 | `ORCH_OVERSEER_WALL_MINUTES` | Projected wall minutes that fire overseer succession. `0` disables it | `20` |
 | `ORCH_OVERSEER_SUCCESSOR_ACCOUNTS` | Qualifying-account count that fires succession: `oversee-succeed --help`. `0` disables it | `1` |
@@ -85,7 +83,7 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | Recording settings | `ORCH_FLEET_LOG_ROW_BYTES`, `ORCH_TAKEOVER_ROWS`, `ORCH_RECORD_RETENTION_DAYS`, `ORCH_PROGRESS_REPORT_DIR`: [recording policy](schemas/workflow-state.md#recording-policy) | |
 | `ORCH_REPORT_QUIET_HOURS` | Owner-local window: reports write and print, with no owner notice. Empty disables it. The first due morning brief covers work since the last sent report. Asks and critical notices stay immediate. | `0-7` |
 | `ORCH_OWNER_TIME_ZONE` | Report time zone | `America/Los_Angeles` |
-| Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: `oversee-watch --help` | |
+| Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: [guide](kendex.settings.toml.example) | |
 | `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | `overseer-approve`'s app token: an absolute path, one line, mode 600, outside lane roots, swapped atomically before expiry by the control VM (hosted) or fleet worker (local) | |
 | `ORCH_OVERSEER_REVIEW_LOGIN` | The token app's bot login, such as `vanillagreen-overseer[bot]`. Required for failed-POST read-back; unset refuses confirmation | |
 | `ORCH_COPILOT_HOLD_SECS` | Bound for current-head Copilot checks and pending timeline work: `copilot-wait --help`, `overseer-approve --help`. Requires the token app's repository Checks: read permission | `600` |
@@ -99,7 +97,8 @@ Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` an
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
 | Reviewer-gate settings | `PR_REVIEW_WAIT_SECS`, `PR_COPILOT_REQUESTS`: [references/gates.md](references/gates.md) | |
-| `ORCH_LANE_MAX_PCT` | Usage share at or above which `lanes pick` refuses an account; credit exemptions, bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
+| `ORCH_LANE_MAX_PCT` | Usage share at or above which the orch runtime's account judge and `lanes pick` refuse an account; credit exemptions, bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
+| `ORCH_LANE_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs naming the day an account ends. The orch runtime's account judge picks the account until that UTC day and refuses it after; `lanes` lists it retired and never looks inside its directory: [guide](kendex.settings.toml.example) | empty |
 | `ORCH_OVERSEER_SEAT_RESERVE_PCT` | Plan room kept for the overseer. Seats return last above it; lanes on seats hand off at it. Keep above `ORCH_OVERSEER_HEADROOM_PCT`; 100 admits no seat, 0 uses the lane limit alone | `50` |
 | `ORCH_LANE_CLOUD_CREDIT_FLOOR` | Dollars a Claude cloud or Pi Anthropic API grant must exceed to stay pickable; tier and refusal: `lanes --help` | `10` |
 | `ORCH_LANE_CODEX_CREDIT_FLOOR` | Credits a spent Codex account must exceed to stay pickable, after plan room, since credits never reset. Provisional; lane-day arithmetic: [guide](kendex.settings.toml.example) | `5000` |

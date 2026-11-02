@@ -242,7 +242,7 @@ Once the PR exists, this run is a continuing action. Clear any stop a capped run
 
 `pr-order` selects `review-first` for `ORCH_DELIVERY=push-base`, so no early pull request exists.
 
-**Open post-merge boxes.** Before any other step here, read the root item live, and for a single bundle each non-canceled child the commit implements: `.agents/skills/linear/scripts/linear.sh issues get [ID]` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body` for GitHub. The overseer's verification route takes its merge evidence from a merged pull request, and direct delivery creates none. An item whose Done-when holds an open post-merge box, in the form the project-management skill's SKILL.md § Disposition states, therefore takes the PR route. Write `[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md` with one `delivery-post-merge: issue=[ID] route=pr` line per such item, print it, send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md"`, and stop. The stop prepares, pushes and completes nothing. The overseer relaunches the item with `ORCH_DELIVERY=pr`. A failed read stops publication.
+**Open post-merge boxes.** **Skip if** `TRACKER=none` ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)): a directed change has no item to read. Before any other step here, read the root item live, and for a single bundle each non-canceled child the commit implements: `.agents/skills/linear/scripts/linear.sh issues get [ID]` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body` for GitHub. The overseer's verification route takes its merge evidence from a merged pull request, and direct delivery creates none. An item whose Done-when holds an open post-merge box, in the form the project-management skill's SKILL.md § Disposition states, therefore takes the PR route. Write `[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md` with one `delivery-post-merge: issue=[ID] route=pr` line per such item, print it, send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md"`, and stop. The stop prepares, pushes and completes nothing. The overseer relaunches the item with `ORCH_DELIVERY=pr`. A failed read stops publication.
 
 Apply § 6.1 Gate 1 before preparation. Bind `[LIFECYCLE]` to `managed` or `self`. For a managed caller, bind `[REVIEW_VERDICT]` to the internal review's returned verdict. A standalone caller needs a non-empty `json_paths` record. Section 1.2's advisory external review supplies no substitute. Micro keeps its explicit internal-review exception.
 
@@ -270,7 +270,7 @@ This call runs the existing worktree preparation, normal commit hooks and SHA re
 
 This call refuses a changed head before validation. It validates the prepared head locally, checks it again, then uses the existing pinned base transport without rebasing. Micro runs its final path check after the normal preparation hooks. Read `delivery: mode=push-base base=[BASE] commit=[PUSHED_SHA] at=[PUSHED_AT]` only after exit zero. `worktree-push --help` owns the failure contract. A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal returns to [merge-pr-restack.md](merge-pr-restack.md). That direct route returns here after its guarded restack and rules reload. A red validation publishes nothing. A failed push sends no completion notice.
 
-**Verification.** Verify the published head where it stands. The verification is pinned to `[PUSHED_SHA]`: the runtime reads that commit's check runs, statuses and Actions runs and the base's required set, never the branch's later head and never a pull request, and it records the verdict itself.
+**Verification.** Verify the published head where it stands. The verification is pinned to `[PUSHED_SHA]`: the runtime reads that commit's check runs, statuses and Actions runs and the base's required set, never the branch's later head and never a pull request, and it records the verdict itself. `[OWNER/REPO]` is the repository as `gh repo view --json nameWithOwner --jq .nameWithOwner` answers it from `[WORKTREE_PATH]`, whatever the item's tracker.
 
 ```bash
 jq -cn --arg repo "[OWNER/REPO]" --arg base "[BASE]" --arg head "[PUSHED_SHA]" \
@@ -288,7 +288,7 @@ jq -cn --arg repo "[OWNER/REPO]" --arg base "[BASE]" --arg head "[PUSHED_SHA]" \
 
 The op records a `complete` verdict through `record-verification` in the same call: make no separate `record-verification` call. The reply's `result.recorded.report` names the head, the verdict and whether an earlier record was replaced; the record's shape is the `verification` row of [workflow-state.md](../schemas/workflow-state.md).
 
-**Linear completion.** Read the common checkout before entering the reused step, including for a standalone caller:
+**Linear completion**, **Linear only**. Read the common checkout before entering the reused step, including for a standalone caller:
 
 ```bash
 .agents/skills/orch/scripts/git-context common-root "[WORKTREE_PATH]"
@@ -296,7 +296,7 @@ The op records a `complete` verdict through `record-verification` in the same ca
 
 Stop on a nonzero exit. Bind the printed path as `[MAIN_REPO_ROOT]`. Substitute that value into the next command; a shell variable from this command does not survive a separate tool call. Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For the in-PR bundle, repeat it for each non-canceled child implemented in the pushed commit. Follow that step's container close.
 
-**GitHub completion.** Use this session's resolved tracker and repository. Bind `[ISSUE_NUMBER]` to the root GitHub item's number from Tracker Resolution, then run:
+**GitHub completion**, **GitHub only**. Use this session's resolved tracker and repository. Bind `[ISSUE_NUMBER]` to the root GitHub item's number from Tracker Resolution, then run:
 
 ```bash
 gh issue close [ISSUE_NUMBER] --repo "[OWNER/REPO]" --reason completed
@@ -505,7 +505,7 @@ When it prints the verdict's `result.head`, this head had its rerun: go to Run W
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
 ```
 
-`[HEAD]` is the verdict's `result.head`; `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`. A `rerun run=[RUN_ID]` line records the run, then returns to the § 5 call after the interval § 5 keeps between calls, never at once: GitHub registers the new attempt after the verb answers, and a call before that reads the old red as a second failure of this head. The call reads the rerun attempt as the current run:
+`[HEAD]` is the verdict's `result.head`; `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`. A `rerun run=[RUN_ID]` line returns to the § 5 call after the interval § 5 keeps between calls, never at once: GitHub registers the new attempt after the verb answers, and a call before that reads the old red as a second failure of this head. The § 5 call then reads the rerun attempt as the current run. Before returning, record the run on the item:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] ci_rerun.run [RUN_ID]

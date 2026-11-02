@@ -527,12 +527,21 @@ assert_file_contains "$SKILL_DIR/workflows/start-worktree.md" \
 echo
 echo "=== round-closure contract ==="
 
-# Dev workflows that accept artifacts mint a dev token so a previous receipt cannot
-# satisfy the current round. CI fixes use a separate token and no artifact.
+# Dev workflows that accept artifacts mint a dev round through the runtime so a
+# previous receipt cannot satisfy the current round; the one mint each uses is
+# the `begin-round` request the runtime's `op` verb reads. CI fixes use a
+# separate token and no artifact.
+dev_mint_present() {
+  grep -Fq -- '{"op": "begin-round", "kind": "dev"}' "$1"
+}
 for wf in dev-start dev-fix review-pr-comments; do
   doc="$SKILL_DIR/workflows/$wf.md"
-  assert_file_contains "$doc" 'new-round-id [ISSUE_ID] dev_round_id' "$wf mints a fresh round id before delegating"
+  assert_eq "$(dev_mint_present "$doc" && echo yes || echo no)" yes \
+    "$wf mints its dev round through begin-round before delegating"
 done
+assert_doc_mutant_fails dev_mint_present "$SKILL_DIR/workflows/dev-start.md" \
+  '{"op": "begin-round", "kind": "dev"}' '{"op": "begin-round", "kind": "review"}' \
+  'a dev workflow minting a review round in place of its dev round'
 ci_stamp_present() {
   grep -Fq -- 'new-round-id [ISSUE_ID] ci_round_id' "$1"
 }
@@ -618,7 +627,7 @@ micro_dirty_transfer_is_owned() { # micro-doc
   local route=""
   if ! route=$(awk '
     /^- \*\*From the main checkout at conditions 2 through 4\*\*/ { inside = 1 }
-    /^- \*\*From the main checkout at conditions 5 through 8\*\*/ { inside = 0 }
+    /^- \*\*From the main checkout at conditions 5 through 9\*\*/ { inside = 0 }
     inside { print }
   ' "$1"); then
     return 1

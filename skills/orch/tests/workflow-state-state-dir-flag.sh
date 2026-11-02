@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Tests for the `--state-dir` global flag on workflow-state. orch's shell rule
-# (../SKILL.md § Harness-Safe Shell) takes no env-assignment prefix such as
-# `ORCH_STATE_DIR=… workflow-state …`, so worktree sessions target a canonical
-# state directory with the plain `--state-dir <path>` flag instead. ORCH_STATE_DIR stays supported as
+# Tests for the `--state-dir` global flag on workflow-state. A worktree session targets a
+# canonical state directory with the plain `--state-dir <path>` flag rather than an
+# `ORCH_STATE_DIR=… workflow-state …` prefix. ORCH_STATE_DIR stays supported as
 # a fallback. These tests fail against a unguarded script that lacks the flag
 # (`--state-dir` dispatches as an unknown command).
 

@@ -70,7 +70,7 @@ Omit empty sections. Render Orchestration stopped only when `post_pr_stop` is no
 
 ## 2. Post Handoff Comments
 
-**Skip if** `TRACKER=github` → § 3
+**Skip if** `TRACKER` is `github` or `none` → § 3
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]

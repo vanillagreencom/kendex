@@ -18,7 +18,7 @@ Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a
 
 - `vanillagreen-overseer` holds Dependabot alerts, code scanning alerts and secret scanning alerts, each read and write. Lanes hold none of these permissions.
 - The control VM alone holds the app key and mints and renews its installation token. The fleet supplies that token as one non-empty line in a private file, mode 600, outside lane roots, on the overseer's own host: the control VM writes it for a hosted overseer, and the fleet worker on the owner's machine writes it for a local overseer, from a narrowed overseer-app token it pulls from the control VM. Replace the file atomically before the token expires.
-- Set `ORCH_SECURITY_ALERT_TOKEN_FILE` to that file's absolute path on the overseer's own host. `oversee-watch --help` defines its read and failure contract. Alert lists and the GraphQL alert-to-pull-request link use this token. Other watch reads keep their current credential.
+- Set `ORCH_SECURITY_ALERT_TOKEN_FILE` to that file's absolute path on the overseer's own host. The module header of [runtime/src/watch/security.rs](../runtime/src/watch/security.rs) defines its read and failure contract. Alert lists and the GraphQL alert-to-pull-request link use this token. Other watch reads keep their current credential.
 
 ## Dependabot pull requests
 

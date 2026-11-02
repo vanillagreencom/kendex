@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pins the machine-read half of the oversee watch delivery: the commands and
-# status file the watch rules run and read, and the tool and parameter names
-# each harness row hands its harness. Every bg_task parameter the Pi rows name
+# Pins the machine-read half of the oversee watch delivery: the runtime verbs
+# the watch rules run to read and stop the claim, and the tool and parameter
+# names each harness row hands its harness. Every bg_task parameter the Pi rows name
 # is read from those rows and must stand in the package instructions that
 # define it, and the numbered follow every harness runs is executed from its
 # fence.
@@ -22,10 +22,10 @@ REPEAT="## Repeat watch"
 echo "=== orch oversee wake lint ==="
 
 # --- The watch's commands and status file -----------------------------------
-rule "a stop runs stop-job on the runner the launch recorded" "$WATCH" "$REPEAT" \
-  'job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID]'
-rule "every delivery and expiry reads the waiter's status file" "$WATCH" \
-  "$REPEAT" 'test -s "[RUN_DIR]/watch.exit"'
+rule "a stop asks the runtime to release the claim" "$WATCH" "$REPEAT" \
+  'orch-runtime watch stop --fleet'
+rule "every delivery and expiry reads the claim through the runtime" "$WATCH" \
+  "$REPEAT" 'orch-runtime watch status --fleet'
 
 # --- One row per harness, by the tool and parameter names it takes ----------
 rule "the Claude Code row names Monitor and its timeout" "$WATCH" \

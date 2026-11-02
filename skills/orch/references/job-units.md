@@ -1,6 +1,6 @@
 # Job units
 
-Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. Its callers are `dev-validate-run`'s run, every job [waiter-launch.md](waiter-launch.md) launches (`approval-wait`, `ci-wait`, `queue-wait` and `lane-mail wait`), the fleet watch [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) starts, and the `oversee-watch` entry's relaunch of itself out of a retired repeat loop's pass (`oversee-watch --help`). These launches use their own mechanism, not this one: `lane_run_detached` in `scripts/lib/lane-launch.sh`, which `open-terminal` uses for a terminal emulator and a woken lane turn, and the preparing-job stop in `lane-close` and `open-terminal`.
+Load when starting, naming, finding or stopping an orch job through `scripts/lib/job-unit.sh`: run it with `--help` for its subcommands, or source it for the same functions. Its callers are `dev-validate-run`'s run, every job [waiter-launch.md](waiter-launch.md) launches (`approval-wait`, `copilot-wait`, `queue-wait`, `lane-mail wait` and each `verify-pr` call), the fleet watch (the runtime's `start-controller` launches it for an overseer `oversee launch` opened; a registered session starts it with the block in [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance)), and the `oversee-watch` entry's relaunch of itself out of a retired repeat loop's pass (`oversee-watch --help`). These launches use their own mechanism, not this one: `lane_run_detached` in `scripts/lib/lane-launch.sh`, which `open-terminal` uses for a terminal emulator and a woken lane turn, and the preparing-job stop in `lane-close` and `open-terminal`.
 
 `job-unit.sh attach RECORD -- ARGV` is the one start that is not detached: it runs the job as the caller's own child, leading a process group of its own in the caller's session, and waits for it. The child forks through the github skill's group-leader prefix, `scripts/lib/group-leader.sh`, so an install without the github skill beside orch refuses the start as `group-leader-missing`, exit 2, and starts nothing. That prefix runs perl, so a host without perl refuses the start as `missing-command commands=perl`, exit 2, and starts nothing. `dev-validate-run --attached` starts its run this way. A host whose agent warden kills detached jobs needs it: the job stays inside the calling agent's process tree, where a unit or a `setsid` job does not.
 
@@ -13,7 +13,7 @@ A job runs as the transient systemd user unit `orch-NAME-PID.service` where a us
 | Component | Meaning | Example |
 |---|---|---|
 | `orch` | The runner that owns the unit | `orch` |
-| `NAME` | The job, as its caller names it; `dev-validate-run` names `validate-` and the worktree directory's name, which is a lane's item in lower case; a waiter launch names the run path's last word and `[RUN_ID]`; the fleet watch's launch names `watch-` and its `[STAMP]`, the entry's relaunch `watch-` and the UTC second | `validate-ken-1784`, `watch-Bj3g6I` |
+| `NAME` | The job, as its caller names it; `dev-validate-run` names `validate-` and the worktree directory's name, which is a lane's item in lower case; a waiter launch names the run path's last word and `[RUN_ID]`; the fleet watch's launch names `watch-` and the launch's UTC time in the compact form [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) defines as `[STAMP]`, the runtime's `start-controller`, the registered session's block and the entry's relaunch alike | `validate-ken-1784`, `watch-20260301T120000Z` |
 | `PID` | The launching process's own pid, so two runs of one job are two units | `180993` |
 
 Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-validate-ken-1784-180993.service`. `job-unit.sh name NAME PID` prints a name.
@@ -35,7 +35,7 @@ Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-v
 
 ## Runner line
 
-The launch prints the runner line and records it. `dev-validate-run` and a waiter launch write it as the first line of the job's log; the fleet watch's launch leaves it on the launching session's stdout, and the `oversee-watch` entry's relaunch carries it in the `unit=` field of its `watch-relaunched` line.
+The launch prints the runner line and records it. `dev-validate-run` and a waiter launch write it as the first line of the job's log; the fleet watch's launch records it in `oversee-watch.runner` beside the fleet state, which the runtime reads for the record's `overseer.watch` and a registered session's block leaves on its stdout as well, and the `oversee-watch` entry's relaunch carries it in the `unit=` field of its `watch-relaunched` line.
 
 | Line | Meaning |
 |---|---|

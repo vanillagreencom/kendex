@@ -50,27 +50,19 @@ A `command_execution` item with `"status":"completed"` in the `--json` output is
 
 ### Substitutes
 
-orch runs one simple command per tool call in every harness ([../SKILL.md](../SKILL.md) § Harness-Safe Shell). These substitutes keep a command inside that rule; no mode above refuses the forms they replace. In a fenced command, write a backtick in a search pattern with the regex hex escape `\x60` (`[\x60]` inside a bracket expression) in regex mode; `rg -F` has no escapes:
+A fenced command in these documents is read by a hook before the harness runs it, and a literal backtick there is the one shell form a hook reads as a command boundary. In a fenced command, write a backtick in a search pattern with the regex hex escape `\x60` (`[\x60]` inside a bracket expression) in regex mode; `rg -F` has no escapes:
 
 ```bash
 rg -n '\x60kendex refresh\x60' skills/
 ```
 
-- Polling loops → the orch waiters `ci-wait`, `approval-wait`, `queue-wait`, launched through [Waiter launch](waiter-launch.md). Save its detach command with the harness file-write tool, then invoke the saved script as one simple command. Use the harness wait mechanism to poll the completion file.
-- Multi-item sweeps → one simple command per item.
-- Derived values → helper scripts (`git-context`, `workflow-state`), never substitution.
-- File writes → harness file tools, `apply_patch`, or a direct redirect such as `echo value > path` where the sandbox allows the write. Never wrap a write in a Python subprocess.
-- Related `workflow-state` operations → one `get '{...}'` or one `update '... | ...'`. Split what cannot collapse — `set-git-head`/`set-now` (they compute their own value), a read mixed with a write, a `// empty` default that would collapse a combined object, a per-item loop — into separate one-command calls.
-- Several file reads → separate read commands or the harness file-read tool.
+- Derived values → helper scripts (`git-context`, `workflow-state`), never substitution ([../SKILL.md](../SKILL.md) § State Management).
+- Related `workflow-state` operations → one `get '{...}'` or one `update '... | ...'`. Split what cannot collapse, `set-git-head`/`set-now` (they compute their own value), a read mixed with a write, a `// empty` default that would collapse a combined object, a per-item loop, into separate calls.
 - An optional environment variable affecting a command → omit the option and let the script auto-detect, or read it with `printenv VAR` and run a second command with a literal value. Never put an unset-variable expansion in a required command.
-
-### Env-assignment prefixes
-
-The prefix is an environment precondition, not part of the required command — normalize it where the command is accepted into the workflow, before any agent is asked to run it. `printenv VAR` confirms ordinary variables; `locale` confirms locale variables by their effective `LC_*` lines (an unset `LC_ALL` with an effective `C` locale satisfies `LC_ALL=C`). `env VAR=value cmd args` is not an accepted shape. If the ambient environment does not satisfy the precondition, report a blocker instead of running under the wrong environment.
 
 ### Rule-refused porcelain
 
-Where an execpolicy rule refuses top-level `git rebase`, no user authorization or delegation lifts the refusal. The replacement for a clean linear issue branch is the worktree skill's guarded `create <ID> --reuse --replay` (or `--restack --replay` to pause on conflicts) with `worktree restack continue|skip|abort` — worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback) — never an improvised force-push. A dirty tree or merge commits in range put the branch outside that recipe: report a blocker.
+Where an execpolicy rule refuses top-level `git rebase`, no user authorization or delegation lifts the refusal. The replacement for a clean linear issue branch is the worktree skill's guarded `create <ID> --reuse --replay` (or `--restack --replay` to pause on conflicts) with `worktree restack continue|skip|abort`, worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback), never an improvised force-push. A dirty tree or merge commits in range put the branch outside that recipe: report a blocker.
 
 ## Standing watch
 
@@ -82,8 +74,6 @@ Codex starts no turn for output that arrives after a turn ended, from a detached
 | Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000 | An empty poll waits 5000-300000 ms; `background_terminal_max_timeout` sets the ceiling, 300000 by default. It returns the output written since the previous call. |
 | Re-arm | The same `write_stdin` again, in the same turn, once every returned line is handled | Never end the turn between polls while a lane record is `running`. Every poll return, empty, with output or with an `exit_code`, is an expiry: run the watch-delivery.md checks before the next poll. An `exit_code` ended the follow: arm again from the line after the last number handled. |
 
-Each call is one simple command, as orch's one-simple-command rule asks ([../SKILL.md](../SKILL.md) § Harness-Safe Shell).
-
 ## Validation wait
 
 A dev agent holds its `dev-validate-run` inside the turn with the same tools, under the limits of § Standing watch. Codex starts no turn when the run ends, and the wake refuses a hosted Codex lane (§ Lane mailbox).
@@ -92,7 +82,7 @@ Start and Resume each return an `exit_code` once the command ended inside their 
 
 | Step | Call | Return |
 |------|------|--------|
-| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]`, `yield_time_ms` 30000 | The output so far. The start prints its `state=started` line only once it has classified the change and launched the run, which nothing bounds to this call, so the line can come on a Wait return. Keep its `run-dir=` value. The start then blocks until the verdict and never exits 3. |
+| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, `yield_time_ms` 30000 | The output so far. The start prints its `state=started` line only once it has classified the change and launched the run, which nothing bounds to this call, so the line can come on a Wait return. Keep its `run-dir=` value. The start then blocks until the verdict and never exits 3. |
 | Wait | `write_stdin` on the `session_id` a Start or Resume returned, empty `chars`, `yield_time_ms` 300000, repeated in the same turn | The output since the previous return. |
 | Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000 | Taken only for a run whose `state=started` line was read: when its session ended with no verdict line and no refusal line, or when a `--wait` session exits 3 with `state=running`, which `--wait` prints once its per-call budget runs out. |
 

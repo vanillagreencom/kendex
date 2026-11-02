@@ -1,10 +1,8 @@
 # Small Workflow
 
-The tier for a change inside one subsystem and within the `small` ceiling in [change-scope's narrow-change.conf](../../change-scope/references/narrow-change.conf).
+The tier for a change inside one subsystem and within the `small` ceiling, `small_max_production` in [change-scope's narrow-change.conf](../../change-scope/references/narrow-change.conf). It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review and publication under the bounds in § 3 and § 4. [oversee.md](oversee.md) § Item Tier assigns the tier through `item-tier`; a `micro` item runs [micro.md](micro.md) and every other item runs [start.md](start.md).
 
 **A subsystem** is what the change-scope skill's `scripts/change-scope` counts as one for the `small` class; its `--help` `small` entry is the definition. The filing rule, the project-management skill's `SKILL.md` § Disposition **One landing per subsystem**, and the launch read, [oversee.md](oversee.md) § Lane directive step 2, apply it to an item's Location paths before a diff exists.
-
-It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review and publication, under the bounds in § 3. [oversee.md](oversee.md) § Item Tier picks the tier; a `micro` item runs [micro.md](micro.md) and every other item runs [start.md](start.md).
 
 | Command | Flow |
 |---------|------|
@@ -12,9 +10,9 @@ It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, re
 | `small github OWNER/REPO#N` (from a worktree) | normalize to `ISSUE_ID=issue-N`, then § 1 → § 5 |
 | `small [ISSUE_ID]` (from the main checkout) | [start.md](start.md) from its opening main-checkout lane-host read through § 4 Prepare Worktree, then § 1 → § 5 here in `[WT_PATH]`, in place of start.md § 5 |
 
-The runner is a lane in the item's worktree, or a session that prepared one from the main checkout by the route above.
+The runner is a lane in the item's worktree, or a session that prepared one from the main checkout by the route above. A lane never waits on the overseer for a step this workflow permits: [skill-rules.md § Coordination](../references/skill-rules.md#coordination), Lane asks.
 
-A lane never waits on the overseer for a step this workflow permits: [skill-rules.md § Coordination](../references/skill-rules.md#coordination), Lane asks.
+The tier is read once, at the admission that launched the run, and floors the run: `--floor small` below carries it. Each later check reads the branch's paths against the shared path rules and nothing else; a fix inside the admitted paths keeps the tier.
 
 ## 1. Open The Session
 

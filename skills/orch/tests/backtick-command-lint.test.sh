@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# orch runs one simple command per tool call (../SKILL.md § Harness-Safe Shell),
-# and its docs write a backtick in a fenced command's search pattern with the
-# regex hex escape \x60 in single quotes, in regex mode
-# (../references/codex-runtime.md § Substitutes). So no fenced ```bash/```sh
-# command line in the orch or dev docs may carry a literal backtick. Prose
-# and inline-code backticks are untouched: Markdown is full of them, and only a
-# fenced command line is an agent-runnable shape.
+# A fenced ```bash/```sh command line in the orch or dev docs is a shape an
+# agent runs as written, and a hook that reads the command line reads a
+# literal backtick in it as a command boundary (../SKILL.md § Harness-Safe Shell:
+# a finding's text never crosses argv for the same reason). So the docs
+# write a backtick in a fenced command's search pattern with the regex hex
+# escape \x60 in single quotes, in regex mode (../references/codex-runtime.md
+# § Substitutes), and no fenced command line may carry a literal backtick.
+# Prose and inline-code backticks are untouched: Markdown is full of them, and
+# only a fenced command line is an agent-runnable shape.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"

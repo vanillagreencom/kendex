@@ -1,9 +1,11 @@
 # shellcheck shell=bash
 #
-# The steps every overseer launch takes, whoever asks for one: `oversee
-# launch` opening a fleet's first overseer, and `oversee-succeed` opening a
-# successor in a predecessor's place. One launcher, so a first launch and a
-# succession cannot come to open, verify or record a session differently.
+# The steps every overseer launch shares, whoever asks for one: `oversee
+# launch` opening a fleet's first overseer, and `oversee launch --predecessor`
+# opening a successor in a predecessor's place. One account walk, so a first
+# launch and a succession cannot choose an account differently; a first launch
+# opens, verifies and records its session through the runtime's start-controller
+# (`oversee` step 6), a succession through ol_succession below.
 # What differs between them is policy and stays with the caller: which marks
 # fire and which entries the account walk tries; the walk and the flag
 # assembly apply that policy the same way for both. `oversee-watch` sources
@@ -1389,8 +1391,8 @@ ol_session_abandon() {
 
 # ol_succession PREDECESSOR CWD LINE IDENTITY PENDING LANE_VAR LANE_DIR FORM
 # WAIT_SECS — one succession, from the successor's first record write to the
-# commit point, whichever launcher runs it: `oversee launch --predecessor` and
-# `oversee-succeed` in every mode that launches (succeed, walled and dead). In
+# commit point, which `oversee launch --predecessor` runs (`oversee-succeed`
+# hands every succession to the runtime's `request-transfer`). In
 # order:
 #   1. With PENDING `pending`, LINE and IDENTITY become the record's pending
 #      successor (ol_record_pending); `replay`, a relaunch of the line the

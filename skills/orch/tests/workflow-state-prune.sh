@@ -5,7 +5,8 @@
 # go, with the fleet_log rows and done lane records past the window. A live
 # lane's files, an open item's files while its own workflow state is inside
 # the retention or names a worktree that stands, a
-# --keep path and the named keep list stay whatever their age. A checkout with
+# --keep path, the named keep list and the fleet's standing instructions, the
+# `standing[]` rows the prune never reads, stay whatever their age. A checkout with
 # no fleet state prunes the same directory with no lane records to judge.
 # Everything removed is in the archive `kept=` names first, and a prune whose
 # archive cannot be written removes nothing.
@@ -36,6 +37,10 @@ now="$(date -u +%s)"
 old_at="$(from_epoch "$((now - 3 * 86400))" '%Y-%m-%dT%H:%M:%SZ')"
 old_touch="$(from_epoch "$((now - 3 * 86400))" '%Y%m%d%H%M' '')"
 fresh_at="$(from_epoch "$now" '%Y-%m-%dT%H:%M:%SZ')"
+# A standing instruction from the owner, one row of the fleet's `standing[]`
+# array, three days old like every fleet_log row the prune removes.
+standing_row="$(jq -cn --arg old "$old_at" \
+  '{at: $old, id: "note-1", scope: "fleet", end: "until lifted", text: "waived"}')"
 umask 022
 
 # One project per case, outside Git, so its root, its progress directory and
@@ -52,7 +57,7 @@ build() { # DIR
   local p="$1" sd="$1/tmp"
   mkdir -p "$p"
   (cd "$p" && "$WS" init oversee >/dev/null)
-  jq --arg old "$old_at" --arg fresh "$fresh_at" '
+  jq --arg old "$old_at" --arg fresh "$fresh_at" --argjson standing "$standing_row" '
     .lanes = [{item: "KEN-0", status: "done", launched_at: $old},
               {item: "KEN-1", status: "running", launched_at: $old},
               {item: "KEN-2", status: "done", launched_at: $old},
@@ -60,7 +65,8 @@ build() { # DIR
               {item: "KEN-12", status: "done", launched_at: $old}]
     | .fleet_log = [{at: $old, kind: "ruling", item: "KEN-2", text: "old"},
                     {at: $fresh, kind: "ruling", item: "KEN-1", text: "fresh"},
-                    {at: "2020-01-01", kind: "ruling", item: "KEN-2", text: "date-only"}]' \
+                    {at: "2020-01-01", kind: "ruling", item: "KEN-2", text: "date-only"}]
+    | .standing = [$standing]' \
     "$sd/workflow-state-oversee.json" > "$sd/next.json"
   mv "$sd/next.json" "$sd/workflow-state-oversee.json"
   mkdir -p "$sd/lane-mail/KEN-1" "$sd/lane-mail/KEN-2" "$sd/lane-mail/overseer" \
@@ -162,6 +168,14 @@ start_after="$(jq -r '.lanes[0].launched_at' "$sd/workflow-state-oversee.json")"
 [[ "$start_after" == "$start_before" ]] \
   && pass "the fleet start, the first lane record's launched_at, is unchanged" \
   || fail "the fleet start, the first lane record's launched_at, is unchanged" "before=$start_before after=$start_after"
+# Decision 214 H1. Defect: a prune that reaches past its two arrays and drops
+# a standing instruction from the live record, so a successor re-applies a
+# stop the owner had lifted (round-10 item 2). The array is read back whole,
+# against the row as it was written.
+standing_after="$(jq -c '.standing' "$sd/workflow-state-oversee.json")"
+[[ "$standing_after" == "[$standing_row]" ]] \
+  && pass "a standing instruction older than the retention stands, byte for byte" \
+  || fail "a standing instruction older than the retention stands, byte for byte" "want=[$standing_row] got=$standing_after"
 
 count="$(grep '^pruned fleet_log=' "$TMP_ROOT/main.out" || true)"
 [[ "$count" == "pruned fleet_log=1 lanes=2 progress_reports=2 paths=10 to-lane=0 to-overseer=0 sessions=0" ]] \
@@ -543,6 +557,19 @@ shapes_run no-tree-match "$NO_TREE_MATCH/workflow-state"
 [[ " $SHAPES" == *" 2:removed,removed "* ]] \
   && pass "control: without the worktree match a state naming a linked worktree alone is pruned" \
   || fail "control: without the worktree match a state naming a linked worktree alone is pruned" "got=$SHAPES"
+
+# The standing row's must-fail control: the state write reaching a third
+# array, so the instruction leaves the live record beside the old fleet_log
+# row.
+STANDING_PRUNED="$(mutant_scripts standing-pruned workflow-state)/workflow-state" || exit 1
+mutate_file "$STANDING_PRUNED" '.lanes = ((.lanes // []) - $r[0].lanes)' '.lanes = ((.lanes // []) - $r[0].lanes) | .standing = []'
+mp="$TMP_ROOT/m-standing-pruned"
+build "$mp"
+run_prune "$mp" "$STANDING_PRUNED" "" --keep tmp/waiter.run >/dev/null 2>&1 || true
+got="$(jq -c '.standing' "$mp/tmp/workflow-state-oversee.json")"
+[[ "$got" == "[]" ]] \
+  && pass "control: a prune that writes past its two arrays drops the standing instruction" \
+  || fail "control: a prune that writes past its two arrays drops the standing instruction" "got=$got"
 
 p="$TMP_ROOT/unsafe-archive"
 build "$p"

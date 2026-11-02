@@ -2,7 +2,7 @@
 
 Verify the merge conditions and merge PR(s).
 
-Run every long `approval-wait` and `queue-wait` below, and the repeated `verify-pr` calls of [Merge attempt](../references/merge-attempt.md), through [Waiter launch](../references/waiter-launch.md). `approval-wait --resolve-mode` runs directly, not through that launch. Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
+Run every long `approval-wait` and `queue-wait` below, and each `verify-pr` call of [Merge attempt](../references/merge-attempt.md), through [Waiter launch](../references/waiter-launch.md). `approval-wait --resolve-mode` runs directly, not through that launch. Exit `5` from `approval-wait` or `queue-wait`, with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>`, is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below. A `verify-pr` call has no exit `5`; Merge attempt routes its reply.
 
 | Command | Flow |
 |---------|------|
@@ -171,7 +171,7 @@ Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree co
 
 ### 4.1 Detach Orphaned Children
 
-**Skip if** no `[ISSUE]` was extracted, `TRACKER=github`, or workflow state for `[STATE_KEY]` records `children_detached`: [submit-pr.md](submit-pr.md) § 2 step 5 already ran this detach, before its arm.
+**Skip if** no `[ISSUE]` was extracted, `TRACKER` is `github` or `none`, or workflow state for `[STATE_KEY]` records `children_detached`: [submit-pr.md](submit-pr.md) § 2 step 5 already ran this detach, before its arm.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues children [ISSUE] --pending --recursive
@@ -295,8 +295,6 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Every wait in this sequence follows an exit `75`: GitHub reported the PR queued or armed. Each new wait resets its queue history (`queue-wait --help` § Verdicts). A later `not_queued` therefore means that arm cleared between waits, not that no arm occurred.
 
-   Under Codex, run the saved launch script as one simple command ([references/codex-runtime.md](../references/codex-runtime.md)).
-
    | `verdict` | Route |
    |-----------|-------|
    | `merged` | Step 2 |
@@ -365,9 +363,9 @@ Use the output as `MAIN_REPO_ROOT`.
    1. On `cause: late_findings_dequeue_failed`, first apply the disarm-then-dequeue order and PR-node-id lookup from `merge-pr-restack.md`; the PR must be out of the queue before triage pushes.
    2. Run § 3.3. With the head unmoved, return to step 1 and wait.
 
-2. **Post the merge comment, complete the issue and close a finished container.** Before tracker completion or worktree cleanup, post the merge summary through [post-summary.md § 1](post-summary.md#1-post-the-summary), with this PR and item's caller context. Include every actual round/run's Validation Routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file), including fix and restack runs since the previous summary. Keep original pending, failed and no-verdict rows even after the merge-group CI passes; record that CI proof separately by run reference. Post each bundled child's rows on its originating item through the same comment interface. A validation-routing Done-when box reads these durable comments on that item.
+2. **Post the merge comment, complete the issue and close a finished container.** **Skip if** `TRACKER=none`, a directed change ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)): it has no tracker item to post to or complete. Before tracker completion or worktree cleanup, post the merge summary through [post-summary.md § 1](post-summary.md#1-post-the-summary), with this PR and item's caller context. Include every actual round/run's Validation Routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file), including fix and restack runs since the previous summary. Keep original pending, failed and no-verdict rows even after the merge-group CI passes; record that CI proof separately by run reference. Post each bundled child's rows on its originating item through the same comment interface. A validation-routing Done-when box reads these durable comments on that item.
 
-   **Linear only from here.** Skip the remainder of this step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
+   **Linear only from here**, under [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution): the remainder of this step runs for a Linear item alone.
 
    The lane owns completion after merge. The overseer owns the remaining post-merge checks on the same item.
 

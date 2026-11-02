@@ -1869,8 +1869,7 @@ remove_help() {
 # for the help forms. --state-dir <path> (or --state-dir=<path>) overrides the
 # state directory for EVERY subcommand and takes precedence over
 # ORCH_STATE_DIR (which stays supported as a fallback). Prefer this flag from
-# worktree sessions: orch's shell rule (../SKILL.md § Harness-Safe Shell) takes
-# no env-assignment prefix such as `ORCH_STATE_DIR=… workflow-state …`.
+# worktree sessions over an `ORCH_STATE_DIR=… workflow-state …` prefix.
 #
 # An EMPTY value is rejected, not read as absent: `--state-dir "$VAR"` with VAR
 # unset must name the mistake, not write orch state where nobody asked.

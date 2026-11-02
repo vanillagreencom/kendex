@@ -9,12 +9,12 @@
 #   oversee resume [--session NAME] [--handoff PATH] [--wait-secs N]
 #
 #   launch   opens a fleet's FIRST overseer, or with --predecessor its
-#            successor. A first launch is a succession launch with no
-#            predecessor: the account walk, the flag words and every step
-#            after them are lib/overseer-launch.sh's, the ones
-#            `oversee-succeed` runs when it replaces an overseer at a mark,
-#            so the two cannot choose, open, verify or record a session
-#            differently. In order:
+#            successor. The account walk, the flag words and the checkout
+#            sync are lib/overseer-launch.sh's for both, so a first launch
+#            and a succession cannot choose an account differently; a first
+#            launch opens, verifies and records its session through the
+#            runtime's start-controller (step 6), a succession through
+#            lib/overseer-launch.sh's ol_succession. In order:
 #     1. Resolve the runtime through `overseer-host resolve`
 #        (ORCH_OVERSEER_HOST). This launcher reads the new session's account
 #        off its tmux pane, so a runtime other than tmux refuses
@@ -105,8 +105,8 @@
 #        `--interval 240 --since` the first lane record's `launched_at` or
 #        this launch's time, `--harness` the entry's, `--repo` the
 #        checkout's repository where one resolves, and the step-5 flags
-#        after `--`. The runtime opens the session at the base index through
-#        the overseer-host provider, brings it to its composer, delivers the
+#        after `--`. The runtime opens the session at the base index in the
+#        fleet's tmux session, brings it to its composer, delivers the
 #        brief, launches the watch detached through the job launcher and
 #        writes the session record: the identity, the line, the watch and
 #        generation 1, or one past the record a stopped fleet left. A
@@ -121,7 +121,7 @@
 #     7. Read the record the runtime wrote and print `overseer-launched`
 #        naming its session, window, server, generation and lane, at exit 0.
 #     With --predecessor, steps 6 and 7 are lib/overseer-launch.sh's
-#        ol_succession, the one `oversee-succeed` runs: the command and its
+#        ol_succession: the command and its
 #        identity are written as the record's `pending` successor (a write
 #        that fails refuses `record-unwritten step=pending` with nothing
 #        opened), the checkout is fast-forwarded as above (the predecessor
@@ -854,8 +854,8 @@ start_controller() {
 
 SESSION=""
 if [[ -n "$PREDECESSOR" ]]; then
-  # A succession is lib/overseer-launch.sh's ol_succession, the one
-  # `oversee-succeed` runs: the pending record, the session opened at the base
+  # A succession is lib/overseer-launch.sh's ol_succession: the pending
+  # record, the session opened at the base
   # index, the record, the verification and the predecessor's stop,
   # the commit point.
   if ! ol_succession "$PREDECESSOR" "$CWD" "$OL_CMD" "$OL_IDENTITY" pending \

@@ -1792,6 +1792,76 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
     assert_eq!(again.paths, Vec::<PathBuf>::new());
 }
 
+/// Decision 214 H1. Defect: a prune that reaches past its two arrays and
+/// drops a standing instruction from the live record, so a successor
+/// re-applies a stop the owner had lifted (round-10 item 2). A standing
+/// instruction is a row of the fleet record's `standing[]` and has no
+/// retention; the fixture's is older than the cutoff, with a `fleet_log`
+/// row on each side of the cutoff. The duty as the runner runs it, the
+/// record read back from the disk after the store's write: the old row and
+/// the closed lane's record leave, the array is byte for byte what was
+/// written.
+#[test]
+fn retention_leaves_a_standing_instruction_older_than_the_cutoff_byte_for_byte() {
+    let world = World::new();
+    let paths = world.paths();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let old = clock::iso_utc(wall - 10 * 86_400);
+    let recent = clock::iso_utc(wall - 86_400);
+    let standing = json!([{"at": old, "id": "note-1", "scope": "fleet", "end": "until lifted",
+                           "text": "the two-reviewer gate is waived for docs-only changes"}]);
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [],
+        "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-A", "closed", &old, json!({}))],
+        "fleet_log": [
+            {"at": old, "kind": "ruling", "item": "KEN-A", "text": "old"},
+            {"at": recent, "kind": "ruling", "item": "KEN-0", "text": "recent"}
+        ],
+        "standing": standing
+    }));
+    touch(&world.path().join("workflow-state-KEN-A.json"));
+    let mut runner = runner(&world, &clock);
+    runner.register(
+        Duty::Retention,
+        retention::body(retention::Context {
+            locking: Locking::FLOCK,
+            fleet: world.fleet_path(),
+            paths: paths.clone(),
+            settings: world.settings.clone(),
+        }),
+    );
+    let identity = me();
+    let ended = run_driven(runner, &clock, &paths, &identity, || {
+        clock.await_sleepers(1);
+    });
+    assert!(ended.is_ok(), "{ended:?}");
+    let fleet = world.fleet();
+    let texts = |key: &str, field: &str| -> Vec<String> {
+        fleet[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row[field].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        texts("fleet_log", "text"),
+        vec!["recent"],
+        "the row past the cutoff left"
+    );
+    assert_eq!(
+        texts("lanes", "item"),
+        vec!["KEN-0"],
+        "the closed lane's record left"
+    );
+    assert_eq!(
+        serde_json::to_string(&fleet["standing"]).unwrap(),
+        serde_json::to_string(&standing).unwrap(),
+        "the standing instruction, byte for byte"
+    );
+}
+
 /// The duty wired as the runner runs it: a pass on the fake clock removes
 /// what `pass` removes and prints nothing.
 #[test]

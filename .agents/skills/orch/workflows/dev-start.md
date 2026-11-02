@@ -1,6 +1,6 @@
 # Dev Implementation Workflow
 
-Delegate implementation to specialist agent(s). Handles a single issue and a bundled multi-agent work item.
+Delegate the implementation of one issue, or of a bundled multi-agent work item, to a specialist dev agent, then accept the round from its receipt. Run it first line to last for one round.
 
 | Command | Behavior |
 |---------|----------|
@@ -8,7 +8,7 @@ Delegate implementation to specialist agent(s). Handles a single issue and a bun
 | `dev-start [ISSUE_ID]` | Implement a specific issue |
 | (from start-worktree / review-pr) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 4) or `"self"` (default); `issue_id` — the workflow-state key, whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number.
+**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 4) or `"self"` (default); `issue_id`, the workflow-state key, whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number.
 
 **Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else:
 
@@ -59,7 +59,7 @@ gh issue view [N] --repo [OWNER/REPO] --json labels --jq '.labels[].name'
 
 Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before choosing a stored dev agent or starting a replacement. Persistence follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle).
 
-Before EVERY implementation delegation, including managed entry at § 1 and each group's delegation in bundled mode, repeat the Linear launch preflight from current facts:
+Before every implementation delegation, managed entry at § 1 and each group's delegation in bundled mode included, repeat the Linear launch preflight from current facts:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
@@ -123,13 +123,13 @@ Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 </delegation_format>
 
-`[LABELS]` is the item's labels from § 1's read, comma-separated, or `none` when it carries none. The dev agent passes them to `dev-return-write`, whose Apple gate reads them. `Validation admission:` is the exact command the dev agent runs before each `dev-validate-run` start; the dev workflow does not depend on orch for it. The start under the admitted id is the runtime's one verb, `orch-runtime validate start`: `dev-validate-run --worktree [WORKTREE_PATH] --run-id [RUN_ID]` hands it the admitted directory, and the verb resolves the mode from the project's declaration, records the run's proof and job on the admitted `validate` entry before the launch, launches the run's job and prints the started line the dev skill parses; the job closes the entry with the sentinel's word and sends the lane its end notice, through the mailbox's outbound directive route, when the run ends.
+`[LABELS]` is the item's labels from § 1's read, comma-separated, or `none` when it carries none. The dev agent passes them to `dev-return-write`, whose Apple gate reads them. `Validation admission:` is the exact command the dev agent runs before each `dev-validate-run` start; the dev workflow does not depend on orch for it. The start under the admitted id is the runtime's one verb, `orch-runtime validate start`: `dev-validate-run --worktree [WORKTREE_PATH] --run-id [RUN_ID]` hands it the admitted directory, and the verb resolves the mode from the project's declaration, records the run's proof and job on the admitted `validate` entry before the launch, launches the run's job and prints the started line the dev skill parses. The job closes the entry with the sentinel's word and sends the lane its end notice, through the mailbox's outbound directive route, when the run ends.
 
 **GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
 
 ### Bundled issue
 
-Group pending sub-issues by `agent:[TYPE]` label and order them per [references/skill-rules.md § Coordination](../references/skill-rules.md#coordination) sequencing. Process groups sequentially: delegate → wait → validate (§ 3) → collect handoff notes → next group.
+Group pending sub-issues by `agent:[TYPE]` label and order them per [references/skill-rules.md § Coordination](../references/skill-rules.md#coordination) sequencing. Process groups sequentially: delegate, wait, validate (§ 3), collect handoff notes, next group.
 
 Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run § 2's stamps immediately before each group's delegation.
 
@@ -166,9 +166,9 @@ Handoff from prior agents:
 
 ## 3. Accept The Round
 
-Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and tracker completion). The return message is display-only — run A/B on the § 2 watchdog deadline rather than waiting for one.
+Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and tracker completion). The return message is display-only: run A/B on the § 2 watchdog deadline rather than waiting for one.
 
-**Check A** — two tool calls:
+**Check A**, two tool calls:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
@@ -178,9 +178,9 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
 ```
 
-`A` is the `verdict` field — `accept`, `wait`, or `retry`. The checker selects the round receipt under [dev-return.md § Identity](../schemas/dev-return.md#identity-the-round-id) and matches its internal `round_id`. Read its returned `path` for every artifact field below and carry that path to submit.
+`A` is the `verdict` field: `accept`, `wait` or `retry`. The checker selects the round's receipt under [dev-return.md § Identity](../schemas/dev-return.md#identity-the-round-id), the receipt of the run the round's newest `validate` stage names, and matches its internal `round_id`. Read its returned `path` for every artifact field below and carry that path to submit.
 
-**Check B** — `B = pass` only when every check passes:
+**Check B**, `B = pass` only when every check passes:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pre_delegate_sha // empty'
@@ -189,7 +189,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 .agents/skills/linear/scripts/linear.sh issues validate-completion [ISSUE_ID] --include-children-of [ISSUE_ID]
 ```
 
-`HEAD` must differ from `pre_delegate_sha`, or, where it did not move, the round's proof must be complete for `HEAD`'s tree: `.agents/skills/orch/scripts/orch-runtime read-proof --item [ISSUE_ID] --need round --tree "$(git -C "[WORKTREE_PATH]" rev-parse "HEAD^{tree}")"`, the runtime's proof reader over the round's `validate` entries, must answer `complete` in `.result.proof`; `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands the audit-created sub-issues worked in this session. Bundle-expanded children follow the linear skill's `validate-completion` contract. Dev-implement § Issue state records verified branch-box ticks and Evidence through a description-only update while each child stays In Progress. Validation reads that persisted checklist, whether or not it has post-merge boxes. The session root stays In Progress or In Review before merge. Carry qualified started children into submit-pr's child `Closes` lines and merge-pr's post-merge completion step. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
+`HEAD` must differ from `pre_delegate_sha`, or, where it did not move, the round's proof must be complete for `HEAD`'s tree: `.agents/skills/orch/scripts/orch-runtime read-proof --item [ISSUE_ID] --need round --tree "$(git -C "[WORKTREE_PATH]" rev-parse "HEAD^{tree}")"`, the runtime's proof reader over the round's `validate` entries, must answer `complete` in `.result.proof`. `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands the audit-created sub-issues worked in this session. Bundle-expanded children follow the linear skill's `validate-completion` contract. Dev-implement § Issue state records verified branch-box ticks and Evidence through a description-only update while each child stays In Progress. Validation reads that persisted checklist, whether or not it has post-merge boxes. The session root stays In Progress or In Review before merge. Carry qualified started children into submit-pr's child `Closes` lines and merge-pr's post-merge completion step. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
 A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round. Before `round-recover` replaces the round, reconcile its admitted runs: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}` and run it with Close The Round's Stages' command, so a lost or stopped run is a closed stage before the round is replaced.
 
@@ -197,11 +197,11 @@ A round that meets the Stalled round conditions of [references/skill-rules.md §
 
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. With `validate_mode` `ci`, acceptance completes local edits and leaves required PR CI pending; submit's existing exact-head wait supplies the proof. → Close The Round's Stages with `pass`, then Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
-| `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding: the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. With `validate_mode` `ci`, acceptance completes local edits and leaves required PR CI pending; submit's existing exact-head wait supplies the proof. → Close The Round's Stages with `pass`, then Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
+| `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or write the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid failed original, route a qualifying stopped-round recovery through [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), keeping the original delegation, `pre_delegate_sha` and Check B. Check A again after its terminal companion. A selected failed companion or an original that does not qualify is final: run Close The Round's Stages with `fail`, then Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
+| `retry` | any | An artifact for THIS round exists but fails a gate; the check's `reason` names it. A structurally valid receipt whose `validate` fails may take the one recovery [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate) admits, under the original delegation, `pre_delegate_sha` and Check B: the runtime admits the round's next attempt, which writes its own receipt under its own run id, and the checker then selects the receipt the round's newest `validate` stage names. Check A again when that run has ended. A failing selected receipt, or an original that qualifies for no recovery, is final: run Close The Round's Stages with `fail`, then Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
@@ -217,7 +217,11 @@ The runtime is the one writer of a stage's end ([workflow-state.md](../schemas/w
 
 The runtime reads each open `validate` entry's run directory, and the job it started by the identity the entry records, and closes the entry with the word the run supports: an ended run with its sentinel's verdict, `pass`, `fail` or `no-verdict`; an admitted directory never created, a refused or never attempted start, or a run `validate stop` ended, `stopped`; a run whose job or child is gone without its sentinel, or that never recorded one, `lost`. A run whose job or child still runs stays open and is reported `live`, or `live-unit` under a user manager; one the runtime could not read stays open and is reported `unreadable` with the cause. The reply's `runs` rows name each. A run the runtime started carries its mode on the entry's `proof`; read `dev-validate-run --record --run-dir [RUN_DIR]` for a closed run's timing when the round's report needs it. The reconcile first sends the end notice a closed run still owes its lane.
 
-Then the round's own entry, with the same command over `{"op": "accept-result", "round_id": "[DEV_ROUND_ID]", "outcome": "[WORD]", "summary_file": "[WORKTREE_PATH]/tmp/completion-summary-[ISSUE_ID].md", "attachments": [SCREENSHOTS]}`, `[SCREENSHOTS]` the artifact's `screenshots` list as `dev-artifact-check` echoed it (`[]` where it echoed none): `pass` on the accept row, `fail` on a final retry. `outcome` is required; a request without it is refused `request-invalid`. The request names no `authorization`: this close is the lane's own acceptance of its round, and it skips no ask [communication-modes.md](../references/communication-modes.md) owns. An item keyed `directive-[ID]` adds `"authorization": {"by": "owner-directive", "id": "[ID]"}`, the directive the change was made under; its round refuses a close without it as `authorization-missing`. The `overseer` arm, `{"by": "overseer", "id": <the fleet record's overseer.session_id>}`, is the fleet overseer's own acceptance of a step, written where the overseer accepts one and never by this workflow; submit-pr reads whichever authorization the record holds through `state inspect --item [ISSUE_ID]`. `summary_file` names the round's Completion Summary, the artifact's `summary` written to that path with the harness file tool; omit it where `TRACKER` is GitHub, as [micro.md](micro.md) step 6 skips its post: the Linear CLI refuses every post for a GitHub item. After the close the runtime creates the item's comment headed `## Completion Summary` through the tracker CLI with one `--attach` per `attachments` path, records its id and its attachment links as `summary_comment`, and updates that one comment in place on every later acceptance with the recorded links rendered under the summary (a comment the list finds with no record is the acceptance's own, recorded and updated the same way), and reports `summary` with `posted` `created`, `updated`, `failed` or `unrecorded` and its cause, a failed post leaving the acceptance standing. A repeated accept changes nothing and reports the recorded end and word; one naming another authorization is refused `authorization-differs`.
+Then the round's own entry, with the same command over `{"op": "accept-result", "round_id": "[DEV_ROUND_ID]", "outcome": "[WORD]", "summary_file": "[WORKTREE_PATH]/tmp/completion-summary-[ISSUE_ID].md", "attachments": [SCREENSHOTS]}`, `[SCREENSHOTS]` the artifact's `screenshots` list as `dev-artifact-check` echoed it (`[]` where it echoed none): `pass` on the accept row, `fail` on a final retry. `outcome` is required; a request without it is refused `request-invalid`.
+
+The request names no `authorization`: this close is the lane's own acceptance of its round, and it skips no ask [communication-modes.md](../references/communication-modes.md) owns. An item keyed `directive-[ID]` adds `"authorization": {"by": "owner-directive", "id": "[ID]"}`, the directive the change was made under; its round refuses a close without it as `authorization-missing`. A close adds `"authorization": {"by": "overseer", "id": "[ENVELOPE_ID]"}` only when the overseer has acted on this lane's own question: `[ENVELOPE_ID]` is the id of the envelope in the lane's inbox that answers the lane's `lane-question` for this step, or of an owner's directive the overseer relayed to the lane. A launch ruling, a fleet-log row or a session id is never that id, and no one but this workflow writes the field. submit-pr reads whichever authorization the record holds through `state inspect --item [ISSUE_ID]`, and takes each ask's `auto-recommended` action under a recorded one.
+
+`summary_file` names the round's Completion Summary, the artifact's `summary` written to that path with the harness file tool. Omit it, and `attachments`, where `TRACKER` is GitHub, as [micro.md](micro.md) step 6 skips its post, since the Linear CLI refuses every post for a GitHub item, and for a bundled round, whose parent's one summary is the post [dev-implement.md § 11](../../dev/workflows/dev-implement.md#11-return-bundled) makes. After the close the runtime creates the item's comment headed `## Completion Summary` through the tracker CLI with one `--attach` per `attachments` path, records its id and its attachment links as `summary_comment`, and updates that one comment in place on every later acceptance with the recorded links rendered under the summary (a comment the list finds with no record is the acceptance's own, recorded and updated the same way), and reports `summary` with `posted` `created`, `updated`, `failed` or `unrecorded` and its cause, a failed post leaving the acceptance standing. A repeated accept changes nothing and reports the recorded end and word; one naming another authorization is refused `authorization-differs`.
 
 ### Store Proposed Rules
 
@@ -259,7 +263,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 
 ### Validation status
 
-`dev-artifact-check` records each schema-valid round's end and its validation minutes in `validate_rounds` before its verdict routes the round; the round's `validate` stage is the runtime's, per `schemas/workflow-state.md` `stages`. `worktree-push` records a restack's validation after a successful push, in `validate_rounds` and `stages` together.
+A run's cost stands in two records. `dev-artifact-check` records each schema-valid round's end and its validation minutes in `validate_rounds` before its verdict routes the round; the round's `validate` entry on `stages` is the runtime's, with the run's `start`, `end` and `proof` (`schemas/workflow-state.md` `stages`). `worktree-push` records a restack's validation after a successful push, in `validate_rounds` and `stages` together.
 
 A lane under an overseer rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive). It then lists each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes.
 
