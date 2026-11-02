@@ -94,8 +94,10 @@ pub fn resolve_declared(
 }
 
 /// What `update-pi` does with one declared package, decided here once for
-/// the verb that installs it (`update-pi`'s plan) and for the plans that
-/// name it (`record_matching`), so neither keeps a reading of its own.
+/// the verb that installs it (`update-pi`'s plan), for the plans that name
+/// it (`record_matching`), for the check that names it (`drift::report`)
+/// and for the package's update standing (`package::updates`), so none of
+/// them keeps a reading of its own.
 #[derive(Debug)]
 pub enum Admission {
     /// Its catalog retired it: nothing installs, settles or re-records it.
@@ -121,6 +123,28 @@ pub enum Admission {
     /// Its source would not resolve, or its copy or record would not
     /// compare: nothing was judged.
     NotEvaluated(CoreError),
+}
+
+impl Admission {
+    /// Why `update-pi` leaves the package, and the reason a report draws
+    /// for it; `None` where it installs the package or nothing is owed.
+    pub fn unsettled(&self) -> Option<(crate::engine::PiUnsettled, String)> {
+        use crate::engine::PiUnsettled;
+        match self {
+            Admission::Retired | Admission::Current { .. } | Admission::Install { .. } => None,
+            Admission::LoadedElsewhere { installed, at } => Some((
+                PiUnsettled::LoadedElsewhere,
+                format!(
+                    "carrier package does not match, and {installed} is installed at {} as well; Pi loads both package lists together and will not start with one package registered twice, so update-pi leaves it until one copy is removed",
+                    at.display()
+                ),
+            )),
+            Admission::OriginRefused(error) => {
+                Some((PiUnsettled::OriginRefused, uncompared(error)))
+            }
+            Admission::NotEvaluated(error) => Some((PiUnsettled::NotEvaluated, uncompared(error))),
+        }
+    }
 }
 
 /// What an admitted install changes.
@@ -328,7 +352,7 @@ fn record_matching<'a>(
     basis: RecordBasis,
     mut plan: Option<SwitchPlan<'_>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
-    use crate::engine::{DriftRow, DriftState, PiUnsettled, RowRemedy};
+    use crate::engine::{DriftRow, DriftState, RowRemedy};
     use crate::model::{HarnessId, ItemKind};
     // The roots `update-pi` checks when it is run on this scope alone, as
     // the finish naming it runs it.
@@ -351,8 +375,9 @@ fn record_matching<'a>(
         });
         let existing = lock.entries.get(&key);
         let mut remedy = None;
-        let mut unsettled = None;
-        let (detail, cause) = match admit(&root, &other_roots, name, resolved, existing, basis) {
+        let admission = admit(&root, &other_roots, name, resolved, existing, basis);
+        let (mut unsettled, left) = admission.unsettled().unzip();
+        let (detail, cause) = match admission {
             Admission::Retired => continue,
             Admission::Current {
                 package,
@@ -385,24 +410,12 @@ fn record_matching<'a>(
                     None,
                 )
             }
-            Admission::LoadedElsewhere { installed, at } => {
-                unsettled = Some(PiUnsettled::LoadedElsewhere);
-                (
-                    format!(
-                        "carrier package does not match, and {installed} is installed at {} as well; Pi loads both package lists together and will not start with one package registered twice, so update-pi leaves it until one copy is removed",
-                        at.display()
-                    ),
-                    None,
-                )
-            }
-            Admission::OriginRefused(error) => {
-                unsettled = Some(PiUnsettled::OriginRefused);
-                (uncompared(&error), None)
-            }
-            Admission::NotEvaluated(error) => {
-                unsettled = Some(PiUnsettled::NotEvaluated);
-                (uncompared(&error), None)
-            }
+            Admission::LoadedElsewhere { .. }
+            | Admission::OriginRefused(_)
+            | Admission::NotEvaluated(_) => (
+                left.unwrap_or_else(|| unreachable!("an unsettled admission has its reason")),
+                None,
+            ),
         };
         drift.push(DriftRow {
             kind: ItemKind::PiExtension,

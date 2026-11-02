@@ -172,6 +172,32 @@ fn keyed(output: &str, key: &str) -> Vec<String> {
         .collect()
 }
 
+/// The Pi packages `check --json` names `update-pi` for, read from the
+/// typed remedy a program acts on, each once.
+#[allow(clippy::unwrap_used)]
+fn check_names_update_pi(home: &Path, project: &Path) -> Vec<String> {
+    let json = kendex(home, project, &["check", "--json", "--scope", "project"]);
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .unwrap_or_else(|error| panic!("check --json is JSON: {error}: {}", said(&json)));
+    let mut named: Vec<String> = report["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|section| section["lines"].as_array().unwrap())
+        .filter(|line| line["remedy"]["verb"] == "update-pi")
+        .map(|line| {
+            let text = line["text"].as_str().unwrap();
+            let (_, rest) = text
+                .split_once("pi-extension '")
+                .unwrap_or_else(|| panic!("an update-pi line names no package: {text}"));
+            rest.split('\'').next().unwrap().to_owned()
+        })
+        .collect();
+    named.sort();
+    named.dedup();
+    named
+}
+
 /// The personal Pi root holding its own copy of `pi-widgets`.
 #[allow(clippy::unwrap_used)]
 fn loaded_from_the_personal_scope(home: &Path) {
@@ -185,7 +211,9 @@ fn loaded_from_the_personal_scope(home: &Path) {
 /// The closing line names `update-pi` as the finish only where running it
 /// finishes the scope, and a declared package neither the run's write nor
 /// `update-pi` settles is named and counted, so the run never closes as up
-/// to date over it. Beside a package whose source no longer ships it,
+/// to date over it. `check` names `update-pi` for the packages it installs
+/// and for no other, and `verify` does not offer it as the record's remedy
+/// for a package it leaves. Beside a package whose source no longer ships it,
 /// update-pi notes that one as not evaluated and fails; for a copy Pi
 /// already loads from the personal scope, it leaves the copy blocked, so
 /// neither finish is named beside it, the take-over included, which
@@ -203,6 +231,8 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         settle_with: &'static [&'static str],
         /// The package the run names though nothing settles it.
         unsettled: Option<&'static str>,
+        /// The packages `check` names `update-pi` for afterwards.
+        check_update_pi: &'static [&'static str],
     }
     fn settled_once(home: &Path, project: &Path) {
         kendex(home, project, &["apply", "--yes"]);
@@ -252,6 +282,22 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         );
         kendex(home, project, &["apply", "--yes"]);
     };
+    let recorded_from_another_source: Plant = |home, project| {
+        settled_once(home, project);
+        let installed = kendex(home, project, &["update-pi", "--scope", "project"]);
+        assert!(installed.status.success(), "{}", said(&installed));
+        settled_once(home, project);
+        let two = project.join("catalog2/pi-extensions/pi-widgets");
+        write(&two.join("package.json"), PACKAGE);
+        write(&two.join("index.js"), INDEX);
+        write(
+            &project.join("kendex.toml"),
+            &format!(
+                "{}\n[sources.two]\npath = \"catalog2\"\n",
+                MANIFEST.replace("source = \"cat\"", "source = \"two\"")
+            ),
+        );
+    };
     const UPDATE_PI: &str = "update-pi scope=project";
     let rows = [
         Row {
@@ -260,6 +306,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             finish: &[],
             settle_with: &[UPDATE_PI],
             unsettled: Some("pi-gone"),
+            check_update_pi: &["pi-widgets"],
         },
         Row {
             case: "a copy Pi already loads from the personal scope",
@@ -267,6 +314,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             finish: &[],
             settle_with: &[],
             unsettled: Some("pi-widgets"),
+            check_update_pi: &[],
         },
         Row {
             case: "a filter the run writes beside a package left for update-pi",
@@ -274,6 +322,7 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             finish: &[UPDATE_PI],
             settle_with: &[UPDATE_PI],
             unsettled: None,
+            check_update_pi: &["pi-other"],
         },
         Row {
             case: "a copy Pi loads twice beside a conflict the take-over replaces",
@@ -281,6 +330,15 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
             finish: &[],
             settle_with: &[],
             unsettled: Some("pi-widgets"),
+            check_update_pi: &[],
+        },
+        Row {
+            case: "a record naming another source than the declaration",
+            plant: recorded_from_another_source,
+            finish: &[],
+            settle_with: &[],
+            unsettled: Some("pi-widgets"),
+            check_update_pi: &[],
         },
     ];
     for row in rows {
@@ -295,6 +353,18 @@ fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
         if let Some(name) = row.unsettled {
             assert!(run.contains(name), "{case}: {run}");
             assert!(!run.contains("up to date"), "{case}: {run}");
+        }
+        assert_eq!(
+            check_names_update_pi(&home, &project),
+            row.check_update_pi,
+            "{case}"
+        );
+        if let Some(name) = row.unsettled {
+            let verified = said(&kendex(&home, &project, &["verify"]));
+            assert!(
+                !verified.contains(&format!("{name} — kendex update-pi records it")),
+                "{case}: {verified}"
+            );
         }
     }
 }
@@ -319,7 +389,8 @@ fn verify_names_what_the_record_does_not_hold() {
         &manifest,
         &format!("{MANIFEST}\n[plugins.\"fmt@main\"]\nenabled = true\nharness = \"copilot\"\n"),
     );
-    catalog(manifest.parent().unwrap());
+    // A global source path reads from the home directory.
+    catalog(&home);
     write(&home.join(".copilot/config.json"), "{}\n");
 
     assert!(

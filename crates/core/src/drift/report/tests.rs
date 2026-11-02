@@ -992,6 +992,12 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
     let managed = root.join(".pi").join("packages").join("pi-widgets");
     std::fs::create_dir_all(&managed).unwrap();
     std::fs::write(managed.join("package.json"), package("2.0.0")).unwrap();
+    let declared = root
+        .join("catalog")
+        .join("pi-extensions")
+        .join("pi-widgets");
+    std::fs::create_dir_all(&declared).unwrap();
+    std::fs::write(declared.join("package.json"), package("2.0.0")).unwrap();
     // The managed copy has no completed install record here, which is its
     // own line in another section; this test reads only the shadow's.
     let shadowed = |report: &CheckReport| {

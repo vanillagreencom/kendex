@@ -301,6 +301,10 @@ struct Written {
     report: kendex_core::engine::EngineReport,
     /// `None` is a scope with nothing to write, up to date.
     count: Option<usize>,
+    /// The scope reported a failure before a write that had nothing to
+    /// write, which leaves the named project unregistered
+    /// (`project::register_target`).
+    failed: bool,
     /// The reading an earlier write of this run took, which an offer this
     /// write still owes covers from ([`Start::before`]).
     before: Option<Before>,
@@ -710,6 +714,7 @@ impl Start {
         ScopeWrite::Written(Box::new(Written {
             report,
             count,
+            failed: false,
             before: self.before().cloned(),
             stop,
         }))
@@ -927,6 +932,7 @@ fn write_ready(
         start,
     } = writing;
     let listed = listing(context.verbose);
+    let mut failed = false;
     if pending.is_empty() {
         let deferred = match defer_process_installs(env, scope, context, &report) {
             Ok(deferred) => deferred,
@@ -934,7 +940,7 @@ fn write_ready(
         };
         *attention = print_attention(env, &report, listed, context.reach);
         let reported = refresh_failures(&report, &deferred);
-        let failed = !context.synced.failures.is_empty() || !reported.is_empty();
+        failed = !context.synced.failures.is_empty() || !reported.is_empty();
         failures.extend(reported);
         // A recovery wrote a record this run, whatever the plan after it.
         // The record refusing to read is what stops a scope with none.
@@ -957,27 +963,27 @@ fn write_ready(
             return Ok(None);
         }
     }
-    Ok(Some(write_scope(
-        env,
-        scope,
-        report,
-        &pending,
-        &start,
-        context,
-        |after| {
-            context.synced.suppress_busy_pending(&mut after.notes);
-            let deferred = defer_process_installs(env, scope, context, after)?;
-            *attention = print_attention(env, after, listed, context.reach);
-            failures.extend(refresh_failures(after, &deferred));
-            Ok(())
-        },
-    )))
+    let mut outcome = write_scope(env, scope, report, &pending, &start, context, |after| {
+        context.synced.suppress_busy_pending(&mut after.notes);
+        let deferred = defer_process_installs(env, scope, context, after)?;
+        *attention = print_attention(env, after, listed, context.reach);
+        failures.extend(refresh_failures(after, &deferred));
+        Ok(())
+    });
+    // A scope with packages left goes on to its closing ledger even with
+    // nothing to write, and the ledger is not a write: with a failure to
+    // report, `close_written` lists nothing.
+    if let Ok(ScopeWrite::Written(written)) = &mut outcome {
+        written.failed = failed;
+    }
+    Ok(Some(outcome))
 }
 
 /// What a written scope owes before the run moves on: what its armed
 /// packages say now that it is written, said and never acted on (a
 /// refresh arms nothing, and `commands::repo_effects` says why the record
-/// of an earlier yes does not change that), its registration, its closing
+/// of an earlier yes does not change that), its registration where it
+/// wrote or reported no failure (`project::register_target`), its closing
 /// line, and what a write that stopped short owes ([`stopped`]). `Some`
 /// is the cancel that ends the run.
 fn close_written(
@@ -990,7 +996,9 @@ fn close_written(
 ) -> Option<Box<dyn std::error::Error>> {
     let scope = close.scope.clone();
     super::repo_effects::say_lapsed(env, &scope, &[]);
-    register_written(env, registering, &scope, failures);
+    if written.count.is_some() || !written.failed {
+        register_written(env, registering, &scope, failures);
+    }
     closing.push(close);
     stopped(env, &scope, written, failures)
 }
