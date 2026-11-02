@@ -1633,9 +1633,11 @@ PY
 # of a `# Inputs:` line, items separated by spaces, commas or both.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
 # or repository input in this tree, one per changed [env] key of a narrowed
-# kendex.settings.toml (settings_change), that key in SCAN_KEYS and empty for
-# every other query. One batch extracts file metadata and
-# compares the document-read lines, retaining source text inside that process.
+# kendex.settings.toml (settings_change) or, scoped, per key a changed
+# settings example of the tree adds or removes (example_keys) beside its path
+# query, that key in SCAN_KEYS and empty for every other query. One batch
+# extracts file metadata and compares the document-read lines, retaining
+# source text inside that process.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
 # less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
 # `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
@@ -1664,11 +1666,17 @@ scan_load() { # DIR
   done <<<"$files"
   while IFS=$'\t' read -r tree rel path; do
     [ "$tree" = "$1" ] || continue
+    query_keys=("")
     case "$rel" in
       ../*) ;;
+      kendex.settings.toml.example)
+        [ "$scoped_only" -eq 1 ] || continue
+        value=$(example_keys "$suites_base" "$path") || return 2
+        [ -n "$value" ] || continue
+        while IFS= read -r key; do query_keys+=("$key"); done <<<"$value"
+        ;;
       *) [ "$(path_role "$1" "$rel")" = doc ] || continue ;;
     esac
-    query_keys=("")
     [ "$rel:$settings_scope" != ../kendex.settings.toml:keys ] || query_keys=("${settings_keys[@]}")
     for key in "${query_keys[@]}"; do
       q=${#SCAN_RELS[@]}
@@ -1951,6 +1959,13 @@ reach_join() { # ROLE PATH [changed]
 # key and does not name it runs nothing for it. A change to comments alone
 # seeds only the file's input notes. Any other settings change seeds by path
 # as an unscoped run does.
+# Scoped too, a changed skills/<name>/kendex.settings.toml.example, or its
+# render under .agents/skills/<name>/, that adds or removes a declared key
+# (example_keys) reads as a doc of its tree: it seeds its input notes, the
+# files doc_readers finds naming it by path, and per such key the files
+# naming the key. A key no suite, helper, test module or test program of the
+# tree names runs the tree's whole set. Any other example change is a path
+# of no role.
 # Only a scoped run gives tests/*.py the test-program role (path_role): a
 # control can run a test program through a bare quoted file name or a sibling
 # suite, which no needle follows. In any other run no scan reads a test
@@ -1995,6 +2010,12 @@ mapped_suites() { # DIR REL
   esac
   case "$role:$scoped_only" in test-module:0) return 1 ;; esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
+  # The one path of no role scan_load queries is a settings example by key.
+  if [ "$role" = none ]; then
+    for ((q = 0; q < ${#SCAN_RELS[@]}; q++)); do
+      [ "${SCAN_RELS[q]}" != "$rel" ] || role=doc
+    done
+  fi
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
     input_path="$dir/$rel"
@@ -2015,7 +2036,8 @@ mapped_suites() { # DIR REL
     readers=""
     for ((q = 0; q < ${#SCAN_RELS[@]}; q++)); do
       [ "${SCAN_RELS[q]}" = "$rel" ] || continue
-      if [ -n "${SCAN_KEYS[q]}" ] && [[ $settings_areas == *"$nl${SCAN_KEYS[q]} $dir$nl"* ]]; then
+      # The tree's own example declares each key it is queried by.
+      if [ -n "${SCAN_KEYS[q]}" ] && { [[ $rel != ../* ]] || [[ $settings_areas == *"$nl${SCAN_KEYS[q]} $dir$nl"* ]]; }; then
         tested=0
         while IFS= read -r i; do
           [ -n "$i" ] || continue
@@ -2183,6 +2205,21 @@ settings_declared() { # TREE
         if (items[i] ~ /^[A-Z_][A-Z0-9_]*<NAME>[A-Z0-9_]*$/) print items[i] " " tree
     }
   '
+}
+# Each key the settings example FILE, a source or its render, declares at REV
+# or in the working tree but not at both (settings_declared): the keys its
+# change adds or removes. An absent side declares nothing. Status 1: a side
+# could not be read.
+example_keys() { # REV FILE
+  local base="" head=""
+  if git cat-file -e "$1:$2" 2>/dev/null; then
+    base=$(git show "$1:$2") || return 1
+    base=$(settings_declared - <<<"$base" | cut -d ' ' -f 1 | sort -u) || return 1
+  fi
+  if [ -e "$2" ]; then
+    head=$(settings_declared - <"$2" | cut -d ' ' -f 1 | sort -u) || return 1
+  fi
+  printf '%s\n%s\n' "$base" "$head" | sort | uniq -u | sed '/^$/d'
 }
 # `<key>=<value>` for each KEY as the shared loader decodes the settings FILE,
 # in a subshell of its own so no key reaches this script or its suites.

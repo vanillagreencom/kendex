@@ -228,7 +228,9 @@ done
 # reader and a suite writing a settings file of its own; skills/area
 # declares FIXTURE_AREA_KEY, commented out, and no test of it names the key;
 # no example declares FIXTURE_LOOSE_KEY. skills/second-opinion declares its
-# reviewer key family alone, and no test of it names a key. tools/ holds a
+# reviewer key family alone, and no test of it names a key. skills/keyed has
+# an example render and a test module naming FIXTURE_NEW_KEY, which neither
+# copy declares yet. tools/ holds a
 # copier noting the file alone and one noting it first in a comma list. Every
 # key a row edits is appended here, never one of the copied live file.
 printf '\nFIXTURE_READ_KEY = "a"\nFIXTURE_AREA_KEY = "b"\nFIXTURE_LOOSE_KEY = "c"\nSECOND_OPINION_FIXTURE_CMD = "d"\n' >> "$R/kendex.settings.toml"
@@ -243,6 +245,12 @@ for name in one two; do
   printf 'printf "%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/area/tests/$name.sh"
   printf 'printf "review-%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/second-opinion/tests/$name.sh"
 done
+mkdir -p "$R/skills/keyed/tests/lib" "$R/.agents/skills/keyed"
+printf '[env]\nFIXTURE_OLD_KEY = "a"\n' > "$R/skills/keyed/kendex.settings.toml.example"
+cp "$R/skills/keyed/kendex.settings.toml.example" "$R/.agents/skills/keyed/kendex.settings.toml.example"
+printf 'KEY = "FIXTURE_NEW_KEY"\n' > "$R/skills/keyed/tests/lib/world.py"
+printf 'python3 -B "$PWD/skills/keyed/tests/lib/world.py"\nprintf "keyed-reader\\n" >> "$SUITE_LOG"\n' > "$R/skills/keyed/tests/reader.sh"
+printf 'printf "keyed-other\\n" >> "$SUITE_LOG"\n' > "$R/skills/keyed/tests/other.sh"
 printf '# Inputs: kendex.settings.toml\ncat "$PWD/kendex.settings.toml" >/dev/null\nprintf "copy\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-copy.sh"
 printf '# Inputs: kendex.settings.toml, skills/demo/scripts/demo.sh\nprintf "listed\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-listed.sh"
 git -C "$R" add -A
@@ -259,6 +267,13 @@ settings_change() { # CHANGE: one edit of the settings world, then a clean SUITE
     comment) printf '# changed\n\n' >> "$R/kendex.settings.toml" ;;
     noted-example) printf '# changed\n' >> "$R/skills/settings/kendex.settings.toml.example" ;;
     unnoted-example) printf '# changed\n' >> "$R/skills/area/kendex.settings.toml.example" ;;
+    named-example-key | unnamed-example-key)
+      key=FIXTURE_NEW_KEY
+      [ "$1" = named-example-key ] || key=FIXTURE_UNNAMED_KEY
+      for example in skills/keyed .agents/skills/keyed; do
+        printf '%s = "b"\n' "$key" >> "$R/$example/kendex.settings.toml.example"
+      done
+      ;;
   esac
   rm -f "$R/kendex.settings.toml.bak"
   [ -n "$(git -C "$R" status --porcelain)" ] || { bad "settings fixture change $1 changed nothing"; }
@@ -275,7 +290,9 @@ for row in \
   "a foreign table maps the file by path|foreign-table|$PATH_READERS" \
   "comments and blank lines select only the noted copiers|comment|$NOTED" \
   "a path of no role selects the suite noting it|noted-example|skills/settings/tests/example-noted.sh " \
-  "a path of no role no note names selects its tree's whole set|unnoted-example|skills/area/tests/one.sh skills/area/tests/two.sh "; do
+  "a path of no role no note names selects its tree's whole set|unnoted-example|skills/area/tests/one.sh skills/area/tests/two.sh " \
+  "an example and its render adding a key a test module names select its reader|named-example-key|skills/keyed/tests/reader.sh " \
+  "an example and its render adding a key no test names select the tree's whole set|unnamed-example-key|skills/keyed/tests/other.sh skills/keyed/tests/reader.sh "; do
   IFS='|' read -r name change expected <<<"$row"
   settings_change "$change"
   doc_selection "$GUARD"
@@ -302,6 +319,18 @@ if mutant_guard '/^  if \[ -n "\${2-}" \]; then$/,/^  fi$/d'; then
   git -C "$R" checkout -q -- .
 else
   bad 'control changes the settings seed'
+fi
+# Control: without the example's key queries, its render is a path of no role.
+if mutant_guard '/^      kendex\.settings\.toml\.example)$/,/^        ;;$/d'; then
+  settings_change named-example-key
+  doc_selection "$MUTANT_TOOLS/guard"
+  [ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/keyed/tests/other.sh skills/keyed/tests/reader.sh ' ] \
+    && grep -qx 'guard-note: suites=all reason=unidentified path=.agents/skills/keyed/kendex.settings.toml.example' <<<"$OUT" \
+    && ok 'control: the render read by path selects the whole set and breaks the example key row' \
+    || bad 'control: the render read by path selects the whole set and breaks the example key row' "rc=$RC plan=$PLAN out=$OUT"
+  git -C "$R" checkout -q -- .
+else
+  bad 'control changes the example key queries'
 fi
 
 # A tree with no run-all.sh runs each suite through guard's direct loop.
