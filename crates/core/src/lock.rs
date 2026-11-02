@@ -56,8 +56,10 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// `renderedHash` matches the destination. Every other destination remains
 /// a conflict. The old managed ignore rule keeps the moved record out of
 /// git, where it stays the proof for later partial recoveries. Where that
-/// file is already this record, byte for byte, the record is not moved
-/// again; a link, or a different record there, refuses the recovery
+/// file already holds this record, byte for byte, the recovery moves the
+/// record over it, bound to the same hash, so its bytes are unchanged; a
+/// link at the lock path, anything else at the aside, or a scope with no
+/// readable manifest to rebuild from refuses the recovery
 /// (`engine::planning_lock`).
 ///
 /// Version 11 gained [`Lock::shims`] without a bump, at two costs to a

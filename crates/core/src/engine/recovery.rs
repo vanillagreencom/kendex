@@ -293,12 +293,15 @@ pub fn compare_unmanaged_copies(
 pub(super) fn plan_version_10(
     env: &Env,
     scope: &Scope,
-    manifest: &Manifest,
-    recoverable: super::Version10Recoverable,
+    recoverable: super::Version10Recoverable<'_>,
     options: &PlanOptions,
 ) -> Result<EngineReport> {
     use crate::apply::{Description, PlannedOp, Pre};
-    let super::Version10Recoverable { hash, moved } = recoverable;
+    let super::Version10Recoverable {
+        hash,
+        moved,
+        manifest,
+    } = recoverable;
     let path = lock_path(env, scope);
     let aside = path.with_file_name(crate::lock::VERSION_10_LOCK_FILE);
     let carried = super::unmanaged::version_10_keys(&path)?;
@@ -359,32 +362,41 @@ pub(super) fn plan_version_10(
     Ok(report)
 }
 
-/// The one action that settles every conflict a plan left, where one
-/// command does: an apply that replaces the files in the way.
+/// The one action that finishes what a plan leaves, where one command
+/// does: an apply that replaces the files in the way, or `update-pi` for
+/// the Pi packages an apply's write never installs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Completion {
-    /// The take-over installs a package whose repository effect then needs
-    /// its own yes, so the action carries that permission as a parameter.
-    pub allow_repo_effects: bool,
+#[serde(tag = "action", rename_all = "kebab-case")]
+pub enum Completion {
+    /// The take-over settles every conflict. It installs a package whose
+    /// repository effect then needs its own yes, so the action carries
+    /// that permission as a parameter.
+    TakeOver { allow_repo_effects: bool },
+    /// No conflict is left, and `update-pi` installs every declared Pi
+    /// package the plan leaves.
+    UpdatePi,
 }
 
-/// The completion for a plan's conflicts, or `None` where no single
-/// action settles all of them: a conflict the take-over cannot replace
-/// (an edit, a link, a revision clash), or a take-over that does not
-/// answer for the whole scope (`take_over_settles`). `apply` and
-/// `refresh` name what this returns, and `check` reads it off the plan
-/// that judged its unmanaged copies ([`UnmanagedCopies::completion`]);
-/// none of them has a reading of its own.
+/// The completion for what a plan leaves, or `None` where no single
+/// action finishes it. With a conflict, the take-over, where it can
+/// replace every one and answers for the whole scope
+/// (`take_over_settles`); never one beside a conflict an edit, a link or a
+/// revision clash holds. With none, `update-pi`, where it installs every
+/// Pi package left (`update_pi_settles`). `apply` and `refresh` name what
+/// this returns, and `check` reads it off the plan that judged its
+/// unmanaged copies ([`UnmanagedCopies::completion`]); none of them has a
+/// reading of its own.
 pub fn completion(report: &EngineReport) -> Option<Completion> {
     let mut conflicts = report
         .drift
         .iter()
         .filter(|row| row.state == DriftState::Conflict)
         .peekable();
-    conflicts.peek()?;
+    if conflicts.peek().is_none() {
+        return update_pi_settles(&report.drift).then_some(Completion::UpdatePi);
+    }
     let replaceable = conflicts.all(|row| row.cause.is_some_and(DriftCause::can_replace));
-    (replaceable && take_over_settles(&report.drift)).then_some(Completion {
+    (replaceable && take_over_settles(&report.drift)).then_some(Completion::TakeOver {
         allow_repo_effects: !report.repo_effects_held.is_empty(),
     })
 }
@@ -410,6 +422,45 @@ fn take_over_settles(drift: &[DriftRow]) -> bool {
                     .as_ref()
                     .is_some_and(|compared| compared.differing_total > 0)
             })
+}
+
+/// Whether `update-pi` finishes the declared Pi packages a plan with no
+/// conflict leaves: at least one is left for it, and every other one is a
+/// row whose cause this plan's own write settles. A row with neither —
+/// a source that would not resolve, an origin that differs from the
+/// record, a comparison that failed, a copy Pi already loads from another
+/// root (`pi_ext::record_matching`) — is one `update-pi` notes as not
+/// evaluated, fails the scope on, or will not install, so naming it as
+/// the finish hands over a command that leaves the scope where it is.
+fn update_pi_settles(drift: &[DriftRow]) -> bool {
+    let mut left = false;
+    for row in drift
+        .iter()
+        .filter(|row| row.kind == crate::model::ItemKind::PiExtension)
+    {
+        match row.state {
+            // A record of a package no longer declared, or a stranger's
+            // files beside the declared ones: not a declaration update-pi
+            // installs.
+            DriftState::Orphaned | DriftState::Unmanaged => {}
+            DriftState::Missing | DriftState::Stale | DriftState::Conflict => {
+                use super::RowRemedy;
+                match (row.remedy, row.cause) {
+                    (Some(RowRemedy::UpdatePi), _) => left = true,
+                    (None, Some(cause)) if !cause.holds_the_write() => {}
+                    // Settled by another verb, or by none.
+                    (
+                        None
+                        | Some(
+                            RowRemedy::Remove | RowRemedy::RemoveEdited | RowRemedy::PruneOrRemove,
+                        ),
+                        _,
+                    ) => return false,
+                }
+            }
+        }
+    }
+    left
 }
 
 /// The render's origin as the report names it: the source's provenance at

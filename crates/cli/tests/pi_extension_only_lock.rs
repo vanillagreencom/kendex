@@ -162,6 +162,54 @@ fn apply_writes_the_record_once_for_a_pi_extension_only_scope() {
     assert_record_landed(&env.global_lock_file());
 }
 
+/// The closing line names `update-pi` as the finish only where running it
+/// finishes the scope. Beside a declared package whose source no longer
+/// ships it, update-pi notes that one as not evaluated and fails; for a
+/// package Pi already loads from the personal scope, it leaves the copy
+/// blocked and exits clean, so the action is not named for that package
+/// either. Either way the run names no finish.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_finish_is_update_pi_only_where_update_pi_finishes_the_scope() {
+    type Plant = fn(&Path, &Path);
+    let gone: Plant = |_, project| {
+        write(
+            &project.join("kendex.toml"),
+            &format!("{MANIFEST}\n[pi-extensions.pi-gone]\nsource = \"cat\"\n"),
+        );
+    };
+    let loaded_twice: Plant = |home, _| {
+        let env = kendex_core::env::Env::host_rooted(home);
+        let personal =
+            kendex_core::pi_ext::scope_root(&env, &kendex_core::model::Scope::Global).unwrap();
+        write(&personal.join("packages/pi-widgets/package.json"), PACKAGE);
+        write(&personal.join("packages/pi-widgets/index.js"), INDEX);
+    };
+    let rows: [(&str, Plant, bool); 2] = [
+        ("a declared package its source no longer ships", gone, true),
+        (
+            "a copy Pi already loads from the personal scope",
+            loaded_twice,
+            false,
+        ),
+    ];
+    for (case, plant, settled_beside) in rows {
+        let (_tmp, home) = fixture();
+        let project = home.join("dev/app");
+        plant(&home, &project);
+        kendex(&home, &project, &["apply", "--yes"]);
+
+        let second = said(&kendex(&home, &project, &["apply", "--yes"]));
+        let keyed = |key: &str| {
+            second
+                .lines()
+                .any(|line| line.contains(&format!("{key}=update-pi")))
+        };
+        assert!(!keyed("finish-with"), "{case}: {second}");
+        assert_eq!(keyed("settle-with"), settled_beside, "{case}: {second}");
+    }
+}
+
 /// The gap line, with both kinds of gap under the one headline it has.
 ///
 /// A plugin is recorded when the plan derives its toggle and skipped when

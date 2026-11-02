@@ -3,10 +3,10 @@
 //! reason, every position it sits at, how the content in the way compares
 //! with the install it blocks, and the exits under all of it.
 
-use kendex_core::engine::{Comparison, DriftCause, DriftRow, DriftState, EngineReport};
+use kendex_core::engine::{Comparison, Completion, DriftCause, DriftRow, DriftState, EngineReport};
 use kendex_core::model::ItemKind;
 
-use super::offers::{Blocked, Offer, finish_with, offer_goes_under};
+use super::offers::{Blocked, Finish, Offer, finish_with, offer_goes_under};
 use crate::ui::{Span, Status, Style};
 
 /// What this plan cannot write and why. A conflict plans no op, so
@@ -264,7 +264,15 @@ fn plural(n: u32) -> &'static str {
 /// only where one take-over settles every conflict, and keyed as the
 /// closing ledger keys it. Each item's own way out above still stands.
 fn scope_exit(style: &Style, rows: &[&DriftRow], blocked: &[Blocked]) -> Vec<String> {
-    let (Some(finish), Some(row)) = (blocked.first().and_then(|item| item.finish), rows.first())
+    let (
+        Some(
+            finish @ Finish {
+                completion: Completion::TakeOver { .. },
+                ..
+            },
+        ),
+        Some(row),
+    ) = (blocked.first().and_then(|item| item.finish), rows.first())
     else {
         return Vec::new();
     };

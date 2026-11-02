@@ -725,7 +725,7 @@ fn a_version_10_recovery_moves_the_record_in_its_own_transaction() {
 /// the fresh plan nothing to record.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_version_10_record_already_aside_is_recovered_in_place() {
+fn a_version_10_record_already_aside_is_moved_over_its_copy() {
     type Plant = fn(&Fixture);
     let nothing: Plant = |_| {};
     let hand_made: Plant = |f| {

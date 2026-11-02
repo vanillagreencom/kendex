@@ -581,7 +581,7 @@ impl ScopeCheck<'_> {
                 }
             }
             Err(crate::error::CoreError::LegacyProjectLock { path, aside }) => {
-                self.version_10_line(path, aside, sections);
+                self.version_10_line(manifest, path, aside, sections);
             }
             Err(error) => sections.unknown.push(unknown(format!(
                 "{prefix}lock: {}",
@@ -596,15 +596,17 @@ impl ScopeCheck<'_> {
     /// refusal itself still reaches the caller's error channel, keyed. One
     /// the recovery would refuse is unread, with the recovery's own reason
     /// (`engine::version_10_recovery`), since no command of kendex's
-    /// settles it.
+    /// settles it: a scope whose manifest is absent or would not read among
+    /// them, which has nothing to rebuild the record from.
     fn version_10_line(
         &self,
+        manifest: &ManifestRead,
         path: &std::path::Path,
         aside: &std::path::Path,
         sections: &mut Sections,
     ) {
         let prefix = self.prefix;
-        match crate::engine::version_10_recovery(path, aside) {
+        match crate::engine::version_10_recovery(path, aside, manifest.current()) {
             Ok(None) => sections.record_cleanup.push(drift(
                 format!("{prefix}lock: a version 10 record, which a refresh recovers"),
                 Some(Remedy::Refresh {
@@ -1052,9 +1054,17 @@ impl ScopeCheck<'_> {
         install: &crate::engine::Occupied,
         files: u32,
         rendered_from: &str,
-        take_over: Option<crate::engine::Completion>,
+        completion: Option<crate::engine::Completion>,
         sections: &mut Sections,
     ) {
+        // A differing copy is a conflict, and `update-pi` never finishes a
+        // scope that has one (`engine::completion`).
+        let take_over = match completion {
+            Some(crate::engine::Completion::TakeOver { allow_repo_effects }) => {
+                Some(allow_repo_effects)
+            }
+            Some(crate::engine::Completion::UpdatePi) | None => None,
+        };
         let mut text = format!(
             "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
             self.prefix,
@@ -1075,9 +1085,9 @@ impl ScopeCheck<'_> {
         sections.stale.push(drift(
             text,
             Some(match take_over {
-                Some(take_over) => Remedy::ReplaceUnmanaged {
+                Some(allow_repo_effects) => Remedy::ReplaceUnmanaged {
                     global: self.global,
-                    allow_repo_effects: take_over.allow_repo_effects,
+                    allow_repo_effects,
                 },
                 None => Remedy::Plan {
                     global: self.global,

@@ -898,51 +898,60 @@ pub fn audit(env: &Env, scope: &Scope) -> Result<EngineReport> {
 pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<EngineReport> {
     let scope = &scope.canonical();
     let (manifest_file, base) = manifest::read_for_mutation(&manifest::manifest_path(env, scope))?;
-    if let Some(manifest) = &manifest_file {
-        let mut options = options.clone();
-        options.manifest_base.get_or_insert(base.clone());
-        let mut report = match planning_lock(env, scope, &options)? {
-            PlanningLock::Read(lock) => plan_scope(env, scope, manifest, &lock, &options)?,
-            PlanningLock::Version10(recoverable) => {
-                recovery::plan_version_10(env, scope, manifest, recoverable, &options)?
-            }
-        };
-        if !manifest.migration_notes.is_empty() && !persists_manifest(&report.plan.ops) {
-            ops::insert_manifest_save(env, scope, &mut report.plan, manifest.clone(), Some(&base))?;
+    let mut options = options.clone();
+    let (manifest, mut report) = match planning_lock(env, scope, manifest_file.as_ref(), &options)?
+    {
+        PlanningLock::Version10(recoverable) => {
+            options.manifest_base.get_or_insert(base.clone());
+            let manifest = recoverable.manifest;
+            let report = recovery::plan_version_10(env, scope, recoverable, &options)?;
+            (manifest, report)
         }
-        return Ok(report);
+        PlanningLock::Read(lock) => match &manifest_file {
+            Some(manifest) => {
+                options.manifest_base.get_or_insert(base.clone());
+                (manifest, plan_scope(env, scope, manifest, &lock, &options)?)
+            }
+            // Nothing is declared here: the scope reads as observation-only
+            // rather than failing the whole audit, so a stranger's files
+            // still get a row.
+            None => {
+                let mut report = EngineReport::observed(Plan::landed(scope.clone(), Vec::new())?);
+                let empty = Manifest::default();
+                unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;
+                return Ok(report);
+            }
+        },
+    };
+    if !manifest.migration_notes.is_empty() && !persists_manifest(&report.plan.ops) {
+        ops::insert_manifest_save(env, scope, &mut report.plan, manifest.clone(), Some(&base))?;
     }
-
-    // Nothing is declared here: the scope reads as observation-only rather
-    // than failing the whole audit, so a stranger's files still get a row.
-    // Recovery rebuilds a record from declarations, and a scope with none
-    // has nothing to rebuild it from: its record is read, and refused, as
-    // every other reader reads it.
-    let lock = crate::lock::load(&lock_path(env, scope))?;
-    let mut report = EngineReport::observed(Plan::landed(scope.clone(), Vec::new())?);
-    let empty = Manifest::default();
-    unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;
     Ok(report)
 }
 
 /// The record a scope plans against.
-enum PlanningLock {
+enum PlanningLock<'m> {
     /// The current record, or an empty one where no file sits at the
     /// path: a fresh scope plans through the normal path.
     Read(Lock),
     /// A version 10 project record this plan recovers: the scope plans
     /// fresh over no record.
-    Version10(Version10Recoverable),
+    Version10(Version10Recoverable<'m>),
 }
 
 /// A version 10 project record a recovery may take, as it was read.
-pub(crate) struct Version10Recoverable {
+pub(crate) struct Version10Recoverable<'m> {
     /// The hash of the record's bytes, which the recovery's first write is
     /// bound to.
     pub(crate) hash: String,
     /// An earlier recovery already left these same bytes aside, so the
     /// move onto the aside is bound to them rather than to its absence.
     pub(crate) moved: bool,
+    /// The declarations the new record is rebuilt from. No verdict is
+    /// recoverable without them ([`Version10Stop::NoDeclarations`]).
+    ///
+    /// [`Version10Stop::NoDeclarations`]: crate::error::Version10Stop::NoDeclarations
+    pub(crate) manifest: &'m Manifest,
 }
 
 /// Which record a scope plans against, decided once for the plan and for
@@ -950,8 +959,14 @@ pub(crate) struct Version10Recoverable {
 /// about whether a version 10 record stops the run. Without
 /// [`PlanOptions::recover_version_10`] such a record refuses as every
 /// other reader refuses it. With it, the record is recovered or refused
-/// as [`version_10_recovery`] reads it.
-fn planning_lock(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<PlanningLock> {
+/// as [`version_10_recovery`] reads it, over `manifest`, the declarations
+/// the scope's manifest read as, if it read as any.
+fn planning_lock<'m>(
+    env: &Env,
+    scope: &Scope,
+    manifest: Option<&'m Manifest>,
+    options: &PlanOptions,
+) -> Result<PlanningLock<'m>> {
     let path = lock_path(env, scope);
     let refused = match crate::lock::load_file(&path) {
         Ok(LockFile::Current(lock)) => return Ok(PlanningLock::Read(lock)),
@@ -969,38 +984,45 @@ fn planning_lock(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Plan
     if !options.recover_version_10 {
         return Err(refused);
     }
-    match recoverable(&path, aside)? {
+    match recoverable(&path, aside, manifest)? {
         Ok(recoverable) => Ok(PlanningLock::Version10(recoverable)),
         Err(why) => Err(crate::error::CoreError::Version10RecoveryRefused { path, why }),
     }
 }
 
-/// Whether the version 10 project record at `path` can be recovered where
-/// it sits, the one answer the recovery and `kendex check` read: `None`
-/// where a refresh or an apply recovers it, else why it would refuse.
-/// `aside` is where the recovery moves it
-/// ([`crate::error::CoreError::LegacyProjectLock`]).
+/// Whether the version 10 project record at `path` can be recovered, the
+/// one answer the recovery and `kendex check` read: `None` where a refresh
+/// or an apply recovers it, else why it would refuse. `aside` is where the
+/// recovery moves it ([`crate::error::CoreError::LegacyProjectLock`]), and
+/// `manifest` the scope's declarations, `None` where its manifest is
+/// absent or would not read.
 pub(crate) fn version_10_recovery(
     path: &std::path::Path,
     aside: &std::path::Path,
+    manifest: Option<&Manifest>,
 ) -> Result<Option<crate::error::Version10Stop>> {
-    Ok(recoverable(path, aside)?.err())
+    Ok(recoverable(path, aside, manifest)?.err())
 }
 
-/// The record is recoverable only as kendex's own file, at the lock path
-/// itself rather than through a link, and only where the file aside is
-/// not a different record: that file is the proof partial recoveries keep
-/// reading, and moving a second record onto it would replace the first.
-/// An aside holding these exact bytes is this record already moved, the
-/// state a checkout back to a commit from before an earlier recovery
-/// leaves, since the record is committed and the file aside is ignored;
-/// it reads as the same proof, so the recovery goes on and moves the
-/// record over it.
-fn recoverable(
+/// The record is recoverable only where the scope declares what to rebuild
+/// it from, as kendex's own file, at the lock path itself rather than
+/// through a link, and only where the file aside is not a different
+/// record: that file is the proof partial recoveries keep reading, and
+/// moving a second record onto it would replace the first. An aside
+/// holding these exact bytes is this record already moved, the state a
+/// checkout back to a commit from before an earlier recovery leaves,
+/// since the record is committed and the file aside is ignored; it reads
+/// as the same proof, so the recovery goes on and moves the record over
+/// it.
+fn recoverable<'m>(
     path: &std::path::Path,
     aside: &std::path::Path,
-) -> Result<std::result::Result<Version10Recoverable, crate::error::Version10Stop>> {
+    manifest: Option<&'m Manifest>,
+) -> Result<std::result::Result<Version10Recoverable<'m>, crate::error::Version10Stop>> {
     use crate::error::{CoreError, Version10Stop};
+    let Some(manifest) = manifest else {
+        return Ok(Err(Version10Stop::NoDeclarations));
+    };
     if path.is_symlink() {
         return Ok(Err(Version10Stop::LinkedRecord));
     }
@@ -1026,6 +1048,7 @@ fn recoverable(
     Ok(Ok(Version10Recoverable {
         hash: crate::hash::hash_tree(path)?,
         moved,
+        manifest,
     }))
 }
 
@@ -1047,7 +1070,7 @@ pub fn check_catalog_compatibility_for(
     options: &PlanOptions,
 ) -> Result<()> {
     crate::source::check_catalog_compatibility(env, scope, manifest)?;
-    let lock = match planning_lock(env, scope, options)? {
+    let lock = match planning_lock(env, scope, Some(manifest), options)? {
         PlanningLock::Read(lock) => lock,
         // A recovery holds nothing at a recorded commit: it plans over no
         // record, as `plan_apply` does.

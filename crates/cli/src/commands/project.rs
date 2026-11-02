@@ -312,7 +312,10 @@ pub enum Registering {
 /// run that exits nonzero; and a confirmation the reader declined —
 /// except in `refresh`,
 /// where a Pi settle before the final confirm has already written what
-/// this then registers.
+/// this then registers. A write that landed counts as got through
+/// whatever fails after or beside it: an `apply` whose effects step
+/// failed, an `update-pi` scope where one package installed and another
+/// did not.
 ///
 /// A named root inside a linked git worktree, a repository nested in one
 /// included, is never registered, and no flag changes that: a worktree is removed when its lane ends, and an

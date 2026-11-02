@@ -88,7 +88,8 @@ struct ScopePlan {
 /// where it names one. A named project is registered as `apply` and
 /// `refresh` register theirs: the refusal asked before the first write,
 /// the registration once the write got through
-/// (`project::register_target`).
+/// (`project::register_target`), and, in a run that fails, for each scope
+/// a package landed in before it did.
 pub fn run(
     env: &Env,
     filter: ScopeFilter,
@@ -135,7 +136,19 @@ pub fn run(
         }
         return Ok(());
     }
-    update(env, &plans)?;
+    let mut wrote = Vec::new();
+    if let Err(error) = update(env, &plans, &mut wrote) {
+        // The packages that landed are on disk whatever failed beside
+        // them, so their project is listed as `apply` lists one whose
+        // effects step failed after its write; a registry that refuses is
+        // said beside the failure it did not cause.
+        for scope in wrote {
+            if let Err(refused) = super::project::register_target(env, &registering, scope) {
+                super::fail_refusal("warning: ", refused.as_ref());
+            }
+        }
+        return Err(error);
+    }
     for plan in &plans {
         super::project::register_target(env, &registering, &plan.scope)?;
     }
@@ -251,7 +264,9 @@ pub fn settle_scope(
         notes: Vec::new(),
         shadows: pi_ext::ShadowScan::default(),
     };
-    Ok(install_rows(env, &plan, options)?.count)
+    let mut installed = Installed::default();
+    install_rows(env, &plan, options, &mut installed)?;
+    Ok(installed.count)
 }
 
 /// What a settle may install, decided once and here: a declared package
@@ -640,7 +655,10 @@ fn describe(row: &Row) -> String {
     }
 }
 
-fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
+/// Install what each plan marks, and say how the run ended. `wrote` gains
+/// every scope a package landed in, whatever the run returns: a failure
+/// after a landed install still leaves that install on disk.
+fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> CliResult {
     let mut updated = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for plan in plans {
@@ -661,7 +679,12 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
         {
             continue;
         }
-        let installed = install_rows(env, plan, &PlanOptions::current())?;
+        let mut installed = Installed::default();
+        let pass = install_rows(env, plan, &PlanOptions::current(), &mut installed);
+        if installed.count > 0 {
+            wrote.push(&plan.scope);
+        }
+        pass?;
         updated += installed.count;
         failures.extend(
             installed
@@ -687,6 +710,7 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
 
 /// What one scope's install pass did: how many packages landed, and the
 /// names of the ones that did not, each already said with its cause.
+#[derive(Default)]
 struct Installed {
     count: usize,
     failed: Vec<String>,
@@ -698,15 +722,14 @@ struct Installed {
 /// and no completion, so the next pass finds it stale again. The record
 /// compares each package with its source read at the commit a plan under
 /// `options` reads it at, the commit the plan's rows were installed from.
+/// What landed is counted into `installed` as it lands, so a pass that
+/// stops on an error still says what it wrote.
 fn install_rows(
     env: &Env,
     plan: &ScopePlan,
     options: &PlanOptions,
-) -> Result<Installed, Box<dyn std::error::Error>> {
-    let mut installed = Installed {
-        count: 0,
-        failed: Vec::new(),
-    };
+    installed: &mut Installed,
+) -> CliResult {
     let declared = kendex_core::engine::ops::manifest_for_reading(env, &plan.scope)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, &plan.scope))?;
     let readings =
@@ -725,8 +748,8 @@ fn install_rows(
         pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
         match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
-                record_pi_installs(env, plan, &readings, Some(&row.name))?;
                 installed.count += 1;
+                record_pi_installs(env, plan, &readings, Some(&row.name))?;
                 out(&format!(
                     "  {verb} {} -> {}",
                     row.name,
@@ -748,7 +771,7 @@ fn install_rows(
     if installed.failed.is_empty() {
         record_pi_installs(env, plan, &readings, None)?;
     }
-    Ok(installed)
+    Ok(())
 }
 
 /// The commit offer, made here because this verb writes into a project's

@@ -907,6 +907,56 @@ fn an_installer_that_fails_after_the_write_still_lists_the_named_project() {
     );
 }
 
+/// An `update-pi` that installs one declared package and cannot evaluate
+/// another exits on that failure and still lists the named project the
+/// installed one landed in; one that lands nothing there lists nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_update_pi_that_fails_beside_a_landed_install_lists_the_named_project() {
+    let package = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
+    for (case, declared, lands) in [
+        ("one lands", &["pi-widgets", "pi-gone"][..], true),
+        ("none lands", &["pi-gone"][..], false),
+    ] {
+        let (_tmp, home, catalog, elsewhere) = world();
+        let project = home.join("dev/app");
+        write(
+            &catalog.join("pi-extensions/pi-widgets/package.json"),
+            package,
+        );
+        write(
+            &catalog.join("pi-extensions/pi-widgets/index.js"),
+            "export const version = 1;\n",
+        );
+        let mut manifest = manifest_head(&catalog);
+        for name in declared {
+            manifest.push_str(&format!("\n[pi-extensions.{name}]\nsource = \"cat\"\n"));
+        }
+        write(&project.join("kendex.toml"), &manifest);
+
+        let failed = kendex(
+            &home,
+            &elsewhere,
+            &["update-pi", "--project-path", project.to_str().unwrap()],
+        );
+        let text = said(&failed);
+
+        assert!(!failed.status.success(), "{case}: {text}");
+        assert_eq!(
+            project
+                .join(".pi/packages/pi-widgets/package.json")
+                .is_file(),
+            lands,
+            "{case}: {text}"
+        );
+        assert_eq!(
+            registered(&home).contains(&project),
+            lands,
+            "{case}: {text}"
+        );
+    }
+}
+
 /// A named refresh whose catalog cannot be read writes nothing, exits
 /// nonzero, and leaves the projects list as it found it.
 ///

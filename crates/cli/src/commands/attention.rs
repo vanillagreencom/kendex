@@ -16,7 +16,7 @@ use kendex_core::env::Env;
 use super::advisory::{Listing, safety_section};
 use super::blocked::{conflict_rows, conflicts, drift};
 use super::offers::{
-    Blocked, Reached, UpdatePiLeft, blocked_items, left_for_update_pi, update_pi_with,
+    Blocked, Reached, UpdatePiLeft, blocked_items, finish, left_for_update_pi, update_pi_with,
 };
 use crate::ui::{self, Span, Status, Style};
 
@@ -32,7 +32,8 @@ pub struct Attention {
     /// verbose run, which draws it all.
     pub folded: bool,
     /// The Pi packages the plan left for `update-pi`, which the closing
-    /// ledger counts and names the action for.
+    /// ledger counts, with the plan's completion it names where there is
+    /// one.
     pub update_pi: Option<UpdatePiLeft>,
 }
 
@@ -61,7 +62,8 @@ fn attention(
     reached: Reached,
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
-    let blocked = blocked_items(env, report, &rows, reached);
+    let finish = finish(report, reached);
+    let blocked = blocked_items(env, &rows, finish);
     let left = left_for_update_pi(report);
     let draw = |listing: Listing| {
         let verbose = listing == Listing::Verbose;
@@ -84,7 +86,7 @@ fn attention(
     let folded = listing == Listing::Attention && draw(Listing::Verbose) != lines;
     let update_pi = (!left.is_empty()).then_some(UpdatePiLeft {
         count: left.len(),
-        reached,
+        finish,
     });
     (
         lines,

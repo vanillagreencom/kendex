@@ -806,6 +806,9 @@ pub enum Version10Stop {
     AsideTaken { aside: PathBuf },
     /// The lock path is a link. A recovery moves only kendex's own file.
     LinkedRecord,
+    /// The scope's manifest is absent or would not read. The new record is
+    /// built from the declarations, so there is nothing to rebuild it from.
+    NoDeclarations,
 }
 
 impl std::fmt::Display for Version10Stop {
@@ -818,6 +821,9 @@ impl std::fmt::Display for Version10Stop {
             ),
             Version10Stop::LinkedRecord => out.write_str(
                 "it is a link, and a recovery moves only the record file itself; put the file in its place",
+            ),
+            Version10Stop::NoDeclarations => out.write_str(
+                "this place's manifest is missing or does not read, and a recovery rebuilds the record from what the manifest lists; put back a readable manifest first",
             ),
         }
     }

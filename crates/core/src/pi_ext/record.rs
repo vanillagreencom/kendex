@@ -217,7 +217,7 @@ fn record_matching<'a>(
 ) -> Result<Vec<crate::engine::DriftRow>> {
     use crate::engine::{DriftCause, DriftRow, DriftState};
     use crate::model::{HarnessId, ItemKind};
-    let root = scope_root(env, scope)?;
+    let (root, other_roots) = guarded_roots(env, scope)?;
     let mut drift = Vec::new();
     let mut switches = Vec::new();
     for (name, decl) in declarations {
@@ -240,9 +240,7 @@ fn record_matching<'a>(
         let Some(result) = result.transpose() else {
             continue;
         };
-        // The one row only update-pi settles: apply's write never installs
-        // a carrier package.
-        let remedy = matches!(result, Ok(None)).then_some(crate::engine::RowRemedy::UpdatePi);
+        let mut remedy = None;
         let (detail, cause) = match result {
             Ok(Some(mut entry)) => {
                 let differs = entry.enabled != decl.enabled;
@@ -261,8 +259,11 @@ fn record_matching<'a>(
                         entry.enabled = decl.enabled;
                     }
                     if let Some((path, edit)) = edit {
-                        plan.edits
-                            .push((path.clone(), format!("{name} instructions"), edit.clone()));
+                        plan.edits.push((
+                            path.clone(),
+                            format!("{name} instructions"),
+                            edit.clone(),
+                        ));
                     }
                 }
                 lock.entries.insert(key, entry);
@@ -283,12 +284,11 @@ fn record_matching<'a>(
                     Ok(None) => continue,
                 }
             }
-            Ok(None) => (
-                "carrier package or completed install record does not match; update-pi must settle it"
-                    .to_owned(),
+            Ok(None) => (left_for_update_pi(name, &other_roots, &mut remedy), None),
+            Err(error) => (
+                format!("carrier package could not be compared: {error}"),
                 None,
             ),
-            Err(error) => (format!("carrier package could not be compared: {error}"), None),
         };
         drift.push(DriftRow {
             kind: ItemKind::PiExtension,
@@ -319,6 +319,43 @@ fn record_matching<'a>(
         });
     }
     Ok(drift)
+}
+
+/// Where a scope's packages install, and the roots update-pi's install
+/// guard checks when it is run on this scope alone, as the finish naming
+/// it runs it (`pi_ext::paired_roots`).
+fn guarded_roots(env: &Env, scope: &crate::model::Scope) -> Result<(PathBuf, Vec<PathBuf>)> {
+    let settings = crate::settings::load(env)?;
+    Ok(paired_roots(
+        env,
+        &settings,
+        scope,
+        std::slice::from_ref(scope),
+    ))
+}
+
+/// The detail of a declared package whose copy or completed record does
+/// not match, setting `remedy` where update-pi settles it: the one row
+/// only update-pi settles, since apply's write never installs a carrier
+/// package. Update-pi installs none Pi already loads from another root,
+/// under this name or an earlier one, so that row carries no remedy and
+/// says why.
+fn left_for_update_pi(
+    name: &str,
+    other_roots: &[PathBuf],
+    remedy: &mut Option<crate::engine::RowRemedy>,
+) -> String {
+    match super::duplicate_elsewhere(name, other_roots) {
+        None => {
+            *remedy = Some(crate::engine::RowRemedy::UpdatePi);
+            "carrier package or completed install record does not match; update-pi must settle it"
+                .to_owned()
+        }
+        Some((installed, at)) => format!(
+            "carrier package does not match, and {installed} is installed at {} as well; Pi loads both package lists together and will not start with one package registered twice, so update-pi leaves it until one copy is removed",
+            at.display()
+        ),
+    }
 }
 
 /// The edit that brings the package's `APPEND_SYSTEM.md` block in line with

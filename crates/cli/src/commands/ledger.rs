@@ -18,7 +18,7 @@ use std::io::IsTerminal;
 use kendex_core::engine::ItemSafety;
 use kendex_core::model::{ItemKind, Scope};
 
-use super::offers::{Blocked, UpdatePiLeft, finish_with, update_pi_with};
+use super::offers::{Blocked, UpdatePiLeft, finish_with};
 use super::scope_label;
 use crate::ui;
 
@@ -151,17 +151,17 @@ fn ledger(
         ));
         steps.push(ui::Step::Decision(conflict_exit(scope, blocked)));
     }
-    // The one action that settles them, and the scope's finish where no
-    // conflict is left beside them; the take-over's completion is never
-    // named beside them (`engine::completion`), so one finish is said.
+    // The plan's one completion where it has one, which beside packages
+    // left for update-pi is never the take-over (`engine::completion`), so
+    // one finish is said; the settle-with line above otherwise.
     if let Some(update_pi) = update_pi {
         parts.push(format!(
             "left {left} Pi package{} for update-pi",
             plural(left)
         ));
-        steps.push(ui::Step::Decision(match skipped {
-            0 => update_pi_with("finish-with", scope, update_pi.reached),
-            _ => "left for update-pi — see the settle-with line above".to_owned(),
+        steps.push(ui::Step::Decision(match update_pi.finish {
+            Some(finish) => finish_with(finish, scope),
+            None => "left for update-pi — see the settle-with line above".to_owned(),
         }));
     }
     // A scored run says what safety found either way: a clean scan and

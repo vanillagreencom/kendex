@@ -629,21 +629,24 @@ fn a_version_10_recovery_runs_no_installer_for_a_carried_package() {
 /// The check names a version 10 record's fix, the refresh, as drift with a
 /// remedy rather than a scope it could not check, and still hands fleet its
 /// keyed refusal. That holds with this same record already aside, which
-/// the refresh recovers in place; a different record aside is one the
-/// refresh refuses, so the check names no refresh and reads the scope as
-/// one it could not check. Every other verb that reads the record keeps
+/// the refresh moves the record over; a different record aside, or no
+/// manifest to rebuild the record from, is one the refresh refuses or
+/// passes over, so the check names no refresh and reads the scope as one
+/// it could not check. Every other verb that reads the record keeps
 /// refusing.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_check_names_a_refresh_for_a_version_10_record() {
-    for (case, aside, recovers) in [
-        ("nothing aside", None, true),
-        ("this record aside", Some(None), true),
+    for (case, aside, declared, recovers) in [
+        ("nothing aside", None, true, true),
+        ("this record aside", Some(None), true, true),
         (
             "another record aside",
             Some(Some("an earlier recovery\n")),
+            true,
             false,
         ),
+        ("no manifest", None, false, false),
     ] {
         let world = World::new(&["claude"]);
         world.declare_catalog();
@@ -652,6 +655,9 @@ fn the_check_names_a_refresh_for_a_version_10_record() {
         let older = read(&world.at(".kendex-lock.json"));
         if let Some(other) = aside {
             super::write(&world.at(".kendex-lock.v10.json"), other.unwrap_or(&older));
+        }
+        if !declared {
+            std::fs::remove_file(world.at("kendex.toml")).unwrap();
         }
 
         let checked = world.try_run(&["check"]);
@@ -673,7 +679,7 @@ fn the_check_names_a_refresh_for_a_version_10_record() {
             recovers,
             "{case}: {verbs:?}"
         );
-        if aside.is_none() {
+        if aside.is_none() && declared {
             let removed = world.try_run(&["remove", "deploy"]);
             assert!(!removed.status.success());
             assert_eq!(refused_version_10_lines(&removed), 1);

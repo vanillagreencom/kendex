@@ -24,8 +24,8 @@ pub struct Blocked {
     pub name: String,
     /// The line printed under this item's rows, when it has one.
     pub offer: Option<Offer>,
-    /// The one action that settles every conflict of the plan this item
-    /// came from, the same for each of its items: the engine's answer
+    /// The one action that finishes the plan this item came from, the
+    /// same for each of its items: the engine's answer
     /// (`engine::completion`), so the conflicts section and the closing
     /// ledger name one action and never a reading of their own.
     pub finish: Option<Finish>,
@@ -70,16 +70,7 @@ fn same_item(row: &DriftRow, other: &DriftRow) -> bool {
 /// Every item these rows block, each asked once. One derivation per item:
 /// the line printed under a row and the sentence that closes the run come
 /// from the same answer, so they cannot disagree about what was offered.
-pub fn blocked_items(
-    env: &Env,
-    report: &EngineReport,
-    rows: &[&DriftRow],
-    reached: Reached,
-) -> Vec<Blocked> {
-    let finish = kendex_core::engine::completion(report).map(|completion| Finish {
-        completion,
-        reached,
-    });
+pub fn blocked_items(env: &Env, rows: &[&DriftRow], finish: Option<Finish>) -> Vec<Blocked> {
     let mut items: Vec<Blocked> = Vec::new();
     for row in rows {
         if items.iter().any(|item| item.is(row)) {
@@ -194,6 +185,16 @@ pub fn adopt_command(env: &Env, item: &[&DriftRow]) -> Option<String> {
     ))
 }
 
+/// A plan's one completion and how the run reached its scope: the
+/// engine's answer (`engine::completion`), computed once for every surface
+/// that names it.
+pub fn finish(report: &EngineReport, reached: Reached) -> Option<Finish> {
+    kendex_core::engine::completion(report).map(|completion| Finish {
+        completion,
+        reached,
+    })
+}
+
 /// A plan's one completion as keyed data a program reads: the verb and
 /// its parameters, never a command line (engine.md rule 18). The
 /// repository-effect permission rides as a parameter because the
@@ -201,12 +202,17 @@ pub fn adopt_command(env: &Env, item: &[&DriftRow]) -> Option<String> {
 /// the run named is the last field, escaped and read to the end of the
 /// data, since a path may hold a space.
 pub fn finish_with(finish: Finish, scope: &Scope) -> String {
-    let mut line = "finish-with=apply replace-unmanaged".to_owned();
-    if finish.completion.allow_repo_effects {
-        line.push_str(" allow-repo-effects");
+    match finish.completion {
+        Completion::TakeOver { allow_repo_effects } => {
+            let mut line = "finish-with=apply replace-unmanaged".to_owned();
+            if allow_repo_effects {
+                line.push_str(" allow-repo-effects");
+            }
+            push_place(&mut line, scope, finish.reached);
+            line
+        }
+        Completion::UpdatePi => update_pi_with("finish-with", scope, finish.reached),
     }
-    push_place(&mut line, scope, finish.reached);
-    line
 }
 
 /// The scope an apply-shaped action names: the personal scope by its one
@@ -238,17 +244,20 @@ pub fn left_for_update_pi(report: &EngineReport) -> Vec<&DriftRow> {
         .collect()
 }
 
-/// What a plan left for `update-pi` in one scope, and how the run reached
-/// that scope, which the action names.
+/// What a plan left for `update-pi` in one scope, and the plan's one
+/// completion, which is `update-pi` where it finishes the scope and `None`
+/// where it does not: a take-over never settles a scope that leaves a
+/// package for `update-pi` (`engine::completion`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpdatePiLeft {
     pub count: usize,
-    pub reached: Reached,
+    pub finish: Option<Finish>,
 }
 
 /// The action that settles every row `left_for_update_pi` returns in one
 /// scope, keyed under `key` as `finish_with` keys the take-over:
-/// `settle-with` beside the rows, `finish-with` where nothing else is left.
+/// `settle-with` beside the rows, `finish-with` where it is the plan's one
+/// completion.
 /// The scope is always a parameter, as `Remedy::UpdatePi` always says
 /// `--scope`: `update-pi` with none writes every scope, the personal Pi
 /// root included, which the plan never reported on.
