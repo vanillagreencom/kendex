@@ -8,7 +8,7 @@ use test_util::{rooted, source_path};
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
 use kendex_core::base::Base;
@@ -20,6 +20,8 @@ use kendex_core::settings_file::{
     Current, SettingsDraft, SettingsEdit, SettingsEditValue, SettingsRefusal,
 };
 use kendex_core::settings_view::{ScopeSettings, SkillTemplate, scope_settings};
+
+mod compare;
 
 /// One key the consumer must decide, which an arrival writes, and one
 /// that ships a working default, which no arrival writes.
@@ -59,29 +61,7 @@ fn fixture_via_link(template: &str) -> Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture_at(home: std::path::PathBuf, template: &str, tmp: tempfile::TempDir) -> Fixture {
     let env = Env::fake(&home, FakeOs::Linux);
-    let project = home.join("dev/app");
-    fs::create_dir_all(project.join(".claude")).unwrap();
-    let project = project.canonicalize().unwrap();
-
-    let source = home.join("catalog");
-    let skill = source.join("skills/review");
-    fs::create_dir_all(&skill).unwrap();
-    fs::write(
-        skill.join("SKILL.md"),
-        "---\nname: review\ndescription: review changes\n---\nBody.\n",
-    )
-    .unwrap();
-    fs::write(skill.join("kendex.settings.toml.example"), template).unwrap();
-
-    fs::write(
-        project.join("kendex.toml"),
-        format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\n",
-            source_path(&source)
-        ),
-    )
-    .unwrap();
-
+    let project = project_at(&home, "app", "review", template);
     Fixture {
         env,
         scope: Scope::Project {
@@ -90,6 +70,37 @@ fn fixture_at(home: std::path::PathBuf, template: &str, tmp: tempfile::TempDir) 
         project,
         _tmp: tmp,
     }
+}
+
+/// One project at `home/dev/<name>` installing one skill from the catalog
+/// at `home/catalog`, which ships `template` for it. Projects built over
+/// one home share that catalog, so two of them installing one skill read
+/// one template. Returns the project's canonical root.
+#[allow(clippy::unwrap_used)]
+fn project_at(home: &Path, name: &str, skill: &str, template: &str) -> PathBuf {
+    let project = home.join("dev").join(name);
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    let project = project.canonicalize().unwrap();
+
+    let source = home.join("catalog");
+    let skill_dir = source.join("skills").join(skill);
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        format!("---\nname: {skill}\ndescription: review changes\n---\nBody.\n"),
+    )
+    .unwrap();
+    fs::write(skill_dir.join("kendex.settings.toml.example"), template).unwrap();
+
+    fs::write(
+        project.join("kendex.toml"),
+        format!(
+            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.{skill}]\nsource = \"cat\"\n",
+            source_path(&source)
+        ),
+    )
+    .unwrap();
+    project
 }
 
 #[allow(clippy::unwrap_used)]
