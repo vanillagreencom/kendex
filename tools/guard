@@ -965,9 +965,15 @@ fi
 # renders to .agents/skills/<x>/<p>, an agent definition to one file per
 # harness, and a hook to whichever harness hook directories already carry it.
 # Presence, not byte equality — a render can carry an injected block the
-# source has no copy of, so bytes cannot be compared. The one allowance is a
-# render left unchanged by a source change that only moves a frontmatter key
-# between values its harness renders alike, the render_blind rows below. Rendered is judged at
+# source has no copy of, so bytes cannot be compared. Two allowances pass a
+# render the change leaves unchanged. A source change that only moves a
+# frontmatter key between values its harness renders alike, the render_blind
+# rows below, owes none. A skills/<x>/SKILL.md change whose every changed
+# line lies inside the frontmatter on both sides passes with a guard-note:
+# the installed copy cuts keys and derives others, and which edits it leaves
+# byte-identical needs the renderer, so the merge-group run of
+# `cargo test -p kendex-core --lib own_renders` proves those bytes. A body
+# edit still owes its render at commit. Rendered is judged at
 # the tree: a skill with anything tracked under .agents/skills/<x> renders
 # every file rendered_in_skill above carries, so each such source there
 # owes a render, and an agent owes a
@@ -1113,21 +1119,25 @@ render_blind='.claude/agents model inherit inherit
 frontmatter_end() { # — the line number of the closing --- of the text on stdin, 0 with none
   awk 'NR == 1 { open = $0 == "---"; next } open && !end && $0 == "---" { end = NR } END { print end + 0 }'
 }
-render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, each key's lines share one RENDERED, and each key it removes it adds back
+render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a frontmatter row render_blind lists for RENDER's root, each key's lines share one RENDERED, and each key it removes it adds back; for a skill's SKILL.md, every changed line is frontmatter
   # A key removed or added outright moves it to or from its absent default,
   # which the table does not judge: an agent with no model requests sonnet.
   [ "$have_head" = 1 ] && render_has "$1" && render_has "$2" || return 1
-  local old_source new_source old_end new_end source_diff
+  local old_source new_source old_end new_end source_diff skill_frontmatter=0 skill
+  skill="${1#skills/}"
+  [ "$2" != ".agents/$1" ] || [ "${skill#*/}" != SKILL.md ] || skill_frontmatter=1
   new_source=$(render_read "$1") || return 1
   old_source=$(git show "${diff_against[0]}:$1" 2>/dev/null) || return 1
   old_end=$(frontmatter_end <<<"$old_source") || return 1
   new_end=$(frontmatter_end <<<"$new_source") || return 1
   source_diff=$(git -c core.quotePath=false diff --no-color --no-ext-diff --unified=0 "${render_diff[@]}" -- "$1") || return 1
   # The rows ride the environment: BSD awk refuses a newline in a -v value.
-  RENDER_BLIND="$render_blind" awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" '
+  RENDER_BLIND="$render_blind" awk -v root="${2%/*}" -v old_end="$old_end" -v new_end="$new_end" -v skill_frontmatter="$skill_frontmatter" '
     function blind(text, line, end,   value, row) {
       key = ""
-      if (line <= 1 || line >= end + 0 || !match(text, /^[A-Za-z0-9_-]+:/)) return 0
+      if (line <= 1 || line >= end + 0) return 0
+      if (skill_frontmatter) return 1
+      if (!match(text, /^[A-Za-z0-9_-]+:/)) return 0
       key = substr(text, 1, RLENGTH - 1)
       value = substr(text, RLENGTH + 1)
       gsub(/^[ \t]+|[ \t]+$/, "", value)
@@ -1142,8 +1152,10 @@ render_unchanged_by() { # SOURCE RENDER — every changed SOURCE line is a front
     /^-/ { if (!blind(substr($0, 2), o++, old_end)) { bad = 1; exit } moved[key]--; changed++; next }
     /^\+/ { if (!blind(substr($0, 2), w++, new_end)) { bad = 1; exit } moved[key]++; changed++; next }
     { bad = 1; exit }
-    END { if (!bad) for (k in moved) if (moved[k]) bad = 1; exit (bad || !changed) }
-  ' <<<"$source_diff"
+    END { if (!bad && !skill_frontmatter) for (k in moved) if (moved[k]) bad = 1; exit (bad || !changed) }
+  ' <<<"$source_diff" || return 1
+  [ "$skill_frontmatter" = 0 ] ||
+    note render-frontmatter-only "$1 bytes=merge-group own_renders (crates/core/src/engine/generated_paths/own_renders.rs)"
 }
 require_render() { # SOURCE RENDER — RENDER changes with SOURCE and outlives it
   { grep -Fxq -- "$2" <<<"$render_changed" && { ! render_has "$1" || render_has "$2"; }; } ||
