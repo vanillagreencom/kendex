@@ -1,12 +1,16 @@
-"""The handoff's progress record form: progress-log writes it, owner-unanswered reads it.
+"""The handoff form: progress-log writes and checks it, owner-unanswered reads it.
 
 A record is one list item whose nested items are the fields of
 references/long-session.md § Progress records. A value's later lines are
 indented four spaces. The README states the id form. The archive INDEX line
 of references/long-session.md § Handoff dates an archived file by its records.
+A State entry is one line with its indented lines; the ids it names decide
+whether `progress-log --check-state` lists it.
 """
 from pathlib import Path
 import re
+
+from sections import headings, section
 
 DEFAULT_HANDOFF = Path("state/handoff.md")
 HEAD = "Id and time"
@@ -18,6 +22,19 @@ INDEX = "INDEX.md"
 UNREAD = "unread"
 _INDEX_LINE = re.compile(r"- (\S+)(.*)")
 _MINUTE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z")
+# skills/slack/schemas/journal.md: every relay delivery is keyed `channel:ts`,
+# ts a Slack message stamp, the root a top-level message's replies name.
+SLACK_KEY = re.compile(r"([A-Za-z0-9]+):(\d+\.\d+)")
+# skills/mailbox lane-mail mints `<epoch>-<pid>-<random>`; ten epoch digits
+# keep a YYYY-MM-DD date from binding a line.
+_MAILBOX_ID = r"\d{10,}-\d+-\d+"
+# Narrower than Linear's own identifier shape, which a mailbox id's first two
+# parts would match; the alternation order reads a mailbox id whole first.
+_TRACKER_ID = r"[A-Z][A-Z0-9]*-\d+"
+_ID = re.compile(r"(?<![\w-])(?:(?P<mailbox>%s)|(?P<slack>%s)|(?P<tracker>%s))(?![\w-])"
+                 % (_MAILBOX_ID, SLACK_KEY.pattern, _TRACKER_ID))
+# The Linear package's closed states: formatters.sh issue_is_open.
+CLOSED_TYPES = ("completed", "canceled")
 
 
 def handoff_path(home, selected):
@@ -128,3 +145,64 @@ def index_ends(text):
 
 def ids(text):
     return {record["id"] for record in records(text)}
+
+
+def state_entries(lines):
+    """Each entry of the State section in keepends lines as (line number, text).
+
+    An entry is a non-blank, non-heading line and the indented lines after it,
+    so a parent and its child items are one entry. A State heading that is
+    missing or repeated raises section's LookupError.
+    """
+    start, end = section(lines, "State")
+    heads = {index for index, _, _ in headings(lines)}
+    found, current = [], None
+    for index in range(start + 1, end):
+        line = lines[index]
+        if index in heads:
+            current = None
+        elif not line.strip():
+            continue
+        elif current is not None and line[:1].isspace():
+            current[1].append(line)
+        else:
+            current = (index + 1, [line])
+            found.append(current)
+    return [(number, "".join(text)) for number, text in found]
+
+
+def state_ids(text):
+    """The tracker ids and the mailbox and Slack ids text names, in order and each once."""
+    tracker, other = {}, {}
+    for match in _ID.finditer(text):
+        (tracker if match["tracker"] else other)[match[0]] = None
+    return list(tracker), list(other)
+
+
+def check_state(entries, reads, not_issue):
+    """Each State entry to list as (kind, line number, ids), in entry order.
+
+    reads maps a tracker id to its read (state name, state type); a tracker id
+    with no read and not in not_issue is unread. An entry with an open tracker
+    id stays unlisted, and an entry is closed only when every tracker id it
+    names read closed. A not-issue ref binds nothing.
+    """
+    found = []
+    for number, text in entries:
+        tracker, other = state_ids(text)
+        refused = [ref for ref in tracker if ref in not_issue]
+        tracker = [ref for ref in tracker if ref not in not_issue]
+        if refused:
+            found.append(("not-issue", number, refused))
+        if not tracker:
+            if not other:
+                found.append(("unbound", number, []))
+            continue
+        if any(ref in reads and reads[ref][1] not in CLOSED_TYPES for ref in tracker):
+            continue
+        unread = [ref for ref in tracker if ref not in reads]
+        if unread:
+            found.append(("unread", number, unread))
+        else:
+            found.append(("closed", number, ["%s:%s" % (ref, reads[ref][0]) for ref in tracker]))
+    return found

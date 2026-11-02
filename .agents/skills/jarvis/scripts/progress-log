@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Append one progress record to the home handoff's Progress log section, or index an archived handoff.
+"""Append one progress record to the home handoff's Progress log section, index an archived handoff, or list State lines to correct.
 
 Usage: progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
        progress-log [--handoff PATH] --archived FILE
+       progress-log [--handoff PATH] --check-state
 
 The record takes the field form of references/long-session.md § Progress
 records. Its id and time come from `date -u` at this call. Run it anywhere in
@@ -18,9 +19,27 @@ the selected handoff, appends FILE's line to that archive's INDEX.md in the
 form of references/long-session.md § Handoff, dated by FILE's records. Keys:
 archive-outside, archive-missing, archive-unreadable, index-unwritable.
 Success prints the line after `progress-log: indexed `.
+
+--check-state reads the selected handoff's State section and writes nothing.
+The session runs it before each scheduled-report write and before
+succession, under references/long-session.md § Handoff.
+An entry is a line and its indented lines. It reads every tracker id the
+entries name in one live `linear.sh issues bulk-get` from the linear package
+beside this one, and prints one stdout line per entry to correct:
+  progress-log: closed line=N ids=ID:STATE,...   every tracker id is Done or Canceled
+  progress-log: unbound line=N                   no tracker, mailbox or Slack id
+  progress-log: unread line=N ids=ID,...         no open id, and these were not read
+  progress-log: not-issue line=N ids=REF,...     Linear has no issue for REF; it binds nothing
+An entry with an open tracker id, or with only mailbox or Slack ids, prints
+nothing. The last line is `progress-log: checked entries=E closed=C
+unbound=U unread=R not-issue=K`. Exit 0 when every tracker id was read, 1
+when one was not, with `progress-log: tracker-unavailable=CAUSE detail=TEXT`
+or `progress-log: tracker-unmatched=ID,...` on stderr. Refusal keys, exit 2:
+handoff-missing, handoff-unreadable, section-missing, section-ambiguous.
 """
 import argparse
 import fcntl
+import json
 import os
 from pathlib import Path
 import re
@@ -29,13 +48,15 @@ import sys
 
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "scripts/lib"))
-from progress import (DEFAULT_HANDOFF, FIELDS, INDEX, archive_dir, format_record, handoff_path, ids,  # noqa: E402
-                      index_line, record_id)
+from progress import (DEFAULT_HANDOFF, FIELDS, INDEX, archive_dir, check_state, format_record,  # noqa: E402
+                      handoff_path, ids, index_line, record_id, state_entries, state_ids)
 from sections import section  # noqa: E402
-from watch import home_root  # noqa: E402
+import watch  # noqa: E402
 
 FIX = "fix=" + str(PACKAGE / "references/long-session.md") + "#progress-records"
-FIX_INDEX = "fix=" + str(PACKAGE / "references/long-session.md") + "#handoff"
+FIX_HANDOFF = "fix=" + str(PACKAGE / "references/long-session.md") + "#handoff"
+# The sibling package's own CLI, located as watch.lane_mail locates the mailbox.
+LINEAR = PACKAGE.parent / "linear/scripts/linear.sh"
 # The clock stamps every record; a value that opens with a time was typed.
 TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}(?!\d))")
 
@@ -122,24 +143,144 @@ def index(handoff, archived):
     return line
 
 
+def read_state(handoff):
+    """The State entries of handoff, read under the writer's lock."""
+    try:
+        with handoff.open("rb") as source:
+            fcntl.flock(source, fcntl.LOCK_SH)
+            text = source.read().decode("utf-8")
+    except FileNotFoundError as error:
+        raise Refusal("handoff-missing", handoff) from error
+    except (OSError, UnicodeError) as error:
+        raise Refusal("handoff-unreadable", handoff) from error
+    try:
+        return state_entries(text.splitlines(keepends=True))
+    except LookupError as error:
+        raise Refusal("section-missing" if error.args[0] == "unknown-heading" else "section-ambiguous",
+                      "State") from error
+
+
+def missing(stderr, refs):
+    """The refs a bulk read refused as no issue, or None when it failed another way.
+
+    This reads undocumented output. skills/linear lib/common.sh
+    linear_issue_refs_read ends a read with `{"error": ..., "missing": [REF, ...]}`
+    on stderr only for refs Linear answered it has no issue for; `bulk-get --help`
+    and skills/linear SKILL.md do not document the key. The documented
+    interfaces cannot serve. bulk-get's documented nonzero exit refuses the whole
+    read and names no ref, so it cannot separate a ref Linear has no issue for
+    from a quota, 5xx or transport failure. A per-ref `issues get <id>` documents
+    no not-found outcome either, and costs one request per ref. A changed key
+    fails closed: this returns None, and the read is unavailable evidence.
+    """
+    for line in reversed(stderr.splitlines()):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        found = row.get("missing") if isinstance(row, dict) else None
+        if isinstance(found, list) and found and all(ref in refs for ref in found):
+            return found
+    return None
+
+
+def bulk_get(home, refs):
+    """(reads, None) for one compact bulk read of refs, or (None, the refs it refused as no issue)."""
+    result = watch.run([LINEAR, "issues", "bulk-get", "--stdin", "--format=compact"], home,
+                       "".join(ref + "\n" for ref in refs), "tracker-read")
+    if result.returncode:
+        refused = missing(result.stderr, refs)
+        if refused is None:
+            raise watch.child_failure("tracker-read", result)
+        return None, refused
+    reads = {}
+    try:
+        # skills/linear lib/formatters.sh format_issues_list_compact: one row per issue.
+        # `compact` is a documented --format value, but its fields are not; its
+        # `id`, `state` and `state_type` are the names skills/linear SKILL.md
+        # documents for the default `safe` rows. `safe` is not read because each
+        # row also carries the issue's full description, which this check does not use.
+        for row in json.loads(result.stdout):
+            fields = (row["id"], row["state"], row["state_type"])
+            if not all(isinstance(field, str) for field in fields):
+                raise TypeError(fields)
+            reads[fields[0]] = fields[1:]
+    except (ValueError, TypeError, KeyError) as error:
+        raise watch.Failure("tracker-read", "protocol", "rows-unread", result.stdout[:200]) from error
+    return reads, None
+
+
+def tracker_reads(home, refs):
+    """(reads, not_issue, failure): each ref's live (state name, state type), and the cause of any not read."""
+    if not refs:
+        return {}, set(), None
+    if not LINEAR.is_file():
+        return {}, set(), watch.Failure("tracker-read", "linear-missing", None, LINEAR)
+    not_issue = set()
+    try:
+        reads, refused = bulk_get(home, refs)
+        if refused is not None:
+            not_issue = set(refused)
+            rest = [ref for ref in refs if ref not in not_issue]
+            reads, refused = bulk_get(home, rest) if rest else ({}, None)
+            if refused is not None:
+                raise watch.Failure("tracker-read", "missing-again", None, ",".join(refused))
+    except watch.Failure as failure:
+        return {}, not_issue, failure
+    # A moved issue answers under its new identifier; its old ref stays unread.
+    return {ref: reads[ref] for ref in refs if ref in reads}, not_issue, None
+
+
+def check(home, handoff):
+    entries = read_state(handoff)
+    refs = list(dict.fromkeys(ref for _, text in entries for ref in state_ids(text)[0]))
+    reads, not_issue, failure = tracker_reads(home, refs)
+    rows = check_state(entries, reads, not_issue)
+    counts = dict.fromkeys(("closed", "unbound", "unread", "not-issue"), 0)
+    for kind, number, listed in rows:
+        counts[kind] += 1
+        print("progress-log: %s line=%d%s" % (kind, number, " ids=" + ",".join(listed) if listed else ""))
+    print("progress-log: checked entries=%d %s" % (len(entries), " ".join("%s=%d" % item for item in counts.items())))
+    if failure is not None:
+        _, category, code = failure.record["key"]
+        cause = category if code == "None" else category + "-" + code
+        detail = failure.record["detail"].strip().split("\n", 1)[0]
+        print("progress-log: tracker-unavailable=%s detail=%s" % (cause, detail), file=sys.stderr)
+        return 1
+    unmatched = [ref for ref in refs if ref not in reads and ref not in not_issue]
+    if unmatched:
+        print("progress-log: tracker-unmatched=" + ",".join(unmatched), file=sys.stderr)
+        return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--handoff", type=Path, default=DEFAULT_HANDOFF)
     parser.add_argument("--archived", type=Path, help="index this archived file in place of writing a record")
+    parser.add_argument("--check-state", action="store_true", help="list State lines to correct; write nothing")
     options = ("--operation", "--result", "--decision", "--state-change")
     for option, field in zip(options, FIELDS):
         parser.add_argument(option, help=field)
     args = parser.parse_args()
     values = dict(zip(FIELDS, (args.operation, args.result, args.decision, args.state_change)))
     given = [option for option, value in zip(options, values.values()) if value is not None]
-    home = home_root(Path.cwd())
+    home = watch.home_root(Path.cwd())
+    if args.check_state:
+        if given or args.archived is not None:
+            parser.error("--check-state takes no record field or --archived")
+        try:
+            return check(home, handoff_path(home, args.handoff))
+        except Refusal as refusal:
+            print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX_HANDOFF), file=sys.stderr)
+            return 2
     if args.archived is not None:
         if given:
             parser.error("--archived takes no record field: " + ", ".join(given))
         try:
             line = index(handoff_path(home, args.handoff), handoff_path(home, args.archived))
         except Refusal as refusal:
-            print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX_INDEX), file=sys.stderr)
+            print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX_HANDOFF), file=sys.stderr)
             return 2
         print("progress-log: indexed " + line, end="")
         return 0

@@ -13,7 +13,8 @@ import sys
 
 LIB = Path(__file__).resolve().parent
 sys.path.insert(0, str(LIB))
-from progress import DEFAULT_HANDOFF, INDEX, archive_dir, handoff_path, index_ends, legacy_entries, records  # noqa: E402
+from progress import (DEFAULT_HANDOFF, INDEX, SLACK_KEY, archive_dir, handoff_path, index_ends,  # noqa: E402
+                      legacy_entries, records)
 import watch  # noqa: E402
 
 # Without --since the list starts one day back, the consumer's reporting
@@ -22,9 +23,6 @@ DEFAULT_WINDOW_SECS = 24 * 60 * 60
 # An owner's file posted as its own Slack message lands at most this many
 # seconds from the text it belongs to.
 PAIR_SECS = 30
-# skills/slack/schemas/journal.md: every relay delivery is keyed `channel:ts`,
-# ts a Slack message stamp, the root a top-level message's replies name.
-SLACK_KEY = re.compile(r"([A-Za-z0-9]+):(\d+\.\d+)")
 # The relay's fetch_files line for each file of an owner's message: the path
 # skills/slack store.save_file wrote, or why it was not fetched.
 FILE_LINE = re.compile(r".*/tmp/slack/files/[A-Za-z0-9._-]+|file \S* not fetched: .*")
