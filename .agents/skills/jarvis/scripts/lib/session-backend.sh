@@ -186,46 +186,57 @@ case "$verb" in
     tmux if-shell -F -t "$4" "#{&&:$binding,#{==:#{pid},$2}}" "kill-window -t $5" ;;
   live)
     home_pane_live "$1" "$2" "$3" "$4" || exit "$?"
-    if [[ "$7" == adopted ]]; then
-      # An adopted session's pane carries no generation mark and lives in the
-      # consumer's own session, so its process ($5) and window bind it.
-      actual="$(tmux display-message -p -t "$4" '#{pane_pid}	#{window_id}	#{session_name}')" || exit 2
-      IFS=$'\t' read -r pid window session <<<"$actual"
-      [[ "$pid" == "$5" && "$window" == "$6" ]] || exit 1
-      jq -cn --arg socket "$1" --arg session "$session" --arg window "$window" --arg pane "$4" \
-        '{server:$socket,session:$session,window:$window,pane:$pane}'
-      exit
-    fi
-    actual="$(tmux display-message -p -t "$4" '#{@jarvis-generation}')" || exit 2
-    # Staging ownership precedes the native generation mark.
-    [[ "$actual" == "$5" || ( "$7" == staging && -z "$actual" ) ]] || exit 1
-    session="$(tmux display-message -p -t "$4" '#{session_name}')" || exit 2
-    window="$(tmux display-message -p -t "$4" '#{window_id}')" || exit 2
-    [[ "$session" == jarvis && "$window" == "$6" ]] || exit 1
+    # The mark last: tab is IFS whitespace, so an empty field before it would
+    # shift the fields after.
+    actual="$(tmux display-message -p -t "$4" '#{pane_pid}	#{session_name}	#{window_id}	#{@jarvis-generation}')" || exit 2
+    IFS=$'\t' read -r pid session window generation <<<"$actual"
+    case "$7" in
+      # An adopted pane carries no generation mark and lives in the
+      # consumer's own session, where moving it keeps its pane and process
+      # but not its window: its process ($5) binds it.
+      adopted) [[ "$pid" == "$5" ]] || exit 1 ;;
+      # Staging ownership precedes the native generation mark.
+      staging | native)
+        [[ ( "$generation" == "$5" || ( "$7" == staging && -z "$generation" ) ) && "$session" == jarvis && "$window" == "$6" ]] || exit 1 ;;
+      *) printf 'jarvis-session: live=invalid mode=%s\n' "$7" >&2; exit 2 ;;
+    esac
     jq -cn --arg socket "$1" --arg session "$session" --arg window "$window" --arg pane "$4" \
       '{server:$socket,session:$session,window:$window,pane:$pane}' ;;
   adopt)
     # The unmanaged session a Start adopts, read once on the caller's tmux
-    # server: PANE's pane, window and server, PID's start, and the one harness
-    # running at or below PID. Status 3 is a PANE whose process is not PID, or
-    # that runs no harness or more than one; 2 is an unread process table.
+    # server: PANE's pane, window and server, PID's start, and the harness
+    # nearest PID at or below it, from the process table stop-process signals
+    # by. A Pi session on a codex-bridge model runs codex below pi, so only
+    # the outermost harness names the session. Status 3 refuses with one
+    # keyed line, its cause pid-ended, pane-unread, pane-dead, pid-mismatch,
+    # no-harness or harnesses (two at that nearest depth); 2 is an unread
+    # process table.
     pane="$1" pid="$2"
+    refuse() {
+      printf 'jarvis-session: adopt=refused cause=%s pane=%s pid=%s%s\n' "$1" "$pane" "$pid" "${2:+ harnesses=$2}" >&2
+      exit 3
+    }
     at="$(lane_process_start "$pid")" || exit 2
-    [[ -n "$at" ]] || exit 3
-    line="$(tmux display-message -p -t "$pane" '#{socket_path}	#{pid}	#{start_time}	#{session_name}	#{window_id}	#{pane_id}	#{pane_dead}	#{pane_pid}	#{pane_current_command}')" || exit 3
-    IFS=$'\t' read -r socket server started session window id dead pane_pid cmd <<<"$line"
-    [[ "$pane_pid" == "$pid" && "$dead" != 1 ]] || exit 3
-    harness=""
+    [[ -n "$at" ]] || refuse pid-ended
+    line="$(tmux display-message -p -t "$pane" '#{socket_path}	#{pid}	#{start_time}	#{session_name}	#{window_id}	#{pane_id}	#{pane_dead}	#{pane_pid}')" || refuse pane-unread
+    IFS=$'\t' read -r socket server started session window id dead pane_pid <<<"$line"
+    [[ "$dead" != 1 ]] || refuse pane-dead
+    [[ "$pane_pid" == "$pid" ]] || refuse pid-mismatch
+    table="$(lane_process_table)" || exit 2
+    harness="" nearest=""
     for name in claude codex copilot pi; do
-      rc=0
-      lane_pane_runs "$cmd" "$pid" "$name" || rc=$?
-      case "$rc" in
-        0) [[ -z "$harness" ]] || exit 3; harness="$name" ;;
-        1) ;;
-        *) exit 2 ;;
-      esac
+      pattern="$(lane_harness_process_re "$name")" || exit 2
+      found="$(lane_process_below "$table" "$pid" "$pattern" 1 "" pids)" || exit 2
+      [[ -n "$found" ]] || continue
+      hops="$(awk 'NR == 1 || $1 < least { least = $1 } END { print least }' <<<"$found")" || exit 2
+      if [[ -z "$nearest" ]] || (( hops < nearest )); then
+        harness="$name" nearest="$hops"
+      elif (( hops == nearest )); then
+        harness+=",$name"
+      fi
     done
-    [[ -n "$harness" ]] || exit 3
+    [[ -n "$harness" ]] || refuse no-harness
+    [[ "$harness" != *,* ]] || refuse harnesses "$harness"
     jq -cn --arg harness "$harness" --arg socket "$socket" --arg session "$session" --arg window "$window" --arg pane "$id" \
       --argjson server "$server" --argjson started "$started" --argjson pid "$pid" --arg at "$at" \
       '{harness:$harness,terminal:{server:$socket,session:$session,window:$window,pane:$pane},

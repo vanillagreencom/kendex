@@ -346,15 +346,28 @@ print(json.dumps({"config_dir": row["account"]}))
         # Native launches so far; the fixture creates its row file at the first.
         return len(self.started()) if self.rows.exists() else 0
 
-    def unmanaged(self, harness):
+    def unmanaged(self, harness, bridge=False):
         # A Jarvis session started outside the package: the native fixture
         # binary under the consumer's shell, on the consumer's own tmux
         # server. The shell keeps the pane open after the harness ends. A
-        # harness of None leaves the shell alone in its pane.
+        # harness of None leaves the shell alone in its pane. A bridge runs a
+        # process named codex below the harness, as pi-codex-bridge runs
+        # `codex app-server` below pi. The consumer's other shells, one beside
+        # the pane and one in another window, are no part of the session.
         self.consumers = getattr(self, "consumers", 0) + 1
         folder = self.root / ("unmanaged-" + str(self.consumers))
         folder.mkdir()
-        (folder / ".fixture-harness.py").write_text("import sys\nsys.stdin.read()\n")
+        script = "import sys\nsys.stdin.read()\n"
+        if bridge:
+            shutil.copyfile(shutil.which("sleep"), folder / "codex")
+            (folder / "codex").chmod(0o755)
+            # Hangup and terminate end the bridge child with its parent.
+            script = ("import signal, subprocess, sys\n"
+                      "child = subprocess.Popen([" + repr(str(folder / "codex")) + ", '120'], stdin=subprocess.DEVNULL)\n"
+                      "for number in (signal.SIGHUP, signal.SIGTERM):\n"
+                      "    signal.signal(number, lambda *_: sys.exit(0))\n"
+                      "try:\n    sys.stdin.read()\nfinally:\n    child.terminate()\n    child.wait()\n")
+        (folder / ".fixture-harness.py").write_text(script)
         command = ":"
         if harness:
             shutil.copyfile(session_test.HARNESS, folder / harness)
@@ -367,8 +380,12 @@ print(json.dumps({"config_dir": row["account"]}))
                                   self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc", "-c", command + "; read -r _"],
                                  capture_output=True, text=True, env=self.env, timeout=10, check=True)
         socket, server, pane, pid = created.stdout.strip().split("\t")
-        consumer = {"label": label, "socket": socket, "pane": pane, "env": self.env | {"TMUX": socket + "," + server + ",0"},
-                    "process": self.identity(pid), "harness": None}
+        shell = [self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"]
+        siblings = [subprocess.run(["tmux", "-L", label, *opening, "-d", "-P", "-F", "#{pane_id}", *shell],
+                                   capture_output=True, text=True, env=self.env, timeout=10, check=True).stdout.strip()
+                    for opening in (["split-window", "-t", pane], ["new-window", "-t", "=consumer"])]
+        consumer = {"label": label, "socket": socket, "pane": pane, "siblings": siblings,
+                    "env": self.env | {"TMUX": socket + "," + server + ",0"}, "process": self.identity(pid), "harness": None}
         deadline = time.monotonic() + 10
         while harness and consumer["harness"] is None:
             self.assertLess(time.monotonic(), deadline, "the unmanaged harness did not start")
@@ -390,37 +407,71 @@ print(json.dumps({"config_dir": row["account"]}))
                                 capture_output=True, text=True, env=self.env, timeout=10)
         return result.stdout.split() if result.returncode == 0 else []
 
-    def adopt(self, consumer, harness="claude", pid=None):
-        return self.call("start", harness=harness, mode="new", env=consumer["env"],
+    def adopt(self, consumer, harness="claude", pid=None, brief=None):
+        return self.call("start", harness=harness, mode="new", env=consumer["env"], brief=brief,
                          adopt=(consumer["pane"], pid or consumer["process"]["pid"]))
 
-    def test_adoption_contract(self):
-        # The unmanaged session's harness is detected at the call; the
-        # successor launches on Start's own arguments in the home's session.
+    def adoption_ended(self, consumer):
+        # One controller remains: the unmanaged harness, its shell and its
+        # pane ended, and the consumer's other shells left as they were.
+        self.assertFalse(self.process_live(consumer["harness"]))
+        self.assertFalse(self.process_live(consumer["process"]))
+        panes = self.consumer_panes(consumer)
+        self.assertNotIn(consumer["pane"], panes)
+        for sibling in consumer["siblings"]:
+            self.assertIn(sibling, panes)
+
+    def private_brief(self):
+        path = self.root / "private-brief.txt"
+        path.write_text("Consumer private line.\n")
         with patch.dict(os.environ, {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}):
             start_brief = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))["START_BRIEF"]
-        for harness in ("claude", "codex", "copilot", "pi"):
-            with self.subTest(harness=harness):
+        return path, start_brief, start_brief + " Consumer private line."
+
+    def prompts(self, native_id):
+        rows = [json.loads(line) for line in self.rows.read_text().splitlines()]
+        return [row["prompt"] for row in rows if "prompt" in row and row["id"] == native_id]
+
+    def test_adoption_contract(self):
+        # The unmanaged session's harness is detected at the call; Start's own
+        # arguments choose the successor, which launches in the home's
+        # session. Each row's Start names another harness than the adopted.
+        brief, start_brief, private = self.private_brief()
+        rows = (
+            # unmanaged, bridge child, Start's harness, brief file, task window left in jarvis
+            ("claude", False, "codex", False, False),
+            ("codex", False, "copilot", True, False),
+            ("copilot", False, "pi", False, True),
+            ("pi", False, "claude", False, False),
+            ("pi", True, "codex", False, False),
+        )
+        for harness, bridge, successor, briefed, task in rows:
+            with self.subTest(harness=harness, bridge=bridge, successor=successor):
                 contents = self.handoff()
-                consumer = self.unmanaged(harness)
+                consumer = self.unmanaged(harness, bridge)
+                if task:
+                    # A task window task.py left, remain-on-exit, after a
+                    # managed controller ended on its own.
+                    left = subprocess.run(["tmux", "-L", self.label, "-f", os.devnull, "new-session", "-d", "-s", "jarvis",
+                                           "-P", "-F", "#{pane_id}", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                          capture_output=True, text=True, env=self.env, timeout=10, check=True).stdout.strip()
+                    subprocess.run(["tmux", "-L", self.label, "set-option", "-p", "-t", left, "@jarvis-task", "task-1"],
+                                   capture_output=True, env=self.env, timeout=10, check=True)
                 native_count = self.launched()
-                answer, code = self.adopt(consumer, harness)
+                answer, code = self.adopt(consumer, successor, brief=brief if briefed else None)
                 self.assertEqual(code, 0)
                 current = self.wait()
                 record = json.loads(self.record.read_text())
-                self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), harness, str(self.account)))
+                self.assertEqual((current["home"], current["harness"], current["account"]), (str(self.home), successor, str(self.account)))
                 self.assertEqual(current["terminal"]["session"], "jarvis")
                 self.assertNotEqual(current["terminal"]["server"], consumer["socket"])
                 self.assertEqual(record["transfer"]["phase"], "complete")
                 self.assertEqual(Path(record["transfer"]["handoff"]).read_text(), contents)
                 self.assertTrue(record["identity_verified"])
                 self.assertEqual(self.launched(), native_count + 1)
-                prompts = [json.loads(line) for line in self.rows.read_text().splitlines() if "prompt" in json.loads(line)]
-                self.assertEqual([row["prompt"] for row in prompts if row["id"] == record["pending"]["native_session_id"]], [start_brief])
-                # One controller: the unmanaged harness, its shell and its pane ended.
-                self.assertFalse(self.process_live(consumer["harness"]))
-                self.assertFalse(self.process_live(consumer["process"]))
-                self.assertNotIn(consumer["pane"], self.consumer_panes(consumer))
+                self.assertEqual(self.started()[-1]["harness"], successor)
+                self.assertEqual(self.prompts(record["pending"]["native_session_id"]), [private if briefed else start_brief])
+                self.adoption_ended(consumer)
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
 
@@ -431,7 +482,7 @@ print(json.dumps({"config_dir": row["account"]}))
         for row in ("other-pid", "no-harness", "running", "starting"):
             with self.subTest(row=row):
                 consumer = self.unmanaged(None if row == "no-harness" else "claude")
-                pid = None
+                pid = worker = None
                 if row == "other-pid":
                     # A live harness session, but not the named pane's.
                     pid = self.unmanaged("claude")["process"]["pid"]
@@ -439,16 +490,26 @@ print(json.dumps({"config_dir": row["account"]}))
                     self.call("start", mode="new")
                     self.wait()
                 elif row == "starting":
-                    launched = self.launched()
-                    os.mkfifo(self.gate)
-                    self.call("start", mode="new")
-                    self.await_launches(launched + 1)
+                    # A Start whose worker has not yet recorded its pane:
+                    # only that live worker answers for the controller.
+                    worker = subprocess.Popen(["sleep", "60"])
+                    self.addCleanup(worker.wait)
+                    self.addCleanup(worker.kill)
+                    self.record.parent.mkdir(parents=True, exist_ok=True)
+                    self.record.write_text(json.dumps({
+                        "v": 1, "home": str(self.home), "harness": "claude", "account": str(self.account), "origin": "manual",
+                        "boot": None, "generation": 1, "intent": "start", "state": "starting", "reason": "launching", "detail": "",
+                        "terminal": None, "worker": self.identity(worker.pid)}))
                     self.assertEqual(self.call("status")[0]["state"], "starting")
                 saved = self.record.read_bytes() if self.record.exists() else None
                 native_count = self.launched()
                 answer, code = self.adopt(consumer, pid=pid)
                 expected = "name-conflict" if row in ("running", "starting") else "selection-conflict"
                 self.assertEqual((answer["state"], answer["reason"], code), ("blocked", expected, 1))
+                if expected == "selection-conflict":
+                    # The keyed refusal line operators read names the binding.
+                    cause = "pid-mismatch" if row == "other-pid" else "no-harness"
+                    self.assertIn("jarvis-session: adopt=refused cause=" + cause + " ", self.stderr)
                 self.assertEqual(self.record.read_bytes() if self.record.exists() else None, saved)
                 self.assertFalse((self.home / "state/archive").exists())
                 self.assertEqual(self.launched(), native_count)
@@ -459,13 +520,15 @@ print(json.dumps({"config_dir": row["account"]}))
                 if row in ("running", "starting"):
                     self.call("stop")
                     self.wait("stopped", persisted_stop=True)
-                self.gate.unlink(missing_ok=True)
 
     def test_adoption_recovery(self):
         # Before the unmanaged process ends, an interruption leaves it the
         # only controller; after its end, the transfer fails and succeed
         # completes it. The transition writes are succession's, one code path
-        # for every harness, so one launch shape reaches each.
+        # for every harness, so one launch shape reaches each. A retry after a
+        # refusal before the end follows the consumer's pane when the consumer
+        # moves it, and a retry after the end keeps the brief Start named.
+        brief, _, private = self.private_brief()
         skills = self.instrumented()
         script = skills / "jarvis/scripts/jarvis-session"
         pause = self.home / ".succession-pause.json"
@@ -480,6 +543,9 @@ print(json.dumps({"config_dir": row["account"]}))
                         native_count = self.launched()
                         argv = [str(script), "start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
                                 "--mode", "new", "--origin", "manual", "--adopt-pane", consumer["pane"], "--adopt-pid", str(consumer["process"]["pid"])]
+                        briefed = (phase, edge) == ("predecessor-ended", "after")
+                        if briefed:
+                            argv += ["--brief-file", str(brief)]
                         identity, request = self.paused(argv, pause, phase, edge, consumer["env"])
                         with request:
                             persisted = json.loads(self.record.read_text()) if self.record.exists() else None
@@ -509,6 +575,11 @@ print(json.dumps({"config_dir": row["account"]}))
                                                  env=self.env).returncode == 0:
                                 self.assertLess(time.monotonic(), deadline, "a managed controller outlived its worker")
                                 time.sleep(0.05)
+                            if edge == "after":
+                                # A move keeps the pane and its process but gives it another window.
+                                subprocess.run(["tmux", "-L", consumer["label"], "break-pane", "-d", "-s", consumer["pane"]],
+                                               capture_output=True, env=self.env, timeout=10, check=True)
+                                self.assertEqual((self.call("status")[0]["terminal"] or {}).get("pane"), consumer["pane"])
                             self.call("succeed")
                         elif completed:
                             self.assertEqual(self.wait("running")["terminal"], persisted["terminal"])
@@ -523,8 +594,9 @@ print(json.dumps({"config_dir": row["account"]}))
                             self.wait()
                         recovered = json.loads(self.record.read_text())
                         self.assertEqual(recovered["transfer"]["phase"], "complete")
-                        self.assertFalse(self.process_live(consumer["harness"]))
-                        self.assertNotIn(consumer["pane"], self.consumer_panes(consumer))
+                        self.adoption_ended(consumer)
+                        if briefed:
+                            self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
                         self.call("stop")
                         self.wait("stopped", persisted_stop=True)
 

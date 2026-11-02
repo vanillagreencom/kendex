@@ -1,4 +1,4 @@
-"""Reject removed process and pane identity checks in a disposable source copy."""
+"""Reject planted succession and adoption defects in a disposable source copy."""
 import argparse
 import os
 from pathlib import Path
@@ -25,15 +25,45 @@ def main():
         # Each planted defect proves succession_test.py goes red: without the
         # identity check, succession stops a process the record does not own;
         # without the pane comparison, adoption takes a process its named
-        # pane does not run.
-        defects = (("process identity", "jarvis/scripts/lib/session-backend.sh",
-                    '    lane_stop_identity "$1" "$2" "$3" || rc=$?',
-                    '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" || rc=$?',
+        # pane does not run. The adoption rows each reject the defect their
+        # guarantee names: a starting Start's worker, the consumer's other
+        # panes, Start's brief and harness, the home's task session, the
+        # outermost harness and a moved pane.
+        backend, session = "jarvis/scripts/lib/session-backend.sh", "jarvis/scripts/lib/session.py"
+        defects = (("process identity", backend,
+                    (('    lane_stop_identity "$1" "$2" "$3" || rc=$?',
+                      '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" || rc=$?'),),
                     "test_succession_identity"),
-                   ("adopted pane process", "jarvis/scripts/lib/session-backend.sh",
-                    '    [[ "$pane_pid" == "$pid" && "$dead" != 1 ]] || exit 3',
-                    '    [[ "$dead" != 1 ]] || exit 3',
-                    "test_adoption_refusals"))
+                   ("adopted pane process", backend,
+                    (('    [[ "$pane_pid" == "$pid" ]] || refuse pid-mismatch', '    : || refuse pid-mismatch'),),
+                    "test_adoption_refusals"),
+                   ("starting worker", session,
+                    (("(self.terminal(record) or self.worker_live(record)", "(self.terminal(record)"),),
+                    "test_adoption_refusals"),
+                   ("adopted pane only", session,
+                    (('action = "kill-pane" if adopted', 'action = "kill-session" if adopted'),),
+                    "test_adoption_contract"),
+                   ("adoption brief", session,
+                    (('        brief = self.start_brief(args)\n        if stated and stated["warning"]:',
+                      '        brief = START_BRIEF\n        if stated and stated["warning"]:'),),
+                    "test_adoption_contract"),
+                   ("Start's harness", session,
+                    (("self._hand_over(base, choice, predecessor, None, brief)",
+                      'self._hand_over(base, dict(choice, harness=predecessor["harness"]), predecessor, None, brief)'),),
+                    "test_adoption_contract"),
+                   ("task session", session,
+                    (("                elif adopted:\n                    self.end_task_session()\n", ""),),
+                    "test_adoption_contract"),
+                   ("outermost harness", backend,
+                    (('      if [[ -z "$nearest" ]] || (( hops < nearest )); then', '      if [[ -z "$nearest" ]]; then'),
+                     ("      elif (( hops == nearest )); then", "      else")),
+                    "test_adoption_contract"),
+                   ("moved pane", backend,
+                    (('      adopted) [[ "$pid" == "$5" ]] || exit 1 ;;', '      adopted) [[ "$pid" == "$5" && "$window" == "$6" ]] || exit 1 ;;'),),
+                    "test_adoption_recovery"),
+                   ("retry brief", session,
+                    (('brief = (record.get("launch") or {}).get("brief", START_BRIEF)', "brief = START_BRIEF"),),
+                    "test_adoption_recovery"))
         # The rows the latest change added, which its pre-change revision fails.
         cases = ("test_adoption_contract",)
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
@@ -42,17 +72,18 @@ def main():
         def rejected(name, case):
             nonlocal completed
             result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(ROOT / "skills/jarvis/tests/succession.test.sh"),
-                                     "--failfast", "SuccessionContract." + case], env=env, capture_output=True, text=True, timeout=90)
+                                     "--failfast", "SuccessionContract." + case], env=env, capture_output=True, text=True, timeout=180)
             assert result.returncode != 0, name + " passed its planted defect"
             assert "FAILED (failures=" in result.stderr, result.stdout + result.stderr
             completed += 1
             print("control: rejected=" + name + " case=" + case, flush=True)
 
-        for name, relative, old, new, case in defects:
+        for name, relative, edits, case in defects:
             target = skills / relative
-            clean = target.read_text()
-            assert clean.count(old) == 1, name
-            mutant = clean.replace(old, new)
+            clean = mutant = target.read_text()
+            for old, new in edits:
+                assert mutant.count(old) == 1, name
+                mutant = mutant.replace(old, new)
             assert mutant != clean
             target.write_text(mutant)
             try:
