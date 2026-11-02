@@ -1,5 +1,5 @@
-//! Where this project keeps its secrets, and whether a secret may be
-//! written there.
+//! Where this project keeps its secrets, whether a secret may be written
+//! there, and which file the loaders read values from.
 //!
 //! One file per project, named by the project and read by the packages:
 //! `.env.local` unless `kendex.settings.toml` `[env]` names another
@@ -102,26 +102,9 @@ pub fn destination_layered(
     layers: &[Option<String>],
     want: Option<&str>,
 ) -> Destination {
-    // The last layer that ASSIGNS the key is the one the loaders honour,
-    // so the walk runs from the top down and stops at the first
-    // assignment — not at the first non-empty one. An empty assignment is
-    // an answer there: the shell reads `${KENDEX_ENV_FILE:-}` off it and
-    // resolves the default, and a walk that read past it would take a
-    // filename from a layer the loaders have already overwritten.
-    let answered = layers.iter().enumerate().rev().find_map(|(at, text)| {
-        match text.as_deref().map(configured_file) {
-            None | Some(Ok(Assigned::Absent)) => None,
-            Some(answer) => Some((at, answer)),
-        }
-    });
-    let (from, named) = match answered {
-        // Empty resolves to the default here exactly as it does in the
-        // shell, and it still stops the walk.
-        Some((at, Ok(Assigned::Empty))) => (at, Some(DEFAULT_ENV_FILE.to_owned())),
-        Some((at, Ok(Assigned::Named(named)))) => (at, Some(named)),
-        Some((_, Ok(Assigned::Absent))) => (0, None),
-        Some((_, Err(problem))) => return refused_selector(problem),
-        None => (0, None),
+    let (from, named) = match selected(layers) {
+        Ok(selected) => selected,
+        Err(problem) => return refused_selector(problem),
     };
     // A file the higher-precedence layer names is honoured and never
     // recorded over: kendex writes the root settings file, and a choice
@@ -156,13 +139,73 @@ pub fn destination_layered(
         };
     }
     let state = match relative(&file) {
-        Err(refusal) => refusal,
+        Err(refusal) => refusal.into(),
         Ok(()) => protection(root, &file),
     };
     Destination {
         file,
         chosen,
         state,
+    }
+}
+
+/// The private file the shipped loaders source for this project, given
+/// every settings layer lowest precedence first, or why they source none.
+///
+/// The read half of [`destination_layered`]: the same selector walk, the
+/// same spelling check and the same containment of the directory the file
+/// sits in. A link at the file itself is the project's own layout and is
+/// read, as the loaders read it — a git worktree links `.env.local` back
+/// to its main checkout. What a write adds on top, refusing that link,
+/// kendex's own files and a file git would carry, is [`protection`]'s and
+/// answers whether a credential may land there, not where values are read
+/// from.
+pub fn private_file(root: &Path, layers: &[Option<String>]) -> std::result::Result<String, String> {
+    let (_, named) = selected(layers)?;
+    let file = named.unwrap_or_else(|| DEFAULT_ENV_FILE.to_owned());
+    relative(&file)
+        .and_then(|()| inside(root, &root.join(&file), &file))
+        .map_err(|refusal| refusal.problem)?;
+    Ok(file)
+}
+
+/// Which layer names the private file and what it names: the index of the
+/// layer whose assignment the loaders honour, and the file, or `None`
+/// where no layer assigns the key. `Err` is why nothing can read the
+/// selector, which the loaders refuse the whole file over.
+fn selected(layers: &[Option<String>]) -> std::result::Result<(usize, Option<String>), String> {
+    // The last layer that ASSIGNS the key is the one the loaders honour,
+    // so the walk runs from the top down and stops at the first
+    // assignment — not at the first non-empty one. An empty assignment is
+    // an answer there: the shell reads `${KENDEX_ENV_FILE:-}` off it and
+    // resolves the default, and a walk that read past it would take a
+    // filename from a layer the loaders have already overwritten.
+    let answered = layers.iter().enumerate().rev().find_map(|(at, text)| {
+        match text.as_deref().map(configured_file) {
+            None | Some(Ok(Assigned::Absent)) => None,
+            Some(answer) => Some((at, answer)),
+        }
+    });
+    match answered {
+        // Empty resolves to the default here exactly as it does in the
+        // shell, and it still stops the walk.
+        Some((at, Ok(Assigned::Empty))) => Ok((at, Some(DEFAULT_ENV_FILE.to_owned()))),
+        Some((at, Ok(Assigned::Named(named)))) => Ok((at, Some(named))),
+        Some((_, Ok(Assigned::Absent))) | None => Ok((0, None)),
+        Some((_, Err(problem))) => Err(problem),
+    }
+}
+
+/// Why a path is no place for this project's private file, and what to do
+/// about it. The read path keeps the problem; a write shows both.
+struct Refusal {
+    problem: String,
+    fix: String,
+}
+
+impl From<Refusal> for DestinationState {
+    fn from(refusal: Refusal) -> Self {
+        refused(refusal.problem, refusal.fix)
     }
 }
 
@@ -229,9 +272,9 @@ fn configured_file(settings: &str) -> std::result::Result<Assigned, String> {
 /// text before anything is touched. A path that leaves the project by
 /// spelling is refused here; one that leaves it through a link is refused
 /// by [`protection`].
-fn relative(file: &str) -> std::result::Result<(), DestinationState> {
+fn relative(file: &str) -> std::result::Result<(), Refusal> {
     let refuse = |problem: &str| {
-        Err(DestinationState::Refused {
+        Err(Refusal {
             problem: problem.to_owned(),
             fix: format!(
                 "set {} in kendex.settings.toml to a path inside this project, or remove it to use {DEFAULT_ENV_FILE}",
@@ -341,7 +384,7 @@ fn protection(root: &Path, file: &str) -> DestinationState {
         );
     }
     if let Err(refusal) = inside(root, &path, file) {
-        return refusal;
+        return refusal.into();
     }
     match std::fs::symlink_metadata(&path) {
         // A link is refused whatever it points at: the target is where
@@ -462,14 +505,15 @@ fn refused(problem: String, fix: String) -> DestinationState {
 /// is followed. The file itself may not exist yet, so the deepest
 /// existing ancestor is what is resolved and the rest is spelling, which
 /// [`relative`] has already judged.
-fn inside(root: &Path, path: &Path, file: &str) -> std::result::Result<(), DestinationState> {
+fn inside(root: &Path, path: &Path, file: &str) -> std::result::Result<(), Refusal> {
     let Ok(root) = crate::paths::canonical(root) else {
-        return Err(refused(
-            format!(
+        return Err(Refusal {
+            problem: format!(
                 "this project's folder could not be resolved, so nothing can say whether {file} is inside it"
             ),
-            "check that the project folder is still there, then open this page again".to_owned(),
-        ));
+            fix: "check that the project folder is still there, then open this page again"
+                .to_owned(),
+        });
     };
     let mut ancestor = path.parent();
     while let Some(dir) = ancestor {
@@ -478,19 +522,21 @@ fn inside(root: &Path, path: &Path, file: &str) -> std::result::Result<(), Desti
             continue;
         }
         let Ok(resolved) = crate::paths::canonical(dir) else {
-            return Err(refused(
-                format!(
+            return Err(Refusal {
+                problem: format!(
                     "{} could not be resolved, so nothing can say whether {file} is inside this project",
                     dir.display()
                 ),
-                "check that the folder is still there, then open this page again".to_owned(),
-            ));
+                fix: "check that the folder is still there, then open this page again".to_owned(),
+            });
         };
         if !resolved.starts_with(&root) {
-            return Err(refused(
-                format!("{file} resolves outside this project, through a link on the way to it"),
-                "name a file inside this project for its secrets".to_owned(),
-            ));
+            return Err(Refusal {
+                problem: format!(
+                    "{file} resolves outside this project, through a link on the way to it"
+                ),
+                fix: "name a file inside this project for its secrets".to_owned(),
+            });
         }
         return Ok(());
     }

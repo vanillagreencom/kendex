@@ -100,9 +100,7 @@ pub fn assignments(text: &str) -> Vec<Assignment> {
     for (index, raw) in text.split_inclusive('\n').enumerate() {
         let span = at..at + raw.len();
         at = span.end;
-        let content = raw.strip_suffix('\n').unwrap_or(raw);
-        let content = content.strip_suffix('\r').unwrap_or(content);
-        let Some((key, rest, plain)) = split_assignment(content) else {
+        let Some((key, rest, plain)) = split_assignment(line_content(raw)) else {
             continue;
         };
         out.push(Assignment {
@@ -162,6 +160,25 @@ fn single_quoted(value: &str) -> Option<&str> {
         .strip_prefix('\'')
         .and_then(|rest| rest.strip_suffix('\''))
         .filter(|inside| !inside.contains('\''))
+}
+
+/// The value one assignment holds, read by the same decoder that decides
+/// its shape: `Some` exactly for a [`Shape::Holds`] or [`Shape::Empty`]
+/// line of this text. Every byte between the quotes is the value, as the
+/// shell reads it.
+///
+/// This is content, not presence. Only a public key's value may be asked
+/// for: a caller asking about a key some package declares under
+/// `[secrets]` would put a credential in its answer.
+pub fn value_of<'a>(text: &'a str, at: &Assignment) -> Option<&'a str> {
+    let (_, rest, plain) = split_assignment(line_content(text.get(at.span.clone())?))?;
+    plain.then(|| single_quoted(rest)).flatten()
+}
+
+/// One line of the file without its terminator, LF or CRLF.
+fn line_content(raw: &str) -> &str {
+    let content = raw.strip_suffix('\n').unwrap_or(raw);
+    content.strip_suffix('\r').unwrap_or(content)
 }
 
 /// Where one key stands in the file.

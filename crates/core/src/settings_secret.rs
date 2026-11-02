@@ -45,7 +45,7 @@ mod destination;
 pub mod env_file;
 pub use destination::{
     DEFAULT_ENV_FILE, Destination, DestinationState, IGNORE_FILE, NESTED_SETTINGS_FILE,
-    destination, destination_layered,
+    destination, destination_layered, private_file,
 };
 
 /// The settings key naming this project's private env file. Read by

@@ -6,8 +6,10 @@ use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
 use kendex_core::{discover, settings};
 
+use kendex_core::settings_compare::Answer;
+
 use super::{CliResult, out};
-use crate::ui::{Lines, escaped};
+use crate::ui::{self, Lines, Span, Status, escaped};
 
 #[derive(Subcommand)]
 pub enum ProjectCommand {
@@ -43,6 +45,8 @@ pub enum ProjectCommand {
     },
     /// List the projects on Projects
     List,
+    /// Show the saved settings that differ between the projects on Projects
+    Settings,
     /// Find projects in a folder
     Discover {
         root: PathBuf,
@@ -136,6 +140,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             ));
         }
         ProjectCommand::List => list(env)?,
+        ProjectCommand::Settings => compare_settings(env)?,
         ProjectCommand::Discover {
             root,
             register,
@@ -191,6 +196,64 @@ fn list(env: &Env) -> CliResult {
             }
         ));
     }
+    Ok(())
+}
+
+/// Where the saved settings of the listed projects differ: each value,
+/// the projects holding it and the file it comes from, then the projects
+/// that could not be read. Agreement is silent, and a difference is a
+/// report, never a failure.
+fn compare_settings(env: &Env) -> CliResult {
+    let projects = settings::load(env)?.projects;
+    let compared = kendex_core::settings_compare::compare_settings(env, &projects);
+    let style = ui::style();
+    ui::stderr(&style.header(
+        "project settings",
+        &format!("{} projects", compared.projects.len()),
+    ));
+    ui::stderr(&style.note(&[Span::Prose(
+        "This report does not include values from the environment of this command.",
+    )]));
+    for differing in &compared.differing {
+        ui::stderr(&style.section(&differing.key, differing.answers.len(), Status::Decision));
+        for one in &differing.answers {
+            let label = match &one.answer {
+                Answer::Value(value) => format!("\"{value}\""),
+                Answer::Undecided { problem, lines } if lines.is_empty() => {
+                    format!("unknown: {problem}")
+                }
+                Answer::Undecided { problem, lines } => format!(
+                    "unknown: {problem} ({})",
+                    kendex_core::settings_file::lines_phrase(lines)
+                ),
+            };
+            ui::stderr(&style.row(Status::Decision, &[Span::Prose(&label)], None));
+            for holder in &one.holders {
+                let project = holder.project.display().to_string();
+                let from = format!("  from {}", holder.layer);
+                ui::stderr(&style.detail(None, &[Span::Command(&project), Span::Prose(&from)]));
+            }
+        }
+    }
+    if !compared.unread.is_empty() {
+        ui::stderr(&style.section("not read", compared.unread.len(), Status::Failed));
+        for unread in &compared.unread {
+            let project = unread.project.display().to_string();
+            let reason = unread.reason.to_string();
+            ui::stderr(&style.row(Status::Failed, &[Span::Command(&project)], None));
+            ui::stderr(&style.detail(None, &[Span::Prose(&reason)]));
+        }
+    }
+    ui::stderr(
+        &match (compared.differing.len(), compared.unread.is_empty()) {
+            (0, true) => style.summary(Status::Done, "no saved settings differ"),
+            (0, false) => style.summary(
+                Status::Notice,
+                "no saved settings differ between the projects that were read",
+            ),
+            (count, _) => style.summary(Status::Notice, &format!("{count} saved settings differ")),
+        },
+    );
     Ok(())
 }
 
