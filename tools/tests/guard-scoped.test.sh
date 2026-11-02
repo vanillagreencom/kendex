@@ -326,8 +326,8 @@ if mutant_guard '/^  if \[ -n "\${2-}" \]; then$/,/^  fi$/d'; then
 else
   bad 'control changes the settings seed'
 fi
-# Control: without the example's key queries, its render is a path of no role.
-if mutant_guard '/^      kendex\.settings\.toml\.example)$/,/^        ;;$/d'; then
+# Control: without the settings-example role, its render is a path of no role.
+if mutant_guard '/^    skills\/\*:kendex\.settings\.toml\.example)$/,/^      ;;$/d'; then
   settings_change named-example-key
   doc_selection "$MUTANT_TOOLS/guard"
   [ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/keyed/tests/other.sh skills/keyed/tests/reader.sh ' ] \

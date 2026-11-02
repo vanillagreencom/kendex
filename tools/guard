@@ -174,6 +174,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
       ;;
+    example-keys)
+      echo "a side of that changed settings example could not be read, so its changed keys are unknown and the scoped run maps it as a path of no role; the read's own error is above." ;;
     merge-group-shards)
       printf 'tools/ci-job-set could not say which shards run the suites of %s, so the scoped run maps its skill Markdown as any changed file; its own error is above.\n' "${2#*tree=}" ;;
     missing-tool)
@@ -1493,6 +1495,10 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #                the set
 #   doc          a file under references/ and any other .md file: a
 #                skill's SKILL.md, README.md, workflows/ and schemas/
+#   settings-example in a DEV_VALIDATE_SCOPED=true run only, a skill's
+#                kendex.settings.toml.example, source or render, whose
+#                change names a key (example_areas); any other change of it
+#                is a path of no role
 # A module is scanned as a lib is, and a test module or test program as a
 # helper is, but a changed module seeds its enclosing folder and file name.
 # A changed test module seeds no name: an import can spell no path. A
@@ -1503,6 +1509,10 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # header says what a scoped run reads for a test module or such a path.
 path_role() { # DIR REL
   case "$1:$2" in
+    skills/*:kendex.settings.toml.example)
+      [[ ${example_areas-} == *" $1"$'\n'* ]] || return 1
+      echo settings-example
+      ;;
     *:tests/run-all.sh) return 1 ;;
     *:scripts/*/*.sh | *:scripts/*/*.bash) echo lib ;;
     *:tests/lib/*.sh | *:tests/lib/*.bash) echo helper ;;
@@ -1633,16 +1643,15 @@ PY
 # of a `# Inputs:` line, items separated by spaces, commas or both.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
 # or repository input in this tree, one per changed [env] key of a narrowed
-# kendex.settings.toml (settings_change) or, scoped, per key a changed
-# settings example of the tree adds, removes or changes (example_keys) beside
-# its path query, that key in SCAN_KEYS and empty for every other query. One batch
-# extracts file metadata and compares the document-read lines, retaining
-# source text inside that process.
+# kendex.settings.toml (settings_change) or per example_areas key of a
+# changed settings example beside its path query, that key in SCAN_KEYS and
+# empty for every other query. One batch extracts file metadata and compares
+# the document-read lines, retaining source text inside that process.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
 # less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
 # `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
 scan_load() { # DIR
-  local role f files tree rel path i q kind value record cache key
+  local role f files tree rel path i q kind value record cache key key_tree
   local scan_input="" reader_patterns=() query_keys=() nl=$'\n'
   SCAN_DIR=""
   SCAN_PATH=()
@@ -1669,13 +1678,18 @@ scan_load() { # DIR
     query_keys=("")
     case "$rel" in
       ../*) ;;
-      kendex.settings.toml.example)
-        [ "$scoped_only" -eq 1 ] || continue
-        value=$(example_keys "$suites_base" "$path") || return 2
-        [ -n "$value" ] || continue
-        while IFS= read -r key; do query_keys+=("$key"); done <<<"$value"
+      *)
+        role=$(path_role "$1" "$rel") || continue
+        case "$role" in
+          doc) ;;
+          settings-example)
+            while read -r key key_tree; do
+              [ "$key_tree" != "$1" ] || query_keys+=("$key")
+            done <<<"$example_areas"
+            ;;
+          *) continue ;;
+        esac
         ;;
-      *) [ "$(path_role "$1" "$rel")" = doc ] || continue ;;
     esac
     [ "$rel:$settings_scope" != ../kendex.settings.toml:keys ] || query_keys=("${settings_keys[@]}")
     for key in "${query_keys[@]}"; do
@@ -1960,12 +1974,12 @@ reach_join() { # ROLE PATH [changed]
 # seeds only the file's input notes. Any other settings change seeds by path
 # as an unscoped run does.
 # Scoped too, a changed skills/<name>/kendex.settings.toml.example, or its
-# render under .agents/skills/<name>/, that adds, removes or changes the
-# line declaring a key (example_keys) reads as a doc of its tree: it seeds its input notes, the
-# files doc_readers finds naming it by path, and per such key the files
-# naming the key. A key no suite, helper, test module or test program of the
-# tree names runs the tree's whole set. Any other example change is a path
-# of no role.
+# render under .agents/skills/<name>/, whose change adds, removes or changes
+# the line declaring a key (example_areas) is a settings-example: it seeds
+# its input notes, the files doc_readers finds naming it by path, and per
+# such key the files naming the key. A key no suite, helper, test module or
+# test program of the tree names runs the tree's whole set. Any other
+# example change is a path of no role.
 # Only a scoped run gives tests/*.py the test-program role (path_role): a
 # control can run a test program through a bare quoted file name or a sibling
 # suite, which no needle follows. In any other run no scan reads a test
@@ -2010,12 +2024,6 @@ mapped_suites() { # DIR REL
   esac
   case "$role:$scoped_only" in test-module:0) return 1 ;; esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
-  # The one path of no role scan_load queries is a settings example by key.
-  if [ "$role" = none ]; then
-    for ((q = 0; q < ${#SCAN_RELS[@]}; q++)); do
-      [ "${SCAN_RELS[q]}" != "$rel" ] || role=doc
-    done
-  fi
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
     input_path="$dir/$rel"
@@ -2032,12 +2040,13 @@ mapped_suites() { # DIR REL
   done
   if [ "$role" = none ] || [ "$role" = test-module ]; then
     [ -n "$noted" ] || return 4
-  elif [ "$role" = doc ]; then
+  elif [ "$role" = doc ] || [ "$role" = settings-example ]; then
     readers=""
     for ((q = 0; q < ${#SCAN_RELS[@]}; q++)); do
       [ "${SCAN_RELS[q]}" = "$rel" ] || continue
-      # The tree's own example declares each key it is queried by.
-      if [ -n "${SCAN_KEYS[q]}" ] && { [[ $rel != ../* ]] || [[ $settings_areas == *"$nl${SCAN_KEYS[q]} $dir$nl"* ]]; }; then
+      # A settings-example key is one the tree's own example declares at an
+      # endpoint.
+      if [ -n "${SCAN_KEYS[q]}" ] && { [ "$role" = settings-example ] || [[ $settings_areas == *"$nl${SCAN_KEYS[q]} $dir$nl"* ]]; }; then
         tested=0
         while IFS= read -r i; do
           [ -n "$i" ] || continue
@@ -2366,6 +2375,29 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     else
       note settings-change 'broad unread'
     fi
+  fi
+  # example_keys' reading of each changed skill settings example, source or
+  # render, for path_role: one `<key> <tree>` line per key its change names,
+  # as settings_areas holds them. A tree with no line keeps its example a
+  # path of no role.
+  example_areas=$'\n'
+  if [ "$scoped_only" -eq 1 ]; then
+    while IFS= read -r f; do
+      case "$f" in skills/*/* | .agents/skills/*/*) ;; *) continue ;; esac
+      x="${f#.agents/}"
+      x="${x#skills/}"
+      [ "${x#*/}" = kendex.settings.toml.example ] || continue
+      if ! example_read=$(example_keys "$suites_base" "$f"); then
+        say example-keys "unread path=$f"
+        continue
+      fi
+      # A source and its render name the same keys once.
+      while IFS= read -r example_key; do
+        [ -n "$example_key" ] || continue
+        [[ $example_areas == *$'\n'"$example_key skills/${x%%/*}"$'\n'* ]] ||
+          example_areas+="$example_key skills/${x%%/*}"$'\n'
+      done <<<"$example_read"
+    done <<<"$touched"
   fi
   while IFS= read -r f; do
     [ -n "$f" ] || continue
