@@ -364,22 +364,36 @@ case "$verb" in
     # The attach a caller inside a tmux client opens in a new window of the
     # user's own terminal, from the caller's environment less TMUX and
     # TMUX_PANE, which jarvis-session clears. Status 3 is no terminal: no
-    # $TERMINAL and no candidate on PATH. 4 is a $TERMINAL naming nothing on
-    # PATH with no other candidate, which is not that absence. 5 is a
-    # terminal that exited non-zero or put no new client on the session
-    # within 5 seconds.
-    home="$1" socket="$2" session="$3"
+    # $TERMINAL and no xdg-terminal-exec on PATH. 4 is a $TERMINAL naming
+    # nothing on PATH with no xdg-terminal-exec, which is not that absence. 5
+    # is a
+    # terminal that exited non-zero, put no new client on the session within
+    # 5 seconds or whose process state could not be read.
+    socket="$1" session="$2"
     printf -v line 'exec tmux -S %q attach-session -t %q' "$socket" "=$session"
-    if ! lane_terminal_pick "$home" jarvis "$line"; then
-      [[ -n "${TERMINAL:-}" ]] || exit 3
+    # The user's configured terminal, then the desktop's. This does not share
+    # orch's private open_gui choice: KEN-4687's owner-held replacement owns
+    # orch and migrates its adjacent callers, so one shared choice is a
+    # caller-integration concern for that rebuild.
+    if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
+      launch=("$TERMINAL" -e bash -lc "$line")
+    elif command -v xdg-terminal-exec >/dev/null 2>&1; then
+      launch=(xdg-terminal-exec bash -lc "$line")
+    elif [[ -n "${TERMINAL:-}" ]]; then
       printf 'jarvis-session: terminal=unresolved requested=%s\n' "$TERMINAL" >&2
       exit 4
+    else
+      exit 3
     fi
-    [[ -z "${TERMINAL:-}" || "$LANE_TERMINAL" == "$TERMINAL" ]] ||
-      printf 'jarvis-session: terminal=fallback requested=%s selected=%s\n' "$TERMINAL" "$LANE_TERMINAL" >&2
+    [[ -z "${TERMINAL:-}" || "${launch[0]}" == "$TERMINAL" ]] ||
+      printf 'jarvis-session: terminal=fallback requested=%s selected=%s\n' "$TERMINAL" "${launch[0]}" >&2
     clients() { tmux -S "$socket" list-clients -t "=$session" -F '#{client_pid}'; }
     before="$(clients)" || exit 5
-    lane_run_detached /dev/null /dev/null "${LANE_TERMINAL_ARGV[@]}" || exit 5
+    # The terminal's own stderr names why it failed, such as a display it
+    # could not reach; its tail follows a non-zero exit.
+    errors="$(mktemp "${TMPDIR:-/tmp}/jarvis-terminal.XXXXXX")" || exit 5
+    trap 'rm -f -- "$errors"' EXIT
+    lane_run_detached /dev/null "$errors" "${launch[@]}" || exit 5
     launcher="$!" waited=0
     # A terminal that hands its window to a running server exits 0 at once,
     # so only a new client on the session proves the window opened.
@@ -389,18 +403,25 @@ case "$verb" in
         [[ $'\n'"$before"$'\n' == *$'\n'"$pid"$'\n'* ]] || exit 0
       done
       if [[ -n "$launcher" ]]; then
-        state="$(lane_process_state "$launcher")" || exit 5
+        state="$(lane_process_state "$launcher")" || {
+          printf 'jarvis-session: launcher-state=unread pid=%s\n' "$launcher" >&2
+          exit 5
+        }
         if [[ -z "$state" || "$state" == Z ]]; then
           rc=0
           wait "$launcher" || rc=$?
-          [[ "$rc" == 0 ]] || { printf 'jarvis-session: terminal=%s exit=%s\n' "$LANE_TERMINAL" "$rc" >&2; exit 5; }
+          if [[ "$rc" != 0 ]]; then
+            printf 'jarvis-session: terminal=%s exit=%s\n' "${launch[0]}" "$rc" >&2
+            tail -n 5 -- "$errors" >&2
+            exit 5
+          fi
           launcher=""
         fi
       fi
       sleep 0.1
       waited=$((waited + 1))
     done
-    printf 'jarvis-session: terminal=%s client=none seconds=5\n' "$LANE_TERMINAL" >&2
+    printf 'jarvis-session: terminal=%s client=none seconds=5\n' "${launch[0]}" >&2
     exit 5 ;;
   *) printf 'jarvis-session: backend=%s\n' "$verb" >&2; exit 2 ;;
 esac

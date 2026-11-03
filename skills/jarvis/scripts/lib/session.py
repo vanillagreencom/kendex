@@ -22,6 +22,8 @@ import uuid
 
 
 BACKEND = Path(__file__).with_name("session-backend.sh")
+# The package's own command, which no install puts on PATH.
+ENTRY = Path(__file__).resolve().parent.parent / "jarvis-session"
 BASH = os.environ["JARVIS_BASH"]
 # VGS bounds each call at 60 seconds. Leave time to print its answer.
 CALL_SECONDS = 55
@@ -337,7 +339,7 @@ os.execvpe(argv[0],argv,env)
             # terminal opens one in a window of its own and the caller's
             # client stays where it is.
             try:
-                opened = self.backend("open-window", self.home, terminal["server"], terminal["session"], check=False, env=own)
+                opened = self.backend("open-window", terminal["server"], terminal["session"], check=False, env=own)
             except (OSError, subprocess.TimeoutExpired) as failure:
                 raise Refusal("terminal-launch-failed", str(failure))
             if opened.returncode == 4:
@@ -347,7 +349,8 @@ os.execvpe(argv[0],argv,env)
             print(opened.stderr, end="", file=sys.stderr)
             if opened.returncode == 0:
                 return
-            print("No terminal is set in TERMINAL or found on PATH, so Jarvis opens inside this tmux pane.", file=sys.stderr)
+            print("No terminal is set in TERMINAL and xdg-terminal-exec is not on PATH, so Jarvis opens inside this tmux pane.",
+                  file=sys.stderr)
         # tmux refuses a client only from a pane of the server it attaches to
         # (server_client_check_nested), so the caller's TMUX stays: the nested
         # client crosses servers, and a pane on the home's own server is
@@ -1126,7 +1129,8 @@ def main():
         else:
             answer, code = session.answer(session.read()), 0
             if answer["terminal"]:
-                print("jarvis-session: attach=jarvis-session attach --home " + shlex.quote(session.home), file=sys.stderr)
+                print("jarvis-session: attach=" + shlex.quote(str(ENTRY)) + " attach --home " + shlex.quote(session.home),
+                      file=sys.stderr)
     except Refusal as failure:
         try:
             record = session.read()

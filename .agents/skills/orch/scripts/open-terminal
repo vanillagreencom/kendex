@@ -2814,13 +2814,15 @@ tmux_launch_verify() { # PANE TITLE BRIEF EXPECT
   return 1
 }
 
-# Outside tmux the user's own terminal opens the lane, in the order
-# lib/lane-launch.sh's lane_terminal_pick owns. Every launcher arm starts from the same scrubbed environment: a GUI window
+# Outside tmux the user's own terminal opens the lane: $TERMINAL is the
+# explicit choice, xdg-terminal-exec the desktop's, and ghostty only where a
+# desktop names neither. Nothing is hardcoded ahead of what the user set.
+# Every launcher arm starts from the same scrubbed environment: a GUI window
 # opened from inside tmux (--ghostty as an override) otherwise inherits TMUX
 # and TMUX_PANE, so the child reads as a GUI terminal and a tmux pane at once
 # and pane-aware tools in it act on the controller's server.
 open_gui() {
-  local dir="$1" title="$2" cmd="$3"
+  local dir="$1" title="$2" cmd="$3" chosen=""
   # The title is written from inside the launched shell, so it survives whichever
   # launcher runs: only the ghostty arm carries --title, and it is tried last.
   # The title is the item id, validated against GH_ISSUE_PATTERN before it
@@ -2829,17 +2831,27 @@ open_gui() {
   # live session below.
   local shell_cmd="unset ${LANE_LAUNCH_SCRUB[*]}; printf '\033]0;%s\007' '$title'; cd '$dir' && $cmd"
   launchable_dir "$dir" "$title" || return 1
-  if ! lane_terminal_pick "$dir" "$title" "$shell_cmd"; then
+  local -a launcher=()
+  if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
+    chosen="$TERMINAL"
+    launcher=("$TERMINAL" -e bash -lc "$shell_cmd")
+  elif command -v xdg-terminal-exec >/dev/null 2>&1; then
+    chosen="xdg-terminal-exec"
+    launcher=(xdg-terminal-exec bash -lc "$shell_cmd")
+  elif command -v ghostty >/dev/null 2>&1; then
+    chosen="ghostty"
+    launcher=(ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
+  else
     ot_message terminal-missing "setting=TERMINAL" >&2
     return 1
   fi
   # A $TERMINAL naming nothing on PATH — a typo, an uninstalled terminal, a value
   # carrying arguments — is otherwise substituted in silence.
-  [[ -z "${TERMINAL:-}" || "$LANE_TERMINAL" == "$TERMINAL" ]] ||
-    ot_message terminal-fallback "requested=$TERMINAL" "selected=$LANE_TERMINAL" "item=$title" >&2
+  [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
+    ot_message terminal-fallback "requested=$TERMINAL" "selected=$chosen" "item=$title" >&2
   # The terminal opens its window on the owner's desktop, so it keeps the live
   # session the scrub would clear.
-  ( lane_launch_keep_live_session && run_detached /dev/null "${LANE_TERMINAL_ARGV[@]}" )
+  ( lane_launch_keep_live_session && run_detached /dev/null "${launcher[@]}" )
   ot_message terminal-opened "item=$title" "path=$dir"
 }
 
