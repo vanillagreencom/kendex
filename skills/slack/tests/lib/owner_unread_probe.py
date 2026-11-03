@@ -2,6 +2,7 @@
 """Unread page contract through the producer, canonical mailbox and relay."""
 
 import importlib.util
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -34,9 +35,9 @@ box = root / "tmp/lane-mail/overseer"
 script = root / ".agents/skills/mailbox/scripts/lane-mail"
 
 
-def command(*args):
+def command(*args, env=None):
     return subprocess.run([str(script), *args], cwd=root, capture_output=True,
-                          text=True, check=True, timeout=30).stdout
+                          text=True, check=True, timeout=30, env=env).stdout
 
 
 def directive(text, key):
@@ -64,6 +65,13 @@ try:
     if mode != "seed":
         poll()
     directive("Owner request.", "page-original")
+    if mode == "compacted-read":
+        # A running relay keeps its startup thread horizon when the mailbox's
+        # retention setting changes. The original remains inside that horizon.
+        path = box / "to-lane.jsonl"
+        rows = [json.loads(raw) for raw in path.read_text().splitlines()]
+        rows[-1]["at"] = datetime.fromtimestamp(now - 6 * 86400, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     original = next(row for row in bound.mail.events() if row.get("delivery_id") == "page-original")
     blocks = []
     watch.owner_unread(shutil.which("bash"), root, 0, original["count"], now, set(), blocks)
@@ -77,6 +85,8 @@ try:
         body = blocks[0]
     elif mode == "unanswered":
         body = body.replace("EVENT owner-unread", "EVENT owner-unanswered")
+    if mode == "compacted-read":
+        command("inbox", "--item", "overseer")
     if mode != "no-event":
         directive(body, "ordinary" if mode == "ordinary" else "jarvis-" + "a" * 64)
     if mode == "read":
@@ -100,6 +110,22 @@ try:
             return result
 
         relay_module.outbound = prepared
+    if mode == "compacted-read":
+        receipts = bound.mail.read_receipts
+
+        def compacted(*args, **kwargs):
+            bound.mail.read_receipts = receipts
+            output = command("compact", "--item", "overseer", env=dict(
+                os.environ, ORCH_RECORD_RETENTION_DAYS="5", SLACK_THREAD_DAYS="1"))
+            assert "to-lane=1" in output, output
+            rows = bound.mail.events()
+            assert original["id"] not in {row["id"] for row in rows}
+            assert any(row.get("delivery_id") == "jarvis-" + "a" * 64 for row in rows)
+            cursor, read = receipts(*args, **kwargs)
+            assert original["line"] <= cursor and original["id"] not in read
+            return cursor, read
+
+        bound.mail.read_receipts = compacted
     if mode in ("refusal-accepted", "refusal-read", "unknown"):
         fault = {"method": "chat.postMessage", "cut": "chunked"} if mode == "unknown" else {
             "method": "chat.postMessage", "error": "not_in_channel", "times": 1}

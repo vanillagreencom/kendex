@@ -12,7 +12,7 @@ set -e
 sk_fake_start
 # Jarvis produces the deadline event; the real mailbox and relay judge each
 # candidate with fake time. Shared send recovery remains in recovery.test.sh.
-for page_case in accepted read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-read hold-release read-during-prepare missed invalid capability refusal-accepted refusal-read unknown; do
+for page_case in accepted read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-read hold-release read-during-prepare compacted-read missed invalid capability refusal-accepted refusal-read unknown; do
   ROOT="$(sk_new_root "page $page_case")"
   sk_bind "$ROOT"
   PAGE_RC=0
@@ -40,6 +40,21 @@ sk_assert_red "$PAGE_RC" 0 'control: removing the page action fails the accepted
 assert_has "$(cat "$SK_TMP/page-control.log")" "AssertionError: ('page-count', 'accepted', 0, 1)" \
   'control fails specifically because the eligible page did not land'
 
+sk_bin_reset
+
+sk_mutant unread-reference relay.py '\[\*self.mail.events\(\), \*references\]' 'self.mail.events()'
+ROOT="$(sk_new_root page-reference-control)"
+sk_bind "$ROOT"
+PAGE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+  SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+  python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" compacted-read \
+  "$SK_ROOT/skills/jarvis/scripts/lib/watch.py" >"$SK_TMP/page-reference-control.log" 2>&1 || PAGE_RC=$?
+sk_assert_red "$PAGE_RC" 0 'control: losing the retained reference pages a compacted read original'
+assert_has "$(cat "$SK_TMP/page-reference-control.log")" "AssertionError: ('page-count', 'compacted-read', 1, 0)" \
+  'control fails specifically because the compacted read original was paged'
 sk_bin_reset
 
 echo "=== slack owner notices ==="

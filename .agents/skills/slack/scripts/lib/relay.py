@@ -861,9 +861,11 @@ class RootRelay:
             if self.react("reactions.remove", ts, SEEN) and self.react("reactions.add", ts, READ):
                 self.journal.append(t="mark", ts=ts, name=READ)
 
-    def read_membership(self, strict: bool = False) -> Set[str]:
+    def read_membership(self, strict: bool = False, references: Iterable[Dict] = ()) -> Set[str]:
         cursor, read = self.mail.read_receipts(strict=True) if strict else self.mail.read_receipts()
-        return read | {e["id"] for e in self.mail.events()
+        # Compaction can remove a read original while its unread batch remains.
+        # Its snapshot's logical position still belongs to this read cursor.
+        return read | {e["id"] for e in [*self.mail.events(), *references]
                        if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
 
     def post_owner_unread(self, events: List[Dict]) -> None:
@@ -903,7 +905,7 @@ class RootRelay:
                     continue
 
                 def admit() -> bool:
-                    read = self.read_membership(strict=True)
+                    read = self.read_membership(strict=True, references=(original,))
                     touched = self.refresh_hold()
                     return (original["id"] not in read
                             and at_epoch(original["at"]) >= self.settings.horizon(self.clock())
