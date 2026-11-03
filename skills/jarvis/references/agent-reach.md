@@ -95,7 +95,11 @@ One machine runs the main Jarvis for an owner. Every other Jarvis for that owner
 
 `JARVIS_MAIN_HOST` selects the role. Empty means main; a satellite sets `DEST:HOME`, where `DEST` is an SSH destination with no whitespace, `:` or `/` and no leading `-`, and `HOME` is the main home's absolute path on that host. An invalid nonempty value remains a satellite and reports `setting-invalid`.
 
-Set a satellite's value in its home's private env file. Never commit it in `kendex.settings.toml`: a cloned main would then become a satellite on pull. Leave it empty on exactly one machine. The package cannot detect two mains; record the one-main rule in the consumer's setup records.
+Use `jarvis-session main-host --home HOME --set DEST:HOME` to save a satellite's value, `--clear` to save the empty main value, or `--get` to read it. Each successful operation returns only `{"JARVIS_MAIN_HOST":"value"}`. Set validates through the same role parser as forwarding and refuses an invalid value before writing, with `jarvis-session: main-host=refused cause=setting-invalid` and exit 2.
+
+The command uses the home's selected private env file, including `KENDEX_ENV_FILE`. Set and clear append a literal final assignment on each call, preserving every existing byte and the file's mode. An absent file is created with permission bits `0600`, filtered by the process umask. A file symlink keeps pointing to its target. Get follows the existing settings precedence: an explicit caller environment value still wins over the saved value. Set and clear return the value they saved. Settings-read or file-write failures refuse with `settings-unreadable` or `private-file-unwritable`; the command prints no private-file diagnostics or unrelated settings.
+
+Never commit the value in `kendex.settings.toml`: a cloned main would then become a satellite on pull. Leave it empty on exactly one machine. The package cannot detect two mains; record the one-main rule in the consumer's setup records.
 
 ### Satellite
 

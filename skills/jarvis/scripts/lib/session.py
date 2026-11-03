@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import sys
@@ -903,10 +904,52 @@ class Arguments(argparse.ArgumentParser):
         raise SystemExit(2)
 
 
+def main_host(args):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import watch
+
+    value = args.set if args.set is not None else ""
+    if not args.get and watch.role({"JARVIS_MAIN_HOST": value}).kind == "invalid":
+        print("jarvis-session: main-host=refused cause=setting-invalid", file=sys.stderr)
+        return 2
+    # Read the selected path and this one value through the same owner as
+    # watch.config. Private-file diagnostics can contain other secret values.
+    reader = r'''
+source "$1/jarvis-env.sh"
+kendex_project_env_supports selected-private-path || exit 1
+kendex_load_project_env "$2" _jarvis_selected_private || exit 1
+export JARVIS_MAIN_HOST="${JARVIS_MAIN_HOST:-}"
+exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["JARVIS_MAIN_HOST"]]))' "$_jarvis_selected_private"
+'''
+    cause = "settings-unreadable"
+    try:
+        home = Path(args.home).resolve(strict=True)
+        result = subprocess.run([BASH, "-c", reader, "jarvis-main-host", str(BACKEND.parent), str(home), sys.executable],
+                                cwd=home, capture_output=True, text=True, timeout=CALL_SECONDS)
+        if result.returncode:
+            raise Refusal(cause)
+        private, current = json.loads(result.stdout)
+        if args.get:
+            value = current
+        else:
+            cause = "private-file-unwritable"
+            # A final assignment preserves arbitrary Bash, including multiline
+            # secrets. Follow the loader's supported file symlink layout.
+            path = (home / private).resolve()
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "ab") as stream:
+                stream.write(("\nJARVIS_MAIN_HOST=" + shlex.quote(value) + "\n").encode("utf-8"))
+        print(json.dumps({"JARVIS_MAIN_HOST": value}))
+        return 0
+    except (Refusal, OSError, ValueError, subprocess.SubprocessError):
+        print("jarvis-session: main-host=refused cause=" + cause, file=sys.stderr)
+        return 2
+
+
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed", "report-due", "forward", "forward-drain"):
+    for verb in ("start", "status", "stop", "succeed", "report-due", "forward", "forward-drain", "main-host"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "status":
@@ -915,6 +958,11 @@ def main():
         elif verb == "forward":
             # Text crosses this file, never argv.
             command.add_argument("--record", required=True)
+        elif verb == "main-host":
+            operation = command.add_mutually_exclusive_group(required=True)
+            operation.add_argument("--set")
+            operation.add_argument("--clear", action="store_true")
+            operation.add_argument("--get", action="store_true")
         if verb == "start":
             command.add_argument("--harness", choices=("claude", "codex", "copilot", "pi"), required=True)
             command.add_argument("--account", required=True)
@@ -942,6 +990,8 @@ def main():
         parser.error("adopt")
     if args.verb == "forward" and not (clean(args.record) and args.record):
         parser.error("record")
+    if args.verb == "main-host":
+        return main_host(args)
     if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import forward
