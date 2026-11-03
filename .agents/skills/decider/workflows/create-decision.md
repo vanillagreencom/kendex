@@ -12,7 +12,7 @@ Inputs: summary, reasons, and revisit conditions (required); research reference 
 
 `next-id` also reads the base branch's INDEX, so it skips a number another branch already merged. A `notice=base-unverified` line says the base was not fully read; its reason is listed under `DECISIONS_BASE_REF` in `decisions --help`.
 
-Without the script: take the last populated INDEX ID value and increment its numeric suffix. If it has none, ask for the project's scheme.
+Without the script: select the project's ID scheme from its configuration or last populated INDEX ID. If neither supplies one, ask for the scheme. Inspect the working and base-branch indexes, then increment the highest numeric suffix reserved in that scheme. Disclose an unread base instead of claiming its IDs were checked.
 
 Derive a 2-5 word kebab-case descriptor from the summary — "Use Redis for session caching" → `session-caching`.
 
@@ -60,4 +60,4 @@ Path: [DECISIONS_DIR]/[DECISION_ID]-[DESCRIPTOR].md
 - the `REVISIT([DECISION_ID])` markers in code
 - the `**Decision [DECISION_ID]**:` reference in the prompting issue
 
-The commit-guards `md-refs` lane catches a link whose target file was renamed. It does not judge a bare decision ID in prose, a Status cell, a link label or a code marker, so check those by reading them.
+The commit-guards `md-refs` lane catches missing link targets and, where decision checks apply, IDs without tracked records. It cannot decide whether a reference names the intended policy. Read status cells, link labels and code markers for the renumbered record.
