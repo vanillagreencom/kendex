@@ -1013,7 +1013,7 @@ while IFS=$'\t' read -r error methods <&3; do
   sk_bin_reset
 done 3<<<"$(settle_rows)"
 
-sk_mutant mark-read-refused relay.py '        try:\n            cursor, read = self\.mail\.read_receipts\(\)\n            events = self\.mail\.events\(\)\n        except Refusal as err:\n            print_refusal\(err\)\n            return\n' '        cursor, read = self.mail.read_receipts()\n        events = self.mail.events()\n'
+sk_mutant mark-read-refused relay.py '        try:\n            read = self\.read_membership\(\)\n        except Refusal as err:\n            print_refusal\(err\)\n            return\n' '        read = self.read_membership()\n'
 sk_inject "$MU_CH" U001 'refused read' >/dev/null
 touch "$MU/tmp/drain-refused"
 sk_lm "$MU" notice --item overseer --to owner --file "$(sk_text n21 'Held back.')" >/dev/null

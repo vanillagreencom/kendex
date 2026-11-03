@@ -17,6 +17,7 @@ its repeat.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
 import shutil
@@ -61,7 +62,7 @@ class LaneMail:
         except subprocess.TimeoutExpired as err:
             raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command={args[0]}") from err
 
-    def _read_events(self, receipts: bool = False) -> Tuple[List[Dict], Optional[Tuple[int, Set[str]]]]:
+    def _read_events(self, receipts: bool = False, strict_receipts: bool = False) -> Tuple[List[Dict], Optional[Tuple[int, Set[str]]]]:
         deadline = time.monotonic() + LANE_MAIL_TIMEOUT_SECONDS
         if self.reader is None:
             path = MAILBOX_READ_FILES[0]
@@ -94,8 +95,13 @@ class LaneMail:
             self.box = Path(mailbox_root) / "tmp" / "lane-mail" / "overseer"
             self.reader = reader
         try:
+            options = {}
+            if strict_receipts:
+                if "strict_receipts" not in inspect.signature(self.reader).parameters:
+                    raise Refusal("lane-mail-failed", "reader=read_events capability=strict_receipts unavailable")
+                options["strict_receipts"] = True
             return self.reader(self.box, self.jq_defs, self.snapshots,
-                               receipts=receipts, timeout=max(0, deadline - time.monotonic()))
+                               receipts=receipts, timeout=max(0, deadline - time.monotonic()), **options)
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
             raise Refusal("lane-mail-failed", str(error)) from error
 
@@ -206,11 +212,11 @@ class LaneMail:
             return "absent", err.strip()
         raise Refusal("lane-mail-failed", err.strip() or first)
 
-    def read_receipts(self) -> Tuple[int, Set[str]]:
+    def read_receipts(self, strict: bool = False) -> Tuple[int, Set[str]]:
         """The mailbox store's read cursor and directives at or below it.
         Directive ids also judge older producers without line metadata.
-        A missed cursor has read none."""
-        _, receipts = self._read_events(receipts=True)
+        A missed cursor has read none unless strict, which refuses it."""
+        _, receipts = self._read_events(receipts=True, strict_receipts=strict)
         assert receipts is not None, "the mailbox store must return requested receipts"
         return receipts
 

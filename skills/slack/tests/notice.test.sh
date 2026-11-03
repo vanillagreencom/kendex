@@ -10,6 +10,38 @@ set -euo pipefail
 set -e
 
 sk_fake_start
+# Jarvis produces the deadline event; the real mailbox and relay judge each
+# candidate with fake time. Shared send recovery remains in recovery.test.sh.
+for page_case in accepted read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-read hold-release read-during-prepare missed invalid capability refusal-accepted refusal-read unknown; do
+  ROOT="$(sk_new_root "page $page_case")"
+  sk_bind "$ROOT"
+  PAGE_RC=0
+  env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+    SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" SLACK_JARVIS_SESSION_FILE=tmp/page-presence \
+    python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" "$page_case" \
+    "$SK_ROOT/skills/jarvis/scripts/lib/watch.py" >"$SK_TMP/page-$page_case.log" 2>&1 || PAGE_RC=$?
+  assert_eq "$PAGE_RC" 0 "$page_case: canonical unread page admission and root status"
+  [ "$PAGE_RC" -eq 0 ] || cat "$SK_TMP/page-$page_case.log"
+done
+
+sk_mutant unread-action relay.py '            self.post_owner_unread\(events\)' '            pass # self.post_owner_unread(events)'
+ROOT="$(sk_new_root page-control)"
+sk_bind "$ROOT"
+PAGE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+  SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+  python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" accepted \
+  "$SK_ROOT/skills/jarvis/scripts/lib/watch.py" >"$SK_TMP/page-control.log" 2>&1 || PAGE_RC=$?
+sk_assert_red "$PAGE_RC" 0 'control: removing the page action fails the accepted-delivery assertion'
+assert_has "$(cat "$SK_TMP/page-control.log")" "AssertionError: ('page-count', 'accepted', 0, 1)" \
+  'control fails specifically because the eligible page did not land'
+
+sk_bin_reset
+
 echo "=== slack owner notices ==="
 ROOT="$(sk_new_root notices)"
 sk_bind "$ROOT"
@@ -173,5 +205,6 @@ answer "$FWD_KEY" 'Control forward.'
 sk_poll "$ROOT"
 sk_assert_red "$RC|$(threads_of 'Control forward.')" "0|[]" "control: dropping the key comparison posts a mismatched forward"
 sk_bin_reset
+
 
 sk_summary

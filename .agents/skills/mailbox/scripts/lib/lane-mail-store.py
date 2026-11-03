@@ -142,12 +142,14 @@ def receipt_cursor(box, value, seen, absent, count, files=None):
     return str(count) if seen > count else value or "0"
 
 
-def read_events(box, jq_defs, previous, receipts=False, timeout=30):
+def read_events(box, jq_defs, previous, receipts=False, timeout=30, strict_receipts=False):
     """Cache numbered snapshots; read cursor changes without launching lane-mail.
 
     flock writers hold the file inode. Directory-mutex writers on macOS
     publish their mutex before changing bytes or numbering. A read is usable
     only with unchanged stamps and no such writer during the snapshot.
+    strict_receipts lets a paging caller refuse a missed receipt instead of
+    using the legacy zero fallback; receipt_cursor owns that judgement.
     """
     import fcntl
     validate_mailbox(box)
@@ -226,6 +228,9 @@ def read_events(box, jq_defs, previous, receipts=False, timeout=30):
     if receipts:
         value, seen, absent = read_cursor(box)
         cursor = receipt_cursor(box, value, seen, absent, previous["count"])
+        # Slack's unread page cannot treat lost evidence of a read as unread.
+        if strict_receipts and cursor == "missed":
+            raise StoreRefusal("receipt-missed", box / "to-lane.cursor")
         count = 0 if cursor == "missed" else int(cursor)
         read = {row["id"] for row in previous["directives"] if row["line"] <= count}
         receipt = count, read
