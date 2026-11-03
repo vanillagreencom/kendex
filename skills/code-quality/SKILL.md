@@ -89,9 +89,9 @@ Load only the references for the code being changed:
 
 ## Comments and Prose
 
-A comment states why, or a constraint the code cannot show: no history, review notes, code restatements or change logs. Header help a script prints is CLI documentation, not narration. Delete a comment that adds nothing, and keep a claim within what the adjacent code establishes.
+A comment states why, or a constraint the code cannot show: no history, review notes, code restatements or change logs. History includes a citation of an old script by line, a round, a session, an incident, a review or a past issue: the reason a reader needs now stays, its origin goes. A doc comment is a comment: it states a why or a constraint, never what the item's name and signature already say, and no rule requires one on every item. Header help a script prints is CLI documentation, not narration. Delete a comment that adds nothing, and keep a claim within what the adjacent code establishes.
 
-Markdown follows [docs-writing](../docs-writing/SKILL.md). Commit bodies explain intent, not the diff.
+Markdown follows [docs-writing](../docs-writing/SKILL.md) and carries no history either. Commit bodies explain intent, not the diff.
 
 ## Cleanup
 
