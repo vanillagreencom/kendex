@@ -1,9 +1,4 @@
-"""Send the owner's note as a directive to one repository's overseer.
-
-The repository's own lane-mail makes the send on the machine that holds it,
-and its refusal decides the route: `overseer-absent` on the control host
-tries this machine.
-"""
+"""Send an owner directive through watch's declared destination selection."""
 import argparse
 from pathlib import Path
 import shlex
@@ -35,16 +30,7 @@ cat >"$note"
 """ % {"mail": LANE_MAIL}
 
 
-class Refusal(Exception):
-    """KEY, the value it names, then detail lines."""
-
-
-def listing(side, host):
-    command = ["ssh", host, "kendex project list"] if side == "host" else ["kendex", "project", "list"]
-    try:
-        return watch.listed_roots(watch.checked(command, operation="project-list"))
-    except watch.Failure as error:
-        raise Refusal("project-list-failed", side, str(error)) from error
+Refusal = watch.DestinationRefusal
 
 
 def send(bash, side, host, root, note):
@@ -62,35 +48,34 @@ def send(bash, side, host, root, note):
                              root, operation="local-send")
 
 
-def deliver(bash, repo, note, host):
-    sides = (("host", "local") if host else ("local",))
-    for side in sides:
-        matches = [root for root in listing(side, host) if root.rstrip("/").rsplit("/", 1)[-1] == repo]
-        if len(matches) > 1:
-            raise Refusal("repo-ambiguous", repo, "side=%s roots=%s" % (side, " ".join(matches)))
-        if not matches:
-            continue
+def deliver(bash, repo, note, settings, host=None, local=False):
+    for target, root, fallback in watch.note_routes(settings, repo, host, local):
+        side = "host" if target.host else "local"
         try:
-            sys.stdout.write(send(bash, side, host, matches[0], note))
+            sys.stdout.write(send(bash, side, target.host, root, note))
         except watch.Failure as error:
-            if error.record["key"][1:] == ["refusal", "overseer-absent"]:
+            if fallback and error.record["key"][1:] == ["refusal", "overseer-absent"]:
                 continue
-            raise Refusal("send-failed", side, str(error)) from error
-        return side, matches[0]
-    raise Refusal("no-overseer", repo, "sides=" + ",".join(sides))
+            raise Refusal("send-failed", side if fallback else target.key, str(error)) from error
+        return side, root, target.key
+    raise Refusal("no-overseer", repo)
 
 
 def main():
     parser = argparse.ArgumentParser(prog="owner-note", description=(
         "Send FILE, then a blank line and the verify footer, as a directive to the overseer of REPO, "
-        "the last path segment of a root `kendex project list` prints: on JARVIS_CONTROL_HOST first "
-        "when it is set, then on this machine."), epilog=(
+        "the last path segment of a root `kendex project list` prints. JARVIS_REMOTE_HOSTS adds SSH aliases "
+        "to local and JARVIS_CONTROL_HOST roots; bare selection must be unique across them. With no additional "
+        "alias, try JARVIS_CONTROL_HOST first, then this machine."), epilog=(
         "A refusal prints `owner-note: KEY=VALUE` and its cause on stderr and exits 2. Keys: file-unreadable, "
-        "settings-unreadable, project-list-failed (VALUE is the side), repo-ambiguous, mailbox-missing "
+        "settings-unreadable, setting-invalid, destination-unknown, project-list-failed (VALUE is the destination), repo-ambiguous, mailbox-missing "
         "(VALUE is the root), send-failed (VALUE is the side), no-overseer (no side lists a root named REPO whose "
         "lane-mail has an overseer), role-satellite (VALUE is JARVIS_MAIN_HOST: a satellite instructs no "
         "overseer, so forward the request to the main instead)."))
     parser.add_argument("--bash", required=True, help=argparse.SUPPRESS)
+    selector = parser.add_mutually_exclusive_group()
+    selector.add_argument("--host", help="Select this declared SSH alias only; never fall back.")
+    selector.add_argument("--local", action="store_true", help="Select this machine only; never fall back.")
     parser.add_argument("repo")
     parser.add_argument("file", type=Path)
     args = parser.parse_args()
@@ -107,13 +92,13 @@ def main():
         if watch.role(settings).kind != "main":
             raise Refusal("role-satellite", settings["JARVIS_MAIN_HOST"])
         note = text.rstrip("\n") + "\n\n" + FOOTER + "\n"
-        side, root = deliver(args.bash, args.repo, note, host)
+        side, root, destination = deliver(args.bash, args.repo, note, settings, args.host, args.local)
     except Refusal as refusal:
         key, value = refusal.args[:2]
         detail = "".join("\n" + part for part in refusal.args[2:] if part)
         print("owner-note: %s=%s%s" % (key, value, detail), file=sys.stderr)
         return 2
-    print("owner-note: sent side=%s root=%s" % (side, root))
+    print("owner-note: sent side=%s root=%s destination=%s" % (side, root, destination))
     return 0
 
 

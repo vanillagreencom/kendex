@@ -155,7 +155,7 @@ class Presence(unittest.TestCase):
             failure.unlink()
             # A successful ordinary mail poll cannot confirm a hold renewal.
             watch.tick(epoch+722, watch.acquire(epoch+722))
-            self.assertTrue(watch.state["presence_failures"]["host"])
+            self.assertTrue(watch.state["presence_failures"]["ssh:host"])
             watch = module.Watch(root, BASH, settings)
             failure.touch()
             clock.write_text(str(epoch+723))

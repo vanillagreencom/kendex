@@ -29,6 +29,67 @@ FORWARD_EVERY_SECS = 60
 # A machine's role from JARVIS_MAIN_HOST: kind main, satellite or invalid. An
 # invalid value is still a satellite, so a typo never makes a second main.
 Role = namedtuple("Role", "kind dest home")
+Destination = namedtuple("Destination", "key host")
+
+
+class DestinationRefusal(Exception):
+    """A destination selection refusal: key, value and optional cause."""
+
+
+def destinations(settings):
+    """The main's declared machines; a satellite never discovers fleet roots."""
+    local = Destination("local", None)
+    if role(settings).kind != "main":
+        return (local,)
+    hosts = []
+    control = settings.get("JARVIS_CONTROL_HOST", "")
+    if control:
+        hosts.append(control)
+    for host in settings.get("JARVIS_REMOTE_HOSTS", "").split():
+        if not re.fullmatch(r"[^\s:/-][^\s:/]*", host):
+            raise DestinationRefusal("setting-invalid", "JARVIS_REMOTE_HOSTS", host)
+        if host not in hosts:
+            hosts.append(host)
+    return (local, *(Destination("ssh:" + host, host) for host in hosts))
+
+
+def destination_roots(destination):
+    if destination.host:
+        return listed_roots(checked(["ssh", destination.host, "kendex project list"], operation="project-list"))
+    return listed_roots(checked(["kendex", "project", "list"], operation="project-list"))
+
+
+def note_routes(settings, repo, host=None, local=False):
+    """Select without sending; only the legacy route discovers its fallback lazily."""
+    declared = destinations(settings)
+    if host is not None or local:
+        key = "ssh:" + host if host is not None else "local"
+        selected = [target for target in declared if target.key == key]
+        if not selected:
+            raise DestinationRefusal("destination-unknown", host)
+    else:
+        selected = list(declared)
+    legacy = host is None and not local and len(declared) == (2 if settings.get("JARVIS_CONTROL_HOST") else 1)
+    if legacy:
+        selected.reverse()
+    matches = []
+    for target in selected:
+        try:
+            roots = [root for root in destination_roots(target) if root.rstrip("/").rsplit("/", 1)[-1] == repo]
+        except Failure as error:
+            side = "host" if legacy and target.host else target.key
+            raise DestinationRefusal("project-list-failed", side, str(error)) from error
+        if len(roots) > 1:
+            raise DestinationRefusal("repo-ambiguous", repo, "destination=%s roots=%s" % (target.key, " ".join(roots)))
+        if legacy:
+            if roots:
+                yield target, roots[0], True
+        else:
+            matches.extend((target, root) for root in roots)
+    if not legacy:
+        if len(matches) > 1:
+            raise DestinationRefusal("repo-ambiguous", repo, " ".join("%s:%s" % (target.key, root) for target, root in matches))
+        yield from ((target, root, False) for target, root in matches)
 
 
 class Failure(RuntimeError):
@@ -221,10 +282,10 @@ def listed_roots(text):
 
 def project_roots():
     try:
-        roots = checked(["kendex", "project", "list"], operation="project-list")
+        roots = destination_roots(Destination("local", None))
     except Failure as error:
         raise Failure(*error.record["key"], "kendex-missing fix=install-kendex-on-host-PATH " + str(error)) from error
-    return [Path(root).expanduser().resolve() for root in listed_roots(roots)]
+    return [Path(root).expanduser().resolve() for root in roots]
 
 
 def presence_roots(permitted):
@@ -242,6 +303,9 @@ def presence_roots(permitted):
 def pass_output(side, roots, events):
     body, origins, size = [], [], 0
     for root, block in events:
+        if root is not None:
+            header, separator, tail = block.partition("\n")
+            block = header + " destination=" + line_value(side, True) + " root=" + line_value(root, True) + separator + tail
         end = size + len(block.encode())
         origins.append([size, end, str(root)] if root is not None else [size, end, None])
         body.append(block)
@@ -460,10 +524,28 @@ class Watch:
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {
             "generation": uuid.uuid4().hex, "offset": 0, "spans": [], "due": None, "pending": None}
         self._saved = json.loads(json.dumps(self.state)) if self.path.exists() else None
+        self.destinations = destinations(settings)
+        if not self.state.get("legacy_control_host") and settings.get("JARVIS_CONTROL_HOST"):
+            # Old host cursors contain no alias. Keep the original setting
+            # through this first upgrade; the frozen binding owns old tails.
+            self.state["legacy_control_host"] = settings["JARVIS_CONTROL_HOST"]
+            self.save()
         if not self.path.exists():
             self.save()
         self.cursors = self.state.get("cursors", {})
         self.state["cursors"] = self.cursors
+        legacy = self.destination_key("host")
+        if legacy != "host":
+            if "host" in self.cursors:
+                self.cursors[legacy] = self.cursors.pop("host")
+            if "host_failure" in self.state:
+                self.state[legacy + "_failure"] = self.state.pop("host_failure")
+            failures = self.state.get("presence_failures", {})
+            if "host" in failures:
+                failures[legacy] = failures.pop("host")
+                if "host" in failures[legacy]:
+                    failures[legacy][legacy] = failures[legacy].pop("host")
+            self.state["spans"] = [self.canonical_span(span) for span in self.state["spans"]]
         if self.log.exists():
             with self.log.open("rb") as source:
                 fcntl.flock(source, fcntl.LOCK_SH)
@@ -478,6 +560,20 @@ class Watch:
         self.satellite = role(settings).kind != "main"
         self.forward_pending = None
         self.next_forward = 0
+        self.mail_pending = {}
+
+    def destination_key(self, side):
+        host = self.state.get("legacy_control_host")
+        return "ssh:" + host if side == "host" and host else side
+
+    def destination(self, side):
+        key = self.destination_key(side)
+        return next(target for target in self.destinations if target.key == key)
+
+    def canonical_span(self, span):
+        if len(span) == 3:
+            return [*span[:2], [self.destination_key(span[2][0]), span[2][1]]]
+        return span
 
     def save(self):
         if self.state != self._saved:
@@ -491,11 +587,11 @@ class Watch:
         source.seek(start)
         spans, end, records = decode_log(source.read(), start)
         if self.state["pending"] is None:
-            self.state["spans"].extend(span for span in spans if span[0] >= offset)
+            self.state["spans"].extend(self.canonical_span(span) for span in spans if span[0] >= offset)
             self.state["offset"] = end
         for at, record in records:
             if at > checkpoint:
-                self.cursors[record["side"]] = record["roots"]
+                self.cursors[self.destination_key(record["side"])] = record["roots"]
                 self.state["cursor_offset"] = at
         self.state["cursor_offset"] = max(self.state.get("cursor_offset", 0), end)
 
@@ -571,7 +667,7 @@ class Watch:
         if not receipt:
             print("watch-loop: send=pending " + result.stderr.strip(), file=sys.stderr)
             return
-        self.state.update(spans=pending["retained"], pending=None, due=None)
+        self.state.update(spans=[self.canonical_span(span) for span in pending["retained"]], pending=None, due=None)
         self.save()
         print("watch-loop: batch=" + pending["key"] + " id=" + receipt[0] + " inbox=overseer", flush=True)
 
@@ -619,9 +715,9 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         return ("python3 -c " + shlex.quote(bootstrap) + " \"$BASH\" " + shlex.join(args) +
                 " 3<<'jarvis-files'\n" + json.dumps(files) + "\njarvis-files\n")
 
-    def remote(self, host):
-        args = ["--side", "host", "--cursor", json.dumps(self.cursors.get("host", {}))]
-        return run(["ssh", host, "bash -s"], data=self.remote_command(args))
+    def remote(self, destination):
+        args = ["--side", destination.key, "--cursor", json.dumps(self.cursors.get(destination.key, {}))]
+        return run(["ssh", destination.host, "bash -s"], data=self.remote_command(args))
 
     def presence(self, side):
         try:
@@ -637,13 +733,14 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             return [(None, "failed", failure("presence-" + side, error).record)]
 
     def _presence(self, side):
+        destination = self.destination(side)
         permitted = self.live
-        if side == "local":
+        if destination.host is None:
             return presence_roots(permitted)
         # Each host operation requests current local permission. The host
         # supplies the touch timestamp before its final permission request.
         with tempfile.TemporaryFile(mode="w+") as errors:
-            process = subprocess.Popen(["ssh", self.settings["JARVIS_CONTROL_HOST"], "bash -s"],
+            process = subprocess.Popen(["ssh", destination.host, "bash -s"],
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
                                        text=True, bufsize=1)
             try:
@@ -678,25 +775,21 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                     process.kill()
                 process.wait()
 
-    def acquire(self, now):
-        """Each side's pass as (side, output, failure record, owner rows the pass delivered)."""
-        outputs = []
+    def acquire(self, now, side="local"):
+        """One destination's pass, accepted independently by the loop thread."""
+        destination = self.destination(side)
         try:
             delivered = []
-            output = mail_pass(self.bash, self.home, "local", self.cursors.get("local", {}), delivered,
-                               self.satellite)
-            outputs.append(("local", output, None, delivered))
+            if destination.host is None:
+                output = mail_pass(self.bash, self.home, side, self.cursors.get(side, {}), delivered, self.satellite)
+            else:
+                result = self.remote(destination)
+                if result.returncode:
+                    raise child_failure("host-pass", result)
+                output = result.stdout
+            return [(side, output, None, delivered)]
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            outputs.append(("local", None, failure("local-pass", error).record, []))
-        host = self.settings["JARVIS_CONTROL_HOST"]
-        if host and not self.satellite:
-            try:
-                result = self.remote(host)
-                outputs.append(("host", result.stdout,
-                                child_failure("host-pass", result).record if result.returncode else None, []))
-            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-                outputs.append(("host", None, failure("host-pass", error).record, []))
-        return outputs
+            return [(side, None, failure("host-pass" if destination.host else "local-pass", error).record, [])]
 
     def report(self):
         try:
@@ -839,7 +932,16 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             if self.report_pending is None and now >= self.next_report:
                 self.next_report = now + 30
                 self.report_pending = passes.submit(self.report)
-            sides = ("local", "host") if self.settings["JARVIS_CONTROL_HOST"] else ("local",)
+            sides = tuple(target.key for target in self.destinations)
+            for side in sides:
+                if side == "local":
+                    continue
+                work = self.mail_pending.get(side)
+                if work is not None and work.done():
+                    self.accept(work.result())
+                    del self.mail_pending[side]
+                if side not in self.mail_pending:
+                    self.mail_pending[side] = passes.submit(self.acquire, now, side)
         for side in sides:
             work = self.presence_pending.get(side)
             if work is not None and work.done():
@@ -856,15 +958,17 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         return pending
 
     def failed_pass(self, side, cause):
+        side = self.destination_key(side)
         prior = self.state.get(side + "_failure", {})
         if prior.get("key") != cause["key"]:
             self.append(pass_output(side, self.cursors.get(side, {}), [(None,
-                event("root-unreachable", repo=self.settings["JARVIS_CONTROL_HOST"] if side == "host" else self.home.name,
+                event("root-unreachable", repo=side if side.startswith("ssh:") else self.home.name,
                       cause=cause["detail"]))]))
             self.state[side + "_failure"] = cause
             self.save()
 
     def accept_presence(self, side, results):
+        side = self.destination_key(side)
         failures = self.state.setdefault("presence_failures", {}).setdefault(side, {})
         if any(status == "ok" for _, status, _ in results) and all(status != "failed" for _, status, _ in results):
             failures.pop(side, None)
@@ -917,7 +1021,7 @@ def main():
             watch = Watch(home, args.bash, settings)
             # Slow SSH and mailbox reads cannot extend an already-started
             # settle. Only this thread appends results or commits batch state.
-            with ThreadPoolExecutor(max_workers=4) as passes:
+            with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 2) as passes:
                 pending = passes.submit(watch.acquire, epoch())
                 while True:
                     pending = watch._poll(passes, pending, epoch())
@@ -927,6 +1031,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, RuntimeError, DestinationRefusal, subprocess.SubprocessError) as error:
         print("jarvis: failure=" + json.dumps(failure("pass", error).record), file=sys.stderr)
         sys.exit(1)

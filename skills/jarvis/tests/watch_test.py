@@ -89,6 +89,9 @@ class Producer(unittest.TestCase):
     def watch(self):
         return self.module.Watch(self.home, BASH, self.settings)
 
+    def acquire_all(self, watch, now):
+        return [row for target in watch.destinations for row in watch.acquire(now, target.key)]
+
     def intercept_mail(self, body):
         self.mail_command.write_text('#!/bin/sh\n' + body + '\nexec ' + shlex.quote(BASH) + ' ' +
             shlex.quote(str(REPO / "skills/mailbox/scripts/lane-mail")) + ' "$@"\n')
@@ -112,7 +115,7 @@ class Producer(unittest.TestCase):
         with self.registry.open("a") as out:
             out.write(str(noted) + " (worktree of ignored)\n" + str(missing) + "\n")
         output, cursor = self.read_pass()
-        self.assertIn("EVENT mail repo=home file=to-overseer\n", output)
+        self.assertIn("EVENT mail repo=home file=to-overseer destination=local root="+str(self.home)+"\n", output)
         self.assertIn("peer answer\n", output)
         self.assertIn("ask to=owner ref= options=yes,no recommend=yes deadline=", output)
         self.assertNotIn("already delivered at home", output)
@@ -245,7 +248,7 @@ class Producer(unittest.TestCase):
 
             watch = started()
             # Idle: a pass delivers no owner row, so no interval checks.
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             for now in (0, 300, 600):
                 step(watch, now, reminder, False, 0, [])
             self.assertFalse(windows.exists())
@@ -257,11 +260,11 @@ class Producer(unittest.TestCase):
             both, late = [first, second], "EVENT owner-unanswered id=" + second + " "
             # Each row: now, the header counted, whether the poll checks, lines it adds, saved waiting ids.
             # Delivery starts the check at once; young rows stay waiting unreminded.
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             step(watch, 601, reminder, True, 0, both)
             # A row delivered after the check read the inbox waits for the next check.
             third = self.owner_note("third ask")
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             step(watch, 602, reminder, False, 0, both + [third])
             at = {row["id"]: row["at"] for row in self.inbox()}
             self.assertLess(at[first], at[second])
@@ -308,7 +311,7 @@ class Producer(unittest.TestCase):
             # directive in the inbox is not an owner delivery.
             self.assertTrue(any(row.get("delivery_id", "").startswith("jarvis-") for row in self.inbox()))
             watch = started()
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             step(watch, 0, reminder, False, 0, [])
             # A home the project list omits still waits on its owner rows; its
             # to-overseer mail stays out of the pass.
@@ -316,7 +319,7 @@ class Producer(unittest.TestCase):
             fourth = self.owner_note("fourth ask")
             self.mail(self.home, "notice", "home mail while unlisted", "--to", "owner")
             before = watch.log.read_text()
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             self.assertNotIn("EVENT mail ", watch.log.read_text()[len(before):])
             step(watch, 1, reminder, True, 0, [fourth])
 
@@ -342,7 +345,7 @@ class Producer(unittest.TestCase):
         self.assertNotIn("EVENT owner-unread", again, "second pass")
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             watch.accept_unanswered(*watch.unanswered(watch.state["unanswered"]["pending"]))
             log = watch.log.read_text()
         self.assertIn("EVENT owner-unanswered id=" + read + " ", log)
@@ -521,6 +524,9 @@ class Producer(unittest.TestCase):
             with watch.log.open("a") as out:
                 out.write("EVENT mail repo=peer file=to-lane\nopen fragment")
             watch.batch(0)
+            owner = owner.replace("\n", " destination=local root="+str(self.home)+"\n", 1)
+            peer = peer.replace("\n", " destination=local root="+str(self.peer)+"\n", 1)
+            later = later.replace("\n", " destination=local root="+str(self.peer)+"\n", 1)
             self.assertEqual(self.inbox()[0]["text"], owner.rstrip("\n"))
             self.assertLessEqual(len(self.inbox()[0]["text"].encode()), self.module.CAP)
             watch.batch(1)
@@ -560,23 +566,23 @@ class Producer(unittest.TestCase):
                     watch = self.watch()
                     # Leave one byte free. This forces the later warning to
                     # remain behind a complete home block before restart.
-                    header = "EVENT custom\n"
+                    header = "EVENT custom destination=local root="+str(self.home)+"\n"
                     filler = header + "o" * (self.module.CAP - len(header.encode()) - 2) + "\n"
                     peer = "EVENT custom\npeer traffic\n"
-                    watch.append(self.module.pass_output("local", {}, [(self.home, filler), (None, peer)]))
+                    watch.append(self.module.pass_output("local", {}, [(self.home, filler.replace(" destination=local root="+str(self.home), "", 1)), (None, peer)]))
                     watch.accept_presence(side, [result])
                     warning = watch.state["spans"][-1]
                     origin = warning[2] if len(warning) == 3 else None
-                    self.assertEqual(origin, expected_origin, "presence origin")
+                    self.assertEqual(origin, (["ssh:host.example", result[0]] if side == "host" and result[0] else expected_origin), "presence origin")
                     scope = result[0] if result[0] is not None else side
-                    standing = json.loads(json.dumps(watch.state["presence_failures"][side]))
+                    standing = json.loads(json.dumps(watch.state["presence_failures"][watch.destination_key(side)]))
                     size = watch.log.stat().st_size
                     changed_detail = dict(result[2], detail="another extraction path")
                     watch.accept_presence(side, [(result[0], "failed", changed_detail)])
                     watch.accept_presence(side, [(result[0], "skipped", None)])
                     watch.accept([("local", self.module.pass_output("local", {}, []), None, [])])
                     self.assertEqual(watch.log.stat().st_size, size)
-                    self.assertEqual(watch.state["presence_failures"][side], standing)
+                    self.assertEqual(watch.state["presence_failures"][watch.destination_key(side)], standing)
                     watch.batch(0)
                     self.assertEqual(self.inbox()[-1]["text"], filler.rstrip("\n"))
                     self.assertIn(warning, watch.state["spans"])
@@ -591,9 +597,9 @@ class Producer(unittest.TestCase):
                     self.assertIn("EVENT presence-renew-failed", body)
                     if result[0] is not None:
                         watch.accept_presence(side, [(str(self.root / "other-success"), "ok", None)])
-                        self.assertIn(scope, watch.state["presence_failures"][side])
+                        self.assertIn(scope, watch.state["presence_failures"][watch.destination_key(side)])
                     watch.accept_presence(side, [(result[0], "ok", None)])
-                    self.assertNotIn(scope, watch.state["presence_failures"][side])
+                    self.assertNotIn(scope, watch.state["presence_failures"][watch.destination_key(side)])
 
     def test_saved_selection_after_append_restart(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -774,22 +780,22 @@ class Producer(unittest.TestCase):
         shutil.rmtree(self.peer / ".agents")
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.tick(0, watch.acquire(0))
+            watch.tick(0, self.acquire_all(watch, 0))
             self.assertFalse((self.root / "ssh.log").exists())
             self.settings["JARVIS_CONTROL_HOST"] = "host.example"
             watch = self.watch()
-            watch.tick(1, watch.acquire(1))
+            watch.tick(1, self.acquire_all(watch, 1))
             self.assertEqual((self.root / "ssh.log").read_text().splitlines(), ["host.example"])
             self.assertIn("remote owner", watch.log.read_text())
-            self.assertIn("host", watch.cursors)
-            self.assertNotIn("cause", watch.cursors["host"][str(self.peer)])
-            self.assertGreater(watch.cursors["host"][str(self.peer)]["to-overseer"]["count"], 0)
+            self.assertIn("ssh:host.example", watch.cursors)
+            self.assertNotIn("cause", watch.cursors["ssh:host.example"][str(self.peer)])
+            self.assertGreater(watch.cursors["ssh:host.example"][str(self.peer)]["to-overseer"]["count"], 0)
             self.executable("ssh", '#!/bin/sh\necho "Traceback /jarvis-pass-$$/watch.py" >&2\nexit 1\n')
-            watch.accept(watch.acquire(2))
+            watch.accept(self.acquire_all(watch, 2))
             size = watch.log.stat().st_size
-            first = watch.state["host_failure"]
-            watch.accept(watch.acquire(3))
-            self.assertEqual(watch.state["host_failure"], first)
+            first = watch.state["ssh:host.example_failure"]
+            watch.accept(self.acquire_all(watch, 3))
+            self.assertEqual(watch.state["ssh:host.example_failure"], first)
             self.assertEqual(watch.log.stat().st_size, size)
 
     def test_hold_paths_and_failed_renewal_reset(self):
@@ -886,7 +892,7 @@ class Producer(unittest.TestCase):
                 watch.accept_presence("local", results)
                 self.assertFalse(self.home.joinpath("hold").exists())
                 self.append(watch, "EVENT mail repo=peer file=to-lane\ndelivery after "+type(error).__name__+"\n")
-                watch.tick(0, watch.acquire(0))
+                watch.tick(0, self.acquire_all(watch, 0))
                 self.assertIn("delivery after "+type(error).__name__, self.inbox()[-1]["text"])
 
     def test_dependency_failure_denies_presence_with_cause(self):
@@ -947,16 +953,16 @@ class Producer(unittest.TestCase):
                     self.assertFalse(any(root.joinpath("hold").exists() for root in (self.home, self.peer)))
                     watch.accept_presence(side, results)
                     self.assertIn("EVENT presence-renew-failed", watch.log.read_text())
-                    recorded = watch.state["presence_failures"][side]
+                    recorded = watch.state["presence_failures"][watch.destination_key(side)]
                     self.assertEqual([cause["key"] for cause in recorded.values()], [expected])
 
     def test_log_checkpoint_skips_unchanged_and_processed_bytes(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             size = watch.log.stat().st_size
-            watch.accept(watch.acquire(1))
+            watch.accept(self.acquire_all(watch, 1))
             self.assertEqual(watch.log.stat().st_size, size)
             with watch.log.open("ab") as out:
                 out.write(b'cursor: {"side":"consumer","roots":{}}\n' * 512)
@@ -1030,7 +1036,7 @@ class Producer(unittest.TestCase):
         block = "EVENT forward-failed request=vgs-audit:r key=forward-r cause=send-failed\n"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.tick(0, watch.acquire(0))
+            watch.tick(0, self.acquire_all(watch, 0))
             passes = Submitted()
             watch._poll(passes, Future(), 1)
             watch.accept_forward(block)
@@ -1045,6 +1051,138 @@ class Producer(unittest.TestCase):
         self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
                          [block.split("\n")[0]])
 
+    def test_remote_identity_restart(self):
+        # Both independent machine views expose the same path and initial
+        # bytes. The transport shim shares fixture storage, never identity.
+        self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_REMOTE_HOSTS="beta alpha beta",
+                             JARVIS_WAKE_SETTLE_SECS="0")
+        self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
+        self.registry.write_text(str(self.peer)+"\n")
+        self.mail(self.peer, "notice", "same-path notice", "--to", "owner")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            for target in watch.destinations:
+                watch.accept(watch.acquire(0, target.key))
+            watch.batch(0)
+            expected = ["local", "ssh:alpha", "ssh:beta"]
+            def sources():
+                bodies = [row["text"] for row in self.inbox() if row.get("delivery_id", "").startswith("jarvis-")]
+                headers = [line for body in bodies for line in body.splitlines() if line.startswith("EVENT mail ")]
+                return [re.search(r" destination=(\S+) root=(\S+)$", line).groups() for line in headers]
+            self.assertCountEqual(sources(), [(key, str(self.peer)) for key in expected])
+            self.settings["JARVIS_REMOTE_HOSTS"] = "beta alpha"
+            watch = self.watch()
+            for target in reversed(watch.destinations):
+                watch.accept(watch.acquire(1, target.key))
+            watch.batch(1)
+            self.assertCountEqual(sources(), [(key, str(self.peer)) for key in expected])
+            self.mail(self.peer, "notice", "next independent notice", "--to", "owner")
+            for target in watch.destinations:
+                watch.accept(watch.acquire(2, target.key))
+            self.watch().batch(2)
+            self.assertCountEqual(sources(), [(key, str(self.peer)) for key in expected] * 2)
+
+    def test_legacy_host_migration(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            root = Path("/srv/app")
+            header = "EVENT mail repo=app file=to-overseer\n"
+            selected = header + "s" * 32000 + "\n"
+            retained = header + "r" * 32000 + "\nretained old bytes\n"
+            watch.append(self.module.pass_output("host", {str(root): {"to-overseer": {"count": 4}}},
+                                                 [(root, selected), (root, retained)]))
+            original_save = watch.save
+            def stop_after_receipt():
+                if watch.state["pending"] is None:
+                    raise InterruptedError("acknowledgement barrier before commit")
+                original_save()
+            watch.save = stop_after_receipt
+            with self.assertRaises(InterruptedError):
+                watch.batch(0)
+            saved = json.loads(watch.path.read_text())
+            pending = saved["pending"]
+            self.assertIsNotNone(pending)
+            body = selected.replace("\n", " destination=host root=/srv/app\n", 1)
+            self.assertEqual(pending["body"].encode(), body.encode())
+            self.assertTrue(pending["key"].startswith("jarvis-"))
+            self.assertEqual([span[2] for span in pending["retained"]], [["host", str(root)]])
+            pending_bytes = json.dumps(pending, sort_keys=True).encode()
+            delivered = self.inbox()
+            self.assertEqual(len(delivered), 1)
+            self.assertEqual(delivered[0]["text"], body.rstrip("\n"))
+            self.assertEqual(delivered[0]["delivery_id"], pending["key"])
+            generation = saved["generation"]
+            self.assertNotIn("legacy_control_host", saved)
+            saved["host_failure"] = {"key": ["host-pass", "exit", "255"], "detail": "old failure"}
+            saved["presence_failures"] = {"host": {"/srv/app": {"key": ["hold", "exit", "1"]}}}
+            watch.path.write_text(json.dumps(saved))
+            with watch.log.open("a") as out:
+                out.write('cursor: {"side":"host","roots":{"/srv/app":{"to-overseer":{"count":5}}}}\n')
+            self.settings["JARVIS_CONTROL_HOST"] = "alpha"
+            resumed = self.watch()
+            self.assertEqual(resumed.cursors["ssh:alpha"]["/srv/app"]["to-overseer"]["count"], 5)
+            self.assertEqual(resumed.state["generation"], generation)
+            self.assertEqual(json.dumps(json.loads(resumed.path.read_text())["pending"], sort_keys=True).encode(),
+                             pending_bytes)
+            self.assertEqual(resumed.state["ssh:alpha_failure"], saved["host_failure"])
+            self.assertEqual(resumed.state["presence_failures"]["ssh:alpha"], saved["presence_failures"]["host"])
+            self.settings["JARVIS_CONTROL_HOST"] = "beta"
+            changed = self.watch()
+            self.assertNotIn("ssh:beta", changed.cursors)
+            self.assertEqual(changed.state["legacy_control_host"], "alpha")
+            self.assertEqual(json.dumps(json.loads(changed.path.read_text())["pending"], sort_keys=True).encode(),
+                             pending_bytes)
+            changed.batch(1)
+            self.assertEqual(self.inbox(), delivered)
+            self.assertIsNone(changed.state["pending"])
+            self.assertEqual([span[2] for span in changed.state["spans"]], [["ssh:alpha", str(root)]])
+            self.watch().batch(2)
+            self.watch().batch(3)
+            final = self.inbox()
+            self.assertEqual(len(final), 2)
+            self.assertEqual(final[0], delivered[0])
+            self.assertEqual(final[1]["text"],
+                             retained.replace("\n", " destination=host root=/srv/app\n", 1).rstrip("\n"))
+            self.assertNotEqual(final[1]["delivery_id"], pending["key"])
+
+    def test_healthy_destination_during_blocked_host(self):
+        import threading
+        self.settings.update(JARVIS_CONTROL_HOST="slow", JARVIS_REMOTE_HOSTS="healthy", JARVIS_WAKE_SETTLE_SECS="0")
+        self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
+        self.registry.write_text(str(self.peer)+"\n")
+        self.mail(self.peer, "notice", "healthy before timeout", "--to", "owner")
+        ready, release = threading.Event(), threading.Event()
+        original = self.module.run
+        def transport(args, *positional, **keywords):
+            if list(map(str, args[:2])) == ["ssh", "slow"]:
+                ready.set()
+                if not release.wait(30):
+                    raise AssertionError("transport barrier not released")
+                return subprocess.CompletedProcess(args, 255, "", "transport failed")
+            return original(args, *positional, **keywords)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(self.module, "run", side_effect=transport), ThreadPoolExecutor(max_workers=8) as passes:
+            watch = self.watch()
+            watch.next_presence = {target.key: 10 ** 9 for target in watch.destinations}
+            watch.next_report = 10 ** 9
+            local = Future()
+            local.set_result(watch.acquire(0))
+            try:
+                pending = watch._poll(passes, local, 0)
+                self.assertTrue(ready.wait(30))
+                watch.mail_pending["ssh:healthy"].result(timeout=30)
+                pending = watch._poll(passes, pending, 1)
+                bodies = "\n".join(row["text"] for row in self.inbox())
+                self.assertIn("destination=ssh:healthy root="+str(self.peer), bodies)
+                self.assertIn("healthy before timeout", bodies)
+                self.assertFalse(watch.mail_pending["ssh:slow"].done())
+            finally:
+                release.set()
+            watch.mail_pending["ssh:slow"].result(timeout=30)
+            watch._poll(passes, pending, 2)
+            self.assertIn("ssh:slow_failure", watch.state)
+
     def test_instrument_control(self):
         # Each planted defect, in a disposable producer copy, turns its row red.
         gate = "if self.unanswered_pending is None and waiting and now >= self.next_unanswered:"
@@ -1054,6 +1192,10 @@ class Producer(unittest.TestCase):
         unlisted = 'alone = side == "local" and home not in roots'
         satellite = "roots = [home] if satellite else project_roots()"
         for name, old, new in (
+                ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',
+                 'spans=pending["retained"]'),
+                ("test_remote_identity_restart", 'self.cursors[self.destination_key(record["side"])] = record["roots"]',
+                 'self.cursors["shared-remote" if record["side"].startswith("ssh:") else record["side"]] = record["roots"]'),
                 # The watch never pages a report the cursor has not seen.
                 ("test_report_deadline_restart_and_receipt", report, "if False and " + report[len("if "):]),
                 # An idle interval with no waiting owner row checks nothing.
