@@ -5,8 +5,9 @@
 # The class comes from the change-class composite action and is never decided
 # here; this script maps it, and the changed paths behind it, onto one
 # `<lane>=true|false` line per gated lane, plus one `shards=` line naming the
-# shell shards the diff selects as a JSON list and one `queue_macos_shards=`
-# line naming the selected macOS-capable shards. Every lane condition in
+# shell shards the diff selects as a JSON list, one `queue_macos_shards=`
+# line naming the selected macOS-capable shards and one `skipped_suites=`
+# line, the JSON list of suites the narrowed row skips. Every lane condition in
 # that workflow reads one of those lines, the Linux shard matrix `shards` and
 # the queue's macOS matrix `queue_macos_shards` on a classified group, so the
 # selection is made once instead of re-derived in each `if:`.
@@ -15,6 +16,7 @@
 # that main run still owes; see THE PUSH ROUTE below.
 #
 # Usage: tools/ci-job-set [--event-parity]
+#        tools/ci-job-set --suite-list CANDIDATE...
 #
 #   --event-parity  also derive the selection at every other event and refuse
 #                   `event-parity` where one differs. The `changes` job of
@@ -55,7 +57,12 @@
 # nothing either: the step warns, emits the whole rosters and exits 0, since
 # a red step on main would report a push failure for an API outage while the
 # whole roster is the safe answer. Its one diagnostic line starts
-# `ci-job-set: main-proof=read|none|unread`.
+# `ci-job-set: main-proof=read|none|unread`. A merge-group shard job whose
+# suite list left out one of its own candidates ran a step named
+# NARROWED_STEP, which --suite-list arms, and proves nothing: the push runs
+# that shard whole. A job whose steps the read does not hold, or whose
+# NARROWED_STEP did anything but skip, proves nothing either. A leg that
+# kept every candidate is proved as any other. The push skips no suite.
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
 #
@@ -83,6 +90,15 @@
 #   - A changed file citing a shard by name in backticks selects
 #     `guards-tools-tail`, whose orch-shard-partition suite holds every
 #     citation to the roster.
+#   - A measured diff whose every path is Markdown of a skill package,
+#     under skills/<name>/ or its render under .agents/skills/<name>/, and
+#     that selects no build lane, takes the narrowed row: the row its paths
+#     select, the same shards included, with `skipped_suites=` listing each
+#     suite tools/guard --note-skips names, whose own `# Inputs:` note covers
+#     no changed document. A suite with no note runs. Each shell suite step
+#     runs only the candidates --suite-list keeps. Where --note-skips
+#     refuses, a suite's code naming a document its note leaves out among
+#     its causes, the row skips no suite. Every other row skips none.
 #   - `guards-scans` runs where a path under skills/, hooks/ or tools/
 #     changed, the trees its scans read. The CHECKOUT_KENDEX_SHARDS
 #     also run where a build input changed, because their consumer rows use
@@ -149,6 +165,9 @@
 #   ui                  the vitest, tsc and biome lane.
 #   catalog             the released engine's strict check and catalog render.
 #   smoke               the rendered sample trees read by real harness CLIs.
+#   skipped_suites      the narrowed row's JSON list of suites, `[]` on
+#                       every other row; each shell suite step leaves the
+#                       listed suites out of its own.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
 #                       shell bit is false. Merge groups run these on macOS,
@@ -168,6 +187,55 @@
 # loud way to learn a sixth class shipped. A read set tools/rust-reads could
 # not derive is another.
 set -euo pipefail
+
+# --suite-list CANDIDATE... prints, one per line in argument order, the
+# candidate suite paths a shard step runs: each one SKIPPED_SUITES, the
+# changes job's `skipped_suites`, does not name whole, so a same-named suite
+# of another tree is never left out with it. An unset or empty list keeps
+# every candidate, and a list of any other shape is refused. It is the one
+# keep-or-skip test: each shard step of skill-tests.yml hands it its
+# candidates and runs what it prints, and a step it leaves with none runs no
+# suite. A pooled step turns the kept paths into base-name selectors, which
+# can run a same-named suite of another battery beside a kept one but never
+# drop one. Where SUITE_LIST_DROPS names a file, a shard step's GITHUB_ENV,
+# leaving a candidate out appends `SUITE_LIST_DROPPED=true` to it, which
+# runs the leg's NARROWED_STEP; a failed append fails the call, so no leg
+# passes for whole unmarked.
+if [ "${1-}" = --suite-list ]; then
+  shift
+  skipped="${SKIPPED_SUITES-}"
+  case "$skipped" in
+    "" | '[]')
+      [ "$#" -eq 0 ] || printf '%s\n' "$@"
+      exit 0
+      ;;
+    '["'*'"]')
+      grep -Eqx '\[("[^",[:space:]]+")(,"[^",[:space:]]+")*\]' <<<"$skipped" || {
+        printf 'ci-job-set: cause=suite-skips-unreadable\n' >&2
+        exit 2
+      }
+      ;;
+    *)
+      printf 'ci-job-set: cause=suite-skips-unreadable\n' >&2
+      exit 2
+      ;;
+  esac
+  listed=" $(printf '%s' "$skipped" | sed 's/[][]//g; s/"//g; s/,/ /g') "
+  dropped=0
+  for candidate in "$@"; do
+    case "$listed" in
+      *" $candidate "*) dropped=1 ;;
+      *) printf '%s\n' "$candidate" ;;
+    esac
+  done
+  if [ "$dropped" -eq 1 ] && [ -n "${SUITE_LIST_DROPS-}" ]; then
+    printf 'SUITE_LIST_DROPPED=true\n' >>"$SUITE_LIST_DROPS" || {
+      printf 'ci-job-set: cause=suite-list-unrecorded\n' >&2
+      exit 2
+    }
+  fi
+  exit 0
+fi
 
 # --suite-kendex OS PATH [ORCH_SHARD] reports checkout or none for one suite.
 # The shared suite runner supplies orch's owning shard from shard_of.
@@ -234,14 +302,14 @@ esac
 # and the macOS shard list, JSON in roster order; shell_os names each runner
 # whose list is non-empty and shell_shards is true where it names one, so a
 # merge group and a main push read alike. The JOB=VALUE words of a class row
-# follow; the push route selects no job.
-emit() { # SHARDS QUEUE [JOB=VALUE ...]
-  local shards="$1" queue="$2" legs="" shell=false
-  shift 2
+# follow; the push route selects no job and skips no suite.
+emit() { # SHARDS QUEUE SKIPPED [JOB=VALUE ...]
+  local shards="$1" queue="$2" skipped="$3" legs="" shell=false
+  shift 3
   [ "$shards" = "[]" ] || legs='"ubuntu-latest"'
   [ "$queue" = "[]" ] || legs="${legs:+$legs,}\"macos-latest\""
   [ -z "$legs" ] || shell=true
-  set -- "shell_shards=$shell" "shell_os=[$legs]" "$@" "shards=$shards" "queue_macos_shards=$queue"
+  set -- "shell_shards=$shell" "shell_os=[$legs]" "$@" "shards=$shards" "queue_macos_shards=$queue" "skipped_suites=$skipped"
   printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
   printf '%s\n' "$@" >&2
 }
@@ -249,6 +317,9 @@ emit() { # SHARDS QUEUE [JOB=VALUE ...]
 # The push route, as the header states it. A read that fails proves nothing,
 # so the rosters it emits are whole.
 PROOF_WORKFLOW=.github/workflows/skill-tests.yml
+# The shard step that runs where a suite list left out a candidate of its
+# leg; skill-tests.yml declares it under this name.
+NARROWED_STEP="narrowed by the suite list"
 main_proof() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause=""
   local runs ids="" id page jobs="" owed linux macos linux_n macos_n
@@ -267,7 +338,7 @@ main_proof() {
       break
     fi
     if ! page="$(jq -cs --arg sha "$sha" --argjson id "$id" '
-        [.[].jobs[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion}]' <<<"$page")"; then
+        [.[].jobs[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion, steps}]' <<<"$page")"; then
       state=unread cause="jobs-unparseable run=$id"
       break
     fi
@@ -276,17 +347,18 @@ main_proof() {
   [ "$state" = read ] || jobs=""
   # Each roster less the shards proved on its runner, with the proved
   # counts: `<linux> <macos> <linux proved> <macos proved>`.
-  owed="$(jq -rs --arg linux "$SHARDS" --arg macos "$MACOS_SHARDS" '
+  owed="$(jq -rs --arg linux "$SHARDS" --arg macos "$MACOS_SHARDS" --arg narrowed "$NARROWED_STEP" '
     (add // []) as $jobs
     | def owed($roster; $os):
         [$roster | split(" ")[] | select(. as $shard
           | [$jobs[] | select(.name == "Skill suites shard (\($shard), \($os))")]
-          | length == 0 or any(.[]; .status != "completed" or .conclusion != "success"))];
+          | length == 0 or any(.[]; .status != "completed" or .conclusion != "success"
+              or (.steps | type) != "array" or any(.steps[]; .name == $narrowed and .conclusion != "skipped")))];
     owed($linux; "ubuntu-latest") as $l | owed($macos; "macos-latest") as $m
     | "\($l | tojson) \($m | tojson) \(($linux | split(" ") | length) - ($l | length)) \(($macos | split(" ") | length) - ($m | length))"' <<<"$jobs")" ||
     die main-proof-unevaluated "jq could not subtract the proved shards from the rosters"
   read -r linux macos linux_n macos_n <<<"$owed"
-  emit "$linux" "$macos"
+  emit "$linux" "$macos" '[]'
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
   printf 'ci-job-set: main-proof=%s runs=%s proved-linux=%d proved-macos=%d%s\n' \
     "$state" "${ids:-none}" "$linux_n" "$macos_n" "${cause:+ cause=$cause}" >&2
@@ -339,6 +411,9 @@ LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rus
 # builds its own catalog in cli_smoke.rs; its compiled inputs come from
 # rust-reads below. Both jobs use this union, including catalog prose.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
+# A skill package's Markdown, source or render: a diff of these alone takes
+# the narrowed row.
+SKILL_PROSE='^(\.agents/)?skills/[^/]+/.+\.(md|markdown)$'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 # What selects every shell shard: the lane sources and the rest of .github/.
@@ -639,6 +714,25 @@ $path" ;;
   printf '[%s]' "${list#,}"
 }
 
+# The narrowed row's skips, for a measured diff of skill Markdown alone:
+# each suite tools/guard --note-skips names, whose own input note covers no
+# changed document, as one JSON list in NARROW_SKIPS. Any other answer from
+# it, a suite whose code names a document its note leaves out among them,
+# skips none, and its diagnostics stand above the row.
+NARROW_SKIPS='[]'
+narrow_suites() {
+  local skips status=0 list="" suite
+  skips="$(printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --note-skips)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'ci-job-set: suite-skips=none status=%s\n' "$status" >&2
+    return 0
+  fi
+  while IFS= read -r suite; do
+    [ -z "$suite" ] || list="$list,\"$suite\""
+  done <<<"$(printf '%s\n' "$skips" | LC_ALL=C sort -u)"
+  NARROW_SKIPS="[${list#,}]"
+}
+
 # Whether one shard of the JSON list SHARDS is one the matrix runs on macOS.
 macos_shard() { # SHARDS
   local shard
@@ -653,7 +747,7 @@ macos_shard() { # SHARDS
 # refusals included. Run it in a subshell: the readers above take the paths
 # from `paths`, which it sets, and the shard search starts empty each time.
 select_row() { # CLASS DOCS PATHS EVENT
-  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards macos catalog=false known=false each
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards skipped macos catalog=false known=false each
   paths="$3"
   want=" " reached=" " pending=""
   case "$docs" in
@@ -689,7 +783,7 @@ select_row() { # CLASS DOCS PATHS EVENT
   case "$read_lines" in *compiled=1*) catalog=true ;; esac
   case "$row" in
     render | trivial)
-      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[]"
+      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[] skipped_suites=[]"
       ;;
     micro | small | standard | trivial-read)
       platform=false
@@ -700,6 +794,8 @@ select_row() { # CLASS DOCS PATHS EVENT
       build=false
       case "$read_lines" in *build=1*) build=true ;; esac
       shards="$(select_shards "$build")" || exit 2
+      skipped='[]'
+      [ "$build" = true ] || skipped=$NARROW_SKIPS
       if any "$LANE_SOURCES"; then
         platform=true
         uitree=true
@@ -708,11 +804,18 @@ select_row() { # CLASS DOCS PATHS EVENT
       macos=$platform
       # The runner arithmetic uses the nightly macOS matrix's exclusions.
       macos_shard "$shards" || macos=false
-      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards"
+      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards skipped_suites=$skipped"
       ;;
   esac
 }
 
+# The narrowed row's skips, read once for every event's selection, and for
+# a measured class alone: any other class reaches select_row without them.
+case "$CHANGE_CLASS:$paths" in
+  micro:?* | small:?* | standard:?*)
+    any_outside "$SKILL_PROSE" || narrow_suites
+    ;;
+esac
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
 
 # Event parity: pull requests and merge groups receive equal lane, shard and
@@ -749,4 +852,4 @@ if [ "$macos_on" = true ]; then
 fi
 
 # shellcheck disable=SC2086 # one `lane=value` word per job
-emit "$now_shards" "[$queue]" $jobs
+emit "$now_shards" "[$queue]" "$(sel_get "$now" skipped_suites)" $jobs

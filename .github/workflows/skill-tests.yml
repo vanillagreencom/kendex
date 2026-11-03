@@ -21,7 +21,12 @@ name: Skill Tests
 # `tools/ci-job-set` lists. Every other diff, and a `trivial` one changing a
 # path tools/rust-reads names, runs that job, the shell shards its packages
 # select and each other lane as `tools/ci-job-set` selects it; the invariant
-# comment there is the one statement of what each lane runs. The selected
+# comment there is the one statement of what each lane runs. A diff of skill
+# Markdown alone narrows inside its shards: the changes job publishes the
+# suites whose own input notes cover none of it as `skipped_suites`, each
+# shell suite step leaves those out of its own, and a leg whose list left
+# out one of its suites runs its `narrowed by the suite list` step, so the
+# main push runs that shard whole. The selected
 # macOS cargo and shell legs run in the group. The two diff checks,
 # preflight and Markdown, run on every group against its base.
 # `tools/ci-job-set --event-parity` holds the pull-request selection, which
@@ -183,6 +188,7 @@ jobs:
       smoke: ${{ steps.select.outputs.smoke }}
       shards: ${{ steps.select.outputs.shards }}
       queue_macos_shards: ${{ steps.select.outputs.queue_macos_shards }}
+      skipped_suites: ${{ steps.select.outputs.skipped_suites }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
     # tools/ci-aggregate run from the group's tree, held by review.
@@ -546,6 +552,11 @@ jobs:
       # This workflow owns the temporary roster; evidence tables are never inputs.
       TEMPORARY_SUITE: ${{ matrix.suite || '' }}
       MAIN_ONLY_FILTERS: ${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push') && '!=critical-path-deny.test !=orch-shard-partition.test !=adopt-refresh.test' || '' }}
+      # The suites the changes job skips, which each shell suite step's
+      # `tools/ci-job-set --suite-list` leaves out of its candidates; none
+      # where that job did not succeed or does not run, the nightly and
+      # main-only legs among them.
+      SKIPPED_SUITES: ${{ needs.changes.result == 'success' && needs.changes.outputs.skipped_suites || '[]' }}
     steps: &skill-suite-steps
       # run-all.sh stops every suite still running at this Unix time and names
       # each in the log, so a hang fails by name before the job ceiling cancels
@@ -749,10 +760,12 @@ jobs:
           set -u
           fail=0
           review=()
-          for t in skills/review-gate/tests/*.test.sh; do
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/review-gate/tests/*.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             review+=("=${base%.sh}")
           done
+          [ "${#review[@]}" -gt 0 ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/review-gate/tests "${review[@]}" || fail=1
           exit "$fail"
 
@@ -764,11 +777,13 @@ jobs:
           set -u
           fail=0
           refresh=()
-          for t in refresh/tests/*.test.sh; do
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list refresh/tests/*.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             refresh+=("=${base%.sh}")
           done
           [[ -z "${TEMPORARY_SUITE:-}" ]] || refresh=("=$TEMPORARY_SUITE")
+          [ "${#refresh[@]}" -gt 0 ] || exit 0
           bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
       - name: tmux for pane delivery tests
@@ -886,13 +901,15 @@ jobs:
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           set --
-          for t in skills/commit-guards/tests/*.sh; do
-            if printf '%s\n' "$claims" | grep -qF "$t"; then
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/commit-guards/tests/*.sh)"
+          for t in $kept; do
+            if grep -qF -- "$t" <<<"$claims"; then
               continue
             fi
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
+          [ "$#" -gt 0 ] || exit 0
           # The terminal watchdog must finish inside its caller's real-time window.
           bash skills/orch/tests/run-all.sh --battery skills/commit-guards/tests \
             --alone terminal-paths.test "$@"
@@ -908,11 +925,21 @@ jobs:
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           set --
           for t in tools/tests/*.test.sh; do
-            if printf '%s\n' "$claims" | grep -qF "$t"; then
+            if grep -qF -- "$t" <<<"$claims"; then
               base="${t##*/}"
               set -- "$@" "!=${base%.sh}"
             fi
           done
+          # The rejectors keep the claimed suites out; these selectors name
+          # the suites this leg's list keeps.
+          selected=0
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list tools/tests/*.test.sh)"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+            grep -qF -- "$t" <<<"$claims" || selected=1
+          done
+          [ "$selected" -eq 1 ] || exit 0
           bash tools/tests/run-all.sh --alone bash32-parse.test "$@"
 
       - name: the two slowest tools suites
@@ -922,8 +949,9 @@ jobs:
           tools/rust-reads --cli-smoke . >/dev/null || exit $?
           fail=0
           failed=""
-          for t in tools/tests/harness-smoke.test.sh \
-            tools/tests/orch-shard-partition.test.sh; do
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list tools/tests/harness-smoke.test.sh \
+            tools/tests/orch-shard-partition.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             [[ -z "${TEMPORARY_SUITE:-}" || "$base" == "$TEMPORARY_SUITE.sh" ]] || continue
             case " ${MAIN_ONLY_FILTERS:-} " in *" !=${base%.sh} "*) continue ;; esac
@@ -962,16 +990,17 @@ jobs:
           md_refs=skills/commit-guards/tests/md-refs
           hooks=()
           guards=()
-          for t in hooks/tests/*.sh \
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list hooks/tests/*.sh \
             skills/commit-guards/tests/install-git-hooks.test.sh \
-            "$md_refs.test.sh"; do
+            "$md_refs.test.sh")"
+          for t in $kept; do
             claim=""
             case "${t##*/}" in
               lane-mail-*.test.sh) claim="${t%/*}/lane-mail-"'*.test.sh' ;;
               reviewer-*.test.sh) claim="${t%/*}/reviewer-"'*.test.sh' ;;
               md-refs.test.sh) claim="$t" ;;
             esac
-            if [ -n "$claim" ] && printf '%s\n' "$claims" | grep -qF "$claim"; then
+            if [ -n "$claim" ] && grep -qF -- "$claim" <<<"$claims"; then
               continue
             fi
             base="${t##*/}"
@@ -984,6 +1013,7 @@ jobs:
             hooks=("=$TEMPORARY_SUITE")
             guards=()
           fi
+          [ "${#hooks[@]}" -gt 0 ] || [ "${#guards[@]}" -gt 0 ] || exit 0
           fail=0
           # If the tail is removed, its pending-reading timer keeps its isolation here.
           # Both batteries use one pool. Filters apply to both roots.
@@ -991,7 +1021,7 @@ jobs:
           if [ -z "${TEMPORARY_SUITE:-}" ] && [ "${#guards[@]}" -gt 0 ]; then
             batteries+=(--battery skills/commit-guards/tests)
           fi
-          bash skills/orch/tests/run-all.sh "${batteries[@]}" "${hooks[@]}" ${guards[@]+"${guards[@]}"} ${MAIN_ONLY_FILTERS:-} || fail=1
+          bash skills/orch/tests/run-all.sh "${batteries[@]}" ${hooks[@]+"${hooks[@]}"} ${guards[@]+"${guards[@]}"} ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
 
       - name: lane-mail and reviewer suites
@@ -999,11 +1029,13 @@ jobs:
         run: |
           set -u
           hooks=()
-          for t in hooks/tests/lane-mail-*.test.sh \
-            hooks/tests/reviewer-*.test.sh; do
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list hooks/tests/lane-mail-*.test.sh \
+            hooks/tests/reviewer-*.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             hooks+=("=${base%.sh}")
           done
+          [ "${#hooks[@]}" -gt 0 ] || exit 0
           fail=0
           # The pending-reading row removes its marker inside the hook's real wait.
           bash skills/orch/tests/run-all.sh --battery hooks/tests \
@@ -1018,11 +1050,13 @@ jobs:
         run: |
           set -u
           set --
-          for t in skills/commit-guards/tests/pre-push.test.sh \
-            skills/commit-guards/tests/md-refs.test.sh; do
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/commit-guards/tests/pre-push.test.sh \
+            skills/commit-guards/tests/md-refs.test.sh)"
+          for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
           done
+          [ "$#" -gt 0 ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/commit-guards/tests "$@"
       # ---- shard: linear — the linear suites, and the two mid-sized
       # packages that balance the shard against the guard shards ----------
@@ -1038,7 +1072,8 @@ jobs:
           linear=()
           bot=()
           preflight=()
-          for t in "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh; do
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh)"
+          for t in $kept; do
             case "$t" in skills/linear/tests/must-fail-controls.sh) continue ;; esac
             base="${t##*/}"
             case "$t" in
@@ -1047,19 +1082,25 @@ jobs:
               skills/preflight/*) preflight+=("=${base%.sh}") ;;
             esac
           done
+          [ "$((${#linear[@]} + ${#bot[@]} + ${#preflight[@]}))" -gt 0 ] || exit 0
           fail=0
           # The control-runner fixtures use a short cap and a real signal window.
           # These parent deadlines distinguish bounded reads and matching from hangs.
           bash skills/orch/tests/run-all.sh \
             --battery skills/linear/tests --alone mutation-isolation.test --alone interrupt.test \
             --battery skills/bot-instructions/tests --alone fsutil.test --alone globs.test \
-            --battery skills/preflight/tests "${linear[@]}" "${bot[@]}" "${preflight[@]}" || fail=1
+            --battery skills/preflight/tests ${linear[@]+"${linear[@]}"} ${bot[@]+"${bot[@]}"} ${preflight[@]+"${preflight[@]}"} || fail=1
           exit "$fail"
       # ---- shard: linear-controls: the linear control battery, which the
       # step above skips. It needs Bash 4, so the macOS leg excludes it.
       - name: linear must-fail controls
         if: matrix.shard == 'linear-controls'
-        run: bash skills/linear/tests/must-fail-controls.sh
+        run: |
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/linear/tests/must-fail-controls.sh)"
+          for t in $kept; do
+            echo "=== $t"
+            bash "$t"
+          done
 
       # ---- shard: worktree — the roster that held half of `rest`'s time.
       # `rest` ran 735-845s on the macOS leg over 79 files, 780s of it on run
@@ -1075,11 +1116,13 @@ jobs:
         run: |
           set -u
           set --
-          for t in skills/worktree/tests/*.sh; do
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/worktree/tests/*.sh)"
+          for t in $kept; do
             base="${t##*/}"
             case "$base" in *restack*) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || continue ;; esac
             set -- "$@" "=${base%.sh}"
           done
+          [ "$#" -gt 0 ] || exit 0
           # The held-mutex row must reach the guard before its outer timeout.
           bash skills/orch/tests/run-all.sh --battery skills/worktree/tests \
             --alone worktree_session_guard_lifecycle "$@"
@@ -1089,18 +1132,41 @@ jobs:
       # together without first waiting for the other worktree suites.
       - name: worktree restack suites
         if: matrix.shard == 'worktree-restack'
-        run: bash skills/orch/tests/run-all.sh --battery skills/worktree/tests restack
+        run: |
+          set --
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/worktree/tests/*restack*.sh)"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          [ "$#" -gt 0 ] || exit 0
+          bash skills/orch/tests/run-all.sh --battery skills/worktree/tests "$@"
       # Slack's process-heavy suites run separately from the other packages.
       # A package glob places new Slack suites here without another roster.
       - name: Mailbox suites
         if: matrix.shard == 'mailbox'
-        run: bash skills/orch/tests/run-all.sh --battery skills/mailbox/tests
+        run: |
+          set --
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/mailbox/tests/*.sh)"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          [ "$#" -gt 0 ] || exit 0
+          bash skills/orch/tests/run-all.sh --battery skills/mailbox/tests "$@"
 
       - name: Slack suites
         if: matrix.shard == 'slack'
         run: |
+          set --
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/slack/tests/*.sh)"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          [ "$#" -gt 0 ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/slack/tests \
-            --alone mailbox.test --alone reload.test --alone socket.test
+            --alone mailbox.test --alone reload.test --alone socket.test "$@"
 
       # Jarvis's tmux fixtures and session controls run apart from `rest`'s
       # Linux pool, on a leg that builds the checkout kendex its picker rows
@@ -1108,7 +1174,15 @@ jobs:
       # there, as the worktree step keeps restack.
       - name: Jarvis suites
         if: matrix.shard == 'jarvis'
-        run: bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests
+        run: |
+          set --
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/*.sh)"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          [ "$#" -gt 0 ] || exit 0
+          bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests "$@"
 
       # ---- shard: rest — every shell suite no other shard runs. The skip
       # list below names the packages the shards above claim, and a skip is
@@ -1186,6 +1260,7 @@ jobs:
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           batteries=()
+          candidates=()
           for dir in skills/*/tests; do
             suites=("$dir"/*.sh)
             [ -f "${suites[0]}" ] || continue
@@ -1203,7 +1278,7 @@ jobs:
               *) needle="" ;;
             esac
             if [ -n "$needle" ]; then
-              if printf '%s\n' "$claims" | grep -qF -- "$needle"; then
+              if grep -qF -- "$needle" <<<"$claims"; then
                 continue
               fi
               echo "no other shard runs $needle: running $dir here"
@@ -1219,10 +1294,20 @@ jobs:
               slack) set -- --alone mailbox.test --alone reload.test --alone socket.test ;;
             esac
             batteries+=(--battery "$dir" "$@")
+            candidates+=("${suites[@]}")
           done
+          # The selectors apply across the pool by base name, so a kept suite
+          # can bring a same-named one of another battery, never drop one.
+          set --
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list ${candidates[@]+"${candidates[@]}"})"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          [ "$#" -gt 0 ] || exit 0
           # Run 38452700793 reached the deadline before the reviewer and
           # second-opinion packages started. One pool removes package barriers.
-          bash skills/orch/tests/run-all.sh "${batteries[@]}"
+          bash skills/orch/tests/run-all.sh "${batteries[@]}" "$@"
 
       # ---- shard: node — every node and bun suite here but pi-claude-bridge's,
       # which the shard below runs -----------------------------------------
@@ -1449,6 +1534,14 @@ jobs:
         if: matrix.shard == 'pi-claude-bridge'
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
+
+      # A suite list that left out one of this leg's suites arms this step,
+      # so its success tells the main push's proof read (tools/ci-job-set,
+      # NARROWED_STEP) that the leg ran part of its shard; a leg that kept
+      # every suite skips it and proves its shard.
+      - name: narrowed by the suite list
+        if: env.SUITE_LIST_DROPPED == 'true'
+        run: echo "this leg ran the suites its list kept, not its whole shard"
 
       - name: Report final job budget
         if: success()

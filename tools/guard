@@ -239,6 +239,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       ;;
     range-base)
       echo "that --range base names no commit in this repository." ;;
+    inputs-undeclared)
+      echo "that suite's own code names that skill document, and its # Inputs: note does not cover it; the note is what the merge group trusts, so add the document, or a directory holding it, to the note." ;;
     *)
       echo "no explanation is defined for this key: tools/guard is broken." ;;
   esac
@@ -328,6 +330,10 @@ if [ "${1:-}" = --released-packages ]; then
     shift 2
   fi
 fi
+if [ "${1:-}" = --note-skips ]; then
+  MODE=note-skips
+  shift
+fi
 if [ "${1:-}" = --selection ]; then
   selection_only=1
   shift
@@ -386,7 +392,10 @@ case "${1:-}" in
       '        the same suite mapper, leaving the full record to merge-group CI;' \
       '        a skill package'"'"'s Markdown, source or render, selects no suite there,' \
       '        nor does a .kendex-generated.json change only to their rows, save' \
-      '        in a tree whose suites tools/ci-job-set runs in no shard.'
+      '        in a tree whose suites tools/ci-job-set runs in no shard.' \
+      '--note-skips: read skill Markdown paths on stdin and print every shell suite' \
+      '        whose # Inputs: note covers none of them; run nothing.' \
+      '        Exit 1: such a suite'"'"'s own code names one of the paths.'
     exit 0
     ;;
 esac
@@ -398,6 +407,164 @@ if [ "$MODE" = range ]; then
   # name moves while the run is going.
   range_sha=$(git rev-parse --verify -q "$range_base^{commit}") || refuse range-base "$range_base"
   range_base=$range_sha
+fi
+
+# The one reading of a file's input notes, for scan_load and --note-skips:
+# every item of a `# Inputs:` line, items separated by spaces, commas or
+# both, a line ending in a comma going on into the next comment line, and a
+# trailing period dropped from an item. note_line prints `I<tab>KEY<tab>ITEM`
+# for each item and answers whether TEXT belongs to KEY's note.
+INPUTS_NOTE_AWK='
+  function note_line(key, text, items, count, j) {
+    if (text !~ /^# Inputs: / && !(noting[key] && text ~ /^#/)) {
+      noting[key] = 0
+      return 0
+    }
+    count = split(substr(text, (text ~ /^# Inputs: / ? 11 : 2)), items, /[ ,]+/)
+    for (j = 1; j <= count; j++) {
+      sub(/\.$/, "", items[j])
+      if (items[j] != "") print "I\t" key "\t" items[j]
+    }
+    noting[key] = text ~ /,[[:space:]]*$/
+    return 1
+  }
+'
+
+# --note-skips is the merge group's suite query for a diff of skill Markdown
+# alone; tools/ci-job-set is its one caller. The paths arrive on stdin, each
+# a Markdown file of a skill package or its render, and it prints, one per
+# line, each shell suite whose input note covers none of them, running
+# nothing. An item covers a path, its source or its .agents/ render, as a
+# case pattern, or as a directory holding it: one spelled with a trailing
+# slash or a directory of the checkout. A suite with no note is never
+# printed, nor one with a note this cannot take: every item must be a
+# repository path whose fixed part exists, with no brace list, so a note in
+# prose or relative to its own tree reads as none.
+# Exit 1 is the consistency check: a suite it would print whose own code
+# names one of the paths as a read of the checkout, `/skills/<name>/<file>`
+# not after .agents/, `../<name>/<file>`, or inside its own package
+# `/<file>` after an upper-case root variable; a bare relative path is a
+# fixture's. Exit 2 is a suite it could not read.
+note_covers() { # ITEM PATH
+  # shellcheck disable=SC2254 # the item is a case pattern
+  case "$2" in $1) return 0 ;; esac
+  case "$1" in
+    */) case "$2" in "$1"*) return 0 ;; esac ;;
+    *[*?[]*) ;;
+    *) if [ -d "$1" ]; then case "$2" in "$1"/*) return 0 ;; esac; fi ;;
+  esac
+  return 1
+}
+# Prints SUITE where its note ITEMS, one per line, can be taken and covers
+# none of note_docs; status 1 where it would print SUITE and NAMED, the
+# paths its code names, holds one.
+note_skip() { # SUITE ITEMS NAMED
+  local item fixed doc covered=1
+  while IFS= read -r item; do
+    [ -n "$item" ] || continue
+    case "$item" in *[{}]*) return 0 ;; */* | *.*) ;; *) return 0 ;; esac
+    fixed=${item%%[*?[]*}
+    case "$fixed" in
+      "") return 0 ;;
+      */) [ -d "$fixed" ] || return 0 ;;
+      *)
+        if [ "$fixed" = "$item" ]; then
+          [ -e "$fixed" ] || return 0
+        else
+          case "$fixed" in */*) [ -d "${fixed%/*}" ] || return 0 ;; esac
+        fi
+        ;;
+    esac
+    while IFS= read -r doc; do
+      [ -n "$doc" ] || continue
+      if note_covers "$item" "$doc" || note_covers "$item" ".agents/$doc"; then covered=0; fi
+    done <<<"$note_docs"
+  done <<<"$2"
+  [ "$covered" -eq 1 ] || return 0
+  if [ -n "$3" ]; then
+    say inputs-undeclared "$1 path=${3%%$'\n'*}" >&2
+    return 1
+  fi
+  printf '%s\n' "$1"
+}
+if [ "$MODE" = note-skips ]; then
+  note_docs=""
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    case "$doc" in
+      skills/*/*.md | .agents/skills/*/*.md | skills/*/*.markdown | .agents/skills/*/*.markdown) ;;
+      *) refuse argument "--note-skips=$doc" ;;
+    esac
+    # A render is the same text as its source, so its source path answers.
+    doc=${doc#.agents/}
+    case $'\n'"$note_docs" in *$'\n'"$doc"$'\n'*) continue ;; esac
+    note_docs+="$doc"$'\n'
+  done
+  [ -n "$note_docs" ] || refuse argument --note-skips-without-paths
+  note_suites=()
+  for t in tools/tests/*.sh hooks/tests/*.sh refresh/tests/*.sh skills/*/tests/*.sh; do
+    [ ! -f "$t" ] || note_suites+=("$t")
+  done
+  noted_status=0
+  noted=$(grep -l -e '^# Inputs: ' -- "${note_suites[@]}") || noted_status=$?
+  case "$noted_status" in 0) ;; 1) exit 0 ;; *) exit 2 ;; esac
+  # Per suite, its note items (I), each path its code names (C), then its
+  # end (E). The patterns are those the header above names.
+  # shellcheck disable=SC2086 # one suite path per word, none with a space
+  note_records=$(GUARD_NOTE_DOCS=$note_docs awk "$INPUTS_NOTE_AWK"'
+    function escape(text) {
+      gsub(/[][\\.*^$+?(){}|]/, "\\\\&", text)
+      return text
+    }
+    BEGIN {
+      end = "([^[:alnum:]_/-]|$)"
+      count = split(ENVIRON["GUARD_NOTE_DOCS"], list, "\n")
+      for (i = 1; i <= count; i++) {
+        if (list[i] == "") continue
+        n++
+        doc[n] = list[i]
+        rel = substr(list[i], 8)
+        file = rel
+        sub(/^[^\/]*\//, "", file)
+        package[n] = "skills/" substr(rel, 1, length(rel) - length(file))
+        base[n] = file
+        sub(/.*\//, "", base[n])
+        named[n] = "(^|[^s])/" escape(list[i]) end "|\\.\\./" escape(rel) end
+        own[n] = "\\$\\{?[A-Z_]*(ROOT|DIR|SKILL|HERE|PACKAGE|PKG)[A-Z_]*\\}?[\"'"'"']?/" escape(file) end
+      }
+    }
+    FNR == 1 {
+      if (NR > 1) print "E\t" suite
+      suite = FILENAME
+      split("", hit)
+    }
+    note_line(suite, $0) { next }
+    /^[[:space:]]*#/ { next }
+    {
+      # Every pattern spells the file name, so a line without it is passed
+      # over before any is matched.
+      for (k = 1; k <= n; k++)
+        if (!hit[k] && index($0, base[k]) && ($0 ~ named[k] || (index(suite, package[k]) == 1 && $0 ~ own[k]))) {
+          hit[k] = 1
+          print "C\t" suite "\t" doc[k]
+        }
+    }
+    END { if (NR > 0) print "E\t" suite }
+  ' $noted) || exit 2
+  note_items=""
+  note_named=""
+  while IFS=$'\t' read -r kind t value; do
+    case "$kind" in
+      I) note_items+="$value"$'\n' ;;
+      C) note_named+="$value"$'\n' ;;
+      E)
+        note_skip "$t" "$note_items" "$note_named" || exit 1
+        note_items=""
+        note_named=""
+        ;;
+    esac
+  done <<<"$note_records"
+  exit 0
 fi
 
 # The lanes --full runs. dev-validate-run hands over what the classifier and
@@ -1639,8 +1806,8 @@ PY
 # SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
 # spells and each `/<module>.py` a test program imports, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines,
-# and SCAN_INPUTS, the repository path patterns in its input notes: every item
-# of a `# Inputs:` line, items separated by spaces, commas or both.
+# and SCAN_INPUTS, the repository path patterns in its input notes, as
+# INPUTS_NOTE_AWK reads them.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or per example_areas key of a
@@ -1702,7 +1869,7 @@ scan_load() { # DIR
     done
   done <<<"$tree_paths"
   # File text stays inside the batch. Bash receives only reach metadata.
-  cache=$(awk '
+  cache=$(awk "$INPUTS_NOTE_AWK"'
     function scan_names(reader, text, kind, rest, name) {
       rest = text
       while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
@@ -1733,14 +1900,10 @@ scan_load() { # DIR
           print "N\t" reader "\t" name
       }
     }
-    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, j, notes, note_count) {
+    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i) {
       path = scan_paths[reader]; role = scan_roles[reader]
       while ((status = (getline text < path)) > 0) {
-        if (text ~ /^# Inputs: /) {
-          note_count = split(substr(text, 11), notes, /[ ,]+/)
-          for (j = 1; j <= note_count; j++)
-            if (notes[j] != "") print "I\t" reader "\t" notes[j]
-        }
+        if (note_line(reader, text)) continue
         if (text ~ /^[[:space:]]*#/) continue
         code[++count] = text
         scan_names(reader, text, "N")

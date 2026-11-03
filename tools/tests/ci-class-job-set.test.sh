@@ -121,7 +121,7 @@ mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\]"$/'
+RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\]"$/'
 [ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 # LANE|WORD dropped from the render row

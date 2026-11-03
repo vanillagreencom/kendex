@@ -93,6 +93,11 @@ done
 # latest jobs, on the head main pushed next. Each world varies them as one
 # GitHub state would.
 DATA="$TEST_DIR/data"
+# The step skill-tests.yml runs where a suite list left out a leg's suite,
+# read from the workflow, so the proof read and the step share one name.
+NARROWED_STEP="$(awk '/^      - name: / { name = substr($0, 15) } /^        if: env\.SUITE_LIST_DROPPED == .true.$/ { print name }' \
+  "$ROOT/.github/workflows/skill-tests.yml")"
+[ "$(grep -c . <<<"$NARROWED_STEP")" -eq 1 ] || { echo "the workflow declares no single narrowed step" >&2; exit 1; }
 PUSH_SHA="$(jq -er '.workflow_runs[0].head_sha' "$DATA/main-proof-runs.json")"
 PUSH_RUN="$(jq -er '.workflow_runs[0].id' "$DATA/main-proof-runs.json")"
 mkdir -p "$TMP/gh-stub"
@@ -129,7 +134,7 @@ push_world() { # NAME
   mkdir -p "$dir"
   cp "$runs" "$dir/runs.json"
   cp "$jobs" "$dir/jobs-$PUSH_RUN.json"
-  edit_jobs() { jq "$1" "$jobs" >"$dir/jobs-$PUSH_RUN.json"; }
+  edit_jobs() { jq --arg narrowed "$NARROWED_STEP" "$1" "$jobs" >"$dir/jobs-$PUSH_RUN.json"; }
   case "$1" in
     all-proved) ;;
     subset)
@@ -151,6 +156,15 @@ push_world() { # NAME
     foreign-run-job)
       edit_jobs '.jobs |= map(if .name == "Skill suites shard (slack, ubuntu-latest)" then .run_id = 1 else . end)' ;;
     foreign-head-run) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$runs" >"$dir/runs.json" ;;
+    # A leg whose suite list left out one of its suites ran the workflow's
+    # narrowed step, so it proves nothing; one that skipped it ran whole, and
+    # a job whose steps the read does not hold shows neither.
+    narrowed-leg)
+      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then .steps += [{name: $narrowed, status: "completed", conclusion: "success"}] else . end)' ;;
+    whole-leg)
+      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then .steps += [{name: $narrowed, status: "completed", conclusion: "skipped"}] else . end)' ;;
+    stepless-leg)
+      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then del(.steps) else . end)' ;;
     push-event-run) jq '.workflow_runs[0].event = "push"' "$runs" >"$dir/runs.json" ;;
     other-workflow-run) jq '.workflow_runs[0].path = ".github/workflows/lock-record.yml"' "$runs" >"$dir/runs.json" ;;
     *) echo "no push world named $1" >&2; exit 1 ;;
@@ -169,8 +183,8 @@ push_select() { # WORLD [SELECTOR]
     "$(sed -n 's/^ci-job-set: \(main-proof=[a-z]*\) runs=[^ ]* \(proved-linux=[0-9]* proved-macos=[0-9]*\).*/\1 \2/p' "$TMP/push-err")" \
     "$(grep -q '^::warning ' "$TMP/push-stdout" && echo yes || echo no)"
 }
-NO_SHARDS="shell_shards=false shell_os=[] shards=[] queue_macos_shards=[]"
-ALL_SHARDS='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] '"shards=$ROSTER queue_macos_shards=$QUEUE_ALL"
+NO_SHARDS="shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] skipped_suites=[]"
+ALL_SHARDS='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] '"shards=$ROSTER queue_macos_shards=$QUEUE_ALL skipped_suites=[]"
 QUEUE_N="$(jq length <<<"$QUEUE_ALL")"
 ROSTER_N="$(jq length <<<"$ROSTER")"
 UNREAD="main-proof=unread proved-linux=0 proved-macos=0 warned=yes"
@@ -184,13 +198,16 @@ while IFS='|' read -r world expected; do
   check "push route: $world" "$expected" "$(push_select "$world")"
 done <<ROWS
 all-proved|$NO_SHARDS main-proof=read proved-linux=$ROSTER_N proved-macos=$QUEUE_N warned=no
-subset|shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["linear","rest","node"] queue_macos_shards=["linear","rest"] main-proof=read proved-linux=$((ROSTER_N - 3)) proved-macos=$((QUEUE_N - 2)) warned=no
-macos-only|shell_shards=true shell_os=["ubuntu-latest"] shards=$ROSTER queue_macos_shards=[] main-proof=read proved-linux=0 proved-macos=$QUEUE_N warned=no
+subset|shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["linear","rest","node"] queue_macos_shards=["linear","rest"] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 3)) proved-macos=$((QUEUE_N - 2)) warned=no
+macos-only|shell_shards=true shell_os=["ubuntu-latest"] shards=$ROSTER queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=0 proved-macos=$QUEUE_N warned=no
 no-shard-selected|$ALL_SHARDS main-proof=read proved-linux=0 proved-macos=0 warned=no
-in-progress|shell_shards=true shell_os=["ubuntu-latest"] shards=["guards-scans"] queue_macos_shards=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
-failed-second-run|shell_shards=true shell_os=["ubuntu-latest"] shards=["worktree"] queue_macos_shards=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
-foreign-head-job|shell_shards=true shell_os=["macos-latest"] shards=[] queue_macos_shards=["mailbox"] main-proof=read proved-linux=$ROSTER_N proved-macos=$((QUEUE_N - 1)) warned=no
-foreign-run-job|shell_shards=true shell_os=["ubuntu-latest"] shards=["slack"] queue_macos_shards=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
+in-progress|shell_shards=true shell_os=["ubuntu-latest"] shards=["guards-scans"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
+failed-second-run|shell_shards=true shell_os=["ubuntu-latest"] shards=["worktree"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
+foreign-head-job|shell_shards=true shell_os=["macos-latest"] shards=[] queue_macos_shards=["mailbox"] skipped_suites=[] main-proof=read proved-linux=$ROSTER_N proved-macos=$((QUEUE_N - 1)) warned=no
+narrowed-leg|shell_shards=true shell_os=["ubuntu-latest"] shards=["jarvis"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
+whole-leg|$NO_SHARDS main-proof=read proved-linux=$ROSTER_N proved-macos=$QUEUE_N warned=no
+stepless-leg|shell_shards=true shell_os=["ubuntu-latest"] shards=["jarvis"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
+foreign-run-job|shell_shards=true shell_os=["ubuntu-latest"] shards=["slack"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
 no-run|$ALL_SHARDS $NO_RUN
 foreign-head-run|$ALL_SHARDS $NO_RUN
 push-event-run|$ALL_SHARDS $NO_RUN
@@ -199,7 +216,7 @@ outage|$ALL_SHARDS $UNREAD
 unparseable|$ALL_SHARDS $UNREAD
 jobs-missing|$ALL_SHARDS $UNREAD
 ROWS
-[ "$push_rows" -eq 15 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+[ "$push_rows" -eq 18 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
