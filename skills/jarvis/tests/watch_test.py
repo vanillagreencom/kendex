@@ -1083,30 +1083,68 @@ class Producer(unittest.TestCase):
             self.assertCountEqual(sources(), [(key, str(self.peer)) for key in expected] * 2)
 
     def test_legacy_host_migration(self):
-        self.settings["JARVIS_CONTROL_HOST"] = "alpha"
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            self.append(watch, "EVENT custom\nretained old bytes\n")
-            watch.batch(0)
+            root = Path("/srv/app")
+            header = "EVENT mail repo=app file=to-overseer\n"
+            selected = header + "s" * 32000 + "\n"
+            retained = header + "r" * 32000 + "\nretained old bytes\n"
+            watch.append(self.module.pass_output("host", {str(root): {"to-overseer": {"count": 4}}},
+                                                 [(root, selected), (root, retained)]))
+            original_save = watch.save
+            def stop_after_receipt():
+                if watch.state["pending"] is None:
+                    raise InterruptedError("acknowledgement barrier before commit")
+                original_save()
+            watch.save = stop_after_receipt
+            with self.assertRaises(InterruptedError):
+                watch.batch(0)
             saved = json.loads(watch.path.read_text())
+            pending = saved["pending"]
+            self.assertIsNotNone(pending)
+            body = selected.replace("\n", " destination=host root=/srv/app\n", 1)
+            self.assertEqual(pending["body"].encode(), body.encode())
+            self.assertTrue(pending["key"].startswith("jarvis-"))
+            self.assertEqual([span[2] for span in pending["retained"]], [["host", str(root)]])
+            pending_bytes = json.dumps(pending, sort_keys=True).encode()
+            delivered = self.inbox()
+            self.assertEqual(len(delivered), 1)
+            self.assertEqual(delivered[0]["text"], body.rstrip("\n"))
+            self.assertEqual(delivered[0]["delivery_id"], pending["key"])
             generation = saved["generation"]
-            saved.pop("legacy_control_host", None)
-            saved["cursors"]["host"] = {"/srv/app": {"to-overseer": {"count": 4}}}
+            self.assertNotIn("legacy_control_host", saved)
             saved["host_failure"] = {"key": ["host-pass", "exit", "255"], "detail": "old failure"}
             saved["presence_failures"] = {"host": {"/srv/app": {"key": ["hold", "exit", "1"]}}}
             watch.path.write_text(json.dumps(saved))
             with watch.log.open("a") as out:
                 out.write('cursor: {"side":"host","roots":{"/srv/app":{"to-overseer":{"count":5}}}}\n')
+            self.settings["JARVIS_CONTROL_HOST"] = "alpha"
             resumed = self.watch()
             self.assertEqual(resumed.cursors["ssh:alpha"]["/srv/app"]["to-overseer"]["count"], 5)
             self.assertEqual(resumed.state["generation"], generation)
-            self.assertEqual(resumed.state["pending"], saved["pending"])
+            self.assertEqual(json.dumps(json.loads(resumed.path.read_text())["pending"], sort_keys=True).encode(),
+                             pending_bytes)
             self.assertEqual(resumed.state["ssh:alpha_failure"], saved["host_failure"])
             self.assertEqual(resumed.state["presence_failures"]["ssh:alpha"], saved["presence_failures"]["host"])
             self.settings["JARVIS_CONTROL_HOST"] = "beta"
             changed = self.watch()
             self.assertNotIn("ssh:beta", changed.cursors)
             self.assertEqual(changed.state["legacy_control_host"], "alpha")
+            self.assertEqual(json.dumps(json.loads(changed.path.read_text())["pending"], sort_keys=True).encode(),
+                             pending_bytes)
+            changed.batch(1)
+            self.assertEqual(self.inbox(), delivered)
+            self.assertIsNone(changed.state["pending"])
+            self.assertEqual([span[2] for span in changed.state["spans"]], [["ssh:alpha", str(root)]])
+            self.watch().batch(2)
+            self.watch().batch(3)
+            final = self.inbox()
+            self.assertEqual(len(final), 2)
+            self.assertEqual(final[0], delivered[0])
+            self.assertEqual(final[1]["text"],
+                             retained.replace("\n", " destination=host root=/srv/app\n", 1).rstrip("\n"))
+            self.assertNotEqual(final[1]["delivery_id"], pending["key"])
 
     def test_healthy_destination_during_blocked_host(self):
         import threading
@@ -1154,6 +1192,8 @@ class Producer(unittest.TestCase):
         unlisted = 'alone = side == "local" and home not in roots'
         satellite = "roots = [home] if satellite else project_roots()"
         for name, old, new in (
+                ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',
+                 'spans=pending["retained"]'),
                 ("test_remote_identity_restart", 'self.cursors[self.destination_key(record["side"])] = record["roots"]',
                  'self.cursors["shared-remote" if record["side"].startswith("ssh:") else record["side"]] = record["roots"]'),
                 # The watch never pages a report the cursor has not seen.

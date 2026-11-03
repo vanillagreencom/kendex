@@ -143,13 +143,20 @@ class OwnerNote(MailWorld):
             source = path.read_text()
             old = "        return side, root, target.key"
             self.assertEqual(source.count(old), 1)
-            path.write_text(source.replace(old, "        if side == 'local':\\n            return side, root, target.key"))
+            mutant = source.replace(old, "        if side == 'local':\n            return side, root, target.key")
+            self.assertNotEqual(source, mutant)
+            compile(mutant, str(path), "exec")
+            path.write_text(mutant)
             case = OwnerNote(methodName="test_routes")
             case.scripts = copy
             case.setUp()
             try:
                 with self.assertRaises(AssertionError):
                     case.test_routes()
+                for side in ("remote", "local"):
+                    written = case.box(case.root / "host-overseer" / side / "app", "to-lane")
+                    self.assertEqual([row["text"] for row in written],
+                                     [NOTE.rstrip("\n") + "\n\n" + FOOTER], side)
             finally:
                 case.doCleanups()
 
